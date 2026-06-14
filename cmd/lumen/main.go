@@ -39,6 +39,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Fill unset provider keys from a local .env before resolving config.
+	_ = config.LoadDotEnv(".env")
+
 	cmd := os.Args[1]
 	switch cmd {
 	case "chat":

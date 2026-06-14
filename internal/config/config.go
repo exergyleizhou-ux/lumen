@@ -83,6 +83,47 @@ func Load(path string) (*File, error) {
 	return cfg, nil
 }
 
+// LoadDotEnv reads KEY=VALUE pairs from a .env file and sets them in the
+// process environment. Variables already present in the environment win — the
+// .env file only fills in what is unset. A missing file is not an error.
+// Supports blank lines, "#" comments, an optional "export " prefix, and
+// surrounding single/double quotes on the value.
+func LoadDotEnv(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		eq := strings.IndexByte(line, '=')
+		if eq <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eq])
+		val := strings.TrimSpace(line[eq+1:])
+		if len(val) >= 2 {
+			if (val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'') {
+				val = val[1 : len(val)-1]
+			}
+		}
+		if key == "" {
+			continue
+		}
+		if _, ok := os.LookupEnv(key); ok {
+			continue // a real environment variable wins over .env
+		}
+		os.Setenv(key, val)
+	}
+	return nil
+}
+
 // UserConfigPath returns the OS-specific user config file path.
 func UserConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()

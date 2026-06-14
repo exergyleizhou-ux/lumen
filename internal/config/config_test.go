@@ -153,3 +153,47 @@ func TestConventionDirs(t *testing.T) {
 		t.Error("ConventionDirs should include .reasonix")
 	}
 }
+
+func TestLoadDotEnv(t *testing.T) {
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	os.WriteFile(envPath, []byte("# a comment\n"+
+		"DEEPSEEK_API_KEY=sk-from-dotenv\n"+
+		"export GROK_API_KEY=\"xai-quoted\"\n"+
+		"\n"+
+		"ALREADY_SET=should-not-win\n"), 0o644)
+
+	// Existing environment must win over the .env file.
+	t.Setenv("ALREADY_SET", "from-environment")
+	// Target vars must start truly unset so .env can fill them.
+	for _, k := range []string{"DEEPSEEK_API_KEY", "GROK_API_KEY"} {
+		orig, had := os.LookupEnv(k)
+		os.Unsetenv(k)
+		t.Cleanup(func() {
+			if had {
+				os.Setenv(k, orig)
+			} else {
+				os.Unsetenv(k)
+			}
+		})
+	}
+
+	if err := LoadDotEnv(envPath); err != nil {
+		t.Fatalf("LoadDotEnv: %v", err)
+	}
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "sk-from-dotenv" {
+		t.Errorf("DEEPSEEK_API_KEY: want sk-from-dotenv, got %q", got)
+	}
+	if got := os.Getenv("GROK_API_KEY"); got != "xai-quoted" {
+		t.Errorf("GROK_API_KEY (export + quotes): want xai-quoted, got %q", got)
+	}
+	if got := os.Getenv("ALREADY_SET"); got != "from-environment" {
+		t.Errorf("existing env must win: want from-environment, got %q", got)
+	}
+}
+
+func TestLoadDotEnvMissingFileIsOK(t *testing.T) {
+	if err := LoadDotEnv(filepath.Join(t.TempDir(), "nope.env")); err != nil {
+		t.Errorf("missing .env should not error, got %v", err)
+	}
+}
