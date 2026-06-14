@@ -207,6 +207,14 @@ func (c *Controller) Agent() *agent.Agent { return c.ag }
 // Session returns the agent's session.
 func (c *Controller) Session() *agent.Session { return c.sess }
 
+// SetSink replaces the event sink at runtime (used by SSE/TUI to redirect events).
+func (c *Controller) SetSink(s event.Sink) {
+	c.sink = s
+	if c.ag != nil {
+		c.ag.SetSink(s)
+	}
+}
+
 // ProviderName returns the active provider instance name.
 func (c *Controller) ProviderName() string { return c.provCfg.Name }
 
