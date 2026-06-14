@@ -218,3 +218,50 @@ Body.`), 0o644)
 		t.Error("notes.md (no frontmatter/description) must NOT load as a skill")
 	}
 }
+
+func TestStoreExcludesGlobalSkillsByDefault(t *testing.T) {
+	// A skill installed in the host's global ~/.claude/skills.
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".claude", "skills")
+	os.MkdirAll(globalDir, 0o755)
+	os.WriteFile(filepath.Join(globalDir, "global-skill.md"), []byte(`---
+name: global-skill
+description: From the host global install
+---
+Body.`), 0o644)
+
+	// A project skill.
+	project := t.TempDir()
+	projSkills := filepath.Join(project, "skills")
+	os.Mkdir(projSkills, 0o755)
+	os.WriteFile(filepath.Join(projSkills, "proj-skill.md"), []byte(`---
+name: proj-skill
+description: A project skill
+---
+Body.`), 0o644)
+
+	// Default is project-only: the host's global skills are NOT inherited.
+	store := New(Options{ProjectRoot: project, HomeDir: home})
+	if _, ok := store.Get("proj-skill"); !ok {
+		t.Error("project skill should load")
+	}
+	if _, ok := store.Get("global-skill"); ok {
+		t.Error("global skill must NOT load by default (project-only)")
+	}
+}
+
+func TestStoreIncludesGlobalSkillsWhenOptedIn(t *testing.T) {
+	home := t.TempDir()
+	globalDir := filepath.Join(home, ".claude", "skills")
+	os.MkdirAll(globalDir, 0o755)
+	os.WriteFile(filepath.Join(globalDir, "global-skill.md"), []byte(`---
+name: global-skill
+description: From the host global install
+---
+Body.`), 0o644)
+
+	store := New(Options{ProjectRoot: t.TempDir(), HomeDir: home, IncludeGlobal: true})
+	if _, ok := store.Get("global-skill"); !ok {
+		t.Error("global skill should load when IncludeGlobal is set")
+	}
+}

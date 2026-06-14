@@ -55,14 +55,20 @@ type Options struct {
 	ProjectRoot string
 	CustomPaths []string
 	MaxDepth    int
+	// IncludeGlobal opts into scanning the host's global convention dirs
+	// (~/.claude/skills, ~/.agents/skills, …). Off by default: lumen is
+	// project-scoped, so it does not inherit another agent's global skills
+	// unless explicitly asked.
+	IncludeGlobal bool
 }
 
 // Store resolves skills across the configured roots.
 type Store struct {
-	homeDir     string
-	projectRoot string
-	customPaths []string
-	maxDepth    int
+	homeDir       string
+	projectRoot   string
+	customPaths   []string
+	maxDepth      int
+	includeGlobal bool
 }
 
 // New builds a Store.
@@ -80,10 +86,11 @@ func New(opts Options) *Store {
 		}
 	}
 	return &Store{
-		homeDir:     home,
-		projectRoot: root,
-		customPaths: opts.CustomPaths,
-		maxDepth:    normalizeMaxDepth(opts.MaxDepth),
+		homeDir:       home,
+		projectRoot:   root,
+		customPaths:   opts.CustomPaths,
+		maxDepth:      normalizeMaxDepth(opts.MaxDepth),
+		includeGlobal: opts.IncludeGlobal,
 	}
 }
 
@@ -111,12 +118,14 @@ func (s *Store) List() []Skill {
 		}
 	}
 
-	// Global: same convention dirs under home
-	for _, dir := range config.ConventionDirs {
-		skillsDir := filepath.Join(s.homeDir, dir, SkillsDirname)
-		for _, sk := range s.discoverDir(skillsDir, ScopeGlobal) {
-			if _, dup := byName[sk.Name]; !dup {
-				byName[sk.Name] = sk
+	// Global: same convention dirs under home — only when explicitly opted in.
+	if s.includeGlobal {
+		for _, dir := range config.ConventionDirs {
+			skillsDir := filepath.Join(s.homeDir, dir, SkillsDirname)
+			for _, sk := range s.discoverDir(skillsDir, ScopeGlobal) {
+				if _, dup := byName[sk.Name]; !dup {
+					byName[sk.Name] = sk
+				}
 			}
 		}
 	}
