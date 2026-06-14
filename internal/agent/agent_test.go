@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
+	"lumen/internal/event"
 	"lumen/internal/provider"
 	"lumen/internal/tool"
 )
@@ -336,5 +338,32 @@ func TestExecuteOneStampsCallContext(t *testing.T) {
 	}
 	if probe.gotID != "call_42" {
 		t.Errorf("parentID: want call_42, got %q", probe.gotID)
+	}
+}
+
+func TestAutoCompactMarkerDoesNotClaimSummary(t *testing.T) {
+	a := New(&mockProvider{name: "test"}, testRegistry(), NewSession(""), Options{
+		MaxSteps: 5, ContextWindow: 90, RecentKeep: 2, Sink: event.Discard,
+	})
+	for i := 0; i < 12; i++ {
+		a.session.Add(provider.Message{Role: provider.RoleUser, Content: strings.Repeat("x", 40)})
+	}
+	a.autoCompact()
+
+	var marker string
+	for _, m := range a.session.Snapshot() {
+		if strings.Contains(strings.ToLower(m.Content), "compact") {
+			marker = m.Content
+		}
+	}
+	if marker == "" {
+		t.Fatal("autoCompact should have inserted a compaction marker")
+	}
+	low := strings.ToLower(marker)
+	if strings.Contains(low, "summariz") {
+		t.Errorf("sliding-window compaction must not claim messages were summarized: %q", marker)
+	}
+	if !strings.Contains(low, "omit") && !strings.Contains(low, "drop") {
+		t.Errorf("marker should honestly say earlier messages were dropped/omitted: %q", marker)
 	}
 }

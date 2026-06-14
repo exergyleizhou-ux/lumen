@@ -620,8 +620,10 @@ func (a *Agent) autoCompact() {
 
 	if a.recentKeep > 0 && estimatedTokens > hardLimit {
 		a.session.Compact(a.recentKeep, a.recentKeep,
-			fmt.Sprintf("[auto-compacted at ~%d tokens: session exceeded %d threshold. "+
-				"Earlier messages have been summarized. Recent context is preserved.]",
+			fmt.Sprintf("[auto-compacted at ~%d tokens: session exceeded the %d-token threshold. "+
+				"Earlier messages were dropped (sliding window) to fit the context window; "+
+				"the opening and most recent messages are preserved verbatim. "+
+				"If you need omitted detail, re-read the relevant files.]",
 				estimatedTokens, hardLimit))
 	}
 	if estimatedTokens > softLimit && !a.softCompactNoticed {

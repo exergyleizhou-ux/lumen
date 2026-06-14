@@ -64,9 +64,10 @@ func (s *Session) SystemPrompt(basePrompt, memory string) string {
 	return sb.String()
 }
 
-// Compact replaces the middle of the session with a summary, keeping the
-// first keepFirst and last keepLast messages verbatim. This keeps the context
-// under the token budget while preserving the cache-stable prefix end.
+// Compact drops the middle of the session, keeping the first keepFirst and
+// last keepLast messages verbatim and inserting a short marker (the summary
+// arg) in their place. This is a sliding window — the omitted messages are
+// NOT model-summarized — chosen to keep the cache-stable prefix end intact.
 func (s *Session) Compact(keepFirst, keepLast int, summary string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
