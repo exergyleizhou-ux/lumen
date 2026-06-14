@@ -155,16 +155,45 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
-			Usage *provider.Usage `json:"usage"`
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				TotalTokens      int `json:"total_tokens"`
+				// DeepSeek-specific cache accounting.
+				PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+				PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
+				// OpenAI-style cache + reasoning accounting.
+				PromptTokensDetails struct {
+					CachedTokens int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+				CompletionTokensDetails struct {
+					ReasoningTokens int `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
+			} `json:"usage"`
 		}
 
 		if err := json.Unmarshal([]byte(data), &sse); err != nil {
 			continue
 		}
 
-		// Emit usage when present
+		// Emit usage when present, normalizing cache accounting across providers.
 		if sse.Usage != nil {
-			ch <- provider.Chunk{Type: provider.ChunkUsage, Usage: sse.Usage}
+			u := &provider.Usage{
+				PromptTokens:     sse.Usage.PromptTokens,
+				CompletionTokens: sse.Usage.CompletionTokens,
+				TotalTokens:      sse.Usage.TotalTokens,
+				ReasoningTokens:  sse.Usage.CompletionTokensDetails.ReasoningTokens,
+			}
+			// Prefer DeepSeek's explicit hit/miss split; otherwise fall back to
+			// OpenAI's cached_tokens (the rest of the prompt counts as a miss).
+			if sse.Usage.PromptCacheHitTokens > 0 || sse.Usage.PromptCacheMissTokens > 0 {
+				u.CacheHitTokens = sse.Usage.PromptCacheHitTokens
+				u.CacheMissTokens = sse.Usage.PromptCacheMissTokens
+			} else {
+				u.CacheHitTokens = sse.Usage.PromptTokensDetails.CachedTokens
+				u.CacheMissTokens = sse.Usage.PromptTokens - sse.Usage.PromptTokensDetails.CachedTokens
+			}
+			ch <- provider.Chunk{Type: provider.ChunkUsage, Usage: u}
 		}
 
 		if len(sse.Choices) == 0 {

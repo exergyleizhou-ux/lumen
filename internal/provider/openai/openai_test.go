@@ -359,3 +359,70 @@ func TestStreamContextCancellation(t *testing.T) {
 		}
 	}
 }
+
+func TestSSEUsageDeepSeekCacheTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+		// DeepSeek's usage uses prompt_cache_hit_tokens / prompt_cache_miss_tokens.
+		w.Write([]byte(`data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":5,"total_tokens":125,"prompt_cache_hit_tokens":100,"prompt_cache_miss_tokens":20,"prompt_tokens_details":{"cached_tokens":100}}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var usage *provider.Usage
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkUsage {
+			usage = chunk.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected a usage chunk")
+	}
+	if usage.CacheHitTokens != 100 {
+		t.Errorf("CacheHitTokens: want 100, got %d", usage.CacheHitTokens)
+	}
+	if usage.CacheMissTokens != 20 {
+		t.Errorf("CacheMissTokens: want 20, got %d", usage.CacheMissTokens)
+	}
+	if usage.PromptTokens != 120 || usage.TotalTokens != 125 {
+		t.Errorf("prompt/total: want 120/125, got %d/%d", usage.PromptTokens, usage.TotalTokens)
+	}
+}
+
+func TestSSEUsageOpenAICachedTokensFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+		// OpenAI reports cache only via prompt_tokens_details.cached_tokens.
+		w.Write([]byte(`data: {"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":120,"completion_tokens":5,"total_tokens":125,"prompt_tokens_details":{"cached_tokens":80}}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var usage *provider.Usage
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkUsage {
+			usage = chunk.Usage
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected a usage chunk")
+	}
+	if usage.CacheHitTokens != 80 {
+		t.Errorf("CacheHitTokens (OpenAI fallback): want 80, got %d", usage.CacheHitTokens)
+	}
+	if usage.CacheMissTokens != 40 {
+		t.Errorf("CacheMissTokens (120-80): want 40, got %d", usage.CacheMissTokens)
+	}
+}
