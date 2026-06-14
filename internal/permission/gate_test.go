@@ -9,19 +9,19 @@ import (
 func TestModeBypass(t *testing.T) {
 	g := NewGate(ModeBypass, nil)
 
-	// Everything allowed
-	allow, reason, err := g.Check(context.Background(), "bash", json.RawMessage(`{"command":"rm -rf /"}`), false)
+	// Safe commands pass even in bypass
+	allow, reason, err := g.Check(context.Background(), "bash", json.RawMessage(`{"command":"echo hello"}`), false)
 	if err != nil {
-		t.Fatalf("bypass should not error: %v", err)
+		t.Fatalf("safe command should not error: %v", err)
 	}
 	if !allow {
-		t.Errorf("bypass should allow all, got reason: %s", reason)
+		t.Errorf("safe command should be allowed: %s", reason)
 	}
 
-	// Even dangerous tools
-	allow, _, _ = g.Check(context.Background(), "bash", json.RawMessage(`{}`), false)
-	if !allow {
-		t.Error("bypass should allow bash")
+	// Destructive bash commands are blocked by content guard regardless of mode
+	allow, _, _ = g.Check(context.Background(), "bash", json.RawMessage(`{"command":"rm -rf /"}`), false)
+	if allow {
+		t.Error("destructive command should be blocked even in bypass mode")
 	}
 }
 

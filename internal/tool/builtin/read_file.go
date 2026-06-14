@@ -4,10 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"strings"
 
 	"lumen/internal/diff"
+	"lumen/internal/fileutil"
 	"lumen/internal/tool"
 )
 
@@ -50,29 +49,9 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("path is required")
 	}
 
-	data, err := os.ReadFile(p.Path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", p.Path, err)
-	}
-
-	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
-	if p.Limit <= 0 {
-		p.Limit = 2000
-	}
-	start := p.Offset
-	if start < 0 {
-		start = 0
-	}
-	end := start + p.Limit
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	var sb strings.Builder
-	for i := start; i < end; i++ {
-		fmt.Fprintf(&sb, "%d→%s\n", i+1, lines[i])
-	}
-	return sb.String(), nil
+	wsRoot := fileutil.WorkspaceRoot()
+	content, _, _, err := fileutil.SafeReadFile(p.Path, wsRoot, p.Offset, p.Limit)
+	return content, err
 }
 
 // ── Previewer implementation ──────────────────────────────

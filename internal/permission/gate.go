@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"lumen/internal/guard"
 )
 
 // Mode controls the permission gate behavior.
@@ -53,6 +55,18 @@ func NewGate(mode Mode, asker func(ctx context.Context, toolName string, args js
 
 // Check implements agent.Gate.
 func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error) {
+	// ── Bash content inspection (fires for ALL modes) ──────
+	if toolName == "bash" {
+		var p struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal(args, &p); err == nil && p.Command != "" {
+			if r := guard.CheckBash(p.Command); !r.Safe {
+				return false, "blocked: " + r.Reason, nil
+			}
+		}
+	}
+
 	switch g.mode {
 	case ModeBypass:
 		return true, "", nil

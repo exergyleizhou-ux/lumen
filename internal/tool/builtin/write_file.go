@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"lumen/internal/diff"
+	"lumen/internal/fileutil"
 	"lumen/internal/tool"
 )
 
@@ -47,11 +47,9 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if p.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	if err := os.MkdirAll(filepath.Dir(p.Path), 0o755); err != nil {
-		return "", fmt.Errorf("mkdir: %w", err)
-	}
-	if err := os.WriteFile(p.Path, []byte(p.Content), 0o644); err != nil {
-		return "", fmt.Errorf("write: %w", err)
+	wsRoot := fileutil.WorkspaceRoot()
+	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(p.Content)); err != nil {
+		return "", err
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
 }

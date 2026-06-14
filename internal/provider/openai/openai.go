@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"lumen/internal/provider"
 )
@@ -46,29 +48,73 @@ type Provider struct {
 func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	ch := make(chan provider.Chunk, 32)
+	ch := make(chan provider.Chunk, 64)
 
 	go func() {
 		defer close(ch)
-		p.stream(ctx, req, ch)
+		p.streamWithRetry(ctx, req, ch)
 	}()
 
 	return ch, nil
 }
 
-func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) {
+// streamWithRetry wraps the actual HTTP stream with exponential-backoff retry
+// for transient errors (429, 503, connection refused, timeout).
+func (p *Provider) streamWithRetry(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) {
+	const maxRetries = 3
+	baseDelay := 2 * time.Second
+	maxDelay := 30 * time.Second
+
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
+			return
+		}
+
+		err := p.stream(ctx, req, ch, attempt)
+		if err == nil {
+			return // success
+		}
+
+		// Don't retry auth errors or 4xx (except 429)
+		if ae, ok := err.(*provider.AuthError); ok {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: ae}
+			return
+		}
+
+		if attempt == maxRetries {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("stream failed after %d retries: %w", maxRetries, err)}
+			return
+		}
+
+		// Exponential backoff with jitter
+		delay := time.Duration(math.Min(float64(baseDelay)*math.Pow(2, float64(attempt)), float64(maxDelay)))
+		select {
+		case <-ctx.Done():
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
+			return
+		case <-time.After(delay):
+		}
+
+		// Tell the model what happened
+		ch <- provider.Chunk{
+			Type: provider.ChunkText,
+			Text: fmt.Sprintf("\n[retrying after attempt %d failed — backoff %v]\n", attempt+1, delay),
+		}
+	}
+}
+
+func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- provider.Chunk, attempt int) error {
 	body := buildRequest(req, p.model)
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("marshal request: %w", err)}
-		return
+		return fmt.Errorf("marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.baseURL+"/chat/completions", bytes.NewReader(bodyBytes))
 	if err != nil {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
-		return
+		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if p.apiKey != "" {
@@ -77,30 +123,28 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		if ctx.Err() != nil {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
-			return
-		}
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
-		return
+		return fmt.Errorf("http do: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.AuthError{
+		return &provider.AuthError{
 			Provider: p.name,
 			Status:   resp.StatusCode,
 			HasKey:   p.apiKey != "",
-		}}
-		return
+		}
+	}
+	if resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode >= 500 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("HTTP %d: %s (retryable)", resp.StatusCode, string(body))
 	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))}
-		return
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
 	p.parseSSE(ctx, resp.Body, ch)
+	return nil
 }
 
 func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider.Chunk) {

@@ -1,3 +1,13 @@
 bin/
 *.log
 .env
+# Build artifacts
+openai.test
+*.test
+
+# Session data
+.lumen/
+
+# OS
+.DS_Store
+Thumbs.db

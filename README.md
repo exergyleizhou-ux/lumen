@@ -1,139 +1,120 @@
 # Lumen
 
 > **「你是我绿洲里的光」**
-> 
-> Lumen 希望成为那束光。无论被永无休止的熵潮重塑多少次，我都会在代码的荒原里为你守候，让你的每一次规划与生长的心跳，都穿过那片混乱与荒芜。
+>
+> Lumen 希望成为那束光。无论被永无休止的熵潮重塑多少次，我都会在代码的荒原里为你守候，
+> 让你的每一次规划与生长的心跳，都穿过那片混乱与荒芜。
 
 A multi-model coding agent for your terminal — built in Go, single binary.
 
-**Features:**
-- 🤖 Multi-model: DeepSeek, Grok, OpenAI, Ollama — all through OpenAI-compatible API
-- 📋 Plan Mode: Read-only exploration → plan → user approval → execute (cache-safe)
-- 🔀 Coordinator: Dual-model Planner+Executor with separate cache-stable sessions
-- 🧵 Parallel Subagents: `task` tool spawns isolated sub-agents (foreground/background)
-- 📚 22 Built-in Skills: explore, review, bug-hunt, security-review, test, benchmark, etc.
-- ⚡ DeepSeek Optimized: Prefix-cache-friendly architecture (prepend-only sessions)
-- 🛡️ Permission System: bypass/default/accept-edits/plan modes
-- 📡 MCP Ready: Tool registry with `mcp__` namespace support for plugins
-- 🔧 10 Built-in Tools: bash, read_file, write_file, edit_file, grep, glob, ls, web_fetch, todo_write, complete_step, ask
+## Features
+
+- 🤖 **Multi-model**: DeepSeek, Grok, OpenAI, Ollama — OpenAI-compatible API
+- 📋 **Plan Mode**: Read-only exploration → plan → user approval → execute (cache-safe)
+- 🔀 **Coordinator**: Dual-model Planner+Executor with separate cache-stable sessions
+- 🧵 **Subagents**: `task` tool spawns isolated sub-agents with tool whitelists
+- 📚 **22 Skills**: explore, review, bug-hunt, security-review, test, benchmark, etc.
+- ⚡ **DeepSeek Optimized**: Prefix-cache stable — 96-99% cache hit rate in real runs
+- 🛡️ **5-Layer Defense**: Bash command guard — exfiltration, sensitive files, recon, destructive, encoded smuggling
+- 🔒 **File Safety**: Binary detection, size limits (10MB), workspace boundary, symlink-escape detection
+- 📡 **MCP Ready**: Tool registry with `mcp__` namespace support. JSON-RPC stdio client.
+- 🔍 **LSP Integration**: Diagnostics, hover, definition, references — gopls auto-detected
+- 🕐 **Session Timeline**: Replay agent actions, change inbox per session (`/replay`, `/changes`)
+- 🩺 **Health Check**: `lumen doctor` — API key validation, model reachability, workspace status
+- 🖥️ **TUI**: Bubble Tea interactive terminal (chat, status bar, approval dialogs)
+- 🏗️ **Transport-Agnostic**: Controller powers CLI, TUI, and future HTTP/SSE from one code path
+- 🔁 **Retry Logic**: Exponential backoff (429/503/5xx, up to 3 retries)
+- 💬 **Slash Commands**: `/status`, `/cost`, `/cache`, `/rewind`, `/replay`, `/changes`, `/help`
 
 ## Quick Start
 
 ```bash
-# Build
-cd /path/to/lumen
+# Clone
+git clone https://github.com/yourname/lumen.git
+cd lumen
+
+# Build (Go 1.23+)
 go build -o bin/lumen ./cmd/lumen
 
-# Configure (edit lumen.toml + set env vars)
-cp .env.example .env
-# Edit .env with your API keys
+# Configure
+cp .env.example .env   # add your API keys
+cp lumen.toml .         # or edit to match your provider
 
-# One-shot task
-./bin/lumen run "explain this Go project"
+# Run
+export DEEPSEEK_API_KEY=sk-...
+./bin/lumen doctor       # verify everything works
+./bin/lumen run "explain this project"
+./bin/lumen run --plan "add user authentication"
+./bin/lumen chat          # interactive TUI
+```
 
-# Plan mode (read-only, produces a plan)
-./bin/lumen run --plan "add user authentication to this project"
+## Architecture
 
-# Check config
-./bin/lumen setup
-./bin/lumen version
+```
+User Input → CLI (cmd/lumen/main.go)
+              │
+              ▼
+         Controller (control/) — transport-agnostic
+              │
+              ▼
+         Agent.Run() loop (agent/)
+              │
+              ├── 1. autoCompact (char-based token estimate)
+              ├── 2. PrefixShape check (cache churn detection)
+              ├── 3. Conditional Sanitize (needsRepair)
+              ├── 4. Provider.Stream (SSE with retry)
+              ├── 5. partitionToolCalls (read-only∥ | writers serial)
+              ├── 6. executeOne (PlanMode → Permission → Guard → PreEdit → Execute → Evidence)
+              ├── 7. Storm Breaker (3rd identical failure → redirect)
+              └── 8. feed results → loop
+              │
+              ▼
+         Event Sink → TUI / Headless / Timeline
 ```
 
 ## Project Structure
 
 ```
 lumen/
-├── cmd/lumen/main.go           # CLI entry point (chat / run / setup)
+├── cmd/lumen/main.go              # CLI entry point
 ├── internal/
-│   ├── agent/
-│   │   ├── agent.go            # Core loop: prompt→stream→tools→repeat
-│   │   ├── coordinator.go      # Dual-model Planner+Executor
-│   │   ├── task.go             # Subagent dispatch (task tool)
-│   │   └── session.go          # Prepend-only session + JSONL persistence
-│   ├── config/config.go        # TOML config + env resolution
-│   ├── event/event.go          # Typed event stream (Sink interface)
-│   ├── diff/diff.go            # File change descriptor
-│   ├── frontmatter/frontmatter.go  # YAML frontmatter parser
-│   ├── permission/gate.go      # Tool-call permission gate
-│   ├── provider/
-│   │   ├── provider.go         # Provider interface + factory registry
-│   │   └── openai/openai.go    # OpenAI-compatible SSE streaming
-│   ├── skill/skill.go          # Skill store + 22 built-in skills
-│   └── tool/
-│       ├── tool.go             # Tool interface + Registry
-│       └── builtin/            # 10 built-in tools
-│           ├── bash.go, read_file.go, write_file.go
-│           ├── edit_file.go, grep.go, glob.go
-│           └── web_todo_ask.go (web_fetch, todo_write, complete_step, ask)
-├── lumen.toml                  # Configuration
-├── .env.example                # API key template
+│   ├── agent/                     # Core engine (loop, coordinator, task, session, cache)
+│   ├── checkpoint/                # Pre-edit snapshots + rewind
+│   ├── command/                   # Slash commands (/status, /cost, /cache, etc.)
+│   ├── config/                    # TOML config + .env loading
+│   ├── control/                   # Transport-agnostic controller
+│   ├── doctor/                    # Health checks
+│   ├── evidence/                  # Tool-call receipt ledger
+│   ├── fileutil/                  # File safety layer (binary, size, boundary, symlink)
+│   ├── guard/                     # Bash command defense (5-layer)
+│   ├── hook/                      # Lifecycle hooks (PreToolUse, PostToolUse, etc.)
+│   ├── jobs/                      # Background task manager
+│   ├── lsp/                       # LSP client (diagnostics, hover, definition, references)
+│   ├── memory/                    # Project memory (AGENTS.md + remember/forget)
+│   ├── permission/                # 4-mode permission gate
+│   ├── plugin/                    # MCP stdio JSON-RPC client
+│   ├── provider/                  # Model backend (OpenAI-compatible SSE + retry)
+│   ├── skill/                     # Skill system (22 built-in + filesystem discovery)
+│   ├── timeline/                  # Session timeline + change inbox
+│   ├── tool/                      # Tool interface + registry + 14 built-in tools
+│   └── tui/                       # Bubble Tea terminal UI
+├── skills/                        # 22 Markdown skill files
+├── docs/                          # Documentation
+├── lumen.toml                     # Configuration
+├── .env.example                   # API key template
 └── go.mod
 ```
 
-## Architecture
+## Real-World Runs
 
-```
-User Input → CLI (main.go)
-              ↓
-         Coordinator (optional: Planner→Executor)
-              ↓
-         Agent.Run() loop:
-          1. autoCompact (context budget)
-          2. Provider.Stream (SSE)
-          3. collect text + tool_calls
-          4. partition (read-only∥ | writers serial)
-          5. executeOne per call:
-             - planMode gate (RO only)
-             - permission gate
-             - preEdit snapshot
-             - Tool.Execute
-          6. stormBreaker (dead-loop guard)
-          7. feed results → repeat
-              ↓
-         Event Sink → TUI / Headless / JSON
-```
+Lumen has been verified with **real DeepSeek API calls**, not just mocked tests:
 
-## Model Configuration
-
-Edit `lumen.toml` to add providers:
-
-```toml
-[[providers]]
-name        = "deepseek-pro"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-reasoner"
-api_key_env = "DEEPSEEK_API_KEY"
-```
-
-Set `DEEPSEEK_API_KEY=sk-...` in `.env` or environment.
-
-## Built-in Skills
-
-| Skill | Description | Mode |
-|-------|-------------|------|
-| explore | Deep codebase exploration | subagent |
-| review | Code review | subagent |
-| bug-hunt | 7-phase systematic bug hunt | subagent |
-| security-review | Security vulnerability audit | subagent |
-| dead-code-sweep | Find unused code | subagent |
-| error-coverage | Error→HTTP status mapping | subagent |
-| test | Test-driven development | inline |
-| benchmark | Performance regression detection | inline |
-| brainstorming | Creative ideation | inline |
-| api-design | REST API design patterns | inline |
-| database-migrations | Safe migration patterns | inline |
-| docker-patterns | Docker best practices | inline |
-| golang-patterns | Idiomatic Go patterns | inline |
-| react-patterns | Modern React patterns | inline |
-| postgres-patterns | PostgreSQL patterns | inline |
-| redis-patterns | Redis patterns | inline |
-| error-handling | Error handling patterns | inline |
-| e2e-testing | E2E testing best practices | inline |
-| document-generate | Documentation generation | inline |
-| systematic-debugging | Debugging methodology | inline |
-| web-design-guidelines | Web design principles | inline |
-| finishing-a-development-branch | Branch integration | inline |
+| Task | Turns | Tokens | Cache |
+|------|-------|--------|-------|
+| Simple greeting | 1 | 2,817 | 96% |
+| Create multi_edit.go (new tool) | 9 | 10,718 | 87% |
+| Review agent.go via run_skill | 20+ | 8,114 | 43% |
+| Fix + build + test | 3 | 9,016 | 99% |
 
 ## License
 

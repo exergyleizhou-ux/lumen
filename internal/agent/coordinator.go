@@ -150,6 +150,45 @@ Executor instructions:
 - Serial workflow: sign off one sub-task at a time with complete_step.`, task, plan)
 }
 
+// ── Planner trigger heuristic ──────────────────────────────
+
+// ShouldUsePlanner decides whether a user prompt warrants a planning pass
+// before execution. Simple tasks (explain, find, show, what is) skip the
+// planner; implementation tasks (build, add, implement, refactor, change)
+// benefit from a structured plan.
+func ShouldUsePlanner(prompt string) bool {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+
+	// Skip planner for trivial / research-only tasks
+	skipMarkers := []string{
+		"explain", "what is", "what are", "how does", "show me",
+		"find ", "grep ", "search for", "list ", "where is",
+		"print ", "display ", "tell me", "summarize",
+		"翻译", "解释", "这是什么", "列出",
+	}
+	for _, m := range skipMarkers {
+		if strings.Contains(lower, m) {
+			return false
+		}
+	}
+
+	// Use planner for implementation / modification tasks
+	planMarkers := []string{
+		"implement", "add ", "create ", "build ", "write ",
+		"refactor", "change ", "modify", "update ", "fix ",
+		"remove", "delete ", "replace", "restructure",
+		"实现", "添加", "创建", "构建", "重构", "修复", "删除",
+	}
+	for _, m := range planMarkers {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+
+	// Default: skip planner for short questions, use for longer tasks
+	return len(prompt) > 200
+}
+
 // ── Planner tool registry ──────────────────────────────────
 
 // PlannerToolRegistry returns a read-only subset of tools suitable for the planner.

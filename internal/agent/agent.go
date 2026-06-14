@@ -18,6 +18,7 @@ import (
 	"lumen/internal/checkpoint"
 	"lumen/internal/event"
 	"lumen/internal/evidence"
+	"lumen/internal/guard"
 	"lumen/internal/jobs"
 	"lumen/internal/provider"
 	"lumen/internal/tool"
@@ -90,9 +91,18 @@ type Agent struct {
 	// rewind (Esc-Esc). Set via SetCheckpoint; the agent feeds it via onPreEdit.
 	checkpoint *checkpoint.Store
 
+	// cache tracks prefix-cache stability across turns. It computes the
+	// prefix shape before each API call and detects churn.
+	cache *cacheTracker
+
 	// jobs is the session's background job manager. executeOne stamps it onto
 	// each tool call's context so bash/task run_in_background tools can access it.
 	jobs *jobs.Manager
+
+	// cachedSchemas is the stable tool schema list, computed once at registration
+	// and reused every turn. It must stay byte-identical across turns for the
+	// DeepSeek prefix cache to stay hot.
+	cachedSchemas []provider.ToolSchema
 
 	// stormSig / stormCount track consecutive identical failures (see storm breaker).
 	stormSig   string
@@ -100,6 +110,11 @@ type Agent struct {
 
 	// repeatSuccessCounts tracks write-like calls that keep succeeding identically.
 	repeatSuccessCounts map[string]int
+
+	// emptyFinalCount tracks consecutive empty final answers (reset on non-empty).
+	emptyFinalCount int
+	// streamRecoveryCount limits stream-interrupted recovery attempts per turn.
+	streamRecoveryCount int
 
 	// evidence is a per-user-turn ledger of host-observed tool receipts. It lets
 	// complete_step validate that cited evidence happened before the claim.
@@ -162,6 +177,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		compactRatio:       opts.CompactRatio,
 		compactForceRatio:  opts.CompactForceRatio,
 		recentKeep:         opts.RecentKeep,
+		cache:              newCacheTracker(),
 	}
 }
 
@@ -195,8 +211,31 @@ func (a *Agent) SetCheckpoint(s *checkpoint.Store) {
 // Checkpoint returns the current turn's checkpoint store, or nil.
 func (a *Agent) Checkpoint() *checkpoint.Store { return a.checkpoint }
 
+// LastUsage returns the most recent per-turn token telemetry, or nil.
+func (a *Agent) LastUsage() *provider.Usage { return a.lastUsage.Load() }
+
+// SessionCache returns the aggregate cache-hit and cache-miss tokens for the session.
+func (a *Agent) SessionCache() (hit, miss int64) {
+	return a.sessCacheHit.Load(), a.sessCacheMiss.Load()
+}
+
+// CacheReasons returns the recorded prefix-churn reasons for diagnostics.
+func (a *Agent) CacheReasons() []string {
+	if a.cache == nil {
+		return nil
+	}
+	return a.cache.reasons()
+}
+
+// InvalidateSchemaCache discards the cached tool schemas so the next
+// API call picks up newly registered tools (e.g. after MCP server connect).
+func (a *Agent) InvalidateSchemaCache() { a.cachedSchemas = nil }
+
 // SetJobs installs the session's background job manager.
 func (a *Agent) SetJobs(jm *jobs.Manager) { a.jobs = jm }
+
+// SetSink replaces the event sink (used by TUI to redirect output mid-session).
+func (a *Agent) SetSink(s event.Sink) { a.sink = s }
 
 // Session returns the agent's current session.
 func (a *Agent) Session() *Session {
@@ -218,12 +257,16 @@ func (a *Agent) SetSession(s *Session) {
 // feeds results back, and repeats until the model produces a final answer or
 // maxSteps is exhausted.
 func (a *Agent) Run(ctx context.Context, input string) error {
+	// Strip hidden/invisible Unicode characters (indirect injection defense)
+	input = guard.StripHiddenChars(input)
 	if a.sink == nil {
 		a.sink = event.Discard
 	}
 	// Fresh evidence ledger for this user turn
 	a.evidence = evidence.NewLedger()
 	a.repeatSuccessCounts = nil
+	a.emptyFinalCount = 0
+	a.streamRecoveryCount = 0
 	a.sink.Emit(event.Event{Kind: event.TurnStarted, Timestamp: time.Now()})
 
 	// Ensure the session starts with a system prompt (cache-stable prefix).
@@ -241,17 +284,51 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// 1. Auto-compact before the prompt nears the context window
 		a.autoCompact()
 
-		// 2. Build request — sanitize messages to satisfy tool-call pairing contract
-		msgs := provider.SanitizeToolPairing(a.session.Snapshot())
+		// 2. Build request — sanitize messages to satisfy tool-call pairing contract.
+		// Only sanitize when the last assistant message had tool calls (the common
+		// case for unpaired calls); otherwise the snapshot is already clean.
+		snapshot := a.session.Snapshot()
+		needsRepair := len(snapshot) > 0 && snapshot[len(snapshot)-1].Role == provider.RoleTool
+		if needsRepair {
+			snapshot = provider.SanitizeToolPairing(snapshot)
+		}
+
+		// 3. Cache schemas — compute once per agent lifetime, reuse every turn
+		if a.cachedSchemas == nil {
+			a.cachedSchemas = a.tools.Schemas()
+		}
+
+		// 4. Check prefix-cache stability before the API call
+		if a.cache != nil {
+			firstUser := ""
+			for _, m := range snapshot {
+				if m.Role == provider.RoleUser || m.Role == provider.RoleSystem {
+					firstUser += m.Content
+					break
+				}
+			}
+			_, churn := a.cache.check(DefaultSystemPrompt, a.cachedSchemas, firstUser, false)
+			if churn {
+				a.sink.Emit(event.Event{
+					Kind: event.Notice, Level: event.LevelInfo,
+					Text: "prefix cache churn detected — next turn may have reduced cache hit rate",
+				})
+			}
+		}
+
 		req := provider.Request{
-			Messages:    msgs,
-			Tools:       a.tools.Schemas(),
+			Messages:    snapshot,
+			Tools:       a.cachedSchemas,
 			Temperature: a.temperature,
 		}
 
-		// 3. Stream the completion
+		// 5. Stream the completion
 		ch, err := a.prov.Stream(ctx, req)
 		if err != nil {
+			// Recovery: interrupted stream after some output already delivered
+			if a.handleStreamRecovery(err) {
+				continue
+			}
 			return fmt.Errorf("stream: %w", err)
 		}
 
@@ -304,8 +381,16 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		text := textBuf.String()
 		reasoning := reasonBuf.String()
 
-		// 5. If no tool calls → final answer
+		// 5. If no tool calls → check readiness, then final answer
 		if len(toolCalls) == 0 {
+			// 5a. Empty final guard — model produced no text at all
+			if a.handleEmptyFinal(text) {
+				continue // retry with a nudge
+			}
+			// 5b. Check whether the model has actually finished its work
+			if !a.finalAnswerReady(text) {
+				continue // retry with a prompt to finish
+			}
 			a.session.Add(provider.Message{
 				Role:             provider.RoleAssistant,
 				Content:          text,
@@ -636,6 +721,71 @@ func (a *Agent) autoCompact() {
 	}
 }
 
+// ── Final-answer readiness guards ──────────────────────────
+
+// finalAnswerReady checks whether the model's final answer actually concludes
+// the work. Short text without a done marker suggests the model stopped
+// prematurely. Returns false to force another loop iteration with a nudge.
+func (a *Agent) finalAnswerReady(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+
+	// Any non-empty answer at least one character long is accepted.
+	// The empty-final guard (handleEmptyFinal) already catches the truly
+	// empty case, and the storm-breaker prevents infinite loops.
+	// We rely on the model's judgment — our job is to keep it from
+	// silently producing nothing, not to second-guess short answers.
+	return true
+}
+
+// handleEmptyFinal detects a completely empty final answer and nudges the
+// model to produce a real response. Returns true when it nudged.
+func (a *Agent) handleEmptyFinal(text string) bool {
+	if strings.TrimSpace(text) != "" {
+		return false
+	}
+	a.emptyFinalCount++
+	if a.emptyFinalCount > maxEmptyFinalBlocks {
+		a.session.Add(provider.Message{
+			Role:    provider.RoleUser,
+			Content: "[system: you have produced multiple empty responses. Write a brief message explaining what you were trying to do, then end.]",
+		})
+		return false
+	}
+	a.session.Add(provider.Message{
+		Role:    provider.RoleUser,
+		Content: "[system: your response was empty. If you are finished, say so. Otherwise continue.]",
+	})
+	a.sink.Emit(event.Event{
+		Kind: event.Notice, Level: event.LevelWarn,
+		Text: "empty assistant response — nudging model",
+	})
+	return true
+}
+
+// handleStreamRecovery attempts to recover from a stream interruption by
+// appending a recovery prompt. Returns true when a recovery was attempted.
+func (a *Agent) handleStreamRecovery(err error) bool {
+	if err == nil || !provider.IsStreamInterrupted(err) {
+		return false
+	}
+	if a.streamRecoveryCount >= maxStreamRecoveries {
+		return false
+	}
+	a.streamRecoveryCount++
+	a.session.Add(provider.Message{
+		Role:    provider.RoleUser,
+		Content: "[system: the previous response was interrupted mid-stream. Continue from where you left off without repeating completed work. Re-state the last complete sentence, then proceed.]",
+	})
+	a.sink.Emit(event.Event{
+		Kind: event.Notice, Level: event.LevelWarn,
+		Text: "stream interrupted — recovering once",
+	})
+	return true
+}
+
 // ── Helpers ────────────────────────────────────────────────
 
 func firstLine(s string) string {
@@ -656,7 +806,8 @@ func truncateToolOutput(s string) (string, string) {
 	body := head + fmt.Sprintf(
 		"\n\n…[truncated %d of %d bytes — rerun with narrower args to see the middle]…\n\n",
 		omitted, len(s)) + tail
-	return body, ""
+	notice := fmt.Sprintf("tool output truncated: %d of %d bytes elided", omitted, len(s))
+	return body, notice
 }
 
 func snapToRuneBoundary(s string, lo, hi int) string {

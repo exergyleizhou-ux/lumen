@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"lumen/internal/diff"
+	"lumen/internal/fileutil"
 	"lumen/internal/tool"
 )
 
@@ -51,7 +52,24 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("path is required")
 	}
 
-	data, err := os.ReadFile(p.Path)
+	wsRoot := fileutil.WorkspaceRoot()
+	resolved, err := fileutil.ResolvePath(p.Path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
+	}
+	if wsRoot != "" {
+		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
+			return "", err
+		}
+	}
+	if err := fileutil.ValidateReadSize(resolved); err != nil {
+		return "", err
+	}
+	if binary, _ := fileutil.IsBinaryFile(resolved); binary {
+		return "", fmt.Errorf("file appears to be binary")
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}
@@ -66,7 +84,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 
 	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
-	if err := os.WriteFile(p.Path, []byte(newContent), 0o644); err != nil {
+	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(newContent)); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("Replaced 1 occurrence in %s", p.Path), nil
