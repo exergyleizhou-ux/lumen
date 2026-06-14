@@ -167,6 +167,22 @@ func runOneShot(args []string) {
 		fmt.Fprintf(os.Stderr, "  %s — %s\n", sk.Name, sk.Description)
 	}
 
+	// Permission gate, shared with sub-agents spawned by run_skill / task.
+	gate := permission.NewGate(permission.ModeBypass, nil)
+
+	// Wire the skill + sub-agent tools so the model can invoke skills and
+	// delegate focused sub-tasks. Sub-agents inherit this registry, filtered.
+	subDeps := agent.SubagentDeps{
+		Prov:          prov,
+		ParentReg:     reg,
+		MaxSteps:      cfg.Agent.MaxSteps,
+		ContextWindow: cfg.Agent.ContextWindow,
+		Temperature:   cfg.Agent.Temperature,
+		Gate:          gate,
+	}
+	reg.Add(agent.NewSkillTool(skillStore, subDeps))
+	reg.Add(agent.NewTaskTool(prov, nil, reg, cfg.Agent.MaxSteps, cfg.Agent.ContextWindow, cfg.Agent.Temperature, "", gate, "", "", nil))
+
 	// Create session
 	sess := agent.NewSession("")
 
@@ -176,15 +192,12 @@ func runOneShot(args []string) {
 		Temperature:   cfg.Agent.Temperature,
 		ContextWindow: cfg.Agent.ContextWindow,
 		Sink:          headlessSink(),
-		Gate:          permission.NewGate(permission.ModeBypass, nil),
+		Gate:          gate,
 	})
 	// Wire checkpoint for pre-edit snapshots
 	ag.SetCheckpoint(checkpoint.New())
 	// Wire background job manager
 	ag.SetJobs(jobs.NewManager())
-
-	// Skills loaded via skills/ directory (project scope wins over builtins)
-	_ = skillStore
 
 	// Plan mode
 	if planMode {
