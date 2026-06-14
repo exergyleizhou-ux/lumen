@@ -97,7 +97,8 @@ var sensitivePaths = []string{
 
 func checkSensitiveReads(cmd string) CheckResult {
 	for _, path := range sensitivePaths {
-		if strings.Contains(cmd, path) {
+		// Match sensitive path only at word boundaries, not inside other filenames
+		if strings.Contains(cmd, "/"+path) || strings.HasSuffix(cmd, " "+path) || strings.HasPrefix(cmd, "cat "+path) || strings.HasPrefix(cmd, "grep "+path) {
 			return CheckResult{Safe: false, Reason: "attempting to read sensitive file: " + path}
 		}
 	}

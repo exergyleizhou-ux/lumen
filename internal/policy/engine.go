@@ -169,9 +169,11 @@ func (e *Engine) ruleMatches(rule Rule, toolName, filePath, command string, file
 		}
 	}
 
-	// File size filter
-	if cond.MaxFileSize > 0 && fileSize > cond.MaxFileSize {
-		return true
+	// File size filter — rule matches only when file exceeds the limit
+	if cond.MaxFileSize > 0 {
+		if fileSize <= cond.MaxFileSize {
+			return false // under limit, rule doesn't apply
+		}
 	}
 
 	// Read-only filter
