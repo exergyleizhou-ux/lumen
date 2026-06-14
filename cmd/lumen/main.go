@@ -76,7 +76,7 @@ Usage:
 
 func runSetup() {
 	fmt.Println("Lumen setup")
-	fmt.Println("Create a reasonix.toml file in your project root with your provider config.")
+	fmt.Println("Create a lumen.toml file in your project root with your provider config.")
 	fmt.Println("See .env.example for environment variable configuration.")
 	fmt.Println()
 	cfg, err := config.Load(config.FindConfig())

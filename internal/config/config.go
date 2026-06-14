@@ -15,7 +15,7 @@ import (
 // in priority order. Compatible with Reasonix, Claude Code, and other agents.
 var ConventionDirs = []string{".reasonix", ".agents", ".agent", ".claude"}
 
-// File is the decoded reasonix.toml.
+// File is the decoded lumen.toml.
 type File struct {
 	DefaultModel string           `toml:"default_model"`
 	Providers    []ProviderConfig `toml:"providers"`
