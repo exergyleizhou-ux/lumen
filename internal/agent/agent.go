@@ -128,6 +128,8 @@ type Agent struct {
 	recentKeep        int
 	softCompactNoticed bool
 	compactStuck      bool
+	compactProvider    provider.Provider // model-based compaction (nil = sliding window)
+	consecutiveCompacts int
 }
 
 // Options configures a new Agent.
@@ -233,6 +235,10 @@ func (a *Agent) InvalidateSchemaCache() { a.cachedSchemas = nil }
 
 // SetJobs installs the session's background job manager.
 func (a *Agent) SetJobs(jm *jobs.Manager) { a.jobs = jm }
+
+// SetCompactProvider installs a compact model for context summarization.
+// When nil (default), the agent falls back to sliding-window compaction.
+func (a *Agent) SetCompactProvider(prov provider.Provider) { a.compactProvider = prov }
 
 // SetSink replaces the event sink (used by TUI to redirect output mid-session).
 func (a *Agent) SetSink(s event.Sink) { a.sink = s }
@@ -704,6 +710,26 @@ func (a *Agent) autoCompact() {
 	softLimit := int(float64(a.contextWindow) * a.softCompactRatio)
 
 	if a.recentKeep > 0 && estimatedTokens > hardLimit {
+		// Prefer model-based compaction when a compact provider is available
+		if a.compactProvider != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := a.CompactWithModel(ctx, a.compactProvider, a.recentKeep, a.recentKeep); err != nil {
+				a.sink.Emit(event.Event{
+					Kind: event.Notice, Level: event.LevelWarn,
+					Text: fmt.Sprintf("model compaction failed, falling back to sliding window: %v", err),
+				})
+				a.session.Compact(a.recentKeep, a.recentKeep,
+					fmt.Sprintf("[auto-compacted at ~%d tokens: session exceeded the %d-token threshold. "+
+						"Earlier messages were dropped (sliding window) to fit the context window; "+
+						"the opening and most recent messages are preserved verbatim. "+
+						"If you need omitted detail, re-read the relevant files.]",
+						estimatedTokens, hardLimit))
+			}
+			a.consecutiveCompacts++
+			return
+		}
+		// Fallback: pure sliding window
 		a.session.Compact(a.recentKeep, a.recentKeep,
 			fmt.Sprintf("[auto-compacted at ~%d tokens: session exceeded the %d-token threshold. "+
 				"Earlier messages were dropped (sliding window) to fit the context window; "+
