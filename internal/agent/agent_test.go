@@ -307,3 +307,34 @@ func contains(s, substr string) bool {
 	}
 	return false
 }
+
+// callCtxProbeTool records whether a call context was stamped onto ctx.
+type callCtxProbeTool struct {
+	gotID string
+	gotOK bool
+}
+
+func (t *callCtxProbeTool) Name() string            { return "probe" }
+func (t *callCtxProbeTool) Description() string      { return "probe call context" }
+func (t *callCtxProbeTool) ReadOnly() bool           { return true }
+func (t *callCtxProbeTool) Schema() json.RawMessage  { return json.RawMessage(`{}`) }
+func (t *callCtxProbeTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	id, _, _, ok := CallContext(ctx)
+	t.gotID = id
+	t.gotOK = ok
+	return "ok", nil
+}
+
+func TestExecuteOneStampsCallContext(t *testing.T) {
+	probe := &callCtxProbeTool{}
+	reg := tool.NewRegistry()
+	reg.Add(probe)
+	a := New(&mockProvider{name: "test"}, reg, NewSession(""), Options{MaxSteps: 3})
+	a.executeOne(context.Background(), provider.ToolCall{ID: "call_42", Name: "probe", Arguments: "{}"})
+	if !probe.gotOK {
+		t.Fatal("executeOne should stamp a call context onto ctx so sub-agents can nest events")
+	}
+	if probe.gotID != "call_42" {
+		t.Errorf("parentID: want call_42, got %q", probe.gotID)
+	}
+}

@@ -222,6 +222,18 @@ type callContext struct {
 	planMode bool
 }
 
+// withCallContext stamps the parent call's identity and sink onto ctx so that
+// sub-agents spawned by a tool (task / run_skill) can nest their tool events
+// under the parent call instead of discarding them.
+func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
+	return context.WithValue(ctx, callContextKey{}, callContext{
+		parentID: parentID,
+		sink:     sink,
+		asker:    asker,
+		planMode: planMode,
+	})
+}
+
 // subSinkFor builds a nesting sink that forwards sub-agent tool events under a parent call.
 func subSinkFor(parentID string, parent event.Sink) event.Sink {
 	if parent == nil {

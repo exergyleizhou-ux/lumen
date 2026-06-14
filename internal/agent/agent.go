@@ -402,6 +402,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	if a.jobs != nil {
 		ctx = jobs.WithManager(ctx, a.jobs)
 	}
+	// Stamp this call's identity + sink so sub-agent-spawning tools (task,
+	// run_skill) nest their child events under this call instead of discarding.
+	ctx = withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
 
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
