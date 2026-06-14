@@ -193,7 +193,11 @@ func (s *Store) scanDir(dir string, scope Scope, depth int, seen map[string]bool
 			if !config.IsValidSkillName(stem) {
 				continue
 			}
-			if sk, ok := parseSkill(full, stem, scope); ok {
+			// A loose .md counts as a skill only if it declares skill
+			// frontmatter (a non-empty description). This excludes plain docs
+			// like CHANGELOG.md / README.md / OPENCLAW.md that happen to live
+			// under a skills root — they are markdown, but not skills.
+			if sk, ok := parseSkill(full, stem, scope); ok && sk.Description != "" {
 				*out = append(*out, sk)
 			}
 		}

@@ -188,3 +188,33 @@ func TestIsValidName(t *testing.T) {
 		t.Error("starts with digit should be invalid")
 	}
 }
+
+func TestStoreSkipsLooseMarkdownWithoutDescription(t *testing.T) {
+	dir := t.TempDir()
+	skillsDir := filepath.Join(dir, "skills")
+	os.Mkdir(skillsDir, 0o755)
+
+	// A real skill: frontmatter declares a description.
+	os.WriteFile(filepath.Join(skillsDir, "good.md"), []byte(`---
+name: good
+description: A real, invokable skill
+---
+# Good
+Body.`), 0o644)
+
+	// A plain documentation file masquerading as a skill: no frontmatter,
+	// no description. This is what CHANGELOG.md / README.md / OPENCLAW.md
+	// look like — they must NOT be loaded as skills.
+	os.WriteFile(filepath.Join(skillsDir, "notes.md"),
+		[]byte("# Project Notes\n\nJust documentation, not a skill.\n"), 0o644)
+
+	// Isolate from the host's ~/.claude skills so the test is hermetic.
+	store := New(Options{ProjectRoot: dir, HomeDir: t.TempDir()})
+
+	if _, ok := store.Get("good"); !ok {
+		t.Error("good.md (has description) should load as a skill")
+	}
+	if _, ok := store.Get("notes"); ok {
+		t.Error("notes.md (no frontmatter/description) must NOT load as a skill")
+	}
+}
