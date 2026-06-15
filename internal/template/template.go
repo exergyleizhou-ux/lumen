@@ -1,44 +1,39 @@
-// Package template provides Go template rendering with common functions
-// for shell scripts, prompts, and configuration files. Supports markdown
-// rendering, shell escaping, JSON/YAML helpers, and sprig-like utilities.
+// Package template provides a template rendering engine supporting Go
+// templates, Markdown with frontmatter, and prompt composition. Used for
+// generating agent prompts, configuration files, and reports.
 package template
 
 import (
-	"encoding/json"
+	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"text/template"
+	"time"
 )
 
-// Engine renders templates with a shared function library.
+// Engine renders templates with context data.
 type Engine struct {
-	mu       sync.Mutex
-	funcs    template.FuncMap
-	cache    map[string]*template.Template
-	cacheOn  bool
+	mu      sync.RWMutex
+	funcs   template.FuncMap
+	cache   map[string]*template.Template
+	files   map[string]string
 }
 
-// NewEngine creates a template engine with default functions.
+// NewEngine creates a template engine.
 func NewEngine() *Engine {
-	e := &Engine{cache: map[string]*template.Template{}, cacheOn: true}
-	e.funcs = template.FuncMap{
-		"upper":    strings.ToUpper,
-		"lower":    strings.ToLower,
-		"title":    strings.Title,
-		"trim":     strings.TrimSpace,
-		"contains": strings.Contains,
-		"replace":  strings.ReplaceAll,
-		"join":     strings.Join,
-		"split":    strings.Split,
-		"toJSON":   toJSON,
-		"fromJSON": fromJSON,
-		"default":  defaultValue,
-		"indent":   indent,
-		"quote":    quote,
-		"shellEscape": shellEscape,
-		"list":     makeList,
+	e := &Engine{
+		funcs: template.FuncMap{},
+		cache: map[string]*template.Template{},
+		files: map[string]string{},
 	}
+	e.funcs["upper"] = strings.ToUpper
+	e.funcs["lower"] = strings.ToLower
+	e.funcs["now"] = func() string { return time.Now().Format(time.RFC3339) }
+	e.funcs["join"] = func(sep string, items []string) string { return strings.Join(items, sep) }
+	e.funcs["contains"] = strings.Contains
+	e.funcs["trim"] = strings.TrimSpace
 	return e
 }
 
@@ -48,147 +43,137 @@ func (e *Engine) AddFunc(name string, fn any) {
 	e.funcs[name] = fn
 }
 
-// Render evaluates a template string with the given data.
-func (e *Engine) Render(tmpl string, data any) (string, error) {
+// LoadFile loads a template file by name.
+func (e *Engine) LoadFile(name, content string) {
 	e.mu.Lock(); defer e.mu.Unlock()
+	e.files[name] = content
+	delete(e.cache, name) // Invalidate cache
+}
 
-	var t *template.Template
-	var err error
+// Render renders a named template with data.
+func (e *Engine) Render(name string, data any) (string, error) {
+	e.mu.Lock()
+	tmpl, ok := e.cache[name]
+	if !ok {
+		content, hasFile := e.files[name]
+		if !hasFile {
+			e.mu.Unlock()
+			return "", fmt.Errorf("template %q not found", name)
+		}
+		var err error
+		tmpl, err = template.New(name).Funcs(e.funcs).Parse(content)
+		if err != nil { e.mu.Unlock(); return "", fmt.Errorf("parse %q: %w", name, err) }
+		e.cache[name] = tmpl
+	}
+	e.mu.Unlock()
 
-	if e.cacheOn {
-		if cached, ok := e.cache[tmpl]; ok {
-			t = cached
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("render %q: %w", name, err)
+	}
+	return buf.String(), nil
+}
+
+// RenderString renders an inline template string.
+func (e *Engine) RenderString(tmplStr string, data any) (string, error) {
+	e.mu.Lock()
+	tmpl, err := template.New("inline").Funcs(e.funcs).Parse(tmplStr)
+	e.mu.Unlock()
+	if err != nil { return "", fmt.Errorf("parse: %w", err) }
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", fmt.Errorf("render: %w", err)
+	}
+	return buf.String(), nil
+}
+
+// Names returns loaded template names.
+func (e *Engine) Names() []string {
+	e.mu.RLock(); defer e.mu.RUnlock()
+	var out []string
+	for n := range e.files { out = append(out, n) }
+	sort.Strings(out)
+	return out
+}
+
+// ── Prompt Builder ───────────────────────────────────────
+
+// PromptBuilder composes structured prompts for LLM agents.
+type PromptBuilder struct {
+	mu       sync.Mutex
+	sections []promptSection
+}
+
+type promptSection struct {
+	Title   string
+	Content string
+	Order   int
+}
+
+// NewPromptBuilder creates a prompt builder.
+func NewPromptBuilder() *PromptBuilder { return &PromptBuilder{} }
+
+// AddSection adds a section to the prompt.
+func (pb *PromptBuilder) AddSection(title, content string, order int) {
+	pb.mu.Lock(); defer pb.mu.Unlock()
+	pb.sections = append(pb.sections, promptSection{Title: title, Content: content, Order: order})
+	sort.Slice(pb.sections, func(i, j int) bool { return pb.sections[i].Order < pb.sections[j].Order })
+}
+
+// Build assembles the final prompt string.
+func (pb *PromptBuilder) Build() string {
+	pb.mu.Lock(); defer pb.mu.Unlock()
+	var sb strings.Builder
+	for _, s := range pb.sections {
+		sb.WriteString(fmt.Sprintf("## %s\n\n", s.Title))
+		sb.WriteString(s.Content)
+		sb.WriteString("\n\n")
+	}
+	return sb.String()
+}
+
+// Clear removes all sections.
+func (pb *PromptBuilder) Clear() {
+	pb.mu.Lock(); defer pb.mu.Unlock()
+	pb.sections = nil
+}
+
+// ── Report Generator ─────────────────────────────────────
+
+// ReportData is the input for report generation.
+type ReportData struct {
+	Title    string            `json:"title"`
+	Date     time.Time         `json:"date"`
+	Sections []ReportSection   `json:"sections"`
+	Summary  string            `json:"summary"`
+}
+
+// ReportSection is one section of a report.
+type ReportSection struct {
+	Title   string `json:"title"`
+	Body    string `json:"body"`
+	Metrics map[string]float64 `json:"metrics,omitempty"`
+}
+
+// GenerateReport produces a Markdown report.
+func GenerateReport(data ReportData) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# %s\n\n", data.Title))
+	sb.WriteString(fmt.Sprintf("**Date:** %s\n\n", data.Date.Format("2006-01-02 15:04")))
+	sb.WriteString(fmt.Sprintf("> %s\n\n---\n\n", data.Summary))
+
+	for _, s := range data.Sections {
+		sb.WriteString(fmt.Sprintf("## %s\n\n", s.Title))
+		sb.WriteString(s.Body)
+		sb.WriteString("\n\n")
+		if len(s.Metrics) > 0 {
+			sb.WriteString("| Metric | Value |\n|--------|-------|\n")
+			for k, v := range s.Metrics {
+				sb.WriteString(fmt.Sprintf("| %s | %.2f |\n", k, v))
+			}
+			sb.WriteString("\n")
 		}
 	}
-
-	if t == nil {
-		t, err = template.New("inline").Funcs(e.funcs).Parse(tmpl)
-		if err != nil { return "", fmt.Errorf("parse: %w", err) }
-		if e.cacheOn { e.cache[tmpl] = t }
-	}
-
-	var sb strings.Builder
-	if err := t.Execute(&sb, data); err != nil {
-		return "", fmt.Errorf("execute: %w", err)
-	}
-	return sb.String(), nil
+	return sb.String()
 }
-
-// RenderFile renders a template file with data.
-func (e *Engine) RenderFile(path string, data any) (string, error) {
-	t, err := template.New(path).Funcs(e.funcs).ParseFiles(path)
-	if err != nil { return "", fmt.Errorf("parse %s: %w", path, err) }
-	var sb strings.Builder
-	if err := t.Execute(&sb, data); err != nil { return "", fmt.Errorf("execute: %w", err) }
-	return sb.String(), nil
-}
-
-// ── Prompt template helpers ──────────────────────────────
-
-// PromptContext holds common prompt template data.
-type PromptContext struct {
-	Task        string            `json:"task"`
-	Files       []string          `json:"files,omitempty"`
-	Context     string            `json:"context,omitempty"`
-	Language    string            `json:"language,omitempty"`
-	Constraints []string          `json:"constraints,omitempty"`
-	Examples    []PromptExample   `json:"examples,omitempty"`
-	Extra       map[string]any    `json:"extra,omitempty"`
-}
-
-// PromptExample is a few-shot example for prompt templates.
-type PromptExample struct {
-	Input  string `json:"input"`
-	Output string `json:"output"`
-}
-
-// RenderPrompt renders a prompt template with the given context.
-func (e *Engine) RenderPrompt(tmpl string, ctx *PromptContext) (string, error) {
-	return e.Render(tmpl, ctx)
-}
-
-// ── Template functions ────────────────────────────────────
-
-func toJSON(v any) string {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil { return fmt.Sprintf("%v", v) }
-	return string(b)
-}
-
-func fromJSON(s string) any {
-	var v any; json.Unmarshal([]byte(s), &v); return v
-}
-
-func defaultValue(def, val any) any {
-	if val == nil || val == "" { return def }
-	return val
-}
-
-func indent(spaces int, s string) string {
-	prefix := strings.Repeat(" ", spaces)
-	lines := strings.Split(s, "\n")
-	for i, l := range lines { lines[i] = prefix + l }
-	return strings.Join(lines, "\n")
-}
-
-func quote(s string) string { return fmt.Sprintf("%q", s) }
-
-func shellEscape(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
-
-func makeList(items ...any) []any { return items }
-
-// ── Built-in prompt templates ──────────────────────────────
-
-// SystemPromptTemplate is the default system prompt template.
-const SystemPromptTemplate = `You are a coding agent. {{ .Task }}
-
-Rules:
-{{ range .Constraints }}
-- {{ . }}
-{{ end }}
-
-{{ if .Files }}
-Working with files:
-{{ range .Files }}
-- {{ . }}
-{{ end }}
-{{ end }}
-
-{{ if .Context }}
-Context:
-{{ .Context }}
-{{ end }}
-
-{{ if .Examples }}
-Examples:
-{{ range .Examples }}
-Input: {{ .Input }}
-Output: {{ .Output }}
-{{ end }}
-{{ end }}
-`
-
-// DiffTemplate renders a diff for display.
-const DiffTemplate = `## Changes
-
-{{ range .Files }}
-### {{ .Path }} ({{ .Changes }} change(s))
-
-` + "```" + `diff
-{{ .Diff }}
-` + "```" + `
-
-{{ end }}
-`
-
-// ChangelogTemplate renders a changelog entry.
-const ChangelogTemplate = `## {{ .Version }} ({{ .Date }})
-
-{{ range .Sections }}
-### {{ .Title }}
-{{ range .Items }}
-- {{ . }}
-{{ end }}
-
-{{ end }}
-`
