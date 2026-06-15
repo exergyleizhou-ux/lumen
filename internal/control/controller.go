@@ -122,11 +122,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	wd, _ := os.Getwd()
 	c.skillStore = skill.New(skill.Options{ProjectRoot: wd})
 	skills := c.skillStore.List()
-	c.logf("Skills loaded: %d", len(skills))
-	for _, sk := range skills {
-		c.logf("  %s — %s", sk.Name, sk.Description)
-	}
-
+	_ = skills
 	// 5. Resolve permission mode
 	c.permMode = permission.ParseMode(cfg.Permissions.Mode)
 

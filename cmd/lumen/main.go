@@ -12,7 +12,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+
 
 	"lumen/internal/config"
 	"lumen/internal/control"
@@ -175,42 +175,37 @@ func runOneShot(args []string) {
 
 func runChat(args []string) {
 	ctrl := control.New()
-	sink := headlessSink()
+	sink := chatSink()
 	if err := ctrl.Configure(sink, nil, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "\n⚡ Lumen chat — %s/%s\n", ctrl.ProviderName(), ctrl.ModelName())
-	fmt.Fprintf(os.Stderr, "Type /exit to quit, /help for commands.\n\n")
-
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Fprint(os.Stderr, "> ")
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			break
-		}
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		switch line {
-		case "/exit", "/quit":
-			fmt.Println("Goodbye.")
-			return
-		case "/help":
-			fmt.Println("Commands: /exit  /help  — or type anything to chat with the agent.")
-			continue
-		}
-
-		ctx := context.Background()
-		fmt.Println()
-		if err := ctrl.Run(ctx, line); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		}
-		fmt.Println()
+	if err := runTUIChat(ctrl); err != nil {
+		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		os.Exit(1)
 	}
+}
+
+// chatSink is a clean chat sink: only text output, no tool noise.
+func chatSink() event.Sink {
+	return event.FuncSink(func(e event.Event) {
+		switch e.Kind {
+		case event.Text:
+			fmt.Print(e.Text)
+		case event.ToolResult:
+			if e.Tool.Err != "" && e.Tool.Name != "" {
+				// Minimal: just a one-line tool status
+				short := e.Tool.Name
+				if len(short) > 25 { short = short[:22] + "..." }
+				fmt.Fprintf(os.Stderr, "  \033[2m%s ❌\033[0m\n", short)
+			}
+		case event.UsageKind:
+			if e.Usage != nil {
+				fmt.Fprintf(os.Stderr, "\n\033[2m── %d tokens\033[0m\n", e.Usage.TotalTokens)
+			}
+		}
+	})
 }
 
 
