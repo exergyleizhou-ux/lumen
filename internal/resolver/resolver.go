@@ -580,3 +580,218 @@ func FormatResult(r *ResolveResult) string {
 	}
 	return s
 }
+
+// --- Dependency Graph ---
+
+// Graph represents a dependency graph for visualization and analysis.
+type Graph struct {
+	Nodes map[string]*GraphNode `json:"nodes"`
+}
+
+// GraphNode is a node in the dependency graph.
+type GraphNode struct {
+	Name         string   `json:"name"`
+	Version      Version  `json:"version"`
+	Dependencies []string `json:"dependencies"`
+}
+
+// BuildGraph constructs a graph from resolved entries and a registry.
+func BuildGraph(entries []LockEntry, reg *Registry) *Graph {
+	g := &Graph{Nodes: make(map[string]*GraphNode)}
+	for _, e := range entries {
+		pkg := reg.GetPackage(e.Name)
+		deps := []string{}
+		if pkg != nil {
+			if dd, ok := pkg.Dependencies[e.Version]; ok {
+				for _, d := range dd { deps = append(deps, d.Name) }
+			}
+		}
+		g.Nodes[e.Name] = &GraphNode{Name: e.Name, Version: e.Version, Dependencies: deps}
+	}
+	return g
+}
+
+// TopoSort returns a topologically sorted list of package names.
+func (g *Graph) TopoSort() []string {
+	inDegree := make(map[string]int)
+	for name := range g.Nodes { inDegree[name] = 0 }
+	for _, node := range g.Nodes {
+		for _, dep := range node.Dependencies { inDegree[dep]++ }
+	}
+	var queue []string
+	for name, deg := range inDegree {
+		if deg == 0 { queue = append(queue, name) }
+	}
+	var sorted []string
+	for len(queue) > 0 {
+		n := queue[0]; queue = queue[1:]
+		sorted = append(sorted, n)
+		if node, ok := g.Nodes[n]; ok {
+			for _, dep := range node.Dependencies {
+				inDegree[dep]--
+				if inDegree[dep] == 0 { queue = append(queue, dep) }
+			}
+		}
+	}
+	return sorted
+}
+
+// DetectCycles finds cycles in the dependency graph.
+func (g *Graph) DetectCycles() [][]string {
+	visited := make(map[string]bool)
+	recStack := make(map[string]bool)
+	var cycles [][]string
+	for name := range g.Nodes {
+		if !visited[name] { g.dfs(name, visited, recStack, []string{}, &cycles) }
+	}
+	return cycles
+}
+
+func (g *Graph) dfs(node string, visited, recStack map[string]bool, path []string, cycles *[][]string) {
+	visited[node] = true
+	recStack[node] = true
+	path = append(path, node)
+	if gn, ok := g.Nodes[node]; ok {
+		for _, dep := range gn.Dependencies {
+			if !visited[dep] {
+				g.dfs(dep, visited, recStack, path, cycles)
+			} else if recStack[dep] {
+				// Found cycle.
+				cycleStart := -1
+				for i, n := range path { if n == dep { cycleStart = i; break } }
+				if cycleStart >= 0 {
+					cycle := make([]string, len(path)-cycleStart)
+					copy(cycle, path[cycleStart:])
+					*cycles = append(*cycles, cycle)
+				}
+			}
+		}
+	}
+	recStack[node] = false
+}
+
+// --- Version Range ---
+
+// VersionRange represents a range of versions.
+type VersionRange struct {
+	Min Version `json:"min"`
+	Max Version `json:"max"`
+	InclusiveMin bool `json:"inclusive_min"`
+	InclusiveMax bool `json:"inclusive_max"`
+}
+
+// Contains checks if a version falls within the range.
+func (vr VersionRange) Contains(v Version) bool {
+	cLow := v.Compare(vr.Min)
+	cHigh := v.Compare(vr.Max)
+	lowOK := (vr.InclusiveMin && cLow >= 0) || (!vr.InclusiveMin && cLow > 0)
+	highOK := (vr.InclusiveMax && cHigh <= 0) || (!vr.InclusiveMax && cHigh < 0)
+	return lowOK && highOK
+}
+
+// Intersection returns the intersection of two version ranges.
+func Intersection(a, b VersionRange) *VersionRange {
+	// Determine the higher min.
+	minV := a.Min
+	inclusiveMin := a.InclusiveMin
+	if b.Min.Compare(a.Min) > 0 { minV = b.Min; inclusiveMin = b.InclusiveMin } else if b.Min.Compare(a.Min) == 0 { inclusiveMin = a.InclusiveMin && b.InclusiveMin }
+	// Determine the lower max.
+	maxV := a.Max
+	inclusiveMax := a.InclusiveMax
+	if b.Max.Compare(a.Max) < 0 { maxV = b.Max; inclusiveMax = b.InclusiveMax } else if b.Max.Compare(a.Max) == 0 { inclusiveMax = a.InclusiveMax && b.InclusiveMax }
+	if minV.Compare(maxV) > 0 { return nil }
+	if minV.Compare(maxV) == 0 && (!inclusiveMin || !inclusiveMax) { return nil }
+	return &VersionRange{Min: minV, Max: maxV, InclusiveMin: inclusiveMin, InclusiveMax: inclusiveMax}
+}
+
+// --- Lock File Merge ---
+
+// MergeLockFiles merges two lock files, resolving conflicts with a strategy.
+func MergeLockFiles(base, ours, theirs *LockFile, strategy string) *LockFile {
+	ourMap := make(map[string]LockEntry)
+	theirMap := make(map[string]LockEntry)
+	for _, e := range ours.Entries { ourMap[e.Name] = e }
+	for _, e := range theirs.Entries { theirMap[e.Name] = e }
+
+	merged := make(map[string]LockEntry)
+	for _, e := range base.Entries { merged[e.Name] = e }
+
+	for name, our := range ourMap {
+		their, hasTheir := theirMap[name]
+		baseE, hasBase := merged[name]
+
+		if !hasBase {
+			merged[name] = our
+		} else if hasTheir && our.Version.Compare(baseE.Version) != 0 && their.Version.Compare(baseE.Version) != 0 && our.Version.Compare(their.Version) != 0 {
+			// Conflict: both changed.
+			if strategy == "newest" {
+				if our.Version.Compare(their.Version) > 0 { merged[name] = our } else { merged[name] = their }
+			} else {
+				merged[name] = our // Keep ours by default.
+			}
+		} else if our.Version.Compare(baseE.Version) != 0 {
+			merged[name] = our
+		} else if hasTheir && their.Version.Compare(baseE.Version) != 0 {
+			merged[name] = their
+		}
+	}
+	for name, their := range theirMap {
+		if _, ok := merged[name]; !ok { merged[name] = their }
+	}
+
+	entries := make([]LockEntry, 0, len(merged))
+	for _, e := range merged { entries = append(entries, e) }
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
+	return &LockFile{Entries: entries}
+}
+
+// --- Version Pinning ---
+
+// PinEntry represents a pinned dependency.
+type PinEntry struct {
+	Name    string  `json:"name"`
+	Version Version `json:"version"`
+	Reason  string  `json:"reason"`
+}
+
+// PinManager manages version pins.
+type PinManager struct {
+	mu   sync.RWMutex
+	pins map[string]PinEntry
+}
+
+// NewPinManager creates a pin manager.
+func NewPinManager() *PinManager { return &PinManager{pins: make(map[string]PinEntry)} }
+
+// Pin adds a version pin.
+func (pm *PinManager) Pin(name string, ver Version, reason string) {
+	pm.mu.Lock(); defer pm.mu.Unlock()
+	pm.pins[name] = PinEntry{Name: name, Version: ver, Reason: reason}
+}
+
+// Unpin removes a pin.
+func (pm *PinManager) Unpin(name string) {
+	pm.mu.Lock(); defer pm.mu.Unlock()
+	delete(pm.pins, name)
+}
+
+// IsPinned checks if a package is pinned and returns the pinned version.
+func (pm *PinManager) IsPinned(name string) (Version, bool) {
+	pm.mu.RLock(); defer pm.mu.RUnlock()
+	p, ok := pm.pins[name]; return p.Version, ok
+}
+
+// ApplyPins restricts a registry to only use pinned versions.
+func (pm *PinManager) ApplyPins(reg *Registry) {
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	for name, pin := range pm.pins {
+		pkg := reg.GetPackage(name)
+		if pkg == nil { continue }
+		filtered := make([]Version, 0)
+		for _, v := range pkg.Versions {
+			if v.Compare(pin.Version) == 0 { filtered = append(filtered, v) }
+		}
+		if len(filtered) > 0 { pkg.Versions = filtered }
+	}
+}

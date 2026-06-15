@@ -127,6 +127,10 @@ func New(name string, cfg Config) *CircuitBreaker {
 	if bs < time.Second {
 		bs = time.Second
 		numBuckets = int(cfg.WindowDuration / bs)
+		if numBuckets < 1 {
+			numBuckets = 1
+			bs = cfg.WindowDuration
+		}
 	}
 	return &CircuitBreaker{
 		config:           cfg,
@@ -148,10 +152,8 @@ func (cb *CircuitBreaker) State() State {
 	return cb.state
 }
 
-// setState transitions to a new state, recording metrics.
+// setState transitions to a new state, recording metrics. Caller must hold cb.mu.
 func (cb *CircuitBreaker) setState(s State) {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
 	if cb.state == s {
 		return
 	}
@@ -419,3 +421,252 @@ func (r *BreakerRegistry) FormatAll() string {
 
 // Ensure interface compliance.
 var _ fmt.Stringer = State(0)
+
+// --- Event Callbacks ---
+
+// EventType describes a circuit breaker event.
+type EventType int
+
+const (
+	EventStateChange EventType = iota
+	EventTrip
+	EventReset
+	EventProbeSuccess
+	EventProbeFailure
+)
+
+var eventTypeNames = map[EventType]string{
+	EventStateChange:   "state-change",
+	EventTrip:          "trip",
+	EventReset:         "reset",
+	EventProbeSuccess:  "probe-success",
+	EventProbeFailure:  "probe-failure",
+}
+
+func (et EventType) String() string {
+	if n, ok := eventTypeNames[et]; ok { return n }
+	return "unknown"
+}
+
+// EventListener is called on circuit breaker events.
+type EventListener func(event EventType, breaker *CircuitBreaker, meta map[string]interface{})
+
+// ObservableBreaker wraps CircuitBreaker with event listeners.
+type ObservableBreaker struct {
+	*CircuitBreaker
+	listeners []EventListener
+	muListen  sync.RWMutex
+}
+
+// NewObservable creates an observable circuit breaker.
+func NewObservable(name string, cfg Config) *ObservableBreaker {
+	return &ObservableBreaker{CircuitBreaker: New(name, cfg)}
+}
+
+// On registers an event listener.
+func (ob *ObservableBreaker) On(listener EventListener) {
+	ob.muListen.Lock()
+	defer ob.muListen.Unlock()
+	ob.listeners = append(ob.listeners, listener)
+}
+
+func (ob *ObservableBreaker) emit(event EventType, meta map[string]interface{}) {
+	ob.muListen.RLock()
+	defer ob.muListen.RUnlock()
+	for _, l := range ob.listeners {
+		l(event, ob.CircuitBreaker, meta)
+	}
+}
+
+// Allow checks and emits events.
+func (ob *ObservableBreaker) Allow() error {
+	err := ob.CircuitBreaker.Allow()
+	if err != nil {
+		ob.emit(EventTrip, map[string]interface{}{"error": err.Error()})
+	}
+	return err
+}
+
+// Success records success and emits.
+func (ob *ObservableBreaker) Success() {
+	oldState := ob.CircuitBreaker.State()
+	ob.CircuitBreaker.Success()
+	newState := ob.CircuitBreaker.State()
+	if oldState != newState && newState == StateClosed {
+		ob.emit(EventReset, map[string]interface{}{"from": oldState.String(), "to": newState.String()})
+	}
+	if oldState == StateHalfOpen {
+		ob.emit(EventProbeSuccess, nil)
+	}
+}
+
+// Failure records failure and emits.
+func (ob *ObservableBreaker) Failure() {
+	oldState := ob.CircuitBreaker.State()
+	ob.CircuitBreaker.Failure()
+	newState := ob.CircuitBreaker.State()
+	if oldState != newState {
+		ob.emit(EventStateChange, map[string]interface{}{"from": oldState.String(), "to": newState.String()})
+	}
+	if oldState == StateHalfOpen {
+		ob.emit(EventProbeFailure, nil)
+	}
+}
+
+// --- Dynamic Configuration ---
+
+// DynamicConfig allows runtime reconfiguration.
+type DynamicConfig struct {
+	cb *CircuitBreaker
+}
+
+// NewDynamicConfig wraps a breaker for dynamic reconfiguration.
+func NewDynamicConfig(cb *CircuitBreaker) *DynamicConfig { return &DynamicConfig{cb: cb} }
+
+// SetFailureThreshold updates the failure threshold at runtime.
+func (dc *DynamicConfig) SetFailureThreshold(n int) {
+	dc.cb.mu.Lock()
+	defer dc.cb.mu.Unlock()
+	if n > 0 { dc.cb.config.FailureThreshold = n }
+}
+
+// SetSuccessThreshold updates the success threshold at runtime.
+func (dc *DynamicConfig) SetSuccessThreshold(n int) {
+	dc.cb.mu.Lock()
+	defer dc.cb.mu.Unlock()
+	if n > 0 { dc.cb.config.SuccessThreshold = n }
+}
+
+// SetTimeout updates the open-state timeout.
+func (dc *DynamicConfig) SetTimeout(d time.Duration) {
+	dc.cb.mu.Lock()
+	defer dc.cb.mu.Unlock()
+	if d > 0 { dc.cb.config.Timeout = d }
+}
+
+// ForceState manually sets the breaker state (for testing/admin).
+func (dc *DynamicConfig) ForceState(s State) {
+	dc.cb.mu.Lock()
+	defer dc.cb.mu.Unlock()
+	dc.cb.state = s
+	dc.cb.failCount = 0
+	dc.cb.successCount = 0
+	atomic.AddInt64(&dc.cb.metrics.StateTransitions, 1)
+}
+
+// --- Multi-Region Support ---
+
+// RegionBreaker tracks a breaker per region for failover scenarios.
+type RegionBreaker struct {
+	mu       sync.RWMutex
+	breakers map[string]*CircuitBreaker // region -> breaker
+	config   Config
+}
+
+// NewRegionBreaker creates a multi-region breaker manager.
+func NewRegionBreaker(cfg Config) *RegionBreaker {
+	return &RegionBreaker{breakers: make(map[string]*CircuitBreaker), config: cfg}
+}
+
+// Get returns the breaker for a region, creating if needed.
+func (rb *RegionBreaker) Get(region string) *CircuitBreaker {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+	if cb, ok := rb.breakers[region]; ok { return cb }
+	cb := New("region-"+region, rb.config)
+	rb.breakers[region] = cb
+	return cb
+}
+
+// HealthyRegions returns regions whose breakers are not open.
+func (rb *RegionBreaker) HealthyRegions() []string {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+	var out []string
+	for region, cb := range rb.breakers {
+		if cb.State() != StateOpen { out = append(out, region) }
+	}
+	return out
+}
+
+// AllOpen returns true if all regional breakers are open.
+func (rb *RegionBreaker) AllOpen() bool {
+	rb.mu.RLock()
+	defer rb.mu.RUnlock()
+	if len(rb.breakers) == 0 { return false }
+	for _, cb := range rb.breakers {
+		if cb.State() != StateOpen { return false }
+	}
+	return true
+}
+
+// --- Advisory Policy ---
+
+// Advisory tracks per-breaker health advice.
+type Advisory struct {
+	mu    sync.RWMutex
+	notes map[string][]string // breaker name -> advisories
+}
+
+// NewAdvisory creates an advisory tracker.
+func NewAdvisory() *Advisory { return &Advisory{notes: make(map[string][]string)} }
+
+// AddNote adds an advisory note for a breaker.
+func (a *Advisory) AddNote(breakerName, note string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.notes[breakerName] = append(a.notes[breakerName], note)
+}
+
+// GetNotes returns all notes for a breaker.
+func (a *Advisory) GetNotes(breakerName string) []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	out := make([]string, len(a.notes[breakerName]))
+	copy(out, a.notes[breakerName])
+	return out
+}
+
+// FormatAdvisory returns a summary of all advisories.
+func (a *Advisory) FormatAdvisory() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	s := "Advisories:\n"
+	for name, notes := range a.notes {
+		s += fmt.Sprintf("  %s: %d notes\n", name, len(notes))
+		for _, n := range notes {
+			s += fmt.Sprintf("    - %s\n", n)
+		}
+	}
+	return s
+}
+
+// --- Batch Operations ---
+
+// BatchChecker allows checking multiple breakers atomically.
+type BatchChecker struct {
+	breakers []*CircuitBreaker
+}
+
+// NewBatchChecker creates a batch checker.
+func NewBatchChecker(breakers ...*CircuitBreaker) *BatchChecker {
+	return &BatchChecker{breakers: breakers}
+}
+
+// AllowAll returns nil only if all breakers allow. Returns first error.
+func (bc *BatchChecker) AllowAll() error {
+	for _, cb := range bc.breakers {
+		if err := cb.Allow(); err != nil { return err }
+	}
+	return nil
+}
+
+// SuccessAll records success on all breakers.
+func (bc *BatchChecker) SuccessAll() {
+	for _, cb := range bc.breakers { cb.Success() }
+}
+
+// FailureAll records failure on all breakers.
+func (bc *BatchChecker) FailureAll() {
+	for _, cb := range bc.breakers { cb.Failure() }
+}

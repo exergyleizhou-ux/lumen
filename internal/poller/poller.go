@@ -532,3 +532,156 @@ func (p *Poller) FormatHistory() string {
 	}
 	return s
 }
+
+// --- Poll Group ---
+
+// PollGroup polls multiple resources as a group and aggregates results.
+type PollGroup struct {
+	ID        string
+	resources []string
+	poller    *Poller
+}
+
+// NewPollGroup creates a poll group.
+func NewPollGroup(id string, poller *Poller, resourceIDs []string) *PollGroup {
+	return &PollGroup{ID: id, poller: poller, resources: resourceIDs}
+}
+
+// PollNow polls all resources in the group.
+func (pg *PollGroup) PollNow() {
+	for _, id := range pg.resources { pg.poller.PollOne(id) }
+}
+
+// HistoryForGroup returns combined history for all resources in the group.
+func (pg *PollGroup) HistoryForGroup() []Change {
+	seen := make(map[string]bool)
+	var combined []Change
+	for _, id := range pg.resources {
+		for _, c := range pg.poller.HistoryFor(id) {
+			key := c.ResourceID + c.Timestamp.String()
+			if !seen[key] { seen[key] = true; combined = append(combined, c) }
+		}
+	}
+	sort.Slice(combined, func(i, j int) bool { return combined[i].Timestamp.Before(combined[j].Timestamp) })
+	return combined
+}
+
+// --- Alert / Threshold ---
+
+// Threshold defines a condition that triggers an alert.
+type Threshold struct {
+	ResourceID  string      `json:"resource_id"`
+	Field       string      `json:"field"`
+	Op          string      `json:"op"` // "gt", "lt", "eq", "changed".
+	Value       interface{} `json:"value"`
+}
+
+// Alert is raised when a threshold is breached.
+type Alert struct {
+	ID         string    `json:"id"`
+	Threshold  Threshold `json:"threshold"`
+	Message    string    `json:"message"`
+	FiredAt    time.Time `json:"fired_at"`
+	Acked      bool      `json:"acked"`
+}
+
+// AlertManager evaluates thresholds and tracks alerts.
+type AlertManager struct {
+	mu         sync.Mutex
+	thresholds []Threshold
+	alerts     []Alert
+	history    map[string]json.RawMessage // resourceID -> last known value.
+	poller     *Poller
+}
+
+// NewAlertManager creates an alert manager.
+func NewAlertManager(poller *Poller) *AlertManager {
+	return &AlertManager{poller: poller, history: make(map[string]json.RawMessage)}
+}
+
+// AddThreshold adds a threshold rule.
+func (am *AlertManager) AddThreshold(t Threshold) {
+	am.mu.Lock(); defer am.mu.Unlock()
+	am.thresholds = append(am.thresholds, t)
+}
+
+// Evaluate checks all thresholds against the latest poll data.
+func (am *AlertManager) Evaluate() []Alert {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	var fired []Alert
+	for _, t := range am.thresholds {
+		res := am.poller.GetResource(t.ResourceID)
+		if res == nil { continue }
+		prev, hasPrev := am.history[t.ResourceID]
+		am.history[t.ResourceID] = res.Data
+		if t.Op == "changed" && hasPrev && string(prev) != string(res.Data) {
+			a := Alert{ID: generateAlertID(), Threshold: t, Message: fmt.Sprintf("%s changed", t.ResourceID), FiredAt: time.Now()}
+			am.alerts = append(am.alerts, a); fired = append(fired, a)
+		}
+	}
+	return fired
+}
+
+// Alerts returns all alerts.
+func (am *AlertManager) Alerts() []Alert {
+	am.mu.Lock(); defer am.mu.Unlock()
+	out := make([]Alert, len(am.alerts)); copy(out, am.alerts)
+	return out
+}
+
+// AckAlert acknowledges an alert.
+func (am *AlertManager) AckAlert(id string) bool {
+	am.mu.Lock(); defer am.mu.Unlock()
+	for i, a := range am.alerts {
+		if a.ID == id { am.alerts[i].Acked = true; return true }
+	}
+	return false
+}
+
+var alertIDCounter int64
+func generateAlertID() string { alertIDCounter++; return fmt.Sprintf("alert-%d", alertIDCounter) }
+
+// --- Webhook Notifier ---
+
+// WebhookNotifier sends change notifications to a webhook URL.
+type WebhookNotifier struct {
+	URL     string
+	Headers map[string]string
+	client  interface{} // In production, *http.Client.
+}
+
+// NewWebhookNotifier creates a webhook notifier.
+func NewWebhookNotifier(url string, headers map[string]string) *WebhookNotifier {
+	return &WebhookNotifier{URL: url, Headers: headers}
+}
+
+// Notify sends a change to the webhook (simplified stub).
+func (wn *WebhookNotifier) Notify(change Change) error {
+	// In production: POST change JSON to wn.URL with wn.Headers.
+	_ = change
+	return nil
+}
+
+// --- Poll Scheduler ---
+
+// PollScheduler manages polling at specific times (cron-like).
+type PollSchedule struct {
+	CronExpr   string   `json:"cron_expr"`
+	ResourceIDs []string `json:"resource_ids"`
+}
+
+// ScheduledPoller combines a Poller with cron-based scheduling.
+type ScheduledPoller struct {
+	*Poller
+	schedules []PollSchedule
+	loc       *time.Location
+}
+
+// NewScheduledPoller creates a scheduled poller.
+func NewScheduledPoller(cfg Config, fetch FetchFunc, notify NotifyFunc, loc *time.Location) *ScheduledPoller {
+	return &ScheduledPoller{Poller: New(cfg, fetch, notify), loc: loc}
+}
+
+// AddSchedule adds a cron-based poll schedule.
+func (sp *ScheduledPoller) AddSchedule(sched PollSchedule) { sp.schedules = append(sp.schedules, sched) }

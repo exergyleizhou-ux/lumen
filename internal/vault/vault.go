@@ -593,3 +593,170 @@ func generateID(prefix string) string {
 	idCounter++
 	return fmt.Sprintf("%s-%d-%x", prefix, time.Now().UnixNano(), idCounter)
 }
+
+// --- Key Rotation ---
+
+// RotateMasterKey derives a new master key and re-wraps all data keys.
+func (v *Vault) RotateMasterKey(newPassphrase string) error {
+	newMK := NewMasterKey(newPassphrase)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	for id, dk := range v.dkm.keys {
+		wrapped, nonce, err := newMK.WrapKey(dk)
+		if err != nil { return fmt.Errorf("rewrap key %s: %w", id, err) }
+		v.dkm.wrapped[id] = wrapped
+		v.dkm.nonces[id] = nonce
+	}
+	v.masterKey = newMK
+	v.addAudit(AuditEntry{Timestamp: time.Now(), Action: "rotate-master-key", Success: true})
+	return nil
+}
+
+// --- Secret Labels / Search ---
+
+// SearchSecrets finds secrets by label key-value pairs.
+func (v *Vault) SearchSecrets(labels map[string]string) []*Secret {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	var out []*Secret
+	for _, sec := range v.secrets {
+		match := true
+		for lk, lv := range labels {
+			if sec.Labels[lk] != lv { match = false; break }
+		}
+		if match { out = append(out, sec) }
+	}
+	return out
+}
+
+// --- Secret Metadata ---
+
+// SecretMetadata returns a secret without decrypting its contents.
+type SecretMetadata struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Labels      map[string]string `json:"labels"`
+	VersionCount int      `json:"version_count"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// GetMetadata returns metadata for a secret.
+func (v *Vault) GetMetadata(id string) (*SecretMetadata, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	sec, ok := v.secrets[id]
+	if !ok { return nil, fmt.Errorf("secret %q not found", id) }
+	return &SecretMetadata{
+		ID: sec.ID, Name: sec.Name, Labels: sec.Labels,
+		VersionCount: len(sec.Versions), CreatedAt: sec.CreatedAt, UpdatedAt: sec.UpdatedAt,
+	}, nil
+}
+
+// --- Export / Import ---
+
+// ExportSecret exports a secret's metadata and all encrypted versions.
+func (v *Vault) ExportSecret(id string) (*Secret, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	sec, ok := v.secrets[id]
+	if !ok { return nil, fmt.Errorf("secret %q not found", id) }
+	cp := *sec
+	cp.Versions = make([]SecretVersion, len(sec.Versions))
+	copy(cp.Versions, sec.Versions)
+	return &cp, nil
+}
+
+// ImportSecret imports an exported secret.
+func (v *Vault) ImportSecret(sec *Secret) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if _, exists := v.secrets[sec.ID]; exists {
+		return fmt.Errorf("secret %q already exists", sec.ID)
+	}
+	v.secrets[sec.ID] = sec
+	v.addAudit(AuditEntry{Timestamp: time.Now(), Action: "import", SecretID: sec.ID, Success: true})
+	return nil
+}
+
+// --- Batch Operations ---
+
+// BatchCreate creates multiple secrets.
+func (v *Vault) BatchCreate(items []struct{ Name string; Value []byte; Labels map[string]string }, createdBy string) ([]*Secret, []error) {
+	secrets := make([]*Secret, len(items))
+	errs := make([]error, len(items))
+	for i, item := range items { secrets[i], errs[i] = v.CreateSecret(item.Name, item.Value, item.Labels, createdBy) }
+	return secrets, errs
+}
+
+// --- Policy Evaluation Helpers ---
+
+// EffectiveCapabilities returns the set of capabilities a subject has for a secret path.
+func (v *Vault) EffectiveCapabilities(subject, secretPath string) []AccessCapability {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	var caps []AccessCapability
+	for _, p := range v.policies {
+		if p.Allows(subject, secretPath, AccessAdmin) { return []AccessCapability{AccessAdmin, AccessRead, AccessWrite, AccessList, AccessDelete} }
+		for _, c := range p.Capabilities {
+			if p.Allows(subject, secretPath, c) {
+				caps = append(caps, c)
+			}
+		}
+	}
+	return caps
+}
+
+// --- Vault Stats ---
+
+// VaultStats holds aggregate vault statistics.
+type VaultStats struct {
+	TotalSecrets   int `json:"total_secrets"`
+	TotalVersions  int `json:"total_versions"`
+	TotalPolicies  int `json:"total_policies"`
+	TotalAudit     int `json:"total_audit_entries"`
+	TotalDataKeys  int `json:"total_data_keys"`
+}
+
+// VaultStats returns aggregate statistics.
+func (v *Vault) VaultStats() VaultStats {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	totalVersions := 0
+	for _, sec := range v.secrets { totalVersions += len(sec.Versions) }
+	return VaultStats{
+		TotalSecrets:  len(v.secrets),
+		TotalVersions: totalVersions,
+		TotalPolicies: len(v.policies),
+		TotalAudit:    len(v.auditLog),
+		TotalDataKeys: len(v.dkm.keys),
+	}
+}
+
+// --- SecureString ---
+
+// SecureString is a string that overwrites its memory on zeroing.
+type SecureString struct {
+	data []byte
+}
+
+// NewSecureString creates a secure string from bytes.
+func NewSecureString(b []byte) *SecureString {
+	cp := make([]byte, len(b)); copy(cp, b)
+	return &SecureString{data: cp}
+}
+
+// Bytes returns a copy of the underlying bytes.
+func (ss *SecureString) Bytes() []byte {
+	cp := make([]byte, len(ss.data)); copy(cp, ss.data); return cp
+}
+
+// String returns the string value.
+func (ss *SecureString) String() string { return string(ss.data) }
+
+// Zero overwrites the data with zeros.
+func (ss *SecureString) Zero() {
+	for i := range ss.data { ss.data[i] = 0 }
+	ss.data = nil
+}

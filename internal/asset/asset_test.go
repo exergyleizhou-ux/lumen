@@ -115,10 +115,10 @@ func TestStore_AddRemoveTags(t *testing.T) {
 	a, _ := s.Put("tagged.txt", []byte("x"), "text/plain", []string{"initial"}, false)
 
 	s.AddTags(a.ID, []string{"newtag"})
-	asset, _, _ := s.Get(a.ID)
+	_, a2, _ := s.Get(a.ID)
 	found := false
-	for _, t := range asset.Tags {
-		if t == "newtag" {
+	for _, tag := range a2.Tags {
+		if tag == "newtag" {
 			found = true
 		}
 	}
@@ -127,9 +127,9 @@ func TestStore_AddRemoveTags(t *testing.T) {
 	}
 
 	s.RemoveTags(a.ID, []string{"initial"})
-	asset, _, _ = s.Get(a.ID)
-	for _, t := range asset.Tags {
-		if t == "initial" {
+	_, a2, _ = s.Get(a.ID)
+	for _, tag := range a2.Tags {
+		if tag == "initial" {
 			t.Fatal("expected 'initial' to be removed")
 		}
 	}

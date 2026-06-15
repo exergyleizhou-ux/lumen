@@ -469,3 +469,246 @@ func truncate(s string, n int) string {
 	}
 	return s[:n] + "..."
 }
+
+// --- Batch Operations ---
+
+// BatchEnqueue adds multiple messages atomically.
+func (q *Queue) BatchEnqueue(msgs []*Message) []error {
+	errs := make([]error, len(msgs))
+	for i, msg := range msgs { errs[i] = q.Enqueue(msg) }
+	return errs
+}
+
+// BatchRemove removes messages by ID prefix.
+func (q *Queue) BatchRemove(prefix string) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	count := 0
+	for id := range q.messages {
+		if len(id) >= len(prefix) && id[:len(prefix)] == prefix {
+			if elem, ok := q.messages[id]; ok {
+				q.removeElement(elem)
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// --- Retry Policy ---
+
+// RetryPolicy determines how retries are scheduled.
+type RetryPolicy struct {
+	BackoffBase    time.Duration
+	BackoffMax     time.Duration
+	BackoffMult    float64
+	Jitter         bool
+}
+
+// DefaultRetryPolicy returns a sensible default.
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{
+		BackoffBase: time.Second,
+		BackoffMax:  5 * time.Minute,
+		BackoffMult: 2.0,
+		Jitter:      true,
+	}
+}
+
+// NextDelay computes the next retry delay for a given attempt number.
+func (rp RetryPolicy) NextDelay(attempt int) time.Duration {
+	d := float64(rp.BackoffBase)
+	for i := 1; i < attempt; i++ { d *= rp.BackoffMult }
+	if d > float64(rp.BackoffMax) { d = float64(rp.BackoffMax) }
+	if rp.Jitter {
+		// Simple deterministic jitter for testability.
+		d = d * (0.75 + 0.5*float64(attempt%10)/10.0)
+	}
+	return time.Duration(d)
+}
+
+// --- Message Filtering ---
+
+// MessageFilter is a predicate for filtering messages.
+type MessageFilter func(msg *Message) bool
+
+// FilterBySubject returns a filter matching a subject.
+func FilterBySubject(subject string) MessageFilter {
+	return func(msg *Message) bool { return msg.Subject == subject }
+}
+
+// FilterByRetryCount returns a filter matching retry count >= n.
+func FilterByRetryCount(minRetries int) MessageFilter {
+	return func(msg *Message) bool { return msg.RetryCount >= minRetries }
+}
+
+// FilterMessages returns messages matching the filter.
+func (q *Queue) FilterMessages(fn MessageFilter) []*Message {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	var out []*Message
+	for e := q.order.Front(); e != nil; e = e.Next() {
+		msg := e.Value.(*messageEntry).msg
+		if fn(msg) { out = append(out, msg) }
+	}
+	return out
+}
+
+// --- Persistence Interface ---
+
+// Persistence defines an interface for durable dead-letter storage.
+type Persistence interface {
+	Save(msg *Message) error
+	Load(id string) (*Message, error)
+	LoadAll() ([]*Message, error)
+	Delete(id string) error
+}
+
+// InMemoryPersistence implements Persistence in memory for testing.
+type InMemoryPersistence struct {
+	mu  sync.RWMutex
+	store map[string]*Message
+}
+
+// NewInMemoryPersistence creates an in-memory persistence layer.
+func NewInMemoryPersistence() *InMemoryPersistence {
+	return &InMemoryPersistence{store: make(map[string]*Message)}
+}
+
+func (p *InMemoryPersistence) Save(msg *Message) error {
+	p.mu.Lock(); defer p.mu.Unlock()
+	cp := *msg; cp.Attempts = make([]DeliveryAttempt, len(msg.Attempts)); copy(cp.Attempts, msg.Attempts)
+	p.store[msg.ID] = &cp; return nil
+}
+
+func (p *InMemoryPersistence) Load(id string) (*Message, error) {
+	p.mu.RLock(); defer p.mu.RUnlock()
+	if m, ok := p.store[id]; ok { cp := *m; return &cp, nil }
+	return nil, fmt.Errorf("message %q not found", id)
+}
+
+func (p *InMemoryPersistence) LoadAll() ([]*Message, error) {
+	p.mu.RLock(); defer p.mu.RUnlock()
+	out := make([]*Message, 0, len(p.store))
+	for _, m := range p.store { cp := *m; out = append(out, &cp) }
+	return out, nil
+}
+
+func (p *InMemoryPersistence) Delete(id string) error {
+	p.mu.Lock(); defer p.mu.Unlock()
+	delete(p.store, id); return nil
+}
+
+// --- Queue with Persistence ---
+
+// DurableQueue extends Queue with optional persistence.
+type DurableQueue struct {
+	*Queue
+	persist Persistence
+}
+
+// NewDurableQueue creates a queue backed by a persistence layer.
+func NewDurableQueue(cfg Config, persist Persistence) *DurableQueue {
+	q := New(cfg)
+	if persist == nil { persist = NewInMemoryPersistence() }
+	return &DurableQueue{Queue: q, persist: persist}
+}
+
+// EnqueueAndSave enqueues a message and persists it.
+func (dq *DurableQueue) EnqueueAndSave(msg *Message) error {
+	if err := dq.Queue.Enqueue(msg); err != nil { return err }
+	return dq.persist.Save(msg)
+}
+
+// Restore loads all persisted messages into the queue.
+func (dq *DurableQueue) Restore() (int, error) {
+	msgs, err := dq.persist.LoadAll()
+	if err != nil { return 0, err }
+	count := 0
+	for _, msg := range msgs {
+		if err := dq.Queue.Enqueue(msg); err != nil { continue }
+		count++
+	}
+	return count, nil
+}
+
+// --- Subscription Management ---
+
+// Subscription represents an interest in messages for a subject.
+type Subscription struct {
+	ID      string `json:"id"`
+	Subject string `json:"subject"`
+	Handler ReplayFunc `json:"-"`
+}
+
+// PubSub adds lightweight pub/sub on top of the dead letter queue.
+type PubSub struct {
+	mu            sync.RWMutex
+	subscriptions map[string][]Subscription // subject -> subscriptions.
+}
+
+// NewPubSub creates a pub/sub manager.
+func NewPubSub() *PubSub { return &PubSub{subscriptions: make(map[string][]Subscription)} }
+
+// Subscribe registers a handler for a subject.
+func (ps *PubSub) Subscribe(subject, id string, handler ReplayFunc) {
+	ps.mu.Lock(); defer ps.mu.Unlock()
+	ps.subscriptions[subject] = append(ps.subscriptions[subject], Subscription{ID: id, Subject: subject, Handler: handler})
+}
+
+// Unsubscribe removes a subscription.
+func (ps *PubSub) Unsubscribe(subject, id string) {
+	ps.mu.Lock(); defer ps.mu.Unlock()
+	subs := ps.subscriptions[subject]
+	for i, s := range subs {
+		if s.ID == id { ps.subscriptions[subject] = append(subs[:i], subs[i+1:]...); return }
+	}
+}
+
+// Publish pushes a message to all subscribers.
+func (ps *PubSub) Publish(msg *Message) {
+	ps.mu.RLock()
+	subs := make([]Subscription, len(ps.subscriptions[msg.Subject]))
+	copy(subs, ps.subscriptions[msg.Subject])
+	ps.mu.RUnlock()
+	for _, s := range subs {
+		if s.Handler != nil { s.Handler(msg) }
+	}
+}
+
+// --- Message Deduplication ---
+
+// DedupQueue wraps Queue with message ID deduplication.
+type DedupQueue struct {
+	*Queue
+	seen map[string]time.Time
+	muSeen sync.Mutex
+	dedupWindow time.Duration
+}
+
+// NewDedupQueue creates a deduplicating queue.
+func NewDedupQueue(cfg Config, window time.Duration) *DedupQueue {
+	dq := &DedupQueue{Queue: New(cfg), seen: make(map[string]time.Time), dedupWindow: window}
+	go dq.cleanSeen()
+	return dq
+}
+
+func (dq *DedupQueue) cleanSeen() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		dq.muSeen.Lock()
+		cutoff := time.Now().Add(-dq.dedupWindow)
+		for id, t := range dq.seen { if t.Before(cutoff) { delete(dq.seen, id) } }
+		dq.muSeen.Unlock()
+	}
+}
+
+// EnqueueUnique enqueues a message only if its ID hasn't been seen within the window.
+func (dq *DedupQueue) EnqueueUnique(msg *Message) (bool, error) {
+	dq.muSeen.Lock()
+	if _, seen := dq.seen[msg.ID]; seen { dq.muSeen.Unlock(); return false, nil }
+	dq.seen[msg.ID] = time.Now()
+	dq.muSeen.Unlock()
+	return true, dq.Queue.Enqueue(msg)
+}

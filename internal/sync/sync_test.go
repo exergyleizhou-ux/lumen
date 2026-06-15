@@ -62,8 +62,9 @@ func TestEngine_MergeLastWriteWins(t *testing.T) {
 	if result.Applied != 1 {
 		t.Fatalf("expected 1 applied, got %d", result.Applied)
 	}
-	if len(result.Conflicts) > 0 {
-		t.Fatalf("expected no conflicts, got %d", len(result.Conflicts))
+	// Even with LWW, conflicts are recorded (just auto-resolved).
+	if len(result.Conflicts) != 1 {
+		t.Fatalf("expected 1 conflict recorded, got %d", len(result.Conflicts))
 	}
 
 	rec, _ := e.Get("a")
@@ -98,6 +99,9 @@ func TestEngine_Journal(t *testing.T) {
 
 	e.Put(makeRecord("j1", "v1"))
 	e.Put(makeRecord("j2", "v2"))
+
+	// Merge triggers journal entries.
+	e.Merge(nil, []*Record{makeRecord("j3", "v3")}, nil)
 
 	journal := e.Journal()
 	if len(journal) == 0 {

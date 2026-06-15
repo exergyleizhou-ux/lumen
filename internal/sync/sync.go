@@ -547,3 +547,178 @@ func keysFromMap(m map[string]bool) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// --- Delta Encoding ---
+
+// Delta represents a minimal change description between two records.
+type Delta struct {
+	Key    string            `json:"key"`
+	Ops    []DeltaOp         `json:"ops"`
+	BaseV  int64             `json:"base_version"`
+	TargetV int64            `json:"target_version"`
+}
+
+// DeltaOp is a single field-level change.
+type DeltaOp struct {
+	Op    string          `json:"op"` // "set", "delete", "append".
+	Path  string          `json:"path"`
+	Value json.RawMessage `json:"value,omitempty"`
+}
+
+// ComputeDelta computes the delta between two records.
+func ComputeDelta(old, new *Record) *Delta {
+	d := &Delta{Key: new.Key, BaseV: old.Version, TargetV: new.Version}
+	if old.Digest == new.Digest { return d }
+	var oldM, newM map[string]json.RawMessage
+	json.Unmarshal(old.Value, &oldM)
+	json.Unmarshal(new.Value, &newM)
+	for k, nv := range newM {
+		ov, ok := oldM[k]
+		if !ok { d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv}) }
+		if ok && string(ov) != string(nv) { d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv}) }
+	}
+	for k := range oldM {
+		if _, ok := newM[k]; !ok { d.Ops = append(d.Ops, DeltaOp{Op: "delete", Path: k}) }
+	}
+	return d
+}
+
+// ApplyDelta applies a delta to a record.
+func ApplyDelta(rec *Record, d *Delta) *Record {
+	result := rec.Clone()
+	var m map[string]json.RawMessage
+	json.Unmarshal(result.Value, &m)
+	for _, op := range d.Ops {
+		switch op.Op {
+		case "set": m[op.Path] = op.Value
+		case "delete": delete(m, op.Path)
+		}
+	}
+	v, _ := json.Marshal(m)
+	result.Value = v
+	result.Version = d.TargetV
+	result.ComputeDigest()
+	return result
+}
+
+// --- Conflict Free Replicated Data Types (simplified) ---
+
+// GCounter is a grow-only counter CRDT.
+type GCounter struct {
+	id    string
+	count int64
+}
+
+// NewGCounter creates a new GCounter.
+func NewGCounter(id string) *GCounter { return &GCounter{id: id} }
+
+// Increment increases the counter.
+func (g *GCounter) Increment(delta int64) { g.count += delta }
+
+// Value returns the current count.
+func (g *GCounter) Value() int64 { return g.count }
+
+// Merge combines two GCounters (takes max).
+func (g *GCounter) Merge(other *GCounter) {
+	if other.count > g.count { g.count = other.count }
+}
+
+// PNCounter is a positive-negative counter CRDT.
+type PNCounter struct {
+	inc *GCounter
+	dec *GCounter
+}
+
+// NewPNCounter creates a new PNCounter.
+func NewPNCounter(id string) *PNCounter {
+	return &PNCounter{inc: NewGCounter(id + "-inc"), dec: NewGCounter(id + "-dec")}
+}
+
+// Increment increases the counter.
+func (pn *PNCounter) Increment(delta int64) { pn.inc.Increment(delta) }
+
+// Decrement decreases the counter.
+func (pn *PNCounter) Decrement(delta int64) { pn.dec.Increment(delta) }
+
+// Value returns the current value.
+func (pn *PNCounter) Value() int64 { return pn.inc.Value() - pn.dec.Value() }
+
+// Merge combines two PNCounters.
+func (pn *PNCounter) Merge(other *PNCounter) { pn.inc.Merge(other.inc); pn.dec.Merge(other.dec) }
+
+// --- Batch Operations ---
+
+// BatchPut stores multiple records atomically.
+func (e *Engine) BatchPut(recs []*Record) {
+	for _, r := range recs { e.Put(r) }
+}
+
+// BatchGet retrieves multiple records by key.
+func (e *Engine) BatchGet(keys []string) map[string]*Record {
+	out := make(map[string]*Record)
+	for _, k := range keys {
+		if r, ok := e.Get(k); ok { out[k] = r }
+	}
+	return out
+}
+
+// --- Sync Protocol Helpers ---
+
+// SyncRequest describes a sync pull/push request.
+type SyncRequest struct {
+	Source    string    `json:"source"`
+	Since     time.Time `json:"since"` // Only changes after this time.
+	Keys      []string  `json:"keys,omitempty"`
+}
+
+// SyncResponse is the response to a sync request.
+type SyncResponse struct {
+	Records    []*Record  `json:"records"`
+	Changes    []Change   `json:"changes"`
+	Conflicts  []Conflict `json:"conflicts"`
+	ServerTime time.Time  `json:"server_time"`
+}
+
+// GenerateSyncResponse creates a sync response from the engine state.
+func (e *Engine) GenerateSyncResponse(req SyncRequest) *SyncResponse {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	resp := &SyncResponse{ServerTime: time.Now()}
+	if len(req.Keys) > 0 {
+		for _, k := range req.Keys {
+			if r, ok := e.store[k]; ok && r.UpdatedAt.After(req.Since) {
+				resp.Records = append(resp.Records, r.Clone())
+			}
+		}
+	} else {
+		for _, r := range e.store {
+			if r.UpdatedAt.After(req.Since) { resp.Records = append(resp.Records, r.Clone()) }
+		}
+	}
+	return resp
+}
+
+// --- Consistency Check ---
+
+// CheckConsistency verifies all records have valid digests.
+func (e *Engine) CheckConsistency() []string {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	var issues []string
+	for _, r := range e.store {
+		orig := r.Digest
+		r.ComputeDigest()
+		if r.Digest != orig {
+			issues = append(issues, fmt.Sprintf("digest mismatch for %s: %s != %s", r.Key, orig, r.Digest))
+			r.Digest = orig // Restore.
+		}
+	}
+	return issues
+}
+
+// --- FormatDetails ---
+
+// FormatRecord returns a string representation of a record.
+func FormatRecord(r *Record) string {
+	return fmt.Sprintf("%s v%d digest=%s updated=%s", r.Key, r.Version, r.Digest[:12], r.UpdatedAt.Format(time.RFC3339))
+}

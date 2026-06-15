@@ -470,3 +470,205 @@ func (g *Gateway) FormatStatus() string {
 	s += g.registry.FormatAll()
 	return s
 }
+
+// --- Rate Limiter ---
+
+// RateLimiter implements a token bucket rate limiter.
+type RateLimiter struct {
+	mu        sync.Mutex
+	rate      float64 // tokens per second.
+	burst     int     // max tokens.
+	tokens    float64
+	lastFill  time.Time
+}
+
+// NewRateLimiter creates a token bucket rate limiter.
+func NewRateLimiter(ratePerSec float64, burst int) *RateLimiter {
+	return &RateLimiter{
+		rate:     ratePerSec,
+		burst:    burst,
+		tokens:   float64(burst),
+		lastFill: time.Now(),
+	}
+}
+
+// Allow checks if a request is allowed. Returns true if a token is consumed.
+func (rl *RateLimiter) Allow() bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	elapsed := now.Sub(rl.lastFill).Seconds()
+	rl.tokens += elapsed * rl.rate
+	if rl.tokens > float64(rl.burst) { rl.tokens = float64(rl.burst) }
+	rl.lastFill = now
+	if rl.tokens >= 1 {
+		rl.tokens--
+		return true
+	}
+	return false
+}
+
+// SetRate updates the rate at runtime.
+func (rl *RateLimiter) SetRate(ratePerSec float64) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.rate = ratePerSec
+}
+
+// --- Per-Key Rate Limiter ---
+
+// KeyRateLimiter maps rate limiters by key (e.g. IP, user ID).
+type KeyRateLimiter struct {
+	mu       sync.Mutex
+	limiters map[string]*RateLimiter
+	rate     float64
+	burst    int
+}
+
+// NewKeyRateLimiter creates a per-key rate limiter.
+func NewKeyRateLimiter(ratePerSec float64, burst int) *KeyRateLimiter {
+	return &KeyRateLimiter{
+		limiters: make(map[string]*RateLimiter),
+		rate:     ratePerSec,
+		burst:    burst,
+	}
+}
+
+// Allow checks if the given key is allowed.
+func (krl *KeyRateLimiter) Allow(key string) bool {
+	krl.mu.Lock()
+	rl, ok := krl.limiters[key]
+	if !ok {
+		rl = NewRateLimiter(krl.rate, krl.burst)
+		krl.limiters[key] = rl
+	}
+	krl.mu.Unlock()
+	return rl.Allow()
+}
+
+// Cleanup removes stale limiters (keys not seen in `age` duration).
+func (krl *KeyRateLimiter) Cleanup(age time.Duration) {
+	// Simple: just remove all. A production version would track last access.
+	krl.mu.Lock()
+	defer krl.mu.Unlock()
+	krl.limiters = make(map[string]*RateLimiter)
+}
+
+// --- Load Balancer ---
+
+// LoadBalancer distributes requests across backends.
+type LoadBalancer struct {
+	mu       sync.RWMutex
+	backends []string
+	index    int
+	weights  map[string]int
+}
+
+// NewLoadBalancer creates a load balancer with round-robin.
+func NewLoadBalancer(backends []string) *LoadBalancer {
+	return &LoadBalancer{
+		backends: backends,
+		weights:  make(map[string]int),
+	}
+}
+
+// Next returns the next backend (round-robin).
+func (lb *LoadBalancer) Next() string {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	if len(lb.backends) == 0 { return "" }
+	backend := lb.backends[lb.index%len(lb.backends)]
+	lb.index++
+	return backend
+}
+
+// AddBackend adds a backend.
+func (lb *LoadBalancer) AddBackend(addr string) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	lb.backends = append(lb.backends, addr)
+}
+
+// RemoveBackend removes a backend.
+func (lb *LoadBalancer) RemoveBackend(addr string) {
+	lb.mu.Lock()
+	defer lb.mu.Unlock()
+	for i, b := range lb.backends {
+		if b == addr {
+			lb.backends = append(lb.backends[:i], lb.backends[i+1:]...)
+			return
+		}
+	}
+}
+
+// HealthCheck is a function that checks backend health.
+type HealthCheck func(backend string) bool
+
+// HealthyBackends returns only healthy backends.
+func (lb *LoadBalancer) HealthyBackends(check HealthCheck) []string {
+	lb.mu.RLock()
+	defer lb.mu.RUnlock()
+	var out []string
+	for _, b := range lb.backends {
+		if check(b) { out = append(out, b) }
+	}
+	return out
+}
+
+// --- Cache Warmup ---
+
+// CacheWarmup pre-populates the cache with common keys.
+type CacheWarmup struct {
+	cache *ResponseCache
+}
+
+// NewCacheWarmup creates a cache warmup helper.
+func NewCacheWarmup(cache *ResponseCache) *CacheWarmup {
+	return &CacheWarmup{cache: cache}
+}
+
+// WarmUp pre-fetches and caches the given keys.
+func (cw *CacheWarmup) WarmUp(keys []string, fetcher func(key string) (json.RawMessage, error), ttl time.Duration) {
+	for _, key := range keys {
+		data, err := fetcher(key)
+		if err != nil { continue }
+		cw.cache.Set(key, data, nil, 200, ttl)
+	}
+}
+
+// --- Stats Collector ---
+
+// GatewayStats collects aggregate statistics.
+type GatewayStats struct {
+	TotalRequests  int64
+	CacheHits      int64
+	CacheMisses    int64
+	RateLimited    int64
+	CircuitOpens   int64
+	TotalLatencyMs float64
+	mu             sync.Mutex
+}
+
+// Record adds a request to stats.
+func (gs *GatewayStats) Record(latency time.Duration, cached, rateLimited, circuitOpen bool) {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	gs.TotalRequests++
+	gs.TotalLatencyMs += float64(latency.Microseconds()) / 1000.0
+	if cached { gs.CacheHits++ } else { gs.CacheMisses++ }
+	if rateLimited { gs.RateLimited++ }
+	if circuitOpen { gs.CircuitOpens++ }
+}
+
+// Snapshot returns current stats.
+func (gs *GatewayStats) Snapshot() map[string]int64 {
+	gs.mu.Lock()
+	defer gs.mu.Unlock()
+	return map[string]int64{
+		"total_requests": gs.TotalRequests,
+		"cache_hits":     gs.CacheHits,
+		"cache_misses":   gs.CacheMisses,
+		"rate_limited":   gs.RateLimited,
+		"circuit_opens":  gs.CircuitOpens,
+	}
+}

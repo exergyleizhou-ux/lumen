@@ -544,3 +544,151 @@ func ValidateExpression(expr string) error {
 	_, err := ParseExpression(expr)
 	return err
 }
+
+// --- Human Readable Descriptions ---
+
+// Describe returns a human-readable description of a cron expression.
+func (e *Expression) Describe() string {
+	parts := []string{}
+	parts = append(parts, describeField(e.Minute, "minute"))
+	parts = append(parts, describeField(e.Hour, "hour"))
+	parts = append(parts, describeField(e.DayOfMonth, "day of month"))
+	parts = append(parts, describeField(e.Month, "month"))
+	parts = append(parts, describeField(e.DayOfWeek, "day of week"))
+	return strings.Join(parts, "; ")
+}
+
+func describeField(f *Field, name string) string {
+	if len(f.Parts) == 0 { return name + ": ?" }
+	p := f.Parts[0]
+	switch p.kind {
+	case kindAll: return name + ": every"
+	case kindValue: return fmt.Sprintf("%s: at %d", name, p.start)
+	case kindRange: return fmt.Sprintf("%s: from %d to %d", name, p.start, p.end)
+	case kindStep:
+		if p.start == f.Min { return fmt.Sprintf("%s: every %d", name, p.step) }
+		return fmt.Sprintf("%s: from %d every %d", name, p.start, p.step)
+	default: return fmt.Sprintf("%s: custom", name)
+	}
+}
+
+// --- Cron Syntax Validation & Helpers ---
+
+// CommonPresets returns common cron expressions.
+func CommonPresets() map[string]string {
+	return map[string]string{
+		"every_minute":   "* * * * *",
+		"every_5_minutes": "*/5 * * * *",
+		"every_hour":     "0 * * * *",
+		"every_day_midnight": "0 0 * * *",
+		"every_day_noon": "0 12 * * *",
+		"every_weekday_9am": "0 9 * * 1-5",
+		"every_monday_8am": "0 8 * * 1",
+		"every_1st_of_month": "0 0 1 * *",
+	}
+}
+
+// --- One-Shot Job Support ---
+
+// OneShotJob is a job that runs once at a specific time.
+type OneShotJob struct {
+	ID       string
+	RunAt    time.Time
+	Handler  JobFunc
+	fired    bool
+}
+
+// OneShotScheduler manages one-shot jobs.
+type OneShotScheduler struct {
+	mu   sync.Mutex
+	jobs map[string]*OneShotJob
+}
+
+// NewOneShotScheduler creates a one-shot scheduler.
+func NewOneShotScheduler() *OneShotScheduler {
+	return &OneShotScheduler{jobs: make(map[string]*OneShotJob)}
+}
+
+// Schedule adds a one-shot job.
+func (os *OneShotScheduler) Schedule(id string, runAt time.Time, handler JobFunc) {
+	os.mu.Lock(); defer os.mu.Unlock()
+	os.jobs[id] = &OneShotJob{ID: id, RunAt: runAt, Handler: handler}
+}
+
+// Tick checks for jobs that need to fire.
+func (os *OneShotScheduler) Tick(now time.Time) {
+	os.mu.Lock()
+	defer os.mu.Unlock()
+	for id, job := range os.jobs {
+		if !job.fired && !now.Before(job.RunAt) {
+			job.fired = true
+			if job.Handler != nil { job.Handler(nil) }
+			delete(os.jobs, id)
+		}
+	}
+}
+
+// --- Job Concurrency Limit ---
+
+// ConcurrencyLimiter limits concurrent job executions.
+type ConcurrencyLimiter struct {
+	sem chan struct{}
+}
+
+// NewConcurrencyLimiter creates a limiter with the given max concurrency.
+func NewConcurrencyLimiter(max int) *ConcurrencyLimiter {
+	return &ConcurrencyLimiter{sem: make(chan struct{}, max)}
+}
+
+// Acquire blocks until a slot is available.
+func (cl *ConcurrencyLimiter) Acquire() { cl.sem <- struct{}{} }
+
+// Release frees a slot.
+func (cl *ConcurrencyLimiter) Release() { <-cl.sem }
+
+// --- Extended Scheduler with Overlap Protection ---
+
+// SafeScheduler wraps Scheduler with concurrency limiting and overlap protection.
+type SafeScheduler struct {
+	*Scheduler
+	limiter  *ConcurrencyLimiter
+	running  map[string]bool
+	muRun    sync.Mutex
+}
+
+// NewSafeScheduler creates a safe scheduler.
+func NewSafeScheduler(loc *time.Location, maxConcurrent int) *SafeScheduler {
+	return &SafeScheduler{
+		Scheduler: NewScheduler(loc),
+		limiter:   NewConcurrencyLimiter(maxConcurrent),
+		running:   make(map[string]bool),
+	}
+}
+
+// AddSafeJob registers a job with overlap protection.
+func (ss *SafeScheduler) AddSafeJob(id, name, cronExpr string, handler JobFunc) (*Job, error) {
+	orig := handler
+	safeHandler := func(job *Job) error {
+		ss.muRun.Lock()
+		if ss.running[id] { ss.muRun.Unlock(); return nil } // Skip if already running.
+		ss.running[id] = true
+		ss.muRun.Unlock()
+		ss.limiter.Acquire()
+		defer ss.limiter.Release()
+		defer func() { ss.muRun.Lock(); delete(ss.running, id); ss.muRun.Unlock() }()
+		return orig(job)
+	}
+	return ss.Scheduler.AddJob(id, name, cronExpr, safeHandler)
+}
+
+// --- Format Helpers ---
+
+// FormatCronExpression returns a formatted breakdown of a cron expression.
+func FormatCronExpression(expr string) (string, error) {
+	e, err := ParseExpression(expr)
+	if err != nil { return "", err }
+	nextRuns := e.NextN(time.Now(), 5)
+	s := fmt.Sprintf("Expression: %s\nDescription: %s\nNext runs:\n", expr, e.Describe())
+	for i, t := range nextRuns { s += fmt.Sprintf("  %d. %s\n", i+1, t.Format(time.RFC3339)) }
+	return s, nil
+}

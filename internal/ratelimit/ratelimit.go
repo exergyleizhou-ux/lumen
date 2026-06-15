@@ -1,161 +1,31 @@
-// Package ratelimit provides token-bucket rate limiting for API calls
-// and tool executions. It supports per-provider limits, burst control,
-// and automatic backoff when limits are exceeded.
+// Package ratelimit provides advanced rate limiting algorithms:
+// token bucket, leaky bucket, and hierarchical rate limiting with
+// parent-child budget allocation.
 package ratelimit
 
-import (
-	"context"
-	"fmt"
-	"strings"
-	"sync"
-	"time"
-)
+import ("fmt";"math";"strings";"sync";"time")
 
-// Bucket is a token-bucket rate limiter.
-type Bucket struct {
-	mu       sync.Mutex
-	rate     float64 // tokens per second
-	burst    int     // max tokens (burst capacity)
-	tokens   float64
-	lastTime time.Time
-	waitCount int64
-	allowCount int64
-	denyCount  int64
+type TokenBucket struct{mu sync.Mutex;rate float64;burst float64;tokens float64;last time.Time}
+func NewTokenBucket(rate,burst float64)*TokenBucket{return &TokenBucket{rate:rate,burst:burst,tokens:burst,last:time.Now()}}
+func(tb*TokenBucket)Allow()bool{return tb.AllowN(1)}
+func(tb*TokenBucket)AllowN(n float64)bool{tb.mu.Lock();defer tb.mu.Unlock();now:=time.Now();elapsed:=now.Sub(tb.last).Seconds();tb.tokens+=elapsed*tb.rate;if tb.tokens>tb.burst{tb.tokens=tb.burst};tb.last=now;if tb.tokens>=n{tb.tokens-=n;return true};return false}
+func(tb*TokenBucket)Tokens()float64{tb.mu.Lock();defer tb.mu.Unlock();return tb.tokens}
+func(tb*TokenBucket)SetRate(rate float64){tb.mu.Lock();defer tb.mu.Unlock();tb.rate=rate}
+
+type LeakyBucket struct{mu sync.Mutex;capacity float64;leakRate float64;water float64;last time.Time}
+func NewLeakyBucket(capacity,leakRate float64)*LeakyBucket{return &LeakyBucket{capacity:capacity,leakRate:leakRate,last:time.Now()}}
+func(lb*LeakyBucket)Add(n float64)bool{lb.mu.Lock();defer lb.mu.Unlock();now:=time.Now();elapsed:=now.Sub(lb.last).Seconds();lb.water-=elapsed*lb.leakRate;if lb.water<0{lb.water=0};lb.last=now;if lb.water+n>lb.capacity{return false};lb.water+=n;return true}
+func(lb*LeakyBucket)Level()float64{lb.mu.Lock();defer lb.mu.Unlock();return lb.water}
+
+type HierarchicalLimiter struct{mu sync.Mutex;name string;parent *HierarchicalLimiter;children map[string]*HierarchicalLimiter;bucket *TokenBucket;limit float64}
+func NewHierarchicalLimiter(name string,rate float64)*HierarchicalLimiter{return &HierarchicalLimiter{name:name,bucket:NewTokenBucket(rate,rate),children:map[string]*HierarchicalLimiter{},limit:rate}}
+func(hl*HierarchicalLimiter)AddChild(name string,rate float64)*HierarchicalLimiter{c:=NewHierarchicalLimiter(name,rate);c.parent=hl;hl.mu.Lock();defer hl.mu.Unlock();hl.children[name]=c;return c}
+func(hl*HierarchicalLimiter)Allow()bool{hl.mu.Lock();if !hl.bucket.Allow(){hl.mu.Unlock();return false};hl.mu.Unlock();if hl.parent!=nil&&!hl.parent.Allow(){return false};return true}
+func(hl*HierarchicalLimiter)SetLimit(rate float64){hl.mu.Lock();defer hl.mu.Unlock();hl.limit=rate;hl.bucket.SetRate(rate)}
+func(hl*HierarchicalLimiter)FormatTree()string{hl.mu.Lock();defer hl.mu.Unlock();var sb strings.Builder;hl.formatTreeRec(&sb,0);return sb.String()}
+func(hl*HierarchicalLimiter)formatTreeRec(sb*strings.Builder,depth int){
+  indent:=strings.Repeat("  ",depth);fmt.Fprintf(sb,"%s%s (%.1f/s)\n",indent,hl.name,hl.limit)
+  for _,c:=range hl.children{c.mu.Lock();c.formatTreeRec(sb,depth+1);c.mu.Unlock()}
 }
 
-// NewBucket creates a token bucket with the given rate and burst.
-func NewBucket(ratePerSec float64, burst int) *Bucket {
-	return &Bucket{
-		rate:     ratePerSec,
-		burst:    burst,
-		tokens:   float64(burst),
-		lastTime: time.Now(),
-	}
-}
-
-// Allow reports whether one token can be consumed without waiting.
-func (b *Bucket) Allow() bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.refill()
-	if b.tokens >= 1 {
-		b.tokens--
-		b.allowCount++
-		return true
-	}
-	b.denyCount++
-	return false
-}
-
-// Wait blocks until a token is available or ctx is cancelled.
-func (b *Bucket) Wait(ctx context.Context) error {
-	for {
-		if b.Allow() {
-			return nil
-		}
-		b.mu.Lock()
-		waitTime := time.Duration(float64(time.Second) / b.rate)
-		b.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(waitTime):
-		}
-	}
-}
-
-func (b *Bucket) refill() {
-	now := time.Now()
-	elapsed := now.Sub(b.lastTime).Seconds()
-	b.tokens += elapsed * b.rate
-	if b.tokens > float64(b.burst) {
-		b.tokens = float64(b.burst)
-	}
-	b.lastTime = now
-}
-
-// Stats returns usage statistics.
-func (b *Bucket) Stats() (allowed, denied int64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.allowCount, b.denyCount
-}
-
-// SetRate changes the token rate dynamically.
-func (b *Bucket) SetRate(ratePerSec float64) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.rate = ratePerSec
-}
-
-// ── Multilimiter ──────────────────────────────────────────
-
-// Limiter manages multiple rate limit buckets for different keys.
-type Limiter struct {
-	mu       sync.Mutex
-	buckets  map[string]*Bucket
-	defaultRate float64
-	defaultBurst int
-}
-
-// NewLimiter creates a multi-key rate limiter.
-func NewLimiter(defaultRate float64, defaultBurst int) *Limiter {
-	return &Limiter{
-		buckets:    make(map[string]*Bucket),
-		defaultRate: defaultRate,
-		defaultBurst: defaultBurst,
-	}
-}
-
-// Allow checks if a request for the given key is allowed.
-func (l *Limiter) Allow(key string) bool {
-	b := l.getBucket(key)
-	return b.Allow()
-}
-
-// Wait blocks until a request for key is allowed.
-func (l *Limiter) Wait(ctx context.Context, key string) error {
-	b := l.getBucket(key)
-	return b.Wait(ctx)
-}
-
-func (l *Limiter) getBucket(key string) *Bucket {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if b, ok := l.buckets[key]; ok {
-		return b
-	}
-	b := NewBucket(l.defaultRate, l.defaultBurst)
-	l.buckets[key] = b
-	return b
-}
-
-// Stats returns stats for a specific key.
-func (l *Limiter) Stats(key string) (allowed, denied int64) {
-	l.mu.Lock()
-	b, ok := l.buckets[key]
-	l.mu.Unlock()
-	if !ok {
-		return 0, 0
-	}
-	return b.Stats()
-}
-
-// FormatStats formats limiter stats for all keys.
-func (l *Limiter) FormatStats() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Rate limiter (%d buckets):\n", len(l.buckets)))
-	for k, b := range l.buckets {
-		a, d := b.Stats()
-		total := a + d
-		rate := float64(0)
-		if total > 0 {
-			rate = float64(a) / float64(total) * 100
-		}
-		fmt.Fprintf(&sb, "  %s: %.0f%% allowed (%d/%d)\n", k, rate, a, total)
-	}
-	return sb.String()
-}
 

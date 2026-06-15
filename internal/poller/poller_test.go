@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -80,8 +81,10 @@ func TestPoller_NoChange(t *testing.T) {
 }
 
 func TestPoller_History(t *testing.T) {
+	var counter int64
 	fetchFn := func(ctx context.Context, id, url string) (json.RawMessage, error) {
-		return json.RawMessage(`{"x":` + string(rune('0'+time.Now().UnixNano()%10)) + `}`), nil
+		counter++
+		return json.RawMessage(fmt.Sprintf(`{"x":%d}`, counter)), nil
 	}
 
 	cfg := DefaultConfig()

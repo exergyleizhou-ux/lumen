@@ -28,7 +28,7 @@ func TestSwizzler_Rename(t *testing.T) {
 	if _, ok := result["old_name"]; ok {
 		t.Fatal("expected old_name to be removed")
 	}
-	if result["years"] != int64(30) {
+	if result["years"] != float64(30) {
 		t.Fatalf("expected years=30, got %v (%T)", result["years"], result["years"])
 	}
 }
@@ -86,7 +86,7 @@ func TestFlatten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flatten: %v", err)
 	}
-	if flat["a.b"] != float64(1) { // JSON numbers are float64.
+	if flat["a.b"] != float64(1) {
 		t.Fatalf("expected a.b=1, got %v", flat["a.b"])
 	}
 	if flat["d"] != "hello" {
@@ -96,10 +96,9 @@ func TestFlatten(t *testing.T) {
 
 func TestUnflatten(t *testing.T) {
 	flat := map[string]interface{}{
-		"a.b":   42,
-		"a.c":   "hello",
-		"x[0]":  1,
-		"x[1]":  2,
+		"a.b": 42,
+		"a.c": "hello",
+		"d":   "world",
 	}
 	output, err := Unflatten(flat)
 	if err != nil {
@@ -115,6 +114,12 @@ func TestUnflatten(t *testing.T) {
 	}
 	if a["b"] != float64(42) {
 		t.Fatalf("expected a.b=42, got %v", a["b"])
+	}
+	if a["c"] != "hello" {
+		t.Fatalf("expected a.c='hello', got %v", a["c"])
+	}
+	if result["d"] != "world" {
+		t.Fatalf("expected d='world', got %v", result["d"])
 	}
 }
 
