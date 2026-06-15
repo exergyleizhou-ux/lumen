@@ -1,61 +1,12 @@
-# Lumen configuration
-# Resolution order: CLI flag > ./lumen.toml > ~/.config/lumen/lumen.toml > built-in defaults
-
-default_model = "deepseek-flash"
-
-# ── Providers ──────────────────────────────────────────────
-[[providers]]
-name        = "deepseek-flash"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-chat"
-api_key_env = "DEEPSEEK_API_KEY"
+default_model = "deepseek-chat"
 
 [[providers]]
-name        = "deepseek-pro"
-kind        = "openai"
-base_url    = "https://api.deepseek.com"
-model       = "deepseek-reasoner"
-api_key_env = "DEEPSEEK_API_KEY"
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key = "sk-fa1d1f4db91d48e5b9b33d5375f85e5d"
 
-[[providers]]
-name        = "grok"
-kind        = "openai"
-base_url    = "https://api.x.ai/v1"
-model       = "grok-3"
-api_key_env = "GROK_API_KEY"
-
-[[providers]]
-name        = "openai"
-kind        = "openai"
-base_url    = "https://api.openai.com/v1"
-model       = "gpt-4o"
-api_key_env = "OPENAI_API_KEY"
-
-[[providers]]
-name        = "ollama-qwen"
-kind        = "openai"
-base_url    = "http://localhost:11434/v1"
-model       = "qwen3:latest"
-
-# ── Two-model coordinator (optional) ───────────────────────
-# [coordinator]
-# planner = "deepseek-flash"    # cheap model for planning
-# executor = "deepseek-pro"     # strong model for execution
-
-# ── Agent settings ─────────────────────────────────────────
 [agent]
-max_steps           = 50
-temperature         = 0.0
-context_window      = 128000
-soft_compact_ratio  = 0.5
-compact_ratio       = 0.8
-compact_force_ratio = 1.0
-
-# ── Permissions ────────────────────────────────────────────
-[permissions]
-mode = "default"  # default | accept-edits | bypass | plan
-
-# ── Skills ─────────────────────────────────────────────────
-[skills]
-max_depth = 3
+max_steps = 30
+temperature = 0.7

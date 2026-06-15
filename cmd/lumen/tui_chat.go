@@ -176,7 +176,7 @@ func (t *tuiRuntime) sink() event.Sink {
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.Text:
-			fmt.Print(e.Text)
+			renderClean(e.Text)
 		case event.ToolDispatch:
 			if e.Tool.Name != "" {
 				t.toolCalls.Add(1)

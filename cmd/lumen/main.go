@@ -186,7 +186,7 @@ func chatSink() event.Sink {
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.Text:
-			fmt.Print(e.Text)
+			renderClean(e.Text)
 		case event.ToolResult:
 			if e.Tool.Err != "" && e.Tool.Name != "" {
 				// Minimal: just a one-line tool status
@@ -195,6 +195,7 @@ func chatSink() event.Sink {
 				fmt.Fprintf(os.Stderr, "  \033[2m%s ❌\033[0m\n", short)
 			}
 		case event.UsageKind:
+			flushBuffer()
 			if e.Usage != nil {
 				fmt.Fprintf(os.Stderr, "\n\033[2m── %d tokens\033[0m\n", e.Usage.TotalTokens)
 			}
@@ -209,7 +210,7 @@ func headlessSink() event.Sink {
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.Text:
-			fmt.Print(e.Text)
+			renderClean(e.Text)
 		case event.Reasoning:
 			fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m", e.Text)
 		case event.ToolDispatch:
@@ -227,6 +228,7 @@ func headlessSink() event.Sink {
 				fmt.Fprintf(os.Stderr, "  ✓ %s done\n", e.Tool.Name)
 			}
 		case event.UsageKind:
+			flushBuffer()
 			if e.Usage != nil {
 				cacheRate := 0.0
 				total := e.Usage.CacheHitTokens + e.Usage.CacheMissTokens
