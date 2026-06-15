@@ -16,6 +16,7 @@ const (
 	ToolDispatch Kind = "tool_dispatch"
 	ToolResult   Kind = "tool_result"
 	ToolProgress Kind = "tool_progress"
+	FilePreview  Kind = "file_preview"
 	UsageKind    Kind = "usage"
 	Notice       Kind = "notice"
 	Ask          Kind = "ask"
@@ -90,6 +91,7 @@ type Event struct {
 	Level     Level         `json:"level,omitempty"`
 	Profile   *Profile      `json:"profile,omitempty"`
 	Questions []AskQuestion `json:"questions,omitempty"`
+	DiffText  string        `json:"diff,omitempty"`
 	Timestamp time.Time     `json:"timestamp"`
 }
 

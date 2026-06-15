@@ -114,6 +114,11 @@ func termSink() event.Sink {
 					float64(e.Usage.CompletionTokens)*0.28/1e6)
 			}
 
+		case event.FilePreview:
+			fmt.Printf("\n%s\n", cyan("── Preview ──────────────────────────────"))
+			fmt.Print(e.DiffText)
+			fmt.Printf("%s\n", cyan("──────────────────────────────────────────"))
+
 		case event.TurnDone:
 			drawFooter()
 			thinking = false
@@ -155,9 +160,15 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	// ── Session file for history ──
 	histDir := os.ExpandEnv("$HOME/.lumen/history")
 	os.MkdirAll(histDir, 0700)
-	histFile, _ := os.Create(histDir + "/" + time.Now().Format("2006-01-02-150405") + ".log")
+	histFilename := histDir + "/" + time.Now().Format("2006-01-02-150405") + ".log"
+	histFile, _ := os.Create(histFilename)
 	if histFile != nil {
 		defer histFile.Close()
+	}
+
+	// ── Load previous session ──
+	if prevSession := loadLastSession(histDir, histFilename); prevSession != "" {
+		fmt.Printf("  %s\n\n", dim("last session: "+prevSession))
 	}
 
 	// ── Header ──
@@ -229,4 +240,29 @@ func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "|---", "")
 	s = strings.ReplaceAll(s, "| ", "  ")
 	return s
+}
+
+// ── Session recovery ──────────────────────────────────────
+
+func loadLastSession(dir, currentFile string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil { return "" }
+	if len(entries) == 0 { return "" }
+
+	// Find the most recent non-empty log file that isn't the current one
+	var latest os.DirEntry
+	var latestTime time.Time
+	for _, e := range entries {
+		if e.IsDir() { continue }
+		if dir+"/"+e.Name() == currentFile { continue }
+		info, err := e.Info()
+		if err != nil { continue }
+		if info.Size() == 0 { continue }
+		if info.ModTime().After(latestTime) {
+			latestTime = info.ModTime()
+			latest = e
+		}
+	}
+	if latest == nil { return "" }
+	return latest.Name()
 }
