@@ -42,7 +42,7 @@ type Server struct {
 // MCPClient is the interface an MCP server client must satisfy.
 type MCPClient interface {
 	Connect() ([]string, error)
-	CallTool(tool string, args json.RawMessage) (string, error)
+	CallToolRaw(tool string, args json.RawMessage) (string, error)
 	Disconnect() error
 	HealthCheck() error
 }
@@ -184,7 +184,7 @@ func (m *Manager) CallTool(serverName, toolName string, args json.RawMessage) (s
 	}
 	srv.mu.Unlock()
 
-	result, err := srv.client.CallTool(toolName, args)
+	result, err := srv.client.CallToolRaw(toolName, args)
 	srv.mu.Lock()
 	srv.LastSeen = time.Now()
 	if err != nil {

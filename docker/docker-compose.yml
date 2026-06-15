@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  lumen:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: lumen-agent
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
+      - LUMEN_HOME=/home/lumen
+    volumes:
+      - ${PWD:-.}:/workspace
+      - lumen_data:/home/lumen
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    command: serve
+
+  lumen-dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: lumen-dev
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - ..:/workspace
+      - lumen_dev_data:/home/lumen
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    command: repl
+
+volumes:
+  lumen_data:
+  lumen_dev_data:
