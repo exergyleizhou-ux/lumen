@@ -3,7 +3,7 @@
 // across multiple execution contexts.
 package dispatcher
 
-import ("container/heap";"context";"fmt";"sort";"strings";"sync";"time")
+import ("container/heap";"context";"fmt";"strings";"sync";"time")
 
 type Priority int
 const (PriorityLow Priority=0;PriorityNormal Priority=5;PriorityHigh Priority=10;PriorityCritical Priority=20)
@@ -25,7 +25,7 @@ func(d*Dispatcher)RegisterWorker(w Worker){d.mu.Lock();defer d.mu.Unlock();d.wor
 func(d*Dispatcher)Enqueue(task *Task){d.mu.Lock();defer d.mu.Unlock();heap.Push(&d.queue,task)}
 func(d*Dispatcher)Start(ctx context.Context){
   go func(){ticker:=time.NewTicker(100*time.Millisecond);defer ticker.Stop()
-    for{select{case<-d.stopCh:return;case<-ctx.Done():return;case<-ticker.C:}d.dispatchRound(ctx)}
+    for{select{case<-d.stopCh:return;case<-ctx.Done():return;case<-ticker.C:d.dispatchRound(ctx)}}
   }()
 }
 func(d*Dispatcher)Stop(){close(d.stopCh)}

@@ -8,7 +8,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
