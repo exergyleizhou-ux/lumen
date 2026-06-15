@@ -82,50 +82,52 @@ func makeController(sink event.Sink, modeOverride string) (*control.Controller, 
 }
 
 // ── Event sink ─────────────────────────────────────────────
+//
+// Render strategy: agent text goes straight to stdout with no framing.
+// Tool activity shows as a single overwritable status line on stderr so
+// the main output stays clean.  Token counts go to stderr.
 
 func lumenSink() event.Sink {
+	thinking := true
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
+		case event.TurnStarted:
+			thinking = true
+			fmt.Fprint(os.Stderr, "\033[2m…\033[0m")
+
 		case event.Text:
-			fmt.Print(e.Text)
-		case event.Reasoning:
-			fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m", e.Text)
-		case event.ToolDispatch:
-			fmt.Fprintf(os.Stderr, "\n⚙ %s", e.Tool.Name)
-			if e.Tool.Description != "" {
-				fmt.Fprintf(os.Stderr, " — %s", e.Tool.Description)
+			if thinking {
+				fmt.Fprint(os.Stderr, "\r\033[2K")
+				thinking = false
 			}
-			fmt.Fprintln(os.Stderr)
+			fmt.Print(e.Text)
+
+		case event.Reasoning:
+			// silent
+
+		case event.ToolDispatch:
+			fmt.Fprintf(os.Stderr, "\r\033[2K\033[2m  %s\033[0m", e.Tool.Name)
+
 		case event.ToolResult:
 			if e.Tool.Err != "" {
-				fmt.Fprintf(os.Stderr, "  ✗ %s: %s\n", e.Tool.Name, e.Tool.Err)
-			} else if e.Tool.Blocked {
-				fmt.Fprintf(os.Stderr, "  ⊘ %s blocked\n", e.Tool.Name)
+				fmt.Fprintf(os.Stderr, "\r\033[2K\033[31m  ✗ %s\033[0m\n", e.Tool.Err)
 			} else {
-				fmt.Fprintf(os.Stderr, "  ✓ %s done\n", e.Tool.Name)
+				fmt.Fprintf(os.Stderr, "\r\033[2K")
 			}
+
 		case event.UsageKind:
 			if e.Usage != nil {
-				cacheRate := 0.0
-				total := e.Usage.CacheHitTokens + e.Usage.CacheMissTokens
-				if total > 0 {
-					cacheRate = float64(e.Usage.CacheHitTokens) / float64(total) * 100
-				}
-				fmt.Printf("\n📊 %d tokens (cache: %.0f%%)\n", e.Usage.TotalTokens, cacheRate)
+				fmt.Fprintf(os.Stderr, "\r\033[2K\033[90m  %d tokens\033[0m\n",
+					e.Usage.TotalTokens)
 			}
-		case event.Notice:
-			switch e.Level {
-			case event.LevelWarn:
-				fmt.Printf("\n⚠ %s\n", e.Text)
-			case event.LevelErr:
-				fmt.Printf("\n❌ %s\n", e.Text)
-			default:
-				fmt.Printf("\n· %s\n", e.Text)
-			}
-		case event.Phase:
-			fmt.Printf("\n● %s\n", e.Text)
+
 		case event.TurnDone:
-			fmt.Println()
+			fmt.Fprint(os.Stderr, "\r\033[2K")
+
+		case event.Notice:
+			if e.Level == event.LevelErr {
+				fmt.Fprintf(os.Stderr, "\r\033[2K\033[31m  %s\033[0m\n", e.Text)
+			}
 		}
 	})
 }
@@ -180,11 +182,10 @@ func runOneShot(args []string) {
 	go func() { <-sigCh; cancel() }()
 
 	if planMode {
-		fmt.Fprintf(os.Stderr, "● plan mode — read-only\n\n")
+		fmt.Fprintf(os.Stderr, "[plan — read-only]\n\n")
 		ctrl.Plan(ctx, prompt)
 	} else {
-		fmt.Fprintf(os.Stderr, "● %s/%s  mode: %s\n\n",
-			ctrl.ProviderName(), ctrl.ModelName(), ctrl.PermissionMode())
+		fmt.Fprintf(os.Stderr, "")
 		ctrl.Run(ctx, prompt)
 	}
 }
@@ -218,8 +219,8 @@ func runChat(args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("\n● Lumen — %s/%s  mode: %s\n\n",
-		ctrl.ProviderName(), ctrl.ModelName(), ctrl.PermissionMode())
+	fmt.Printf("lumen · %s/%s · /exit\n\n",
+		ctrl.ProviderName(), ctrl.ModelName())
 
 	sc := bufio.NewScanner(os.Stdin)
 	for {
@@ -227,25 +228,22 @@ func runChat(args []string) {
 		if !sc.Scan() { break }
 		text := strings.TrimSpace(sc.Text())
 		if text == "" { continue }
-		if text == "/exit" || text == "/quit" { break }
+		if text == "/exit" || text == "/quit" { return }
 		if text == "/help" {
-			fmt.Println("  /exit       quit")
-			fmt.Println("  /mode       show permission modes")
-			fmt.Println("  /mode M     switch to mode M")
+			fmt.Println("/exit /mode /mode bypass|plan")
 			continue
 		}
 		if text == "/mode" {
-			fmt.Println("  bypass | plan | default | accept-edits")
+			fmt.Println("bypass | plan | default | accept-edits")
 			continue
 		}
 		if strings.HasPrefix(text, "/mode ") {
 			m := permission.ParseMode(strings.TrimPrefix(text, "/mode "))
 			ctrl.SetPermissionMode(m)
-			fmt.Printf("● mode = %s\n\n", m)
+			fmt.Printf("[%s]\n", m)
 			continue
 		}
 
-		fmt.Println()
 		ctrl.Run(context.Background(), text)
 		fmt.Println()
 	}
