@@ -34,10 +34,10 @@ type StageFunc func(r io.Reader, w io.Writer) error
 // Stage represents one node in the pipeline DAG. A stage has a name, a
 // processing function, and connections to upstream/downstream stages.
 type Stage struct {
-	Name     string
-	Fn       StageFunc
-	inputs   []*PipeBuffer
-	outputs  []*PipeBuffer
+	Name    string
+	Fn      StageFunc
+	inputs  []*PipeBuffer
+	outputs []*PipeBuffer
 }
 
 // PipeBuffer is a buffered pipe connecting two stages (or the pipeline
@@ -142,10 +142,10 @@ func (pb *PipeBuffer) Tee() *PipeBuffer {
 // concurrent execution of independent stages and serial execution within
 // linear chains.
 type Pipeline struct {
-	mu       sync.Mutex
-	stages   []*Stage
-	input    *PipeBuffer
-	output   *PipeBuffer
+	mu     sync.Mutex
+	stages []*Stage
+	input  *PipeBuffer
+	output *PipeBuffer
 }
 
 // New creates an empty Pipeline.

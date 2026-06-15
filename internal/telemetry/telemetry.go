@@ -22,8 +22,8 @@ type Event struct {
 
 // Collector gathers telemetry events and computes aggregates.
 type Collector struct {
-	mu       sync.Mutex
-	events   []Event
+	mu        sync.Mutex
+	events    []Event
 	sessionID string
 	maxEvents int
 }
@@ -76,19 +76,19 @@ func (c *Collector) PermissionDeny(tool, reason string) {
 
 // Summary is an aggregate summary of collected telemetry.
 type Summary struct {
-	TotalTurns       int           `json:"total_turns"`
-	TotalToolCalls   int           `json:"total_tool_calls"`
-	SuccessfulCalls  int           `json:"successful_calls"`
-	FailedCalls      int           `json:"failed_calls"`
-	DeniedCalls      int           `json:"denied_calls"`
-	TotalPrompt      int64         `json:"total_prompt_tokens"`
-	TotalCompletion  int64         `json:"total_completion_tokens"`
-	TotalCacheHit    int64         `json:"total_cache_hit"`
-	TotalCacheMiss   int64         `json:"total_cache_miss"`
-	TotalDuration    time.Duration `json:"total_duration_ms"`
-	ToolFrequency    map[string]int `json:"tool_frequency"`
-	AvgTurnTokens    int64         `json:"avg_turn_tokens"`
-	CacheHitRate     float64       `json:"cache_hit_rate"`
+	TotalTurns      int            `json:"total_turns"`
+	TotalToolCalls  int            `json:"total_tool_calls"`
+	SuccessfulCalls int            `json:"successful_calls"`
+	FailedCalls     int            `json:"failed_calls"`
+	DeniedCalls     int            `json:"denied_calls"`
+	TotalPrompt     int64          `json:"total_prompt_tokens"`
+	TotalCompletion int64          `json:"total_completion_tokens"`
+	TotalCacheHit   int64          `json:"total_cache_hit"`
+	TotalCacheMiss  int64          `json:"total_cache_miss"`
+	TotalDuration   time.Duration  `json:"total_duration_ms"`
+	ToolFrequency   map[string]int `json:"tool_frequency"`
+	AvgTurnTokens   int64          `json:"avg_turn_tokens"`
+	CacheHitRate    float64        `json:"cache_hit_rate"`
 }
 
 // Summarize computes aggregate statistics.
@@ -158,7 +158,10 @@ func (s Summary) Format() string {
 	}
 	if len(s.ToolFrequency) > 0 {
 		sb.WriteString("\nTool frequency:\n")
-		type tf struct{ name string; count int }
+		type tf struct {
+			name  string
+			count int
+		}
 		var freq []tf
 		for n, c := range s.ToolFrequency {
 			freq = append(freq, tf{n, c})

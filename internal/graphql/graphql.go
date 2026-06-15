@@ -40,7 +40,7 @@ import (
 type Scalar int
 
 const (
-	ScalarString  Scalar = iota
+	ScalarString Scalar = iota
 	ScalarInt
 	ScalarFloat
 	ScalarBoolean
@@ -71,7 +71,7 @@ func (s Scalar) String() string {
 type TypeKind int
 
 const (
-	TypeKindScalar  TypeKind = iota
+	TypeKindScalar TypeKind = iota
 	TypeKindObject
 	TypeKindList
 	TypeKindNonNull
@@ -82,8 +82,8 @@ const (
 // TypeRef describes the type of a field, argument, or variable.
 type TypeRef struct {
 	Kind   TypeKind
-	Name   string  // for Scalar, Object, Enum, InputObject
-	Scalar Scalar  // for Scalar
+	Name   string   // for Scalar, Object, Enum, InputObject
+	Scalar Scalar   // for Scalar
 	OfType *TypeRef // for List, NonNull
 }
 
@@ -334,17 +334,21 @@ type Document struct {
 type OpType int
 
 const (
-	OpQuery        OpType = iota
+	OpQuery OpType = iota
 	OpMutation
 	OpSubscription
 )
 
 func (ot OpType) String() string {
 	switch ot {
-	case OpQuery:        return "query"
-	case OpMutation:     return "mutation"
-	case OpSubscription: return "subscription"
-	default:             return "unknown"
+	case OpQuery:
+		return "query"
+	case OpMutation:
+		return "mutation"
+	case OpSubscription:
+		return "subscription"
+	default:
+		return "unknown"
 	}
 }
 
@@ -379,7 +383,7 @@ type FieldSel struct {
 	Directives []*Directive
 }
 
-func (f *FieldSel) isSelection()   {}
+func (f *FieldSel) isSelection()    {}
 func (f *FieldSel) SelName() string { return f.Name }
 
 // InlineFrag is an inline fragment.
@@ -389,7 +393,7 @@ type InlineFrag struct {
 	Directives    []*Directive
 }
 
-func (f *InlineFrag) isSelection()   {}
+func (f *InlineFrag) isSelection()    {}
 func (f *InlineFrag) SelName() string { return "... on " + f.TypeCondition }
 
 // FragSpread is a named fragment spread.
@@ -398,7 +402,7 @@ type FragSpread struct {
 	Directives []*Directive
 }
 
-func (f *FragSpread) isSelection()   {}
+func (f *FragSpread) isSelection()    {}
 func (f *FragSpread) SelName() string { return "..." + f.Name }
 
 // FragmentDef is a named fragment.
@@ -424,7 +428,7 @@ type Directive struct {
 type ValKind int
 
 const (
-	ValString   ValKind = iota
+	ValString ValKind = iota
 	ValInt
 	ValFloat
 	ValBoolean
@@ -696,12 +700,18 @@ func (p *QueryParser) parseType() (*TypeRef, error) {
 	} else {
 		name := p.parseName()
 		switch name {
-		case "String":  tr = StringType
-		case "Int":     tr = IntType
-		case "Float":   tr = FloatType
-		case "Boolean": tr = BooleanType
-		case "ID":      tr = IDType
-		default:        tr = NamedType(name)
+		case "String":
+			tr = StringType
+		case "Int":
+			tr = IntType
+		case "Float":
+			tr = FloatType
+		case "Boolean":
+			tr = BooleanType
+		case "ID":
+			tr = IDType
+		default:
+			tr = NamedType(name)
 		}
 	}
 	p.skipWS()
@@ -758,13 +768,21 @@ func (p *QueryParser) parseString() (string, error) {
 			esc := p.input[p.pos]
 			p.advance()
 			switch esc {
-			case '"', '\\', '/': sb.WriteByte(esc)
-			case 'n': sb.WriteByte('\n')
-			case 'r': sb.WriteByte('\r')
-			case 't': sb.WriteByte('\t')
-			case 'b': sb.WriteByte('\b')
-			case 'f': sb.WriteByte('\f')
-			default: sb.WriteByte('\\'); sb.WriteByte(esc)
+			case '"', '\\', '/':
+				sb.WriteByte(esc)
+			case 'n':
+				sb.WriteByte('\n')
+			case 'r':
+				sb.WriteByte('\r')
+			case 't':
+				sb.WriteByte('\t')
+			case 'b':
+				sb.WriteByte('\b')
+			case 'f':
+				sb.WriteByte('\f')
+			default:
+				sb.WriteByte('\\')
+				sb.WriteByte(esc)
 			}
 		} else if ch == '\n' {
 			return "", p.errf("unexpected newline in string")
@@ -897,12 +915,18 @@ func (p *QueryParser) parseDirectives() []*Directive {
 
 func (p *QueryParser) valToGo(v Val) interface{} {
 	switch v.Kind {
-	case ValString:  return v.Str
-	case ValInt:     return v.Int
-	case ValFloat:   return v.Float
-	case ValBoolean: return v.Bool
-	case ValNull:    return nil
-	case ValEnum:    return v.Str
+	case ValString:
+		return v.Str
+	case ValInt:
+		return v.Int
+	case ValFloat:
+		return v.Float
+	case ValBoolean:
+		return v.Bool
+	case ValNull:
+		return nil
+	case ValEnum:
+		return v.Str
 	case ValList:
 		out := make([]interface{}, len(v.List))
 		for i, e := range v.List {
@@ -936,23 +960,36 @@ func (p *QueryParser) parseName() string {
 
 // Parser helpers.
 func (p *QueryParser) peek() byte {
-	if p.pos >= len(p.input) { return 0 }
+	if p.pos >= len(p.input) {
+		return 0
+	}
 	return p.input[p.pos]
 }
 
 func (p *QueryParser) peek3() string {
-	if p.pos+3 > len(p.input) { return "" }
+	if p.pos+3 > len(p.input) {
+		return ""
+	}
 	return p.input[p.pos : p.pos+3]
 }
 
 func (p *QueryParser) peekRune() (rune, int) {
-	if p.pos >= len(p.input) { return 0, 0 }
+	if p.pos >= len(p.input) {
+		return 0, 0
+	}
 	return utf8.DecodeRuneInString(p.input[p.pos:])
 }
 
 func (p *QueryParser) advance() {
-	if p.pos >= len(p.input) { return }
-	if p.input[p.pos] == '\n' { p.line++; p.col = 1 } else { p.col++ }
+	if p.pos >= len(p.input) {
+		return
+	}
+	if p.input[p.pos] == '\n' {
+		p.line++
+		p.col = 1
+	} else {
+		p.col++
+	}
 	p.pos++
 }
 
@@ -963,10 +1000,14 @@ func (p *QueryParser) match(word string) bool {
 		if end <= len(p.input) {
 			if end < len(p.input) {
 				r, _ := utf8.DecodeRuneInString(p.input[end:])
-				if isAlphaNum(r) || r == '_' { return false }
+				if isAlphaNum(r) || r == '_' {
+					return false
+				}
 			}
 		}
-		for i := 0; i < len(word); i++ { p.advance() }
+		for i := 0; i < len(word); i++ {
+			p.advance()
+		}
 		return true
 	}
 	return false
@@ -978,7 +1019,9 @@ func (p *QueryParser) skipWS() {
 		if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == ',' {
 			p.advance()
 		} else if ch == '#' {
-			for p.pos < len(p.input) && p.input[p.pos] != '\n' { p.advance() }
+			for p.pos < len(p.input) && p.input[p.pos] != '\n' {
+				p.advance()
+			}
 		} else {
 			break
 		}
@@ -990,7 +1033,7 @@ func (p *QueryParser) errf(format string, args ...interface{}) error {
 		fmt.Sprintf(format, args...), p.line, p.col)
 }
 
-func isAlpha(r rune) bool { return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') }
+func isAlpha(r rune) bool    { return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') }
 func isAlphaNum(r rune) bool { return isAlpha(r) || (r >= '0' && r <= '9') }
 
 // ---------------------------------------------------------------------------
@@ -1062,9 +1105,12 @@ func (e *Executor) Execute(ctx ResolveCtx, query string, variables map[string]in
 
 	var rootType *ObjectType
 	switch op.Type {
-	case OpQuery:    rootType = e.schema.Query()
-	case OpMutation: rootType = e.schema.Mutation()
-	default:         rootType = e.schema.Query()
+	case OpQuery:
+		rootType = e.schema.Query()
+	case OpMutation:
+		rootType = e.schema.Mutation()
+	default:
+		rootType = e.schema.Query()
 	}
 
 	result, errs := e.executeSelectionSet(ctx, rootType, nil, op.Selections, doc.Fragments, "")
@@ -1084,8 +1130,8 @@ func (e *Executor) executeSelectionSet(
 	var errs []*ExecError
 
 	type fieldJob struct {
-		key      string
-		field    *FieldSel
+		key   string
+		field *FieldSel
 	}
 
 	var jobs []fieldJob
@@ -1217,22 +1263,34 @@ func (e *Executor) resolveArg(v Val, variables map[string]interface{}) interface
 	switch v.Kind {
 	case ValVariable:
 		if variables != nil {
-			if val, ok := variables[v.Str]; ok { return val }
+			if val, ok := variables[v.Str]; ok {
+				return val
+			}
 		}
 		return nil
-	case ValString:  return v.Str
-	case ValInt:     return v.Int
-	case ValFloat:   return v.Float
-	case ValBoolean: return v.Bool
-	case ValNull:    return nil
-	case ValEnum:    return v.Str
+	case ValString:
+		return v.Str
+	case ValInt:
+		return v.Int
+	case ValFloat:
+		return v.Float
+	case ValBoolean:
+		return v.Bool
+	case ValNull:
+		return nil
+	case ValEnum:
+		return v.Str
 	case ValList:
 		out := make([]interface{}, len(v.List))
-		for i, ev := range v.List { out[i] = e.resolveArg(ev, variables) }
+		for i, ev := range v.List {
+			out[i] = e.resolveArg(ev, variables)
+		}
 		return out
 	case ValObject:
 		out := make(map[string]interface{})
-		for k, ev := range v.Object { out[k] = e.resolveArg(ev, variables) }
+		for k, ev := range v.Object {
+			out[k] = e.resolveArg(ev, variables)
+		}
 		return out
 	}
 	return nil
@@ -1240,28 +1298,42 @@ func (e *Executor) resolveArg(v Val, variables map[string]interface{}) interface
 
 func (e *Executor) resolveType(tr *TypeRef) *ObjectType {
 	name := tr.Named()
-	if name != "" { return e.schema.Type(name) }
+	if name != "" {
+		return e.schema.Type(name)
+	}
 	return nil
 }
 
 func (e *Executor) expand(sel Selection, objType *ObjectType, fragments map[string]*FragmentDef, parent interface{}, vars map[string]interface{}) []Selection {
 	switch s := sel.(type) {
 	case *FieldSel:
-		if shouldSkip(s.Directives, vars) { return nil }
+		if shouldSkip(s.Directives, vars) {
+			return nil
+		}
 		return []Selection{s}
 	case *FragSpread:
-		if shouldSkip(s.Directives, vars) { return nil }
+		if shouldSkip(s.Directives, vars) {
+			return nil
+		}
 		frag, ok := fragments[s.Name]
-		if !ok { return nil }
-		if objType.Name != frag.TypeCondition { return nil }
+		if !ok {
+			return nil
+		}
+		if objType.Name != frag.TypeCondition {
+			return nil
+		}
 		var out []Selection
 		for _, inner := range frag.Selections {
 			out = append(out, e.expand(inner, objType, fragments, parent, vars)...)
 		}
 		return out
 	case *InlineFrag:
-		if shouldSkip(s.Directives, vars) { return nil }
-		if s.TypeCondition != "" && objType.Name != s.TypeCondition { return nil }
+		if shouldSkip(s.Directives, vars) {
+			return nil
+		}
+		if s.TypeCondition != "" && objType.Name != s.TypeCondition {
+			return nil
+		}
 		var out []Selection
 		for _, inner := range s.Selections {
 			out = append(out, e.expand(inner, objType, fragments, parent, vars)...)
@@ -1275,9 +1347,13 @@ func shouldSkip(dirs []*Directive, vars map[string]interface{}) bool {
 	for _, d := range dirs {
 		switch d.Name {
 		case "skip":
-			if getBool(d, "if", vars) { return true }
+			if getBool(d, "if", vars) {
+				return true
+			}
 		case "include":
-			if !getBool(d, "if", vars) { return true }
+			if !getBool(d, "if", vars) {
+				return true
+			}
 		}
 	}
 	return false
@@ -1287,10 +1363,13 @@ func getBool(d *Directive, name string, vars map[string]interface{}) bool {
 	for _, a := range d.Arguments {
 		if a.Name == name {
 			switch a.Value.Kind {
-			case ValBoolean: return a.Value.Bool
+			case ValBoolean:
+				return a.Value.Bool
 			case ValVariable:
 				if v, ok := vars[a.Value.Str]; ok {
-					if b, ok := v.(bool); ok { return b }
+					if b, ok := v.(bool); ok {
+						return b
+					}
 				}
 			}
 		}
@@ -1299,7 +1378,9 @@ func getBool(d *Directive, name string, vars map[string]interface{}) bool {
 }
 
 func joinPath(prefix, name string) string {
-	if prefix == "" { return name }
+	if prefix == "" {
+		return name
+	}
 	return prefix + "." + name
 }
 
@@ -1324,7 +1405,9 @@ func IntrospectSchema(s *Schema) map[string]interface{} {
 				"name": f.Name,
 				"type": introspectType(f.Type),
 			}
-			if f.Description != "" { fi["description"] = f.Description }
+			if f.Description != "" {
+				fi["description"] = f.Description
+			}
 			if f.DeprecationReason != "" {
 				fi["isDeprecated"] = true
 				fi["deprecationReason"] = f.DeprecationReason
@@ -1391,7 +1474,9 @@ func RegisterIntrospection(s *Schema) {
 // CoerceValue attempts to coerce a Go value to match a TypeRef.
 func CoerceValue(tr *TypeRef, val interface{}) (interface{}, error) {
 	if val == nil {
-		if tr.IsNonNull() { return nil, fmt.Errorf("null for non-null type") }
+		if tr.IsNonNull() {
+			return nil, fmt.Errorf("null for non-null type")
+		}
 		return nil, nil
 	}
 	inner := tr.UnwrapNonNull()
@@ -1409,45 +1494,67 @@ func coerceScalar(s Scalar, val interface{}) (interface{}, error) {
 	switch s {
 	case ScalarString:
 		switch v := val.(type) {
-		case string: return v, nil
-		case fmt.Stringer: return v.String(), nil
-		default: return fmt.Sprintf("%v", v), nil
+		case string:
+			return v, nil
+		case fmt.Stringer:
+			return v.String(), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
 		}
 	case ScalarInt:
 		switch v := val.(type) {
-		case int: return int64(v), nil
-		case int32: return int64(v), nil
-		case int64: return v, nil
+		case int:
+			return int64(v), nil
+		case int32:
+			return int64(v), nil
+		case int64:
+			return v, nil
 		case float64:
-			if v == math.Trunc(v) { return int64(v), nil }
+			if v == math.Trunc(v) {
+				return int64(v), nil
+			}
 			return nil, fmt.Errorf("float %v is not an integer", v)
 		case json.Number:
 			iv, err := v.Int64()
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			return iv, nil
-		default: return nil, fmt.Errorf("cannot coerce %T to Int", val)
+		default:
+			return nil, fmt.Errorf("cannot coerce %T to Int", val)
 		}
 	case ScalarFloat:
 		switch v := val.(type) {
-		case float64: return v, nil
-		case float32: return float64(v), nil
-		case int: return float64(v), nil
-		case int64: return float64(v), nil
+		case float64:
+			return v, nil
+		case float32:
+			return float64(v), nil
+		case int:
+			return float64(v), nil
+		case int64:
+			return float64(v), nil
 		case json.Number:
 			return v.Float64()
-		default: return nil, fmt.Errorf("cannot coerce %T to Float", val)
+		default:
+			return nil, fmt.Errorf("cannot coerce %T to Float", val)
 		}
 	case ScalarBoolean:
 		switch v := val.(type) {
-		case bool: return v, nil
-		default: return nil, fmt.Errorf("cannot coerce %T to Boolean", val)
+		case bool:
+			return v, nil
+		default:
+			return nil, fmt.Errorf("cannot coerce %T to Boolean", val)
 		}
 	case ScalarID:
 		switch v := val.(type) {
-		case string: return v, nil
-		case int, int32, int64: return fmt.Sprintf("%v", v), nil
-		case fmt.Stringer: return v.String(), nil
-		default: return fmt.Sprintf("%v", v), nil
+		case string:
+			return v, nil
+		case int, int32, int64:
+			return fmt.Sprintf("%v", v), nil
+		case fmt.Stringer:
+			return v.String(), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
 		}
 	}
 	return val, nil
@@ -1455,7 +1562,9 @@ func coerceScalar(s Scalar, val interface{}) (interface{}, error) {
 
 func coerceList(tr *TypeRef, val interface{}) (interface{}, error) {
 	inner := tr.UnwrapList()
-	if inner == nil { return val, nil }
+	if inner == nil {
+		return val, nil
+	}
 
 	// If it's already a slice, coerce each element.
 	switch v := val.(type) {
@@ -1463,14 +1572,18 @@ func coerceList(tr *TypeRef, val interface{}) (interface{}, error) {
 		out := make([]interface{}, len(v))
 		for i, elem := range v {
 			c, err := CoerceValue(inner, elem)
-			if err != nil { return nil, err }
+			if err != nil {
+				return nil, err
+			}
 			out[i] = c
 		}
 		return out, nil
 	default:
 		// Wrap single value in a list.
 		c, err := CoerceValue(inner, v)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		return []interface{}{c}, nil
 	}
 }

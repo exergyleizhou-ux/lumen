@@ -18,8 +18,8 @@ func init() {
 // BashTool executes shell commands with a configurable timeout.
 type BashTool struct{}
 
-func (t *BashTool) Name() string        { return "bash" }
-func (t *BashTool) ReadOnly() bool      { return false }
+func (t *BashTool) Name() string   { return "bash" }
+func (t *BashTool) ReadOnly() bool { return false }
 
 func (t *BashTool) Description() string {
 	return "Execute a command in the shell and return combined stdout/stderr. Use for builds, tests, git, package managers, etc. To search/read/list/edit files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file) over shell grep/cat/ls/find/sed — they behave identically on every OS. For symbol search, call graphs, or architecture questions, use codegraph tools instead of grep."

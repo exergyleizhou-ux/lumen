@@ -1,15 +1,23 @@
 package observer
 
-import ("testing")
+import (
+	"testing"
+)
 
 func TestTracerStartEnd(t *testing.T) {
 	tr := NewTracer()
 	span := tr.StartSpan("trace-1", "", "test-op", SpanInternal)
-	if span.Name != "test-op" { t.Error("name") }
+	if span.Name != "test-op" {
+		t.Error("name")
+	}
 	tr.EndSpan(span.ID, "ok")
-	if tr.SpanCount() != 1 { t.Error("count") }
+	if tr.SpanCount() != 1 {
+		t.Error("count")
+	}
 	trace := tr.GetTrace("trace-1")
-	if len(trace) != 1 { t.Error("trace size") }
+	if len(trace) != 1 {
+		t.Error("trace size")
+	}
 }
 func TestTracerNested(t *testing.T) {
 	tr := NewTracer()
@@ -18,7 +26,9 @@ func TestTracerNested(t *testing.T) {
 	tr.EndSpan(child.ID, "ok")
 	tr.EndSpan(root.ID, "ok")
 	trace := tr.GetTrace("t2")
-	if len(trace) != 2 { t.Error("nested") }
+	if len(trace) != 2 {
+		t.Error("nested")
+	}
 }
 func TestTracerEvents(t *testing.T) {
 	tr := NewTracer()
@@ -27,15 +37,23 @@ func TestTracerEvents(t *testing.T) {
 	tr.SetAttribute(span.ID, "user", "admin")
 	tr.EndSpan(span.ID, "ok")
 	found := tr.GetTrace("t3")
-	if len(found[0].Events) != 1 { t.Error("events") }
-	if found[0].Attributes["user"] != "admin" { t.Error("attrs") }
+	if len(found[0].Events) != 1 {
+		t.Error("events")
+	}
+	if found[0].Attributes["user"] != "admin" {
+		t.Error("attrs")
+	}
 }
 func TestLogCorrelator(t *testing.T) {
 	lc := NewLogCorrelator()
 	lc.Log("trace-x", "span-1", "info", "hello")
 	logs := lc.GetTraceLogs("trace-x")
-	if len(logs) != 1 { t.Error("log count") }
-	if logs[0].Message != "hello" { t.Error("log msg") }
+	if len(logs) != 1 {
+		t.Error("log count")
+	}
+	if logs[0].Message != "hello" {
+		t.Error("log msg")
+	}
 }
 func TestSampleCollector(t *testing.T) {
 	sc := NewSampleCollector()
@@ -43,11 +61,21 @@ func TestSampleCollector(t *testing.T) {
 	sc.Record("latency", 2.0)
 	sc.Record("latency", 3.0)
 	min, max, mean, count := sc.Stats("latency")
-	if count != 3 { t.Error("count") }
-	if min != 1.0 { t.Error("min") }
-	if max != 3.0 { t.Error("max") }
-	if mean != 2.0 { t.Error("mean") }
+	if count != 3 {
+		t.Error("count")
+	}
+	if min != 1.0 {
+		t.Error("min")
+	}
+	if max != 3.0 {
+		t.Error("max")
+	}
+	if mean != 2.0 {
+		t.Error("mean")
+	}
 }
 func TestSpanKindString(t *testing.T) {
-	if SpanServer.String() != "server" { t.Error("kind") }
+	if SpanServer.String() != "server" {
+		t.Error("kind")
+	}
 }

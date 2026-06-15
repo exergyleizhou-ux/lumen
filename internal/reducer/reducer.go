@@ -40,8 +40,11 @@ type MapFunc func(input Record, emit func(key string, value any))
 type ReduceFunc func(key string, values []any) any
 
 type mapAdapter struct{ fn MapFunc }
+
 func (m mapAdapter) Map(input Record, emit func(key string, value any)) { m.fn(input, emit) }
+
 type reduceAdapter struct{ fn ReduceFunc }
+
 func (r reduceAdapter) Reduce(key string, values []any) any { return r.fn(key, values) }
 
 // Job is a map-reduce job specification.
@@ -56,11 +59,11 @@ type Job struct {
 
 // JobResult holds the output of a map-reduce job.
 type JobResult struct {
-	Name     string        `json:"name"`
-	Outputs  []Output      `json:"outputs"`
-	Duration time.Duration `json:"duration"`
-	MapCount int           `json:"map_count"`
-	ReduceCount int        `json:"reduce_count"`
+	Name        string        `json:"name"`
+	Outputs     []Output      `json:"outputs"`
+	Duration    time.Duration `json:"duration"`
+	MapCount    int           `json:"map_count"`
+	ReduceCount int           `json:"reduce_count"`
 }
 
 // Engine executes map-reduce jobs.
@@ -78,11 +81,18 @@ func NewEngine() *Engine {
 // Run executes a job.
 func (e *Engine) Run(job *Job) *JobResult {
 	start := time.Now()
-	if job.Partitions <= 0 { job.Partitions = 16 }
-	if job.Workers <= 0 { job.Workers = 4 }
+	if job.Partitions <= 0 {
+		job.Partitions = 16
+	}
+	if job.Workers <= 0 {
+		job.Workers = 4
+	}
 
 	// ── Map Phase ──
-	type keyval struct{ key string; value any }
+	type keyval struct {
+		key   string
+		value any
+	}
 	shuffle := make([][]keyval, job.Partitions)
 
 	var mapWg sync.WaitGroup
@@ -105,7 +115,7 @@ func (e *Engine) Run(job *Job) *JobResult {
 
 	// ── Shuffle/Sort Phase ──
 	type partitionData struct {
-		idx   int
+		idx     int
 		buckets map[string][]any
 	}
 	partitionCh := make(chan partitionData, job.Partitions)
@@ -131,7 +141,9 @@ func (e *Engine) Run(job *Job) *JobResult {
 		go func(p partitionData) {
 			defer reduceWg.Done()
 			keys := make([]string, 0, len(p.buckets))
-			for k := range p.buckets { keys = append(keys, k) }
+			for k := range p.buckets {
+				keys = append(keys, k)
+			}
 			sort.Strings(keys)
 
 			var outputs []Output
@@ -158,7 +170,9 @@ func (e *Engine) Run(job *Job) *JobResult {
 
 	e.mu.Lock()
 	e.history = append(e.history, result)
-	if len(e.history) > e.maxHist { e.history = e.history[1:] }
+	if len(e.history) > e.maxHist {
+		e.history = e.history[1:]
+	}
 	e.mu.Unlock()
 
 	return result
@@ -166,14 +180,19 @@ func (e *Engine) Run(job *Job) *JobResult {
 
 func hashKeyPartition(key string, partitions int) int {
 	var h int
-	for _, c := range key { h = h*31 + int(c) }
-	if h < 0 { h = -h }
+	for _, c := range key {
+		h = h*31 + int(c)
+	}
+	if h < 0 {
+		h = -h
+	}
 	return h % partitions
 }
 
 // History returns recent job results.
 func (e *Engine) History() []*JobResult {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	out := make([]*JobResult, len(e.history))
 	copy(out, e.history)
 	return out
@@ -189,7 +208,9 @@ func FormatResult(r *JobResult) string {
 
 	if len(r.Outputs) > 0 {
 		limit := r.ReduceCount
-		if limit > 30 { limit = 30 }
+		if limit > 30 {
+			limit = 30
+		}
 		sb.WriteString("\n  Outputs:\n")
 		for i := 0; i < limit; i++ {
 			fmt.Fprintf(&sb, "    %-30s → %v\n", r.Outputs[i].Key, truncateVal(r.Outputs[i].Value, 40))
@@ -203,7 +224,9 @@ func FormatResult(r *JobResult) string {
 
 func truncateVal(v any, n int) string {
 	s := fmt.Sprint(v)
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n-3] + "..."
 }
 
@@ -225,8 +248,10 @@ func SumReducer() ReduceFunc {
 		var sum int
 		for _, v := range values {
 			switch n := v.(type) {
-			case int: sum += n
-			case float64: sum += int(n)
+			case int:
+				sum += n
+			case float64:
+				sum += int(n)
 			}
 		}
 		return sum

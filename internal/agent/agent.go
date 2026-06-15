@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"lumen/internal/diff"
 	"lumen/internal/checkpoint"
+	"lumen/internal/diff"
 	"lumen/internal/event"
 	"lumen/internal/evidence"
 	"lumen/internal/guard"
@@ -121,14 +121,14 @@ type Agent struct {
 	evidence *evidence.Ledger
 
 	// Context management
-	contextWindow     int
-	softCompactRatio  float64
-	compactRatio      float64
-	compactForceRatio float64
-	recentKeep        int
-	softCompactNoticed bool
-	compactStuck      bool
-	compactProvider    provider.Provider // model-based compaction (nil = sliding window)
+	contextWindow       int
+	softCompactRatio    float64
+	compactRatio        float64
+	compactForceRatio   float64
+	recentKeep          int
+	softCompactNoticed  bool
+	compactStuck        bool
+	compactProvider     provider.Provider // model-based compaction (nil = sliding window)
 	consecutiveCompacts int
 }
 
@@ -165,21 +165,21 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		opts.CompactForceRatio = 1.0
 	}
 	return &Agent{
-		prov:               prov,
-		tools:              tools,
-		session:            session,
-		maxSteps:           opts.MaxSteps,
-		temperature:        opts.Temperature,
-		pricing:            opts.Pricing,
-		sink:               opts.Sink,
-		gate:               opts.Gate,
-		asker:              opts.Asker,
-		contextWindow:      opts.ContextWindow,
-		softCompactRatio:   opts.SoftCompactRatio,
-		compactRatio:       opts.CompactRatio,
-		compactForceRatio:  opts.CompactForceRatio,
-		recentKeep:         opts.RecentKeep,
-		cache:              newCacheTracker(),
+		prov:              prov,
+		tools:             tools,
+		session:           session,
+		maxSteps:          opts.MaxSteps,
+		temperature:       opts.Temperature,
+		pricing:           opts.Pricing,
+		sink:              opts.Sink,
+		gate:              opts.Gate,
+		asker:             opts.Asker,
+		contextWindow:     opts.ContextWindow,
+		softCompactRatio:  opts.SoftCompactRatio,
+		compactRatio:      opts.CompactRatio,
+		compactForceRatio: opts.CompactForceRatio,
+		recentKeep:        opts.RecentKeep,
+		cache:             newCacheTracker(),
 	}
 }
 
@@ -460,9 +460,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 	// Max steps exhausted
 	a.sink.Emit(event.Event{
-		Kind:  event.Notice,
-		Level: event.LevelWarn,
-		Text:  fmt.Sprintf("max steps (%d) reached — stopping", a.maxSteps),
+		Kind:      event.Notice,
+		Level:     event.LevelWarn,
+		Text:      fmt.Sprintf("max steps (%d) reached — stopping", a.maxSteps),
 		Timestamp: time.Now(),
 	})
 	a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
@@ -514,7 +514,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 					"the user will be asked to approve it before any changes are made.",
 				call.Name),
 			blocked: true,
-			errMsg: "blocked: plan mode is read-only",
+			errMsg:  "blocked: plan mode is read-only",
 		}
 	}
 

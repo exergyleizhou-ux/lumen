@@ -14,8 +14,8 @@ type State int32
 
 const (
 	StateClosed   State = iota // Normal operation; requests flow through.
-	StateOpen                   // Failing; requests are rejected immediately.
-	StateHalfOpen               // Probing; a limited number of requests are allowed.
+	StateOpen                  // Failing; requests are rejected immediately.
+	StateHalfOpen              // Probing; a limited number of requests are allowed.
 )
 
 var stateNames = map[State]string{
@@ -33,13 +33,13 @@ func (s State) String() string {
 
 // Config holds the parameters for a circuit breaker.
 type Config struct {
-	FailureThreshold  int           // Consecutive failures to trip to Open.
-	SuccessThreshold  int           // Consecutive successes in HalfOpen to reset to Closed.
-	Timeout           time.Duration // How long to stay Open before transitioning to HalfOpen.
-	HalfOpenMaxReqs   int           // Max requests allowed in HalfOpen state.
-	WindowDuration    time.Duration // Rolling window for failure-rate calculation.
-	FailureRateLimit  float64       // Max failure rate (0-1) before tripping, alternative to threshold.
-	RequestVolumeMin  int           // Min requests in window before failure-rate evaluation.
+	FailureThreshold int           // Consecutive failures to trip to Open.
+	SuccessThreshold int           // Consecutive successes in HalfOpen to reset to Closed.
+	Timeout          time.Duration // How long to stay Open before transitioning to HalfOpen.
+	HalfOpenMaxReqs  int           // Max requests allowed in HalfOpen state.
+	WindowDuration   time.Duration // Rolling window for failure-rate calculation.
+	FailureRateLimit float64       // Max failure rate (0-1) before tripping, alternative to threshold.
+	RequestVolumeMin int           // Min requests in window before failure-rate evaluation.
 }
 
 // DefaultConfig returns sensible defaults.
@@ -57,14 +57,14 @@ func DefaultConfig() Config {
 
 // Metrics tracks circuit breaker statistics.
 type Metrics struct {
-	TotalRequests   int64 // Total requests seen.
-	TotalSuccesses  int64 // Total successful requests.
-	TotalFailures   int64 // Total failed requests.
-	TotalRejects    int64 // Requests rejected due to open circuit.
+	TotalRequests    int64 // Total requests seen.
+	TotalSuccesses   int64 // Total successful requests.
+	TotalFailures    int64 // Total failed requests.
+	TotalRejects     int64 // Requests rejected due to open circuit.
 	StateTransitions int64 // Number of state changes.
-	ShortCircuits   int64 // Requests short-circuited.
-	LastFailureTime int64 // Unix nano of last failure.
-	LastSuccessTime int64 // Unix nano of last success.
+	ShortCircuits    int64 // Requests short-circuited.
+	LastFailureTime  int64 // Unix nano of last failure.
+	LastSuccessTime  int64 // Unix nano of last success.
 }
 
 // Snapshot returns a copy of the current metrics.
@@ -436,15 +436,17 @@ const (
 )
 
 var eventTypeNames = map[EventType]string{
-	EventStateChange:   "state-change",
-	EventTrip:          "trip",
-	EventReset:         "reset",
-	EventProbeSuccess:  "probe-success",
-	EventProbeFailure:  "probe-failure",
+	EventStateChange:  "state-change",
+	EventTrip:         "trip",
+	EventReset:        "reset",
+	EventProbeSuccess: "probe-success",
+	EventProbeFailure: "probe-failure",
 }
 
 func (et EventType) String() string {
-	if n, ok := eventTypeNames[et]; ok { return n }
+	if n, ok := eventTypeNames[et]; ok {
+		return n
+	}
 	return "unknown"
 }
 
@@ -527,21 +529,27 @@ func NewDynamicConfig(cb *CircuitBreaker) *DynamicConfig { return &DynamicConfig
 func (dc *DynamicConfig) SetFailureThreshold(n int) {
 	dc.cb.mu.Lock()
 	defer dc.cb.mu.Unlock()
-	if n > 0 { dc.cb.config.FailureThreshold = n }
+	if n > 0 {
+		dc.cb.config.FailureThreshold = n
+	}
 }
 
 // SetSuccessThreshold updates the success threshold at runtime.
 func (dc *DynamicConfig) SetSuccessThreshold(n int) {
 	dc.cb.mu.Lock()
 	defer dc.cb.mu.Unlock()
-	if n > 0 { dc.cb.config.SuccessThreshold = n }
+	if n > 0 {
+		dc.cb.config.SuccessThreshold = n
+	}
 }
 
 // SetTimeout updates the open-state timeout.
 func (dc *DynamicConfig) SetTimeout(d time.Duration) {
 	dc.cb.mu.Lock()
 	defer dc.cb.mu.Unlock()
-	if d > 0 { dc.cb.config.Timeout = d }
+	if d > 0 {
+		dc.cb.config.Timeout = d
+	}
 }
 
 // ForceState manually sets the breaker state (for testing/admin).
@@ -572,7 +580,9 @@ func NewRegionBreaker(cfg Config) *RegionBreaker {
 func (rb *RegionBreaker) Get(region string) *CircuitBreaker {
 	rb.mu.Lock()
 	defer rb.mu.Unlock()
-	if cb, ok := rb.breakers[region]; ok { return cb }
+	if cb, ok := rb.breakers[region]; ok {
+		return cb
+	}
 	cb := New("region-"+region, rb.config)
 	rb.breakers[region] = cb
 	return cb
@@ -584,7 +594,9 @@ func (rb *RegionBreaker) HealthyRegions() []string {
 	defer rb.mu.RUnlock()
 	var out []string
 	for region, cb := range rb.breakers {
-		if cb.State() != StateOpen { out = append(out, region) }
+		if cb.State() != StateOpen {
+			out = append(out, region)
+		}
 	}
 	return out
 }
@@ -593,9 +605,13 @@ func (rb *RegionBreaker) HealthyRegions() []string {
 func (rb *RegionBreaker) AllOpen() bool {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
-	if len(rb.breakers) == 0 { return false }
+	if len(rb.breakers) == 0 {
+		return false
+	}
 	for _, cb := range rb.breakers {
-		if cb.State() != StateOpen { return false }
+		if cb.State() != StateOpen {
+			return false
+		}
 	}
 	return true
 }
@@ -656,17 +672,23 @@ func NewBatchChecker(breakers ...*CircuitBreaker) *BatchChecker {
 // AllowAll returns nil only if all breakers allow. Returns first error.
 func (bc *BatchChecker) AllowAll() error {
 	for _, cb := range bc.breakers {
-		if err := cb.Allow(); err != nil { return err }
+		if err := cb.Allow(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 // SuccessAll records success on all breakers.
 func (bc *BatchChecker) SuccessAll() {
-	for _, cb := range bc.breakers { cb.Success() }
+	for _, cb := range bc.breakers {
+		cb.Success()
+	}
 }
 
 // FailureAll records failure on all breakers.
 func (bc *BatchChecker) FailureAll() {
-	for _, cb := range bc.breakers { cb.Failure() }
+	for _, cb := range bc.breakers {
+		cb.Failure()
+	}
 }

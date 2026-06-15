@@ -15,15 +15,15 @@ import (
 
 // Item is one installable item in the marketplace.
 type Item struct {
-	Name        string   `json:"name"`
-	Type        string   `json:"type"` // "skill" or "mcp"
-	Description string   `json:"description"`
-	Version     string   `json:"version"`
-	Author      string   `json:"author"`
-	Source      string   `json:"source"` // URL or "local"
-	Tags        []string `json:"tags"`
-	Installed   bool     `json:"installed"`
-	InstalledVersion string `json:"installed_version,omitempty"`
+	Name             string   `json:"name"`
+	Type             string   `json:"type"` // "skill" or "mcp"
+	Description      string   `json:"description"`
+	Version          string   `json:"version"`
+	Author           string   `json:"author"`
+	Source           string   `json:"source"` // URL or "local"
+	Tags             []string `json:"tags"`
+	Installed        bool     `json:"installed"`
+	InstalledVersion string   `json:"installed_version,omitempty"`
 }
 
 // Store manages the marketplace catalog.
@@ -45,40 +45,55 @@ func (s *Store) catalogPath() string { return filepath.Join(s.dir, "catalog.json
 
 func (s *Store) loadCatalog() {
 	data, err := os.ReadFile(s.catalogPath())
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	var items []*Item
-	if json.Unmarshal(data, &items) != nil { return }
-	s.mu.Lock(); defer s.mu.Unlock()
-	for _, item := range items { s.items[item.Name] = item }
+	if json.Unmarshal(data, &items) != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, item := range items {
+		s.items[item.Name] = item
+	}
 }
 
-func (s *Store) saveCatalog() {
-	s.mu.RLock()
+// saveCatalogLocked persists the catalog. The caller must hold s.mu.
+func (s *Store) saveCatalogLocked() {
 	items := make([]*Item, 0, len(s.items))
-	for _, item := range s.items { items = append(items, item) }
-	s.mu.RUnlock()
+	for _, item := range s.items {
+		items = append(items, item)
+	}
 	data, _ := json.MarshalIndent(items, "", "  ")
 	os.WriteFile(s.catalogPath(), data, 0o644)
 }
 
 // AddItem registers an item in the marketplace.
 func (s *Store) AddItem(item *Item) {
-	s.mu.Lock(); defer s.mu.Unlock()
-	s.items[item.Name] = item; s.saveCatalog()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items[item.Name] = item
+	s.saveCatalogLocked()
 }
 
 // Get returns an item by name.
 func (s *Store) Get(name string) (*Item, bool) {
-	s.mu.RLock(); defer s.mu.RUnlock()
-	item, ok := s.items[name]; return item, ok
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	item, ok := s.items[name]
+	return item, ok
 }
 
 // List returns all items, optionally filtered by type.
 func (s *Store) List(itemType string) []*Item {
-	s.mu.RLock(); defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []*Item
 	for _, item := range s.items {
-		if itemType == "" || item.Type == itemType { out = append(out, item) }
+		if itemType == "" || item.Type == itemType {
+			out = append(out, item)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -86,7 +101,8 @@ func (s *Store) List(itemType string) []*Item {
 
 // Search finds items matching a query in name, description, or tags.
 func (s *Store) Search(query string) []*Item {
-	s.mu.RLock(); defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	query = strings.ToLower(query)
 	var out []*Item
 	for _, item := range s.items {
@@ -96,7 +112,10 @@ func (s *Store) Search(query string) []*Item {
 			continue
 		}
 		for _, tag := range item.Tags {
-			if strings.Contains(strings.ToLower(tag), query) { out = append(out, item); break }
+			if strings.Contains(strings.ToLower(tag), query) {
+				out = append(out, item)
+				break
+			}
 		}
 	}
 	return out
@@ -104,24 +123,35 @@ func (s *Store) Search(query string) []*Item {
 
 // MarkInstalled records that an item is installed at a certain version.
 func (s *Store) MarkInstalled(name, version string) {
-	s.mu.Lock(); defer s.mu.Unlock()
-	if item, ok := s.items[name]; ok { item.Installed = true; item.InstalledVersion = version }
-	s.saveCatalog()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if item, ok := s.items[name]; ok {
+		item.Installed = true
+		item.InstalledVersion = version
+	}
+	s.saveCatalogLocked()
 }
 
 // MarkUninstalled records removal.
 func (s *Store) MarkUninstalled(name string) {
-	s.mu.Lock(); defer s.mu.Unlock()
-	if item, ok := s.items[name]; ok { item.Installed = false; item.InstalledVersion = "" }
-	s.saveCatalog()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if item, ok := s.items[name]; ok {
+		item.Installed = false
+		item.InstalledVersion = ""
+	}
+	s.saveCatalogLocked()
 }
 
 // Outdated returns installed items with newer versions available.
 func (s *Store) Outdated() []*Item {
-	s.mu.RLock(); defer s.mu.RUnlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	var out []*Item
 	for _, item := range s.items {
-		if item.Installed && item.InstalledVersion != item.Version { out = append(out, item) }
+		if item.Installed && item.InstalledVersion != item.Version {
+			out = append(out, item)
+		}
 	}
 	return out
 }
@@ -133,9 +163,13 @@ func (s *Store) FormatCatalog() string {
 	fmt.Fprintf(&sb, "Marketplace (%d items):\n\n", len(items))
 	for _, item := range items {
 		installed := ""
-		if item.Installed { installed = " [installed]" }
+		if item.Installed {
+			installed = " [installed]"
+		}
 		fmt.Fprintf(&sb, "  %s (%s v%s)%s\n", item.Name, item.Type, item.Version, installed)
-		if item.Description != "" { fmt.Fprintf(&sb, "    %s\n", item.Description) }
+		if item.Description != "" {
+			fmt.Fprintf(&sb, "    %s\n", item.Description)
+		}
 	}
 	return sb.String()
 }
@@ -143,7 +177,9 @@ func (s *Store) FormatCatalog() string {
 // FormatOutdated formats outdated items.
 func (s *Store) FormatOutdated() string {
 	items := s.Outdated()
-	if len(items) == 0 { return "All items up to date.\n" }
+	if len(items) == 0 {
+		return "All items up to date.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d outdated item(s):\n\n", len(items))
 	for _, item := range items {
@@ -161,15 +197,19 @@ func NewIndexer(store *Store) *Indexer { return &Indexer{store: store} }
 
 func (ix *Indexer) IndexSkillDir(dir string) error {
 	entries, err := os.ReadDir(dir)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") { continue }
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
 		name := strings.TrimSuffix(e.Name(), ".md")
 		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
 		info, _ := e.Info()
 		ix.store.AddItem(&Item{
 			Name: name, Type: "skill", Source: "local",
-			Version: fmt.Sprintf("local-%d", info.ModTime().Unix()),
+			Version:     fmt.Sprintf("local-%d", info.ModTime().Unix()),
 			Description: firstLine(string(data)),
 		})
 	}
@@ -177,8 +217,12 @@ func (ix *Indexer) IndexSkillDir(dir string) error {
 }
 
 func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 { s = s[:i] }
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
 	s = strings.TrimSpace(s)
-	if len(s) > 120 { s = s[:117] + "..." }
+	if len(s) > 120 {
+		s = s[:117] + "..."
+	}
 	return s
 }

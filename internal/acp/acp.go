@@ -64,8 +64,8 @@ type DiagnosticRequest struct {
 }
 
 type DiagnosticResponse struct {
-	FilePath string       `json:"file_path"`
-	Items    []DiagItem   `json:"items"`
+	FilePath string     `json:"file_path"`
+	Items    []DiagItem `json:"items"`
 }
 
 type DiagItem struct {
@@ -87,9 +87,9 @@ type CompletionResponse struct {
 }
 
 type CompletionItem struct {
-	Text     string `json:"text"`
-	Label    string `json:"label"`
-	Detail   string `json:"detail,omitempty"`
+	Text   string `json:"text"`
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
 }
 
 type StatusResponse struct {

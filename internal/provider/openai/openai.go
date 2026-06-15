@@ -331,13 +331,13 @@ func (p *partialToolCall) finalize() *provider.ToolCall {
 // ── Request building ──────────────────────────────────────
 
 type chatRequest struct {
-	Model       string          `json:"model"`
-	Messages    []chatMessage   `json:"messages"`
-	Tools       []chatTool      `json:"tools,omitempty"`
-	Temperature float64         `json:"temperature"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Stream      bool            `json:"stream"`
-	StreamOpts  *streamOptions  `json:"stream_options,omitempty"`
+	Model       string         `json:"model"`
+	Messages    []chatMessage  `json:"messages"`
+	Tools       []chatTool     `json:"tools,omitempty"`
+	Temperature float64        `json:"temperature"`
+	MaxTokens   int            `json:"max_tokens,omitempty"`
+	Stream      bool           `json:"stream"`
+	StreamOpts  *streamOptions `json:"stream_options,omitempty"`
 }
 
 type streamOptions struct {
@@ -345,12 +345,12 @@ type streamOptions struct {
 }
 
 type chatMessage struct {
-	Role             string     `json:"role"`
-	Content          any        `json:"content,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	Role             string         `json:"role"`
+	Content          any            `json:"content,omitempty"`
+	ReasoningContent string         `json:"reasoning_content,omitempty"`
 	ToolCalls        []chatToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	Name             string     `json:"name,omitempty"`
+	ToolCallID       string         `json:"tool_call_id,omitempty"`
+	Name             string         `json:"name,omitempty"`
 }
 
 type chatToolCall struct {

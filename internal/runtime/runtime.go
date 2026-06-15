@@ -210,8 +210,8 @@ func NamedCheck(name string, fn func(ctx context.Context) error) *CheckFunc {
 	return &CheckFunc{name: name, fn: fn}
 }
 
-func (c *CheckFunc) Name() string                   { return c.name }
-func (c *CheckFunc) Run(ctx context.Context) error   { return c.fn(ctx) }
+func (c *CheckFunc) Name() string                  { return c.name }
+func (c *CheckFunc) Run(ctx context.Context) error { return c.fn(ctx) }
 
 // CheckResult is the outcome of one health check.
 type CheckResult struct {
@@ -228,15 +228,15 @@ type CheckResult struct {
 // HealthMonitor runs registered checks on a periodic ticker and retains the
 // most recent result for each.
 type HealthMonitor struct {
-	checks    []Check
-	results   map[string]*CheckResult
-	mu        sync.RWMutex
-	interval  time.Duration
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	running   bool
-	onChange  func(name string, passed bool)
+	checks   []Check
+	results  map[string]*CheckResult
+	mu       sync.RWMutex
+	interval time.Duration
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	running  bool
+	onChange func(name string, passed bool)
 }
 
 // NewHealthMonitor creates a HealthMonitor with a check interval.
@@ -386,8 +386,8 @@ func (hm *HealthMonitor) Summary() string {
 
 // GoroutineCheck reports the goroutine count with a soft threshold.
 type GoroutineCheck struct {
-	WarnThreshold  int
-	CritThreshold  int
+	WarnThreshold int
+	CritThreshold int
 }
 
 func (gc *GoroutineCheck) Name() string { return "goroutines" }
@@ -508,10 +508,10 @@ func fmtDuration(d time.Duration) string {
 // SysInfo collects a flat map of system-level metadata.
 func SysInfo() map[string]string {
 	return map[string]string{
-		"go_version":  runtime.Version(),
-		"goos":        runtime.GOOS,
-		"goarch":      runtime.GOARCH,
-		"num_cpu":     fmt.Sprintf("%d", runtime.NumCPU()),
+		"go_version":   runtime.Version(),
+		"goos":         runtime.GOOS,
+		"goarch":       runtime.GOARCH,
+		"num_cpu":      fmt.Sprintf("%d", runtime.NumCPU()),
 		"go_max_procs": fmt.Sprintf("%d", runtime.GOMAXPROCS(0)),
 	}
 }

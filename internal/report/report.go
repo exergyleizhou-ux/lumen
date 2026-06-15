@@ -18,15 +18,15 @@ import (
 // MetricCard represents one tracked metric suitable for rendering in a
 // dashboard or summary section.
 type MetricCard struct {
-	Title    string
-	Value    float64
-	Unit     string
-	Delta    float64     // change from previous period
-	Min      float64     // period minimum
-	Max      float64     // period maximum
-	Spark    []float64   // small sparkline data
-	Format   string      // sprintf format for Value, e.g. "%.2f"
-	Status   MetricStatus
+	Title  string
+	Value  float64
+	Unit   string
+	Delta  float64   // change from previous period
+	Min    float64   // period minimum
+	Max    float64   // period maximum
+	Spark  []float64 // small sparkline data
+	Format string    // sprintf format for Value, e.g. "%.2f"
+	Status MetricStatus
 }
 
 // MetricStatus indicates whether the metric is trending up/down/neutral.
@@ -174,7 +174,7 @@ func (tl *TrendLine) SimpleMovingAverage(n int) *TrendLine {
 type SectionKind int
 
 const (
-	SectionText    SectionKind = iota
+	SectionText SectionKind = iota
 	SectionTable
 	SectionMetrics
 	SectionTrend
@@ -184,11 +184,11 @@ const (
 type Section struct {
 	Kind    SectionKind
 	Title   string
-	Body    string             // for text sections
-	Headers []string           // for tables
-	Rows    [][]string         // for tables
-	Cards   []*MetricCard      // for metrics
-	Trends  []*TrendLine       // for trends
+	Body    string        // for text sections
+	Headers []string      // for tables
+	Rows    [][]string    // for tables
+	Cards   []*MetricCard // for metrics
+	Trends  []*TrendLine  // for trends
 }
 
 // ReportBuilder incrementally constructs a report.
@@ -571,11 +571,11 @@ func padRight(s string, n int) string {
 
 // JSONSummary is a compact JSON-serialisable summary of a report.
 type JSONSummary struct {
-	Title     string           `json:"title"`
-	Generated string           `json:"generated"`
-	Metrics   []JSONMetric     `json:"metrics,omitempty"`
-	Tables    []JSONTable      `json:"tables,omitempty"`
-	Sections  []JSONSection    `json:"sections,omitempty"`
+	Title     string        `json:"title"`
+	Generated string        `json:"generated"`
+	Metrics   []JSONMetric  `json:"metrics,omitempty"`
+	Tables    []JSONTable   `json:"tables,omitempty"`
+	Sections  []JSONSection `json:"sections,omitempty"`
 }
 
 // JSONMetric is the JSON form of a MetricCard.

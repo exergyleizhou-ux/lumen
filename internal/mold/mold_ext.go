@@ -12,11 +12,11 @@ import (
 
 // ConditionalRule applies validation only when a condition is met.
 type ConditionalRule struct {
-	Field      string
-	Condition  string // "eq", "neq", "gt", "empty", "notempty"
-	Value      interface{}
-	ThenRules  []Rule
-	ElseRules  []Rule
+	Field     string
+	Condition string // "eq", "neq", "gt", "empty", "notempty"
+	Value     interface{}
+	ThenRules []Rule
+	ElseRules []Rule
 }
 
 // ValidateConditional applies conditional validation rules.
@@ -190,10 +190,10 @@ type Sanitizer struct {
 
 // SanitizeRule defines a sanitization operation.
 type SanitizeRule struct {
-	Trim     bool
-	Lower    bool
-	Upper    bool
-	Default  interface{}
+	Trim    bool
+	Lower   bool
+	Upper   bool
+	Default interface{}
 }
 
 // NewSanitizer creates a sanitizer.

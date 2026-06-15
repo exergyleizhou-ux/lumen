@@ -381,7 +381,7 @@ func TestExecUnknownField(t *testing.T) {
 func TestExecMutation(t *testing.T) {
 	s := NewSchema()
 	s.Mutation().AddField("set", StringType, FieldConfig{
-		Args: []*InputValueDef{{Name: "v", Type: NonNullOf(StringType)}},
+		Args:    []*InputValueDef{{Name: "v", Type: NonNullOf(StringType)}},
 		Resolve: func(ctx ResolveCtx) (interface{}, error) { return ctx.Args["v"], nil },
 	})
 	exec := NewExecutor(s)

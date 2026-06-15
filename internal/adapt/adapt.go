@@ -55,7 +55,8 @@ func (wr *WebhookReceiver) Name() string { return wr.name }
 
 // Handle registers a webhook path handler.
 func (wr *WebhookReceiver) Handle(path string, handler func(payload []byte) error) {
-	wr.mu.Lock(); defer wr.mu.Unlock()
+	wr.mu.Lock()
+	defer wr.mu.Unlock()
 	wr.handlers[path] = handler
 }
 
@@ -221,13 +222,15 @@ func NewRegistry() *Registry {
 
 // Register adds an adapter.
 func (r *Registry) Register(a Adapter) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.adapters[a.Name()] = a
 }
 
 // Get retrieves an adapter by name.
 func (r *Registry) Get(name string) (Adapter, bool) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	a, ok := r.adapters[name]
 	return a, ok
 }
@@ -236,7 +239,9 @@ func (r *Registry) Get(name string) (Adapter, bool) {
 func (r *Registry) StartAll(ctx context.Context) error {
 	r.mu.Lock()
 	adapters := make([]Adapter, 0, len(r.adapters))
-	for _, a := range r.adapters { adapters = append(adapters, a) }
+	for _, a := range r.adapters {
+		adapters = append(adapters, a)
+	}
 	r.mu.Unlock()
 	for _, a := range adapters {
 		if err := a.Start(ctx); err != nil {
@@ -250,7 +255,9 @@ func (r *Registry) StartAll(ctx context.Context) error {
 func (r *Registry) StopAll() error {
 	r.mu.Lock()
 	adapters := make([]Adapter, 0, len(r.adapters))
-	for _, a := range r.adapters { adapters = append(adapters, a) }
+	for _, a := range r.adapters {
+		adapters = append(adapters, a)
+	}
 	r.mu.Unlock()
 	var errs []error
 	for _, a := range adapters {
@@ -269,7 +276,9 @@ func (r *Registry) Status() map[string]string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out := map[string]string{}
-	for name, a := range r.adapters { out[name] = a.Status() }
+	for name, a := range r.adapters {
+		out[name] = a.Status()
+	}
 	return out
 }
 
@@ -278,12 +287,15 @@ func (r *Registry) FormatStatus() string {
 	var sb strings.Builder
 	statuses := r.Status()
 	keys := make([]string, 0, len(statuses))
-	for k := range statuses { keys = append(keys, k) }
+	for k := range statuses {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	fmt.Fprintf(&sb, "Adapter Status (%d):\n%s\n\n", len(statuses), strings.Repeat("─", 50))
-	for _, k := range keys { fmt.Fprintf(&sb, "  %s\n", statuses[k]) }
+	for _, k := range keys {
+		fmt.Fprintf(&sb, "  %s\n", statuses[k])
+	}
 	return sb.String()
 }
 
 // ── Helpers ────────────────────────────────────────────────
-

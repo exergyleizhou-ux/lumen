@@ -70,8 +70,8 @@ func NewTaskTool(
 	}
 }
 
-func (t *TaskTool) Name() string        { return "task" }
-func (t *TaskTool) ReadOnly() bool      { return false }
+func (t *TaskTool) Name() string   { return "task" }
+func (t *TaskTool) ReadOnly() bool { return false }
 
 func (t *TaskTool) Description() string {
 	return "Spawn a sub-agent for a focused sub-task. The sub-agent runs in its own session with the same provider and a filtered tool list. Only its final answer is returned. Use for (a) keeping long exploration sequences out of the parent's context budget, or (b) delegating self-contained work like 'find every place that calls X and summarise the patterns'."

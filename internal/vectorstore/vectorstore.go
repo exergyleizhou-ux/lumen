@@ -16,12 +16,12 @@ import (
 
 // Entry is one stored vector with metadata.
 type Entry struct {
-	ID        string                 `json:"id"`
-	Vector    []float32              `json:"vector"`
-	Metadata  map[string]any         `json:"metadata,omitempty"`
-	Content   string                 `json:"content,omitempty"`
-	CreatedAt time.Time              `json:"created_at"`
-	UpdatedAt time.Time              `json:"updated_at"`
+	ID        string         `json:"id"`
+	Vector    []float32      `json:"vector"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // Store is a thread-safe in-memory vector store.
@@ -240,4 +240,3 @@ func FormatResults(results []*Entry) string {
 	}
 	return sb.String()
 }
-

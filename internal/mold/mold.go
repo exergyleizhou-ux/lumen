@@ -16,9 +16,9 @@ import (
 
 // ValidationError represents a single validation error on a field.
 type ValidationError struct {
-	Field   string `json:"field"`
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Field   string      `json:"field"`
+	Message string      `json:"message"`
+	Code    string      `json:"code"`
 	Value   interface{} `json:"value,omitempty"`
 }
 
@@ -511,9 +511,9 @@ func (m *Molder) validateValue(val reflect.Value, prefix string) ValidationError
 			fn, ok := m.validators[rule.Name]
 			if !ok {
 				errs = append(errs, &ValidationError{
-					Field: fieldPath,
+					Field:   fieldPath,
 					Message: fmt.Sprintf("unknown validator '%s'", rule.Name),
-					Code:   "unknown_validator",
+					Code:    "unknown_validator",
 				})
 				continue
 			}
@@ -525,10 +525,10 @@ func (m *Molder) validateValue(val reflect.Value, prefix string) ValidationError
 
 			if !fn(actualValue, rule.Param) {
 				errs = append(errs, &ValidationError{
-					Field: fieldPath,
+					Field:   fieldPath,
 					Message: m.formatMessage(rule.Name, fieldPath, rule.Param),
-					Code:   rule.Name,
-					Value:  actualValue,
+					Code:    rule.Name,
+					Value:   actualValue,
 				})
 			}
 		}
@@ -599,13 +599,13 @@ var defaultMolder = New()
 
 // MolderConfig configures data molding behavior.
 type MolderConfig struct {
-	TrimStrings    bool
-	Lowercase      bool
-	Uppercase      bool
-	DefaultValues  map[string]interface{}
-	RenameFields   map[string]string
-	RemoveFields   []string
-	StrictMode     bool // error on unknown fields
+	TrimStrings   bool
+	Lowercase     bool
+	Uppercase     bool
+	DefaultValues map[string]interface{}
+	RenameFields  map[string]string
+	RemoveFields  []string
+	StrictMode    bool // error on unknown fields
 }
 
 // Mold applies transformations to a struct based on mold tags.
@@ -728,16 +728,16 @@ type Schema struct {
 
 // FieldSchema defines validation rules for a single field.
 type FieldSchema struct {
-	Type     string   `json:"type"` // "string", "number", "bool", "array", "object"
-	Required bool     `json:"required"`
-	Min      *float64 `json:"min,omitempty"`
-	Max      *float64 `json:"max,omitempty"`
-	MinLen   *int     `json:"min_len,omitempty"`
-	MaxLen   *int     `json:"max_len,omitempty"`
-	Pattern  string   `json:"pattern,omitempty"`
-	OneOf    []string `json:"one_of,omitempty"`
+	Type     string        `json:"type"` // "string", "number", "bool", "array", "object"
+	Required bool          `json:"required"`
+	Min      *float64      `json:"min,omitempty"`
+	Max      *float64      `json:"max,omitempty"`
+	MinLen   *int          `json:"min_len,omitempty"`
+	MaxLen   *int          `json:"max_len,omitempty"`
+	Pattern  string        `json:"pattern,omitempty"`
+	OneOf    []string      `json:"one_of,omitempty"`
 	Enum     []interface{} `json:"enum,omitempty"`
-	Children *Schema  `json:"children,omitempty"` // for nested objects
+	Children *Schema       `json:"children,omitempty"` // for nested objects
 }
 
 // ValidateSchema validates data against a schema.

@@ -116,8 +116,8 @@ func ValidateAPIKeyFormat(key string) error {
 // SanitizeInput removes potentially dangerous content from user input.
 func SanitizeInput(input string) string {
 	input = strings.TrimSpace(input)
-	input = strings.ReplaceAll(input, "\x00", "")  // NUL bytes
-	input = stripControlChars(input)                // control characters
+	input = strings.ReplaceAll(input, "\x00", "") // NUL bytes
+	input = stripControlChars(input)              // control characters
 	return input
 }
 

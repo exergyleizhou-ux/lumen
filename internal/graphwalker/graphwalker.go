@@ -27,8 +27,8 @@ type Edge struct {
 
 // AdjacencyGraph is a simple adjacency-list graph.
 type AdjacencyGraph struct {
-	mu   sync.RWMutex
-	adj  map[string][]Edge
+	mu  sync.RWMutex
+	adj map[string][]Edge
 }
 
 // NewAdjacencyGraph creates an adjacency-list graph.
@@ -38,27 +38,37 @@ func NewAdjacencyGraph() *AdjacencyGraph {
 
 // AddNode adds a node.
 func (g *AdjacencyGraph) AddNode(id string) {
-	g.mu.Lock(); defer g.mu.Unlock()
-	if _, ok := g.adj[id]; !ok { g.adj[id] = nil }
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if _, ok := g.adj[id]; !ok {
+		g.adj[id] = nil
+	}
 }
 
 // AddEdge adds a directed edge.
 func (g *AdjacencyGraph) AddEdge(from, to string, weight float64) {
-	g.mu.Lock(); defer g.mu.Unlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	g.adj[from] = append(g.adj[from], Edge{To: to, Weight: weight})
-	if _, ok := g.adj[to]; !ok { g.adj[to] = nil }
+	if _, ok := g.adj[to]; !ok {
+		g.adj[to] = nil
+	}
 }
 
 func (g *AdjacencyGraph) Nodes() []string {
-	g.mu.RLock(); defer g.mu.RUnlock()
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	var out []string
-	for n := range g.adj { out = append(out, n) }
+	for n := range g.adj {
+		out = append(out, n)
+	}
 	sort.Strings(out)
 	return out
 }
 
 func (g *AdjacencyGraph) Neighbors(node string) []Edge {
-	g.mu.RLock(); defer g.mu.RUnlock()
+	g.mu.RLock()
+	defer g.mu.RUnlock()
 	return g.adj[node]
 }
 
@@ -66,8 +76,8 @@ func (g *AdjacencyGraph) Neighbors(node string) []Edge {
 
 // BFSResult is the output of BFS traversal.
 type BFSResult struct {
-	Order    []string          `json:"order"`
-	Distances map[string]int   `json:"distances"`
+	Order     []string          `json:"order"`
+	Distances map[string]int    `json:"distances"`
 	Parents   map[string]string `json:"parents"`
 }
 
@@ -118,7 +128,9 @@ func DFS(g Graph, start string) *DFSResult {
 		result.PreOrder = append(result.PreOrder, node)
 		result.Order = append(result.Order, node)
 		for _, edge := range g.Neighbors(node) {
-			if !visited[edge.To] { dfs(edge.To) }
+			if !visited[edge.To] {
+				dfs(edge.To)
+			}
 		}
 		result.PostOrder = append(result.PostOrder, node)
 	}
@@ -130,9 +142,9 @@ func DFS(g Graph, start string) *DFSResult {
 
 // ShortestPathResult is the output of shortest-path algorithms.
 type ShortestPathResult struct {
-	Distances map[string]float64  `json:"distances"`
-	Parents   map[string]string   `json:"parents"`
-	Reachable []string            `json:"reachable"`
+	Distances map[string]float64 `json:"distances"`
+	Parents   map[string]string  `json:"parents"`
+	Reachable []string           `json:"reachable"`
 }
 
 // Dijkstra computes shortest paths from a start node.
@@ -142,7 +154,9 @@ func Dijkstra(g Graph, start string) *ShortestPathResult {
 		Parents:   map[string]string{},
 	}
 
-	for _, n := range g.Nodes() { result.Distances[n] = math.Inf(1) }
+	for _, n := range g.Nodes() {
+		result.Distances[n] = math.Inf(1)
+	}
 	result.Distances[start] = 0
 
 	pq := &minHeap{{node: start, dist: 0}}
@@ -151,12 +165,16 @@ func Dijkstra(g Graph, start string) *ShortestPathResult {
 
 	for pq.Len() > 0 {
 		item := heap.Pop(pq).(*heapItem)
-		if visited[item.node] { continue }
+		if visited[item.node] {
+			continue
+		}
 		visited[item.node] = true
 		result.Reachable = append(result.Reachable, item.node)
 
 		for _, edge := range g.Neighbors(item.node) {
-			if visited[edge.To] { continue }
+			if visited[edge.To] {
+				continue
+			}
 			newDist := result.Distances[item.node] + edge.Weight
 			if newDist < result.Distances[edge.To] {
 				result.Distances[edge.To] = newDist
@@ -179,7 +197,11 @@ func (h minHeap) Less(i, j int) bool { return h[i].dist < h[j].dist }
 func (h minHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
 func (h *minHeap) Push(x any)        { *h = append(*h, x.(*heapItem)) }
 func (h *minHeap) Pop() any {
-	old := *h; n := len(old); item := old[n-1]; *h = old[:n-1]; return item
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[:n-1]
+	return item
 }
 
 // PathTo reconstructs the path from start to target.
@@ -211,11 +233,15 @@ func AStar(g Graph, start, goal string, h Heuristic) ([]string, float64, bool) {
 		if item.node == goal {
 			return PathTo(parents, goal), gScore[goal], true
 		}
-		if visited[item.node] { continue }
+		if visited[item.node] {
+			continue
+		}
 		visited[item.node] = true
 
 		for _, edge := range g.Neighbors(item.node) {
-			if visited[edge.To] { continue }
+			if visited[edge.To] {
+				continue
+			}
 			tentative := gScore[item.node] + edge.Weight
 			if current, ok := gScore[edge.To]; !ok || tentative < current {
 				parents[edge.To] = item.node
@@ -236,14 +262,20 @@ func ManhattanHeuristic(node, goal string) float64 { return 0 } // Stub — depe
 // TopologicalSort orders nodes in a DAG.
 func TopologicalSort(g Graph) ([]string, error) {
 	inDegree := map[string]int{}
-	for _, n := range g.Nodes() { inDegree[n] = 0 }
 	for _, n := range g.Nodes() {
-		for _, e := range g.Neighbors(n) { inDegree[e.To]++ }
+		inDegree[n] = 0
+	}
+	for _, n := range g.Nodes() {
+		for _, e := range g.Neighbors(n) {
+			inDegree[e.To]++
+		}
 	}
 
 	var queue []string
 	for n, deg := range inDegree {
-		if deg == 0 { queue = append(queue, n) }
+		if deg == 0 {
+			queue = append(queue, n)
+		}
 	}
 	sort.Strings(queue)
 
@@ -254,7 +286,9 @@ func TopologicalSort(g Graph) ([]string, error) {
 		order = append(order, n)
 		for _, e := range g.Neighbors(n) {
 			inDegree[e.To]--
-			if inDegree[e.To] == 0 { queue = append(queue, e.To) }
+			if inDegree[e.To] == 0 {
+				queue = append(queue, e.To)
+			}
 		}
 		sort.Strings(queue)
 	}
@@ -292,9 +326,13 @@ func TarjanSCC(g Graph) *SCCResult {
 		for _, edge := range g.Neighbors(node) {
 			if _, ok := indices[edge.To]; !ok {
 				strongconnect(edge.To)
-				if lowLinks[edge.To] < lowLinks[node] { lowLinks[node] = lowLinks[edge.To] }
+				if lowLinks[edge.To] < lowLinks[node] {
+					lowLinks[node] = lowLinks[edge.To]
+				}
 			} else if onStack[edge.To] {
-				if indices[edge.To] < lowLinks[node] { lowLinks[node] = indices[edge.To] }
+				if indices[edge.To] < lowLinks[node] {
+					lowLinks[node] = indices[edge.To]
+				}
 			}
 		}
 
@@ -305,14 +343,18 @@ func TarjanSCC(g Graph) *SCCResult {
 				stack = stack[:len(stack)-1]
 				onStack[w] = false
 				comp = append(comp, w)
-				if w == node { break }
+				if w == node {
+					break
+				}
 			}
 			components = append(components, comp)
 		}
 	}
 
 	for _, n := range g.Nodes() {
-		if _, ok := indices[n]; !ok { strongconnect(n) }
+		if _, ok := indices[n]; !ok {
+			strongconnect(n)
+		}
 	}
 
 	return &SCCResult{Components: components, Count: len(components)}
@@ -342,7 +384,9 @@ func FormatGraph(g Graph) string {
 
 // FormatPath formats a path.
 func FormatPath(path []string) string {
-	if len(path) == 0 { return "no path" }
+	if len(path) == 0 {
+		return "no path"
+	}
 	return strings.Join(path, " → ")
 }
 

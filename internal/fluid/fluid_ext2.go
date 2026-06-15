@@ -228,12 +228,12 @@ func (tsb *TimeSeriesBuffer) Len() int {
 
 // MovingAverage computes moving averages over time series data.
 type MovingAverage struct {
-	mu       sync.Mutex
-	window   int
-	values   []float64
-	pos      int
-	size     int
-	sum      float64
+	mu     sync.Mutex
+	window int
+	values []float64
+	pos    int
+	size   int
+	sum    float64
 }
 
 // NewMovingAverage creates a simple moving average calculator.
@@ -321,10 +321,10 @@ func (ema *EMovingAverage) Value() float64 {
 
 // ReservoirSample maintains a uniform random sample of a stream.
 type ReservoirSample[T any] struct {
-	mu     sync.Mutex
-	res    []T
-	size   int
-	count  int
+	mu    sync.Mutex
+	res   []T
+	size  int
+	count int
 }
 
 // NewReservoirSample creates a reservoir sampler.
@@ -387,10 +387,10 @@ func (rs *ReservoirSample[T]) rngInt() int {
 
 // QuantileSketch maintains approximate quantiles using a simple GK-like algorithm.
 type QuantileSketch struct {
-	mu       sync.Mutex
-	values   []float64
-	maxSize  int
-	sorted   bool
+	mu      sync.Mutex
+	values  []float64
+	maxSize int
+	sorted  bool
 }
 
 // NewQuantileSketch creates a quantile sketch.

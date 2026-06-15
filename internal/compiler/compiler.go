@@ -303,17 +303,19 @@ type NumberNode struct {
 	Raw   string
 }
 
-func (NumberNode) nodeMarker()   {}
+func (NumberNode) nodeMarker()      {}
 func (n NumberNode) String() string { return n.Raw }
 
 // StringNode is a string literal.
 type StringNode struct{ Value string }
-func (StringNode) nodeMarker()    {}
+
+func (StringNode) nodeMarker()      {}
 func (n StringNode) String() string { return fmt.Sprintf("%q", n.Value) }
 
 // IdentNode is a variable reference.
 type IdentNode struct{ Name string }
-func (IdentNode) nodeMarker()     {}
+
+func (IdentNode) nodeMarker()      {}
 func (n IdentNode) String() string { return n.Name }
 
 // BinaryNode is a binary operation.
@@ -586,9 +588,9 @@ func (p *Parser) parsePrimary() (Node, error) {
 type Opcode int
 
 const (
-	OpPush   Opcode = iota // push a constant from pool
-	OpLoad                  // load a variable
-	OpStore                 // store to a variable
+	OpPush  Opcode = iota // push a constant from pool
+	OpLoad                // load a variable
+	OpStore               // store to a variable
 	OpAdd
 	OpSub
 	OpMul
@@ -605,40 +607,40 @@ const (
 	OpGe
 	OpAnd
 	OpOr
-	OpJmpFalse  // conditional jump if top of stack is false (consumes value)
-	OpJmp       // unconditional jump
-	OpDup       // duplicate top of stack
-	OpCall      // call function (name in pool)
-	OpRet       // return
-	OpPop       // discard top of stack
+	OpJmpFalse // conditional jump if top of stack is false (consumes value)
+	OpJmp      // unconditional jump
+	OpDup      // duplicate top of stack
+	OpCall     // call function (name in pool)
+	OpRet      // return
+	OpPop      // discard top of stack
 )
 
 var opcodeNames = map[Opcode]string{
-	OpPush:    "PUSH",
-	OpLoad:    "LOAD",
-	OpStore:   "STORE",
-	OpAdd:     "ADD",
-	OpSub:     "SUB",
-	OpMul:     "MUL",
-	OpDiv:     "DIV",
-	OpMod:     "MOD",
-	OpPow:     "POW",
-	OpNeg:     "NEG",
-	OpNot:     "NOT",
-	OpEq:      "EQ",
-	OpNotEq:   "NEQ",
-	OpLt:      "LT",
-	OpLe:      "LE",
-	OpGt:      "GT",
-	OpGe:      "GE",
-	OpAnd:     "AND",
-	OpOr:      "OR",
+	OpPush:     "PUSH",
+	OpLoad:     "LOAD",
+	OpStore:    "STORE",
+	OpAdd:      "ADD",
+	OpSub:      "SUB",
+	OpMul:      "MUL",
+	OpDiv:      "DIV",
+	OpMod:      "MOD",
+	OpPow:      "POW",
+	OpNeg:      "NEG",
+	OpNot:      "NOT",
+	OpEq:       "EQ",
+	OpNotEq:    "NEQ",
+	OpLt:       "LT",
+	OpLe:       "LE",
+	OpGt:       "GT",
+	OpGe:       "GE",
+	OpAnd:      "AND",
+	OpOr:       "OR",
 	OpJmpFalse: "JMPF",
-	OpJmp:     "JMP",
-	OpDup:     "DUP",
-	OpCall:    "CALL",
-	OpRet:     "RET",
-	OpPop:     "POP",
+	OpJmp:      "JMP",
+	OpDup:      "DUP",
+	OpCall:     "CALL",
+	OpRet:      "RET",
+	OpPop:      "POP",
 }
 
 func (o Opcode) String() string {
@@ -650,8 +652,8 @@ func (o Opcode) String() string {
 
 // Instruction is a single bytecode instruction.
 type Instruction struct {
-	Op   Opcode
-	Arg  int // index into constant/variable pool
+	Op  Opcode
+	Arg int // index into constant/variable pool
 }
 
 // Bytecode is a compiled expression ready for execution.

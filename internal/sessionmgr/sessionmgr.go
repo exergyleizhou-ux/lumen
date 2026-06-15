@@ -30,8 +30,8 @@ type Info struct {
 
 // Manager manages saved sessions on disk.
 type Manager struct {
-	mu   sync.Mutex
-	dir  string
+	mu  sync.Mutex
+	dir string
 }
 
 // NewManager creates a session manager storing data under the given directory.

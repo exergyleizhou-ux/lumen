@@ -13,9 +13,9 @@ import (
 
 // Classifier is a simple Naive Bayes text classifier.
 type Classifier struct {
-	classes     map[string]*classStats
-	vocabulary  map[string]bool
-	totalDocs   int
+	classes    map[string]*classStats
+	vocabulary map[string]bool
+	totalDocs  int
 }
 
 type classStats struct {
@@ -235,8 +235,8 @@ func ExpandKeywords(tags []Tag, thesaurus map[string][]string) []Tag {
 
 // LanguageProfile holds n-gram frequencies for a language.
 type LanguageProfile struct {
-	Name     string
-	Bigrams  map[string]float64
+	Name    string
+	Bigrams map[string]float64
 }
 
 var languageProfiles = map[string]*LanguageProfile{

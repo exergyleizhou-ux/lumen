@@ -54,12 +54,12 @@ func TestLoadChanges(t *testing.T) {
 	defer r.Close()
 
 	r.Record(Entry{
-		Turn:    1,
-		Kind:    "tool_result",
-		ToolName: "write_file",
-		Detail:  "wrote ok",
-		Success:  true,
-		Path:    "/tmp/test.go",
+		Turn:      1,
+		Kind:      "tool_result",
+		ToolName:  "write_file",
+		Detail:    "wrote ok",
+		Success:   true,
+		Path:      "/tmp/test.go",
 		Timestamp: time.Now(),
 	})
 

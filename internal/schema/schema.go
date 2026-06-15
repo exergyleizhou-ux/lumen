@@ -3,7 +3,14 @@
 // Avro). It validates data against registered schemas and detects breaking changes.
 package schema
 
-import ("encoding/json";"fmt";"sort";"strings";"sync";"time")
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
 
 // SchemaVersion represents one version of a schema.
 type SchemaVersion struct {
@@ -17,26 +24,32 @@ type SchemaVersion struct {
 
 // CompatibilityLevel defines what changes are allowed.
 type CompatibilityLevel int
+
 const (
 	CompatNone CompatibilityLevel = iota
 	CompatBackward
 	CompatForward
 	CompatFull
 )
+
 func (c CompatibilityLevel) String() string {
 	switch c {
-	case CompatBackward: return "backward"
-	case CompatForward: return "forward"
-	case CompatFull: return "full"
-	default: return "none"
+	case CompatBackward:
+		return "backward"
+	case CompatForward:
+		return "forward"
+	case CompatFull:
+		return "full"
+	default:
+		return "none"
 	}
 }
 
 // Registry manages schema versions.
 type Registry struct {
-	mu          sync.Mutex
-	schemas     map[string][]*SchemaVersion
-	compat      CompatibilityLevel
+	mu      sync.Mutex
+	schemas map[string][]*SchemaVersion
+	compat  CompatibilityLevel
 }
 
 // NewRegistry creates a schema registry.
@@ -45,11 +58,16 @@ func NewRegistry() *Registry {
 }
 
 // SetCompatibility sets the compatibility level.
-func (r *Registry) SetCompatibility(level CompatibilityLevel) { r.mu.Lock(); defer r.mu.Unlock(); r.compat = level }
+func (r *Registry) SetCompatibility(level CompatibilityLevel) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.compat = level
+}
 
 // Register adds a schema version.
 func (r *Registry) Register(subject, schema, format string) (*SchemaVersion, error) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	versions := r.schemas[subject]
 	version := len(versions) + 1
 	sv := &SchemaVersion{Subject: subject, Version: version, Schema: schema, Format: format, CreatedAt: time.Now()}
@@ -59,23 +77,37 @@ func (r *Registry) Register(subject, schema, format string) (*SchemaVersion, err
 
 // GetLatest returns the latest version of a subject.
 func (r *Registry) GetLatest(subject string) (*SchemaVersion, bool) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.getLatestLocked(subject)
+}
+
+// getLatestLocked assumes the caller holds the lock.
+func (r *Registry) getLatestLocked(subject string) (*SchemaVersion, bool) {
 	versions := r.schemas[subject]
-	if len(versions) == 0 { return nil, false }
+	if len(versions) == 0 {
+		return nil, false
+	}
 	return versions[len(versions)-1], true
 }
 
 // GetVersion returns a specific version.
 func (r *Registry) GetVersion(subject string, version int) (*SchemaVersion, bool) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	versions := r.schemas[subject]
-	for _, v := range versions { if v.Version == version { return v, true } }
+	for _, v := range versions {
+		if v.Version == version {
+			return v, true
+		}
+	}
 	return nil, false
 }
 
 // Versions returns all versions of a subject.
 func (r *Registry) Versions(subject string) []*SchemaVersion {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := make([]*SchemaVersion, len(r.schemas[subject]))
 	copy(out, r.schemas[subject])
 	return out
@@ -83,9 +115,12 @@ func (r *Registry) Versions(subject string) []*SchemaVersion {
 
 // Subjects returns all registered subjects.
 func (r *Registry) Subjects() []string {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	var out []string
-	for s := range r.schemas { out = append(out, s) }
+	for s := range r.schemas {
+		out = append(out, s)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -93,9 +128,11 @@ func (r *Registry) Subjects() []string {
 // Validate checks data against the latest schema for a subject.
 func (r *Registry) Validate(subject string, data any) (bool, []string) {
 	r.mu.Lock()
-	latest, ok := r.GetLatest(subject)
+	latest, ok := r.getLatestLocked(subject)
 	r.mu.Unlock()
-	if !ok { return false, []string{"subject not found"} }
+	if !ok {
+		return false, []string{"subject not found"}
+	}
 
 	// For JSON Schema, do a basic structural check
 	if latest.Format == "json-schema" {
@@ -110,7 +147,9 @@ func (r *Registry) Validate(subject string, data any) (bool, []string) {
 
 func validateJSON(schema map[string]any, data any) bool {
 	typ, _ := schema["type"].(string)
-	if typ == "" { return true }
+	if typ == "" {
+		return true
+	}
 
 	switch typ {
 	case "object":
@@ -123,7 +162,10 @@ func validateJSON(schema map[string]any, data any) bool {
 		_, ok := data.(string)
 		return ok
 	case "number":
-		switch data.(type) { case float64, int, int64: return true }
+		switch data.(type) {
+		case float64, int, int64:
+			return true
+		}
 		return false
 	case "boolean":
 		_, ok := data.(bool)
@@ -178,7 +220,9 @@ func (r *Registry) DetectBreakingChange(oldSchema, newSchema string) []string {
 func toSet(items []any) map[string]bool {
 	s := map[string]bool{}
 	for _, i := range items {
-		if is, ok := i.(string); ok { s[is] = true }
+		if is, ok := i.(string); ok {
+			s[is] = true
+		}
 	}
 	return s
 }
@@ -188,7 +232,9 @@ func FormatSchema(sv *SchemaVersion) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Subject: %s v%d [%s]\n", sv.Subject, sv.Version, sv.Format)
 	fmt.Fprintf(&sb, "Created: %s\n", sv.CreatedAt.Format(time.RFC3339))
-	if sv.Deprecated { sb.WriteString("Deprecated\n") }
+	if sv.Deprecated {
+		sb.WriteString("Deprecated\n")
+	}
 	fmt.Fprintf(&sb, "Schema:\n%s\n", sv.Schema)
 	return sb.String()
 }
@@ -201,7 +247,9 @@ func (r *Registry) FormatRegistry() string {
 		latest, _ := r.GetLatest(subject)
 		versions := r.Versions(subject)
 		fmt.Fprintf(&sb, "  %-25s v%d  (%d versions)", subject, latest.Version, len(versions))
-		if latest.Deprecated { sb.WriteString(" [deprecated]") }
+		if latest.Deprecated {
+			sb.WriteString(" [deprecated]")
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()

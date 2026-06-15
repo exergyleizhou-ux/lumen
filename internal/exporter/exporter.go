@@ -26,18 +26,18 @@ const (
 
 // SessionData holds session data for export.
 type SessionData struct {
-	ID        string           `json:"id"`
-	Title     string           `json:"title"`
-	Date      time.Time        `json:"date"`
-	Messages  []MessageData    `json:"messages"`
-	Usage     UsageData        `json:"usage"`
-	Changes   []ChangeData     `json:"changes"`
+	ID       string        `json:"id"`
+	Title    string        `json:"title"`
+	Date     time.Time     `json:"date"`
+	Messages []MessageData `json:"messages"`
+	Usage    UsageData     `json:"usage"`
+	Changes  []ChangeData  `json:"changes"`
 }
 
 // MessageData holds one message for export.
 type MessageData struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string         `json:"role"`
+	Content   string         `json:"content"`
 	ToolCalls []ToolCallData `json:"tool_calls,omitempty"`
 }
 

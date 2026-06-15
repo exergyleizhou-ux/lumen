@@ -13,22 +13,22 @@ import (
 
 // Step is one action in a playbook.
 type Step struct {
-	Name       string         `json:"name"`
-	Action     string         `json:"action"`
-	With       map[string]any `json:"with,omitempty"`
-	Condition  string         `json:"condition,omitempty"`
-	Loop       string         `json:"loop,omitempty"`
-	Retry      int            `json:"retry,omitempty"`
-	Timeout    string         `json:"timeout,omitempty"`
-	DependsOn  []string       `json:"depends_on,omitempty"`
+	Name      string         `json:"name"`
+	Action    string         `json:"action"`
+	With      map[string]any `json:"with,omitempty"`
+	Condition string         `json:"condition,omitempty"`
+	Loop      string         `json:"loop,omitempty"`
+	Retry     int            `json:"retry,omitempty"`
+	Timeout   string         `json:"timeout,omitempty"`
+	DependsOn []string       `json:"depends_on,omitempty"`
 }
 
 // Playbook is a named sequence of steps.
 type Playbook struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Version     string    `json:"version"`
-	Steps       []Step    `json:"steps"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Version     string         `json:"version"`
+	Steps       []Step         `json:"steps"`
 	Variables   map[string]any `json:"variables,omitempty"`
 }
 
@@ -46,22 +46,22 @@ type StepStatus struct {
 
 // RunStatus is the outcome of a playbook run.
 type RunStatus struct {
-	Playbook  string       `json:"playbook"`
-	Version   string       `json:"version"`
-	Steps     []StepStatus `json:"steps"`
-	State     string       `json:"state"`
-	StartedAt time.Time    `json:"started_at"`
-	EndedAt   time.Time    `json:"ended_at"`
+	Playbook  string        `json:"playbook"`
+	Version   string        `json:"version"`
+	Steps     []StepStatus  `json:"steps"`
+	State     string        `json:"state"`
+	StartedAt time.Time     `json:"started_at"`
+	EndedAt   time.Time     `json:"ended_at"`
 	Duration  time.Duration `json:"duration"`
 }
 
 // Executor runs playbooks against an action handler.
 type Executor struct {
-	mu       sync.Mutex
-	handler  func(action string, with map[string]any) (string, error)
-	history  []*RunStatus
-	vars     map[string]any
-	maxHist  int
+	mu      sync.Mutex
+	handler func(action string, with map[string]any) (string, error)
+	history []*RunStatus
+	vars    map[string]any
+	maxHist int
 }
 
 // NewExecutor creates a playbook executor.
@@ -70,10 +70,19 @@ func NewExecutor(handler func(action string, with map[string]any) (string, error
 }
 
 // SetVar sets a global variable.
-func (e *Executor) SetVar(name string, value any) { e.mu.Lock(); defer e.mu.Unlock(); e.vars[name] = value }
+func (e *Executor) SetVar(name string, value any) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.vars[name] = value
+}
 
 // GetVar retrieves a global variable.
-func (e *Executor) GetVar(name string) (any, bool) { e.mu.Lock(); defer e.mu.Unlock(); v, ok := e.vars[name]; return v, ok }
+func (e *Executor) GetVar(name string) (any, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	v, ok := e.vars[name]
+	return v, ok
+}
 
 // Run executes a playbook.
 func (e *Executor) Run(pb *Playbook) (*RunStatus, error) {
@@ -87,41 +96,74 @@ func (e *Executor) Run(pb *Playbook) (*RunStatus, error) {
 		// Check dependencies
 		skip := false
 		for _, dep := range step.DependsOn {
-			if r, ok := stepResults[dep]; ok && r.State != "success" { skip = true; break }
+			if r, ok := stepResults[dep]; ok && r.State != "success" {
+				skip = true
+				break
+			}
 		}
-		if skip { stepResults[step.Name] = StepStatus{StepName: step.Name, State: "skipped"}; continue }
+		if skip {
+			stepResults[step.Name] = StepStatus{StepName: step.Name, State: "skipped"}
+			continue
+		}
 
 		// Resolve variables
 		resolved := map[string]any{}
 		for k, v := range step.With {
 			if s, ok := v.(string); ok && strings.HasPrefix(s, "${{") && strings.HasSuffix(s, "}}") {
 				varName := strings.TrimSpace(s[3 : len(s)-2])
-				if val, ok := e.vars[varName]; ok { resolved[k] = val } else { resolved[k] = v }
-			} else { resolved[k] = v }
+				if val, ok := e.vars[varName]; ok {
+					resolved[k] = val
+				} else {
+					resolved[k] = v
+				}
+			} else {
+				resolved[k] = v
+			}
 		}
-		if len(resolved) == 0 { resolved = step.With }
+		if len(resolved) == 0 {
+			resolved = step.With
+		}
 
 		ss := StepStatus{StepName: step.Name, Action: step.Action, State: "running", StartedAt: time.Now()}
 
 		output, err := e.handler(step.Action, resolved)
 		ss.EndedAt = time.Now()
 		ss.Duration = ss.EndedAt.Sub(ss.StartedAt)
-		if err != nil { ss.State = "failed"; ss.Error = err.Error() } else { ss.State = "success"; ss.Output = output }
+		if err != nil {
+			ss.State = "failed"
+			ss.Error = err.Error()
+		} else {
+			ss.State = "success"
+			ss.Output = output
+		}
 		stepResults[step.Name] = ss
 		run.Steps = append(run.Steps, ss)
 
-		if ss.State == "failed" { break }
+		if ss.State == "failed" {
+			break
+		}
 	}
 
 	allSuccess := true
-	for _, ss := range run.Steps { if ss.State == "failed" { allSuccess = false; break } }
-	if allSuccess { run.State = "success" } else { run.State = "failed" }
+	for _, ss := range run.Steps {
+		if ss.State == "failed" {
+			allSuccess = false
+			break
+		}
+	}
+	if allSuccess {
+		run.State = "success"
+	} else {
+		run.State = "failed"
+	}
 	run.EndedAt = time.Now()
 	run.Duration = run.EndedAt.Sub(run.StartedAt)
 
 	e.mu.Lock()
 	e.history = append(e.history, run)
-	if len(e.history) > e.maxHist { e.history = e.history[1:] }
+	if len(e.history) > e.maxHist {
+		e.history = e.history[1:]
+	}
 	e.mu.Unlock()
 
 	return run, nil
@@ -129,7 +171,8 @@ func (e *Executor) Run(pb *Playbook) (*RunStatus, error) {
 
 // History returns recent run statuses.
 func (e *Executor) History() []*RunStatus {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	out := make([]*RunStatus, len(e.history))
 	copy(out, e.history)
 	return out
@@ -142,20 +185,33 @@ func FormatRunStatus(r *RunStatus) string {
 	for _, ss := range r.Steps {
 		icon := "⬜"
 		switch ss.State {
-		case "success": icon = "✅"
-		case "failed": icon = "🔴"
-		case "skipped": icon = "⏭️"
-		case "running": icon = "🟡"
+		case "success":
+			icon = "✅"
+		case "failed":
+			icon = "🔴"
+		case "skipped":
+			icon = "⏭️"
+		case "running":
+			icon = "🟡"
 		}
 		fmt.Fprintf(&sb, "  %s %-20s %-10s %v", icon, ss.StepName, ss.State, ss.Duration)
-		if ss.Error != "" { fmt.Fprintf(&sb, "  err=%s", trunc(ss.Error, 60)) }
-		if ss.Output != "" { fmt.Fprintf(&sb, "  out=%s", trunc(ss.Output, 60)) }
+		if ss.Error != "" {
+			fmt.Fprintf(&sb, "  err=%s", trunc(ss.Error, 60))
+		}
+		if ss.Output != "" {
+			fmt.Fprintf(&sb, "  out=%s", trunc(ss.Output, 60))
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
 }
 
-func trunc(s string, n int) string { if len(s) <= n { return s }; return s[:n-3] + "..." }
+func trunc(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-3] + "..."
+}
 
 // ── Library ────────────────────────────────────────────────
 
@@ -172,13 +228,21 @@ func NewLibrary() *Library { return &Library{playbooks: map[string]*Playbook{}} 
 func (l *Library) Register(pb *Playbook) { l.mu.Lock(); defer l.mu.Unlock(); l.playbooks[pb.Name] = pb }
 
 // Get returns a playbook by name.
-func (l *Library) Get(name string) (*Playbook, bool) { l.mu.Lock(); defer l.mu.Unlock(); pb, ok := l.playbooks[name]; return pb, ok }
+func (l *Library) Get(name string) (*Playbook, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	pb, ok := l.playbooks[name]
+	return pb, ok
+}
 
 // Names returns all playbook names.
 func (l *Library) Names() []string {
-	l.mu.Lock(); defer l.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	var out []string
-	for n := range l.playbooks { out = append(out, n) }
+	for n := range l.playbooks {
+		out = append(out, n)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -186,11 +250,19 @@ func (l *Library) Names() []string {
 // Validate checks a playbook for structural issues.
 func (l *Library) Validate(pb *Playbook) []error {
 	var errs []error
-	if pb.Name == "" { errs = append(errs, fmt.Errorf("name required")) }
-	if len(pb.Steps) == 0 { errs = append(errs, fmt.Errorf("at least one step required")) }
+	if pb.Name == "" {
+		errs = append(errs, fmt.Errorf("name required"))
+	}
+	if len(pb.Steps) == 0 {
+		errs = append(errs, fmt.Errorf("at least one step required"))
+	}
 	for i, s := range pb.Steps {
-		if s.Name == "" { errs = append(errs, fmt.Errorf("step %d: name required", i)) }
-		if s.Action == "" { errs = append(errs, fmt.Errorf("step %d: action required", i)) }
+		if s.Name == "" {
+			errs = append(errs, fmt.Errorf("step %d: name required", i))
+		}
+		if s.Action == "" {
+			errs = append(errs, fmt.Errorf("step %d: action required", i))
+		}
 	}
 	return errs
 }

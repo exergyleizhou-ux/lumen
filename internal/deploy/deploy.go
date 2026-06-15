@@ -98,18 +98,18 @@ type Release struct {
 
 // Asset is one release artifact.
 type Asset struct {
-	Name    string `json:"name"`
-	Path    string `json:"path"`
-	OS      string `json:"os"`
-	Arch    string `json:"arch"`
-	Size    int64  `json:"size"`
-	SHA256  string `json:"sha256"`
+	Name   string `json:"name"`
+	Path   string `json:"path"`
+	OS     string `json:"os"`
+	Arch   string `json:"arch"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
 }
 
 // Packager creates release packages.
 type Packager struct {
-	mu       sync.Mutex
-	distDir  string
+	mu      sync.Mutex
+	distDir string
 }
 
 // NewPackager creates a release packager.

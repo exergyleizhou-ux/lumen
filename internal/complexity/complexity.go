@@ -14,14 +14,14 @@ import (
 
 // Metric holds complexity scores for one function.
 type Metric struct {
-	Name              string  `json:"name"`
-	File              string  `json:"file"`
-	Line              int     `json:"line"`
-	Cyclomatic        int     `json:"cyclomatic"`
-	Cognitive         int     `json:"cognitive"`
-	Lines             int     `json:"lines"`
-	Nesting           int     `json:"nesting_depth"`
-	Risk              string  `json:"risk"` // "low", "medium", "high", "critical"
+	Name       string `json:"name"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Cyclomatic int    `json:"cyclomatic"`
+	Cognitive  int    `json:"cognitive"`
+	Lines      int    `json:"lines"`
+	Nesting    int    `json:"nesting_depth"`
+	Risk       string `json:"risk"` // "low", "medium", "high", "critical"
 }
 
 // Analyzer computes complexity metrics for a Go codebase.

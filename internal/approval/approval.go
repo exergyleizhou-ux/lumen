@@ -34,27 +34,27 @@ const (
 
 // Request is one thing that needs approval.
 type Request struct {
-	ID          string            `json:"id"`
-	Level       Level             `json:"level"`
-	Tool        string            `json:"tool"`
-	Description string            `json:"description"`
-	Args        string            `json:"args,omitempty"`
-	Status      Status            `json:"status"`
-	ApprovedBy  string            `json:"approved_by,omitempty"`
-	Reason      string            `json:"reason,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	ExpiresAt   time.Time         `json:"expires_at"`
-	ResolvedAt  time.Time         `json:"resolved_at,omitempty"`
-	Metadata    map[string]any    `json:"metadata,omitempty"`
+	ID          string         `json:"id"`
+	Level       Level          `json:"level"`
+	Tool        string         `json:"tool"`
+	Description string         `json:"description"`
+	Args        string         `json:"args,omitempty"`
+	Status      Status         `json:"status"`
+	ApprovedBy  string         `json:"approved_by,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ExpiresAt   time.Time      `json:"expires_at"`
+	ResolvedAt  time.Time      `json:"resolved_at,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
 // Rule defines an auto-approve or auto-deny condition.
 type Rule struct {
-	Name      string          `json:"name"`
-	Priority  int             `json:"priority"`
-	ToolMatch string          `json:"tool_match"` // glob pattern
+	Name      string              `json:"name"`
+	Priority  int                 `json:"priority"`
+	ToolMatch string              `json:"tool_match"` // glob pattern
 	Condition func(*Request) bool `json:"-"`
-	Action    string          `json:"action"` // "approve", "deny", "ask"
+	Action    string              `json:"action"` // "approve", "deny", "ask"
 }
 
 // Manager handles approval workflows.
@@ -74,7 +74,8 @@ func NewManager() *Manager {
 
 // AddRule registers an auto-approve/deny rule.
 func (m *Manager) AddRule(r Rule) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.rules = append(m.rules, r)
 	sort.Slice(m.rules, func(i, j int) bool { return m.rules[i].Priority > m.rules[j].Priority })
 }
@@ -83,7 +84,7 @@ func (m *Manager) AddRule(r Rule) {
 // should check Status after the callback fires.
 func (m *Manager) Request(level Level, tool, description, args string, ttl time.Duration) *Request {
 	req := &Request{
-		ID: fmt.Sprintf("appr-%d", time.Now().UnixNano()),
+		ID:    fmt.Sprintf("appr-%d", time.Now().UnixNano()),
 		Level: level, Tool: tool, Description: description, Args: args,
 		Status: StatusPending, CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(ttl),
@@ -106,7 +107,9 @@ func (m *Manager) Request(level Level, tool, description, args string, ttl time.
 				}
 				req.ResolvedAt = time.Now()
 				m.archive(req)
-				if m.onChange != nil { m.onChange(req) }
+				if m.onChange != nil {
+					m.onChange(req)
+				}
 				return req
 			}
 		}
@@ -118,7 +121,8 @@ func (m *Manager) Request(level Level, tool, description, args string, ttl time.
 
 // Approve marks a request as approved.
 func (m *Manager) Approve(id, by, reason string) error {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, r := range m.pending {
 		if r.ID == id {
 			r.Status = StatusApproved
@@ -127,7 +131,9 @@ func (m *Manager) Approve(id, by, reason string) error {
 			r.ResolvedAt = time.Now()
 			m.pending = append(m.pending[:i], m.pending[i+1:]...)
 			m.archive(r)
-			if m.onChange != nil { m.onChange(r) }
+			if m.onChange != nil {
+				m.onChange(r)
+			}
 			return nil
 		}
 	}
@@ -136,7 +142,8 @@ func (m *Manager) Approve(id, by, reason string) error {
 
 // Deny marks a request as denied.
 func (m *Manager) Deny(id, by, reason string) error {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	for i, r := range m.pending {
 		if r.ID == id {
 			r.Status = StatusDenied
@@ -145,7 +152,9 @@ func (m *Manager) Deny(id, by, reason string) error {
 			r.ResolvedAt = time.Now()
 			m.pending = append(m.pending[:i], m.pending[i+1:]...)
 			m.archive(r)
-			if m.onChange != nil { m.onChange(r) }
+			if m.onChange != nil {
+				m.onChange(r)
+			}
 			return nil
 		}
 	}
@@ -154,7 +163,8 @@ func (m *Manager) Deny(id, by, reason string) error {
 
 // ExpireOld rejects requests past their expiration time.
 func (m *Manager) ExpireOld() int {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	now := time.Now()
 	var kept []*Request
 	expired := 0
@@ -174,7 +184,8 @@ func (m *Manager) ExpireOld() int {
 
 // Pending returns all unresolved requests.
 func (m *Manager) Pending() []*Request {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	out := make([]*Request, len(m.pending))
 	copy(out, m.pending)
 	return out
@@ -182,8 +193,11 @@ func (m *Manager) Pending() []*Request {
 
 // History returns recent resolved requests.
 func (m *Manager) History(limit int) []*Request {
-	m.mu.Lock(); defer m.mu.Unlock()
-	if limit <= 0 || limit > len(m.history) { limit = len(m.history) }
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 || limit > len(m.history) {
+		limit = len(m.history)
+	}
 	out := make([]*Request, limit)
 	copy(out, m.history[len(m.history)-limit:])
 	return out
@@ -194,23 +208,31 @@ func (m *Manager) OnChange(fn func(*Request)) { m.onChange = fn }
 
 func (m *Manager) archive(r *Request) {
 	m.history = append(m.history, r)
-	if len(m.history) > m.maxHist { m.history = m.history[len(m.history)-m.maxHist:] }
+	if len(m.history) > m.maxHist {
+		m.history = m.history[len(m.history)-m.maxHist:]
+	}
 }
 
 func matchGlob(pattern, name string) bool {
-	if pattern == "*" || pattern == "" { return true }
+	if pattern == "*" || pattern == "" {
+		return true
+	}
 	return strings.EqualFold(pattern, name)
 }
 
 // FormatPending formats pending requests for display.
 func (m *Manager) FormatPending() string {
 	pending := m.Pending()
-	if len(pending) == 0 { return "No pending approval requests.\n" }
+	if len(pending) == 0 {
+		return "No pending approval requests.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d pending approval(s):\n\n", len(pending))
 	for _, r := range pending {
 		icon := "⚠️"
-		if r.Level == LevelCritical { icon = "🔴" }
+		if r.Level == LevelCritical {
+			icon = "🔴"
+		}
 		fmt.Fprintf(&sb, "%s [%s] %s — %s (expires %s)\n",
 			icon, r.ID, r.Tool, r.Description, r.ExpiresAt.Format("15:04:05"))
 	}
@@ -221,13 +243,16 @@ func (m *Manager) FormatPending() string {
 func (m *Manager) ApproveAll(by, reason string) int {
 	count := 0
 	for _, r := range m.Pending() {
-		if err := m.Approve(r.ID, by, reason); err == nil { count++ }
+		if err := m.Approve(r.ID, by, reason); err == nil {
+			count++
+		}
 	}
 	return count
 }
 
 // Count returns the number of pending requests.
 func (m *Manager) Count() int {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return len(m.pending)
 }

@@ -12,9 +12,9 @@ import (
 
 // SemanticPatch applies changes based on semantic context rather than line numbers.
 type SemanticPatch struct {
-	Anchor   string // regex or literal to find the context
-	Action   string // "insert_before", "insert_after", "replace", "delete"
-	Content  string
+	Anchor  string // regex or literal to find the context
+	Action  string // "insert_before", "insert_after", "replace", "delete"
+	Content string
 }
 
 // ApplySemanticPatch applies a semantic patch to source text.

@@ -29,12 +29,12 @@ const (
 
 // ModelConfig holds per-model configuration.
 type ModelConfig struct {
-	Name     string  `json:"name"`
-	Provider Provider `json:"provider"`
-	APIKey   string  `json:"-"`
-	BaseURL  string  `json:"base_url"`
-	MaxTokens int    `json:"max_tokens"`
-	Temperature float64 `json:"temperature"`
+	Name        string   `json:"name"`
+	Provider    Provider `json:"provider"`
+	APIKey      string   `json:"-"`
+	BaseURL     string   `json:"base_url"`
+	MaxTokens   int      `json:"max_tokens"`
+	Temperature float64  `json:"temperature"`
 }
 
 // DefaultModelConfigs returns common model configs.
@@ -61,10 +61,10 @@ const (
 
 // ContentBlock is one piece of message content (text or tool use).
 type ContentBlock struct {
-	Type     string `json:"type"` // "text" or "tool_use"
-	Text     string `json:"text,omitempty"`
-	ToolID   string `json:"id,omitempty"`
-	ToolName string `json:"name,omitempty"`
+	Type      string         `json:"type"` // "text" or "tool_use"
+	Text      string         `json:"text,omitempty"`
+	ToolID    string         `json:"id,omitempty"`
+	ToolName  string         `json:"name,omitempty"`
 	ToolInput map[string]any `json:"input,omitempty"`
 }
 
@@ -84,13 +84,13 @@ func NewTextMessage(role Role, text string) Message {
 
 // StreamEvent is one chunk from a streaming response.
 type StreamEvent struct {
-	Type       string `json:"type"` // "text_delta", "tool_use_start", "tool_use_delta", "message_stop"
-	Text       string `json:"text,omitempty"`
-	ToolID     string `json:"tool_id,omitempty"`
-	ToolName   string `json:"tool_name,omitempty"`
+	Type       string         `json:"type"` // "text_delta", "tool_use_start", "tool_use_delta", "message_stop"
+	Text       string         `json:"text,omitempty"`
+	ToolID     string         `json:"tool_id,omitempty"`
+	ToolName   string         `json:"tool_name,omitempty"`
 	ToolInput  map[string]any `json:"tool_input,omitempty"`
-	StopReason string `json:"stop_reason,omitempty"`
-	Usage      *Usage `json:"usage,omitempty"`
+	StopReason string         `json:"stop_reason,omitempty"`
+	Usage      *Usage         `json:"usage,omitempty"`
 }
 
 // StreamHandler receives streaming events.
@@ -108,9 +108,9 @@ type Usage struct {
 func (u *Usage) Cost(model string) float64 {
 	// Approximate pricing per 1M tokens (as of 2025)
 	pricing := map[string][2]float64{ // [input, output] per 1M tokens
-		"gpt-4o":               {2.50, 10.00},
-		"gpt-4o-mini":          {0.15, 0.60},
-		"claude-sonnet-4-20250514": {3.00, 15.00},
+		"gpt-4o":                    {2.50, 10.00},
+		"gpt-4o-mini":               {0.15, 0.60},
+		"claude-sonnet-4-20250514":  {3.00, 15.00},
 		"claude-3-5-haiku-20241022": {0.25, 1.25},
 	}
 	if p, ok := pricing[model]; ok {
@@ -139,10 +139,10 @@ type CostTracker struct {
 }
 
 type modelStats struct {
-	Calls       int64
-	InputTokens int64
+	Calls        int64
+	InputTokens  int64
 	OutputTokens int64
-	Cost        float64
+	Cost         float64
 }
 
 // NewCostTracker creates a cost tracker.
@@ -152,12 +152,16 @@ func NewCostTracker() *CostTracker {
 
 // Record adds usage to the tracker.
 func (ct *CostTracker) Record(model string, usage *Usage) {
-	ct.mu.Lock(); defer ct.mu.Unlock()
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
 	cost := usage.Cost(model)
 	ct.totalCost += cost
 	ct.totalCalls++
 	ms, ok := ct.byModel[model]
-	if !ok { ms = &modelStats{}; ct.byModel[model] = ms }
+	if !ok {
+		ms = &modelStats{}
+		ct.byModel[model] = ms
+	}
 	ms.Calls++
 	ms.InputTokens += int64(usage.InputTokens)
 	ms.OutputTokens += int64(usage.OutputTokens)
@@ -166,7 +170,8 @@ func (ct *CostTracker) Record(model string, usage *Usage) {
 
 // Report returns a cost report.
 func (ct *CostTracker) Report() string {
-	ct.mu.Lock(); defer ct.mu.Unlock()
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "LLM Cost Report: %d calls, $%.4f total\n%s\n\n", ct.totalCalls, ct.totalCost, strings.Repeat("─", 50))
 	for model, ms := range ct.byModel {
@@ -178,16 +183,17 @@ func (ct *CostTracker) Report() string {
 // NewClient creates an LLM client.
 func NewClient() *Client {
 	return &Client{
-		configs: map[string]*ModelConfig{},
-		http:    &http.Client{Timeout: 120 * time.Second},
-		tracker: NewCostTracker(),
+		configs:  map[string]*ModelConfig{},
+		http:     &http.Client{Timeout: 120 * time.Second},
+		tracker:  NewCostTracker(),
 		fallback: true,
 	}
 }
 
 // RegisterModel adds a model configuration.
 func (c *Client) RegisterModel(cfg ModelConfig) {
-	c.mu.Lock(); defer c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.configs[cfg.Name] = &cfg
 }
 
@@ -198,7 +204,10 @@ func (c *Client) SetFallback(on bool) { c.mu.Lock(); defer c.mu.Unlock(); c.fall
 func (c *Client) Chat(ctx context.Context, model string, messages []Message) (string, *Usage, error) {
 	c.mu.Lock()
 	cfg, ok := c.configs[model]
-	if !ok { c.mu.Unlock(); return "", nil, fmt.Errorf("model %q not registered", model) }
+	if !ok {
+		c.mu.Unlock()
+		return "", nil, fmt.Errorf("model %q not registered", model)
+	}
 	c.mu.Unlock()
 
 	return c.chatWithRetry(ctx, cfg, messages, 3)
@@ -207,7 +216,9 @@ func (c *Client) Chat(ctx context.Context, model string, messages []Message) (st
 func (c *Client) chatWithRetry(ctx context.Context, cfg *ModelConfig, messages []Message, maxRetries int) (string, *Usage, error) {
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
-		if attempt > 0 { time.Sleep(time.Duration(attempt) * 2 * time.Second) }
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 2 * time.Second)
+		}
 
 		result, usage, err := c.doChat(ctx, cfg, messages)
 		if err == nil {
@@ -243,7 +254,8 @@ func (c *Client) doChat(ctx context.Context, cfg *ModelConfig, messages []Messag
 }
 
 func (c *Client) findFallback(cfg *ModelConfig) *ModelConfig {
-	c.mu.Lock(); defer c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	// Prefer same provider, cheaper model
 	candidates := []string{
 		"gpt-4o-mini",
@@ -260,11 +272,11 @@ func (c *Client) findFallback(cfg *ModelConfig) *ModelConfig {
 // ── OpenAI Chat ────────────────────────────────────────────
 
 type openAIRequest struct {
-	Model    string    `json:"model"`
-	Messages []openAIMsg `json:"messages"`
-	MaxTokens int      `json:"max_tokens,omitempty"`
-	Temperature float64 `json:"temperature,omitempty"`
-	Stream    bool     `json:"stream"`
+	Model       string      `json:"model"`
+	Messages    []openAIMsg `json:"messages"`
+	MaxTokens   int         `json:"max_tokens,omitempty"`
+	Temperature float64     `json:"temperature,omitempty"`
+	Stream      bool        `json:"stream"`
 }
 
 type openAIMsg struct {
@@ -290,7 +302,9 @@ func (c *Client) openAIChat(ctx context.Context, cfg *ModelConfig, messages []Me
 		text := m.Text
 		if text == "" {
 			for _, block := range m.Content {
-				if block.Type == "text" { text += block.Text }
+				if block.Type == "text" {
+					text += block.Text
+				}
 			}
 		}
 		oaiMessages = append(oaiMessages, openAIMsg{Role: string(m.Role), Content: text})
@@ -300,12 +314,16 @@ func (c *Client) openAIChat(ctx context.Context, cfg *ModelConfig, messages []Me
 	b, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", cfg.BaseURL+"/chat/completions", bytes.NewReader(b))
-	if err != nil { return "", nil, err }
+	if err != nil {
+		return "", nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	resp, err := c.http.Do(req)
-	if err != nil { return "", nil, err }
+	if err != nil {
+		return "", nil, err
+	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
@@ -314,8 +332,12 @@ func (c *Client) openAIChat(ctx context.Context, cfg *ModelConfig, messages []Me
 	}
 
 	var result openAIResponse
-	if err := json.Unmarshal(respBody, &result); err != nil { return "", nil, err }
-	if len(result.Choices) == 0 { return "", nil, fmt.Errorf("no choices returned") }
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", nil, err
+	}
+	if len(result.Choices) == 0 {
+		return "", nil, fmt.Errorf("no choices returned")
+	}
 
 	usage := &Usage{InputTokens: result.Usage.PromptTokens, OutputTokens: result.Usage.CompletionTokens}
 	return result.Choices[0].Message.Content, usage, nil
@@ -324,15 +346,15 @@ func (c *Client) openAIChat(ctx context.Context, cfg *ModelConfig, messages []Me
 // ── Anthropic Chat ─────────────────────────────────────────
 
 type anthropicRequest struct {
-	Model    string `json:"model"`
-	MaxTokens int   `json:"max_tokens"`
-	Messages []anthropicMsg `json:"messages"`
-	System   string `json:"system,omitempty"`
-	Stream   bool   `json:"stream"`
+	Model     string         `json:"model"`
+	MaxTokens int            `json:"max_tokens"`
+	Messages  []anthropicMsg `json:"messages"`
+	System    string         `json:"system,omitempty"`
+	Stream    bool           `json:"stream"`
 }
 
 type anthropicMsg struct {
-	Role    string            `json:"role"`
+	Role    string             `json:"role"`
 	Content []anthropicContent `json:"content"`
 }
 
@@ -364,11 +386,13 @@ func (c *Client) anthropicChat(ctx context.Context, cfg *ModelConfig, messages [
 		text := m.Text
 		if text == "" {
 			for _, block := range m.Content {
-				if block.Type == "text" { text += block.Text }
+				if block.Type == "text" {
+					text += block.Text
+				}
 			}
 		}
 		antMessages = append(antMessages, anthropicMsg{
-			Role: string(m.Role),
+			Role:    string(m.Role),
 			Content: []anthropicContent{{Type: "text", Text: text}},
 		})
 	}
@@ -377,13 +401,17 @@ func (c *Client) anthropicChat(ctx context.Context, cfg *ModelConfig, messages [
 	b, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", cfg.BaseURL+"/messages", bytes.NewReader(b))
-	if err != nil { return "", nil, err }
+	if err != nil {
+		return "", nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", cfg.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := c.http.Do(req)
-	if err != nil { return "", nil, err }
+	if err != nil {
+		return "", nil, err
+	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
@@ -392,8 +420,12 @@ func (c *Client) anthropicChat(ctx context.Context, cfg *ModelConfig, messages [
 	}
 
 	var result anthropicResponse
-	if err := json.Unmarshal(respBody, &result); err != nil { return "", nil, err }
-	if len(result.Content) == 0 { return "", nil, fmt.Errorf("no content returned") }
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return "", nil, err
+	}
+	if len(result.Content) == 0 {
+		return "", nil, fmt.Errorf("no content returned")
+	}
 
 	usage := &Usage{InputTokens: result.Usage.InputTokens, OutputTokens: result.Usage.OutputTokens}
 	return result.Content[0].Text, usage, nil
@@ -405,7 +437,10 @@ func (c *Client) anthropicChat(ctx context.Context, cfg *ModelConfig, messages [
 func (c *Client) ChatStream(ctx context.Context, model string, messages []Message, handler StreamHandler) (*Usage, error) {
 	c.mu.Lock()
 	cfg, ok := c.configs[model]
-	if !ok { c.mu.Unlock(); return nil, fmt.Errorf("model %q not registered", model) }
+	if !ok {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("model %q not registered", model)
+	}
 	c.mu.Unlock()
 
 	switch cfg.Provider {
@@ -424,7 +459,9 @@ func (c *Client) openAIStream(ctx context.Context, cfg *ModelConfig, messages []
 		text := m.Text
 		if text == "" {
 			for _, block := range m.Content {
-				if block.Type == "text" { text += block.Text }
+				if block.Type == "text" {
+					text += block.Text
+				}
 			}
 		}
 		oaiMessages = append(oaiMessages, openAIMsg{Role: string(m.Role), Content: text})
@@ -434,12 +471,16 @@ func (c *Client) openAIStream(ctx context.Context, cfg *ModelConfig, messages []
 	b, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", cfg.BaseURL+"/chat/completions", bytes.NewReader(b))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 
 	resp, err := c.http.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -454,9 +495,13 @@ func (c *Client) openAIStream(ctx context.Context, cfg *ModelConfig, messages []
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") { continue }
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
 		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" { break }
+		if data == "[DONE]" {
+			break
+		}
 
 		var chunk struct {
 			Choices []struct {
@@ -470,7 +515,9 @@ func (c *Client) openAIStream(ctx context.Context, cfg *ModelConfig, messages []
 				CompletionTokens int `json:"completion_tokens"`
 			} `json:"usage"`
 		}
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil { continue }
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
 
 		if len(chunk.Choices) > 0 {
 			delta := chunk.Choices[0].Delta.Content
@@ -487,7 +534,9 @@ func (c *Client) openAIStream(ctx context.Context, cfg *ModelConfig, messages []
 		}
 	}
 
-	if usage == nil { usage = &Usage{} }
+	if usage == nil {
+		usage = &Usage{}
+	}
 	c.tracker.Record(cfg.Name, usage)
 	return usage, nil
 }
@@ -496,11 +545,16 @@ func (c *Client) anthropicStream(ctx context.Context, cfg *ModelConfig, messages
 	var systemPrompt string
 	var antMessages []anthropicMsg
 	for _, m := range messages {
-		if m.Role == RoleSystem { systemPrompt = m.Text; continue }
+		if m.Role == RoleSystem {
+			systemPrompt = m.Text
+			continue
+		}
 		text := m.Text
 		if text == "" {
 			for _, block := range m.Content {
-				if block.Type == "text" { text += block.Text }
+				if block.Type == "text" {
+					text += block.Text
+				}
 			}
 		}
 		antMessages = append(antMessages, anthropicMsg{Role: string(m.Role), Content: []anthropicContent{{Type: "text", Text: text}}})
@@ -510,13 +564,17 @@ func (c *Client) anthropicStream(ctx context.Context, cfg *ModelConfig, messages
 	b, _ := json.Marshal(body)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", cfg.BaseURL+"/messages", bytes.NewReader(b))
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-api-key", cfg.APIKey)
 	req.Header.Set("anthropic-version", "2023-06-01")
 
 	resp, err := c.http.Do(req)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
@@ -531,15 +589,17 @@ func (c *Client) anthropicStream(ctx context.Context, cfg *ModelConfig, messages
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.HasPrefix(line, "data: ") { continue }
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
 		data := strings.TrimPrefix(line, "data: ")
 
 		var event struct {
-			Type    string `json:"type"`
-			Delta   struct {
-				Type         string `json:"type"`
-				Text         string `json:"text"`
-				PartialJSON  string `json:"partial_json"`
+			Type  string `json:"type"`
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
 			} `json:"delta"`
 			Usage struct {
 				InputTokens  int `json:"input_tokens"`
@@ -551,7 +611,9 @@ func (c *Client) anthropicStream(ctx context.Context, cfg *ModelConfig, messages
 				Name string `json:"name"`
 			} `json:"content_block"`
 		}
-		if err := json.Unmarshal([]byte(data), &event); err != nil { continue }
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			continue
+		}
 
 		switch event.Type {
 		case "content_block_start":
@@ -575,7 +637,9 @@ func (c *Client) anthropicStream(ctx context.Context, cfg *ModelConfig, messages
 		}
 	}
 
-	if usage == nil { usage = &Usage{} }
+	if usage == nil {
+		usage = &Usage{}
+	}
 	c.tracker.Record(cfg.Name, usage)
 	return usage, nil
 }

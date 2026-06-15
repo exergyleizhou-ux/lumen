@@ -48,21 +48,21 @@ func (s JobState) String() string {
 
 // Job represents a scheduled function with metadata.
 type Job struct {
-	ID          string
-	Name        string
-	Spec        string        // cron spec string
-	fn          JobFunc
-	schedule    *cronSchedule // parsed
-	nextRun     time.Time
-	mu          sync.Mutex
-	runCount    int64
-	lastRun     time.Time
-	lastDur     time.Duration
-	lastErr     error
+	ID           string
+	Name         string
+	Spec         string // cron spec string
+	fn           JobFunc
+	schedule     *cronSchedule // parsed
+	nextRun      time.Time
+	mu           sync.Mutex
+	runCount     int64
+	lastRun      time.Time
+	lastDur      time.Duration
+	lastErr      error
 	allowOverlap bool
-	timeout     time.Duration
-	enabled     bool
-	tags        []string
+	timeout      time.Duration
+	enabled      bool
+	tags         []string
 }
 
 // NewJob creates a Job.  spec is a 5-field cron expression.
@@ -199,15 +199,15 @@ func (jh *JobHistory) Stats() map[string]interface{} {
 // Scheduler manages a set of jobs, ticking every second and dispatching those
 // whose cron spec matches the current time.
 type Scheduler struct {
-	jobs      map[string]*Job
-	history   *JobHistory
-	mu        sync.RWMutex
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	running   atomic.Bool
-	ticker    *time.Ticker
-	loc       *time.Location
+	jobs    map[string]*Job
+	history *JobHistory
+	mu      sync.RWMutex
+	ctx     context.Context
+	cancel  context.CancelFunc
+	wg      sync.WaitGroup
+	running atomic.Bool
+	ticker  *time.Ticker
+	loc     *time.Location
 }
 
 // NewScheduler creates a Scheduler.
@@ -389,11 +389,11 @@ func (s *Scheduler) runJob(job *Job, start time.Time) {
 // cronSchedule — parsed 5-field cron expression.
 
 type cronField struct {
-	values    []int  // explicit values
-	star      bool   // wildcard
-	step      int    // step interval (0 = none)
-	rangeMin  int
-	rangeMax  int
+	values   []int // explicit values
+	star     bool  // wildcard
+	step     int   // step interval (0 = none)
+	rangeMin int
+	rangeMax int
 }
 
 type cronSchedule struct {
@@ -508,7 +508,7 @@ func (cf *cronField) matches(v int) bool {
 // Uses a simple minute-stepping algorithm.
 func (cs *cronSchedule) Next(after time.Time) time.Time {
 	// Start from the next second, round up to the next minute.
-	t := after.Add(1*time.Second).Truncate(time.Minute)
+	t := after.Add(1 * time.Second).Truncate(time.Minute)
 	// Search up to 4 years ahead (safety limit).
 	limit := after.AddDate(4, 0, 0)
 	for t.Before(limit) {

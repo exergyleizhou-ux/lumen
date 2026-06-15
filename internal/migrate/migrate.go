@@ -13,30 +13,30 @@ import (
 
 // Migration is a single versioned migration step.
 type Migration struct {
-	Version     int       `json:"version"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	Version     int          `json:"version"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
 	Up          func() error `json:"-"`
 	Down        func() error `json:"-"`
-	AppliedAt   *time.Time  `json:"applied_at,omitempty"`
+	AppliedAt   *time.Time   `json:"applied_at,omitempty"`
 }
 
 // Status is the migration state.
 type Status struct {
-	Version   int    `json:"version"`
-	Name      string `json:"name"`
-	Applied   bool   `json:"applied"`
+	Version   int        `json:"version"`
+	Name      string     `json:"name"`
+	Applied   bool       `json:"applied"`
 	AppliedAt *time.Time `json:"applied_at,omitempty"`
 }
 
 // Runner manages migration execution.
 type Runner struct {
-	mu          sync.Mutex
-	migrations  map[int]*Migration
-	applied     map[int]bool
-	history     []Migration
-	lockFn      func() error
-	unlockFn    func() error
+	mu         sync.Mutex
+	migrations map[int]*Migration
+	applied    map[int]bool
+	history    []Migration
+	lockFn     func() error
+	unlockFn   func() error
 }
 
 // NewRunner creates a migration runner.
@@ -46,7 +46,8 @@ func NewRunner() *Runner {
 
 // Register adds a migration.
 func (r *Runner) Register(m *Migration) error {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if _, ok := r.migrations[m.Version]; ok {
 		return fmt.Errorf("duplicate migration version %d", m.Version)
 	}
@@ -56,15 +57,26 @@ func (r *Runner) Register(m *Migration) error {
 
 // SetLock sets distributed lock functions.
 func (r *Runner) SetLock(lock, unlock func() error) {
-	r.mu.Lock(); defer r.mu.Unlock()
-	r.lockFn = lock; r.unlockFn = unlock
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lockFn = lock
+	r.unlockFn = unlock
 }
 
 // Migrate runs all pending up migrations.
 func (r *Runner) Migrate() ([]Status, error) {
 	r.mu.Lock()
-	if r.lockFn != nil { if err := r.lockFn(); err != nil { r.mu.Unlock(); return nil, fmt.Errorf("lock: %w", err) } }
-	defer func() { if r.unlockFn != nil { r.unlockFn() } }()
+	if r.lockFn != nil {
+		if err := r.lockFn(); err != nil {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("lock: %w", err)
+		}
+	}
+	defer func() {
+		if r.unlockFn != nil {
+			r.unlockFn()
+		}
+	}()
 	r.mu.Unlock()
 
 	var statuses []Status
@@ -104,8 +116,17 @@ func (r *Runner) Migrate() ([]Status, error) {
 // Rollback reverts the last N migrations.
 func (r *Runner) Rollback(steps int) ([]Status, error) {
 	r.mu.Lock()
-	if r.lockFn != nil { if err := r.lockFn(); err != nil { r.mu.Unlock(); return nil, fmt.Errorf("lock: %w", err) } }
-	defer func() { if r.unlockFn != nil { r.unlockFn() } }()
+	if r.lockFn != nil {
+		if err := r.lockFn(); err != nil {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("lock: %w", err)
+		}
+	}
+	defer func() {
+		if r.unlockFn != nil {
+			r.unlockFn()
+		}
+	}()
 	r.mu.Unlock()
 
 	versions := r.sortedVersions()
@@ -113,9 +134,13 @@ func (r *Runner) Rollback(steps int) ([]Status, error) {
 	for i := len(versions) - 1; i >= 0; i-- {
 		v := versions[i]
 		r.mu.Lock()
-		if r.applied[v] { rev = append(rev, v) }
+		if r.applied[v] {
+			rev = append(rev, v)
+		}
 		r.mu.Unlock()
-		if len(rev) >= steps { break }
+		if len(rev) >= steps {
+			break
+		}
 	}
 
 	var statuses []Status
@@ -135,7 +160,8 @@ func (r *Runner) Rollback(steps int) ([]Status, error) {
 
 // Status returns the status of all migrations.
 func (r *Runner) Status() []Status {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	versions := r.sortedVersions()
 	var out []Status
 	for _, v := range versions {
@@ -147,17 +173,22 @@ func (r *Runner) Status() []Status {
 
 // Pending returns count of unapplied migrations.
 func (r *Runner) Pending() int {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	count := 0
 	for _, v := range r.sortedVersions() {
-		if !r.applied[v] { count++ }
+		if !r.applied[v] {
+			count++
+		}
 	}
 	return count
 }
 
 func (r *Runner) sortedVersions() []int {
 	versions := make([]int, 0, len(r.migrations))
-	for v := range r.migrations { versions = append(versions, v) }
+	for v := range r.migrations {
+		versions = append(versions, v)
+	}
 	sort.Ints(versions)
 	return versions
 }
@@ -168,9 +199,13 @@ func FormatStatus(statuses []Status) string {
 	fmt.Fprintf(&sb, "Migration Status (%d entries):\n%s\n\n", len(statuses), strings.Repeat("─", 50))
 	for _, s := range statuses {
 		icon := "⬜"
-		if s.Applied { icon = "✅" }
+		if s.Applied {
+			icon = "✅"
+		}
 		fmt.Fprintf(&sb, "  %s v%d %s", icon, s.Version, s.Name)
-		if s.AppliedAt != nil { fmt.Fprintf(&sb, " (%v)", s.AppliedAt.Format(time.RFC3339)) }
+		if s.AppliedAt != nil {
+			fmt.Fprintf(&sb, " (%v)", s.AppliedAt.Format(time.RFC3339))
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -188,6 +223,8 @@ type Migrable interface {
 // Apply runs registered migrations against a Migrable target.
 func Apply(target Migrable, migrations ...*Migration) error {
 	r := NewRunner()
-	for _, m := range migrations { r.Register(m) }
+	for _, m := range migrations {
+		r.Register(m)
+	}
 	return target.Migrate(r)
 }

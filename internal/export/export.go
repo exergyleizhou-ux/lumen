@@ -25,10 +25,10 @@ import (
 type Format int
 
 const (
-	FormatJSON    Format = iota // application/json
-	FormatCSV                   // text/csv
-	FormatColumnar              // columnar (Parquet-like, stored as compressed columns)
-	FormatNDJSON                // application/x-ndjson (newline-delimited JSON)
+	FormatJSON     Format = iota // application/json
+	FormatCSV                    // text/csv
+	FormatColumnar               // columnar (Parquet-like, stored as compressed columns)
+	FormatNDJSON                 // application/x-ndjson (newline-delimited JSON)
 )
 
 var formatNames = map[Format]string{
@@ -64,19 +64,19 @@ func FormatFromString(s string) (Format, error) {
 // exceeded.  Each chunk is a complete, self-contained document (for JSON and
 // NDJSON) or a continuation (for CSV).
 type ChunkedWriter struct {
-	dir        string
-	base       string
-	ext        string
-	chunkSize  int64
-	compress   bool
+	dir       string
+	base      string
+	ext       string
+	chunkSize int64
+	compress  bool
 
-	mu       sync.Mutex
-	seq      int
-	current  *os.File
-	written  int64
-	buf      *bufio.Writer
-	gz       *gzip.Writer
-	closer   io.WriteCloser // the chain to close on rotate
+	mu      sync.Mutex
+	seq     int
+	current *os.File
+	written int64
+	buf     *bufio.Writer
+	gz      *gzip.Writer
+	closer  io.WriteCloser // the chain to close on rotate
 }
 
 // NewChunkedWriter creates a ChunkedWriter.  dir is the output directory;

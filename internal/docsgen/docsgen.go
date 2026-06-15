@@ -43,7 +43,9 @@ func NewGenerator(dir string) *Generator { return &Generator{Dir: dir} }
 func (g *Generator) GeneratePackage(importPath string) (*PackageDoc, error) {
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, importPath, nil, parser.ParseComments)
-	if err != nil { return nil, fmt.Errorf("parse: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("parse: %w", err)
+	}
 	pd := &PackageDoc{ImportPath: importPath}
 	for name, pkg := range pkgs {
 		pd.Name = name
@@ -66,12 +68,20 @@ func (g *Generator) GeneratePackage(importPath string) (*PackageDoc, error) {
 func (g *Generator) GenerateDir(root string) ([]*PackageDoc, error) {
 	var docs []*PackageDoc
 	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil || !info.IsDir() { return nil }
+		if err != nil || !info.IsDir() {
+			return nil
+		}
 		n := info.Name()
-		if strings.HasPrefix(n, ".") || n == "vendor" || n == "node_modules" { return filepath.SkipDir }
+		if strings.HasPrefix(n, ".") || n == "vendor" || n == "node_modules" {
+			return filepath.SkipDir
+		}
 		pd, err := g.GeneratePackage(path)
-		if err != nil { return nil }
-		if pd.Name != "" { docs = append(docs, pd) }
+		if err != nil {
+			return nil
+		}
+		if pd.Name != "" {
+			docs = append(docs, pd)
+		}
 		return filepath.SkipDir
 	})
 	return docs, nil
@@ -82,13 +92,17 @@ func (g *Generator) FormatPackage(pd *PackageDoc) string {
 	fmt.Fprintf(&sb, "# Package %s\n\n`%s`\n\n%s\n\n", pd.Name, pd.ImportPath, pd.Doc)
 	if len(pd.Funcs) > 0 {
 		sb.WriteString("## Functions\n\n")
-		for _, f := range pd.Funcs { fmt.Fprintf(&sb, "### %s\n\n```go\n%s\n```\n\n%s\n\n", f.Name, f.Sig, f.Doc) }
+		for _, f := range pd.Funcs {
+			fmt.Fprintf(&sb, "### %s\n\n```go\n%s\n```\n\n%s\n\n", f.Name, f.Sig, f.Doc)
+		}
 	}
 	if len(pd.Types) > 0 {
 		sb.WriteString("## Types\n\n")
 		for _, t := range pd.Types {
 			fmt.Fprintf(&sb, "### %s\n\n%s\n\n", t.Name, t.Doc)
-			for _, m := range t.Methods { fmt.Fprintf(&sb, "- **%s**\n", m.Name) }
+			for _, m := range t.Methods {
+				fmt.Fprintf(&sb, "- **%s**\n", m.Name)
+			}
 			sb.WriteByte('\n')
 		}
 	}
@@ -101,7 +115,9 @@ func (g *Generator) FormatAll(docs []*PackageDoc) string {
 	sort.Slice(docs, func(i, j int) bool { return docs[i].Name < docs[j].Name })
 	for _, pd := range docs {
 		first := pd.Doc
-		if idx := strings.IndexByte(first, '\n'); idx > 0 { first = first[:idx] }
+		if idx := strings.IndexByte(first, '\n'); idx > 0 {
+			first = first[:idx]
+		}
 		fmt.Fprintf(&sb, "- [%s](%s) — %s\n", pd.Name, pd.ImportPath, first)
 	}
 	return sb.String()

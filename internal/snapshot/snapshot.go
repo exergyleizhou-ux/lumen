@@ -19,7 +19,7 @@ type Snapshot struct {
 	ID        string            `json:"id"`
 	Timestamp time.Time         `json:"timestamp"`
 	Label     string            `json:"label,omitempty"`
-	Files     map[string]string `json:"files"` // path → content
+	Files     map[string]string `json:"files"`            // path → content
 	Parent    string            `json:"parent,omitempty"` // parent snapshot ID
 }
 
@@ -147,13 +147,21 @@ func (m *Manager) Diff(fromID, toID string) ([]string, error) {
 	from, ok1 := m.snapshots[fromID]
 	to, ok2 := m.snapshots[toID]
 	m.mu.Unlock()
-	if !ok1 { return nil, fmt.Errorf("from snapshot %q not found", fromID) }
-	if !ok2 { return nil, fmt.Errorf("to snapshot %q not found", toID) }
+	if !ok1 {
+		return nil, fmt.Errorf("from snapshot %q not found", fromID)
+	}
+	if !ok2 {
+		return nil, fmt.Errorf("to snapshot %q not found", toID)
+	}
 
 	var changed []string
 	allPaths := map[string]bool{}
-	for p := range from.Files { allPaths[p] = true }
-	for p := range to.Files { allPaths[p] = true }
+	for p := range from.Files {
+		allPaths[p] = true
+	}
+	for p := range to.Files {
+		allPaths[p] = true
+	}
 
 	for p := range allPaths {
 		oldC := from.Files[p]
@@ -175,7 +183,9 @@ func (m *Manager) Prune(maxAge time.Duration, maxKeep int) {
 	var kept []string
 	for _, id := range m.order {
 		s, ok := m.snapshots[id]
-		if !ok { continue }
+		if !ok {
+			continue
+		}
 		if s.Timestamp.After(cutoff) || len(kept) < maxKeep {
 			kept = append(kept, id)
 		} else {

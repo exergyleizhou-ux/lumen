@@ -338,11 +338,11 @@ func (c *LRUCache[T]) PurgeExpired() int {
 // False positives are possible; false negatives are not.
 // It is concurrency-safe.
 type BloomFilter struct {
-	mu       sync.RWMutex
-	bits     []uint64
-	size     uint64 // number of bits (m)
-	numHash  int    // number of hash functions (k)
-	count    uint64 // number of items added
+	mu      sync.RWMutex
+	bits    []uint64
+	size    uint64 // number of bits (m)
+	numHash int    // number of hash functions (k)
+	count   uint64 // number of items added
 }
 
 // NewBloomFilter creates a Bloom filter with the given capacity and false-positive rate.

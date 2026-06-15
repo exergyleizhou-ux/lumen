@@ -45,21 +45,31 @@ func NewValidator() *Validator { return &Validator{schemas: map[string]*Schema{}
 // Register adds a named schema.
 func (v *Validator) Register(name string, raw json.RawMessage) error {
 	var s Schema
-	if err := json.Unmarshal(raw, &s); err != nil { return err }
-	if s.Pattern != "" { s.patternRe = regexp.MustCompile(s.Pattern) }
-	v.schemas[name] = &s; return nil
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return err
+	}
+	if s.Pattern != "" {
+		s.patternRe = regexp.MustCompile(s.Pattern)
+	}
+	v.schemas[name] = &s
+	return nil
 }
 
 // Validate checks data against a named schema.
 func (v *Validator) Validate(schemaName string, data json.RawMessage) error {
 	s, ok := v.schemas[schemaName]
-	if !ok { return fmt.Errorf("schema %q not found", schemaName) }
-	var val any; json.Unmarshal(data, &val)
+	if !ok {
+		return fmt.Errorf("schema %q not found", schemaName)
+	}
+	var val any
+	json.Unmarshal(data, &val)
 	return validate("$", val, s)
 }
 
 func validate(path string, val any, s *Schema) error {
-	if s == nil { return nil }
+	if s == nil {
+		return nil
+	}
 	var errs []error
 
 	if s.Type != "" && !matchType(s.Type, val) {
@@ -99,9 +109,14 @@ func validate(path string, val any, s *Schema) error {
 	if len(s.Enum) > 0 {
 		found := false
 		for _, e := range s.Enum {
-			if equal(val, e) { found = true; break }
+			if equal(val, e) {
+				found = true
+				break
+			}
 		}
-		if !found { errs = append(errs, ValidationError{Path: path, Message: "value not in enum"}) }
+		if !found {
+			errs = append(errs, ValidationError{Path: path, Message: "value not in enum"})
+		}
 	}
 
 	if obj, ok := val.(map[string]any); ok && s.Properties != nil {
@@ -127,7 +142,9 @@ func validate(path string, val any, s *Schema) error {
 		}
 	}
 
-	if len(errs) == 0 { return nil }
+	if len(errs) == 0 {
+		return nil
+	}
 	return &multiError{errs: errs}
 }
 
@@ -135,7 +152,9 @@ type multiError struct{ errs []error }
 
 func (m *multiError) Error() string {
 	var msgs []string
-	for _, e := range m.errs { msgs = append(msgs, e.Error()) }
+	for _, e := range m.errs {
+		msgs = append(msgs, e.Error())
+	}
 	return strings.Join(msgs, "; ")
 }
 
@@ -143,40 +162,67 @@ func (m *multiError) Error() string {
 
 func matchType(t string, val any) bool {
 	switch t {
-	case "object": _, ok := val.(map[string]any); return ok
-	case "array": _, ok := val.([]any); return ok
-	case "string": _, ok := val.(string); return ok
+	case "object":
+		_, ok := val.(map[string]any)
+		return ok
+	case "array":
+		_, ok := val.([]any)
+		return ok
+	case "string":
+		_, ok := val.(string)
+		return ok
 	case "number":
 		switch val.(type) {
-		case float64, float32, int, int64, int32: return true
-		case json.Number: return true
+		case float64, float32, int, int64, int32:
+			return true
+		case json.Number:
+			return true
 		}
 		return false
 	case "integer":
-		if n, ok := val.(float64); ok { return n == float64(int64(n)) }
-		if _, ok := val.(int); ok { return true }
-		if _, ok := val.(int64); ok { return true }
+		if n, ok := val.(float64); ok {
+			return n == float64(int64(n))
+		}
+		if _, ok := val.(int); ok {
+			return true
+		}
+		if _, ok := val.(int64); ok {
+			return true
+		}
 		return false
-	case "boolean": _, ok := val.(bool); return ok
-	case "null": return val == nil
+	case "boolean":
+		_, ok := val.(bool)
+		return ok
+	case "null":
+		return val == nil
 	}
 	return false
 }
 
 func toFloat(val any) (float64, bool) {
 	switch v := val.(type) {
-	case float64: return v, true
-	case float32: return float64(v), true
-	case int: return float64(v), true
-	case int64: return float64(v), true
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
 	case json.Number:
-		if f, err := v.Float64(); err == nil { return f, true }
+		if f, err := v.Float64(); err == nil {
+			return f, true
+		}
 	}
 	return 0, false
 }
 
 func equal(a, b any) bool {
-	if a == nil && b == nil { return true }
-	if a == nil || b == nil { return false }
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
 	return strings.EqualFold(fmt.Sprint(a), fmt.Sprint(b))
 }

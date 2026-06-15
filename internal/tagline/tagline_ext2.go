@@ -150,9 +150,9 @@ func countSyllables(word string) int {
 
 // TFIDFVectorizer converts documents to TF-IDF vectors.
 type TFIDFVectorizer struct {
-	vocabulary  map[string]int
-	idf         map[string]float64
-	docCount    int
+	vocabulary map[string]int
+	idf        map[string]float64
+	docCount   int
 }
 
 // NewTFIDFVectorizer creates a TF-IDF vectorizer.
@@ -254,19 +254,19 @@ func CosineSimilarity(a, b map[int]float64) float64 {
 
 // TextNormalizer provides text normalization capabilities.
 type TextNormalizer struct {
-	lowercase    bool
+	lowercase     bool
 	removeAccents bool
-	removePunct  bool
-	collapseWS   bool
+	removePunct   bool
+	collapseWS    bool
 }
 
 // NewTextNormalizer creates a text normalizer.
 func NewTextNormalizer() *TextNormalizer {
 	return &TextNormalizer{
-		lowercase:    true,
+		lowercase:     true,
 		removeAccents: true,
-		removePunct:  false,
-		collapseWS:   true,
+		removePunct:   false,
+		collapseWS:    true,
 	}
 }
 

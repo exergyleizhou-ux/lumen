@@ -19,9 +19,9 @@ func checkDuplicateImport(file *ast.File, fset *token.FileSet, src []byte) []Iss
 		if seen[path] {
 			pos := fset.Position(imp.Pos())
 			issues = append(issues, Issue{
-				Line:    pos.Line,
-				Column:  pos.Column,
-				Message: fmt.Sprintf("duplicate import '%s'", path),
+				Line:     pos.Line,
+				Column:   pos.Column,
+				Message:  fmt.Sprintf("duplicate import '%s'", path),
 				Severity: SevError,
 			})
 		}
@@ -136,9 +136,9 @@ func checkFallthrough(file *ast.File, fset *token.FileSet, src []byte) []Issue {
 // ---- Check for fmt.Println in production code ----
 
 var debugFuncs = map[string]bool{
-	"fmt.Println":  true,
-	"fmt.Print":    true,
-	"fmt.Printf":   true,
+	"fmt.Println": true,
+	"fmt.Print":   true,
+	"fmt.Printf":  true,
 }
 
 func checkDebugPrint(file *ast.File, fset *token.FileSet, src []byte) []Issue {

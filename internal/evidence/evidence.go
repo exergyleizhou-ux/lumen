@@ -38,9 +38,9 @@ type Receipt struct {
 	ToolName string     `json:"tool"`
 	Success  bool       `json:"success"`
 	ReadOnly bool       `json:"read_only"`
-	Step     string     `json:"step,omitempty"`   // complete_step: which step
-	Todos    []TodoItem `json:"todos,omitempty"`  // todo_write: task list snapshot
-	Result   string     `json:"result,omitempty"` // complete_step: result claim
+	Step     string     `json:"step,omitempty"`    // complete_step: which step
+	Todos    []TodoItem `json:"todos,omitempty"`   // todo_write: task list snapshot
+	Result   string     `json:"result,omitempty"`  // complete_step: result claim
 	Command  string     `json:"command,omitempty"` // bash: the command string
 	Paths    []string   `json:"paths,omitempty"`   // write_file/edit_file: target paths
 }
@@ -184,7 +184,7 @@ func (l *Ledger) VerifyEvidence(step, result string, evidence []EvidenceItem) (b
 		}
 	}
 	if !hasWriter {
-		return false, fmt.Sprintf("no successful writer-tool receipts this turn")+
+		return false, fmt.Sprintf("no successful writer-tool receipts this turn") +
 			" — complete_step requires at least one non-read-only tool call as evidence of work done"
 	}
 

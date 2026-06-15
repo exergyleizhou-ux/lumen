@@ -1,5 +1,11 @@
 package broker
-import ("context";"testing";"time")
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
 func TestMemoryBrokerPublish(t *testing.T) {
 	mb := NewMemoryBroker()
 	received := make(chan *Message, 1)
@@ -8,8 +14,11 @@ func TestMemoryBrokerPublish(t *testing.T) {
 	mb.Publish(context.Background(), "test", []byte("hello"))
 	select {
 	case msg := <-received:
-		if string(msg.Data) != "hello" { t.Error("data") }
-	case <-time.After(time.Second): t.Error("timeout")
+		if string(msg.Data) != "hello" {
+			t.Error("data")
+		}
+	case <-time.After(time.Second):
+		t.Error("timeout")
 	}
 }
 func TestMemoryBrokerRequest(t *testing.T) {
@@ -26,9 +35,13 @@ func TestStats(t *testing.T) {
 	s.RecordPublish("topic.a")
 	s.RecordPublish("topic.a")
 	s.RecordPublish("topic.b")
-	if s.Published != 3 { t.Error("published") }
+	if s.Published != 3 {
+		t.Error("published")
+	}
 	formatted := s.FormatStats()
-	if formatted == "" { t.Error("format") }
+	if formatted == "" {
+		t.Error("format")
+	}
 }
 func TestRouter(t *testing.T) {
 	mb := NewMemoryBroker()
@@ -38,9 +51,16 @@ func TestRouter(t *testing.T) {
 	router.Start()
 	mb.Publish(context.Background(), "cmd", []byte("go"))
 	time.Sleep(50 * time.Millisecond)
-	if !called { t.Error("router should call handler") }
+	if !called {
+		t.Error("router should call handler")
+	}
 }
-type testSub struct{ subject string; onMsg func(*Message) }
-func (ts *testSub) Subject() string { return ts.subject }
-func (ts *testSub) QueueGroup() string { return "" }
+
+type testSub struct {
+	subject string
+	onMsg   func(*Message)
+}
+
+func (ts *testSub) Subject() string      { return ts.subject }
+func (ts *testSub) QueueGroup() string   { return "" }
 func (ts *testSub) OnMessage(m *Message) { ts.onMsg(m) }

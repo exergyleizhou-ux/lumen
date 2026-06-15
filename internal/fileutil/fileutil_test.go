@@ -99,9 +99,9 @@ type stubFileInfo struct {
 	dir  bool
 }
 
-func (s *stubFileInfo) Name() string { return s.name }
-func (s *stubFileInfo) IsDir() bool  { return s.dir }
-func (s *stubFileInfo) Size() int64  { return 0 }
-func (s *stubFileInfo) Mode() os.FileMode { return 0 }
+func (s *stubFileInfo) Name() string       { return s.name }
+func (s *stubFileInfo) IsDir() bool        { return s.dir }
+func (s *stubFileInfo) Size() int64        { return 0 }
+func (s *stubFileInfo) Mode() os.FileMode  { return 0 }
 func (s *stubFileInfo) ModTime() time.Time { return time.Time{} }
-func (s *stubFileInfo) Sys() any { return nil }
+func (s *stubFileInfo) Sys() any           { return nil }

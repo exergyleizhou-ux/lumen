@@ -14,13 +14,13 @@ import (
 
 // Task is one unit of work in a workflow.
 type Task struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	DependsOn   []string          `json:"depends_on,omitempty"`
+	ID          string                          `json:"id"`
+	Name        string                          `json:"name"`
+	DependsOn   []string                        `json:"depends_on,omitempty"`
 	Fn          func(ctx context.Context) error `json:"-"`
 	Compensate  func(ctx context.Context) error `json:"-"`
-	Timeout     time.Duration     `json:"timeout"`
-	RetryPolicy *RetryPolicy      `json:"retry_policy,omitempty"`
+	Timeout     time.Duration                   `json:"timeout"`
+	RetryPolicy *RetryPolicy                    `json:"retry_policy,omitempty"`
 }
 
 // RetryPolicy specifies retry behavior.
@@ -37,21 +37,21 @@ func DefaultRetryPolicy() *RetryPolicy {
 
 // Workflow defines a DAG of tasks.
 type Workflow struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
+	ID      string           `json:"id"`
+	Name    string           `json:"name"`
 	Tasks   map[string]*Task `json:"tasks"`
-	Timeout time.Duration `json:"timeout"`
+	Timeout time.Duration    `json:"timeout"`
 }
 
 // Result is the outcome of one task execution.
 type Result struct {
-	TaskID   string        `json:"task_id"`
-	Status   string        `json:"status"` // pending, running, success, failed, compensated
-	Error    string        `json:"error,omitempty"`
-	Duration time.Duration `json:"duration"`
-	Attempts int           `json:"attempts"`
-	StartedAt time.Time    `json:"started_at,omitempty"`
-	EndedAt   time.Time    `json:"ended_at,omitempty"`
+	TaskID    string        `json:"task_id"`
+	Status    string        `json:"status"` // pending, running, success, failed, compensated
+	Error     string        `json:"error,omitempty"`
+	Duration  time.Duration `json:"duration"`
+	Attempts  int           `json:"attempts"`
+	StartedAt time.Time     `json:"started_at,omitempty"`
+	EndedAt   time.Time     `json:"ended_at,omitempty"`
 }
 
 // RunResult is the outcome of a workflow run.
@@ -79,7 +79,8 @@ func NewOrchestrator() *Orchestrator {
 
 // RegisterWorkflow adds a workflow.
 func (o *Orchestrator) RegisterWorkflow(w *Workflow) {
-	o.mu.Lock(); defer o.mu.Unlock()
+	o.mu.Lock()
+	defer o.mu.Unlock()
 	o.workflows[w.ID] = w
 }
 
@@ -88,14 +89,20 @@ func (o *Orchestrator) Run(ctx context.Context, workflowID string) (*RunResult, 
 	o.mu.Lock()
 	w, ok := o.workflows[workflowID]
 	o.mu.Unlock()
-	if !ok { return nil, fmt.Errorf("workflow %q not found", workflowID) }
+	if !ok {
+		return nil, fmt.Errorf("workflow %q not found", workflowID)
+	}
 
 	// Build DAG structure
 	inDegree := map[string]int{}
-	for id := range w.Tasks { inDegree[id] = 0 }
+	for id := range w.Tasks {
+		inDegree[id] = 0
+	}
 	for id, t := range w.Tasks {
 		for _, dep := range t.DependsOn {
-			if _, ok := w.Tasks[dep]; !ok { return nil, fmt.Errorf("task %q depends on unknown %q", id, dep) }
+			if _, ok := w.Tasks[dep]; !ok {
+				return nil, fmt.Errorf("task %q depends on unknown %q", id, dep)
+			}
 			inDegree[id]++
 		}
 	}
@@ -103,7 +110,9 @@ func (o *Orchestrator) Run(ctx context.Context, workflowID string) (*RunResult, 
 	run := &RunResult{WorkflowID: workflowID, Status: "running", StartedAt: time.Now()}
 
 	// Detect cycles
-	if hasCycle(w.Tasks, inDegree) { return nil, fmt.Errorf("workflow contains a cycle") }
+	if hasCycle(w.Tasks, inDegree) {
+		return nil, fmt.Errorf("workflow contains a cycle")
+	}
 
 	// Execute tasks in topological order
 	order := topologicalOrder(w.Tasks)
@@ -138,21 +147,32 @@ func (o *Orchestrator) Run(ctx context.Context, workflowID string) (*RunResult, 
 	// Collect results in order
 	var ordered []Result
 	for _, t := range topologicalOrder(w.Tasks) {
-		if r, ok := taskResults[t.ID]; ok { ordered = append(ordered, r) }
+		if r, ok := taskResults[t.ID]; ok {
+			ordered = append(ordered, r)
+		}
 	}
 
 	run.Results = ordered
 	allSuccess := true
 	for _, r := range ordered {
-		if r.Status != "success" { allSuccess = false; break }
+		if r.Status != "success" {
+			allSuccess = false
+			break
+		}
 	}
-	if allSuccess { run.Status = "success" } else { run.Status = "failed" }
+	if allSuccess {
+		run.Status = "success"
+	} else {
+		run.Status = "failed"
+	}
 	run.EndedAt = time.Now()
 	run.Duration = run.EndedAt.Sub(run.StartedAt)
 
 	o.mu.Lock()
 	o.results[workflowID] = append(o.results[workflowID], run)
-	if len(o.results[workflowID]) > o.maxHist { o.results[workflowID] = o.results[workflowID][1:] }
+	if len(o.results[workflowID]) > o.maxHist {
+		o.results[workflowID] = o.results[workflowID][1:]
+	}
 	o.mu.Unlock()
 
 	return run, nil
@@ -211,17 +231,26 @@ func runOneTask(ctx context.Context, t *Task) Result {
 
 func hasCycle(tasks map[string]*Task, inDegree map[string]int) bool {
 	deg := map[string]int{}
-	for k, v := range inDegree { deg[k] = v }
+	for k, v := range inDegree {
+		deg[k] = v
+	}
 
 	var queue []string
-	for id, d := range deg { if d == 0 { queue = append(queue, id) } }
+	for id, d := range deg {
+		if d == 0 {
+			queue = append(queue, id)
+		}
+	}
 	visited := 0
 	for len(queue) > 0 {
-		id := queue[0]; queue = queue[1:]
+		id := queue[0]
+		queue = queue[1:]
 		visited++
 		for _, dep := range tasks[id].DependsOn {
 			deg[dep]--
-			if deg[dep] == 0 { queue = append(queue, dep) }
+			if deg[dep] == 0 {
+				queue = append(queue, dep)
+			}
 		}
 	}
 	return visited < len(tasks)
@@ -229,18 +258,32 @@ func hasCycle(tasks map[string]*Task, inDegree map[string]int) bool {
 
 func topologicalOrder(tasks map[string]*Task) []*Task {
 	inDeg := map[string]int{}
-	for id := range tasks { for range tasks[id].DependsOn { inDeg[id]++ } }
+	for id := range tasks {
+		for range tasks[id].DependsOn {
+			inDeg[id]++
+		}
+	}
 
 	var queue []string
-	for id := range tasks { if inDeg[id] == 0 { queue = append(queue, id) } }
+	for id := range tasks {
+		if inDeg[id] == 0 {
+			queue = append(queue, id)
+		}
+	}
 
 	var order []*Task
 	for len(queue) > 0 {
-		id := queue[0]; queue = queue[1:]
+		id := queue[0]
+		queue = queue[1:]
 		order = append(order, tasks[id])
 		for oid := range tasks {
 			for _, dep := range tasks[oid].DependsOn {
-				if dep == id { inDeg[oid]--; if inDeg[oid] == 0 { queue = append(queue, oid) } }
+				if dep == id {
+					inDeg[oid]--
+					if inDeg[oid] == 0 {
+						queue = append(queue, oid)
+					}
+				}
 			}
 		}
 	}
@@ -254,12 +297,17 @@ func FormatRunResult(r *RunResult) string {
 	for _, res := range r.Results {
 		icon := "✅"
 		switch res.Status {
-		case "failed": icon = "🔴"
-		case "compensated": icon = "🟡"
-		case "pending": icon = "⬜"
+		case "failed":
+			icon = "🔴"
+		case "compensated":
+			icon = "🟡"
+		case "pending":
+			icon = "⬜"
 		}
 		fmt.Fprintf(&sb, "  %s %-20s %-10s %v", icon, res.TaskID, res.Status, res.Duration)
-		if res.Error != "" { fmt.Fprintf(&sb, "  err=%s", res.Error) }
+		if res.Error != "" {
+			fmt.Fprintf(&sb, "  err=%s", res.Error)
+		}
 		sb.WriteByte('\n')
 	}
 	fmt.Fprintf(&sb, "\n  Task count: %d\n", len(r.Results))
@@ -289,17 +337,25 @@ func (b *WorkflowBuilder) WithRetry(rp *RetryPolicy) *WorkflowBuilder {
 	// Find last task
 	var last *Task
 	for _, t := range b.w.Tasks {
-		if last == nil || true { last = t }
+		if last == nil || true {
+			last = t
+		}
 	}
-	if last != nil { last.RetryPolicy = rp }
+	if last != nil {
+		last.RetryPolicy = rp
+	}
 	return b
 }
 
 // WithCompensation sets compensation on the last task.
 func (b *WorkflowBuilder) WithCompensation(fn func(context.Context) error) *WorkflowBuilder {
 	var last *Task
-	for _, t := range b.w.Tasks { last = t }
-	if last != nil { last.Compensate = fn }
+	for _, t := range b.w.Tasks {
+		last = t
+	}
+	if last != nil {
+		last.Compensate = fn
+	}
 	_ = last
 	return b
 }

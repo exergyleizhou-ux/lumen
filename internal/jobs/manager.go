@@ -22,13 +22,13 @@ type Manager struct {
 
 // Job is one running background task.
 type Job struct {
-	ID        string       `json:"id"`
-	Type      string       `json:"type"` // "bash" or "task"
-	Label     string       `json:"label"`
-	StartedAt time.Time    `json:"started_at"`
-	Status    JobStatus    `json:"status"`
-	Result    string       `json:"result,omitempty"`
-	Err       string       `json:"err,omitempty"`
+	ID        string    `json:"id"`
+	Type      string    `json:"type"` // "bash" or "task"
+	Label     string    `json:"label"`
+	StartedAt time.Time `json:"started_at"`
+	Status    JobStatus `json:"status"`
+	Result    string    `json:"result,omitempty"`
+	Err       string    `json:"err,omitempty"`
 	resultCh  chan jobResult
 	cancel    func()
 }

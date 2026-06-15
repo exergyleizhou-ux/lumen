@@ -3,7 +3,15 @@
 // in-memory backends behind a single interface for agent communication.
 package broker
 
-import ("context";"encoding/json";"fmt";"sort";"strings";"sync";"time")
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+)
 
 // Message is a broker-delivered message.
 type Message struct {
@@ -50,8 +58,11 @@ func NewMemoryBroker() *MemoryBroker {
 func (mb *MemoryBroker) Name() string { return "memory" }
 
 func (mb *MemoryBroker) Publish(ctx context.Context, subject string, data []byte) error {
-	mb.mu.RLock(); defer mb.mu.RUnlock()
-	if mb.closed { return fmt.Errorf("broker closed") }
+	mb.mu.RLock()
+	defer mb.mu.RUnlock()
+	if mb.closed {
+		return fmt.Errorf("broker closed")
+	}
 
 	mb.counter++
 	msg := &Message{ID: fmt.Sprintf("msg-%d", mb.counter), Subject: subject, Data: data, Timestamp: time.Now()}
@@ -63,14 +74,18 @@ func (mb *MemoryBroker) Publish(ctx context.Context, subject string, data []byte
 }
 
 func (mb *MemoryBroker) Subscribe(sub Subscriber) error {
-	mb.mu.Lock(); defer mb.mu.Unlock()
-	if mb.closed { return fmt.Errorf("broker closed") }
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
+	if mb.closed {
+		return fmt.Errorf("broker closed")
+	}
 	mb.subscribers[sub.Subject()] = append(mb.subscribers[sub.Subject()], sub)
 	return nil
 }
 
 func (mb *MemoryBroker) Unsubscribe(sub Subscriber) error {
-	mb.mu.Lock(); defer mb.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 	subs := mb.subscribers[sub.Subject()]
 	for i, s := range subs {
 		if s == sub {
@@ -96,7 +111,9 @@ func (mb *MemoryBroker) Request(ctx context.Context, subject string, data []byte
 		mb.replyMu.Unlock()
 	}()
 
-	if err := mb.Publish(ctx, subject, data); err != nil { return nil, err }
+	if err := mb.Publish(ctx, subject, data); err != nil {
+		return nil, err
+	}
 
 	select {
 	case reply := <-replyCh:
@@ -109,7 +126,8 @@ func (mb *MemoryBroker) Request(ctx context.Context, subject string, data []byte
 }
 
 func (mb *MemoryBroker) Close() error {
-	mb.mu.Lock(); defer mb.mu.Unlock()
+	mb.mu.Lock()
+	defer mb.mu.Unlock()
 	mb.closed = true
 	mb.subscribers = nil
 	return nil
@@ -141,7 +159,8 @@ func NewRouter(b Broker) *Router {
 
 // Handle registers a handler for a subject.
 func (r *Router) Handle(subject string, handler func(*Message) *Message) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.routes[subject] = handler
 }
 
@@ -151,7 +170,9 @@ func (r *Router) Start() error {
 	defer r.mu.RUnlock()
 	for subject := range r.routes {
 		s := &routerSubscriber{subject: subject, router: r}
-		if err := r.broker.Subscribe(s); err != nil { return err }
+		if err := r.broker.Subscribe(s); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -161,7 +182,7 @@ type routerSubscriber struct {
 	router  *Router
 }
 
-func (rs *routerSubscriber) Subject() string { return rs.subject }
+func (rs *routerSubscriber) Subject() string    { return rs.subject }
 func (rs *routerSubscriber) QueueGroup() string { return "" }
 func (rs *routerSubscriber) OnMessage(msg *Message) {
 	rs.router.mu.RLock()
@@ -179,10 +200,10 @@ func (rs *routerSubscriber) OnMessage(msg *Message) {
 
 // Stats tracks broker metrics.
 type Stats struct {
-	Published  int64            `json:"published"`
-	Received   int64            `json:"received"`
-	BySubject  map[string]int64 `json:"by_subject"`
-	mu         sync.Mutex
+	Published int64            `json:"published"`
+	Received  int64            `json:"received"`
+	BySubject map[string]int64 `json:"by_subject"`
+	mu        sync.Mutex
 }
 
 // NewStats creates a stats collector.
@@ -190,24 +211,29 @@ func NewStats() *Stats { return &Stats{BySubject: map[string]int64{}} }
 
 // RecordPublish records a published message.
 func (s *Stats) RecordPublish(subject string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Published++
 	s.BySubject[subject]++
 }
 
 // RecordReceive records a received message.
 func (s *Stats) RecordReceive(subject string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Received++
 }
 
 // FormatStats formats broker statistics.
 func (s *Stats) FormatStats() string {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Broker Stats: %d published, %d received\n%s\n\n", s.Published, s.Received, strings.Repeat("─", 40))
 	var keys []string
-	for k := range s.BySubject { keys = append(keys, k) }
+	for k := range s.BySubject {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Fprintf(&sb, "  %-30s %d\n", k, s.BySubject[k])
@@ -220,6 +246,8 @@ func (s *Stats) FormatStats() string {
 // PublishJSON marshals and publishes a JSON message.
 func PublishJSON(ctx context.Context, b Broker, subject string, v any) error {
 	data, err := json.Marshal(v)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	return b.Publish(ctx, subject, data)
 }

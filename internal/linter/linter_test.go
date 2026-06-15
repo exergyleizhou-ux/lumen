@@ -433,8 +433,8 @@ func TestIsClean(t *testing.T) {
 func TestApplyFix(t *testing.T) {
 	src := []byte("line1\nline2\nline3\n")
 	fix := &Fix{
-		StartLine:  2,
-		EndLine:    2,
+		StartLine:   2,
+		EndLine:     2,
 		Replacement: "NEWLINE",
 	}
 	result, err := ApplyFix(src, fix)

@@ -117,8 +117,8 @@ func TestPricingCost(t *testing.T) {
 	}
 
 	u := &Usage{
-		CacheHitTokens:  1000000,
-		CacheMissTokens: 500000,
+		CacheHitTokens:   1000000,
+		CacheMissTokens:  500000,
 		CompletionTokens: 200000,
 	}
 

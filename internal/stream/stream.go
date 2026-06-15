@@ -53,10 +53,14 @@ const (
 
 func (w WindowType) String() string {
 	switch w {
-	case WindowTumbling: return "tumbling"
-	case WindowSliding: return "sliding"
-	case WindowSession: return "session"
-	default: return "unknown"
+	case WindowTumbling:
+		return "tumbling"
+	case WindowSliding:
+		return "sliding"
+	case WindowSession:
+		return "session"
+	default:
+		return "unknown"
 	}
 }
 
@@ -74,55 +78,66 @@ type Aggregator func(window Window) Record
 
 // Topology defines a stream processing DAG.
 type Topology struct {
-	Name       string      `json:"name"`
-	Sources    []Source    `json:"-"`
-	Processors []Processor `json:"processors"`
-	Sinks      []Sink      `json:"sinks"`
+	Name       string       `json:"name"`
+	Sources    []Source     `json:"-"`
+	Processors []Processor  `json:"processors"`
+	Sinks      []Sink       `json:"sinks"`
 	Window     WindowConfig `json:"window,omitempty"`
 }
 
 // WindowConfig configures windowing.
 type WindowConfig struct {
-	Type     WindowType    `json:"type"`
-	Size     time.Duration `json:"size"`
-	Slide    time.Duration `json:"slide,omitempty"` // For sliding windows
-	Gap      time.Duration `json:"gap,omitempty"`   // For session windows
-	MaxSize  int           `json:"max_size"`
+	Type    WindowType    `json:"type"`
+	Size    time.Duration `json:"size"`
+	Slide   time.Duration `json:"slide,omitempty"` // For sliding windows
+	Gap     time.Duration `json:"gap,omitempty"`   // For session windows
+	MaxSize int           `json:"max_size"`
 }
 
 // Metrics tracks stream processing metrics.
 type Metrics struct {
-	mu           sync.Mutex
-	RecordsIn    int64
-	RecordsOut   int64
+	mu             sync.Mutex
+	RecordsIn      int64
+	RecordsOut     int64
 	RecordsDropped int64
-	WindowsClosed int64
-	WindowSizes   []int64
-	Latencies     []time.Duration
-	maxSamples    int
+	WindowsClosed  int64
+	WindowSizes    []int64
+	Latencies      []time.Duration
+	maxSamples     int
 }
 
 // NewMetrics creates stream metrics.
 func NewMetrics() *Metrics { return &Metrics{maxSamples: 1000} }
 
-func (m *Metrics) RecordIn(count int64) { m.mu.Lock(); defer m.mu.Unlock(); m.RecordsIn += count }
+func (m *Metrics) RecordIn(count int64)  { m.mu.Lock(); defer m.mu.Unlock(); m.RecordsIn += count }
 func (m *Metrics) RecordOut(count int64) { m.mu.Lock(); defer m.mu.Unlock(); m.RecordsOut += count }
-func (m *Metrics) RecordDrop(count int64) { m.mu.Lock(); defer m.mu.Unlock(); m.RecordsDropped += count }
+func (m *Metrics) RecordDrop(count int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.RecordsDropped += count
+}
 func (m *Metrics) RecordWindowClosed(size int64) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.WindowsClosed++
 	m.WindowSizes = append(m.WindowSizes, size)
-	if len(m.WindowSizes) > m.maxSamples { m.WindowSizes = m.WindowSizes[1:] }
+	if len(m.WindowSizes) > m.maxSamples {
+		m.WindowSizes = m.WindowSizes[1:]
+	}
 }
 func (m *Metrics) RecordLatency(d time.Duration) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.Latencies = append(m.Latencies, d)
-	if len(m.Latencies) > m.maxSamples { m.Latencies = m.Latencies[1:] }
+	if len(m.Latencies) > m.maxSamples {
+		m.Latencies = m.Latencies[1:]
+	}
 }
 
 // FormatMetrics formats stream metrics.
 func (m *Metrics) FormatMetrics() string {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Stream Metrics:\n%s\n\n", strings.Repeat("─", 40))
 	fmt.Fprintf(&sb, "  Records In:     %d\n", m.RecordsIn)
@@ -142,13 +157,17 @@ func (m *Metrics) FormatMetrics() string {
 
 func avg64(vals []int64) float64 {
 	var sum int64
-	for _, v := range vals { sum += v }
+	for _, v := range vals {
+		sum += v
+	}
 	return float64(sum) / float64(len(vals))
 }
 
 func avgDur(vals []time.Duration) time.Duration {
 	var sum time.Duration
-	for _, v := range vals { sum += v }
+	for _, v := range vals {
+		sum += v
+	}
 	return sum / time.Duration(len(vals))
 }
 
@@ -212,12 +231,18 @@ func (p *Pipeline) runSource(ctx context.Context, source Source) {
 
 	for {
 		select {
-		case <-p.stopCh: return
-		case <-ctx.Done(): return
+		case <-p.stopCh:
+			return
+		case <-ctx.Done():
+			return
 		case <-ticker.C:
 			records, err := source.Poll(ctx)
-			if err != nil { continue }
-			if len(records) == 0 { continue }
+			if err != nil {
+				continue
+			}
+			if len(records) == 0 {
+				continue
+			}
 
 			p.metrics.RecordIn(int64(len(records)))
 
@@ -226,26 +251,38 @@ func (p *Pipeline) runSource(ctx context.Context, source Source) {
 			for _, proc := range p.processors {
 				start := time.Now()
 				result, err := proc.Process(processed)
-				if err != nil { p.metrics.RecordDrop(int64(len(processed))); processed = nil; break }
+				if err != nil {
+					p.metrics.RecordDrop(int64(len(processed)))
+					processed = nil
+					break
+				}
 				processed = result
 				p.metrics.RecordLatency(time.Since(start))
 			}
-			if processed == nil { continue }
+			if processed == nil {
+				continue
+			}
 
 			// Handle windowing if configured
 			if p.windowCfg.Size > 0 && p.aggregator != nil {
 				processed = p.applyWindowing(processed)
-				if processed == nil { continue }
+				if processed == nil {
+					continue
+				}
 			}
 
 			p.metrics.RecordOut(int64(len(processed)))
 
 			// Write to sinks
 			for _, sink := range p.sinks {
-				if err := sink.Write(processed); err != nil { p.metrics.RecordDrop(int64(len(processed))) }
+				if err := sink.Write(processed); err != nil {
+					p.metrics.RecordDrop(int64(len(processed)))
+				}
 			}
 
-			if len(records) > 0 { lastOffset = records[len(records)-1].Offset }
+			if len(records) > 0 {
+				lastOffset = records[len(records)-1].Offset
+			}
 			source.Commit(lastOffset)
 		}
 	}
@@ -259,9 +296,15 @@ func (p *Pipeline) applyWindowing(records []Record) []Record {
 
 	for _, r := range records {
 		key := r.Key
-		if key == "" { key = "_all" }
+		if key == "" {
+			key = "_all"
+		}
 		q, ok := p.windows[key]
-		if !ok { q = &priorityQueue{}; heap.Init(q); p.windows[key] = q }
+		if !ok {
+			q = &priorityQueue{}
+			heap.Init(q)
+			p.windows[key] = q
+		}
 
 		winStart := r.Timestamp.Truncate(p.windowCfg.Size)
 		winEnd := winStart.Add(p.windowCfg.Size)
@@ -270,7 +313,8 @@ func (p *Pipeline) applyWindowing(records []Record) []Record {
 		var win *Window
 		for _, w := range *q {
 			if w.Start.Equal(winStart) {
-				win = w; break
+				win = w
+				break
 			}
 		}
 		if win == nil {
@@ -290,7 +334,9 @@ func (p *Pipeline) applyWindowing(records []Record) []Record {
 			output = append(output, result)
 			p.metrics.RecordWindowClosed(int64(len(win.Records)))
 		}
-		if q.Len() == 0 { delete(p.windows, key) }
+		if q.Len() == 0 {
+			delete(p.windows, key)
+		}
 	}
 
 	return output
@@ -298,7 +344,8 @@ func (p *Pipeline) applyWindowing(records []Record) []Record {
 
 // SetAggregator sets the window aggregation function.
 func (p *Pipeline) SetAggregator(agg Aggregator) {
-	p.mu.Lock(); defer p.mu.Unlock()
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	p.aggregator = agg
 }
 
@@ -309,12 +356,16 @@ func (p *Pipeline) Metrics() *Metrics { return p.metrics }
 
 type priorityQueue []*Window
 
-func (pq priorityQueue) Len() int { return len(pq) }
+func (pq priorityQueue) Len() int           { return len(pq) }
 func (pq priorityQueue) Less(i, j int) bool { return pq[i].End.Before(pq[j].End) }
-func (pq priorityQueue) Swap(i, j int) { pq[i], pq[j] = pq[j], pq[i] }
-func (pq *priorityQueue) Push(x any) { *pq = append(*pq, x.(*Window)) }
+func (pq priorityQueue) Swap(i, j int)      { pq[i], pq[j] = pq[j], pq[i] }
+func (pq *priorityQueue) Push(x any)        { *pq = append(*pq, x.(*Window)) }
 func (pq *priorityQueue) Pop() any {
-	old := *pq; n := len(old); item := old[n-1]; *pq = old[0 : n-1]; return item
+	old := *pq
+	n := len(old)
+	item := old[n-1]
+	*pq = old[0 : n-1]
+	return item
 }
 
 // ── Partitioner ───────────────────────────────────────────
@@ -329,8 +380,12 @@ type Partitioner struct {
 func NewPartitioner(partitions int) *Partitioner {
 	return &Partitioner{partitions: partitions, hasher: func(key string) int {
 		var h int
-		for _, c := range key { h = h*31 + int(c) }
-		if h < 0 { h = -h }
+		for _, c := range key {
+			h = h*31 + int(c)
+		}
+		if h < 0 {
+			h = -h
+		}
 		return h % partitions
 	}}
 }
@@ -344,22 +399,36 @@ func (p *Partitioner) Partition(record *Record) int {
 // ── Built-in Processors ──────────────────────────────────
 
 // FilterProcessor passes records matching a predicate.
-type FilterProcessor struct{ Name string; Fn func(Record) bool }
+type FilterProcessor struct {
+	Name string
+	Fn   func(Record) bool
+}
+
 func (f *FilterProcessor) Filter(n string) string { f.Name = n; return n }
-func (f *FilterProcessor) ProcessName() string { return f.Name }
+func (f *FilterProcessor) ProcessName() string    { return f.Name }
 func (f *FilterProcessor) Process(records []Record) ([]Record, error) {
 	var out []Record
-	for _, r := range records { if f.Fn(r) { out = append(out, r) } }
+	for _, r := range records {
+		if f.Fn(r) {
+			out = append(out, r)
+		}
+	}
 	return out, nil
 }
 
 // MapProcessor transforms each record.
-type MapProcessor struct{ Name string; Fn func(Record) Record }
-func (m *MapProcessor) MapName() string { return m.Name }
+type MapProcessor struct {
+	Name string
+	Fn   func(Record) Record
+}
+
+func (m *MapProcessor) MapName() string      { return m.Name }
 func (m *MapProcessor) ProcessName2() string { return m.Name }
 func (m *MapProcessor) Process(records []Record) ([]Record, error) {
 	out := make([]Record, len(records))
-	for i, r := range records { out[i] = m.Fn(r) }
+	for i, r := range records {
+		out[i] = m.Fn(r)
+	}
 	return out, nil
 }
 
@@ -373,11 +442,16 @@ type MockSource struct {
 	mu      sync.Mutex
 }
 
-func NewMockSource(name string, records []Record) *MockSource { return &MockSource{name: name, records: records} }
+func NewMockSource(name string, records []Record) *MockSource {
+	return &MockSource{name: name, records: records}
+}
 func (ms *MockSource) Name() string { return ms.name }
 func (ms *MockSource) Poll(ctx context.Context) ([]Record, error) {
-	ms.mu.Lock(); defer ms.mu.Unlock()
-	if ms.idx >= len(ms.records) { return nil, nil }
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	if ms.idx >= len(ms.records) {
+		return nil, nil
+	}
 	batch := ms.records[ms.idx:]
 	ms.idx = len(ms.records)
 	return batch, nil
@@ -392,11 +466,11 @@ type MockSink struct {
 }
 
 func NewMockSink(name string) *MockSink { return &MockSink{name: name} }
-func (ms *MockSink) Name() string { return ms.name }
+func (ms *MockSink) Name() string       { return ms.name }
 func (ms *MockSink) Write(records []Record) error {
-	ms.mu.Lock(); defer ms.mu.Unlock()
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
 	ms.Records = append(ms.Records, records...)
 	return nil
 }
 func (ms *MockSink) Count() int { ms.mu.Lock(); defer ms.mu.Unlock(); return len(ms.Records) }
-

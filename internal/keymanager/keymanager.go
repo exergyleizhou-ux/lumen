@@ -15,17 +15,17 @@ import (
 
 // KeyInfo tracks one managed API key.
 type KeyInfo struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Provider   string    `json:"provider"`
-	Prefix     string    `json:"prefix"`
-	CreatedAt  time.Time `json:"created_at"`
-	RotatedAt  time.Time `json:"rotated_at"`
-	ExpiresAt  time.Time `json:"expires_at,omitempty"`
-	LastUsed   time.Time `json:"last_used"`
-	UseCount   int64     `json:"use_count"`
-	Revoked    bool      `json:"revoked"`
-	LastError  string    `json:"last_error,omitempty"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Provider  string    `json:"provider"`
+	Prefix    string    `json:"prefix"`
+	CreatedAt time.Time `json:"created_at"`
+	RotatedAt time.Time `json:"rotated_at"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	LastUsed  time.Time `json:"last_used"`
+	UseCount  int64     `json:"use_count"`
+	Revoked   bool      `json:"revoked"`
+	LastError string    `json:"last_error,omitempty"`
 }
 
 // Manager handles API key lifecycle.

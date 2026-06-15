@@ -12,28 +12,28 @@ import (
 
 // Symbol is a named code element.
 type Symbol struct {
-	Name     string    `json:"name"`
-	Kind     string    `json:"kind"` // func, type, method, interface, var, const
-	Package  string    `json:"package"`
-	File     string    `json:"file"`
-	Line     int       `json:"line"`
-	Exported bool      `json:"exported"`
-	Doc      string    `json:"doc,omitempty"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"` // func, type, method, interface, var, const
+	Package  string `json:"package"`
+	File     string `json:"file"`
+	Line     int    `json:"line"`
+	Exported bool   `json:"exported"`
+	Doc      string `json:"doc,omitempty"`
 }
 
 // CallEdge is a calls relationship between symbols.
 type CallEdge struct {
-	Caller   string `json:"caller"`
-	Callee   string `json:"callee"`
-	Count    int    `json:"count"`
-	File     string `json:"file"`
+	Caller string `json:"caller"`
+	Callee string `json:"callee"`
+	Count  int    `json:"count"`
+	File   string `json:"file"`
 }
 
 // ImportEdge is an import relationship between packages.
 type ImportEdge struct {
-	From     string `json:"from"`
-	To       string `json:"to"`
-	Alias    string `json:"alias,omitempty"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Alias string `json:"alias,omitempty"`
 }
 
 // Map is a code structure map.
@@ -53,7 +53,8 @@ func NewMap() *Map {
 
 // AddSymbol registers a symbol.
 func (m *Map) AddSymbol(sym *Symbol) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	id := fmt.Sprintf("%s.%s", sym.Package, sym.Name)
 	m.symbols[id] = sym
 	m.packages[sym.Package] = append(m.packages[sym.Package], sym.File)
@@ -61,28 +62,34 @@ func (m *Map) AddSymbol(sym *Symbol) {
 
 // AddCall registers a call edge.
 func (m *Map) AddCall(caller, callee, file string) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls = append(m.calls, CallEdge{Caller: caller, Callee: callee, Count: 1, File: file})
 }
 
 // AddImport registers an import edge.
 func (m *Map) AddImport(from, to string) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.imports = append(m.imports, ImportEdge{From: from, To: to})
 }
 
 // Symbols returns all symbols.
 func (m *Map) Symbols() []*Symbol {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var out []*Symbol
-	for _, s := range m.symbols { out = append(out, s) }
+	for _, s := range m.symbols {
+		out = append(out, s)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
 // Calls returns all call edges.
 func (m *Map) Calls() []CallEdge {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	out := make([]CallEdge, len(m.calls))
 	copy(out, m.calls)
 	return out
@@ -90,36 +97,49 @@ func (m *Map) Calls() []CallEdge {
 
 // Callees returns everything called by a symbol.
 func (m *Map) Callees(caller string) []string {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	seen := map[string]bool{}
 	for _, c := range m.calls {
-		if c.Caller == caller { seen[c.Callee] = true }
+		if c.Caller == caller {
+			seen[c.Callee] = true
+		}
 	}
 	var out []string
-	for s := range seen { out = append(out, s) }
+	for s := range seen {
+		out = append(out, s)
+	}
 	sort.Strings(out)
 	return out
 }
 
 // Callers returns everything that calls a symbol.
 func (m *Map) Callers(callee string) []string {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	seen := map[string]bool{}
 	for _, c := range m.calls {
-		if c.Callee == callee { seen[c.Caller] = true }
+		if c.Callee == callee {
+			seen[c.Caller] = true
+		}
 	}
 	var out []string
-	for s := range seen { out = append(out, s) }
+	for s := range seen {
+		out = append(out, s)
+	}
 	sort.Strings(out)
 	return out
 }
 
 // PackageSymbols returns symbols in a package.
 func (m *Map) PackageSymbols(pkg string) []*Symbol {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var out []*Symbol
 	for _, s := range m.symbols {
-		if s.Package == pkg { out = append(out, s) }
+		if s.Package == pkg {
+			out = append(out, s)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
@@ -129,9 +149,9 @@ func (m *Map) PackageSymbols(pkg string) []*Symbol {
 
 // ComplexityScore holds code complexity metrics.
 type ComplexityScore struct {
-	Cyclomatic     int `json:"cyclomatic"`
-	Cognitive      int `json:"cognitive"`
-	LinesOfCode    int `json:"loc"`
+	Cyclomatic     int     `json:"cyclomatic"`
+	Cognitive      int     `json:"cognitive"`
+	LinesOfCode    int     `json:"loc"`
 	CommentDensity float64 `json:"comment_density"`
 }
 
@@ -142,11 +162,16 @@ func EstimateComplexity(symbols []*Symbol) map[string]*ComplexityScore {
 		// Approximate: exported + kind determines rough complexity
 		base := 1
 		switch s.Kind {
-		case "func", "method": base = 2
-		case "type": base = 3
-		case "interface": base = 5
+		case "func", "method":
+			base = 2
+		case "type":
+			base = 3
+		case "interface":
+			base = 5
 		}
-		if s.Exported { base++ }
+		if s.Exported {
+			base++
+		}
 		scores[s.Name] = &ComplexityScore{Cyclomatic: base, Cognitive: base * 2}
 	}
 	return scores
@@ -154,10 +179,13 @@ func EstimateComplexity(symbols []*Symbol) map[string]*ComplexityScore {
 
 // DependencyMatrix builds a package dependency matrix.
 func (m *Map) DependencyMatrix() map[string]map[string]bool {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	matrix := map[string]map[string]bool{}
 	for _, imp := range m.imports {
-		if _, ok := matrix[imp.From]; !ok { matrix[imp.From] = map[string]bool{} }
+		if _, ok := matrix[imp.From]; !ok {
+			matrix[imp.From] = map[string]bool{}
+		}
 		matrix[imp.From][imp.To] = true
 	}
 	return matrix
@@ -186,8 +214,12 @@ func detectCycle(v string, matrix map[string]map[string]bool, color map[string]i
 	color[v] = gray
 	*path = append(*path, v)
 	for dep := range matrix[v] {
-		if color[dep] == gray { return true }
-		if color[dep] == white && detectCycle(dep, matrix, color, path, white, gray, black) { return true }
+		if color[dep] == gray {
+			return true
+		}
+		if color[dep] == white && detectCycle(dep, matrix, color, path, white, gray, black) {
+			return true
+		}
 	}
 	color[v] = black
 	*path = (*path)[:len(*path)-1]
@@ -198,7 +230,10 @@ func detectCycle(v string, matrix map[string]map[string]bool, color map[string]i
 
 // FormatSymbol formats a symbol.
 func FormatSymbol(s *Symbol) string {
-	export := ""; if s.Exported { export = " [exported]" }
+	export := ""
+	if s.Exported {
+		export = " [exported]"
+	}
 	return fmt.Sprintf("%s.%s (%s) %s:%d%s", s.Package, s.Name, s.Kind, s.File, s.Line, export)
 }
 
@@ -226,7 +261,9 @@ func (m *Map) FormatSummary() string {
 	cycles := m.CircularDeps()
 	if len(cycles) > 0 {
 		fmt.Fprintf(&sb, "\n  ⚠️  Circular Dependencies:\n")
-		for _, c := range cycles { fmt.Fprintf(&sb, "     %s\n", strings.Join(c, " → ")) }
+		for _, c := range cycles {
+			fmt.Fprintf(&sb, "     %s\n", strings.Join(c, " → "))
+		}
 	}
 	return sb.String()
 }

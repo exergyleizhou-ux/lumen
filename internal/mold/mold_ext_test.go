@@ -41,11 +41,11 @@ func TestConditionalRule_NotMet(t *testing.T) {
 	m := New()
 	rules := []ConditionalRule{
 		{
-			Field:      "Status",
-			Condition:  "eq",
-			Value:      "rejected",
-			ThenRules:  []Rule{{Name: "required"}},
-			ElseRules:  nil,
+			Field:     "Status",
+			Condition: "eq",
+			Value:     "rejected",
+			ThenRules: []Rule{{Name: "required"}},
+			ElseRules: nil,
 		},
 	}
 
@@ -78,8 +78,8 @@ func TestCrossFieldValidator_Gt(t *testing.T) {
 
 func TestCrossFieldValidator_Eq(t *testing.T) {
 	type Pair struct {
-		Password  string
-		Confirm   string
+		Password string
+		Confirm  string
 	}
 
 	cfv := NewCrossFieldValidator()

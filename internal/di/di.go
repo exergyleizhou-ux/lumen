@@ -13,18 +13,18 @@ import (
 
 // Container holds registered services and resolves dependencies.
 type Container struct {
-	mu       sync.RWMutex
-	bindings map[string]*binding
+	mu        sync.RWMutex
+	bindings  map[string]*binding
 	instances map[string]any
-	started  []string // ordered by startup
+	started   []string // ordered by startup
 }
 
 type binding struct {
-	name     string
-	ctor     any          // constructor function
-	deps     []string     // dependency names
-	instance any          // resolved singleton
-	resolved bool
+	name      string
+	ctor      any      // constructor function
+	deps      []string // dependency names
+	instance  any      // resolved singleton
+	resolved  bool
 	lifecycle Lifecycle
 }
 

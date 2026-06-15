@@ -40,28 +40,35 @@ type Channel struct {
 }
 
 // NewChannel creates a channel.
-func NewChannel(name string) *Channel { return &Channel{Name: name, Subscribers: map[string]Connection{}} }
+func NewChannel(name string) *Channel {
+	return &Channel{Name: name, Subscribers: map[string]Connection{}}
+}
 
 // Publish sends an event to all subscribers.
 func (ch *Channel) Publish(event *Event) int {
-	ch.mu.RLock(); defer ch.mu.RUnlock()
+	ch.mu.RLock()
+	defer ch.mu.RUnlock()
 	data, _ := json.Marshal(event)
 	count := 0
 	for _, conn := range ch.Subscribers {
-		if err := conn.Send(data); err == nil { count++ }
+		if err := conn.Send(data); err == nil {
+			count++
+		}
 	}
 	return count
 }
 
 // Subscribe adds a connection.
 func (ch *Channel) Subscribe(conn Connection) {
-	ch.mu.Lock(); defer ch.mu.Unlock()
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	ch.Subscribers[conn.ID()] = conn
 }
 
 // Unsubscribe removes a connection.
 func (ch *Channel) Unsubscribe(conn Connection) {
-	ch.mu.Lock(); defer ch.mu.Unlock()
+	ch.mu.Lock()
+	defer ch.mu.Unlock()
 	delete(ch.Subscribers, conn.ID())
 }
 
@@ -70,14 +77,14 @@ func (ch *Channel) Count() int { ch.mu.RLock(); defer ch.mu.RUnlock(); return le
 
 // Hub manages WebSocket connections and channels.
 type Hub struct {
-	mu        sync.RWMutex
-	channels  map[string]*Channel
-	conns     map[string]Connection
-	pending   atomic.Int64
-	done      atomic.Int64
-	errors    atomic.Int64
-	onEvent   func(*Event)
-	onConnect func(Connection)
+	mu           sync.RWMutex
+	channels     map[string]*Channel
+	conns        map[string]Connection
+	pending      atomic.Int64
+	done         atomic.Int64
+	errors       atomic.Int64
+	onEvent      func(*Event)
+	onConnect    func(Connection)
 	onDisconnect func(Connection)
 }
 
@@ -93,63 +100,92 @@ func (h *Hub) OnEvent(fn func(*Event)) { h.mu.Lock(); defer h.mu.Unlock(); h.onE
 func (h *Hub) OnConnect(fn func(Connection)) { h.mu.Lock(); defer h.mu.Unlock(); h.onConnect = fn }
 
 // OnDisconnect sets the disconnect handler.
-func (h *Hub) OnDisconnect(fn func(Connection)) { h.mu.Lock(); defer h.mu.Unlock(); h.onDisconnect = fn }
+func (h *Hub) OnDisconnect(fn func(Connection)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.onDisconnect = fn
+}
 
 // Connect registers a new connection.
 func (h *Hub) Connect(conn Connection) {
-	h.mu.Lock(); h.conns[conn.ID()] = conn; h.pending.Add(1); h.mu.Unlock()
-	if h.onConnect != nil { h.onConnect(conn) }
+	h.mu.Lock()
+	h.conns[conn.ID()] = conn
+	h.pending.Add(1)
+	h.mu.Unlock()
+	if h.onConnect != nil {
+		h.onConnect(conn)
+	}
 }
 
 // Disconnect removes a connection.
 func (h *Hub) Disconnect(conn Connection) {
 	h.mu.Lock()
 	delete(h.conns, conn.ID())
-	for _, ch := range h.channels { ch.Unsubscribe(conn) }
+	for _, ch := range h.channels {
+		ch.Unsubscribe(conn)
+	}
 	h.mu.Unlock()
 	h.done.Add(1)
 	conn.Close()
-	if h.onDisconnect != nil { h.onDisconnect(conn) }
+	if h.onDisconnect != nil {
+		h.onDisconnect(conn)
+	}
 }
 
 // Join adds a connection to a channel.
 func (h *Hub) Join(conn Connection, channelName string) {
 	h.mu.Lock()
 	ch, ok := h.channels[channelName]
-	if !ok { ch = NewChannel(channelName); h.channels[channelName] = ch }
+	if !ok {
+		ch = NewChannel(channelName)
+		h.channels[channelName] = ch
+	}
 	h.mu.Unlock()
 	ch.Subscribe(conn)
 }
 
 // Leave removes a connection from a channel.
 func (h *Hub) Leave(conn Connection, channelName string) {
-	h.mu.RLock(); defer h.mu.RUnlock()
-	if ch, ok := h.channels[channelName]; ok { ch.Unsubscribe(conn) }
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if ch, ok := h.channels[channelName]; ok {
+		ch.Unsubscribe(conn)
+	}
 }
 
 // Emit publishes an event to a channel.
 func (h *Hub) Emit(channelName string, event *Event) int {
-	h.mu.RLock(); ch, ok := h.channels[channelName]; h.mu.RUnlock()
-	if !ok { return 0 }
+	h.mu.RLock()
+	ch, ok := h.channels[channelName]
+	h.mu.RUnlock()
+	if !ok {
+		return 0
+	}
 	return ch.Publish(event)
 }
 
 // Broadcast sends an event to all connected clients.
 func (h *Hub) Broadcast(event *Event) int {
-	h.mu.RLock(); defer h.mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	data, _ := json.Marshal(event)
 	count := 0
 	for _, conn := range h.conns {
-		if err := conn.Send(data); err == nil { count++ }
+		if err := conn.Send(data); err == nil {
+			count++
+		}
 	}
 	return count
 }
 
 // ChannelNames returns all channel names.
 func (h *Hub) ChannelNames() []string {
-	h.mu.RLock(); defer h.mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	var out []string
-	for n := range h.channels { out = append(out, n) }
+	for n := range h.channels {
+		out = append(out, n)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -192,7 +228,8 @@ func (hb *Heartbeat) Start() {
 		defer ticker.Stop()
 		for {
 			select {
-			case <-hb.stopCh: return
+			case <-hb.stopCh:
+				return
 			case <-ticker.C:
 				hb.check()
 			}
@@ -224,37 +261,49 @@ func (hb *Heartbeat) check() {
 
 // MockConn is an in-memory connection for testing.
 type MockConn struct {
-	id      string
-	addr    string
-	sendCh  chan []byte
-	recvCh  chan []byte
-	closed  bool
-	mu      sync.Mutex
+	id     string
+	addr   string
+	sendCh chan []byte
+	recvCh chan []byte
+	closed bool
+	mu     sync.Mutex
 }
 
 // NewMockConn creates a mock connection.
 var nextMockID int64
+
 func NewMockConn() *MockConn {
 	id := atomic.AddInt64(&nextMockID, 1)
 	return &MockConn{id: fmt.Sprintf("conn-%d", id), addr: fmt.Sprintf("mock:%d", id), sendCh: make(chan []byte, 32), recvCh: make(chan []byte, 32)}
 }
-func (mc *MockConn) ID() string { return mc.id }
+func (mc *MockConn) ID() string         { return mc.id }
 func (mc *MockConn) RemoteAddr() string { return mc.addr }
 func (mc *MockConn) Send(data []byte) error {
-	mc.mu.Lock(); defer mc.mu.Unlock()
-	if mc.closed { return fmt.Errorf("closed") }
-	select { case mc.sendCh <- data: default: }
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	if mc.closed {
+		return fmt.Errorf("closed")
+	}
+	select {
+	case mc.sendCh <- data:
+	default:
+	}
 	return nil
 }
 func (mc *MockConn) Receive() ([]byte, error) {
 	select {
-	case d := <-mc.recvCh: return d, nil
-	case <-time.After(time.Second): return nil, fmt.Errorf("timeout")
+	case d := <-mc.recvCh:
+		return d, nil
+	case <-time.After(time.Second):
+		return nil, fmt.Errorf("timeout")
 	}
 }
 func (mc *MockConn) Close() error {
-	mc.mu.Lock(); defer mc.mu.Unlock()
-	mc.closed = true; close(mc.sendCh); return nil
+	mc.mu.Lock()
+	defer mc.mu.Unlock()
+	mc.closed = true
+	close(mc.sendCh)
+	return nil
 }
 
 // ── WebSocket Handler ────────────────────────────────────
@@ -300,17 +349,23 @@ func NewEventLog(maxSize int) *EventLog { return &EventLog{maxSize: maxSize} }
 
 // Record stores an event.
 func (el *EventLog) Record(event *Event) {
-	el.mu.Lock(); defer el.mu.Unlock()
+	el.mu.Lock()
+	defer el.mu.Unlock()
 	el.events = append(el.events, event)
-	if len(el.events) > el.maxSize { el.events = el.events[1:] }
+	if len(el.events) > el.maxSize {
+		el.events = el.events[1:]
+	}
 }
 
 // Replay returns events since a timestamp.
 func (el *EventLog) Replay(since time.Time) []*Event {
-	el.mu.Lock(); defer el.mu.Unlock()
+	el.mu.Lock()
+	defer el.mu.Unlock()
 	var out []*Event
 	for _, e := range el.events {
-		if e.Timestamp.After(since) { out = append(out, e) }
+		if e.Timestamp.After(since) {
+			out = append(out, e)
+		}
 	}
 	return out
 }

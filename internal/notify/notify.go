@@ -35,7 +35,7 @@ type Channel interface {
 type Priority int
 
 const (
-	PriorityLow    Priority = iota
+	PriorityLow Priority = iota
 	PriorityNormal
 	PriorityHigh
 	PriorityCritical

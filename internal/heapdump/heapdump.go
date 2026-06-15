@@ -17,13 +17,13 @@ import (
 
 // Snapshot represents a heap memory snapshot.
 type Snapshot struct {
-	Timestamp time.Time `json:"timestamp"`
-	Alloc     uint64    `json:"alloc_bytes"`
-	TotalAlloc uint64   `json:"total_alloc_bytes"`
-	Sys       uint64    `json:"sys_bytes"`
-	NumGC     uint32    `json:"num_gc"`
-	HeapObjects uint64  `json:"heap_objects"`
-	Goroutines int      `json:"goroutines"`
+	Timestamp   time.Time    `json:"timestamp"`
+	Alloc       uint64       `json:"alloc_bytes"`
+	TotalAlloc  uint64       `json:"total_alloc_bytes"`
+	Sys         uint64       `json:"sys_bytes"`
+	NumGC       uint32       `json:"num_gc"`
+	HeapObjects uint64       `json:"heap_objects"`
+	Goroutines  int          `json:"goroutines"`
 	StackTraces []StackFrame `json:"stack_traces,omitempty"`
 }
 
@@ -64,7 +64,9 @@ func (c *Collector) Snap() *Snapshot {
 
 	c.mu.Lock()
 	c.snapshots = append(c.snapshots, s)
-	if len(c.snapshots) > c.maxSnaps { c.snapshots = c.snapshots[1:] }
+	if len(c.snapshots) > c.maxSnaps {
+		c.snapshots = c.snapshots[1:]
+	}
 	c.mu.Unlock()
 	return s
 }
@@ -72,7 +74,9 @@ func (c *Collector) Snap() *Snapshot {
 // WriteProfile writes a pprof heap profile to a file.
 func (c *Collector) WriteProfile(filename string) error {
 	f, err := os.Create(filename)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer f.Close()
 	return pprof.WriteHeapProfile(f)
 }
@@ -80,26 +84,32 @@ func (c *Collector) WriteProfile(filename string) error {
 // Delta computes the delta between two snapshots.
 func Delta(before, after *Snapshot) map[string]int64 {
 	return map[string]int64{
-		"alloc_delta":      int64(after.Alloc) - int64(before.Alloc),
-		"total_alloc_delta": int64(after.TotalAlloc) - int64(before.TotalAlloc),
-		"goroutines_delta": int64(after.Goroutines) - int64(before.Goroutines),
+		"alloc_delta":        int64(after.Alloc) - int64(before.Alloc),
+		"total_alloc_delta":  int64(after.TotalAlloc) - int64(before.TotalAlloc),
+		"goroutines_delta":   int64(after.Goroutines) - int64(before.Goroutines),
 		"heap_objects_delta": int64(after.HeapObjects) - int64(before.HeapObjects),
-		"gc_count_delta":   int64(after.NumGC) - int64(before.NumGC),
+		"gc_count_delta":     int64(after.NumGC) - int64(before.NumGC),
 	}
 }
 
 // Latest returns the most recent snapshot.
 func (c *Collector) Latest() *Snapshot {
-	c.mu.Lock(); defer c.mu.Unlock()
-	if len(c.snapshots) == 0 { return nil }
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.snapshots) == 0 {
+		return nil
+	}
 	return c.snapshots[len(c.snapshots)-1]
 }
 
 // Trend returns alloc values over time.
 func (c *Collector) Trend() []uint64 {
-	c.mu.Lock(); defer c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	var out []uint64
-	for _, s := range c.snapshots { out = append(out, s.Alloc) }
+	for _, s := range c.snapshots {
+		out = append(out, s.Alloc)
+	}
 	return out
 }
 
@@ -118,10 +128,14 @@ func FormatSnapshot(s *Snapshot) string {
 
 func byteCount(n uint64) string {
 	switch {
-	case n < 1024: return fmt.Sprintf("%dB", n)
-	case n < 1024*1024: return fmt.Sprintf("%.1fKB", float64(n)/1024)
-	case n < 1024*1024*1024: return fmt.Sprintf("%.1fMB", float64(n)/1024/1024)
-	default: return fmt.Sprintf("%.1fGB", float64(n)/1024/1024/1024)
+	case n < 1024:
+		return fmt.Sprintf("%dB", n)
+	case n < 1024*1024:
+		return fmt.Sprintf("%.1fKB", float64(n)/1024)
+	case n < 1024*1024*1024:
+		return fmt.Sprintf("%.1fMB", float64(n)/1024/1024)
+	default:
+		return fmt.Sprintf("%.1fGB", float64(n)/1024/1024/1024)
 	}
 }
 
@@ -129,13 +143,19 @@ func byteCount(n uint64) string {
 func FormatDelta(delta map[string]int64) string {
 	var sb strings.Builder
 	keys := make([]string, 0, len(delta))
-	for k := range delta { keys = append(keys, k) }
+	for k := range delta {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	fmt.Fprintf(&sb, "Heap Delta:\n%s\n\n", strings.Repeat("─", 30))
 	for _, k := range keys {
 		v := delta[k]
 		icon := ""
-		if v > 0 { icon = "📈" } else if v < 0 { icon = "📉" }
+		if v > 0 {
+			icon = "📈"
+		} else if v < 0 {
+			icon = "📉"
+		}
 		fmt.Fprintf(&sb, "  %s %s: %+d\n", icon, k, v)
 	}
 	return sb.String()
@@ -145,11 +165,11 @@ func FormatDelta(delta map[string]int64) string {
 
 // AllocationRecord tracks one allocation event.
 type AllocationRecord struct {
-	Size    uint64    `json:"size"`
-	Count   int       `json:"count"`
-	File    string    `json:"file"`
-	Line    int       `json:"line"`
-	Time    time.Time `json:"time"`
+	Size  uint64    `json:"size"`
+	Count int       `json:"count"`
+	File  string    `json:"file"`
+	Line  int       `json:"line"`
+	Time  time.Time `json:"time"`
 }
 
 // AllocationTracker tracks allocation patterns.
@@ -166,18 +186,24 @@ func NewAllocationTracker(maxRecords int) *AllocationTracker {
 
 // Record logs an allocation event.
 func (at *AllocationTracker) Record(size uint64, file string, line int) {
-	at.mu.Lock(); defer at.mu.Unlock()
+	at.mu.Lock()
+	defer at.mu.Unlock()
 	at.records = append(at.records, AllocationRecord{
 		Size: size, Count: 1, File: file, Line: line, Time: time.Now(),
 	})
-	if len(at.records) > at.maxRecs { at.records = at.records[1:] }
+	if len(at.records) > at.maxRecs {
+		at.records = at.records[1:]
+	}
 }
 
 // ByFile aggregates allocations by file.
 func (at *AllocationTracker) ByFile() map[string]uint64 {
-	at.mu.Lock(); defer at.mu.Unlock()
+	at.mu.Lock()
+	defer at.mu.Unlock()
 	agg := map[string]uint64{}
-	for _, r := range at.records { agg[r.File] += r.Size }
+	for _, r := range at.records {
+		agg[r.File] += r.Size
+	}
 	return agg
 }
 
@@ -187,13 +213,24 @@ func (at *AllocationTracker) TopFiles(n int) []struct {
 	Size uint64
 } {
 	byFile := at.ByFile()
-	type kv struct{ f string; s uint64 }
+	type kv struct {
+		f string
+		s uint64
+	}
 	var pairs []kv
-	for f, s := range byFile { pairs = append(pairs, kv{f, s}) }
+	for f, s := range byFile {
+		pairs = append(pairs, kv{f, s})
+	}
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i].s > pairs[j].s })
-	var out []struct{ File string; Size uint64 }
+	var out []struct {
+		File string
+		Size uint64
+	}
 	for i := 0; i < n && i < len(pairs); i++ {
-		out = append(out, struct{ File string; Size uint64 }{pairs[i].f, pairs[i].s})
+		out = append(out, struct {
+			File string
+			Size uint64
+		}{pairs[i].f, pairs[i].s})
 	}
 	return out
 }
@@ -226,7 +263,10 @@ func (gd *GoroutineDumper) Dump() error {
 	buf := make([]byte, 64*1024)
 	for {
 		n := runtime.Stack(buf, true)
-		if n < len(buf) { _, err := gd.out.Write(buf[:n]); return err }
+		if n < len(buf) {
+			_, err := gd.out.Write(buf[:n])
+			return err
+		}
 		buf = make([]byte, 2*len(buf))
 	}
 }
@@ -234,7 +274,9 @@ func (gd *GoroutineDumper) Dump() error {
 // DumpProfile writes goroutine profile.
 func (gd *GoroutineDumper) DumpProfile(filename string) error {
 	f, err := os.Create(filename)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer f.Close()
 	return pprof.Lookup("goroutine").WriteTo(f, 0)
 }
@@ -278,7 +320,9 @@ func FormatGoroutineSummary() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Goroutine Summary (%d total):\n%s\n\n", runtime.NumGoroutine(), strings.Repeat("─", 40))
 	keys := make([]string, 0, len(counts))
-	for k := range counts { keys = append(keys, k) }
+	for k := range counts {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Fprintf(&sb, "  %-20s %d\n", k, counts[k])

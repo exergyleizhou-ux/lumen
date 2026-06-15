@@ -87,7 +87,7 @@ func TestMultiTurnToolCalls(t *testing.T) {
 	if len(snap) < 6 {
 		t.Fatalf("expected at least 6 messages, got %d", len(snap))
 		for i, m := range snap {
-			t.Logf("[%d] role=%s content=%q numToolCalls=%d", i, m.Role, m.Content[:min(30,len(m.Content))], len(m.ToolCalls))
+			t.Logf("[%d] role=%s content=%q numToolCalls=%d", i, m.Role, m.Content[:min(30, len(m.Content))], len(m.ToolCalls))
 		}
 	}
 
@@ -341,20 +341,20 @@ func TestCompleteStepBlocksParallelBatch(t *testing.T) {
 
 type completeStepTool struct{}
 
-func (t *completeStepTool) Name() string                                 { return "complete_step" }
-func (t *completeStepTool) Description() string                          { return "complete step" }
-func (t *completeStepTool) ReadOnly() bool                               { return false }
-func (t *completeStepTool) Schema() json.RawMessage                       { return json.RawMessage(`{}`) }
+func (t *completeStepTool) Name() string            { return "complete_step" }
+func (t *completeStepTool) Description() string     { return "complete step" }
+func (t *completeStepTool) ReadOnly() bool          { return false }
+func (t *completeStepTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *completeStepTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return "completed", nil
 }
 
 type todoWriteTool struct{}
 
-func (t *todoWriteTool) Name() string                                 { return "todo_write" }
-func (t *todoWriteTool) Description() string                          { return "todo write" }
-func (t *todoWriteTool) ReadOnly() bool                               { return false }
-func (t *todoWriteTool) Schema() json.RawMessage                       { return json.RawMessage(`{}`) }
+func (t *todoWriteTool) Name() string            { return "todo_write" }
+func (t *todoWriteTool) Description() string     { return "todo write" }
+func (t *todoWriteTool) ReadOnly() bool          { return false }
+func (t *todoWriteTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *todoWriteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return "ok", nil
 }

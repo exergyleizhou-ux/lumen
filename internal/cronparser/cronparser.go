@@ -69,7 +69,9 @@ func Parse(expr string) (*Expression, error) {
 
 	for i, p := range parsers {
 		fs, err := parseField(fields[i], p.min, p.max, p.name)
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		*p.field = fs
 	}
 	return e, nil
@@ -90,8 +92,12 @@ func parseField(raw string, min, max int, name string) (fieldSet, error) {
 		if idx := strings.Index(item, "/"); idx >= 0 {
 			var err error
 			step, err = strconv.Atoi(item[idx+1:])
-			if err != nil { return fieldSet{}, fmt.Errorf("%s: invalid step: %s", name, item) }
-			if step < 1 { return fieldSet{}, fmt.Errorf("%s: step must be >=1", name) }
+			if err != nil {
+				return fieldSet{}, fmt.Errorf("%s: invalid step: %s", name, item)
+			}
+			if step < 1 {
+				return fieldSet{}, fmt.Errorf("%s: step must be >=1", name)
+			}
 			item = item[:idx]
 		}
 
@@ -99,10 +105,16 @@ func parseField(raw string, min, max int, name string) (fieldSet, error) {
 			parts = append(parts, fieldPart{kind: kindStep, start: min, end: max, step: step})
 		} else if idx := strings.Index(item, "-"); idx >= 0 {
 			start, err := strconv.Atoi(item[:idx])
-			if err != nil { return fieldSet{}, fmt.Errorf("%s: invalid range start: %s", name, item) }
+			if err != nil {
+				return fieldSet{}, fmt.Errorf("%s: invalid range start: %s", name, item)
+			}
 			end, err := strconv.Atoi(item[idx+1:])
-			if err != nil { return fieldSet{}, fmt.Errorf("%s: invalid range end: %s", name, item) }
-			if start < min || end > max { return fieldSet{}, fmt.Errorf("%s: range %d-%d out of bounds [%d,%d]", name, start, end, min, max) }
+			if err != nil {
+				return fieldSet{}, fmt.Errorf("%s: invalid range end: %s", name, item)
+			}
+			if start < min || end > max {
+				return fieldSet{}, fmt.Errorf("%s: range %d-%d out of bounds [%d,%d]", name, start, end, min, max)
+			}
 			if step > 1 {
 				parts = append(parts, fieldPart{kind: kindStep, start: start, end: end, step: step})
 			} else {
@@ -110,8 +122,12 @@ func parseField(raw string, min, max int, name string) (fieldSet, error) {
 			}
 		} else {
 			val, err := strconv.Atoi(item)
-			if err != nil { return fieldSet{}, fmt.Errorf("%s: invalid value: %s", name, item) }
-			if val < min || val > max { return fieldSet{}, fmt.Errorf("%s: value %d out of bounds [%d,%d]", name, val, min, max) }
+			if err != nil {
+				return fieldSet{}, fmt.Errorf("%s: invalid value: %s", name, item)
+			}
+			if val < min || val > max {
+				return fieldSet{}, fmt.Errorf("%s: value %d out of bounds [%d,%d]", name, val, min, max)
+			}
 			parts = append(parts, fieldPart{kind: kindValue, start: val, end: val, step: 1})
 		}
 	}
@@ -126,12 +142,18 @@ func (fs fieldSet) matches(val int) bool {
 		case kindStar:
 			return true
 		case kindValue:
-			if val == p.start { return true }
+			if val == p.start {
+				return true
+			}
 		case kindRange:
-			if val >= p.start && val <= p.end { return true }
+			if val >= p.start && val <= p.end {
+				return true
+			}
 		case kindStep:
 			for v := p.start; v <= p.end; v += p.step {
-				if v == val { return true }
+				if v == val {
+					return true
+				}
 			}
 		}
 	}
@@ -152,7 +174,9 @@ func (e *Expression) Next(after time.Time) time.Time {
 	t := after.Add(1 * time.Minute).Truncate(time.Minute)
 	limit := after.AddDate(4, 0, 0) // Search up to 4 years
 	for t.Before(limit) {
-		if e.Matches(t) { return t }
+		if e.Matches(t) {
+			return t
+		}
 		t = t.Add(1 * time.Minute)
 	}
 	return after.AddDate(4, 0, 0) // Fallback
@@ -164,7 +188,9 @@ func (e *Expression) NextN(after time.Time, n int) []time.Time {
 	t := after
 	for i := 0; i < n; i++ {
 		t = e.Next(t)
-		if t.After(after.AddDate(4, 0, 0)) { break }
+		if t.After(after.AddDate(4, 0, 0)) {
+			break
+		}
 		out = append(out, t)
 	}
 	return out
@@ -195,11 +221,14 @@ func (e *Expression) isEveryMinute() bool {
 }
 
 func describeField(fs fieldSet, unit string) string {
-	if len(fs.parts) == 0 { return "every " + unit }
+	if len(fs.parts) == 0 {
+		return "every " + unit
+	}
 	if len(fs.parts) == 1 {
 		p := fs.parts[0]
 		switch p.kind {
-		case kindStar: return "every " + unit
+		case kindStar:
+			return "every " + unit
 		case kindValue:
 			return fmt.Sprintf("at %s %d", singular(unit), p.start)
 		case kindRange:
@@ -258,7 +287,9 @@ type Simulator struct {
 // NewSimulator creates a schedule simulator.
 func NewSimulator(expr string) (*Simulator, error) {
 	e, err := Parse(expr)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	return &Simulator{expr: e}, nil
 }
 
@@ -267,7 +298,9 @@ func (s *Simulator) Simulate(start, end time.Time) []time.Time {
 	var matches []time.Time
 	t := start.Truncate(time.Minute)
 	for t.Before(end) {
-		if s.expr.Matches(t) { matches = append(matches, t) }
+		if s.expr.Matches(t) {
+			matches = append(matches, t)
+		}
 		t = t.Add(1 * time.Minute)
 	}
 	return matches

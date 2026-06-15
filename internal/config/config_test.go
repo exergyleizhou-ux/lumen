@@ -108,7 +108,7 @@ func TestIsValidSkillName(t *testing.T) {
 		{"brainstorming", true},
 		{"bug-hunt", true},
 		{"docker-patterns", true},
-		{"9invalid", false},          // starts with digit
+		{"9invalid", false}, // starts with digit
 		{"valid_name", true},
 		{"too-long" + string(make([]byte, 60)), false},
 		{"has space", false},

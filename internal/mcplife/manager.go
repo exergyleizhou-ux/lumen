@@ -25,18 +25,18 @@ const (
 
 // Server tracks one MCP server's lifecycle.
 type Server struct {
-	Name      string            `json:"name"`
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
-	State     State             `json:"state"`
-	Tools     []string          `json:"tools"`      // registered tool names
-	LastSeen  time.Time         `json:"last_seen"`
-	FailCount int               `json:"fail_count"`
+	Name      string    `json:"name"`
+	Command   string    `json:"command"`
+	Args      []string  `json:"args"`
+	State     State     `json:"state"`
+	Tools     []string  `json:"tools"` // registered tool names
+	LastSeen  time.Time `json:"last_seen"`
+	FailCount int       `json:"fail_count"`
 	mu        sync.Mutex
 	client    MCPClient
 	cancel    context.CancelFunc
 	onConnect func(name string, tools []string) // called when server connects
-	onDisconn func(name string)                  // called when server disconnects
+	onDisconn func(name string)                 // called when server disconnects
 }
 
 // MCPClient is the interface an MCP server client must satisfy.
@@ -49,10 +49,10 @@ type MCPClient interface {
 
 // Manager manages the lifecycle of multiple MCP servers.
 type Manager struct {
-	mu       sync.Mutex
-	servers  map[string]*Server
-	ctx      context.Context
-	cancel   context.CancelFunc
+	mu      sync.Mutex
+	servers map[string]*Server
+	ctx     context.Context
+	cancel  context.CancelFunc
 }
 
 // NewManager creates an MCP lifecycle manager with background health checks.

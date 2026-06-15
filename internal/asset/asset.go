@@ -16,13 +16,13 @@ import (
 
 // Asset represents a stored asset with metadata.
 type Asset struct {
-	ID          string            `json:"id"`          // Content-addressable ID (SHA-256).
-	Name        string            `json:"name"`        // Optional human-readable name.
-	Tags        []string          `json:"tags"`        // Lookup tags.
+	ID          string            `json:"id"`           // Content-addressable ID (SHA-256).
+	Name        string            `json:"name"`         // Optional human-readable name.
+	Tags        []string          `json:"tags"`         // Lookup tags.
 	ContentType string            `json:"content_type"` // MIME type.
-	Size        int64             `json:"size"`        // Original size in bytes.
-	Compressed  bool              `json:"compressed"`  // Whether stored compressed.
-	StoredSize  int64             `json:"stored_size"` // Size on disk/memory.
+	Size        int64             `json:"size"`         // Original size in bytes.
+	Compressed  bool              `json:"compressed"`   // Whether stored compressed.
+	StoredSize  int64             `json:"stored_size"`  // Size on disk/memory.
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 	Meta        map[string]string `json:"meta"` // Arbitrary metadata.
@@ -30,11 +30,11 @@ type Asset struct {
 
 // Store is an in-memory content-addressed asset store with deduplication.
 type Store struct {
-	mu       sync.RWMutex
-	assets   map[string]*Asset   // id -> asset
-	data     map[string][]byte   // id -> raw data
-	tagIndex map[string]map[string]bool // tag -> set of asset IDs
-	nameIndex map[string]string  // name -> id
+	mu            sync.RWMutex
+	assets        map[string]*Asset          // id -> asset
+	data          map[string][]byte          // id -> raw data
+	tagIndex      map[string]map[string]bool // tag -> set of asset IDs
+	nameIndex     map[string]string          // name -> id
 	totalOriginal int64
 	totalStored   int64
 	dedupSaved    int64
@@ -330,6 +330,11 @@ func (s *Store) List() []*Asset {
 func (s *Store) Stats() map[string]int64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.statsLocked()
+}
+
+// statsLocked assumes the caller holds the lock.
+func (s *Store) statsLocked() map[string]int64 {
 	return map[string]int64{
 		"total_assets":   int64(len(s.assets)),
 		"total_tags":     int64(len(s.tagIndex)),
@@ -343,7 +348,7 @@ func (s *Store) Stats() map[string]int64 {
 func (s *Store) FormatStore() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	st := s.Stats()
+	st := s.statsLocked()
 	out := fmt.Sprintf("Asset Store: %d assets, %d tags, original=%d stored=%d saved=%d\n",
 		st["total_assets"], st["total_tags"], st["total_original"], st["total_stored"], st["dedup_saved"])
 	for _, a := range s.assets {
@@ -357,7 +362,9 @@ func (s *Store) FormatStore() string {
 
 // DetectContentType guesses MIME type from the first few bytes.
 func DetectContentType(data []byte) string {
-	if len(data) == 0 { return "application/octet-stream" }
+	if len(data) == 0 {
+		return "application/octet-stream"
+	}
 	switch {
 	case len(data) >= 4 && data[0] == 0x89 && data[1] == 'P' && data[2] == 'N' && data[3] == 'G':
 		return "image/png"
@@ -374,14 +381,18 @@ func DetectContentType(data []byte) string {
 	case len(data) >= 4 && data[0] == 'P' && data[1] == 'K':
 		return "application/zip"
 	default:
-		if isText(data) { return "text/plain" }
+		if isText(data) {
+			return "text/plain"
+		}
 		return "application/octet-stream"
 	}
 }
 
 func isText(data []byte) bool {
 	for _, b := range data {
-		if b == 0 { return false }
+		if b == 0 {
+			return false
+		}
 	}
 	return true
 }
@@ -415,7 +426,9 @@ func (at *Transformer) Apply(asset *Asset, data []byte) ([]byte, error) {
 	meta := asset.Meta
 	for _, t := range at.transforms {
 		data, err = t.fn(data, meta)
-		if err != nil { return nil, fmt.Errorf("transform %s: %w", t.name, err) }
+		if err != nil {
+			return nil, fmt.Errorf("transform %s: %w", t.name, err)
+		}
 	}
 	return data, nil
 }
@@ -424,10 +437,10 @@ func (at *Transformer) Apply(asset *Asset, data []byte) ([]byte, error) {
 
 // Collection groups related assets.
 type Collection struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	AssetIDs  []string  `json:"asset_ids"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	AssetIDs  []string          `json:"asset_ids"`
+	CreatedAt time.Time         `json:"created_at"`
 	Meta      map[string]string `json:"meta"`
 }
 
@@ -467,9 +480,13 @@ func (cm *CollectionManager) AddToCollection(collectionID, assetID string) bool 
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
 	c, ok := cm.collections[collectionID]
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	for _, id := range c.AssetIDs {
-		if id == assetID { return true }
+		if id == assetID {
+			return true
+		}
 	}
 	c.AssetIDs = append(c.AssetIDs, assetID)
 	return true
@@ -480,11 +497,15 @@ func (cm *CollectionManager) GetCollectionAssets(collectionID string) []*Asset {
 	cm.mu.RLock()
 	c, ok := cm.collections[collectionID]
 	cm.mu.RUnlock()
-	if !ok { return nil }
+	if !ok {
+		return nil
+	}
 	out := make([]*Asset, 0, len(c.AssetIDs))
 	for _, id := range c.AssetIDs {
 		cm.store.mu.RLock()
-		if a, ok := cm.store.assets[id]; ok { out = append(out, a) }
+		if a, ok := cm.store.assets[id]; ok {
+			out = append(out, a)
+		}
 		cm.store.mu.RUnlock()
 	}
 	return out
@@ -525,12 +546,18 @@ func (ca *ChunkedAsset) Assemble(assetID string) ([]byte, error) {
 	ca.mu.RLock()
 	chunks, ok := ca.chunks[assetID]
 	ca.mu.RUnlock()
-	if !ok { return nil, fmt.Errorf("no chunks for %q", assetID) }
+	if !ok {
+		return nil, fmt.Errorf("no chunks for %q", assetID)
+	}
 	sort.Slice(chunks, func(i, j int) bool { return chunks[i].Index < chunks[j].Index })
 	var total int64
-	for _, c := range chunks { total += int64(len(c.Data)) }
+	for _, c := range chunks {
+		total += int64(len(c.Data))
+	}
 	out := make([]byte, 0, total)
-	for _, c := range chunks { out = append(out, c.Data...) }
+	for _, c := range chunks {
+		out = append(out, c.Data...)
+	}
 	return out, nil
 }
 
@@ -538,11 +565,11 @@ func (ca *ChunkedAsset) Assemble(assetID string) ([]byte, error) {
 
 // Snapshot captures the state of an asset at a point in time.
 type Snapshot struct {
-	AssetID   string    `json:"asset_id"`
-	Version   int       `json:"version"`
-	Data      []byte    `json:"data"`
-	TakenAt   time.Time `json:"taken_at"`
-	Label     string    `json:"label"`
+	AssetID string    `json:"asset_id"`
+	Version int       `json:"version"`
+	Data    []byte    `json:"data"`
+	TakenAt time.Time `json:"taken_at"`
+	Label   string    `json:"label"`
 }
 
 // VersionedStore adds snapshot versioning on top of Store.
@@ -560,7 +587,9 @@ func NewVersionedStore() *VersionedStore {
 // Snapshot creates a snapshot of the current asset version.
 func (vs *VersionedStore) Snapshot(assetID, label string) (*Snapshot, error) {
 	data, _, err := vs.Store.Get(assetID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 	snap := Snapshot{
@@ -576,7 +605,9 @@ func (vs *VersionedStore) GetSnapshot(assetID string, version int) (*Snapshot, e
 	vs.mu.RLock()
 	defer vs.mu.RUnlock()
 	snaps := vs.snapshots[assetID]
-	if version < 1 || version > len(snaps) { return nil, fmt.Errorf("version %d not found", version) }
+	if version < 1 || version > len(snaps) {
+		return nil, fmt.Errorf("version %d not found", version)
+	}
 	s := snaps[version-1]
 	return &s, nil
 }
@@ -594,11 +625,11 @@ func (vs *VersionedStore) ListSnapshots(assetID string) []Snapshot {
 
 // SearchParams defines search criteria for assets.
 type SearchParams struct {
-	NamePrefix  string   `json:"name_prefix,omitempty"`
-	ContentType string   `json:"content_type,omitempty"`
-	Tag         string   `json:"tag,omitempty"`
-	MinSize     int64    `json:"min_size,omitempty"`
-	MaxSize     int64    `json:"max_size,omitempty"`
+	NamePrefix    string    `json:"name_prefix,omitempty"`
+	ContentType   string    `json:"content_type,omitempty"`
+	Tag           string    `json:"tag,omitempty"`
+	MinSize       int64     `json:"min_size,omitempty"`
+	MaxSize       int64     `json:"max_size,omitempty"`
 	CreatedAfter  time.Time `json:"created_after,omitempty"`
 	CreatedBefore time.Time `json:"created_before,omitempty"`
 }
@@ -609,13 +640,27 @@ func (s *Store) Search(params SearchParams) []*Asset {
 	defer s.mu.RUnlock()
 	var out []*Asset
 	for _, a := range s.assets {
-		if params.NamePrefix != "" && (len(a.Name) < len(params.NamePrefix) || a.Name[:len(params.NamePrefix)] != params.NamePrefix) { continue }
-		if params.ContentType != "" && a.ContentType != params.ContentType { continue }
-		if params.Tag != "" && !a.hasTag(params.Tag) { continue }
-		if params.MinSize > 0 && a.Size < params.MinSize { continue }
-		if params.MaxSize > 0 && a.Size > params.MaxSize { continue }
-		if !params.CreatedAfter.IsZero() && a.CreatedAt.Before(params.CreatedAfter) { continue }
-		if !params.CreatedBefore.IsZero() && a.CreatedAt.After(params.CreatedBefore) { continue }
+		if params.NamePrefix != "" && (len(a.Name) < len(params.NamePrefix) || a.Name[:len(params.NamePrefix)] != params.NamePrefix) {
+			continue
+		}
+		if params.ContentType != "" && a.ContentType != params.ContentType {
+			continue
+		}
+		if params.Tag != "" && !a.hasTag(params.Tag) {
+			continue
+		}
+		if params.MinSize > 0 && a.Size < params.MinSize {
+			continue
+		}
+		if params.MaxSize > 0 && a.Size > params.MaxSize {
+			continue
+		}
+		if !params.CreatedAfter.IsZero() && a.CreatedAt.Before(params.CreatedAfter) {
+			continue
+		}
+		if !params.CreatedBefore.IsZero() && a.CreatedAt.After(params.CreatedBefore) {
+			continue
+		}
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
@@ -627,11 +672,15 @@ func (s *Store) Search(params SearchParams) []*Asset {
 // CopyTo duplicates an asset with a new name.
 func (s *Store) CopyTo(id, newName string, newTags []string) (*Asset, error) {
 	data, _, err := s.Get(id)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	s.mu.RLock()
 	a, ok := s.assets[id]
 	s.mu.RUnlock()
-	if !ok { return nil, fmt.Errorf("asset %q not found", id) }
+	if !ok {
+		return nil, fmt.Errorf("asset %q not found", id)
+	}
 	return s.Put(newName, data, a.ContentType, newTags, a.Compressed)
 }
 
@@ -644,9 +693,14 @@ func (s *Store) VerifyIntegrity() []string {
 	var mismatches []string
 	for id, a := range s.assets {
 		data, ok := s.data[id]
-		if !ok { mismatches = append(mismatches, fmt.Sprintf("%s: missing data", id)); continue }
+		if !ok {
+			mismatches = append(mismatches, fmt.Sprintf("%s: missing data", id))
+			continue
+		}
 		expected := computeID(data)
-		if a.ID != expected { mismatches = append(mismatches, fmt.Sprintf("%s: digest mismatch", id)) }
+		if a.ID != expected {
+			mismatches = append(mismatches, fmt.Sprintf("%s: digest mismatch", id))
+		}
 	}
 	return mismatches
 }
@@ -654,9 +708,17 @@ func (s *Store) VerifyIntegrity() []string {
 // --- Bulk Import ---
 
 // BulkImport adds multiple assets efficiently.
-func (s *Store) BulkImport(items []struct{ Name string; Data []byte; ContentType string; Tags []string; Compress bool }) ([]*Asset, []error) {
+func (s *Store) BulkImport(items []struct {
+	Name        string
+	Data        []byte
+	ContentType string
+	Tags        []string
+	Compress    bool
+}) ([]*Asset, []error) {
 	assets := make([]*Asset, len(items))
 	errs := make([]error, len(items))
-	for i, item := range items { assets[i], errs[i] = s.Put(item.Name, item.Data, item.ContentType, item.Tags, item.Compress) }
+	for i, item := range items {
+		assets[i], errs[i] = s.Put(item.Name, item.Data, item.ContentType, item.Tags, item.Compress)
+	}
 	return assets, errs
 }

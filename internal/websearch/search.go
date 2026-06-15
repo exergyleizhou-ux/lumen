@@ -156,9 +156,9 @@ func (e *BingEngine) Search(ctx context.Context, query string, maxResults int) (
 	var bingResp struct {
 		WebPages struct {
 			Value []struct {
-				Name       string `json:"name"`
-				URL        string `json:"url"`
-				Snippet    string `json:"snippet"`
+				Name          string `json:"name"`
+				URL           string `json:"url"`
+				Snippet       string `json:"snippet"`
 				DatePublished string `json:"datePublished"`
 			} `json:"value"`
 			TotalEstimatedMatches int `json:"totalEstimatedMatches"`

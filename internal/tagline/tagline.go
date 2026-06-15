@@ -45,10 +45,10 @@ var defaultStopWords = map[string]bool{
 
 // Extractor extracts semantic tags from text.
 type Extractor struct {
-	mu          sync.RWMutex
-	stopWords   map[string]bool
-	minWordLen  int
-	maxKeywords int
+	mu             sync.RWMutex
+	stopWords      map[string]bool
+	minWordLen     int
+	maxKeywords    int
 	entityPatterns []*regexp.Regexp
 }
 
@@ -339,9 +339,9 @@ func NormalizeWeights(tags []Tag) {
 
 // TagCloud represents a weighted collection of tags for visualization.
 type TagCloud struct {
-	Tags       []Tag  `json:"tags"`
-	MaxWeight  float64 `json:"max_weight"`
-	MinWeight  float64 `json:"min_weight"`
+	Tags      []Tag   `json:"tags"`
+	MaxWeight float64 `json:"max_weight"`
+	MinWeight float64 `json:"min_weight"`
 }
 
 // GenerateCloud creates a tag cloud from tags.
@@ -634,9 +634,9 @@ func copyStopWords(src map[string]bool) map[string]bool {
 
 // BatchResult contains extraction results for multiple texts.
 type BatchResult struct {
-	Documents int           `json:"documents"`
-	Tags      [][]Tag       `json:"tags"`
-	Entities  [][]Entity    `json:"entities"`
+	Documents int        `json:"documents"`
+	Tags      [][]Tag    `json:"tags"`
+	Entities  [][]Entity `json:"entities"`
 }
 
 // ProcessBatch extracts tags and entities from multiple documents.

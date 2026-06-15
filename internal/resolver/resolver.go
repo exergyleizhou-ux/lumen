@@ -15,15 +15,17 @@ import (
 
 // Version represents a semantic version.
 type Version struct {
-	Major int `json:"major"`
-	Minor int `json:"minor"`
-	Patch int `json:"patch"`
+	Major int    `json:"major"`
+	Minor int    `json:"minor"`
+	Patch int    `json:"patch"`
 	Pre   string `json:"pre,omitempty"` // Pre-release tag.
 }
 
 func (v Version) String() string {
 	s := fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
-	if v.Pre != "" { s += "-" + v.Pre }
+	if v.Pre != "" {
+		s += "-" + v.Pre
+	}
 	return s
 }
 
@@ -77,21 +79,20 @@ func cmpInt(a, b int) int {
 	return 0
 }
 
-
 // --- Constraint ---
 
 // ConstraintOp describes the operator in a version constraint.
 type ConstraintOp int
 
 const (
-	OpEQ  ConstraintOp = iota // =
-	OpGT                       // >
-	OpGTE                      // >=
-	OpLT                       // <
-	OpLTE                      // <=
-	OpCaret                    // ^ compatible
-	OpTilde                    // ~ approximately
-	OpWildcard                 // * any
+	OpEQ       ConstraintOp = iota // =
+	OpGT                           // >
+	OpGTE                          // >=
+	OpLT                           // <
+	OpLTE                          // <=
+	OpCaret                        // ^ compatible
+	OpTilde                        // ~ approximately
+	OpWildcard                     // * any
 )
 
 var opStrings = map[ConstraintOp]string{
@@ -109,13 +110,20 @@ type Constraint struct {
 
 func (c Constraint) String() string {
 	switch c.Op {
-	case OpWildcard: return "*"
-	case OpEQ: return "=" + c.Version.String()
-	case OpGTE: return ">=" + c.Version.String()
-	case OpLT: return "<" + c.Version.String()
-	case OpCaret: return "^" + c.Version.String()
-	case OpTilde: return "~" + c.Version.String()
-	default: return "?" + c.Version.String()
+	case OpWildcard:
+		return "*"
+	case OpEQ:
+		return "=" + c.Version.String()
+	case OpGTE:
+		return ">=" + c.Version.String()
+	case OpLT:
+		return "<" + c.Version.String()
+	case OpCaret:
+		return "^" + c.Version.String()
+	case OpTilde:
+		return "~" + c.Version.String()
+	default:
+		return "?" + c.Version.String()
 	}
 }
 
@@ -205,8 +213,8 @@ func (c Constraint) Satisfies(v Version) bool {
 
 // PkgInfo describes a package with its available versions.
 type PkgInfo struct {
-	Name        string    `json:"name"`
-	Versions    []Version `json:"versions"`
+	Name         string                   `json:"name"`
+	Versions     []Version                `json:"versions"`
 	Dependencies map[Version][]Dependency `json:"deps"` // per-version dependencies.
 }
 
@@ -226,16 +234,16 @@ type LockEntry struct {
 
 // LockFile represents a resolved lock file.
 type LockFile struct {
-	Entries  []LockEntry `json:"entries"`
-	Generated string     `json:"generated"`
+	Entries   []LockEntry `json:"entries"`
+	Generated string      `json:"generated"`
 }
 
 // Conflict describes a resolution conflict.
 type Conflict struct {
-	Package  string     `json:"package"`
+	Package  string       `json:"package"`
 	Required []Constraint `json:"required"` // Conflicting constraints.
-	Existing Version    `json:"existing"`
-	Message  string     `json:"message"`
+	Existing Version      `json:"existing"`
+	Message  string       `json:"message"`
 }
 
 // ResolveResult holds the outcome of dependency resolution.
@@ -292,7 +300,7 @@ func NewResolver(reg *Registry, strategy string) *Resolver {
 // Resolve resolves dependencies for a set of root packages with constraints.
 func (rs *Resolver) Resolve(roots []Dependency) *ResolveResult {
 	result := &ResolveResult{}
-	decisions := make(map[string]Version)        // package -> decided version
+	decisions := make(map[string]Version) // package -> decided version
 	queue := make([]Dependency, len(roots))
 	copy(queue, roots)
 
@@ -304,8 +312,8 @@ func (rs *Resolver) Resolve(roots []Dependency) *ResolveResult {
 		pkg := rs.registry.GetPackage(dep.Name)
 		if pkg == nil {
 			result.Conflicts = append(result.Conflicts, Conflict{
-				Package:  dep.Name,
-				Message:  "package not found",
+				Package: dep.Name,
+				Message: "package not found",
 			})
 			continue
 		}
@@ -603,7 +611,9 @@ func BuildGraph(entries []LockEntry, reg *Registry) *Graph {
 		deps := []string{}
 		if pkg != nil {
 			if dd, ok := pkg.Dependencies[e.Version]; ok {
-				for _, d := range dd { deps = append(deps, d.Name) }
+				for _, d := range dd {
+					deps = append(deps, d.Name)
+				}
 			}
 		}
 		g.Nodes[e.Name] = &GraphNode{Name: e.Name, Version: e.Version, Dependencies: deps}
@@ -614,22 +624,31 @@ func BuildGraph(entries []LockEntry, reg *Registry) *Graph {
 // TopoSort returns a topologically sorted list of package names.
 func (g *Graph) TopoSort() []string {
 	inDegree := make(map[string]int)
-	for name := range g.Nodes { inDegree[name] = 0 }
+	for name := range g.Nodes {
+		inDegree[name] = 0
+	}
 	for _, node := range g.Nodes {
-		for _, dep := range node.Dependencies { inDegree[dep]++ }
+		for _, dep := range node.Dependencies {
+			inDegree[dep]++
+		}
 	}
 	var queue []string
 	for name, deg := range inDegree {
-		if deg == 0 { queue = append(queue, name) }
+		if deg == 0 {
+			queue = append(queue, name)
+		}
 	}
 	var sorted []string
 	for len(queue) > 0 {
-		n := queue[0]; queue = queue[1:]
+		n := queue[0]
+		queue = queue[1:]
 		sorted = append(sorted, n)
 		if node, ok := g.Nodes[n]; ok {
 			for _, dep := range node.Dependencies {
 				inDegree[dep]--
-				if inDegree[dep] == 0 { queue = append(queue, dep) }
+				if inDegree[dep] == 0 {
+					queue = append(queue, dep)
+				}
 			}
 		}
 	}
@@ -642,7 +661,9 @@ func (g *Graph) DetectCycles() [][]string {
 	recStack := make(map[string]bool)
 	var cycles [][]string
 	for name := range g.Nodes {
-		if !visited[name] { g.dfs(name, visited, recStack, []string{}, &cycles) }
+		if !visited[name] {
+			g.dfs(name, visited, recStack, []string{}, &cycles)
+		}
 	}
 	return cycles
 }
@@ -658,7 +679,12 @@ func (g *Graph) dfs(node string, visited, recStack map[string]bool, path []strin
 			} else if recStack[dep] {
 				// Found cycle.
 				cycleStart := -1
-				for i, n := range path { if n == dep { cycleStart = i; break } }
+				for i, n := range path {
+					if n == dep {
+						cycleStart = i
+						break
+					}
+				}
 				if cycleStart >= 0 {
 					cycle := make([]string, len(path)-cycleStart)
 					copy(cycle, path[cycleStart:])
@@ -674,10 +700,10 @@ func (g *Graph) dfs(node string, visited, recStack map[string]bool, path []strin
 
 // VersionRange represents a range of versions.
 type VersionRange struct {
-	Min Version `json:"min"`
-	Max Version `json:"max"`
-	InclusiveMin bool `json:"inclusive_min"`
-	InclusiveMax bool `json:"inclusive_max"`
+	Min          Version `json:"min"`
+	Max          Version `json:"max"`
+	InclusiveMin bool    `json:"inclusive_min"`
+	InclusiveMax bool    `json:"inclusive_max"`
 }
 
 // Contains checks if a version falls within the range.
@@ -694,13 +720,27 @@ func Intersection(a, b VersionRange) *VersionRange {
 	// Determine the higher min.
 	minV := a.Min
 	inclusiveMin := a.InclusiveMin
-	if b.Min.Compare(a.Min) > 0 { minV = b.Min; inclusiveMin = b.InclusiveMin } else if b.Min.Compare(a.Min) == 0 { inclusiveMin = a.InclusiveMin && b.InclusiveMin }
+	if b.Min.Compare(a.Min) > 0 {
+		minV = b.Min
+		inclusiveMin = b.InclusiveMin
+	} else if b.Min.Compare(a.Min) == 0 {
+		inclusiveMin = a.InclusiveMin && b.InclusiveMin
+	}
 	// Determine the lower max.
 	maxV := a.Max
 	inclusiveMax := a.InclusiveMax
-	if b.Max.Compare(a.Max) < 0 { maxV = b.Max; inclusiveMax = b.InclusiveMax } else if b.Max.Compare(a.Max) == 0 { inclusiveMax = a.InclusiveMax && b.InclusiveMax }
-	if minV.Compare(maxV) > 0 { return nil }
-	if minV.Compare(maxV) == 0 && (!inclusiveMin || !inclusiveMax) { return nil }
+	if b.Max.Compare(a.Max) < 0 {
+		maxV = b.Max
+		inclusiveMax = b.InclusiveMax
+	} else if b.Max.Compare(a.Max) == 0 {
+		inclusiveMax = a.InclusiveMax && b.InclusiveMax
+	}
+	if minV.Compare(maxV) > 0 {
+		return nil
+	}
+	if minV.Compare(maxV) == 0 && (!inclusiveMin || !inclusiveMax) {
+		return nil
+	}
 	return &VersionRange{Min: minV, Max: maxV, InclusiveMin: inclusiveMin, InclusiveMax: inclusiveMax}
 }
 
@@ -710,11 +750,17 @@ func Intersection(a, b VersionRange) *VersionRange {
 func MergeLockFiles(base, ours, theirs *LockFile, strategy string) *LockFile {
 	ourMap := make(map[string]LockEntry)
 	theirMap := make(map[string]LockEntry)
-	for _, e := range ours.Entries { ourMap[e.Name] = e }
-	for _, e := range theirs.Entries { theirMap[e.Name] = e }
+	for _, e := range ours.Entries {
+		ourMap[e.Name] = e
+	}
+	for _, e := range theirs.Entries {
+		theirMap[e.Name] = e
+	}
 
 	merged := make(map[string]LockEntry)
-	for _, e := range base.Entries { merged[e.Name] = e }
+	for _, e := range base.Entries {
+		merged[e.Name] = e
+	}
 
 	for name, our := range ourMap {
 		their, hasTheir := theirMap[name]
@@ -725,7 +771,11 @@ func MergeLockFiles(base, ours, theirs *LockFile, strategy string) *LockFile {
 		} else if hasTheir && our.Version.Compare(baseE.Version) != 0 && their.Version.Compare(baseE.Version) != 0 && our.Version.Compare(their.Version) != 0 {
 			// Conflict: both changed.
 			if strategy == "newest" {
-				if our.Version.Compare(their.Version) > 0 { merged[name] = our } else { merged[name] = their }
+				if our.Version.Compare(their.Version) > 0 {
+					merged[name] = our
+				} else {
+					merged[name] = their
+				}
 			} else {
 				merged[name] = our // Keep ours by default.
 			}
@@ -736,11 +786,15 @@ func MergeLockFiles(base, ours, theirs *LockFile, strategy string) *LockFile {
 		}
 	}
 	for name, their := range theirMap {
-		if _, ok := merged[name]; !ok { merged[name] = their }
+		if _, ok := merged[name]; !ok {
+			merged[name] = their
+		}
 	}
 
 	entries := make([]LockEntry, 0, len(merged))
-	for _, e := range merged { entries = append(entries, e) }
+	for _, e := range merged {
+		entries = append(entries, e)
+	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return &LockFile{Entries: entries}
 }
@@ -765,20 +819,24 @@ func NewPinManager() *PinManager { return &PinManager{pins: make(map[string]PinE
 
 // Pin adds a version pin.
 func (pm *PinManager) Pin(name string, ver Version, reason string) {
-	pm.mu.Lock(); defer pm.mu.Unlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.pins[name] = PinEntry{Name: name, Version: ver, Reason: reason}
 }
 
 // Unpin removes a pin.
 func (pm *PinManager) Unpin(name string) {
-	pm.mu.Lock(); defer pm.mu.Unlock()
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	delete(pm.pins, name)
 }
 
 // IsPinned checks if a package is pinned and returns the pinned version.
 func (pm *PinManager) IsPinned(name string) (Version, bool) {
-	pm.mu.RLock(); defer pm.mu.RUnlock()
-	p, ok := pm.pins[name]; return p.Version, ok
+	pm.mu.RLock()
+	defer pm.mu.RUnlock()
+	p, ok := pm.pins[name]
+	return p.Version, ok
 }
 
 // ApplyPins restricts a registry to only use pinned versions.
@@ -787,11 +845,17 @@ func (pm *PinManager) ApplyPins(reg *Registry) {
 	defer pm.mu.RUnlock()
 	for name, pin := range pm.pins {
 		pkg := reg.GetPackage(name)
-		if pkg == nil { continue }
+		if pkg == nil {
+			continue
+		}
 		filtered := make([]Version, 0)
 		for _, v := range pkg.Versions {
-			if v.Compare(pin.Version) == 0 { filtered = append(filtered, v) }
+			if v.Compare(pin.Version) == 0 {
+				filtered = append(filtered, v)
+			}
 		}
-		if len(filtered) > 0 { pkg.Versions = filtered }
+		if len(filtered) > 0 {
+			pkg.Versions = filtered
+		}
 	}
 }

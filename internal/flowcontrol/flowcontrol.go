@@ -20,10 +20,10 @@ type Limiter interface {
 
 // FixedWindow limits requests within fixed time windows.
 type FixedWindow struct {
-	mu       sync.Mutex
-	limit    int
-	window   time.Duration
-	counter  int
+	mu          sync.Mutex
+	limit       int
+	window      time.Duration
+	counter     int
 	windowStart time.Time
 }
 
@@ -34,18 +34,30 @@ func NewFixedWindow(limit int, window time.Duration) *FixedWindow {
 
 func (fw *FixedWindow) Allow() bool { return fw.AllowN(1) }
 func (fw *FixedWindow) AllowN(n int) bool {
-	fw.mu.Lock(); defer fw.mu.Unlock()
-	if time.Since(fw.windowStart) > fw.window { fw.counter = 0; fw.windowStart = time.Now() }
-	if fw.counter+n <= fw.limit { fw.counter += n; return true }
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	if time.Since(fw.windowStart) > fw.window {
+		fw.counter = 0
+		fw.windowStart = time.Now()
+	}
+	if fw.counter+n <= fw.limit {
+		fw.counter += n
+		return true
+	}
 	return false
 }
-func (fw *FixedWindow) Reset() { fw.mu.Lock(); defer fw.mu.Unlock(); fw.counter = 0; fw.windowStart = time.Now() }
+func (fw *FixedWindow) Reset() {
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	fw.counter = 0
+	fw.windowStart = time.Now()
+}
 
 // SlidingWindow limits requests in a sliding time window.
 type SlidingWindow struct {
-	mu       sync.Mutex
-	limit    int
-	window   time.Duration
+	mu         sync.Mutex
+	limit      int
+	window     time.Duration
 	timestamps []time.Time
 }
 
@@ -56,14 +68,21 @@ func NewSlidingWindow(limit int, window time.Duration) *SlidingWindow {
 
 func (sw *SlidingWindow) Allow() bool { return sw.AllowN(1) }
 func (sw *SlidingWindow) AllowN(n int) bool {
-	sw.mu.Lock(); defer sw.mu.Unlock()
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
 	now := time.Now()
 	cutoff := now.Add(-sw.window)
 	var valid []time.Time
-	for _, t := range sw.timestamps { if t.After(cutoff) { valid = append(valid, t) } }
+	for _, t := range sw.timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
 	sw.timestamps = valid
 	if len(sw.timestamps)+n <= sw.limit {
-		for i := 0; i < n; i++ { sw.timestamps = append(sw.timestamps, now) }
+		for i := 0; i < n; i++ {
+			sw.timestamps = append(sw.timestamps, now)
+		}
 		return true
 	}
 	return false
@@ -87,8 +106,10 @@ func (s *Semaphore) Release() { <-s.ch }
 // TryAcquire attempts non-blocking acquisition.
 func (s *Semaphore) TryAcquire() bool {
 	select {
-	case s.ch <- struct{}{}: return true
-	default: return false
+	case s.ch <- struct{}{}:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -97,9 +118,9 @@ func (s *Semaphore) Available() int { return cap(s.ch) - len(s.ch) }
 
 // AdmissionController decides whether to admit a request.
 type AdmissionController struct {
-	mu        sync.Mutex
-	limiters  []Limiter
-	priority  map[string]int
+	mu       sync.Mutex
+	limiters []Limiter
+	priority map[string]int
 }
 
 // NewAdmissionController creates an admission controller.
@@ -109,20 +130,27 @@ func NewAdmissionController() *AdmissionController {
 
 // AddLimiter adds a rate limiter check.
 func (ac *AdmissionController) AddLimiter(l Limiter) {
-	ac.mu.Lock(); defer ac.mu.Unlock()
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
 	ac.limiters = append(ac.limiters, l)
 }
 
 // SetPriority sets the priority for a request class.
 func (ac *AdmissionController) SetPriority(class string, pri int) {
-	ac.mu.Lock(); defer ac.mu.Unlock()
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
 	ac.priority[class] = pri
 }
 
 // Admit checks whether a request should be processed.
 func (ac *AdmissionController) Admit(class string) bool {
-	ac.mu.Lock(); defer ac.mu.Unlock()
-	for _, l := range ac.limiters { if !l.Allow() { return false } }
+	ac.mu.Lock()
+	defer ac.mu.Unlock()
+	for _, l := range ac.limiters {
+		if !l.Allow() {
+			return false
+		}
+	}
 	_ = class
 	return true
 }
@@ -145,7 +173,8 @@ func NewBackpressure(maxDepth int) *Backpressure {
 
 // SetDepth updates the current queue depth.
 func (bp *Backpressure) SetDepth(depth int) bool {
-	bp.mu.Lock(); defer bp.mu.Unlock()
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
 	bp.queueDepth = depth
 	bp.loadAvg = float64(depth) / float64(bp.maxDepth)
 	bp.throttle = depth > bp.maxDepth
@@ -179,16 +208,23 @@ func NewGovernor(rateLimit int, window time.Duration, maxConcurrency, maxDepth i
 
 // TryProcess attempts to admit and process a request.
 func (g *Governor) TryProcess(fn func()) bool {
-	if g.backpressure.Throttled() { return false }
-	if !g.limiter.Allow() { return false }
-	if !g.semaphore.TryAcquire() { return false }
+	if g.backpressure.Throttled() {
+		return false
+	}
+	if !g.limiter.Allow() {
+		return false
+	}
+	if !g.semaphore.TryAcquire() {
+		return false
+	}
 	go func() { defer g.semaphore.Release(); fn() }()
 	return true
 }
 
 // Stats returns governor statistics.
 func (g *Governor) Stats() map[string]any {
-	g.mu.Lock(); defer g.mu.Unlock()
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	return map[string]any{
 		"concurrency_available": g.semaphore.Available(),
 		"backpressure_active":   g.backpressure.Throttled(),
@@ -201,7 +237,9 @@ func FormatStats(stats map[string]any) string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Flow Control Stats:\n%s\n\n", strings.Repeat("─", 40))
 	keys := make([]string, 0, len(stats))
-	for k := range stats { keys = append(keys, k) }
+	for k := range stats {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		fmt.Fprintf(&sb, "  %-25s %v\n", k, stats[k])

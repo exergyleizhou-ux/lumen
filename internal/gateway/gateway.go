@@ -17,14 +17,14 @@ import (
 
 // CacheEntry holds a cached response with metadata.
 type CacheEntry struct {
-	Key       string          `json:"key"`
-	Response  json.RawMessage `json:"response"`
+	Key       string            `json:"key"`
+	Response  json.RawMessage   `json:"response"`
 	Headers   map[string]string `json:"headers"`
-	Status    int             `json:"status"`
-	CachedAt  time.Time       `json:"cached_at"`
-	ExpiresAt time.Time       `json:"expires_at"`
-	Hits      int64           `json:"hits"`
-	Size      int             `json:"size"`
+	Status    int               `json:"status"`
+	CachedAt  time.Time         `json:"cached_at"`
+	ExpiresAt time.Time         `json:"expires_at"`
+	Hits      int64             `json:"hits"`
+	Size      int               `json:"size"`
 }
 
 // IsExpired returns true if the entry has passed its TTL.
@@ -41,11 +41,11 @@ func (ce *CacheEntry) TTL() time.Duration {
 
 // ResponseCache is a TTL-based response cache with LRU-like eviction.
 type ResponseCache struct {
-	mu       sync.RWMutex
-	entries  map[string]*CacheEntry
-	maxSize  int
-	totalHits  int64
-	totalMisses int64
+	mu             sync.RWMutex
+	entries        map[string]*CacheEntry
+	maxSize        int
+	totalHits      int64
+	totalMisses    int64
 	totalEvictions int64
 }
 
@@ -196,9 +196,9 @@ func (dk DedupKey) String() string {
 
 // DedupTracker tracks in-flight requests to prevent duplicates.
 type DedupTracker struct {
-	mu        sync.Mutex
-	inFlight  map[string]chan struct{} // key -> completion signal
-	ttl       time.Duration
+	mu       sync.Mutex
+	inFlight map[string]chan struct{} // key -> completion signal
+	ttl      time.Duration
 }
 
 // NewDedupTracker creates a new deduplication tracker.
@@ -277,11 +277,11 @@ type ScatterResponse struct {
 
 // ScatterGatherResult aggregates all responses.
 type ScatterGatherResult struct {
-	Responses   []ScatterResponse `json:"responses"`
-	TotalTime   time.Duration     `json:"total_time"`
-	Successes   int               `json:"successes"`
-	Failures    int               `json:"failures"`
-	Partial     bool              `json:"partial"`
+	Responses []ScatterResponse `json:"responses"`
+	TotalTime time.Duration     `json:"total_time"`
+	Successes int               `json:"successes"`
+	Failures  int               `json:"failures"`
+	Partial   bool              `json:"partial"`
 }
 
 // AggregateFunc is a user-supplied function that performs a single scatter request.
@@ -375,9 +375,9 @@ func ProtectedCallContext[T any](ctx context.Context, breaker *circuitbreaker.Ci
 
 // Gateway ties together caching, deduplication, and circuit breaking.
 type Gateway struct {
-	cache     *ResponseCache
-	dedup     *DedupTracker
-	registry  *circuitbreaker.BreakerRegistry
+	cache    *ResponseCache
+	dedup    *DedupTracker
+	registry *circuitbreaker.BreakerRegistry
 }
 
 // NewGateway creates a new gateway extension bundle.
@@ -475,11 +475,11 @@ func (g *Gateway) FormatStatus() string {
 
 // RateLimiter implements a token bucket rate limiter.
 type RateLimiter struct {
-	mu        sync.Mutex
-	rate      float64 // tokens per second.
-	burst     int     // max tokens.
-	tokens    float64
-	lastFill  time.Time
+	mu       sync.Mutex
+	rate     float64 // tokens per second.
+	burst    int     // max tokens.
+	tokens   float64
+	lastFill time.Time
 }
 
 // NewRateLimiter creates a token bucket rate limiter.
@@ -499,7 +499,9 @@ func (rl *RateLimiter) Allow() bool {
 	now := time.Now()
 	elapsed := now.Sub(rl.lastFill).Seconds()
 	rl.tokens += elapsed * rl.rate
-	if rl.tokens > float64(rl.burst) { rl.tokens = float64(rl.burst) }
+	if rl.tokens > float64(rl.burst) {
+		rl.tokens = float64(rl.burst)
+	}
 	rl.lastFill = now
 	if rl.tokens >= 1 {
 		rl.tokens--
@@ -576,7 +578,9 @@ func NewLoadBalancer(backends []string) *LoadBalancer {
 func (lb *LoadBalancer) Next() string {
 	lb.mu.Lock()
 	defer lb.mu.Unlock()
-	if len(lb.backends) == 0 { return "" }
+	if len(lb.backends) == 0 {
+		return ""
+	}
 	backend := lb.backends[lb.index%len(lb.backends)]
 	lb.index++
 	return backend
@@ -610,7 +614,9 @@ func (lb *LoadBalancer) HealthyBackends(check HealthCheck) []string {
 	defer lb.mu.RUnlock()
 	var out []string
 	for _, b := range lb.backends {
-		if check(b) { out = append(out, b) }
+		if check(b) {
+			out = append(out, b)
+		}
 	}
 	return out
 }
@@ -631,7 +637,9 @@ func NewCacheWarmup(cache *ResponseCache) *CacheWarmup {
 func (cw *CacheWarmup) WarmUp(keys []string, fetcher func(key string) (json.RawMessage, error), ttl time.Duration) {
 	for _, key := range keys {
 		data, err := fetcher(key)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		cw.cache.Set(key, data, nil, 200, ttl)
 	}
 }
@@ -655,9 +663,17 @@ func (gs *GatewayStats) Record(latency time.Duration, cached, rateLimited, circu
 	defer gs.mu.Unlock()
 	gs.TotalRequests++
 	gs.TotalLatencyMs += float64(latency.Microseconds()) / 1000.0
-	if cached { gs.CacheHits++ } else { gs.CacheMisses++ }
-	if rateLimited { gs.RateLimited++ }
-	if circuitOpen { gs.CircuitOpens++ }
+	if cached {
+		gs.CacheHits++
+	} else {
+		gs.CacheMisses++
+	}
+	if rateLimited {
+		gs.RateLimited++
+	}
+	if circuitOpen {
+		gs.CircuitOpens++
+	}
 }
 
 // Snapshot returns current stats.

@@ -39,24 +39,24 @@ const (
 // Create with New, call Configure, then Run/Chat/Plan.
 type Controller struct {
 	// Configuration (set by Configure)
-	cfg         *config.File
-	provCfg     *config.ProviderConfig
-	prov        provider.Provider
-	reg         *tool.Registry
-	skillStore  *skill.Store
-	permMode    permission.Mode
-	sink        event.Sink
-	asker       agent.Asker
+	cfg        *config.File
+	provCfg    *config.ProviderConfig
+	prov       provider.Provider
+	reg        *tool.Registry
+	skillStore *skill.Store
+	permMode   permission.Mode
+	sink       event.Sink
+	asker      agent.Asker
 
 	// Agent (created by Configure)
-	ag          *agent.Agent
-	sess        *agent.Session
-	cp          *checkpoint.Store
-	jm          *jobs.Manager
-	tl          *timeline.Recorder // session timeline for replay + change inbox
+	ag   *agent.Agent
+	sess *agent.Session
+	cp   *checkpoint.Store
+	jm   *jobs.Manager
+	tl   *timeline.Recorder // session timeline for replay + change inbox
 
 	// Sub-agent deps (shared by run_skill / task tools)
-	subDeps     agent.SubagentDeps
+	subDeps agent.SubagentDeps
 }
 
 // New creates an unconfigured Controller. Call Configure() before use.

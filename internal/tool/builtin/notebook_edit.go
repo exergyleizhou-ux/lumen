@@ -140,13 +140,17 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 }
 
 func (t *NotebookEditTool) Preview(args json.RawMessage) (diff.Change, error) {
-	var p struct{ Path string `json:"path"` }
+	var p struct {
+		Path string `json:"path"`
+	}
 	json.Unmarshal(args, &p)
 	data, _ := os.ReadFile(p.Path)
 	return diff.Change{Path: p.Path, Before: string(data)}, nil
 }
 
-func writeNotebook(path string, nb struct{ Cells []map[string]any `json:"cells"` }, action string, idx int) (string, error) {
+func writeNotebook(path string, nb struct {
+	Cells []map[string]any `json:"cells"`
+}, action string, idx int) (string, error) {
 	data, err := json.MarshalIndent(nb, "", " ")
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
@@ -260,7 +264,9 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 }
 
 func (t *DeleteRangeTool) Preview(args json.RawMessage) (diff.Change, error) {
-	var p struct{ Path string `json:"path"` }
+	var p struct {
+		Path string `json:"path"`
+	}
 	json.Unmarshal(args, &p)
 	data, _ := os.ReadFile(p.Path)
 	return diff.Change{Path: p.Path, Before: string(data)}, nil

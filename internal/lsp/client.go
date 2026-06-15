@@ -82,8 +82,8 @@ type Location struct {
 
 // SymbolInformation describes a symbol in the workspace.
 type SymbolInformation struct {
-	Name     string `json:"name"`
-	Kind     int    `json:"kind"`
+	Name     string   `json:"name"`
+	Kind     int      `json:"kind"`
 	Location Location `json:"location"`
 }
 
@@ -101,8 +101,8 @@ type Client struct {
 	closed bool
 
 	// Diagnostics cache (per-URI)
-	diagMu   sync.RWMutex
-	diags    map[string][]Diagnostic
+	diagMu sync.RWMutex
+	diags  map[string][]Diagnostic
 }
 
 // StartClient launches a language server binary and performs the initialize
@@ -122,11 +122,11 @@ func StartClient(command string, args []string, rootURI string) (*Client, error)
 	}
 
 	c := &Client{
-		cmd:   cmd,
-		stdin: stdin,
+		cmd:    cmd,
+		stdin:  stdin,
 		stdout: stdout,
-		resps: map[int64]chan jsonRPCResponse{},
-		diags: map[string][]Diagnostic{},
+		resps:  map[int64]chan jsonRPCResponse{},
+		diags:  map[string][]Diagnostic{},
 	}
 
 	go c.readLoop()

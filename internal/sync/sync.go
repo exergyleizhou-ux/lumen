@@ -18,8 +18,8 @@ type Strategy int
 
 const (
 	StrategyLastWriteWins Strategy = iota // Timestamp-based; newest wins.
-	StrategyCRDTLike                       // Merge both values when possible.
-	StrategyManual                         // Flag conflict for manual resolution.
+	StrategyCRDTLike                      // Merge both values when possible.
+	StrategyManual                        // Flag conflict for manual resolution.
 )
 
 var strategyNames = map[Strategy]string{
@@ -61,10 +61,10 @@ func (ct ChangeType) String() string {
 type Record struct {
 	Key       string            `json:"key"`
 	Value     json.RawMessage   `json:"value"`
-	Version   int64             `json:"version"`   // Monotonic version.
+	Version   int64             `json:"version"` // Monotonic version.
 	UpdatedAt time.Time         `json:"updated_at"`
 	UpdatedBy string            `json:"updated_by"`
-	Digest    string            `json:"digest"`    // Content hash.
+	Digest    string            `json:"digest"` // Content hash.
 	Deleted   bool              `json:"deleted"`
 	Extra     map[string]string `json:"extra"`
 }
@@ -88,13 +88,13 @@ func (r *Record) ComputeDigest() {
 
 // Change represents a tracked modification.
 type Change struct {
-	ID        string     `json:"id"`
-	RecordKey string     `json:"record_key"`
-	Type      ChangeType `json:"type"`
+	ID        string          `json:"id"`
+	RecordKey string          `json:"record_key"`
+	Type      ChangeType      `json:"type"`
 	OldValue  json.RawMessage `json:"old_value,omitempty"`
 	NewValue  json.RawMessage `json:"new_value,omitempty"`
-	Timestamp time.Time  `json:"timestamp"`
-	Source    string     `json:"source"` // e.g. "local", "remote", "merge".
+	Timestamp time.Time       `json:"timestamp"`
+	Source    string          `json:"source"` // e.g. "local", "remote", "merge".
 }
 
 // Conflict describes a synchronization conflict.
@@ -120,23 +120,23 @@ type JournalEntry struct {
 
 // MergeResult holds the outcome of a three-way merge.
 type MergeResult struct {
-	Resolved  []*Record  `json:"resolved"`
+	Resolved  []*Record   `json:"resolved"`
 	Conflicts []*Conflict `json:"conflicts"`
-	Applied   int        `json:"applied"`
-	Skipped   int        `json:"skipped"`
+	Applied   int         `json:"applied"`
+	Skipped   int         `json:"skipped"`
 }
 
 // Engine is the synchronization engine.
 type Engine struct {
-	mu          sync.RWMutex
-	store       map[string]*Record // key -> record
-	journal     []JournalEntry
-	changes     []Change
-	conflicts   []Conflict
-	strategy    Strategy
-	version     int64
-	changeCap   int
-	journalCap  int
+	mu         sync.RWMutex
+	store      map[string]*Record // key -> record
+	journal    []JournalEntry
+	changes    []Change
+	conflicts  []Conflict
+	strategy   Strategy
+	version    int64
+	changeCap  int
+	journalCap int
 }
 
 // NewEngine creates a new synchronization engine.
@@ -520,12 +520,12 @@ func (e *Engine) Stats() map[string]int {
 		}
 	}
 	return map[string]int{
-		"total_records":  total,
-		"active_records": total - deleted,
-		"deleted":        deleted,
-		"changes":        len(e.changes),
+		"total_records":   total,
+		"active_records":  total - deleted,
+		"deleted":         deleted,
+		"changes":         len(e.changes),
 		"journal_entries": len(e.journal),
-		"conflicts":      len(e.conflicts),
+		"conflicts":       len(e.conflicts),
 	}
 }
 
@@ -552,10 +552,10 @@ func keysFromMap(m map[string]bool) []string {
 
 // Delta represents a minimal change description between two records.
 type Delta struct {
-	Key    string            `json:"key"`
-	Ops    []DeltaOp         `json:"ops"`
-	BaseV  int64             `json:"base_version"`
-	TargetV int64            `json:"target_version"`
+	Key     string    `json:"key"`
+	Ops     []DeltaOp `json:"ops"`
+	BaseV   int64     `json:"base_version"`
+	TargetV int64     `json:"target_version"`
 }
 
 // DeltaOp is a single field-level change.
@@ -568,17 +568,25 @@ type DeltaOp struct {
 // ComputeDelta computes the delta between two records.
 func ComputeDelta(old, new *Record) *Delta {
 	d := &Delta{Key: new.Key, BaseV: old.Version, TargetV: new.Version}
-	if old.Digest == new.Digest { return d }
+	if old.Digest == new.Digest {
+		return d
+	}
 	var oldM, newM map[string]json.RawMessage
 	json.Unmarshal(old.Value, &oldM)
 	json.Unmarshal(new.Value, &newM)
 	for k, nv := range newM {
 		ov, ok := oldM[k]
-		if !ok { d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv}) }
-		if ok && string(ov) != string(nv) { d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv}) }
+		if !ok {
+			d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv})
+		}
+		if ok && string(ov) != string(nv) {
+			d.Ops = append(d.Ops, DeltaOp{Op: "set", Path: k, Value: nv})
+		}
 	}
 	for k := range oldM {
-		if _, ok := newM[k]; !ok { d.Ops = append(d.Ops, DeltaOp{Op: "delete", Path: k}) }
+		if _, ok := newM[k]; !ok {
+			d.Ops = append(d.Ops, DeltaOp{Op: "delete", Path: k})
+		}
 	}
 	return d
 }
@@ -590,8 +598,10 @@ func ApplyDelta(rec *Record, d *Delta) *Record {
 	json.Unmarshal(result.Value, &m)
 	for _, op := range d.Ops {
 		switch op.Op {
-		case "set": m[op.Path] = op.Value
-		case "delete": delete(m, op.Path)
+		case "set":
+			m[op.Path] = op.Value
+		case "delete":
+			delete(m, op.Path)
 		}
 	}
 	v, _ := json.Marshal(m)
@@ -620,7 +630,9 @@ func (g *GCounter) Value() int64 { return g.count }
 
 // Merge combines two GCounters (takes max).
 func (g *GCounter) Merge(other *GCounter) {
-	if other.count > g.count { g.count = other.count }
+	if other.count > g.count {
+		g.count = other.count
+	}
 }
 
 // PNCounter is a positive-negative counter CRDT.
@@ -650,14 +662,18 @@ func (pn *PNCounter) Merge(other *PNCounter) { pn.inc.Merge(other.inc); pn.dec.M
 
 // BatchPut stores multiple records atomically.
 func (e *Engine) BatchPut(recs []*Record) {
-	for _, r := range recs { e.Put(r) }
+	for _, r := range recs {
+		e.Put(r)
+	}
 }
 
 // BatchGet retrieves multiple records by key.
 func (e *Engine) BatchGet(keys []string) map[string]*Record {
 	out := make(map[string]*Record)
 	for _, k := range keys {
-		if r, ok := e.Get(k); ok { out[k] = r }
+		if r, ok := e.Get(k); ok {
+			out[k] = r
+		}
 	}
 	return out
 }
@@ -666,9 +682,9 @@ func (e *Engine) BatchGet(keys []string) map[string]*Record {
 
 // SyncRequest describes a sync pull/push request.
 type SyncRequest struct {
-	Source    string    `json:"source"`
-	Since     time.Time `json:"since"` // Only changes after this time.
-	Keys      []string  `json:"keys,omitempty"`
+	Source string    `json:"source"`
+	Since  time.Time `json:"since"` // Only changes after this time.
+	Keys   []string  `json:"keys,omitempty"`
 }
 
 // SyncResponse is the response to a sync request.
@@ -692,7 +708,9 @@ func (e *Engine) GenerateSyncResponse(req SyncRequest) *SyncResponse {
 		}
 	} else {
 		for _, r := range e.store {
-			if r.UpdatedAt.After(req.Since) { resp.Records = append(resp.Records, r.Clone()) }
+			if r.UpdatedAt.After(req.Since) {
+				resp.Records = append(resp.Records, r.Clone())
+			}
 		}
 	}
 	return resp

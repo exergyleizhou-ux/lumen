@@ -26,17 +26,17 @@ type Symbol struct {
 
 // CallEdge represents one caller→callee relationship.
 type CallEdge struct {
-	Caller  string `json:"caller"`
-	Callee  string `json:"callee"`
-	File    string `json:"file"`
-	Line    int    `json:"line"`
+	Caller string `json:"caller"`
+	Callee string `json:"callee"`
+	File   string `json:"file"`
+	Line   int    `json:"line"`
 }
 
 // Graph builds and queries a call graph for a Go workspace.
 type Graph struct {
 	mu      sync.RWMutex
 	root    string
-	symbols map[string]*Symbol  // fully-qualified name → symbol
+	symbols map[string]*Symbol    // fully-qualified name → symbol
 	callers map[string][]CallEdge // callee → callers
 	calls   map[string][]CallEdge // caller → callees
 	loaded  bool

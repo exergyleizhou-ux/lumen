@@ -18,10 +18,10 @@ import (
 
 // Plan is a directed acyclic graph of tasks to execute.
 type Plan struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Tasks     []*Task   `json:"tasks"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	Tasks     []*Task    `json:"tasks"`
+	CreatedAt time.Time  `json:"created_at"`
 	Status    PlanStatus `json:"status"`
 }
 
@@ -38,20 +38,20 @@ const (
 
 // Task is one unit of work in a plan.
 type Task struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Agent       string        `json:"agent"`
-	Prompt      string        `json:"prompt"`
-	DependsOn   []string      `json:"depends_on,omitempty"`
-	Status      TaskStatus    `json:"status"`
-	Result      string        `json:"result,omitempty"`
-	Error       string        `json:"error,omitempty"`
-	StartedAt   time.Time     `json:"started_at,omitempty"`
-	CompletedAt time.Time     `json:"completed_at,omitempty"`
-	Attempts    int           `json:"attempts"`
-	MaxRetries  int           `json:"max_retries"`
-	Timeout     time.Duration `json:"timeout"`
-	Priority    int           `json:"priority"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Agent       string         `json:"agent"`
+	Prompt      string         `json:"prompt"`
+	DependsOn   []string       `json:"depends_on,omitempty"`
+	Status      TaskStatus     `json:"status"`
+	Result      string         `json:"result,omitempty"`
+	Error       string         `json:"error,omitempty"`
+	StartedAt   time.Time      `json:"started_at,omitempty"`
+	CompletedAt time.Time      `json:"completed_at,omitempty"`
+	Attempts    int            `json:"attempts"`
+	MaxRetries  int            `json:"max_retries"`
+	Timeout     time.Duration  `json:"timeout"`
+	Priority    int            `json:"priority"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 }
 
@@ -82,17 +82,17 @@ type Agent interface {
 
 // AgentPool manages a collection of agents with load balancing.
 type AgentPool struct {
-	mu      sync.RWMutex
-	agents  map[string]Agent
-	busy    map[string]int
-	stats   map[string]*AgentStats
+	mu     sync.RWMutex
+	agents map[string]Agent
+	busy   map[string]int
+	stats  map[string]*AgentStats
 }
 
 // AgentStats tracks per-agent usage metrics.
 type AgentStats struct {
-	TotalTasks    int64 `json:"total_tasks"`
-	SuccessTasks  int64 `json:"success_tasks"`
-	FailedTasks   int64 `json:"failed_tasks"`
+	TotalTasks    int64         `json:"total_tasks"`
+	SuccessTasks  int64         `json:"success_tasks"`
+	FailedTasks   int64         `json:"failed_tasks"`
 	TotalDuration time.Duration `json:"total_duration"`
 	mu            sync.Mutex
 }
@@ -137,8 +137,12 @@ func (p *AgentPool) Select(preferred string, requiredCaps []string) Agent {
 	var best Agent
 	bestBusy := int(^uint(0) >> 1)
 	for name, a := range p.agents {
-		if !a.IsAvailable() || a == nil { continue }
-		if !p.canHandle(a, requiredCaps) { continue }
+		if !a.IsAvailable() || a == nil {
+			continue
+		}
+		if !p.canHandle(a, requiredCaps) {
+			continue
+		}
 		busy := p.busy[name]
 		if busy < bestBusy {
 			best = a
@@ -149,14 +153,21 @@ func (p *AgentPool) Select(preferred string, requiredCaps []string) Agent {
 }
 
 func (p *AgentPool) canHandle(a Agent, caps []string) bool {
-	if len(caps) == 0 { return true }
+	if len(caps) == 0 {
+		return true
+	}
 	ac := a.Capabilities()
 	for _, required := range caps {
 		found := false
 		for _, c := range ac {
-			if c == required { found = true; break }
+			if c == required {
+				found = true
+				break
+			}
 		}
-		if !found { return false }
+		if !found {
+			return false
+		}
 	}
 	return true
 }
@@ -166,10 +177,16 @@ func (p *AgentPool) Acquire(name string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	a, ok := p.agents[name]
-	if !ok { return false }
+	if !ok {
+		return false
+	}
 	max := a.MaxConcurrency()
-	if max <= 0 { max = 1 }
-	if p.busy[name] >= max { return false }
+	if max <= 0 {
+		max = 1
+	}
+	if p.busy[name] >= max {
+		return false
+	}
 	p.busy[name]++
 	return true
 }
@@ -178,7 +195,9 @@ func (p *AgentPool) Acquire(name string) bool {
 func (p *AgentPool) Release(name string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.busy[name] > 0 { p.busy[name]-- }
+	if p.busy[name] > 0 {
+		p.busy[name]--
+	}
 }
 
 // RecordSuccess records a successful task execution.
@@ -186,7 +205,9 @@ func (p *AgentPool) RecordSuccess(name string, d time.Duration) {
 	p.mu.RLock()
 	s, ok := p.stats[name]
 	p.mu.RUnlock()
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.mu.Lock()
 	s.TotalTasks++
 	s.SuccessTasks++
@@ -199,7 +220,9 @@ func (p *AgentPool) RecordFailure(name string, d time.Duration) {
 	p.mu.RLock()
 	s, ok := p.stats[name]
 	p.mu.RUnlock()
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.mu.Lock()
 	s.TotalTasks++
 	s.FailedTasks++
@@ -212,7 +235,9 @@ func (p *AgentPool) Stats() map[string]*AgentStats {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 	out := make(map[string]*AgentStats)
-	for n, s := range p.stats { out[n] = s }
+	for n, s := range p.stats {
+		out[n] = s
+	}
 	return out
 }
 
@@ -222,7 +247,9 @@ func (p *AgentPool) FormatStats() string {
 	sb.WriteString(fmt.Sprintf("Agent Pool (%d agents):\n\n", len(p.agents)))
 	stats := p.Stats()
 	names := make([]string, 0, len(stats))
-	for n := range stats { names = append(names, n) }
+	for n := range stats {
+		names = append(names, n)
+	}
 	sort.Strings(names)
 	for _, n := range names {
 		s := stats[n]
@@ -295,13 +322,22 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) error {
 		// Find ready tasks (all dependencies completed)
 		var ready []*Task
 		for _, t := range plan.Tasks {
-			if completed[t.ID] { continue }
-			if t.Status == TaskRunning { continue }
+			if completed[t.ID] {
+				continue
+			}
+			if t.Status == TaskRunning {
+				continue
+			}
 			allDepsDone := true
 			for _, dep := range t.DependsOn {
-				if !completed[dep] { allDepsDone = false; break }
+				if !completed[dep] {
+					allDepsDone = false
+					break
+				}
 			}
-			if allDepsDone { ready = append(ready, t) }
+			if allDepsDone {
+				ready = append(ready, t)
+			}
 		}
 
 		if len(ready) == 0 && len(completed) < len(plan.Tasks) {
@@ -325,7 +361,9 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) error {
 				e.executeTask(ctx, t)
 				if t.Status == TaskFailed {
 					errMu.Lock()
-					if firstErr == nil { firstErr = fmt.Errorf("%s: %s", t.Name, t.Error) }
+					if firstErr == nil {
+						firstErr = fmt.Errorf("%s: %s", t.Name, t.Error)
+					}
 					errMu.Unlock()
 				}
 			}(task)
@@ -347,7 +385,10 @@ func (e *Executor) Execute(ctx context.Context, plan *Plan) error {
 
 	allSuccess := true
 	for _, t := range plan.Tasks {
-		if t.Status != TaskDone { allSuccess = false; break }
+		if t.Status != TaskDone {
+			allSuccess = false
+			break
+		}
 	}
 	if allSuccess {
 		plan.Status = PlanCompleted
@@ -374,12 +415,16 @@ func (e *Executor) executeTask(ctx context.Context, task *Task) {
 
 	// Execute with retries
 	timeout := task.Timeout
-	if timeout <= 0 { timeout = e.cfg.DefaultTimeout }
+	if timeout <= 0 {
+		timeout = e.cfg.DefaultTimeout
+	}
 
 	var result string
 	var err error
 	for attempt := 0; attempt <= task.MaxRetries; attempt++ {
-		if attempt > 0 { time.Sleep(e.cfg.RetryDelay) }
+		if attempt > 0 {
+			time.Sleep(e.cfg.RetryDelay)
+		}
 
 		taskCtx, cancel := context.WithTimeout(ctx, timeout)
 		start := time.Now()
@@ -412,7 +457,9 @@ func buildDepGraph(tasks []*Task) map[string][]string {
 
 func allDoneOrFailed(completed map[string]bool, tasks []*Task) bool {
 	for _, t := range tasks {
-		if !completed[t.ID] { return false }
+		if !completed[t.ID] {
+			return false
+		}
 	}
 	return true
 }
@@ -441,13 +488,19 @@ func (e *Executor) FormatPlan(plan *Plan) string {
 	for _, t := range plan.Tasks {
 		icon := iconForStatus(t.Status)
 		fmt.Fprintf(&sb, "%s %-25s [%s]", icon, t.Name, t.Status)
-		if t.Agent != "" { fmt.Fprintf(&sb, " via %s", t.Agent) }
+		if t.Agent != "" {
+			fmt.Fprintf(&sb, " via %s", t.Agent)
+		}
 		if t.Result != "" {
 			result := t.Result
-			if len(result) > 60 { result = result[:57] + "..." }
+			if len(result) > 60 {
+				result = result[:57] + "..."
+			}
 			fmt.Fprintf(&sb, " → %s", result)
 		}
-		if t.Error != "" { fmt.Fprintf(&sb, " ✗ %s", t.Error) }
+		if t.Error != "" {
+			fmt.Fprintf(&sb, " ✗ %s", t.Error)
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -455,13 +508,20 @@ func (e *Executor) FormatPlan(plan *Plan) string {
 
 func iconForStatus(s TaskStatus) string {
 	switch s {
-	case TaskDone: return "✅"
-	case TaskFailed: return "❌"
-	case TaskRunning: return "🔄"
-	case TaskPending: return "○"
-	case TaskSkipped: return "⏭"
-	case TaskCancelled: return "⊘"
-	default: return "·"
+	case TaskDone:
+		return "✅"
+	case TaskFailed:
+		return "❌"
+	case TaskRunning:
+		return "🔄"
+	case TaskPending:
+		return "○"
+	case TaskSkipped:
+		return "⏭"
+	case TaskCancelled:
+		return "⊘"
+	default:
+		return "·"
 	}
 }
 
@@ -469,9 +529,9 @@ func iconForStatus(s TaskStatus) string {
 
 // UsageSnapshot is a point-in-time usage report.
 type UsageSnapshot struct {
-	Timestamp time.Time              `json:"timestamp"`
-	Agents    map[string]AgentStats  `json:"agents"`
-	TotalBusy int                    `json:"total_busy"`
+	Timestamp time.Time             `json:"timestamp"`
+	Agents    map[string]AgentStats `json:"agents"`
+	TotalBusy int                   `json:"total_busy"`
 }
 
 // Snapshot takes a usage snapshot.

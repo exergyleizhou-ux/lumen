@@ -16,17 +16,17 @@ import (
 
 // Scenario is one scripted exchange in a parity test.
 type Scenario struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Turns       []MockTurn      `json:"turns"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Turns       []MockTurn `json:"turns"`
 }
 
 // MockTurn describes what the model "says" in one turn: optional text
 // and optional tool calls.
 type MockTurn struct {
-	Text      string             `json:"text,omitempty"`
+	Text      string              `json:"text,omitempty"`
 	ToolCalls []provider.ToolCall `json:"tool_calls,omitempty"`
-	Usage     *provider.Usage    `json:"usage,omitempty"`
+	Usage     *provider.Usage     `json:"usage,omitempty"`
 }
 
 // Service is a deterministic mock provider that replays a pre-scripted

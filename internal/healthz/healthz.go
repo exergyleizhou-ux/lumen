@@ -23,10 +23,10 @@ const (
 
 // Check is one health check function.
 type Check struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
 	Timeout     time.Duration `json:"timeout"`
-	Check       func() error   `json:"-"`
+	Check       func() error  `json:"-"`
 }
 
 // Result is the outcome of one health check.
@@ -40,12 +40,12 @@ type Result struct {
 
 // Handler provides health check endpoints.
 type Handler struct {
-	mu       sync.RWMutex
-	checks   map[string]*Check
-	results  map[string]Result
+	mu        sync.RWMutex
+	checks    map[string]*Check
+	results   map[string]Result
 	listeners []func(results []Result)
-	liveness   func() error
-	readiness  func() error
+	liveness  func() error
+	readiness func() error
 }
 
 // NewHandler creates a health check handler.
@@ -55,7 +55,8 @@ func NewHandler() *Handler {
 
 // AddCheck registers a named health check.
 func (h *Handler) AddCheck(name, description string, timeout time.Duration, fn func() error) {
-	h.mu.Lock(); defer h.mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.checks[name] = &Check{Name: name, Description: description, Timeout: timeout, Check: fn}
 }
 
@@ -89,31 +90,40 @@ func (h *Handler) RunAll() []Result {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
 
-	for _, fn := range h.listeners { fn(results) }
+	for _, fn := range h.listeners {
+		fn(results)
+	}
 	return results
 }
 
 // OnChange registers a listener for health status changes.
 func (h *Handler) OnChange(fn func(results []Result)) {
-	h.mu.Lock(); defer h.mu.Unlock()
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.listeners = append(h.listeners, fn)
 }
 
 // IsHealthy returns true when all checks pass.
 func (h *Handler) IsHealthy() bool {
-	h.mu.RLock(); defer h.mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	for _, r := range h.results {
-		if r.Status == StatusFail { return false }
+		if r.Status == StatusFail {
+			return false
+		}
 	}
 	return true
 }
 
 // FailedChecks returns the names of failed checks.
 func (h *Handler) FailedChecks() []string {
-	h.mu.RLock(); defer h.mu.RUnlock()
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	var failed []string
 	for _, r := range h.results {
-		if r.Status == StatusFail { failed = append(failed, r.Name) }
+		if r.Status == StatusFail {
+			failed = append(failed, r.Name)
+		}
 	}
 	return failed
 }
@@ -125,7 +135,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	healthy := true
 	for _, r := range results {
-		if r.Status == StatusFail { healthy = false }
+		if r.Status == StatusFail {
+			healthy = false
+		}
 	}
 
 	switch endpoint {
@@ -154,19 +166,30 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // FormatResults returns a human-readable health summary.
 func (h *Handler) FormatResults() string {
-	h.mu.RLock(); defer h.mu.RUnlock()
-	if len(h.results) == 0 { return "No health checks registered.\n" }
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if len(h.results) == 0 {
+		return "No health checks registered.\n"
+	}
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Health Check (%d checks):\n\n", len(h.results)))
 	keys := make([]string, 0, len(h.results))
-	for k := range h.results { keys = append(keys, k) }
+	for k := range h.results {
+		keys = append(keys, k)
+	}
 	sort.Strings(keys)
 	for _, k := range keys {
 		r := h.results[k]
 		icon := "✅"
-		if r.Status == StatusFail { icon = "❌" } else if r.Status == StatusWarn { icon = "⚠️" }
+		if r.Status == StatusFail {
+			icon = "❌"
+		} else if r.Status == StatusWarn {
+			icon = "⚠️"
+		}
 		fmt.Fprintf(&sb, "%s %-20s %s", icon, r.Name, r.Duration)
-		if r.Message != "" { fmt.Fprintf(&sb, " — %s", r.Message) }
+		if r.Message != "" {
+			fmt.Fprintf(&sb, " — %s", r.Message)
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -175,7 +198,9 @@ func (h *Handler) FormatResults() string {
 func formatResultsJSON(w http.ResponseWriter, results []Result) {
 	fmt.Fprint(w, "{\"status\":\"ok\",\"checks\":[")
 	for i, r := range results {
-		if i > 0 { fmt.Fprint(w, ",") }
+		if i > 0 {
+			fmt.Fprint(w, ",")
+		}
 		fmt.Fprintf(w, `{"name":%q,"status":%q,"duration_ms":%d}`, r.Name, r.Status, r.Duration.Milliseconds())
 	}
 	fmt.Fprint(w, "]}\n")

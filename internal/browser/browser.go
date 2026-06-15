@@ -58,7 +58,9 @@ func (c *Client) Navigate(ctx context.Context, pageURL string) error {
 
 func (c *Client) ExtractText(ctx context.Context) (string, error) {
 	var result struct {
-		Result struct{ Value string `json:"value"` } `json:"result"`
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
 	}
 	if err := c.send(ctx, "Runtime.evaluate", map[string]any{
 		"expression": "document.body.innerText", "returnByValue": true,
@@ -70,7 +72,9 @@ func (c *Client) ExtractText(ctx context.Context) (string, error) {
 
 func (c *Client) GetTitle(ctx context.Context) (string, error) {
 	var result struct {
-		Result struct{ Value string `json:"value"` } `json:"result"`
+		Result struct {
+			Value string `json:"value"`
+		} `json:"result"`
 	}
 	if err := c.send(ctx, "Runtime.evaluate", map[string]any{
 		"expression": "document.title", "returnByValue": true,
@@ -82,7 +86,9 @@ func (c *Client) GetTitle(ctx context.Context) (string, error) {
 
 func (c *Client) ExecuteJS(ctx context.Context, js string) (string, error) {
 	var result struct {
-		Result struct{ Value json.RawMessage `json:"value"` } `json:"result"`
+		Result struct {
+			Value json.RawMessage `json:"value"`
+		} `json:"result"`
 	}
 	if err := c.send(ctx, "Runtime.evaluate", map[string]any{
 		"expression": js, "returnByValue": true,

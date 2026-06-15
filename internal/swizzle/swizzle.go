@@ -425,25 +425,25 @@ func (s *Swizzler) FormatSpecs() string {
 
 // ValidationRule defines a rule to validate a value.
 type ValidationRule struct {
-	Field    string `json:"field"`
-	Required bool   `json:"required,omitempty"`
-	MinLen   int    `json:"min_len,omitempty"`
-	MaxLen   int    `json:"max_len,omitempty"`
-	Min      float64 `json:"min,omitempty"`
-	Max      float64 `json:"max,omitempty"`
-	Pattern  string `json:"pattern,omitempty"`
+	Field    string        `json:"field"`
+	Required bool          `json:"required,omitempty"`
+	MinLen   int           `json:"min_len,omitempty"`
+	MaxLen   int           `json:"max_len,omitempty"`
+	Min      float64       `json:"min,omitempty"`
+	Max      float64       `json:"max,omitempty"`
+	Pattern  string        `json:"pattern,omitempty"`
 	OneOf    []interface{} `json:"one_of,omitempty"`
 }
 
 // Validator validates data against rules.
 type Validator struct {
-	rules []ValidationRule
+	rules    []ValidationRule
 	compiled []compiledRule
 }
 
 type compiledRule struct {
-	rule    ValidationRule
-	re      *regexp.Regexp
+	rule ValidationRule
+	re   *regexp.Regexp
 }
 
 // NewValidator creates a validator from rules.
@@ -453,7 +453,9 @@ func NewValidator(rules []ValidationRule) (*Validator, error) {
 		cr := compiledRule{rule: r}
 		if r.Pattern != "" {
 			re, err := regexp.Compile(r.Pattern)
-			if err != nil { return nil, fmt.Errorf("pattern %q: %w", r.Pattern, err) }
+			if err != nil {
+				return nil, fmt.Errorf("pattern %q: %w", r.Pattern, err)
+			}
 			cr.re = re
 		}
 		v.compiled = append(v.compiled, cr)
@@ -471,7 +473,9 @@ func (v *Validator) Validate(input map[string]interface{}) []string {
 			errs = append(errs, fmt.Sprintf("%s: required", cr.rule.Field))
 			continue
 		}
-		if !found { continue }
+		if !found {
+			continue
+		}
 		s := fmt.Sprintf("%v", val)
 		if cr.rule.MinLen > 0 && len(s) < cr.rule.MinLen {
 			errs = append(errs, fmt.Sprintf("%s: min length %d", cr.rule.Field, cr.rule.MinLen))
@@ -485,9 +489,14 @@ func (v *Validator) Validate(input map[string]interface{}) []string {
 		if len(cr.rule.OneOf) > 0 {
 			match := false
 			for _, o := range cr.rule.OneOf {
-				if fmt.Sprintf("%v", o) == s { match = true; break }
+				if fmt.Sprintf("%v", o) == s {
+					match = true
+					break
+				}
 			}
-			if !match { errs = append(errs, fmt.Sprintf("%s: not in allowed values", cr.rule.Field)) }
+			if !match {
+				errs = append(errs, fmt.Sprintf("%s: not in allowed values", cr.rule.Field))
+			}
 		}
 		// Numeric range checks.
 		if cr.rule.Min != 0 || cr.rule.Max != 0 {
@@ -506,13 +515,17 @@ func (v *Validator) Validate(input map[string]interface{}) []string {
 
 func toFloat(v interface{}) (float64, bool) {
 	switch n := v.(type) {
-	case float64: return n, true
-	case int64: return float64(n), true
-	case int: return float64(n), true
+	case float64:
+		return n, true
+	case int64:
+		return float64(n), true
+	case int:
+		return float64(n), true
 	case string:
 		f, err := strconv.ParseFloat(n, 64)
 		return f, err == nil
-	default: return 0, false
+	default:
+		return 0, false
 	}
 }
 
@@ -525,9 +538,9 @@ type Schema struct {
 
 // FieldSchema describes a single field in a schema.
 type FieldSchema struct {
-	Type     string      `json:"type"`     // string, int, float, bool, array, object.
-	Required bool        `json:"required"`
-	Default  interface{} `json:"default,omitempty"`
+	Type     string       `json:"type"` // string, int, float, bool, array, object.
+	Required bool         `json:"required"`
+	Default  interface{}  `json:"default,omitempty"`
 	Items    *FieldSchema `json:"items,omitempty"` // For arrays.
 }
 
@@ -540,12 +553,18 @@ func ApplySchema(input json.RawMessage, schema *Schema) (json.RawMessage, error)
 	for name, fs := range schema.Fields {
 		val, ok := obj[name]
 		if !ok {
-			if fs.Required { return nil, fmt.Errorf("required field %q missing", name) }
-			if fs.Default != nil { obj[name] = fs.Default }
+			if fs.Required {
+				return nil, fmt.Errorf("required field %q missing", name)
+			}
+			if fs.Default != nil {
+				obj[name] = fs.Default
+			}
 			continue
 		}
 		coerced, err := coerce(val, fs.Type)
-		if err != nil { return nil, fmt.Errorf("field %q: %w", name, err) }
+		if err != nil {
+			return nil, fmt.Errorf("field %q: %w", name, err)
+		}
 		obj[name] = coerced
 	}
 	return json.Marshal(obj)
@@ -556,17 +575,23 @@ func ApplySchema(input json.RawMessage, schema *Schema) (json.RawMessage, error)
 // Query extracts values from JSON using simple path expressions.
 func Query(input json.RawMessage, path string) (interface{}, error) {
 	var root interface{}
-	if err := json.Unmarshal(input, &root); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &root); err != nil {
+		return nil, err
+	}
 	parts := parsePath(path)
 	val, found := getPath(root, parts)
-	if !found { return nil, fmt.Errorf("path %q not found", path) }
+	if !found {
+		return nil, fmt.Errorf("path %q not found", path)
+	}
 	return val, nil
 }
 
 // QueryString is like Query but always returns a string.
 func QueryString(input json.RawMessage, path string) (string, error) {
 	v, err := Query(input, path)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return fmt.Sprintf("%v", v), nil
 }
 
@@ -575,9 +600,15 @@ func QueryString(input json.RawMessage, path string) (string, error) {
 // MergeJSON shallow-merges src into dst.
 func MergeJSON(dst, src json.RawMessage) (json.RawMessage, error) {
 	var d, s map[string]interface{}
-	if err := json.Unmarshal(dst, &d); err != nil { return nil, err }
-	if err := json.Unmarshal(src, &s); err != nil { return nil, err }
-	for k, v := range s { d[k] = v }
+	if err := json.Unmarshal(dst, &d); err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(src, &s); err != nil {
+		return nil, err
+	}
+	for k, v := range s {
+		d[k] = v
+	}
 	return json.Marshal(d)
 }
 
@@ -586,10 +617,14 @@ func MergeJSON(dst, src json.RawMessage) (json.RawMessage, error) {
 // Pick returns a new JSON object containing only the specified keys.
 func Pick(input json.RawMessage, keys []string) (json.RawMessage, error) {
 	var obj map[string]interface{}
-	if err := json.Unmarshal(input, &obj); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return nil, err
+	}
 	out := make(map[string]interface{})
 	for _, k := range keys {
-		if v, ok := obj[k]; ok { out[k] = v }
+		if v, ok := obj[k]; ok {
+			out[k] = v
+		}
 	}
 	return json.Marshal(out)
 }
@@ -597,12 +632,18 @@ func Pick(input json.RawMessage, keys []string) (json.RawMessage, error) {
 // Omit returns a new JSON object without the specified keys.
 func Omit(input json.RawMessage, keys []string) (json.RawMessage, error) {
 	var obj map[string]interface{}
-	if err := json.Unmarshal(input, &obj); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return nil, err
+	}
 	drop := make(map[string]bool)
-	for _, k := range keys { drop[k] = true }
+	for _, k := range keys {
+		drop[k] = true
+	}
 	out := make(map[string]interface{})
 	for k, v := range obj {
-		if !drop[k] { out[k] = v }
+		if !drop[k] {
+			out[k] = v
+		}
 	}
 	return json.Marshal(out)
 }
@@ -611,9 +652,13 @@ func Omit(input json.RawMessage, keys []string) (json.RawMessage, error) {
 
 // FormatValidationErrors returns a human-readable string of validation errors.
 func FormatValidationErrors(errs []string) string {
-	if len(errs) == 0 { return "no errors" }
+	if len(errs) == 0 {
+		return "no errors"
+	}
 	s := fmt.Sprintf("%d validation errors:\n", len(errs))
-	for _, e := range errs { s += "  - " + e + "\n" }
+	for _, e := range errs {
+		s += "  - " + e + "\n"
+	}
 	return s
 }
 
@@ -622,15 +667,24 @@ func FormatValidationErrors(errs []string) string {
 // DetectType tries to infer the JSON type of a raw message.
 func DetectType(raw json.RawMessage) string {
 	s := strings.TrimSpace(string(raw))
-	if len(s) == 0 { return "null" }
+	if len(s) == 0 {
+		return "null"
+	}
 	switch s[0] {
-	case '{': return "object"
-	case '[': return "array"
-	case '"': return "string"
-	case 't', 'f': return "boolean"
-	case 'n': return "null"
+	case '{':
+		return "object"
+	case '[':
+		return "array"
+	case '"':
+		return "string"
+	case 't', 'f':
+		return "boolean"
+	case 'n':
+		return "null"
 	default:
-		if _, err := strconv.ParseFloat(s, 64); err == nil { return "number" }
+		if _, err := strconv.ParseFloat(s, 64); err == nil {
+			return "number"
+		}
 		return "string"
 	}
 }
@@ -640,12 +694,16 @@ func DetectType(raw json.RawMessage) string {
 // MapArray applies a transform function to each element of a JSON array.
 func MapArray(input json.RawMessage, fn func(json.RawMessage) (json.RawMessage, error)) (json.RawMessage, error) {
 	var arr []json.RawMessage
-	if err := json.Unmarshal(input, &arr); err != nil { return nil, fmt.Errorf("not an array: %w", err) }
+	if err := json.Unmarshal(input, &arr); err != nil {
+		return nil, fmt.Errorf("not an array: %w", err)
+	}
 	out := make([]json.RawMessage, len(arr))
 	for i, elem := range arr {
 		var err error
 		out[i], err = fn(elem)
-		if err != nil { return nil, fmt.Errorf("element %d: %w", i, err) }
+		if err != nil {
+			return nil, fmt.Errorf("element %d: %w", i, err)
+		}
 	}
 	return json.Marshal(out)
 }
@@ -653,10 +711,14 @@ func MapArray(input json.RawMessage, fn func(json.RawMessage) (json.RawMessage, 
 // FilterArray filters a JSON array, keeping elements where fn returns true.
 func FilterArray(input json.RawMessage, fn func(json.RawMessage) bool) (json.RawMessage, error) {
 	var arr []json.RawMessage
-	if err := json.Unmarshal(input, &arr); err != nil { return nil, fmt.Errorf("not an array: %w", err) }
+	if err := json.Unmarshal(input, &arr); err != nil {
+		return nil, fmt.Errorf("not an array: %w", err)
+	}
 	var out []json.RawMessage
 	for _, elem := range arr {
-		if fn(elem) { out = append(out, elem) }
+		if fn(elem) {
+			out = append(out, elem)
+		}
 	}
 	return json.Marshal(out)
 }
@@ -666,27 +728,40 @@ func FilterArray(input json.RawMessage, fn func(json.RawMessage) bool) (json.Raw
 // CamelToSnake converts camelCase keys to snake_case in a JSON object.
 func CamelToSnake(input json.RawMessage) (json.RawMessage, error) {
 	var obj map[string]interface{}
-	if err := json.Unmarshal(input, &obj); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return nil, err
+	}
 	out := make(map[string]interface{})
-	for k, v := range obj { out[toSnake(k)] = v }
+	for k, v := range obj {
+		out[toSnake(k)] = v
+	}
 	return json.Marshal(out)
 }
 
 // SnakeToCamel converts snake_case keys to camelCase in a JSON object.
 func SnakeToCamel(input json.RawMessage) (json.RawMessage, error) {
 	var obj map[string]interface{}
-	if err := json.Unmarshal(input, &obj); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &obj); err != nil {
+		return nil, err
+	}
 	out := make(map[string]interface{})
-	for k, v := range obj { out[toCamel(k)] = v }
+	for k, v := range obj {
+		out[toCamel(k)] = v
+	}
 	return json.Marshal(out)
 }
 
 var camelRE = regexp.MustCompile(`[A-Z]`)
-func toSnake(s string) string { return strings.ToLower(camelRE.ReplaceAllStringFunc(s, func(m string) string { return "_" + m })) }
+
+func toSnake(s string) string {
+	return strings.ToLower(camelRE.ReplaceAllStringFunc(s, func(m string) string { return "_" + m }))
+}
 func toCamel(s string) string {
 	parts := strings.Split(s, "_")
 	for i := 1; i < len(parts); i++ {
-		if len(parts[i]) > 0 { parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:] }
+		if len(parts[i]) > 0 {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
 	}
 	return strings.Join(parts, "")
 }
@@ -696,7 +771,9 @@ func toCamel(s string) string {
 // DeepCloneJSON returns a deep copy of a JSON value.
 func DeepCloneJSON(input json.RawMessage) (json.RawMessage, error) {
 	var v interface{}
-	if err := json.Unmarshal(input, &v); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &v); err != nil {
+		return nil, err
+	}
 	return json.Marshal(v)
 }
 
@@ -705,15 +782,21 @@ func DeepCloneJSON(input json.RawMessage) (json.RawMessage, error) {
 // PrettyJSON reformats JSON with indentation.
 func PrettyJSON(input json.RawMessage) (string, error) {
 	var v interface{}
-	if err := json.Unmarshal(input, &v); err != nil { return "", err }
+	if err := json.Unmarshal(input, &v); err != nil {
+		return "", err
+	}
 	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return string(b), nil
 }
 
 // CompactJSON removes whitespace from JSON.
 func CompactJSON(input json.RawMessage) (json.RawMessage, error) {
 	var v interface{}
-	if err := json.Unmarshal(input, &v); err != nil { return nil, err }
+	if err := json.Unmarshal(input, &v); err != nil {
+		return nil, err
+	}
 	return json.Marshal(v)
 }

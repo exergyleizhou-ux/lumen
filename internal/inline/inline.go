@@ -54,26 +54,38 @@ func (a *Analyzer) Scan() error {
 
 func (a *Analyzer) scanFile(path string) error {
 	f, err := os.Open(path)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	defer f.Close()
 
 	rel, _ := filepath.Rel(a.dir, path)
-	if rel == "" { rel = path }
+	if rel == "" {
+		rel = path
+	}
 
 	lines := []string{}
 	scanner := bufio.NewScanner(f)
-	for scanner.Scan() { lines = append(lines, scanner.Text()) }
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(line, "func ") { continue }
+		if !strings.HasPrefix(line, "func ") {
+			continue
+		}
 		name := extractFuncName(line)
-		if name == "" || name == "init" { continue }
+		if name == "" || name == "init" {
+			continue
+		}
 		bodyEnd := findFuncEnd(lines, i)
-		if bodyEnd < 0 { continue }
+		if bodyEnd < 0 {
+			continue
+		}
 		bodyLines := bodyEnd - i
 		c := &Candidate{Name: name, File: rel, Line: i + 1, BodyLines: bodyLines}
 		a.byName[name] = c
@@ -96,7 +108,7 @@ func (a *Analyzer) Analyze() []Candidate {
 	const (
 		maxBodyLines = 20
 		minCallCount = 3
-		maxCost = 5.0
+		maxCost      = 5.0
 	)
 
 	var results []Candidate
@@ -126,18 +138,24 @@ func (a *Analyzer) Analyze() []Candidate {
 // TopN returns the N best inline candidates.
 func (a *Analyzer) TopN(n int) []Candidate {
 	all := a.Analyze()
-	if n > len(all) { n = len(all) }
+	if n > len(all) {
+		n = len(all)
+	}
 	return all[:n]
 }
 
 // FormatResults formats inline analysis for display.
 func FormatResults(candidates []Candidate) string {
-	if len(candidates) == 0 { return "No inline candidates found.\n" }
+	if len(candidates) == 0 {
+		return "No inline candidates found.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d inline candidate(s):\n\n", len(candidates))
 	for _, c := range candidates {
 		icon := "○"
-		if c.Inline { icon = "●" }
+		if c.Inline {
+			icon = "●"
+		}
 		fmt.Fprintf(&sb, "%s %s (%s:%d) — %d lines, %d calls, cost=%.1f\n",
 			icon, c.Name, c.File, c.Line, c.BodyLines, c.CallCount, c.Cost)
 		fmt.Fprintf(&sb, "   %s\n", c.Reason)
@@ -148,9 +166,13 @@ func FormatResults(candidates []Candidate) string {
 func extractFuncName(line string) string {
 	line = strings.TrimPrefix(line, "func ")
 	if strings.HasPrefix(line, "(") {
-		if end := strings.Index(line, ")"); end > 0 { line = strings.TrimSpace(line[end+1:]) }
+		if end := strings.Index(line, ")"); end > 0 {
+			line = strings.TrimSpace(line[end+1:])
+		}
 	}
-	if idx := strings.Index(line, "("); idx > 0 { return strings.TrimSpace(line[:idx]) }
+	if idx := strings.Index(line, "("); idx > 0 {
+		return strings.TrimSpace(line[:idx])
+	}
 	return ""
 }
 
@@ -158,10 +180,16 @@ func findFuncEnd(lines []string, start int) int {
 	depth := 0
 	for i := start; i < len(lines); i++ {
 		for _, r := range lines[i] {
-			if r == '{' { depth++ }
-			if r == '}' { depth-- }
+			if r == '{' {
+				depth++
+			}
+			if r == '}' {
+				depth--
+			}
 		}
-		if depth == 0 && i > start { return i }
+		if depth == 0 && i > start {
+			return i
+		}
 	}
 	return -1
 }

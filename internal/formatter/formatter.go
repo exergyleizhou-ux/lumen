@@ -23,13 +23,13 @@ import (
 type TokenKind int
 
 const (
-	TokWord     TokenKind = iota // identifier, keyword
-	TokNumber                     // numeric literal
-	TokString                     // string literal
-	TokOperator                   // + - * / = etc.
-	TokPunct                      // punctuation: . , ; : ( ) [ ] { }
-	TokComment                    // // or /* */ comment
-	TokWhitespace                 // spaces, tabs, newlines
+	TokWord       TokenKind = iota // identifier, keyword
+	TokNumber                      // numeric literal
+	TokString                      // string literal
+	TokOperator                    // + - * / = etc.
+	TokPunct                       // punctuation: . , ; : ( ) [ ] { }
+	TokComment                     // // or /* */ comment
+	TokWhitespace                  // spaces, tabs, newlines
 	TokEOF_
 )
 
@@ -105,24 +105,24 @@ type Profile struct {
 // DefaultProfile returns a generic formatting profile.
 func DefaultProfile() Profile {
 	return Profile{
-		Name:              "default",
-		IndentSize:        4,
-		TabWidth:          8,
-		UseTabs:           false,
-		MaxLineWidth:      100,
-		AlignComments:     false,
-		CommentColumn:     40,
-		SpaceAfterComma:   true,
-		SpaceBeforeBrace:  true,
+		Name:               "default",
+		IndentSize:         4,
+		TabWidth:           8,
+		UseTabs:            false,
+		MaxLineWidth:       100,
+		AlignComments:      false,
+		CommentColumn:      40,
+		SpaceAfterComma:    true,
+		SpaceBeforeBrace:   true,
 		NewlineBeforeBrace: false,
-		StringQuote:       '"',
-		LineComment:       "//",
-		BlockCommentStart: "/*",
-		BlockCommentEnd:   "*/",
-		SpaceOperators:    map[string]bool{"+": true, "-": true, "*": true, "/": true, "=": true, ":=": true, "==": true, "!=": true, "<": true, ">": true, "<=": true, ">=": true, "&&": true, "||": true},
-		TightOperators:    map[string]bool{".": true, "->": true, "::": true},
-		BlockStarters:     []string{"{"},
-		BlockEnders:       []string{"}"},
+		StringQuote:        '"',
+		LineComment:        "//",
+		BlockCommentStart:  "/*",
+		BlockCommentEnd:    "*/",
+		SpaceOperators:     map[string]bool{"+": true, "-": true, "*": true, "/": true, "=": true, ":=": true, "==": true, "!=": true, "<": true, ">": true, "<=": true, ">=": true, "&&": true, "||": true},
+		TightOperators:     map[string]bool{".": true, "->": true, "::": true},
+		BlockStarters:      []string{"{"},
+		BlockEnders:        []string{"}"},
 	}
 }
 
@@ -157,7 +157,7 @@ func JSONProfile() Profile {
 	p.NewlineBeforeBrace = false
 	p.SpaceBeforeBrace = false
 	p.SpaceAfterComma = true
-	p.SpaceOperators = map[string]bool{":" : true}
+	p.SpaceOperators = map[string]bool{":": true}
 	p.LineComment = ""
 	p.BlockCommentStart = ""
 	p.BlockCommentEnd = ""

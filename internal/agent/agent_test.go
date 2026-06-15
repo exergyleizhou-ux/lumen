@@ -33,30 +33,30 @@ func (m *mockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 
 type testReadOnlyTool struct{}
 
-func (t *testReadOnlyTool) Name() string                     { return "read_test" }
-func (t *testReadOnlyTool) Description() string              { return "test read-only tool" }
-func (t *testReadOnlyTool) ReadOnly() bool                   { return true }
-func (t *testReadOnlyTool) Schema() json.RawMessage          { return json.RawMessage(`{}`) }
+func (t *testReadOnlyTool) Name() string            { return "read_test" }
+func (t *testReadOnlyTool) Description() string     { return "test read-only tool" }
+func (t *testReadOnlyTool) ReadOnly() bool          { return true }
+func (t *testReadOnlyTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *testReadOnlyTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return "read result", nil
 }
 
 type testWriteTool struct{}
 
-func (t *testWriteTool) Name() string                        { return "write_test" }
-func (t *testWriteTool) Description() string                 { return "test write tool" }
-func (t *testWriteTool) ReadOnly() bool                      { return false }
-func (t *testWriteTool) Schema() json.RawMessage             { return json.RawMessage(`{}`) }
+func (t *testWriteTool) Name() string            { return "write_test" }
+func (t *testWriteTool) Description() string     { return "test write tool" }
+func (t *testWriteTool) ReadOnly() bool          { return false }
+func (t *testWriteTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *testWriteTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return "wrote ok", nil
 }
 
 type testFailingTool struct{}
 
-func (t *testFailingTool) Name() string                      { return "fail_test" }
-func (t *testFailingTool) Description() string               { return "always fails" }
-func (t *testFailingTool) ReadOnly() bool                    { return false }
-func (t *testFailingTool) Schema() json.RawMessage           { return json.RawMessage(`{}`) }
+func (t *testFailingTool) Name() string            { return "fail_test" }
+func (t *testFailingTool) Description() string     { return "always fails" }
+func (t *testFailingTool) ReadOnly() bool          { return false }
+func (t *testFailingTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *testFailingTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	return "", errors.New("simulated failure")
 }
@@ -317,9 +317,9 @@ type callCtxProbeTool struct {
 }
 
 func (t *callCtxProbeTool) Name() string            { return "probe" }
-func (t *callCtxProbeTool) Description() string      { return "probe call context" }
-func (t *callCtxProbeTool) ReadOnly() bool           { return true }
-func (t *callCtxProbeTool) Schema() json.RawMessage  { return json.RawMessage(`{}`) }
+func (t *callCtxProbeTool) Description() string     { return "probe call context" }
+func (t *callCtxProbeTool) ReadOnly() bool          { return true }
+func (t *callCtxProbeTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
 func (t *callCtxProbeTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	id, _, _, ok := CallContext(ctx)
 	t.gotID = id

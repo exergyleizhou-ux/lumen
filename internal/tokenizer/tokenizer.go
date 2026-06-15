@@ -11,16 +11,16 @@ import (
 
 // Estimator provides fast token count estimates based on character ratios.
 type Estimator struct {
-	mu     sync.Mutex
-	stats  Stats
-	model  string
+	mu    sync.Mutex
+	stats Stats
+	model string
 }
 
 // Stats tracks token estimation accuracy.
 type Stats struct {
-	TotalChars    int64 `json:"total_chars"`
+	TotalChars      int64 `json:"total_chars"`
 	EstimatedTokens int64 `json:"estimated_tokens"`
-	Calls int64 `json:"calls"`
+	Calls           int64 `json:"calls"`
 }
 
 // NewEstimator creates a token estimator for the given model.
@@ -31,12 +31,16 @@ func NewEstimator(model string) *Estimator {
 // Count estimates the number of tokens in text.
 // Uses ~4 chars/token for English, ~2 chars/token for CJK, ~3 average.
 func (e *Estimator) Count(text string) int {
-	if text == "" { return 0 }
+	if text == "" {
+		return 0
+	}
 
 	chars := len(text)
 	cjkChars := 0
 	for _, r := range text {
-		if isCJK(r) { cjkChars++ }
+		if isCJK(r) {
+			cjkChars++
+		}
 	}
 
 	// CJK chars ~2 per token, others ~4 per token
@@ -99,9 +103,9 @@ func (e *Estimator) StatsReport() Stats {
 
 // Encoding provides accurate token counting using a vocabulary.
 type Encoding struct {
-	Name     string         `json:"name"`
-	Vocab    map[string]int `json:"-"`
-	VocabSize int           `json:"vocab_size"`
+	Name      string         `json:"name"`
+	Vocab     map[string]int `json:"-"`
+	VocabSize int            `json:"vocab_size"`
 }
 
 // NewEncoding creates a token encoding (stub — real impl uses tiktoken-go).
@@ -134,7 +138,7 @@ func (e *Encoding) Count(text string) int {
 
 // ModelTokenizers maps model names to their tokenizer configurations.
 var ModelTokenizers = map[string]struct {
-	Encoding string
+	Encoding  string
 	MaxTokens int
 }{
 	"deepseek-chat":     {Encoding: "deepseek", MaxTokens: 128000},
@@ -181,7 +185,9 @@ func (b *Budget) Remaining() int {
 
 // Usage returns the fraction used (0.0-1.0).
 func (b *Budget) Usage() float64 {
-	if b.MaxTokens == 0 { return 0 }
+	if b.MaxTokens == 0 {
+		return 0
+	}
 	return float64(b.Used) / float64(b.MaxTokens)
 }
 
@@ -197,16 +203,26 @@ func Classify(text string) string {
 	maxScript := ""
 	maxCount := 0
 	for s, c := range scripts {
-		if c > maxCount { maxScript, maxCount = s, c }
+		if c > maxCount {
+			maxScript, maxCount = s, c
+		}
 	}
 	return maxScript
 }
 
 func scriptOf(r rune) string {
-	if r < 128 { return "latin" }
-	if isCJK(r) { return "cjk" }
-	if r >= 0x0600 && r <= 0x06FF { return "arabic" }
-	if r >= 0x0400 && r <= 0x04FF { return "cyrillic" }
+	if r < 128 {
+		return "latin"
+	}
+	if isCJK(r) {
+		return "cjk"
+	}
+	if r >= 0x0600 && r <= 0x06FF {
+		return "arabic"
+	}
+	if r >= 0x0400 && r <= 0x04FF {
+		return "cyrillic"
+	}
 	return "other"
 }
 

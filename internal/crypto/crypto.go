@@ -36,20 +36,28 @@ func DeriveKeyWithSalt(passphrase string, salt []byte) Key {
 // GenerateKey creates a random 32-byte key.
 func GenerateKey() (Key, error) {
 	key := make([]byte, 32)
-	if _, err := rand.Read(key); err != nil { return nil, err }
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
 	return key, nil
 }
 
 // Encrypt encrypts plaintext using AES-256-GCM.
 func Encrypt(plaintext []byte, key Key) (string, error) {
 	block, err := aes.NewCipher(key)
-	if err != nil { return "", fmt.Errorf("aes cipher: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("aes cipher: %w", err)
+	}
 
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return "", fmt.Errorf("gcm: %w", err) }
+	if err != nil {
+		return "", fmt.Errorf("gcm: %w", err)
+	}
 
 	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil { return "", err }
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
 
 	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 	return base64.RawStdEncoding.EncodeToString(ciphertext), nil
@@ -58,13 +66,19 @@ func Encrypt(plaintext []byte, key Key) (string, error) {
 // Decrypt decrypts an AES-256-GCM encrypted string.
 func Decrypt(encoded string, key Key) ([]byte, error) {
 	ciphertext, err := base64.RawStdEncoding.DecodeString(encoded)
-	if err != nil { return nil, fmt.Errorf("base64: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("base64: %w", err)
+	}
 
 	block, err := aes.NewCipher(key)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	gcm, err := cipher.NewGCM(block)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 
 	nonceSize := gcm.NonceSize()
 	if len(ciphertext) < nonceSize {
@@ -95,7 +109,9 @@ func Verify(data []byte, signature string, key Key) bool {
 // HashPassword creates a salted SHA-256 hash of a password.
 func HashPassword(password string) (string, error) {
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil { return "", err }
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
 
 	h := sha256.New()
 	h.Write(salt)
@@ -108,10 +124,14 @@ func HashPassword(password string) (string, error) {
 // VerifyPassword checks a password against a hash.
 func VerifyPassword(password, stored string) bool {
 	parts := splitN(stored, "$", 2)
-	if len(parts) != 2 { return false }
+	if len(parts) != 2 {
+		return false
+	}
 
 	salt, err := hex.DecodeString(parts[0])
-	if err != nil { return false }
+	if err != nil {
+		return false
+	}
 
 	h := sha256.New()
 	h.Write(salt)
@@ -138,7 +158,9 @@ func splitN(s, sep string, n int) []string {
 
 func indexOf(s, substr string, start int) int {
 	for i := start; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr { return i }
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
 	}
 	return -1
 }
@@ -148,14 +170,18 @@ func indexOf(s, substr string, start int) int {
 // RandomToken generates a URL-safe random token of the given byte length.
 func RandomToken(byteLen int) (string, error) {
 	b := make([]byte, byteLen)
-	if _, err := rand.Read(b); err != nil { return "", err }
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
 	return hex.EncodeToString(b), nil
 }
 
 // RandomBase64 generates a base64 random token.
 func RandomBase64(byteLen int) (string, error) {
 	b := make([]byte, byteLen)
-	if _, err := rand.Read(b); err != nil { return "", err }
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
@@ -176,31 +202,44 @@ func NewVault(passphrase string) *Vault {
 // Set encrypts and stores a value.
 func (v *Vault) Set(key, value string) error {
 	encrypted, err := Encrypt([]byte(value), v.key)
-	if err != nil { return err }
-	v.mu.Lock(); defer v.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.data[key] = encrypted
 	return nil
 }
 
 // Get decrypts and returns a value.
 func (v *Vault) Get(key string) (string, error) {
-	v.mu.RLock(); encrypted, ok := v.data[key]; v.mu.RUnlock()
-	if !ok { return "", fmt.Errorf("key %q not found", key) }
+	v.mu.RLock()
+	encrypted, ok := v.data[key]
+	v.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("key %q not found", key)
+	}
 	decrypted, err := Decrypt(encrypted, v.key)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	return string(decrypted), nil
 }
 
 // Delete removes a key.
 func (v *Vault) Delete(key string) {
-	v.mu.Lock(); defer v.mu.Unlock()
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	delete(v.data, key)
 }
 
 // List returns all stored keys.
 func (v *Vault) List() []string {
-	v.mu.RLock(); defer v.mu.RUnlock()
+	v.mu.RLock()
+	defer v.mu.RUnlock()
 	keys := make([]string, 0, len(v.data))
-	for k := range v.data { keys = append(keys, k) }
+	for k := range v.data {
+		keys = append(keys, k)
+	}
 	return keys
 }

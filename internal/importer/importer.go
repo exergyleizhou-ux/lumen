@@ -13,23 +13,23 @@ import (
 
 // Source describes what to install.
 type Source struct {
-	URL      string `json:"url,omitempty"`
-	Path     string `json:"path,omitempty"`
-	Package  string `json:"package,omitempty"`
-	Skill    string `json:"skill,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Package string `json:"package,omitempty"`
+	Skill   string `json:"skill,omitempty"`
 }
 
 // Kind categorizes an import source.
 type Kind string
 
 const (
-	KindURL      Kind = "url"
-	KindFile     Kind = "file"
-	KindFolder   Kind = "folder"
-	KindMCPJson  Kind = "mcp_json"
-	KindExec     Kind = "executable"
-	KindPackage  Kind = "package"
-	KindSkill    Kind = "skill"
+	KindURL     Kind = "url"
+	KindFile    Kind = "file"
+	KindFolder  Kind = "folder"
+	KindMCPJson Kind = "mcp_json"
+	KindExec    Kind = "executable"
+	KindPackage Kind = "package"
+	KindSkill   Kind = "skill"
 )
 
 // ── Skill Import ────────────────────────────────────────────

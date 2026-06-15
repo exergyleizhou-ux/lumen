@@ -14,11 +14,11 @@ import (
 type Strategy int
 
 const (
-	StrategyNone         Strategy = iota
-	StrategyWhitespace            // normalize whitespace
-	StrategyComments              // strip comments
-	StrategyDedup                 // remove duplicate lines
-	StrategyAggressive            // all of the above
+	StrategyNone       Strategy = iota
+	StrategyWhitespace          // normalize whitespace
+	StrategyComments            // strip comments
+	StrategyDedup               // remove duplicate lines
+	StrategyAggressive          // all of the above
 )
 
 // Compressor reduces text size using the given strategy.
@@ -30,9 +30,9 @@ type Compressor struct {
 
 // Stats tracks compression effectiveness.
 type Stats struct {
-	OriginalBytes  int64 `json:"original_bytes"`
+	OriginalBytes   int64 `json:"original_bytes"`
 	CompressedBytes int64 `json:"compressed_bytes"`
-	Calls int64 `json:"calls"`
+	Calls           int64 `json:"calls"`
 }
 
 // New creates a compressor with the given strategy.
@@ -42,7 +42,9 @@ func New(s Strategy) *Compressor {
 
 // Compress reduces the size of text.
 func (c *Compressor) Compress(text string) string {
-	if text == "" { return "" }
+	if text == "" {
+		return ""
+	}
 	original := len(text)
 
 	var result string
@@ -84,9 +86,13 @@ func (c *Compressor) CompressWithBudget(text string, tokenBudget int, estimator 
 	}
 	// Last resort: truncate
 	words := strings.Fields(result)
-	if len(words) <= 10 { return result }
+	if len(words) <= 10 {
+		return result
+	}
 	keep := tokenBudget / 2
-	if keep > len(words) { keep = len(words) }
+	if keep > len(words) {
+		keep = len(words)
+	}
 	return strings.Join(words[len(words)-keep:], " ")
 }
 
@@ -137,7 +143,9 @@ func (c *Compressor) StatsReport() Stats {
 func (c *Compressor) Ratio() float64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.stats.OriginalBytes == 0 { return 100 }
+	if c.stats.OriginalBytes == 0 {
+		return 100
+	}
 	return float64(c.stats.CompressedBytes) / float64(c.stats.OriginalBytes) * 100
 }
 
@@ -145,7 +153,9 @@ func (c *Compressor) Ratio() float64 {
 
 // EstimateTokens returns a rough token count.
 func EstimateTokens(text string) int {
-	if text == "" { return 0 }
+	if text == "" {
+		return 0
+	}
 	// ~4 characters per token for mixed English/CJK
 	return len(text)/3 + 1
 }

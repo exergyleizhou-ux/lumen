@@ -15,11 +15,13 @@ type testTool struct {
 	output   string
 }
 
-func (t *testTool) Name() string                           { return t.name }
-func (t *testTool) Description() string                    { return t.desc }
-func (t *testTool) ReadOnly() bool                         { return t.readOnly }
-func (t *testTool) Schema() json.RawMessage                { return t.schema }
-func (t *testTool) Execute(ctx context.Context, args json.RawMessage) (string, error) { return t.output, nil }
+func (t *testTool) Name() string            { return t.name }
+func (t *testTool) Description() string     { return t.desc }
+func (t *testTool) ReadOnly() bool          { return t.readOnly }
+func (t *testTool) Schema() json.RawMessage { return t.schema }
+func (t *testTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return t.output, nil
+}
 
 func TestNewRegistry(t *testing.T) {
 	r := NewRegistry()

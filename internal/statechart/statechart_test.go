@@ -249,7 +249,13 @@ func stateNames(states []*State) []string {
 }
 
 func TestStateKind_String(t *testing.T) {
-	if KindBasic.String() != "basic" { t.Fatal("bad") }
-	if KindComposite.String() != "composite" { t.Fatal("bad") }
-	if KindParallel.String() != "parallel" { t.Fatal("bad") }
+	if KindBasic.String() != "basic" {
+		t.Fatal("bad")
+	}
+	if KindComposite.String() != "composite" {
+		t.Fatal("bad")
+	}
+	if KindParallel.String() != "parallel" {
+		t.Fatal("bad")
+	}
 }

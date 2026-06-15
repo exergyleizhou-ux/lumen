@@ -25,10 +25,10 @@ type Finding struct {
 
 // Scanner analyzes a Go codebase for dead code.
 type Scanner struct {
-	mu      sync.Mutex
+	mu       sync.Mutex
 	findings []Finding
-	refs    map[string]int // symbol → reference count
-	defs    map[string]Finding
+	refs     map[string]int // symbol → reference count
+	defs     map[string]Finding
 }
 
 // NewScanner creates a dead code scanner.

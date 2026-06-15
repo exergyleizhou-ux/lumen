@@ -13,19 +13,19 @@ import (
 
 // Notes represents generated release notes.
 type Notes struct {
-	Version     string    `json:"version"`
-	Title       string    `json:"title"`
-	Date        time.Time `json:"date"`
-	Sections    []Section `json:"sections"`
-	TotalCommits int      `json:"total_commits"`
-	RawMarkdown string    `json:"raw_markdown"`
+	Version      string    `json:"version"`
+	Title        string    `json:"title"`
+	Date         time.Time `json:"date"`
+	Sections     []Section `json:"sections"`
+	TotalCommits int       `json:"total_commits"`
+	RawMarkdown  string    `json:"raw_markdown"`
 }
 
 // Section is one category of changes.
 type Section struct {
-	Title  string   `json:"title"`
-	Emoji  string   `json:"emoji"`
-	Items  []string `json:"items"`
+	Title string   `json:"title"`
+	Emoji string   `json:"emoji"`
+	Items []string `json:"items"`
 }
 
 // Generator creates release notes from git history.

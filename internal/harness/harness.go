@@ -48,14 +48,14 @@ func (s TestStatus) String() string {
 
 // TestResult holds the result of a single test.
 type TestResult struct {
-	Name      string
-	Status    TestStatus
-	Duration  time.Duration
-	Message   string
+	Name       string
+	Status     TestStatus
+	Duration   time.Duration
+	Message    string
 	StackTrace string
-	StartedAt time.Time
-	EndedAt   time.Time
-	Output    string
+	StartedAt  time.Time
+	EndedAt    time.Time
+	Output     string
 }
 
 // SuiteResult aggregates results from a test suite.
@@ -95,18 +95,18 @@ type AfterAllFunc func() error
 
 // T provides assertion and logging methods for tests.
 type T struct {
-	name       string
-	suite      *Suite
-	failed     bool
-	skipped    bool
-	timedOut   bool
-	logs       []string
-	output     strings.Builder
-	startTime  time.Time
-	mu         sync.Mutex
-	cleanups   []func()
-	timeout    time.Duration
-	parent     *T  // for subtests
+	name      string
+	suite     *Suite
+	failed    bool
+	skipped   bool
+	timedOut  bool
+	logs      []string
+	output    strings.Builder
+	startTime time.Time
+	mu        sync.Mutex
+	cleanups  []func()
+	timeout   time.Duration
+	parent    *T // for subtests
 }
 
 // Name returns the test name.
@@ -596,13 +596,13 @@ type JUnitProperty struct {
 
 // JUnitTestCase is a test case in JUnit XML.
 type JUnitTestCase struct {
-	Name      string          `xml:"name,attr"`
-	ClassName string          `xml:"classname,attr"`
-	Time      string          `xml:"time,attr"`
-	Skipped   *JUnitSkipped   `xml:"skipped,omitempty"`
-	Failure   *JUnitFailure   `xml:"failure,omitempty"`
-	Error     *JUnitError     `xml:"error,omitempty"`
-	SystemOut string          `xml:"system-out,omitempty"`
+	Name      string        `xml:"name,attr"`
+	ClassName string        `xml:"classname,attr"`
+	Time      string        `xml:"time,attr"`
+	Skipped   *JUnitSkipped `xml:"skipped,omitempty"`
+	Failure   *JUnitFailure `xml:"failure,omitempty"`
+	Error     *JUnitError   `xml:"error,omitempty"`
+	SystemOut string        `xml:"system-out,omitempty"`
 }
 
 // JUnitSkipped represents a skipped test in JUnit.
@@ -701,12 +701,12 @@ func formatDuration(d time.Duration) string {
 
 // Runner manages multiple test suites.
 type Runner struct {
-	suites    []*Suite
-	timeout   time.Duration
-	parallel  bool
-	results   []*SuiteResult
-	verbose   bool
-	writer    io.Writer
+	suites   []*Suite
+	timeout  time.Duration
+	parallel bool
+	results  []*SuiteResult
+	verbose  bool
+	writer   io.Writer
 }
 
 // NewRunner creates a new test runner.
@@ -799,8 +799,8 @@ func (r *Runner) Results() []*SuiteResult { return r.results }
 // AggregateSummary creates a consolidated summary.
 func (r *Runner) AggregateSummary() *SuiteResult {
 	summary := &SuiteResult{
-		Name:    "All Suites",
-		Tests:   make([]*TestResult, 0),
+		Name:  "All Suites",
+		Tests: make([]*TestResult, 0),
 	}
 
 	for _, sr := range r.results {
@@ -835,17 +835,17 @@ func (r *Runner) WriteAllJUnit(w io.Writer, classNamePrefix string) error {
 
 // Fixture represents a test fixture (setup/teardown resources).
 type Fixture struct {
-	name    string
-	setup   func() (interface{}, error)
+	name     string
+	setup    func() (interface{}, error)
 	teardown func(interface{}) error
-	value   interface{}
+	value    interface{}
 }
 
 // NewFixture creates a new fixture.
 func NewFixture(name string, setup func() (interface{}, error), teardown func(interface{}) error) *Fixture {
 	return &Fixture{
-		name:    name,
-		setup:   setup,
+		name:     name,
+		setup:    setup,
 		teardown: teardown,
 	}
 }
@@ -986,10 +986,10 @@ func RunTestCases(t *T, cases []TestCase, fn func(t *T, tc TestCase)) {
 
 // BenchmarkResult holds the result of a benchmark.
 type BenchmarkResult struct {
-	Name      string
+	Name       string
 	Iterations int
-	Duration  time.Duration
-	NsPerOp   float64
+	Duration   time.Duration
+	NsPerOp    float64
 }
 
 // RunBenchmark runs a simple benchmark.

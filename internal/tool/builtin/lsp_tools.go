@@ -104,7 +104,9 @@ func (t *LSPDiagnosticsTool) Schema() json.RawMessage {
 }
 
 func (t *LSPDiagnosticsTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct{ File string `json:"file"` }
+	var p struct {
+		File string `json:"file"`
+	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid args: %w", err)
 	}

@@ -37,14 +37,14 @@ type Node interface {
 // RootNode represents the root "$" token.
 type RootNode struct{}
 
-func (RootNode) nodeMarker()  {}
+func (RootNode) nodeMarker()    {}
 func (RootNode) String() string { return "$" }
 
 // ChildNode represents a named child accessor: .field or ['field'] or bare after ..
 type ChildNode struct {
-	Key     string
-	Bare    bool // true when this follows .. (no leading dot)
-	Quoted  bool // true when bracket notation was used ['key']
+	Key    string
+	Bare   bool // true when this follows .. (no leading dot)
+	Quoted bool // true when bracket notation was used ['key']
 }
 
 func (ChildNode) nodeMarker() {}
@@ -64,7 +64,7 @@ func (n ChildNode) String() string {
 // RecursiveDescent represents ".." — search recursively for the next segment.
 type RecursiveDescent struct{}
 
-func (RecursiveDescent) nodeMarker()  {}
+func (RecursiveDescent) nodeMarker()    {}
 func (RecursiveDescent) String() string { return ".." }
 
 // WildcardNode represents "*" — select all children/elements.
@@ -167,7 +167,7 @@ type NotExpr struct {
 	Expr FilterExpr
 }
 
-func (NotExpr) filterMarker() {}
+func (NotExpr) filterMarker()    {}
 func (e NotExpr) String() string { return "!" + e.Expr.String() }
 
 // CurrentNodeExpr represents "@" (the current node in a filter).
@@ -514,19 +514,26 @@ func (p *Parser) parseComparison() (FilterExpr, error) {
 	op := ""
 	switch {
 	case strings.HasPrefix(p.input[p.pos:], "=="):
-		op = "=="; p.pos += 2
+		op = "=="
+		p.pos += 2
 	case strings.HasPrefix(p.input[p.pos:], "!="):
-		op = "!="; p.pos += 2
+		op = "!="
+		p.pos += 2
 	case strings.HasPrefix(p.input[p.pos:], ">="):
-		op = ">="; p.pos += 2
+		op = ">="
+		p.pos += 2
 	case strings.HasPrefix(p.input[p.pos:], "<="):
-		op = "<="; p.pos += 2
+		op = "<="
+		p.pos += 2
 	case p.peek() == '>':
-		op = ">"; p.advance()
+		op = ">"
+		p.advance()
 	case p.peek() == '<':
-		op = "<"; p.advance()
+		op = "<"
+		p.advance()
 	case p.peek() == '=':
-		op = "="; p.advance()
+		op = "="
+		p.advance()
 	}
 
 	if op != "" {

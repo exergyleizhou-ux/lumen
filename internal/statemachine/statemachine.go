@@ -16,27 +16,27 @@ type State string
 
 // Transition is a named transition between states.
 type Transition struct {
-	Name      string `json:"name"`
-	From      State  `json:"from"`
-	To        State  `json:"to"`
-	Guard     func(ctx *Context) bool `json:"-"`
-	OnEnter   func(ctx *Context)      `json:"-"`
-	OnExit    func(ctx *Context)      `json:"-"`
+	Name    string                  `json:"name"`
+	From    State                   `json:"from"`
+	To      State                   `json:"to"`
+	Guard   func(ctx *Context) bool `json:"-"`
+	OnEnter func(ctx *Context)      `json:"-"`
+	OnExit  func(ctx *Context)      `json:"-"`
 }
 
 // Context carries mutable data through state transitions.
 type Context struct {
-	mu       sync.RWMutex
-	data     map[string]any
-	history  []StateRecord
-	started  time.Time
+	mu      sync.RWMutex
+	data    map[string]any
+	history []StateRecord
+	started time.Time
 }
 
 // StateRecord is one state change in history.
 type StateRecord struct {
-	From      State     `json:"from"`
-	To        State     `json:"to"`
-	Transition string   `json:"transition"`
+	From       State     `json:"from"`
+	To         State     `json:"to"`
+	Transition string    `json:"transition"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 
@@ -47,77 +47,93 @@ func NewContext() *Context {
 
 // Set stores a value in the context.
 func (c *Context) Set(key string, value any) {
-	c.mu.Lock(); defer c.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.data[key] = value
 }
 
 // Get retrieves a value from the context.
 func (c *Context) Get(key string) (any, bool) {
-	c.mu.RLock(); defer c.mu.RUnlock()
-	v, ok := c.data[key]; return v, ok
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	v, ok := c.data[key]
+	return v, ok
 }
 
 // History returns all state transitions.
 func (c *Context) History() []StateRecord {
-	c.mu.RLock(); defer c.mu.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	out := make([]StateRecord, len(c.history))
-	copy(out, c.history); return out
+	copy(out, c.history)
+	return out
 }
 
 // Machine is a finite state machine with named states and transitions.
 type Machine struct {
-	mu           sync.RWMutex
-	states       map[State]bool
-	transitions  []Transition
-	current      State
-	initial      State
-	finalStates  map[State]bool
-	name         string
+	mu          sync.RWMutex
+	states      map[State]bool
+	transitions []Transition
+	current     State
+	initial     State
+	finalStates map[State]bool
+	name        string
 }
 
 // NewMachine creates a state machine.
 func NewMachine(name string, initial State) *Machine {
 	return &Machine{
 		name: name, initial: initial, current: initial,
-		states: map[State]bool{initial: true},
+		states:      map[State]bool{initial: true},
 		finalStates: map[State]bool{},
 	}
 }
 
 // AddState registers a new state.
 func (m *Machine) AddState(s State) *Machine {
-	m.mu.Lock(); defer m.mu.Unlock()
-	m.states[s] = true; return m
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[s] = true
+	return m
 }
 
 // AddFinalState registers a final (terminal) state.
 func (m *Machine) AddFinalState(s State) *Machine {
-	m.mu.Lock(); defer m.mu.Unlock()
-	m.states[s] = true; m.finalStates[s] = true; return m
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[s] = true
+	m.finalStates[s] = true
+	return m
 }
 
 // AddTransition registers a transition between states.
 func (m *Machine) AddTransition(name string, from, to State, guard func(*Context) bool) *Machine {
-	m.mu.Lock(); defer m.mu.Unlock()
-	m.states[from] = true; m.states[to] = true
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.states[from] = true
+	m.states[to] = true
 	m.transitions = append(m.transitions, Transition{Name: name, From: from, To: to, Guard: guard})
 	return m
 }
 
 // Current returns the current state.
 func (m *Machine) Current() State {
-	m.mu.RLock(); defer m.mu.RUnlock(); return m.current
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.current
 }
 
 // IsFinal reports whether the current state is terminal.
 func (m *Machine) IsFinal() bool {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.finalStates[m.current]
 }
 
 // AvailableTransitions returns transitions that can fire from the current state.
 func (m *Machine) AvailableTransitions(ctx *Context) []Transition {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var available []Transition
 	for _, t := range m.transitions {
 		if t.From == m.current {
@@ -154,7 +170,8 @@ func (m *Machine) TransitionTo(name string, ctx *Context) error {
 
 // CanTransitionTo reports whether a transition is possible.
 func (m *Machine) CanTransitionTo(name string, ctx *Context) bool {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	for _, t := range m.transitions {
 		if t.Name == name && t.From == m.current {
 			return t.Guard == nil || t.Guard(ctx)
@@ -165,7 +182,8 @@ func (m *Machine) CanTransitionTo(name string, ctx *Context) bool {
 
 // Reset returns the machine to its initial state.
 func (m *Machine) Reset() {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.current = m.initial
 }
 
@@ -219,18 +237,18 @@ func FormatHistory(records []StateRecord) string {
 
 // Workflow defines a sequence of states with branching logic.
 type Workflow struct {
-	Name    string           `json:"name"`
-	Steps   []WorkflowStep   `json:"steps"`
+	Name       string         `json:"name"`
+	Steps      []WorkflowStep `json:"steps"`
 	onComplete func(*Context) `json:"-"`
 }
 
 // WorkflowStep is one step in a workflow.
 type WorkflowStep struct {
-	Name      string                 `json:"name"`
-	Condition func(*Context) bool     `json:"-"`
-	Action    func(*Context) error    `json:"-"`
-	OnError   func(*Context, error)   `json:"-"`
-	Retries   int                    `json:"retries"`
+	Name      string                `json:"name"`
+	Condition func(*Context) bool   `json:"-"`
+	Action    func(*Context) error  `json:"-"`
+	OnError   func(*Context, error) `json:"-"`
+	Retries   int                   `json:"retries"`
 }
 
 // NewWorkflow creates a workflow.
@@ -240,7 +258,8 @@ func NewWorkflow(name string) *Workflow {
 
 // AddStep appends a workflow step.
 func (w *Workflow) AddStep(step WorkflowStep) *Workflow {
-	w.Steps = append(w.Steps, step); return w
+	w.Steps = append(w.Steps, step)
+	return w
 }
 
 // Execute runs the workflow.
@@ -252,18 +271,23 @@ func (w *Workflow) Execute(ctx *Context) error {
 		var err error
 		for attempt := 0; attempt <= step.Retries; attempt++ {
 			err = step.Action(ctx)
-			if err == nil { break }
+			if err == nil {
+				break
+			}
 		}
 		if err != nil && step.OnError != nil {
 			step.OnError(ctx, err)
 			return fmt.Errorf("workflow %s step %s: %w", w.Name, step.Name, err)
 		}
 	}
-	if w.onComplete != nil { w.onComplete(ctx) }
+	if w.onComplete != nil {
+		w.onComplete(ctx)
+	}
 	return nil
 }
 
 // OnComplete registers a completion callback.
 func (w *Workflow) OnComplete(fn func(*Context)) *Workflow {
-	w.onComplete = fn; return w
+	w.onComplete = fn
+	return w
 }

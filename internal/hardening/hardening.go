@@ -13,11 +13,11 @@ import (
 
 // Check is a single security hardening check.
 type Check struct {
-	ID          string `json:"id"`
-	Category    string `json:"category"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Severity    string `json:"severity"` // critical, high, medium, low
+	ID          string                `json:"id"`
+	Category    string                `json:"category"`
+	Title       string                `json:"title"`
+	Description string                `json:"description"`
+	Severity    string                `json:"severity"` // critical, high, medium, low
 	CheckFn     func() (bool, string) `json:"-"`
 }
 
@@ -34,12 +34,12 @@ type Result struct {
 
 // Report is a complete hardening scan report.
 type Report struct {
-	ID        string    `json:"id"`
-	Timestamp time.Time `json:"timestamp"`
-	Results   []Result  `json:"results"`
-	Passed    int       `json:"passed"`
-	Failed    int       `json:"failed"`
-	Score     float64   `json:"score"` // 0-100
+	ID        string        `json:"id"`
+	Timestamp time.Time     `json:"timestamp"`
+	Results   []Result      `json:"results"`
+	Passed    int           `json:"passed"`
+	Failed    int           `json:"failed"`
+	Score     float64       `json:"score"` // 0-100
 	Duration  time.Duration `json:"duration"`
 }
 
@@ -54,7 +54,8 @@ func NewScanner() *Scanner { return &Scanner{} }
 
 // AddCheck registers a hardening check.
 func (s *Scanner) AddCheck(c *Check) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.checks = append(s.checks, c)
 }
 
@@ -72,7 +73,11 @@ func (s *Scanner) Scan() *Report {
 		passed, msg := c.CheckFn()
 		r := Result{CheckID: c.ID, Category: c.Category, Title: c.Title, Passed: passed, Severity: c.Severity, Message: msg, Time: time.Now()}
 		report.Results = append(report.Results, r)
-		if passed { report.Passed++ } else { report.Failed++ }
+		if passed {
+			report.Passed++
+		} else {
+			report.Failed++
+		}
 	}
 
 	report.Duration = time.Since(start)
@@ -95,11 +100,18 @@ func FormatReport(r *Report) string {
 	})
 
 	for _, res := range r.Results {
-		icon := "✅"; if !res.Passed { icon = "🔴" }
+		icon := "✅"
+		if !res.Passed {
+			icon = "🔴"
+		}
 		sevIcon := res.Severity
-		if res.Severity == "critical" || res.Severity == "high" { sevIcon = "🔴 " + sevIcon }
+		if res.Severity == "critical" || res.Severity == "high" {
+			sevIcon = "🔴 " + sevIcon
+		}
 		fmt.Fprintf(&sb, "  %s [%s] %s\n", icon, sevIcon, res.Title)
-		if res.Message != "" { fmt.Fprintf(&sb, "     %s\n", res.Message) }
+		if res.Message != "" {
+			fmt.Fprintf(&sb, "     %s\n", res.Message)
+		}
 	}
 	return sb.String()
 }
@@ -124,19 +136,19 @@ func BuiltinChecks() []*Check {
 
 // Vulnerability is a known security issue.
 type Vulnerability struct {
-	ID          string `json:"id"`
-	Package     string `json:"package"`
-	Version     string `json:"version"`
-	Title       string `json:"title"`
-	Severity    string `json:"severity"`
-	FixedIn     string `json:"fixed_in,omitempty"`
-	CVE         string `json:"cve,omitempty"`
+	ID       string `json:"id"`
+	Package  string `json:"package"`
+	Version  string `json:"version"`
+	Title    string `json:"title"`
+	Severity string `json:"severity"`
+	FixedIn  string `json:"fixed_in,omitempty"`
+	CVE      string `json:"cve,omitempty"`
 }
 
 // VulnScanner simulates dependency vulnerability scanning.
 type VulnScanner struct {
-	mu   sync.Mutex
-	db   map[string][]Vulnerability
+	mu sync.Mutex
+	db map[string][]Vulnerability
 }
 
 // NewVulnScanner creates a vulnerability scanner.
@@ -146,17 +158,23 @@ func NewVulnScanner() *VulnScanner {
 
 // LoadDB populates the vulnerability database.
 func (vs *VulnScanner) LoadDB(vulns []Vulnerability) {
-	vs.mu.Lock(); defer vs.mu.Unlock()
-	for _, v := range vulns { vs.db[v.Package] = append(vs.db[v.Package], v) }
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
+	for _, v := range vulns {
+		vs.db[v.Package] = append(vs.db[v.Package], v)
+	}
 }
 
 // Scan checks a package list for known vulnerabilities.
 func (vs *VulnScanner) Scan(packages map[string]string) []Vulnerability {
-	vs.mu.Lock(); defer vs.mu.Unlock()
+	vs.mu.Lock()
+	defer vs.mu.Unlock()
 	var found []Vulnerability
 	for pkg, ver := range packages {
 		for _, v := range vs.db[pkg] {
-			if v.Version == ver { found = append(found, v) }
+			if v.Version == ver {
+				found = append(found, v)
+			}
 		}
 	}
 	sort.Slice(found, func(i, j int) bool { return severityOrd(found[i].Severity) < severityOrd(found[j].Severity) })
@@ -165,16 +183,22 @@ func (vs *VulnScanner) Scan(packages map[string]string) []Vulnerability {
 
 func severityOrd(s string) int {
 	switch s {
-	case "critical": return 0
-	case "high": return 1
-	case "medium": return 2
-	default: return 3
+	case "critical":
+		return 0
+	case "high":
+		return 1
+	case "medium":
+		return 2
+	default:
+		return 3
 	}
 }
 
 // FormatVulnerabilities formats vulnerability scan results.
 func FormatVulnerabilities(vulns []Vulnerability) string {
-	if len(vulns) == 0 { return "No vulnerabilities found.\n" }
+	if len(vulns) == 0 {
+		return "No vulnerabilities found.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Vulnerability Scan: %d found\n%s\n\n", len(vulns), strings.Repeat("─", 50))
 	for _, v := range vulns {

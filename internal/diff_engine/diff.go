@@ -9,7 +9,7 @@ import (
 type Op int
 
 const (
-	OpEqual  Op = iota
+	OpEqual Op = iota
 	OpDelete
 	OpInsert
 )
@@ -58,7 +58,8 @@ func computeEdits(a, b []string) []Edit {
 	for i < n || j < m {
 		if i < n && j < m && a[i] == b[j] {
 			edits = append(edits, Edit{Op: OpEqual, Text: a[i]})
-			i++; j++
+			i++
+			j++
 		} else if j < m && (i >= n || !containsFrom(a, b[j], i)) {
 			edits = append(edits, Edit{Op: OpInsert, Text: b[j]})
 			j++
@@ -201,7 +202,8 @@ func SideBySide(old, new string, width int) string {
 				r = newL[ni]
 			}
 			sb.WriteString(fmt.Sprintf("  %-*s │ %-*s\n", half, truncStr(l, half), half, truncStr(r, half)))
-			oi++; ni++
+			oi++
+			ni++
 		case OpDelete:
 			l := ""
 			if oi < len(oldL) {

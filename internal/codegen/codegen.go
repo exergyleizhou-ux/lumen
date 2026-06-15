@@ -22,10 +22,10 @@ type GenFile struct {
 
 // Context holds information for code generation.
 type Context struct {
-	Package  string   `json:"package"`
-	Types    []TypeInfo `json:"types"`
-	Imports  []string  `json:"imports"`
-	Module   string   `json:"module"`
+	Package string     `json:"package"`
+	Types   []TypeInfo `json:"types"`
+	Imports []string   `json:"imports"`
+	Module  string     `json:"module"`
 }
 
 // TypeInfo describes a Go type for code generation.
@@ -45,7 +45,7 @@ type FieldInfo struct {
 
 // MethodInfo is one interface method.
 type MethodInfo struct {
-	Name    string     `json:"name"`
+	Name    string      `json:"name"`
 	Params  []ParamInfo `json:"params"`
 	Returns []ParamInfo `json:"returns"`
 }
@@ -103,7 +103,9 @@ func (g *Generator) GenerateToolStub(name, description string, readOnly bool) *G
 	sb.WriteString(fmt.Sprintf("type %sTool struct{}\n\n", toCamel(name)))
 	sb.WriteString(fmt.Sprintf("func (t *%sTool) Name() string { return %q }\n", toCamel(name), name))
 	ro := "false"
-	if readOnly { ro = "true" }
+	if readOnly {
+		ro = "true"
+	}
 	sb.WriteString(fmt.Sprintf("func (t *%sTool) ReadOnly() bool { return %s }\n\n", toCamel(name), ro))
 	sb.WriteString(fmt.Sprintf("func (t *%sTool) Description() string { return %q }\n\n", toCamel(name), description))
 	sb.WriteString(fmt.Sprintf("func (t *%sTool) Schema() json.RawMessage {\n", toCamel(name)))
@@ -171,19 +173,25 @@ func (g *Generator) Mock(ifaceName, pkg string, methods []MethodInfo) *GenFile {
 	for _, m := range methods {
 		fmt.Fprintf(&sb, "func (m *Mock%s) %s(", ifaceName, m.Name)
 		for i, p := range m.Params {
-			if i > 0 { sb.WriteString(", ") }
+			if i > 0 {
+				sb.WriteString(", ")
+			}
 			sb.WriteString(p.Name + " " + p.Type)
 		}
 		sb.WriteString(") ")
 		for i, r := range m.Returns {
-			if i > 0 { sb.WriteString(", ") }
+			if i > 0 {
+				sb.WriteString(", ")
+			}
 			sb.WriteString(r.Type)
 		}
 		sb.WriteString(" {\n")
 		fmt.Fprintf(&sb, "\tm.mu.Lock()\n\tm.calls[%q]++\n\tm.mu.Unlock()\n", m.Name)
 		sb.WriteString("\treturn ")
 		for i, r := range m.Returns {
-			if i > 0 { sb.WriteString(", ") }
+			if i > 0 {
+				sb.WriteString(", ")
+			}
 			sb.WriteString(zeroValue(r.Type))
 		}
 		sb.WriteString("\n}\n\n")
@@ -193,12 +201,18 @@ func (g *Generator) Mock(ifaceName, pkg string, methods []MethodInfo) *GenFile {
 
 func zeroValue(t string) string {
 	switch t {
-	case "string": return `""`
-	case "int", "int64": return "0"
-	case "bool": return "false"
-	case "error": return "nil"
+	case "string":
+		return `""`
+	case "int", "int64":
+		return "0"
+	case "bool":
+		return "false"
+	case "error":
+		return "nil"
 	default:
-		if strings.HasPrefix(t, "*") || strings.HasPrefix(t, "[]") { return "nil" }
+		if strings.HasPrefix(t, "*") || strings.HasPrefix(t, "[]") {
+			return "nil"
+		}
 		return "nil"
 	}
 }

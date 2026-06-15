@@ -135,10 +135,10 @@ const (
 // ArchiveBuilder incrementally builds an archive.
 type ArchiveBuilder struct {
 	format  ArchiveFormat
-	w       io.WriteCloser    // underlying file
-	gz      *gzip.Writer      // for tar.gz
-	tw      *tar.Writer       // for tar
-	zw      *zip.Writer       // for zip
+	w       io.WriteCloser // underlying file
+	gz      *gzip.Writer   // for tar.gz
+	tw      *tar.Writer    // for tar
+	zw      *zip.Writer    // for zip
 	root    string
 	files   int
 	written int64
@@ -469,17 +469,17 @@ func (s *Snapshot) Diff(other *Snapshot) []FileEntry {
 
 // ManifestEntry describes one file in a manifest.
 type ManifestEntry struct {
-	Path    string `json:"path"`
-	Size    int64  `json:"size"`
-	SHA256  string `json:"sha256"`
-	Mode    uint32 `json:"mode"`
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+	Mode   uint32 `json:"mode"`
 }
 
 // Manifest is a JSON-serialisable manifest of a directory or archive content.
 type Manifest struct {
-	Version   string           `json:"version"`
-	CreatedAt time.Time        `json:"created_at"`
-	Entries   []ManifestEntry  `json:"entries"`
+	Version   string          `json:"version"`
+	CreatedAt time.Time       `json:"created_at"`
+	Entries   []ManifestEntry `json:"entries"`
 }
 
 // NewManifest creates an empty manifest.

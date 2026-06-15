@@ -19,23 +19,23 @@ import (
 
 // SecretVersion represents one version of a secret.
 type SecretVersion struct {
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	CreatedBy string    `json:"created_by"`
-	Ciphertext string   `json:"ciphertext"` // Base64-encoded encrypted value.
-	KeyID     string    `json:"key_id"`     // Which data key encrypted this version.
-	Nonce     string    `json:"nonce"`      // Base64-encoded nonce.
+	Version    int       `json:"version"`
+	CreatedAt  time.Time `json:"created_at"`
+	CreatedBy  string    `json:"created_by"`
+	Ciphertext string    `json:"ciphertext"` // Base64-encoded encrypted value.
+	KeyID      string    `json:"key_id"`     // Which data key encrypted this version.
+	Nonce      string    `json:"nonce"`      // Base64-encoded nonce.
 }
 
 // Secret holds metadata and all versions of a secret.
 type Secret struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Labels     map[string]string `json:"labels"`
-	CreatedAt  time.Time         `json:"created_at"`
-	UpdatedAt  time.Time         `json:"updated_at"`
-	Versions   []SecretVersion   `json:"versions"`
-	MaxVersions int              `json:"max_versions"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Labels      map[string]string `json:"labels"`
+	CreatedAt   time.Time         `json:"created_at"`
+	UpdatedAt   time.Time         `json:"updated_at"`
+	Versions    []SecretVersion   `json:"versions"`
+	MaxVersions int               `json:"max_versions"`
 }
 
 // LatestVersion returns the most recent version index and value.
@@ -52,7 +52,7 @@ func (s *Secret) LatestVersion() (int, *SecretVersion) {
 // DataKey is an encryption key used to encrypt secrets.
 type DataKey struct {
 	ID        string    `json:"id"`
-	Key       []byte    `json:"key"`       // Raw AES-256 key.
+	Key       []byte    `json:"key"` // Raw AES-256 key.
 	CreatedAt time.Time `json:"created_at"`
 	Active    bool      `json:"active"`
 }
@@ -200,8 +200,8 @@ const (
 type Policy struct {
 	ID           string             `json:"id"`
 	Name         string             `json:"name"`
-	Subjects     []string           `json:"subjects"`     // Who this applies to (user IDs, role names).
-	Capabilities []AccessCapability `json:"capabilities"` // Allowed operations.
+	Subjects     []string           `json:"subjects"`      // Who this applies to (user IDs, role names).
+	Capabilities []AccessCapability `json:"capabilities"`  // Allowed operations.
 	SecretPrefix string             `json:"secret_prefix"` // Scope: which secrets this applies to.
 	CreatedAt    time.Time          `json:"created_at"`
 }
@@ -240,7 +240,7 @@ type AuditEntry struct {
 	ID        string    `json:"id"`
 	Timestamp time.Time `json:"timestamp"`
 	Subject   string    `json:"subject"`
-	Action    string    `json:"action"`   // "create", "read", "update", "delete", "list".
+	Action    string    `json:"action"` // "create", "read", "update", "delete", "list".
 	SecretID  string    `json:"secret_id"`
 	Success   bool      `json:"success"`
 	Details   string    `json:"details"`
@@ -250,13 +250,13 @@ type AuditEntry struct {
 
 // Vault is the top-level secret vault.
 type Vault struct {
-	mu         sync.RWMutex
-	secrets    map[string]*Secret // id -> secret
-	policies   []Policy
-	auditLog   []AuditEntry
-	dkm        *dataKeyManager
-	masterKey  *MasterKey
-	auditCap   int
+	mu        sync.RWMutex
+	secrets   map[string]*Secret // id -> secret
+	policies  []Policy
+	auditLog  []AuditEntry
+	dkm       *dataKeyManager
+	masterKey *MasterKey
+	auditCap  int
 }
 
 // New creates a new Vault with the given master passphrase.
@@ -301,11 +301,11 @@ func (v *Vault) CreateSecret(name string, value []byte, labels map[string]string
 
 	now := time.Now()
 	sec := &Secret{
-		ID:         generateID("sec"),
-		Name:       name,
-		Labels:     labels,
-		CreatedAt:  now,
-		UpdatedAt:  now,
+		ID:          generateID("sec"),
+		Name:        name,
+		Labels:      labels,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 		MaxVersions: 10,
 		Versions: []SecretVersion{{
 			Version:    1,
@@ -604,7 +604,9 @@ func (v *Vault) RotateMasterKey(newPassphrase string) error {
 
 	for id, dk := range v.dkm.keys {
 		wrapped, nonce, err := newMK.WrapKey(dk)
-		if err != nil { return fmt.Errorf("rewrap key %s: %w", id, err) }
+		if err != nil {
+			return fmt.Errorf("rewrap key %s: %w", id, err)
+		}
 		v.dkm.wrapped[id] = wrapped
 		v.dkm.nonces[id] = nonce
 	}
@@ -623,9 +625,14 @@ func (v *Vault) SearchSecrets(labels map[string]string) []*Secret {
 	for _, sec := range v.secrets {
 		match := true
 		for lk, lv := range labels {
-			if sec.Labels[lk] != lv { match = false; break }
+			if sec.Labels[lk] != lv {
+				match = false
+				break
+			}
 		}
-		if match { out = append(out, sec) }
+		if match {
+			out = append(out, sec)
+		}
 	}
 	return out
 }
@@ -634,12 +641,12 @@ func (v *Vault) SearchSecrets(labels map[string]string) []*Secret {
 
 // SecretMetadata returns a secret without decrypting its contents.
 type SecretMetadata struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Labels      map[string]string `json:"labels"`
-	VersionCount int      `json:"version_count"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Labels       map[string]string `json:"labels"`
+	VersionCount int               `json:"version_count"`
+	CreatedAt    time.Time         `json:"created_at"`
+	UpdatedAt    time.Time         `json:"updated_at"`
 }
 
 // GetMetadata returns metadata for a secret.
@@ -647,7 +654,9 @@ func (v *Vault) GetMetadata(id string) (*SecretMetadata, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	sec, ok := v.secrets[id]
-	if !ok { return nil, fmt.Errorf("secret %q not found", id) }
+	if !ok {
+		return nil, fmt.Errorf("secret %q not found", id)
+	}
 	return &SecretMetadata{
 		ID: sec.ID, Name: sec.Name, Labels: sec.Labels,
 		VersionCount: len(sec.Versions), CreatedAt: sec.CreatedAt, UpdatedAt: sec.UpdatedAt,
@@ -661,7 +670,9 @@ func (v *Vault) ExportSecret(id string) (*Secret, error) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	sec, ok := v.secrets[id]
-	if !ok { return nil, fmt.Errorf("secret %q not found", id) }
+	if !ok {
+		return nil, fmt.Errorf("secret %q not found", id)
+	}
 	cp := *sec
 	cp.Versions = make([]SecretVersion, len(sec.Versions))
 	copy(cp.Versions, sec.Versions)
@@ -683,10 +694,16 @@ func (v *Vault) ImportSecret(sec *Secret) error {
 // --- Batch Operations ---
 
 // BatchCreate creates multiple secrets.
-func (v *Vault) BatchCreate(items []struct{ Name string; Value []byte; Labels map[string]string }, createdBy string) ([]*Secret, []error) {
+func (v *Vault) BatchCreate(items []struct {
+	Name   string
+	Value  []byte
+	Labels map[string]string
+}, createdBy string) ([]*Secret, []error) {
 	secrets := make([]*Secret, len(items))
 	errs := make([]error, len(items))
-	for i, item := range items { secrets[i], errs[i] = v.CreateSecret(item.Name, item.Value, item.Labels, createdBy) }
+	for i, item := range items {
+		secrets[i], errs[i] = v.CreateSecret(item.Name, item.Value, item.Labels, createdBy)
+	}
 	return secrets, errs
 }
 
@@ -698,7 +715,9 @@ func (v *Vault) EffectiveCapabilities(subject, secretPath string) []AccessCapabi
 	defer v.mu.RUnlock()
 	var caps []AccessCapability
 	for _, p := range v.policies {
-		if p.Allows(subject, secretPath, AccessAdmin) { return []AccessCapability{AccessAdmin, AccessRead, AccessWrite, AccessList, AccessDelete} }
+		if p.Allows(subject, secretPath, AccessAdmin) {
+			return []AccessCapability{AccessAdmin, AccessRead, AccessWrite, AccessList, AccessDelete}
+		}
 		for _, c := range p.Capabilities {
 			if p.Allows(subject, secretPath, c) {
 				caps = append(caps, c)
@@ -712,11 +731,11 @@ func (v *Vault) EffectiveCapabilities(subject, secretPath string) []AccessCapabi
 
 // VaultStats holds aggregate vault statistics.
 type VaultStats struct {
-	TotalSecrets   int `json:"total_secrets"`
-	TotalVersions  int `json:"total_versions"`
-	TotalPolicies  int `json:"total_policies"`
-	TotalAudit     int `json:"total_audit_entries"`
-	TotalDataKeys  int `json:"total_data_keys"`
+	TotalSecrets  int `json:"total_secrets"`
+	TotalVersions int `json:"total_versions"`
+	TotalPolicies int `json:"total_policies"`
+	TotalAudit    int `json:"total_audit_entries"`
+	TotalDataKeys int `json:"total_data_keys"`
 }
 
 // VaultStats returns aggregate statistics.
@@ -724,7 +743,9 @@ func (v *Vault) VaultStats() VaultStats {
 	v.mu.RLock()
 	defer v.mu.RUnlock()
 	totalVersions := 0
-	for _, sec := range v.secrets { totalVersions += len(sec.Versions) }
+	for _, sec := range v.secrets {
+		totalVersions += len(sec.Versions)
+	}
 	return VaultStats{
 		TotalSecrets:  len(v.secrets),
 		TotalVersions: totalVersions,
@@ -743,13 +764,16 @@ type SecureString struct {
 
 // NewSecureString creates a secure string from bytes.
 func NewSecureString(b []byte) *SecureString {
-	cp := make([]byte, len(b)); copy(cp, b)
+	cp := make([]byte, len(b))
+	copy(cp, b)
 	return &SecureString{data: cp}
 }
 
 // Bytes returns a copy of the underlying bytes.
 func (ss *SecureString) Bytes() []byte {
-	cp := make([]byte, len(ss.data)); copy(cp, ss.data); return cp
+	cp := make([]byte, len(ss.data))
+	copy(cp, ss.data)
+	return cp
 }
 
 // String returns the string value.
@@ -757,6 +781,8 @@ func (ss *SecureString) String() string { return string(ss.data) }
 
 // Zero overwrites the data with zeros.
 func (ss *SecureString) Zero() {
-	for i := range ss.data { ss.data[i] = 0 }
+	for i := range ss.data {
+		ss.data[i] = 0
+	}
 	ss.data = nil
 }

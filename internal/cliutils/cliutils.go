@@ -142,22 +142,22 @@ func HasANSI(s string) bool {
 
 // Spinner frames.
 var (
-	SpinnerDots    = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
-	SpinnerLine    = []string{"|", "/", "—", "\\"}
-	SpinnerDots2   = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
-	SpinnerBounce  = []string{"[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]", "[    ]"}
+	SpinnerDots   = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+	SpinnerLine   = []string{"|", "/", "—", "\\"}
+	SpinnerDots2  = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+	SpinnerBounce = []string{"[    ]", "[=   ]", "[==  ]", "[=== ]", "[ ===]", "[  ==]", "[   =]", "[    ]"}
 )
 
 // Spinner draws an animated indicator on stderr.
 type Spinner struct {
-	frames  []string
-	message string
-	stop    chan struct{}
-	done    chan struct{}
-	w       io.Writer
+	frames   []string
+	message  string
+	stop     chan struct{}
+	done     chan struct{}
+	w        io.Writer
 	interval time.Duration
-	mu      sync.Mutex
-	running bool
+	mu       sync.Mutex
+	running  bool
 }
 
 // NewSpinner creates a spinner with default frames.
@@ -363,11 +363,11 @@ const (
 
 // TableWriter builds a formatted table.
 type TableWriter struct {
-	headers    []string
-	rows       [][]string
-	aligns     []Align
-	colWidths  []int
-	padCols    int // padding on each side of a column
+	headers   []string
+	rows      [][]string
+	aligns    []Align
+	colWidths []int
+	padCols   int // padding on each side of a column
 }
 
 // NewTableWriter creates a table writer with headers.

@@ -20,17 +20,17 @@ type Model struct {
 	mu sync.Mutex
 
 	// Panels
-	chat     *ChatPanel
-	fileTree *FileTreePanel
-	diffView *DiffPanel
-	planView *PlanPanel
+	chat      *ChatPanel
+	fileTree  *FileTreePanel
+	diffView  *DiffPanel
+	planView  *PlanPanel
 	statusBar *StatusBar
 
 	// State
-	width   int
-	height  int
-	focus   Panel // Which panel has focus
-	running bool
+	width    int
+	height   int
+	focus    Panel // Which panel has focus
+	running  bool
 	quitting bool
 
 	// Message bus
@@ -43,6 +43,7 @@ type Model struct {
 
 // Panel identifies which panel has focus.
 type Panel int
+
 const (
 	PanelChat Panel = iota
 	PanelFileTree
@@ -53,22 +54,27 @@ const (
 
 func (p Panel) String() string {
 	switch p {
-	case PanelChat: return "chat"
-	case PanelFileTree: return "files"
-	case PanelDiff: return "diff"
-	case PanelPlan: return "plan"
-	default: return "status"
+	case PanelChat:
+		return "chat"
+	case PanelFileTree:
+		return "files"
+	case PanelDiff:
+		return "diff"
+	case PanelPlan:
+		return "plan"
+	default:
+		return "status"
 	}
 }
 
 // Message is a chat message.
 type Message struct {
-	Role      string    `json:"role"` // user, assistant, system, tool
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
-	Thinking  string    `json:"thinking,omitempty"` // Thinking block (collapsible)
+	Role      string     `json:"role"` // user, assistant, system, tool
+	Content   string     `json:"content"`
+	Timestamp time.Time  `json:"timestamp"`
+	Thinking  string     `json:"thinking,omitempty"` // Thinking block (collapsible)
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
-	ID        string    `json:"id"`
+	ID        string     `json:"id"`
 }
 
 // ToolCall is a tool invocation within a message.
@@ -89,28 +95,28 @@ type Event struct {
 
 // KeyBindings maps key combos to actions.
 type KeyBindings struct {
-	Quit        string
-	SwitchPanel string
-	ScrollUp    string
-	ScrollDown  string
-	Approve     string
-	Reject      string
+	Quit           string
+	SwitchPanel    string
+	ScrollUp       string
+	ScrollDown     string
+	Approve        string
+	Reject         string
 	ToggleThinking string
-	Submit      string
-	Search      string
+	Submit         string
+	Search         string
 }
 
 func defaultKeyBindings() KeyBindings {
 	return KeyBindings{
-		Quit:        "ctrl+c / q",
-		SwitchPanel: "tab",
-		ScrollUp:    "↑ / k",
-		ScrollDown:  "↓ / j",
-		Approve:     "y / enter",
-		Reject:      "n / esc",
+		Quit:           "ctrl+c / q",
+		SwitchPanel:    "tab",
+		ScrollUp:       "↑ / k",
+		ScrollDown:     "↓ / j",
+		Approve:        "y / enter",
+		Reject:         "n / esc",
 		ToggleThinking: "t",
-		Submit:      "enter",
-		Search:      "/",
+		Submit:         "enter",
+		Search:         "/",
 	}
 }
 
@@ -138,7 +144,8 @@ func NewChatPanel() *ChatPanel {
 
 // AddMessage appends a message.
 func (cp *ChatPanel) AddMessage(msg Message) {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	msg.ID = fmt.Sprintf("msg-%d-%d", len(cp.messages), time.Now().UnixNano())
 	cp.messages = append(cp.messages, msg)
 	// Auto-scroll to bottom
@@ -147,14 +154,16 @@ func (cp *ChatPanel) AddMessage(msg Message) {
 
 // SetInput sets the current input text.
 func (cp *ChatPanel) SetInput(text string) {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	cp.input = text
 	cp.cursor = len(text)
 }
 
 // InsertRune inserts a character at cursor.
 func (cp *ChatPanel) InsertRune(r rune) {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	if cp.cursor >= len(cp.input) {
 		cp.input += string(r)
 	} else {
@@ -165,7 +174,8 @@ func (cp *ChatPanel) InsertRune(r rune) {
 
 // DeleteBeforeCursor deletes the character before cursor.
 func (cp *ChatPanel) DeleteBeforeCursor() {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	if cp.cursor > 0 {
 		cp.input = cp.input[:cp.cursor-1] + cp.input[cp.cursor:]
 		cp.cursor--
@@ -174,13 +184,15 @@ func (cp *ChatPanel) DeleteBeforeCursor() {
 
 // ToggleThinking toggles the thinking block visibility for a message.
 func (cp *ChatPanel) ToggleThinking(msgID string) {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	cp.thinking[msgID] = !cp.thinking[msgID]
 }
 
 // Messages returns a snapshot of messages.
 func (cp *ChatPanel) Messages() []Message {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	out := make([]Message, len(cp.messages))
 	copy(out, cp.messages)
 	return out
@@ -188,13 +200,16 @@ func (cp *ChatPanel) Messages() []Message {
 
 // Render renders the chat panel as a string.
 func (cp *ChatPanel) Render(width, height int) string {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 
 	var sb strings.Builder
 	availableMsgs := cp.messages
 	if len(availableMsgs) > height-2 {
 		start := len(availableMsgs) - (height - 2)
-		if start < 0 { start = 0 }
+		if start < 0 {
+			start = 0
+		}
 		availableMsgs = availableMsgs[start:]
 	}
 
@@ -228,7 +243,9 @@ func (cp *ChatPanel) Render(width, height int) string {
 		for _, tc := range msg.ToolCalls {
 			statusIcon := toolStatusIcon(tc.Status)
 			fmt.Fprintf(&sb, "  %s 🔧 %s", statusIcon, tc.Name)
-			if tc.Input != "" { fmt.Fprintf(&sb, "(%s)", truncateForDisplay(tc.Input, 40)) }
+			if tc.Input != "" {
+				fmt.Fprintf(&sb, "(%s)", truncateForDisplay(tc.Input, 40))
+			}
 			sb.WriteByte('\n')
 			if tc.Output != "" {
 				for _, line := range strings.Split(wordWrap(tc.Output, width-6), "\n") {
@@ -252,20 +269,29 @@ func (cp *ChatPanel) Render(width, height int) string {
 
 func roleIcon(role string) string {
 	switch role {
-	case "user": return "👤"
-	case "assistant": return "🤖"
-	case "system": return "⚙️"
-	case "tool": return "🔧"
-	default: return "❓"
+	case "user":
+		return "👤"
+	case "assistant":
+		return "🤖"
+	case "system":
+		return "⚙️"
+	case "tool":
+		return "🔧"
+	default:
+		return "❓"
 	}
 }
 
 func toolStatusIcon(status string) string {
 	switch status {
-	case "done": return "✅"
-	case "error": return "❌"
-	case "running": return "🔄"
-	default: return "⏳"
+	case "done":
+		return "✅"
+	case "error":
+		return "❌"
+	case "running":
+		return "🔄"
+	default:
+		return "⏳"
 	}
 }
 
@@ -304,14 +330,16 @@ func NewFileTreePanel() *FileTreePanel {
 
 // SetRoot replaces the tree root.
 func (ftp *FileTreePanel) SetRoot(node *FileNode) {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	ftp.root = node
 	ftp.flatten()
 }
 
 // AddNode adds a node under a parent path.
 func (ftp *FileTreePanel) AddNode(parentPath string, node *FileNode) {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	parent := ftp.findNode(ftp.root, parentPath)
 	if parent != nil && parent.IsDir {
 		parent.Children = append(parent.Children, node)
@@ -326,9 +354,13 @@ func (ftp *FileTreePanel) AddNode(parentPath string, node *FileNode) {
 }
 
 func (ftp *FileTreePanel) findNode(current *FileNode, path string) *FileNode {
-	if current.Path == path { return current }
+	if current.Path == path {
+		return current
+	}
 	for _, child := range current.Children {
-		if found := ftp.findNode(child, path); found != nil { return found }
+		if found := ftp.findNode(child, path); found != nil {
+			return found
+		}
 	}
 	return nil
 }
@@ -349,16 +381,24 @@ func (ftp *FileTreePanel) flattenRec(node *FileNode, depth int) {
 
 // MoveCursor moves the cursor up or down.
 func (ftp *FileTreePanel) MoveCursor(delta int) {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	ftp.cursor += delta
-	if ftp.cursor < 0 { ftp.cursor = 0 }
-	if ftp.cursor >= len(ftp.flatList) { ftp.cursor = len(ftp.flatList) - 1 }
-	if ftp.cursor < 0 { ftp.cursor = 0 }
+	if ftp.cursor < 0 {
+		ftp.cursor = 0
+	}
+	if ftp.cursor >= len(ftp.flatList) {
+		ftp.cursor = len(ftp.flatList) - 1
+	}
+	if ftp.cursor < 0 {
+		ftp.cursor = 0
+	}
 }
 
 // ToggleExpand toggles the selected directory.
 func (ftp *FileTreePanel) ToggleExpand() {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	if ftp.cursor >= 0 && ftp.cursor < len(ftp.flatList) {
 		node := ftp.flatList[ftp.cursor]
 		if node.IsDir {
@@ -370,7 +410,8 @@ func (ftp *FileTreePanel) ToggleExpand() {
 
 // SelectedPath returns the path of the selected node.
 func (ftp *FileTreePanel) SelectedPath() string {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	if ftp.cursor >= 0 && ftp.cursor < len(ftp.flatList) {
 		return ftp.flatList[ftp.cursor].Path
 	}
@@ -379,29 +420,44 @@ func (ftp *FileTreePanel) SelectedPath() string {
 
 // Render renders the file tree.
 func (ftp *FileTreePanel) Render(width, height int) string {
-	ftp.mu.Lock(); defer ftp.mu.Unlock()
+	ftp.mu.Lock()
+	defer ftp.mu.Unlock()
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📁 Files:\n%s\n", strings.Repeat("─", width-2))
 
 	visibleStart := ftp.scroll
-	if visibleStart >= len(ftp.flatList) { visibleStart = len(ftp.flatList) - 1 }
-	if visibleStart < 0 { visibleStart = 0 }
+	if visibleStart >= len(ftp.flatList) {
+		visibleStart = len(ftp.flatList) - 1
+	}
+	if visibleStart < 0 {
+		visibleStart = 0
+	}
 	visibleEnd := visibleStart + height - 2
-	if visibleEnd > len(ftp.flatList) { visibleEnd = len(ftp.flatList) }
+	if visibleEnd > len(ftp.flatList) {
+		visibleEnd = len(ftp.flatList)
+	}
 
 	for i := visibleStart; i < visibleEnd; i++ {
 		node := ftp.flatList[i]
 		cursor := " "
-		if i == ftp.cursor { cursor = ">" }
+		if i == ftp.cursor {
+			cursor = ">"
+		}
 
 		icon := "📄"
 		if node.IsDir {
-			if node.Expanded { icon = "📂" } else { icon = "📁" }
+			if node.Expanded {
+				icon = "📂"
+			} else {
+				icon = "📁"
+			}
 		}
 
 		indent := strings.Repeat("  ", ftp.depth(node))
 		change := " "
-		if node.Changed { change = "*" }
+		if node.Changed {
+			change = "*"
+		}
 
 		fmt.Fprintf(&sb, "%s%s %s %s%s\n", cursor, indent, icon, change, node.Name)
 	}
@@ -411,8 +467,14 @@ func (ftp *FileTreePanel) Render(width, height int) string {
 func (ftp *FileTreePanel) depth(node *FileNode) int {
 	d := 0
 	parts := strings.Split(strings.TrimPrefix(node.Path, "/"), "/")
-	if len(parts) > 0 && parts[0] == "" { parts = parts[1:] }
-	for _, p := range parts { if p != "" { d++ } }
+	if len(parts) > 0 && parts[0] == "" {
+		parts = parts[1:]
+	}
+	for _, p := range parts {
+		if p != "" {
+			d++
+		}
+	}
 	return d - 1
 }
 
@@ -420,13 +482,13 @@ func (ftp *FileTreePanel) depth(node *FileNode) int {
 
 // DiffPanel shows side-by-side or unified diffs.
 type DiffPanel struct {
-	mu       sync.Mutex
-	diffs    []DiffLine
-	oldPath  string
-	newPath  string
-	scroll   int
-	width    int
-	height   int
+	mu      sync.Mutex
+	diffs   []DiffLine
+	oldPath string
+	newPath string
+	scroll  int
+	width   int
+	height  int
 }
 
 // DiffLine is one line in a diff.
@@ -442,7 +504,8 @@ func NewDiffPanel() *DiffPanel { return &DiffPanel{} }
 
 // SetDiff sets the diff content.
 func (dp *DiffPanel) SetDiff(oldPath, newPath string, lines []DiffLine) {
-	dp.mu.Lock(); defer dp.mu.Unlock()
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
 	dp.oldPath = oldPath
 	dp.newPath = newPath
 	dp.diffs = lines
@@ -457,13 +520,19 @@ func ComputeDiff(oldText, newText string) []DiffLine {
 	// LCS-based diff (simplified)
 	la, lb := len(oldLines), len(newLines)
 	dp := make([][]int, la+1)
-	for i := range dp { dp[i] = make([]int, lb+1) }
+	for i := range dp {
+		dp[i] = make([]int, lb+1)
+	}
 	for i := 1; i <= la; i++ {
 		for j := 1; j <= lb; j++ {
 			if oldLines[i-1] == newLines[j-1] {
 				dp[i][j] = dp[i-1][j-1] + 1
 			} else {
-				if dp[i-1][j] > dp[i][j-1] { dp[i][j] = dp[i-1][j] } else { dp[i][j] = dp[i][j-1] }
+				if dp[i-1][j] > dp[i][j-1] {
+					dp[i][j] = dp[i-1][j]
+				} else {
+					dp[i][j] = dp[i][j-1]
+				}
 			}
 		}
 	}
@@ -473,7 +542,8 @@ func ComputeDiff(oldText, newText string) []DiffLine {
 	for i > 0 || j > 0 {
 		if i > 0 && j > 0 && oldLines[i-1] == newLines[j-1] {
 			raw = append(raw, DiffLine{Type: " ", Content: oldLines[i-1], OldLine: i, NewLine: j})
-			i--; j--
+			i--
+			j--
 		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
 			raw = append(raw, DiffLine{Type: "+", Content: newLines[j-1], NewLine: j})
 			j--
@@ -484,13 +554,16 @@ func ComputeDiff(oldText, newText string) []DiffLine {
 	}
 
 	var result []DiffLine
-	for k := len(raw) - 1; k >= 0; k-- { result = append(result, raw[k]) }
+	for k := len(raw) - 1; k >= 0; k-- {
+		result = append(result, raw[k])
+	}
 	return result
 }
 
 // Render renders the diff panel.
 func (dp *DiffPanel) Render(width, height int) string {
-	dp.mu.Lock(); defer dp.mu.Unlock()
+	dp.mu.Lock()
+	defer dp.mu.Unlock()
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "📊 Diff: %s → %s\n%s\n", dp.oldPath, dp.newPath, strings.Repeat("─", width-2))
@@ -498,17 +571,27 @@ func (dp *DiffPanel) Render(width, height int) string {
 	available := dp.diffs[dp.scroll:]
 	count := 0
 	for _, line := range available {
-		if count >= height-3 { break }
+		if count >= height-3 {
+			break
+		}
 		prefix := line.Type
 		lineNum := ""
-		if line.OldLine > 0 { lineNum = fmt.Sprintf("%4d", line.OldLine) }
-		if line.NewLine > 0 { lineNum += fmt.Sprintf("%4d", line.NewLine) }
+		if line.OldLine > 0 {
+			lineNum = fmt.Sprintf("%4d", line.OldLine)
+		}
+		if line.NewLine > 0 {
+			lineNum += fmt.Sprintf("%4d", line.NewLine)
+		}
 
 		switch line.Type {
-		case "+": fmt.Fprintf(&sb, "\033[32m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
-		case "-": fmt.Fprintf(&sb, "\033[31m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
-		case "@": fmt.Fprintf(&sb, "\033[36m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
-		default: fmt.Fprintf(&sb, "  %s %s %s\n", lineNum, prefix, line.Content)
+		case "+":
+			fmt.Fprintf(&sb, "\033[32m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
+		case "-":
+			fmt.Fprintf(&sb, "\033[31m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
+		case "@":
+			fmt.Fprintf(&sb, "\033[36m%s %s %s\033[0m\n", lineNum, prefix, line.Content)
+		default:
+			fmt.Fprintf(&sb, "  %s %s %s\n", lineNum, prefix, line.Content)
 		}
 		count++
 	}
@@ -519,21 +602,21 @@ func (dp *DiffPanel) Render(width, height int) string {
 
 // PlanPanel displays and manages agent execution plans.
 type PlanPanel struct {
-	mu      sync.Mutex
-	plan    *Plan
-	scroll  int
-	width   int
-	height  int
+	mu       sync.Mutex
+	plan     *Plan
+	scroll   int
+	width    int
+	height   int
 	approval string // "pending", "approved", "rejected"
 }
 
 // Plan is an agent execution plan.
 type Plan struct {
-	Name        string       `json:"name"`
-	Description string       `json:"description"`
-	Steps       []PlanStep   `json:"steps"`
-	Status      string       `json:"status"` // pending, approved, running, done, rejected
-	CreatedAt   time.Time    `json:"created_at"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Steps       []PlanStep `json:"steps"`
+	Status      string     `json:"status"` // pending, approved, running, done, rejected
+	CreatedAt   time.Time  `json:"created_at"`
 }
 
 // PlanStep is one step in a plan.
@@ -553,34 +636,43 @@ func NewPlanPanel() *PlanPanel {
 
 // SetPlan sets the current plan.
 func (pp *PlanPanel) SetPlan(plan *Plan) {
-	pp.mu.Lock(); defer pp.mu.Unlock()
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
 	pp.plan = plan
 	pp.approval = "pending"
 }
 
 // Approve approves the plan.
 func (pp *PlanPanel) Approve() {
-	pp.mu.Lock(); defer pp.mu.Unlock()
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
 	pp.approval = "approved"
-	if pp.plan != nil { pp.plan.Status = "approved" }
+	if pp.plan != nil {
+		pp.plan.Status = "approved"
+	}
 }
 
 // Reject rejects the plan.
 func (pp *PlanPanel) Reject() {
-	pp.mu.Lock(); defer pp.mu.Unlock()
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
 	pp.approval = "rejected"
-	if pp.plan != nil { pp.plan.Status = "rejected" }
+	if pp.plan != nil {
+		pp.plan.Status = "rejected"
+	}
 }
 
 // IsApproved returns whether the plan is approved.
 func (pp *PlanPanel) IsApproved() bool {
-	pp.mu.Lock(); defer pp.mu.Unlock()
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
 	return pp.approval == "approved"
 }
 
 // Render renders the plan panel.
 func (pp *PlanPanel) Render(width, height int) string {
-	pp.mu.Lock(); defer pp.mu.Unlock()
+	pp.mu.Lock()
+	defer pp.mu.Unlock()
 
 	if pp.plan == nil {
 		return "📋 No plan loaded.\n"
@@ -589,8 +681,10 @@ func (pp *PlanPanel) Render(width, height int) string {
 	var sb strings.Builder
 	statusIcon := "⏳"
 	switch pp.approval {
-	case "approved": statusIcon = "✅"
-	case "rejected": statusIcon = "❌"
+	case "approved":
+		statusIcon = "✅"
+	case "rejected":
+		statusIcon = "❌"
 	}
 
 	fmt.Fprintf(&sb, "📋 Plan: %s %s\n%s\n\n", pp.plan.Name, statusIcon, strings.Repeat("─", width-2))
@@ -599,10 +693,14 @@ func (pp *PlanPanel) Render(width, height int) string {
 	for i, step := range pp.plan.Steps {
 		stepIcon := "⬜"
 		switch step.Status {
-		case "done": stepIcon = "✅"
-		case "running": stepIcon = "🔄"
-		case "failed": stepIcon = "❌"
-		case "skipped": stepIcon = "⏭️"
+		case "done":
+			stepIcon = "✅"
+		case "running":
+			stepIcon = "🔄"
+		case "failed":
+			stepIcon = "❌"
+		case "skipped":
+			stepIcon = "⏭️"
 		}
 
 		deps := ""
@@ -648,13 +746,15 @@ func NewStatusBar() *StatusBar {
 
 // UpdateState updates the status bar.
 func (sb *StatusBar) UpdateState(state string) {
-	sb.mu.Lock(); defer sb.mu.Unlock()
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
 	sb.agentState = state
 }
 
 // AddTokens records token usage.
 func (sb *StatusBar) AddTokens(in, out int64, cost float64) {
-	sb.mu.Lock(); defer sb.mu.Unlock()
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
 	sb.tokensIn += in
 	sb.tokensOut += out
 	sb.cost += cost
@@ -662,18 +762,24 @@ func (sb *StatusBar) AddTokens(in, out int64, cost float64) {
 
 // SetSubAgents sets the sub-agent count.
 func (sb *StatusBar) SetSubAgents(count int) {
-	sb.mu.Lock(); defer sb.mu.Unlock()
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
 	sb.subAgents = count
 }
 
 // Render renders the status bar.
 func (sb *StatusBar) Render(width int) string {
-	sb.mu.Lock(); defer sb.mu.Unlock()
+	sb.mu.Lock()
+	defer sb.mu.Unlock()
 
 	elapsed := time.Since(sb.startTime)
 	stateColor := "\033[32m" // green
-	if sb.agentState == "thinking" { stateColor = "\033[33m" }
-	if sb.agentState == "error" { stateColor = "\033[31m" }
+	if sb.agentState == "thinking" {
+		stateColor = "\033[33m"
+	}
+	if sb.agentState == "error" {
+		stateColor = "\033[31m"
+	}
 
 	left := fmt.Sprintf("%s● %s\033[0m │ %s │ %d:%d tk │ $%.4f",
 		stateColor, sb.agentState, sb.model, sb.tokensIn/1000, sb.tokensOut/1000, sb.cost)
@@ -696,8 +802,12 @@ func (m *Model) RenderFull() string {
 	h := m.height
 	m.mu.Unlock()
 
-	if w == 0 { w = 120 }
-	if h == 0 { h = 40 }
+	if w == 0 {
+		w = 120
+	}
+	if h == 0 {
+		h = 40
+	}
 
 	statusH := 1
 	chatW := w * 60 / 100
@@ -741,10 +851,14 @@ func Spinner(tick int) string {
 
 // ProgressBar renders a horizontal progress bar.
 func ProgressBar(current, total int, width int) string {
-	if total == 0 { return "" }
+	if total == 0 {
+		return ""
+	}
 	pct := float64(current) / float64(total)
 	filled := int(pct * float64(width))
-	if filled > width { filled = width }
+	if filled > width {
+		filled = width
+	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 	return fmt.Sprintf("[%s] %3.0f%%", bar, pct*100)
 }
@@ -752,7 +866,9 @@ func ProgressBar(current, total int, width int) string {
 // ── Helpers ────────────────────────────────────────────────
 
 func wordWrap(text string, width int) string {
-	if width <= 0 { return text }
+	if width <= 0 {
+		return text
+	}
 	var sb strings.Builder
 	for _, line := range strings.Split(text, "\n") {
 		if len(line) <= width {
@@ -768,14 +884,18 @@ func wordWrap(text string, width int) string {
 			sb.WriteString(line[:split] + "\n")
 			line = strings.TrimSpace(line[split:])
 		}
-		if line != "" { sb.WriteString(line + "\n") }
+		if line != "" {
+			sb.WriteString(line + "\n")
+		}
 	}
 	return strings.TrimRight(sb.String(), "\n")
 }
 
 func truncateForDisplay(s string, maxLen int) string {
 	s = strings.ReplaceAll(s, "\n", "\\n")
-	if len(s) <= maxLen { return s }
+	if len(s) <= maxLen {
+		return s
+	}
 	return s[:maxLen-3] + "..."
 }
 
@@ -783,10 +903,10 @@ func truncateForDisplay(s string, maxLen int) string {
 
 // Session manages a TUI session lifecycle.
 type Session struct {
-	mu      sync.Mutex
-	model   *Model
-	done    chan struct{}
-	startT  time.Time
+	mu     sync.Mutex
+	model  *Model
+	done   chan struct{}
+	startT time.Time
 }
 
 // NewSession creates a TUI session.
@@ -814,13 +934,15 @@ func newModel() *Model {
 
 // AddMessage adds a chat message.
 func (s *Session) AddMessage(role, content string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.model.chat.AddMessage(Message{Role: role, Content: content, Timestamp: time.Now()})
 }
 
 // AddThinking adds a thinking block.
 func (s *Session) AddThinking(content string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	msgs := s.model.chat.Messages()
 	if len(msgs) > 0 {
 		lastIdx := len(msgs) - 1
@@ -830,7 +952,8 @@ func (s *Session) AddThinking(content string) {
 
 // AddToolCall records a tool invocation.
 func (s *Session) AddToolCall(name, input string, status string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	msgs := s.model.chat.Messages()
 	if len(msgs) > 0 {
 		lastIdx := len(msgs) - 1
@@ -840,32 +963,37 @@ func (s *Session) AddToolCall(name, input string, status string) {
 
 // SetPlan sets the execution plan.
 func (s *Session) SetPlan(plan *Plan) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.model.planView.SetPlan(plan)
 }
 
 // ApprovePlan approves the plan.
 func (s *Session) ApprovePlan() {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.model.planView.Approve()
 }
 
 // SetDiff sets the diff view content.
 func (s *Session) SetDiff(oldPath, newPath string, oldText, newText string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	lines := ComputeDiff(oldText, newText)
 	s.model.diffView.SetDiff(oldPath, newPath, lines)
 }
 
 // UpdateStatus updates the status bar.
 func (s *Session) UpdateStatus(state string) {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.model.statusBar.UpdateState(state)
 }
 
 // Render returns the full TUI as a string.
 func (s *Session) Render() string {
-	s.mu.Lock(); defer s.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.model.RenderFull()
 }
 

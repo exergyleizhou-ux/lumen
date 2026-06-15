@@ -43,13 +43,13 @@ type Team struct {
 
 // CronJob is a scheduled recurring task.
 type CronJob struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Schedule  string    `json:"schedule"` // cron expression
-	Task      string    `json:"task"`     // task template
-	LastRun   time.Time `json:"last_run"`
-	NextRun   time.Time `json:"next_run"`
-	Enabled   bool      `json:"enabled"`
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Schedule string    `json:"schedule"` // cron expression
+	Task     string    `json:"task"`     // task template
+	LastRun  time.Time `json:"last_run"`
+	NextRun  time.Time `json:"next_run"`
+	Enabled  bool      `json:"enabled"`
 }
 
 // TaskRegistry manages tasks with thread-safe operations.

@@ -30,25 +30,33 @@ import (
 type StateKind int
 
 const (
-	KindBasic    StateKind = iota // plain state
-	KindComposite                  // has nested (child) states
-	KindParallel                   // has orthogonal regions
-	KindInitial                    // initial pseudostate
-	KindFinal                      // terminal state
-	KindHistory                    // shallow history pseudostate
-	KindDeepHistory                // deep history pseudostate
+	KindBasic       StateKind = iota // plain state
+	KindComposite                    // has nested (child) states
+	KindParallel                     // has orthogonal regions
+	KindInitial                      // initial pseudostate
+	KindFinal                        // terminal state
+	KindHistory                      // shallow history pseudostate
+	KindDeepHistory                  // deep history pseudostate
 )
 
 func (k StateKind) String() string {
 	switch k {
-	case KindBasic:     return "basic"
-	case KindComposite: return "composite"
-	case KindParallel:  return "parallel"
-	case KindInitial:   return "initial"
-	case KindFinal:     return "final"
-	case KindHistory:   return "history"
-	case KindDeepHistory: return "deep_history"
-	default:            return "unknown"
+	case KindBasic:
+		return "basic"
+	case KindComposite:
+		return "composite"
+	case KindParallel:
+		return "parallel"
+	case KindInitial:
+		return "initial"
+	case KindFinal:
+		return "final"
+	case KindHistory:
+		return "history"
+	case KindDeepHistory:
+		return "deep_history"
+	default:
+		return "unknown"
 	}
 }
 
@@ -75,9 +83,9 @@ func NewGuard(name string, fn func(sm *StateMachine) bool) *FuncGuard {
 	return &FuncGuard{name: name, fn: fn}
 }
 
-func (g FuncGuard) Name() string                          { return g.name }
-func (g FuncGuard) Evaluate(sm *StateMachine) bool         { return g.fn(sm) }
-func (g FuncGuard) String() string                         { return g.name }
+func (g FuncGuard) Name() string                   { return g.name }
+func (g FuncGuard) Evaluate(sm *StateMachine) bool { return g.fn(sm) }
+func (g FuncGuard) String() string                 { return g.name }
 
 // ---------------------------------------------------------------------------
 // Action
@@ -93,11 +101,11 @@ type Action func(sm *StateMachine)
 // Transition is a directed edge between two states, labeled with an event
 // name and optional guard and actions.
 type Transition struct {
-	Event    string
-	Source   *State
-	Target   *State
-	Guard    Guard
-	Actions  []Action
+	Event   string
+	Source  *State
+	Target  *State
+	Guard   Guard
+	Actions []Action
 }
 
 // String returns a brief description.
@@ -117,17 +125,17 @@ func (t *Transition) String() string {
 // a parallel state has orthogonal regions (each region is a child state
 // active simultaneously).
 type State struct {
-	Name       string
-	Kind       StateKind
-	Parent     *State
-	Children   []*State
-	Initial    *State // for composite states: which child starts active
+	Name        string
+	Kind        StateKind
+	Parent      *State
+	Children    []*State
+	Initial     *State // for composite states: which child starts active
 	Transitions []*Transition
 
 	// Actions executed when entering this state.
 	OnEntry []Action
 	// Actions executed when exiting this state.
-	OnExit  []Action
+	OnExit []Action
 
 	// History state remembers which child was active (for history pseudostates).
 	historyChild *State

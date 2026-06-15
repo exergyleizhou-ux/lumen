@@ -17,12 +17,12 @@ var ConventionDirs = []string{".reasonix", ".agents", ".agent", ".claude"}
 
 // File is the decoded lumen.toml.
 type File struct {
-	DefaultModel string           `toml:"default_model"`
-	Providers    []ProviderConfig `toml:"providers"`
+	DefaultModel string             `toml:"default_model"`
+	Providers    []ProviderConfig   `toml:"providers"`
 	Coordinator  *CoordinatorConfig `toml:"coordinator"`
-	Agent        AgentConfig      `toml:"agent"`
-	Permissions  PermissionsConfig `toml:"permissions"`
-	Skills       SkillsConfig     `toml:"skills"`
+	Agent        AgentConfig        `toml:"agent"`
+	Permissions  PermissionsConfig  `toml:"permissions"`
+	Skills       SkillsConfig       `toml:"skills"`
 }
 
 // ProviderConfig is one model provider entry.
@@ -32,7 +32,7 @@ type ProviderConfig struct {
 	BaseURL   string `toml:"base_url"`
 	Model     string `toml:"model"`
 	APIKeyEnv string `toml:"api_key_env"`
-	APIKey    string `toml:"-"` // resolved from env
+	APIKey    string `toml:"api_key,omitempty"` // from toml or resolved from env
 }
 
 // CoordinatorConfig configures the two-model planner+executor mode.
@@ -76,7 +76,7 @@ func Load(path string) (*File, error) {
 	}
 	// Resolve env vars
 	for i := range cfg.Providers {
-		if cfg.Providers[i].APIKeyEnv != "" {
+		if cfg.Providers[i].APIKeyEnv != "" && cfg.Providers[i].APIKey == "" {
 			cfg.Providers[i].APIKey = os.Getenv(cfg.Providers[i].APIKeyEnv)
 		}
 	}

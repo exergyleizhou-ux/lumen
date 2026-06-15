@@ -15,14 +15,14 @@ import (
 
 // Job is one unit of work.
 type Job struct {
-	ID        string        `json:"id"`
-	Queue     string        `json:"queue"`
-	Payload   any           `json:"payload"`
-	Attempts  int           `json:"attempts"`
-	MaxRetries int          `json:"max_retries"`
-	CreatedAt time.Time     `json:"created_at"`
-	StartedAt time.Time     `json:"started_at"`
-	Timeout   time.Duration `json:"timeout"`
+	ID         string        `json:"id"`
+	Queue      string        `json:"queue"`
+	Payload    any           `json:"payload"`
+	Attempts   int           `json:"attempts"`
+	MaxRetries int           `json:"max_retries"`
+	CreatedAt  time.Time     `json:"created_at"`
+	StartedAt  time.Time     `json:"started_at"`
+	Timeout    time.Duration `json:"timeout"`
 }
 
 // Result is the outcome of a job.
@@ -40,19 +40,19 @@ type Handler func(ctx context.Context, job *Job) (any, error)
 
 // Queue manages jobs and workers for one named queue.
 type Queue struct {
-	name     string
-	mu       sync.Mutex
-	jobs     []*Job
-	handler  Handler
-	workers  int
-	sem      chan struct{}
-	results  []Result
+	name       string
+	mu         sync.Mutex
+	jobs       []*Job
+	handler    Handler
+	workers    int
+	sem        chan struct{}
+	results    []Result
 	maxResults int
 	processed  atomic.Int64
 	failed     atomic.Int64
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // NewQueue creates a named queue with a handler and worker count.
@@ -76,7 +76,7 @@ func NewQueue(name string, handler Handler, workers int) *Queue {
 // Enqueue adds a job to the queue. Returns immediately.
 func (q *Queue) Enqueue(payload any, maxRetries int) *Job {
 	job := &Job{
-		ID: fmt.Sprintf("job-%d", time.Now().UnixNano()),
+		ID:    fmt.Sprintf("job-%d", time.Now().UnixNano()),
 		Queue: q.name, Payload: payload,
 		MaxRetries: maxRetries, CreatedAt: time.Now(),
 		Timeout: 30 * time.Second,
@@ -242,7 +242,9 @@ func (m *Manager) FormatStats() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Queue Manager (%d queues):\n\n", len(m.queues)))
 	names := make([]string, 0, len(m.queues))
-	for n := range m.queues { names = append(names, n) }
+	for n := range m.queues {
+		names = append(names, n)
+	}
 	sort.Strings(names)
 	for _, n := range names {
 		q := m.queues[n]

@@ -58,10 +58,10 @@ func (k DiffLineKind) String() string {
 
 // Patch represents a complete unified diff patch.
 type Patch struct {
-	Header  string   // everything before the first hunk
-	Hunks   []*Hunk  // ordered list of hunks
-	OldFile string   // original file path
-	NewFile string   // new file path
+	Header  string  // everything before the first hunk
+	Hunks   []*Hunk // ordered list of hunks
+	OldFile string  // original file path
+	NewFile string  // new file path
 }
 
 // Diff represents a computed difference between two texts.
@@ -627,8 +627,8 @@ func compressEdits(edits []edit) []edit {
 
 // MergeResult holds the result of a three-way merge.
 type MergeResult struct {
-	Success  bool
-	Merged   string
+	Success   bool
+	Merged    string
 	Conflicts []MergeConflict
 }
 

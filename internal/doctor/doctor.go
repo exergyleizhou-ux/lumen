@@ -26,8 +26,8 @@ type Result struct {
 
 // Report holds the full health check report.
 type Report struct {
-	Results  []Result `json:"results"`
-	AllOk    bool     `json:"all_ok"`
+	Results []Result `json:"results"`
+	AllOk   bool     `json:"all_ok"`
 }
 
 // Run executes all health checks and returns the report.

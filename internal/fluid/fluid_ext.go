@@ -364,12 +364,12 @@ func (rl *RateLimiter) Tokens() float64 {
 
 // SlidingWindowCounter counts events within a sliding time window.
 type SlidingWindowCounter struct {
-	mu       sync.Mutex
-	buckets  []int64
-	window   time.Duration
+	mu             sync.Mutex
+	buckets        []int64
+	window         time.Duration
 	bucketDuration time.Duration
-	lastIdx  int
-	lastTime time.Time
+	lastIdx        int
+	lastTime       time.Time
 }
 
 // NewSlidingWindowCounter creates a sliding window counter.

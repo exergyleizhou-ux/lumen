@@ -15,10 +15,10 @@ import (
 
 // ConsistentHashRing maps keys to nodes using consistent hashing.
 type ConsistentHashRing struct {
-	mu       sync.RWMutex
-	nodes    map[uint32]NodeID
+	mu         sync.RWMutex
+	nodes      map[uint32]NodeID
 	sortedKeys []uint32
-	replicas int
+	replicas   int
 }
 
 // NewConsistentHashRing creates a consistent hash ring.
@@ -121,9 +121,9 @@ func (chr *ConsistentHashRing) hash(key string) uint32 {
 
 // DistributedCounter is a counter that can be incremented across nodes.
 type DistributedCounter struct {
-	mu    sync.RWMutex
-	count int64
-	name  string
+	mu      sync.RWMutex
+	count   int64
+	name    string
 	history []CounterEvent
 }
 
@@ -245,9 +245,9 @@ type QuorumResult struct {
 
 // QuorumVoter manages quorum-based decisions.
 type QuorumVoter struct {
-	mu    sync.Mutex
-	votes map[string]int // decision -> count
-	total int
+	mu     sync.Mutex
+	votes  map[string]int // decision -> count
+	total  int
 	quorum int
 }
 

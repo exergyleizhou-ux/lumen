@@ -22,11 +22,16 @@ const (
 
 func (s Severity) String() string {
 	switch s {
-	case SevInfo: return "INFO"
-	case SevWarning: return "WARN"
-	case SevError: return "ERROR"
-	case SevFatal: return "FATAL"
-	default: return "UNKNOWN"
+	case SevInfo:
+		return "INFO"
+	case SevWarning:
+		return "WARN"
+	case SevError:
+		return "ERROR"
+	case SevFatal:
+		return "FATAL"
+	default:
+		return "UNKNOWN"
 	}
 }
 
@@ -51,13 +56,13 @@ type Probe struct {
 
 // Engine runs diagnostics.
 type Engine struct {
-	mu       sync.Mutex
-	probes   map[string]*Probe
-	issues   []*Issue
-	hist     []*Issue
-	maxHist  int
-	running  bool
-	stopCh   chan struct{}
+	mu      sync.Mutex
+	probes  map[string]*Probe
+	issues  []*Issue
+	hist    []*Issue
+	maxHist int
+	running bool
+	stopCh  chan struct{}
 }
 
 // NewEngine creates a diagnostic engine.
@@ -67,7 +72,8 @@ func NewEngine() *Engine {
 
 // RegisterProbe adds a health probe.
 func (e *Engine) RegisterProbe(probe *Probe) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.probes[probe.Name] = probe
 }
 
@@ -76,7 +82,9 @@ func (e *Engine) RunProbe(name string) *Issue {
 	e.mu.Lock()
 	probe, ok := e.probes[name]
 	e.mu.Unlock()
-	if !ok { return nil }
+	if !ok {
+		return nil
+	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -92,14 +100,16 @@ func (e *Engine) RunProbe(name string) *Issue {
 
 	if err != nil {
 		issue := &Issue{
-			ID: fmt.Sprintf("%s-%d", name, time.Now().UnixNano()),
+			ID:        fmt.Sprintf("%s-%d", name, time.Now().UnixNano()),
 			Component: name, Title: fmt.Sprintf("probe %s failed", name),
 			Detail: err.Error(), Severity: SevWarning, Timestamp: time.Now(),
 		}
 		e.mu.Lock()
 		e.issues = append(e.issues, issue)
 		e.hist = append(e.hist, issue)
-		if len(e.hist) > e.maxHist { e.hist = e.hist[1:] }
+		if len(e.hist) > e.maxHist {
+			e.hist = e.hist[1:]
+		}
 		e.mu.Unlock()
 		return issue
 	}
@@ -119,7 +129,9 @@ func (e *Engine) RunProbe(name string) *Issue {
 func (e *Engine) RunAll() []*Issue {
 	e.mu.Lock()
 	probes := make([]*Probe, 0, len(e.probes))
-	for _, p := range e.probes { probes = append(probes, p) }
+	for _, p := range e.probes {
+		probes = append(probes, p)
+	}
 	e.mu.Unlock()
 
 	e.mu.Lock()
@@ -137,17 +149,21 @@ func (e *Engine) RunAll() []*Issue {
 
 // Issues returns active (unresolved) issues.
 func (e *Engine) Issues() []*Issue {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	var out []*Issue
 	for _, is := range e.issues {
-		if !is.Resolved { out = append(out, is) }
+		if !is.Resolved {
+			out = append(out, is)
+		}
 	}
 	return out
 }
 
 // History returns all recorded issues.
 func (e *Engine) History() []*Issue {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	out := make([]*Issue, len(e.hist))
 	copy(out, e.hist)
 	return out
@@ -155,10 +171,13 @@ func (e *Engine) History() []*Issue {
 
 // Summary returns counts by severity.
 func (e *Engine) Summary() map[Severity]int {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	counts := map[Severity]int{}
 	for _, is := range e.issues {
-		if !is.Resolved { counts[is.Severity]++ }
+		if !is.Resolved {
+			counts[is.Severity]++
+		}
 	}
 	return counts
 }
@@ -187,7 +206,9 @@ func (e *Engine) FormatReport() string {
 		fmt.Fprintf(&sb, "\nIssues:\n")
 		for _, is := range issues {
 			fmt.Fprintf(&sb, "  %s [%s] %s\n", iconForSev(is.Severity), is.Severity.String(), is.Title)
-			if is.Detail != "" { fmt.Fprintf(&sb, "     %s\n", is.Detail) }
+			if is.Detail != "" {
+				fmt.Fprintf(&sb, "     %s\n", is.Detail)
+			}
 		}
 	}
 
@@ -199,10 +220,14 @@ func (e *Engine) FormatReport() string {
 
 func iconForSev(s Severity) string {
 	switch s {
-	case SevFatal: return "💀"
-	case SevError: return "🔴"
-	case SevWarning: return "🟡"
-	default: return "🔵"
+	case SevFatal:
+		return "💀"
+	case SevError:
+		return "🔴"
+	case SevWarning:
+		return "🟡"
+	default:
+		return "🔵"
 	}
 }
 
@@ -210,11 +235,11 @@ func iconForSev(s Severity) string {
 
 // ConnectivityResult is the result of a connectivity check.
 type ConnectivityResult struct {
-	Target  string        `json:"target"`
-	Port    int           `json:"port"`
-	Reachable bool        `json:"reachable"`
-	Latency time.Duration `json:"latency"`
-	Error   string        `json:"error,omitempty"`
+	Target    string        `json:"target"`
+	Port      int           `json:"port"`
+	Reachable bool          `json:"reachable"`
+	Latency   time.Duration `json:"latency"`
+	Error     string        `json:"error,omitempty"`
 }
 
 // ConnectivityProber checks network connectivity.
@@ -231,14 +256,18 @@ func NewConnectivityProber() *ConnectivityProber {
 
 // CheckResult records a connectivity result.
 func (cp *ConnectivityProber) CheckResult(result ConnectivityResult) {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	cp.results = append(cp.results, result)
-	if len(cp.results) > cp.maxRes { cp.results = cp.results[1:] }
+	if len(cp.results) > cp.maxRes {
+		cp.results = cp.results[1:]
+	}
 }
 
 // Results returns recent connectivity results.
 func (cp *ConnectivityProber) Results() []ConnectivityResult {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	out := make([]ConnectivityResult, len(cp.results))
 	copy(out, cp.results)
 	return out
@@ -246,9 +275,14 @@ func (cp *ConnectivityProber) Results() []ConnectivityResult {
 
 // Reachable returns the count of reachable targets.
 func (cp *ConnectivityProber) Reachable() int {
-	cp.mu.Lock(); defer cp.mu.Unlock()
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
 	count := 0
-	for _, r := range cp.results { if r.Reachable { count++ } }
+	for _, r := range cp.results {
+		if r.Reachable {
+			count++
+		}
+	}
 	return count
 }
 
@@ -259,9 +293,14 @@ func (cp *ConnectivityProber) FormatConnectivity() string {
 	reachable := cp.Reachable()
 	fmt.Fprintf(&sb, "Connectivity: %d/%d reachable\n%s\n\n", reachable, len(results), strings.Repeat("─", 50))
 	for _, r := range results {
-		icon := "✅"; if !r.Reachable { icon = "🔴" }
+		icon := "✅"
+		if !r.Reachable {
+			icon = "🔴"
+		}
 		fmt.Fprintf(&sb, "  %s %s:%-5d %v", icon, r.Target, r.Port, r.Latency)
-		if r.Error != "" { fmt.Fprintf(&sb, "  %s", r.Error) }
+		if r.Error != "" {
+			fmt.Fprintf(&sb, "  %s", r.Error)
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()

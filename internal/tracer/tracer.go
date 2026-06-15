@@ -334,11 +334,11 @@ type Span struct {
 	finished  bool
 
 	// Attributes
-	tags    map[string]string
-	logs    []LogRecord
-	links   []SpanLink
-	status  spanStatus
-	errMsg  string
+	tags   map[string]string
+	logs   []LogRecord
+	links  []SpanLink
+	status spanStatus
+	errMsg string
 
 	// Child tracking
 	children []*Span

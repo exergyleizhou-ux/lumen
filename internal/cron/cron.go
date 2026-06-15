@@ -13,20 +13,20 @@ import (
 
 // Field represents one field of a cron expression.
 type Field struct {
-	Min   int          // Minimum valid value.
-	Max   int          // Maximum valid value.
-	Name  string       // Human name.
-	Parts []fieldPart  // Parsed sub-expressions.
+	Min   int         // Minimum valid value.
+	Max   int         // Maximum valid value.
+	Name  string      // Human name.
+	Parts []fieldPart // Parsed sub-expressions.
 }
 
 type fieldPart struct {
-	kind  partKind
-	start int
-	end   int
-	step  int
-	last  bool // L flag for day-of-month/week.
-	weekday int // W flag: nearest weekday.
-	hash  int  // # flag: nth occurrence.
+	kind    partKind
+	start   int
+	end     int
+	step    int
+	last    bool // L flag for day-of-month/week.
+	weekday int  // W flag: nearest weekday.
+	hash    int  // # flag: nth occurrence.
 }
 
 type partKind int
@@ -169,7 +169,37 @@ func resolveNumber(s string, min, max int, names map[string]int) (int, error) {
 
 // matches checks whether a value matches this field.
 func (f *Field) matches(val int, isLastDay bool, lastWeekday int, nthWeekdayCount int) bool {
-	found := false; for _, p := range f.Parts { switch p.kind { case kindAll: return true; case kindValue: if val == p.start { return true }; case kindRange: if val >= p.start && val <= p.end { return true }; case kindStep: for v := p.start; v <= p.end; v += p.step { if v == val { return true } }; case kindLast: if isLastDay { return true }; case kindWeekday: if val == nearestWeekday(p.weekday, 31) { return true }; case kindHash: } }; return found
+	found := false
+	for _, p := range f.Parts {
+		switch p.kind {
+		case kindAll:
+			return true
+		case kindValue:
+			if val == p.start {
+				return true
+			}
+		case kindRange:
+			if val >= p.start && val <= p.end {
+				return true
+			}
+		case kindStep:
+			for v := p.start; v <= p.end; v += p.step {
+				if v == val {
+					return true
+				}
+			}
+		case kindLast:
+			if isLastDay {
+				return true
+			}
+		case kindWeekday:
+			if val == nearestWeekday(p.weekday, 31) {
+				return true
+			}
+		case kindHash:
+		}
+	}
+	return found
 }
 
 // nextValue finds the next matching value >= val.
@@ -430,6 +460,11 @@ func (s *Scheduler) GetJob(id string) *Job {
 func (s *Scheduler) ListJobs() []*Job {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.listJobsLocked()
+}
+
+// listJobsLocked assumes the caller holds the lock.
+func (s *Scheduler) listJobsLocked() []*Job {
 	out := make([]*Job, 0, len(s.jobs))
 	for _, j := range s.jobs {
 		out = append(out, j)
@@ -530,7 +565,7 @@ func (s *Scheduler) FormatSchedule() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := fmt.Sprintf("Scheduler: %d jobs (running=%v)\n", len(s.jobs), s.running)
-	for _, j := range s.ListJobs() {
+	for _, j := range s.listJobsLocked() {
 		out += fmt.Sprintf("  %s %q expr=%q next=%s runs=%d errors=%d enabled=%v\n",
 			j.ID, j.Name, j.RawExpr,
 			j.NextRun.Format(time.RFC3339),
@@ -559,16 +594,24 @@ func (e *Expression) Describe() string {
 }
 
 func describeField(f *Field, name string) string {
-	if len(f.Parts) == 0 { return name + ": ?" }
+	if len(f.Parts) == 0 {
+		return name + ": ?"
+	}
 	p := f.Parts[0]
 	switch p.kind {
-	case kindAll: return name + ": every"
-	case kindValue: return fmt.Sprintf("%s: at %d", name, p.start)
-	case kindRange: return fmt.Sprintf("%s: from %d to %d", name, p.start, p.end)
+	case kindAll:
+		return name + ": every"
+	case kindValue:
+		return fmt.Sprintf("%s: at %d", name, p.start)
+	case kindRange:
+		return fmt.Sprintf("%s: from %d to %d", name, p.start, p.end)
 	case kindStep:
-		if p.start == f.Min { return fmt.Sprintf("%s: every %d", name, p.step) }
+		if p.start == f.Min {
+			return fmt.Sprintf("%s: every %d", name, p.step)
+		}
 		return fmt.Sprintf("%s: from %d every %d", name, p.start, p.step)
-	default: return fmt.Sprintf("%s: custom", name)
+	default:
+		return fmt.Sprintf("%s: custom", name)
 	}
 }
 
@@ -577,13 +620,13 @@ func describeField(f *Field, name string) string {
 // CommonPresets returns common cron expressions.
 func CommonPresets() map[string]string {
 	return map[string]string{
-		"every_minute":   "* * * * *",
-		"every_5_minutes": "*/5 * * * *",
-		"every_hour":     "0 * * * *",
+		"every_minute":       "* * * * *",
+		"every_5_minutes":    "*/5 * * * *",
+		"every_hour":         "0 * * * *",
 		"every_day_midnight": "0 0 * * *",
-		"every_day_noon": "0 12 * * *",
-		"every_weekday_9am": "0 9 * * 1-5",
-		"every_monday_8am": "0 8 * * 1",
+		"every_day_noon":     "0 12 * * *",
+		"every_weekday_9am":  "0 9 * * 1-5",
+		"every_monday_8am":   "0 8 * * 1",
 		"every_1st_of_month": "0 0 1 * *",
 	}
 }
@@ -592,10 +635,10 @@ func CommonPresets() map[string]string {
 
 // OneShotJob is a job that runs once at a specific time.
 type OneShotJob struct {
-	ID       string
-	RunAt    time.Time
-	Handler  JobFunc
-	fired    bool
+	ID      string
+	RunAt   time.Time
+	Handler JobFunc
+	fired   bool
 }
 
 // OneShotScheduler manages one-shot jobs.
@@ -611,7 +654,8 @@ func NewOneShotScheduler() *OneShotScheduler {
 
 // Schedule adds a one-shot job.
 func (os *OneShotScheduler) Schedule(id string, runAt time.Time, handler JobFunc) {
-	os.mu.Lock(); defer os.mu.Unlock()
+	os.mu.Lock()
+	defer os.mu.Unlock()
 	os.jobs[id] = &OneShotJob{ID: id, RunAt: runAt, Handler: handler}
 }
 
@@ -622,7 +666,9 @@ func (os *OneShotScheduler) Tick(now time.Time) {
 	for id, job := range os.jobs {
 		if !job.fired && !now.Before(job.RunAt) {
 			job.fired = true
-			if job.Handler != nil { job.Handler(nil) }
+			if job.Handler != nil {
+				job.Handler(nil)
+			}
 			delete(os.jobs, id)
 		}
 	}
@@ -651,9 +697,9 @@ func (cl *ConcurrencyLimiter) Release() { <-cl.sem }
 // SafeScheduler wraps Scheduler with concurrency limiting and overlap protection.
 type SafeScheduler struct {
 	*Scheduler
-	limiter  *ConcurrencyLimiter
-	running  map[string]bool
-	muRun    sync.Mutex
+	limiter *ConcurrencyLimiter
+	running map[string]bool
+	muRun   sync.Mutex
 }
 
 // NewSafeScheduler creates a safe scheduler.
@@ -670,7 +716,10 @@ func (ss *SafeScheduler) AddSafeJob(id, name, cronExpr string, handler JobFunc) 
 	orig := handler
 	safeHandler := func(job *Job) error {
 		ss.muRun.Lock()
-		if ss.running[id] { ss.muRun.Unlock(); return nil } // Skip if already running.
+		if ss.running[id] {
+			ss.muRun.Unlock()
+			return nil
+		} // Skip if already running.
 		ss.running[id] = true
 		ss.muRun.Unlock()
 		ss.limiter.Acquire()
@@ -686,9 +735,13 @@ func (ss *SafeScheduler) AddSafeJob(id, name, cronExpr string, handler JobFunc) 
 // FormatCronExpression returns a formatted breakdown of a cron expression.
 func FormatCronExpression(expr string) (string, error) {
 	e, err := ParseExpression(expr)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	nextRuns := e.NextN(time.Now(), 5)
 	s := fmt.Sprintf("Expression: %s\nDescription: %s\nNext runs:\n", expr, e.Describe())
-	for i, t := range nextRuns { s += fmt.Sprintf("  %d. %s\n", i+1, t.Format(time.RFC3339)) }
+	for i, t := range nextRuns {
+		s += fmt.Sprintf("  %d. %s\n", i+1, t.Format(time.RFC3339))
+	}
 	return s, nil
 }

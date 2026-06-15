@@ -26,9 +26,13 @@ type Store struct {
 func NewStore(path string) (*Store, error) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	db, err := sql.Open("sqlite3", path)
-	if err != nil { return nil, fmt.Errorf("open db: %w", err) }
+	if err != nil {
+		return nil, fmt.Errorf("open db: %w", err)
+	}
 	s := &Store{db: db, path: path}
-	if err := s.migrate(); err != nil { return nil, err }
+	if err := s.migrate(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -48,7 +52,9 @@ func (s *Store) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_sess_updated ON sessions(updated_at DESC)`,
 	}
 	for _, q := range queries {
-		if _, err := s.db.Exec(q); err != nil { return fmt.Errorf("migrate: %w", err) }
+		if _, err := s.db.Exec(q); err != nil {
+			return fmt.Errorf("migrate: %w", err)
+		}
 	}
 	return nil
 }
@@ -107,7 +113,9 @@ func (s *Store) GetSession(id string) (*SessionRecord, error) {
 	var created, updated int64
 	var tagsStr string
 	err := row.Scan(&sess.ID, &sess.Title, &sess.Provider, &sess.Model, &created, &updated, &sess.MessageCount, &sess.TotalTokens, &sess.Status, &tagsStr)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	sess.CreatedAt = time.Unix(created, 0)
 	sess.UpdatedAt = time.Unix(updated, 0)
 	json.Unmarshal([]byte(tagsStr), &sess.Tags)
@@ -148,7 +156,9 @@ func (s *Store) ListSessions(offset, limit int, status string) ([]*SessionRecord
 	query += ` ORDER BY updated_at DESC LIMIT ? OFFSET ?`
 	args = append(args, limit, offset)
 	rows, err := s.db.Query(query, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var sessions []*SessionRecord
 	for rows.Next() {
@@ -174,7 +184,9 @@ func (s *Store) SearchSessions(query string, limit int) ([]*SessionRecord, error
 		 ORDER BY updated_at DESC LIMIT ?`,
 		"%"+query+"%", "%"+query+"%", limit,
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var sessions []*SessionRecord
 	for rows.Next() {
@@ -212,7 +224,9 @@ func (s *Store) GetMessages(sessionID string) ([]*MessageRecord, error) {
 		`SELECT id,session_id,role,content,tool_calls,timestamp,turn
 		 FROM messages WHERE session_id=? ORDER BY turn ASC`, sessionID,
 	)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	var msgs []*MessageRecord
 	for rows.Next() {
@@ -248,13 +262,17 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // FormatSessions formats session records for display.
 func FormatSessions(sessions []*SessionRecord) string {
-	if len(sessions) == 0 { return "No sessions.\n" }
+	if len(sessions) == 0 {
+		return "No sessions.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d session(s):\n\n", len(sessions))
 	for _, s := range sessions {
 		age := time.Since(s.UpdatedAt).Truncate(time.Minute)
 		tags := ""
-		if len(s.Tags) > 0 { tags = " [" + strings.Join(s.Tags, ", ") + "]" }
+		if len(s.Tags) > 0 {
+			tags = " [" + strings.Join(s.Tags, ", ") + "]"
+		}
 		fmt.Fprintf(&sb, "  %-30s %s/%s %dmsgs %dtok %s ago%s\n",
 			s.Title, s.Provider, s.Model, s.MessageCount, s.TotalTokens, age, tags)
 	}
@@ -276,32 +294,46 @@ func NewMemoryStore() *MemoryStore {
 }
 
 func (m *MemoryStore) CreateSession(sess *SessionRecord) error {
-	m.mu.Lock(); defer m.mu.Unlock()
-	sess.CreatedAt = time.Now(); sess.UpdatedAt = sess.CreatedAt
-	m.sessions[sess.ID] = sess; return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess.CreatedAt = time.Now()
+	sess.UpdatedAt = sess.CreatedAt
+	m.sessions[sess.ID] = sess
+	return nil
 }
 
 func (m *MemoryStore) GetSession(id string) (*SessionRecord, error) {
-	m.mu.RLock(); defer m.mu.RUnlock()
-	if s, ok := m.sessions[id]; ok { return s, nil }
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if s, ok := m.sessions[id]; ok {
+		return s, nil
+	}
 	return nil, fmt.Errorf("session %q not found", id)
 }
 
 func (m *MemoryStore) ListSessions(offset, limit int, status string) ([]*SessionRecord, error) {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	var all []*SessionRecord
 	for _, s := range m.sessions {
-		if status == "" || s.Status == status { all = append(all, s) }
+		if status == "" || s.Status == status {
+			all = append(all, s)
+		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].UpdatedAt.After(all[j].UpdatedAt) })
-	if offset >= len(all) { return nil, nil }
+	if offset >= len(all) {
+		return nil, nil
+	}
 	end := offset + limit
-	if end > len(all) { end = len(all) }
+	if end > len(all) {
+		end = len(all)
+	}
 	return all[offset:end], nil
 }
 
 func (m *MemoryStore) AddMessage(msg *MessageRecord) error {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.messages[msg.SessionID] = append(m.messages[msg.SessionID], msg)
 	if s, ok := m.sessions[msg.SessionID]; ok {
 		s.MessageCount = len(m.messages[msg.SessionID])
@@ -311,12 +343,13 @@ func (m *MemoryStore) AddMessage(msg *MessageRecord) error {
 }
 
 func (m *MemoryStore) GetMessages(sessionID string) ([]*MessageRecord, error) {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return m.messages[sessionID], nil
 }
 
 func (m *MemoryStore) Count() int {
-	m.mu.RLock(); defer m.mu.RUnlock()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 	return len(m.sessions)
 }
-

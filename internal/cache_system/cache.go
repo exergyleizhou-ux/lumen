@@ -13,13 +13,13 @@ import (
 
 // Cache is a generic, thread-safe cache with TTL and LRU eviction.
 type Cache struct {
-	mu       sync.Mutex
-	items    map[string]*list.Element
-	lru      *list.List
-	maxItems int
+	mu         sync.Mutex
+	items      map[string]*list.Element
+	lru        *list.List
+	maxItems   int
 	defaultTTL time.Duration
-	hits     int64
-	misses   int64
+	hits       int64
+	misses     int64
 }
 
 type cacheItem struct {
@@ -35,9 +35,9 @@ func New(maxItems int, defaultTTL time.Duration) *Cache {
 		maxItems = 1000
 	}
 	return &Cache{
-		items:    make(map[string]*list.Element),
-		lru:      list.New(),
-		maxItems: maxItems,
+		items:      make(map[string]*list.Element),
+		lru:        list.New(),
+		maxItems:   maxItems,
 		defaultTTL: defaultTTL,
 	}
 }
@@ -197,10 +197,12 @@ func NewStringCache(maxItems int, ttl time.Duration) *StringCache {
 	return &StringCache{inner: New(maxItems, ttl)}
 }
 
-func (c *StringCache) Set(k, v string)          { c.inner.Set(k, v) }
+func (c *StringCache) Set(k, v string) { c.inner.Set(k, v) }
 func (c *StringCache) Get(k string) (string, bool) {
 	v, ok := c.inner.Get(k)
-	if !ok { return "", false }
+	if !ok {
+		return "", false
+	}
 	return v.(string), true
 }
 
@@ -214,9 +216,11 @@ func NewIntCache(maxItems int, ttl time.Duration) *IntCache {
 	return &IntCache{inner: New(maxItems, ttl)}
 }
 
-func (c *IntCache) Set(k string, v int)          { c.inner.Set(k, v) }
+func (c *IntCache) Set(k string, v int) { c.inner.Set(k, v) }
 func (c *IntCache) Get(k string) (int, bool) {
 	v, ok := c.inner.Get(k)
-	if !ok { return 0, false }
+	if !ok {
+		return 0, false
+	}
 	return v.(int), true
 }

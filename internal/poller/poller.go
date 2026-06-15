@@ -20,7 +20,7 @@ import (
 type ChangeType int
 
 const (
-	ChangeNone     ChangeType = iota
+	ChangeNone ChangeType = iota
 	ChangeCreated
 	ChangeUpdated
 	ChangeDeleted
@@ -42,7 +42,7 @@ func (ct ChangeType) String() string {
 
 // DiffEntry describes one changed field or section.
 type DiffEntry struct {
-	Path     string      `json:"path"`     // JSON path or field name.
+	Path     string      `json:"path"` // JSON path or field name.
 	OldValue interface{} `json:"old_value,omitempty"`
 	NewValue interface{} `json:"new_value,omitempty"`
 	Type     ChangeType  `json:"type"`
@@ -420,7 +420,7 @@ func Backoff(base time.Duration, attempt int, maxDuration time.Duration, multipl
 	}
 	// Add jitter.
 	if jitter > 0 {
-		f = f * (1 + jitter*(2*float64(time.Now().UnixNano()%1000)/1000 - 1))
+		f = f * (1 + jitter*(2*float64(time.Now().UnixNano()%1000)/1000-1))
 	}
 	d := time.Duration(f)
 	if d > maxDuration {
@@ -549,7 +549,9 @@ func NewPollGroup(id string, poller *Poller, resourceIDs []string) *PollGroup {
 
 // PollNow polls all resources in the group.
 func (pg *PollGroup) PollNow() {
-	for _, id := range pg.resources { pg.poller.PollOne(id) }
+	for _, id := range pg.resources {
+		pg.poller.PollOne(id)
+	}
 }
 
 // HistoryForGroup returns combined history for all resources in the group.
@@ -559,7 +561,10 @@ func (pg *PollGroup) HistoryForGroup() []Change {
 	for _, id := range pg.resources {
 		for _, c := range pg.poller.HistoryFor(id) {
 			key := c.ResourceID + c.Timestamp.String()
-			if !seen[key] { seen[key] = true; combined = append(combined, c) }
+			if !seen[key] {
+				seen[key] = true
+				combined = append(combined, c)
+			}
 		}
 	}
 	sort.Slice(combined, func(i, j int) bool { return combined[i].Timestamp.Before(combined[j].Timestamp) })
@@ -570,19 +575,19 @@ func (pg *PollGroup) HistoryForGroup() []Change {
 
 // Threshold defines a condition that triggers an alert.
 type Threshold struct {
-	ResourceID  string      `json:"resource_id"`
-	Field       string      `json:"field"`
-	Op          string      `json:"op"` // "gt", "lt", "eq", "changed".
-	Value       interface{} `json:"value"`
+	ResourceID string      `json:"resource_id"`
+	Field      string      `json:"field"`
+	Op         string      `json:"op"` // "gt", "lt", "eq", "changed".
+	Value      interface{} `json:"value"`
 }
 
 // Alert is raised when a threshold is breached.
 type Alert struct {
-	ID         string    `json:"id"`
-	Threshold  Threshold `json:"threshold"`
-	Message    string    `json:"message"`
-	FiredAt    time.Time `json:"fired_at"`
-	Acked      bool      `json:"acked"`
+	ID        string    `json:"id"`
+	Threshold Threshold `json:"threshold"`
+	Message   string    `json:"message"`
+	FiredAt   time.Time `json:"fired_at"`
+	Acked     bool      `json:"acked"`
 }
 
 // AlertManager evaluates thresholds and tracks alerts.
@@ -601,7 +606,8 @@ func NewAlertManager(poller *Poller) *AlertManager {
 
 // AddThreshold adds a threshold rule.
 func (am *AlertManager) AddThreshold(t Threshold) {
-	am.mu.Lock(); defer am.mu.Unlock()
+	am.mu.Lock()
+	defer am.mu.Unlock()
 	am.thresholds = append(am.thresholds, t)
 }
 
@@ -612,12 +618,15 @@ func (am *AlertManager) Evaluate() []Alert {
 	var fired []Alert
 	for _, t := range am.thresholds {
 		res := am.poller.GetResource(t.ResourceID)
-		if res == nil { continue }
+		if res == nil {
+			continue
+		}
 		prev, hasPrev := am.history[t.ResourceID]
 		am.history[t.ResourceID] = res.Data
 		if t.Op == "changed" && hasPrev && string(prev) != string(res.Data) {
 			a := Alert{ID: generateAlertID(), Threshold: t, Message: fmt.Sprintf("%s changed", t.ResourceID), FiredAt: time.Now()}
-			am.alerts = append(am.alerts, a); fired = append(fired, a)
+			am.alerts = append(am.alerts, a)
+			fired = append(fired, a)
 		}
 	}
 	return fired
@@ -625,21 +634,28 @@ func (am *AlertManager) Evaluate() []Alert {
 
 // Alerts returns all alerts.
 func (am *AlertManager) Alerts() []Alert {
-	am.mu.Lock(); defer am.mu.Unlock()
-	out := make([]Alert, len(am.alerts)); copy(out, am.alerts)
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	out := make([]Alert, len(am.alerts))
+	copy(out, am.alerts)
 	return out
 }
 
 // AckAlert acknowledges an alert.
 func (am *AlertManager) AckAlert(id string) bool {
-	am.mu.Lock(); defer am.mu.Unlock()
+	am.mu.Lock()
+	defer am.mu.Unlock()
 	for i, a := range am.alerts {
-		if a.ID == id { am.alerts[i].Acked = true; return true }
+		if a.ID == id {
+			am.alerts[i].Acked = true
+			return true
+		}
 	}
 	return false
 }
 
 var alertIDCounter int64
+
 func generateAlertID() string { alertIDCounter++; return fmt.Sprintf("alert-%d", alertIDCounter) }
 
 // --- Webhook Notifier ---
@@ -667,7 +683,7 @@ func (wn *WebhookNotifier) Notify(change Change) error {
 
 // PollScheduler manages polling at specific times (cron-like).
 type PollSchedule struct {
-	CronExpr   string   `json:"cron_expr"`
+	CronExpr    string   `json:"cron_expr"`
 	ResourceIDs []string `json:"resource_ids"`
 }
 
@@ -684,4 +700,6 @@ func NewScheduledPoller(cfg Config, fetch FetchFunc, notify NotifyFunc, loc *tim
 }
 
 // AddSchedule adds a cron-based poll schedule.
-func (sp *ScheduledPoller) AddSchedule(sched PollSchedule) { sp.schedules = append(sp.schedules, sched) }
+func (sp *ScheduledPoller) AddSchedule(sched PollSchedule) {
+	sp.schedules = append(sp.schedules, sched)
+}

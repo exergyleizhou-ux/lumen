@@ -13,12 +13,12 @@ import (
 // harnessTestTool is a minimal file-writing tool for parity tests.
 type harnessWriteTool struct{ wrote *string }
 
-func (t *harnessWriteTool) Name() string                           { return "write_file" }
-func (t *harnessWriteTool) Description() string                    { return "write" }
-func (t *harnessWriteTool) ReadOnly() bool                         { return false }
-func (t *harnessWriteTool) Schema() provider.ToolSchema            { return provider.ToolSchema{} }
-func (t *harnessWriteTool) SchemaJSON() []byte                     { return []byte(`{}`) }
-func (t *harnessWriteTool) Schemas()                               {}
+func (t *harnessWriteTool) Name() string                { return "write_file" }
+func (t *harnessWriteTool) Description() string         { return "write" }
+func (t *harnessWriteTool) ReadOnly() bool              { return false }
+func (t *harnessWriteTool) Schema() provider.ToolSchema { return provider.ToolSchema{} }
+func (t *harnessWriteTool) SchemaJSON() []byte          { return []byte(`{}`) }
+func (t *harnessWriteTool) Schemas()                    {}
 func (t *harnessWriteTool) Execute(ctx context.Context, args []byte) (string, error) {
 	*t.wrote = string(args)
 	return "wrote ok", nil
@@ -142,7 +142,7 @@ func TestHarnessPlanMode(t *testing.T) {
 	reg := tool.NewRegistry()
 	reg.Add(&testReadOnlyTool{})
 	// Register a write_file tool specifically for plan mode test
-	reg.Add(&testWriteTool{})  // registered as "write_test"
+	reg.Add(&testWriteTool{}) // registered as "write_test"
 
 	scenario := mock.PlanModeScenario()
 	prov := mock.NewService("mock", "mock-model", scenario)

@@ -21,8 +21,8 @@ import (
 type Entry struct {
 	Turn      int       `json:"turn"`
 	Timestamp time.Time `json:"ts"`
-	Kind      string    `json:"kind"`            // "tool_dispatch", "tool_result", "text", "notice", "phase"
-	ToolName  string    `json:"tool,omitempty"`  // bash / write_file / edit_file / ...
+	Kind      string    `json:"kind"`             // "tool_dispatch", "tool_result", "text", "notice", "phase"
+	ToolName  string    `json:"tool,omitempty"`   // bash / write_file / edit_file / ...
 	Detail    string    `json:"detail,omitempty"` // first line of output, or command summary
 	Path      string    `json:"path,omitempty"`   // file path for write_file / edit_file
 	Success   bool      `json:"success,omitempty"`
@@ -132,8 +132,8 @@ func (r *Recorder) RecordEvent(ev event.Event) {
 // ChangedFile represents a file that was modified during the session.
 type ChangedFile struct {
 	Path       string    `json:"path"`
-	Turns      []int     `json:"turns"`       // which turns touched this file
-	Operations []string  `json:"operations"`  // "write", "edit", "bash"
+	Turns      []int     `json:"turns"`      // which turns touched this file
+	Operations []string  `json:"operations"` // "write", "edit", "bash"
 	LastTouch  time.Time `json:"last_touch"`
 }
 
@@ -298,12 +298,16 @@ func summarizeToolArgs(name string, args string) string {
 	}
 	switch name {
 	case "bash":
-		var p struct{ Command string `json:"command"` }
+		var p struct {
+			Command string `json:"command"`
+		}
 		if json.Unmarshal([]byte(args), &p) == nil && p.Command != "" {
 			return p.Command
 		}
 	case "write_file", "edit_file":
-		var p struct{ Path string `json:"path"` }
+		var p struct {
+			Path string `json:"path"`
+		}
 		if json.Unmarshal([]byte(args), &p) == nil && p.Path != "" {
 			return filepath.Base(p.Path)
 		}
@@ -314,12 +318,16 @@ func summarizeToolArgs(name string, args string) string {
 func extractPath(name string, args string) string {
 	switch name {
 	case "write_file", "edit_file":
-		var p struct{ Path string `json:"path"` }
+		var p struct {
+			Path string `json:"path"`
+		}
 		if json.Unmarshal([]byte(args), &p) == nil && p.Path != "" {
 			return p.Path
 		}
 	case "multi_edit":
-		var p struct{ Path string `json:"path"` }
+		var p struct {
+			Path string `json:"path"`
+		}
 		if json.Unmarshal([]byte(args), &p) == nil && p.Path != "" {
 			return p.Path
 		}

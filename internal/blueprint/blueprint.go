@@ -14,13 +14,13 @@ import (
 
 // Component is a named unit with dependencies and lifecycle.
 type Component struct {
-	Name      string            `json:"name"`
-	Provides  []string          `json:"provides"`
-	DependsOn []string          `json:"depends_on"`
-	OptionalDependsOn []string  `json:"optional_depends_on,omitempty"`
-	Factory   func(ctx *Context) (any, error) `json:"-"`
-	Cleanup   func(instance any) error `json:"-"`
-	Priority  int               `json:"priority"`
+	Name              string                          `json:"name"`
+	Provides          []string                        `json:"provides"`
+	DependsOn         []string                        `json:"depends_on"`
+	OptionalDependsOn []string                        `json:"optional_depends_on,omitempty"`
+	Factory           func(ctx *Context) (any, error) `json:"-"`
+	Cleanup           func(instance any) error        `json:"-"`
+	Priority          int                             `json:"priority"`
 }
 
 // Context provides dependency resolution during construction.
@@ -32,7 +32,8 @@ type Context struct {
 
 // Get retrieves a resolved dependency.
 func (c *Context) Get(name string) (any, bool) {
-	c.mu.RLock(); defer c.mu.RUnlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	v, ok := c.instances[name]
 	return v, ok
 }
@@ -40,7 +41,9 @@ func (c *Context) Get(name string) (any, bool) {
 // GetString retrieves a string dependency.
 func (c *Context) GetString(name string) string {
 	if v, ok := c.Get(name); ok {
-		if s, ok := v.(string); ok { return s }
+		if s, ok := v.(string); ok {
+			return s
+		}
 	}
 	return ""
 }
@@ -65,13 +68,15 @@ func NewResolver() *Resolver {
 
 // Register adds a component.
 func (r *Resolver) Register(c *Component) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.components[c.Name] = c
 }
 
 // RegisterBlueprint adds a blueprint.
 func (r *Resolver) RegisterBlueprint(bp *Blueprint) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.blueprints[bp.Name] = bp
 	for _, c := range bp.Components {
 		r.components[c.Name] = c
@@ -80,45 +85,63 @@ func (r *Resolver) RegisterBlueprint(bp *Blueprint) {
 
 // Resolve determines the instantiation order for a set of component names.
 func (r *Resolver) Resolve(names []string) ([]*Component, error) {
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
 	// Build subgraph
 	included := map[string]bool{}
 	var collect func(name string) error
 	collect = func(name string) error {
 		c, ok := r.components[name]
-		if !ok { return fmt.Errorf("component %q not found", name) }
-		if included[name] { return nil }
+		if !ok {
+			return fmt.Errorf("component %q not found", name)
+		}
+		if included[name] {
+			return nil
+		}
 		included[name] = true
 		for _, dep := range c.DependsOn {
 			if err := collect(dep); err != nil {
 				// Check if optional
 				isOptional := false
 				for _, od := range c.OptionalDependsOn {
-					if od == dep { isOptional = true; break }
+					if od == dep {
+						isOptional = true
+						break
+					}
 				}
-				if !isOptional { return err }
+				if !isOptional {
+					return err
+				}
 			}
 		}
 		return nil
 	}
 	for _, name := range names {
-		if err := collect(name); err != nil { return nil, err }
+		if err := collect(name); err != nil {
+			return nil, err
+		}
 	}
 
 	// Topological sort
 	inDegree := map[string]int{}
-	for name := range included { inDegree[name] = 0 }
+	for name := range included {
+		inDegree[name] = 0
+	}
 	for name := range included {
 		c := r.components[name]
 		for _, dep := range c.DependsOn {
-			if included[dep] { inDegree[name]++ }
+			if included[dep] {
+				inDegree[name]++
+			}
 		}
 	}
 
 	var queue []string
 	for name, deg := range inDegree {
-		if deg == 0 { queue = append(queue, name) }
+		if deg == 0 {
+			queue = append(queue, name)
+		}
 	}
 	sort.Strings(queue) // Deterministic order
 
@@ -151,7 +174,9 @@ func (r *Resolver) Resolve(names []string) ([]*Component, error) {
 // Build instantiates all components in the given list.
 func (r *Resolver) Build(names []string) (*Context, func(), error) {
 	order, err := r.Resolve(names)
-	if err != nil { return nil, nil, err }
+	if err != nil {
+		return nil, nil, err
+	}
 
 	ctx := &Context{instances: map[string]any{}, startTime: time.Now()}
 
@@ -189,10 +214,16 @@ func (r *Resolver) Validate(bp *Blueprint) []error {
 	var errs []error
 	names := map[string]bool{}
 	for _, c := range bp.Components {
-		if c.Name == "" { errs = append(errs, fmt.Errorf("component with empty name")) }
-		if names[c.Name] { errs = append(errs, fmt.Errorf("duplicate component %q", c.Name)) }
+		if c.Name == "" {
+			errs = append(errs, fmt.Errorf("component with empty name"))
+		}
+		if names[c.Name] {
+			errs = append(errs, fmt.Errorf("duplicate component %q", c.Name))
+		}
 		names[c.Name] = true
-		if c.Factory == nil { errs = append(errs, fmt.Errorf("%q: no factory function", c.Name)) }
+		if c.Factory == nil {
+			errs = append(errs, fmt.Errorf("%q: no factory function", c.Name))
+		}
 	}
 	// Check deps exist
 	for _, c := range bp.Components {
@@ -200,7 +231,10 @@ func (r *Resolver) Validate(bp *Blueprint) []error {
 			if !names[dep] {
 				optional := false
 				for _, od := range c.OptionalDependsOn {
-					if od == dep { optional = true; break }
+					if od == dep {
+						optional = true
+						break
+					}
 				}
 				if !optional {
 					errs = append(errs, fmt.Errorf("%q: depends on unknown %q", c.Name, dep))
@@ -218,8 +252,12 @@ func FormatBlueprint(bp *Blueprint) string {
 	sort.Slice(bp.Components, func(i, j int) bool { return bp.Components[i].Name < bp.Components[j].Name })
 	for _, c := range bp.Components {
 		fmt.Fprintf(&sb, "  ● %s", c.Name)
-		if len(c.DependsOn) > 0 { fmt.Fprintf(&sb, " → [%s]", strings.Join(c.DependsOn, ", ")) }
-		if len(c.Provides) > 0 { fmt.Fprintf(&sb, " provides [%s]", strings.Join(c.Provides, ", ")) }
+		if len(c.DependsOn) > 0 {
+			fmt.Fprintf(&sb, " → [%s]", strings.Join(c.DependsOn, ", "))
+		}
+		if len(c.Provides) > 0 {
+			fmt.Fprintf(&sb, " provides [%s]", strings.Join(c.Provides, ", "))
+		}
 		sb.WriteByte('\n')
 	}
 	// Try to resolve and show order

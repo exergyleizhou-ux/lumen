@@ -16,10 +16,10 @@ import (
 
 // Router manages multiple providers with automatic fallback.
 type Router struct {
-	mu        sync.RWMutex
-	providers []routeEntry
+	mu         sync.RWMutex
+	providers  []routeEntry
 	defaultIdx int
-	stats     map[string]*ProviderStats
+	stats      map[string]*ProviderStats
 }
 
 // routeEntry pairs a config with its resolved provider.

@@ -12,46 +12,46 @@ import (
 
 // DeliveryAttempt records metadata about a single delivery try.
 type DeliveryAttempt struct {
-	Timestamp time.Time `json:"timestamp"`
-	Error     string    `json:"error"`
+	Timestamp time.Time     `json:"timestamp"`
+	Error     string        `json:"error"`
 	Latency   time.Duration `json:"latency"`
 }
 
 // Message represents a failed message stored in the dead letter queue.
 type Message struct {
-	ID          string            `json:"id"`
-	Subject     string            `json:"subject"`
-	Payload     []byte            `json:"payload"`
-	Headers     map[string]string `json:"headers"`
-	EnqueuedAt  time.Time         `json:"enqueued_at"`
-	ExpiresAt   time.Time         `json:"expires_at"`
-	RetryCount  int               `json:"retry_count"`
-	MaxRetries  int               `json:"max_retries"`
-	Attempts    []DeliveryAttempt `json:"attempts"`
-	LastError   string            `json:"last_error"`
-	Partition   string            `json:"partition"`
+	ID         string            `json:"id"`
+	Subject    string            `json:"subject"`
+	Payload    []byte            `json:"payload"`
+	Headers    map[string]string `json:"headers"`
+	EnqueuedAt time.Time         `json:"enqueued_at"`
+	ExpiresAt  time.Time         `json:"expires_at"`
+	RetryCount int               `json:"retry_count"`
+	MaxRetries int               `json:"max_retries"`
+	Attempts   []DeliveryAttempt `json:"attempts"`
+	LastError  string            `json:"last_error"`
+	Partition  string            `json:"partition"`
 }
 
 // QueueStats holds aggregate statistics for a dead letter queue.
 type QueueStats struct {
-	TotalMessages    int           `json:"total_messages"`
-	TotalSubjects    int           `json:"total_subjects"`
-	TotalPartitions  int           `json:"total_partitions"`
-	ExpiredCount     int64         `json:"expired_count"`
-	ReplayedCount    int64         `json:"replayed_count"`
-	PurgedCount      int64         `json:"purged_count"`
-	OldestMessage    time.Time     `json:"oldest_message"`
-	NewestMessage    time.Time     `json:"newest_message"`
+	TotalMessages   int       `json:"total_messages"`
+	TotalSubjects   int       `json:"total_subjects"`
+	TotalPartitions int       `json:"total_partitions"`
+	ExpiredCount    int64     `json:"expired_count"`
+	ReplayedCount   int64     `json:"replayed_count"`
+	PurgedCount     int64     `json:"purged_count"`
+	OldestMessage   time.Time `json:"oldest_message"`
+	NewestMessage   time.Time `json:"newest_message"`
 }
 
 // Config configures the dead letter queue.
 type Config struct {
-	MaxMessages       int           // Max total messages before eviction of oldest.
-	DefaultTTL        time.Duration // Default TTL for new messages.
-	MaxRetries        int           // Default max retries.
-	PartitionBy       string        // Field to partition by ("subject" or empty for none).
-	EvictionPolicy    string        // "oldest" or "largest".
-	ReplayBatchSize   int           // Max messages replayed per batch.
+	MaxMessages     int           // Max total messages before eviction of oldest.
+	DefaultTTL      time.Duration // Default TTL for new messages.
+	MaxRetries      int           // Default max retries.
+	PartitionBy     string        // Field to partition by ("subject" or empty for none).
+	EvictionPolicy  string        // "oldest" or "largest".
+	ReplayBatchSize int           // Max messages replayed per batch.
 }
 
 // DefaultConfig returns sensible defaults.
@@ -102,11 +102,11 @@ func New(cfg Config) *Queue {
 		cfg.ReplayBatchSize = 100
 	}
 	q := &Queue{
-		config:     cfg,
-		messages:   make(map[string]*list.Element),
-		order:      list.New(),
-		subjects:   make(map[string]*list.List),
-		partitions: make(map[string]*list.List),
+		config:      cfg,
+		messages:    make(map[string]*list.Element),
+		order:       list.New(),
+		subjects:    make(map[string]*list.List),
+		partitions:  make(map[string]*list.List),
 		stopCleanup: make(chan struct{}),
 	}
 	go q.cleanupLoop()
@@ -413,6 +413,11 @@ func (q *Queue) ReplayAll(fn ReplayFunc) (int, error) {
 func (q *Queue) Subjects() []string {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
+	return q.subjectsLocked()
+}
+
+// subjectsLocked assumes the caller holds the lock.
+func (q *Queue) subjectsLocked() []string {
 	out := make([]string, 0, len(q.subjects))
 	for s := range q.subjects {
 		out = append(out, s)
@@ -452,7 +457,7 @@ func (q *Queue) FormatQueue() string {
 	defer q.mu.RUnlock()
 	s := fmt.Sprintf("DeadLetter Queue: %d messages, %d subjects, %d partitions\n",
 		q.order.Len(), len(q.subjects), len(q.partitions))
-	for _, subj := range q.Subjects() {
+	for _, subj := range q.subjectsLocked() {
 		msgs := listToMessages(q.subjects[subj])
 		s += fmt.Sprintf("  Subject %q: %d messages\n", subj, len(msgs))
 		for _, m := range msgs {
@@ -475,7 +480,9 @@ func truncate(s string, n int) string {
 // BatchEnqueue adds multiple messages atomically.
 func (q *Queue) BatchEnqueue(msgs []*Message) []error {
 	errs := make([]error, len(msgs))
-	for i, msg := range msgs { errs[i] = q.Enqueue(msg) }
+	for i, msg := range msgs {
+		errs[i] = q.Enqueue(msg)
+	}
 	return errs
 }
 
@@ -499,10 +506,10 @@ func (q *Queue) BatchRemove(prefix string) int {
 
 // RetryPolicy determines how retries are scheduled.
 type RetryPolicy struct {
-	BackoffBase    time.Duration
-	BackoffMax     time.Duration
-	BackoffMult    float64
-	Jitter         bool
+	BackoffBase time.Duration
+	BackoffMax  time.Duration
+	BackoffMult float64
+	Jitter      bool
 }
 
 // DefaultRetryPolicy returns a sensible default.
@@ -518,8 +525,12 @@ func DefaultRetryPolicy() RetryPolicy {
 // NextDelay computes the next retry delay for a given attempt number.
 func (rp RetryPolicy) NextDelay(attempt int) time.Duration {
 	d := float64(rp.BackoffBase)
-	for i := 1; i < attempt; i++ { d *= rp.BackoffMult }
-	if d > float64(rp.BackoffMax) { d = float64(rp.BackoffMax) }
+	for i := 1; i < attempt; i++ {
+		d *= rp.BackoffMult
+	}
+	if d > float64(rp.BackoffMax) {
+		d = float64(rp.BackoffMax)
+	}
 	if rp.Jitter {
 		// Simple deterministic jitter for testability.
 		d = d * (0.75 + 0.5*float64(attempt%10)/10.0)
@@ -549,7 +560,9 @@ func (q *Queue) FilterMessages(fn MessageFilter) []*Message {
 	var out []*Message
 	for e := q.order.Front(); e != nil; e = e.Next() {
 		msg := e.Value.(*messageEntry).msg
-		if fn(msg) { out = append(out, msg) }
+		if fn(msg) {
+			out = append(out, msg)
+		}
 	}
 	return out
 }
@@ -566,7 +579,7 @@ type Persistence interface {
 
 // InMemoryPersistence implements Persistence in memory for testing.
 type InMemoryPersistence struct {
-	mu  sync.RWMutex
+	mu    sync.RWMutex
 	store map[string]*Message
 }
 
@@ -576,27 +589,41 @@ func NewInMemoryPersistence() *InMemoryPersistence {
 }
 
 func (p *InMemoryPersistence) Save(msg *Message) error {
-	p.mu.Lock(); defer p.mu.Unlock()
-	cp := *msg; cp.Attempts = make([]DeliveryAttempt, len(msg.Attempts)); copy(cp.Attempts, msg.Attempts)
-	p.store[msg.ID] = &cp; return nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	cp := *msg
+	cp.Attempts = make([]DeliveryAttempt, len(msg.Attempts))
+	copy(cp.Attempts, msg.Attempts)
+	p.store[msg.ID] = &cp
+	return nil
 }
 
 func (p *InMemoryPersistence) Load(id string) (*Message, error) {
-	p.mu.RLock(); defer p.mu.RUnlock()
-	if m, ok := p.store[id]; ok { cp := *m; return &cp, nil }
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	if m, ok := p.store[id]; ok {
+		cp := *m
+		return &cp, nil
+	}
 	return nil, fmt.Errorf("message %q not found", id)
 }
 
 func (p *InMemoryPersistence) LoadAll() ([]*Message, error) {
-	p.mu.RLock(); defer p.mu.RUnlock()
+	p.mu.RLock()
+	defer p.mu.RUnlock()
 	out := make([]*Message, 0, len(p.store))
-	for _, m := range p.store { cp := *m; out = append(out, &cp) }
+	for _, m := range p.store {
+		cp := *m
+		out = append(out, &cp)
+	}
 	return out, nil
 }
 
 func (p *InMemoryPersistence) Delete(id string) error {
-	p.mu.Lock(); defer p.mu.Unlock()
-	delete(p.store, id); return nil
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.store, id)
+	return nil
 }
 
 // --- Queue with Persistence ---
@@ -610,23 +637,31 @@ type DurableQueue struct {
 // NewDurableQueue creates a queue backed by a persistence layer.
 func NewDurableQueue(cfg Config, persist Persistence) *DurableQueue {
 	q := New(cfg)
-	if persist == nil { persist = NewInMemoryPersistence() }
+	if persist == nil {
+		persist = NewInMemoryPersistence()
+	}
 	return &DurableQueue{Queue: q, persist: persist}
 }
 
 // EnqueueAndSave enqueues a message and persists it.
 func (dq *DurableQueue) EnqueueAndSave(msg *Message) error {
-	if err := dq.Queue.Enqueue(msg); err != nil { return err }
+	if err := dq.Queue.Enqueue(msg); err != nil {
+		return err
+	}
 	return dq.persist.Save(msg)
 }
 
 // Restore loads all persisted messages into the queue.
 func (dq *DurableQueue) Restore() (int, error) {
 	msgs, err := dq.persist.LoadAll()
-	if err != nil { return 0, err }
+	if err != nil {
+		return 0, err
+	}
 	count := 0
 	for _, msg := range msgs {
-		if err := dq.Queue.Enqueue(msg); err != nil { continue }
+		if err := dq.Queue.Enqueue(msg); err != nil {
+			continue
+		}
 		count++
 	}
 	return count, nil
@@ -636,8 +671,8 @@ func (dq *DurableQueue) Restore() (int, error) {
 
 // Subscription represents an interest in messages for a subject.
 type Subscription struct {
-	ID      string `json:"id"`
-	Subject string `json:"subject"`
+	ID      string     `json:"id"`
+	Subject string     `json:"subject"`
 	Handler ReplayFunc `json:"-"`
 }
 
@@ -652,16 +687,21 @@ func NewPubSub() *PubSub { return &PubSub{subscriptions: make(map[string][]Subsc
 
 // Subscribe registers a handler for a subject.
 func (ps *PubSub) Subscribe(subject, id string, handler ReplayFunc) {
-	ps.mu.Lock(); defer ps.mu.Unlock()
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
 	ps.subscriptions[subject] = append(ps.subscriptions[subject], Subscription{ID: id, Subject: subject, Handler: handler})
 }
 
 // Unsubscribe removes a subscription.
 func (ps *PubSub) Unsubscribe(subject, id string) {
-	ps.mu.Lock(); defer ps.mu.Unlock()
+	ps.mu.Lock()
+	defer ps.mu.Unlock()
 	subs := ps.subscriptions[subject]
 	for i, s := range subs {
-		if s.ID == id { ps.subscriptions[subject] = append(subs[:i], subs[i+1:]...); return }
+		if s.ID == id {
+			ps.subscriptions[subject] = append(subs[:i], subs[i+1:]...)
+			return
+		}
 	}
 }
 
@@ -672,7 +712,9 @@ func (ps *PubSub) Publish(msg *Message) {
 	copy(subs, ps.subscriptions[msg.Subject])
 	ps.mu.RUnlock()
 	for _, s := range subs {
-		if s.Handler != nil { s.Handler(msg) }
+		if s.Handler != nil {
+			s.Handler(msg)
+		}
 	}
 }
 
@@ -681,8 +723,8 @@ func (ps *PubSub) Publish(msg *Message) {
 // DedupQueue wraps Queue with message ID deduplication.
 type DedupQueue struct {
 	*Queue
-	seen map[string]time.Time
-	muSeen sync.Mutex
+	seen        map[string]time.Time
+	muSeen      sync.Mutex
 	dedupWindow time.Duration
 }
 
@@ -699,7 +741,11 @@ func (dq *DedupQueue) cleanSeen() {
 	for range ticker.C {
 		dq.muSeen.Lock()
 		cutoff := time.Now().Add(-dq.dedupWindow)
-		for id, t := range dq.seen { if t.Before(cutoff) { delete(dq.seen, id) } }
+		for id, t := range dq.seen {
+			if t.Before(cutoff) {
+				delete(dq.seen, id)
+			}
+		}
 		dq.muSeen.Unlock()
 	}
 }
@@ -707,7 +753,10 @@ func (dq *DedupQueue) cleanSeen() {
 // EnqueueUnique enqueues a message only if its ID hasn't been seen within the window.
 func (dq *DedupQueue) EnqueueUnique(msg *Message) (bool, error) {
 	dq.muSeen.Lock()
-	if _, seen := dq.seen[msg.ID]; seen { dq.muSeen.Unlock(); return false, nil }
+	if _, seen := dq.seen[msg.ID]; seen {
+		dq.muSeen.Unlock()
+		return false, nil
+	}
 	dq.seen[msg.ID] = time.Now()
 	dq.muSeen.Unlock()
 	return true, dq.Queue.Enqueue(msg)

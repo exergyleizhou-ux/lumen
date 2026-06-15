@@ -17,9 +17,9 @@ import (
 type Priority int
 
 const (
-	PriorityLow    Priority = 0
-	PriorityNormal Priority = 5
-	PriorityHigh   Priority = 10
+	PriorityLow      Priority = 0
+	PriorityNormal   Priority = 5
+	PriorityHigh     Priority = 10
 	PriorityCritical Priority = 20
 )
 
@@ -27,30 +27,30 @@ const (
 type TaskStatus string
 
 const (
-	StatusQueued   TaskStatus = "queued"
-	StatusRunning  TaskStatus = "running"
-	StatusComplete TaskStatus = "complete"
-	StatusFailed   TaskStatus = "failed"
+	StatusQueued    TaskStatus = "queued"
+	StatusRunning   TaskStatus = "running"
+	StatusComplete  TaskStatus = "complete"
+	StatusFailed    TaskStatus = "failed"
 	StatusCancelled TaskStatus = "cancelled"
-	StatusRetrying TaskStatus = "retrying"
+	StatusRetrying  TaskStatus = "retrying"
 )
 
 // Task is one unit of scheduled work.
 type Task struct {
-	ID          string        `json:"id"`
-	Name        string        `json:"name"`
-	Priority    Priority      `json:"priority"`
-	Status      TaskStatus    `json:"status"`
-	DependsOn   []string      `json:"depends_on,omitempty"`
-	Handler     string        `json:"handler"`
-	Payload     any           `json:"payload"`
-	MaxRetries  int           `json:"max_retries"`
-	Attempts    int           `json:"attempts"`
-	CreatedAt   time.Time     `json:"created_at"`
-	StartedAt   time.Time     `json:"started_at"`
-	CompletedAt time.Time     `json:"completed_at"`
-	Error       string        `json:"error,omitempty"`
-	Result      any           `json:"result,omitempty"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Priority    Priority   `json:"priority"`
+	Status      TaskStatus `json:"status"`
+	DependsOn   []string   `json:"depends_on,omitempty"`
+	Handler     string     `json:"handler"`
+	Payload     any        `json:"payload"`
+	MaxRetries  int        `json:"max_retries"`
+	Attempts    int        `json:"attempts"`
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   time.Time  `json:"started_at"`
+	CompletedAt time.Time  `json:"completed_at"`
+	Error       string     `json:"error,omitempty"`
+	Result      any        `json:"result,omitempty"`
 }
 
 // Handler executes tasks.
@@ -58,20 +58,20 @@ type TaskHandler func(ctx context.Context, task *Task) (any, error)
 
 // Engine manages task scheduling and execution.
 type Engine struct {
-	mu        sync.Mutex
-	queue     []*Task
-	handlers  map[string]TaskHandler
-	history   []*Task
+	mu         sync.Mutex
+	queue      []*Task
+	handlers   map[string]TaskHandler
+	history    []*Task
 	maxHistory int
-	running   map[string]bool
-	workers   int
-	sem       chan struct{}
-	processed atomic.Int64
-	failed    atomic.Int64
-	schedule  []CronEntry
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	running    map[string]bool
+	workers    int
+	sem        chan struct{}
+	processed  atomic.Int64
+	failed     atomic.Int64
+	schedule   []CronEntry
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 // CronEntry is a scheduled recurring task.
@@ -85,21 +85,27 @@ type CronEntry struct {
 
 // NewEngine creates a task engine with worker count.
 func NewEngine(workers int) *Engine {
-	if workers <= 0 { workers = 4 }
+	if workers <= 0 {
+		workers = 4
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	e := &Engine{
 		handlers: map[string]TaskHandler{}, maxHistory: 1000,
 		running: map[string]bool{}, workers: workers,
 		sem: make(chan struct{}, workers), ctx: ctx, cancel: cancel,
 	}
-	for i := 0; i < workers; i++ { e.wg.Add(1); go e.worker() }
+	for i := 0; i < workers; i++ {
+		e.wg.Add(1)
+		go e.worker()
+	}
 	go e.cronLoop()
 	return e
 }
 
 // RegisterHandler registers a named task handler.
 func (e *Engine) RegisterHandler(name string, h TaskHandler) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.handlers[name] = h
 }
 
@@ -111,14 +117,16 @@ func (e *Engine) Submit(name, handler string, priority Priority, payload any, de
 		Payload: payload, DependsOn: deps, MaxRetries: maxRetries,
 		CreatedAt: time.Now(),
 	}
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.queue = append(e.queue, task)
 	return task
 }
 
 // ScheduleCron adds a recurring task.
 func (e *Engine) ScheduleCron(name, handler, schedule string, payload any) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	e.schedule = append(e.schedule, CronEntry{Name: name, Schedule: schedule, Handler: handler, Payload: payload, lastRun: time.Now()})
 }
 
@@ -127,7 +135,8 @@ func (e *Engine) cronLoop() {
 	defer ticker.Stop()
 	for {
 		select {
-		case <-e.ctx.Done(): return
+		case <-e.ctx.Done():
+			return
 		case <-ticker.C:
 			e.executePendingCron()
 		}
@@ -152,33 +161,50 @@ func (e *Engine) worker() {
 	defer e.wg.Done()
 	for {
 		select {
-		case <-e.ctx.Done(): return
+		case <-e.ctx.Done():
+			return
 		case e.sem <- struct{}{}:
 		}
 		task := e.dequeueReady()
-		if task == nil { <-e.sem; time.Sleep(50 * time.Millisecond); continue }
+		if task == nil {
+			<-e.sem
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
 		e.execute(task)
 		<-e.sem
 	}
 }
 
 func (e *Engine) dequeueReady() *Task {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	// Sort by priority (highest first)
 	sort.Slice(e.queue, func(i, j int) bool { return e.queue[i].Priority > e.queue[j].Priority })
 
 	completed := map[string]bool{}
-	for _, t := range e.history { if t.Status == StatusComplete { completed[t.ID] = true } }
+	for _, t := range e.history {
+		if t.Status == StatusComplete {
+			completed[t.ID] = true
+		}
+	}
 
 	for i, t := range e.queue {
-		if t.Status == StatusRunning { continue }
+		if t.Status == StatusRunning {
+			continue
+		}
 		// Check dependencies
 		ready := true
 		for _, dep := range t.DependsOn {
-			if !completed[dep] { ready = false; break }
+			if !completed[dep] {
+				ready = false
+				break
+			}
 		}
-		if !ready { continue }
+		if !ready {
+			continue
+		}
 
 		t.Status = StatusRunning
 		t.StartedAt = time.Now()
@@ -205,7 +231,8 @@ func (e *Engine) execute(task *Task) {
 }
 
 func (e *Engine) finishTask(task *Task, result any, err error) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 
 	task.CompletedAt = time.Now()
 	delete(e.running, task.ID)
@@ -227,7 +254,9 @@ func (e *Engine) finishTask(task *Task, result any, err error) {
 	}
 
 	e.history = append(e.history, task)
-	if len(e.history) > e.maxHistory { e.history = e.history[len(e.history)-e.maxHistory:] }
+	if len(e.history) > e.maxHistory {
+		e.history = e.history[len(e.history)-e.maxHistory:]
+	}
 }
 
 // Shutdown gracefully stops the engine.
@@ -235,7 +264,8 @@ func (e *Engine) Shutdown() { e.cancel(); e.wg.Wait() }
 
 // Stats returns engine statistics.
 func (e *Engine) Stats() (queued, running, complete, failed int64) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	return int64(len(e.queue)), int64(len(e.running)), e.processed.Load(), e.failed.Load()
 }
 
@@ -249,8 +279,12 @@ func (e *Engine) FormatStats() string {
 
 // CancelTask cancels a queued or running task.
 func (e *Engine) CancelTask(taskID string) {
-	e.mu.Lock(); defer e.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	for i, t := range e.queue {
-		if t.ID == taskID { e.queue = append(e.queue[:i], e.queue[i+1:]...); return }
+		if t.ID == taskID {
+			e.queue = append(e.queue[:i], e.queue[i+1:]...)
+			return
+		}
 	}
 }

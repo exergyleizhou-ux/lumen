@@ -18,39 +18,39 @@ import (
 
 // Info describes one model in the pool.
 type Info struct {
-	Name       string        `json:"name"`
-	Provider   string        `json:"provider"`
-	Model      string        `json:"model"`
-	BaseURL    string        `json:"base_url"`
-	CostPer1K  float64       `json:"cost_per_1k_tokens"`
-	MaxTokens  int           `json:"max_tokens"`
+	Name         string       `json:"name"`
+	Provider     string       `json:"provider"`
+	Model        string       `json:"model"`
+	BaseURL      string       `json:"base_url"`
+	CostPer1K    float64      `json:"cost_per_1k_tokens"`
+	MaxTokens    int          `json:"max_tokens"`
 	Capabilities []Capability `json:"capabilities"`
-	Weight     float64       `json:"weight"`
-	Healthy    bool          `json:"healthy"`
-	LastError  string        `json:"last_error,omitempty"`
-	LastUsed   time.Time     `json:"last_used"`
+	Weight       float64      `json:"weight"`
+	Healthy      bool         `json:"healthy"`
+	LastError    string       `json:"last_error,omitempty"`
+	LastUsed     time.Time    `json:"last_used"`
 }
 
 // Capability describes what a model can do.
 type Capability string
 
 const (
-	CapCode       Capability = "code"
-	CapReason     Capability = "reasoning"
-	CapVision     Capability = "vision"
-	CapToolUse    Capability = "tool_use"
-	CapStreaming  Capability = "streaming"
-	CapCheap      Capability = "cheap"
-	CapPowerful   Capability = "powerful"
+	CapCode      Capability = "code"
+	CapReason    Capability = "reasoning"
+	CapVision    Capability = "vision"
+	CapToolUse   Capability = "tool_use"
+	CapStreaming Capability = "streaming"
+	CapCheap     Capability = "cheap"
+	CapPowerful  Capability = "powerful"
 )
 
 // ── Pool ────────────────────────────────────────────────────
 
 // Pool manages multiple models with intelligent selection.
 type Pool struct {
-	mu      sync.RWMutex
-	models  map[string]*Info
-	stats   map[string]*ModelStats
+	mu       sync.RWMutex
+	models   map[string]*Info
+	stats    map[string]*ModelStats
 	strategy SelectionStrategy
 }
 
@@ -74,7 +74,9 @@ type SelectionStrategy interface {
 
 // NewPool creates a model pool.
 func NewPool(strategy SelectionStrategy) *Pool {
-	if strategy == nil { strategy = &RoundRobinStrategy{} }
+	if strategy == nil {
+		strategy = &RoundRobinStrategy{}
+	}
 	return &Pool{models: map[string]*Info{}, stats: map[string]*ModelStats{}, strategy: strategy}
 }
 
@@ -97,7 +99,9 @@ func (p *Pool) RecordSuccess(name string, tokens int, latency time.Duration) {
 	p.mu.RLock()
 	s, ok := p.stats[name]
 	p.mu.RUnlock()
-	if !ok { return }
+	if !ok {
+		return
+	}
 	s.mu.Lock()
 	s.TotalCalls++
 	s.SuccessCalls++
@@ -114,7 +118,9 @@ func (p *Pool) RecordFailure(name string, err string) {
 	s, ok := p.stats[name]
 	m, ok2 := p.models[name]
 	p.mu.RUnlock()
-	if !ok || !ok2 { return }
+	if !ok || !ok2 {
+		return
+	}
 	s.mu.Lock()
 	s.TotalCalls++
 	s.FailedCalls++
@@ -148,7 +154,9 @@ func (p *Pool) RestoreHealth(name string) {
 func (p *Pool) HealthCheckAll(ctx context.Context, probe func(context.Context, *Info) error) {
 	p.mu.RLock()
 	models := make([]*Info, 0, len(p.models))
-	for _, m := range p.models { models = append(models, m) }
+	for _, m := range p.models {
+		models = append(models, m)
+	}
 	p.mu.RUnlock()
 
 	for _, m := range models {
@@ -170,13 +178,17 @@ func (p *Pool) FormatStats() string {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Model Pool (%d models, strategy: %s):\n\n", len(p.models), p.strategy.Name()))
 	names := make([]string, 0, len(p.models))
-	for n := range p.models { names = append(names, n) }
+	for n := range p.models {
+		names = append(names, n)
+	}
 	sort.Strings(names)
 	for _, n := range names {
 		m := p.models[n]
 		s := p.stats[n]
 		health := "✅"
-		if !m.Healthy { health = "❌" }
+		if !m.Healthy {
+			health = "❌"
+		}
 		fmt.Fprintf(&sb, "%s %-20s %-15s calls:%-6d success:%d cost:$%.4f/1K\n",
 			health, n, m.Model, s.TotalCalls, s.SuccessCalls, m.CostPer1K*1000)
 	}
@@ -206,9 +218,13 @@ func (s *RoundRobinStrategy) Select(ctx context.Context, pool *Pool, required []
 	// Collect healthy candidates
 	var candidates []*Info
 	for _, m := range pool.models {
-		if m.Healthy && hasCaps(m, required) { candidates = append(candidates, m) }
+		if m.Healthy && hasCaps(m, required) {
+			candidates = append(candidates, m)
+		}
 	}
-	if len(candidates) == 0 { return nil, fmt.Errorf("no healthy model matching capabilities %v", required) }
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no healthy model matching capabilities %v", required)
+	}
 
 	s.mu.Lock()
 	idx := s.index % len(candidates)
@@ -240,7 +256,9 @@ func (s *WeightedStrategy) Select(ctx context.Context, pool *Pool, required []Ca
 			totalWeight += m.Weight
 		}
 	}
-	if len(candidates) == 0 { return nil, fmt.Errorf("no healthy model") }
+	if len(candidates) == 0 {
+		return nil, fmt.Errorf("no healthy model")
+	}
 
 	// Weighted random selection
 	return candidates[0], nil
@@ -269,7 +287,9 @@ func (s *CostOptimizedStrategy) Select(ctx context.Context, pool *Pool, required
 			bestCost = m.CostPer1K
 		}
 	}
-	if best == nil { return nil, fmt.Errorf("no healthy model") }
+	if best == nil {
+		return nil, fmt.Errorf("no healthy model")
+	}
 	return best, nil
 }
 
@@ -291,27 +311,41 @@ func (s *LatencyOptimizedStrategy) Select(ctx context.Context, pool *Pool, requi
 	var best *Info
 	bestLatency := time.Duration(math.MaxInt64)
 	for _, m := range pool.models {
-		if !m.Healthy || !hasCaps(m, required) { continue }
+		if !m.Healthy || !hasCaps(m, required) {
+			continue
+		}
 		s := pool.stats[m.Name]
 		if s.TotalCalls > 0 {
 			avg := s.TotalLatency / time.Duration(s.TotalCalls)
-			if avg < bestLatency { best = m; bestLatency = avg }
+			if avg < bestLatency {
+				best = m
+				bestLatency = avg
+			}
 		} else if best == nil {
 			best = m
 		}
 	}
-	if best == nil { return nil, fmt.Errorf("no healthy model") }
+	if best == nil {
+		return nil, fmt.Errorf("no healthy model")
+	}
 	return best, nil
 }
 
 func hasCaps(m *Info, required []Capability) bool {
-	if len(required) == 0 { return true }
+	if len(required) == 0 {
+		return true
+	}
 	for _, r := range required {
 		found := false
 		for _, c := range m.Capabilities {
-			if c == r { found = true; break }
+			if c == r {
+				found = true
+				break
+			}
 		}
-		if !found { return false }
+		if !found {
+			return false
+		}
 	}
 	return true
 }
@@ -320,7 +354,7 @@ func hasCaps(m *Info, required []Capability) bool {
 
 // BudgetTracker monitors token usage against limits.
 type BudgetTracker struct {
-	mu        sync.Mutex
+	mu         sync.Mutex
 	dailyLimit int64
 	used       int64
 	resetAt    time.Time
@@ -341,7 +375,9 @@ func (b *BudgetTracker) Consume(tokens int64) bool {
 		b.used = 0
 		b.resetAt = b.resetAt.Add(24 * time.Hour)
 	}
-	if b.used+tokens > b.dailyLimit { return false }
+	if b.used+tokens > b.dailyLimit {
+		return false
+	}
 	b.used += tokens
 	return true
 }
@@ -351,7 +387,9 @@ func (b *BudgetTracker) Remaining() int64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	remaining := b.dailyLimit - b.used
-	if remaining < 0 { remaining = 0 }
+	if remaining < 0 {
+		remaining = 0
+	}
 	return remaining
 }
 

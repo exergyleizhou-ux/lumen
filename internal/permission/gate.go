@@ -24,17 +24,17 @@ const (
 
 // AlwaysAllowTools are tools that are always safe to run without prompting.
 var AlwaysAllowTools = map[string]bool{
-	"read_file":   true,
-	"grep":        true,
-	"glob":        true,
-	"ls":          true,
-	"lsp_hover":   true,
-	"lsp_definition": true,
-	"lsp_references": true,
+	"read_file":       true,
+	"grep":            true,
+	"glob":            true,
+	"ls":              true,
+	"lsp_hover":       true,
+	"lsp_definition":  true,
+	"lsp_references":  true,
 	"lsp_diagnostics": true,
-	"web_fetch":   true,
-	"web_search":  true,
-	"ask":         true,
+	"web_fetch":       true,
+	"web_search":      true,
+	"ask":             true,
 }
 
 // DangerousTools are tools that always require confirmation in default mode.
@@ -44,8 +44,8 @@ var DangerousTools = map[string]bool{
 
 // Gate implements agent.Gate with mode-based decision logic.
 type Gate struct {
-	mode     Mode
-	asker    func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
+	mode  Mode
+	asker func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
 }
 
 // NewGate creates a permission gate in the given mode.

@@ -24,11 +24,11 @@ type Resource struct {
 
 // Policy defines when a resource is considered orphaned.
 type Policy struct {
-	Name       string        `json:"name"`
-	Type       string        `json:"type"`
-	MaxIdle    time.Duration `json:"max_idle"`
-	MaxAge     time.Duration `json:"max_age"`
-	AutoClean  bool          `json:"auto_clean"`
+	Name      string        `json:"name"`
+	Type      string        `json:"type"`
+	MaxIdle   time.Duration `json:"max_idle"`
+	MaxAge    time.Duration `json:"max_age"`
+	AutoClean bool          `json:"auto_clean"`
 }
 
 // DefaultPolicies returns standard orphan detection policies.
@@ -56,46 +56,63 @@ func NewDetector() *Detector {
 
 // RegisterResource adds a tracked resource.
 func (d *Detector) RegisterResource(r *Resource) {
-	d.mu.Lock(); defer d.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	r.LastUsed = time.Now()
 	d.resources[r.ID] = r
 }
 
 // Touch updates the last-used time of a resource.
 func (d *Detector) Touch(id string) {
-	d.mu.Lock(); defer d.mu.Unlock()
-	if r, ok := d.resources[id]; ok { r.LastUsed = time.Now() }
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if r, ok := d.resources[id]; ok {
+		r.LastUsed = time.Now()
+	}
 }
 
 // Remove stops tracking a resource.
 func (d *Detector) Remove(id string) {
-	d.mu.Lock(); defer d.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	delete(d.resources, id)
 }
 
 // AddPolicy registers an orphan detection policy.
 func (d *Detector) AddPolicy(p Policy) {
-	d.mu.Lock(); defer d.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.policies[p.Name] = p
 }
 
 // SetCleanup registers the cleanup function.
 func (d *Detector) SetCleanup(fn func(*Resource) error) {
-	d.mu.Lock(); defer d.mu.Unlock()
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.cleanFn = fn
 }
 
 // Scan finds orphaned resources based on policies.
-func (d *Detector) Scan() []*Resource {
-	d.mu.RLock(); defer d.mu.RUnlock()
+func (d *Detector) Scan() []*Resource { d.mu.RLock(); defer d.mu.RUnlock(); return d.scanLocked() }
+
+// scanLocked assumes the caller holds the lock.
+func (d *Detector) scanLocked() []*Resource {
 	now := time.Now()
 	var orphans []*Resource
 
 	for _, r := range d.resources {
 		for _, p := range d.policies {
-			if p.Type != "" && p.Type != r.Type { continue }
-			if p.MaxIdle > 0 && now.Sub(r.LastUsed) > p.MaxIdle { orphans = append(orphans, r); break }
-			if p.MaxAge > 0 && now.Sub(r.CreatedAt) > p.MaxAge { orphans = append(orphans, r); break }
+			if p.Type != "" && p.Type != r.Type {
+				continue
+			}
+			if p.MaxIdle > 0 && now.Sub(r.LastUsed) > p.MaxIdle {
+				orphans = append(orphans, r)
+				break
+			}
+			if p.MaxAge > 0 && now.Sub(r.CreatedAt) > p.MaxAge {
+				orphans = append(orphans, r)
+				break
+			}
 		}
 	}
 	sort.Slice(orphans, func(i, j int) bool { return orphans[i].LastUsed.Before(orphans[j].LastUsed) })
@@ -112,13 +129,21 @@ func (d *Detector) Clean(orphans []*Resource) (cleaned int, errors []error) {
 		var clean bool
 		d.mu.RLock()
 		for _, p := range d.policies {
-			if p.Type == o.Type && p.AutoClean { clean = true; break }
+			if p.Type == o.Type && p.AutoClean {
+				clean = true
+				break
+			}
 		}
 		d.mu.RUnlock()
-		if !clean { continue }
+		if !clean {
+			continue
+		}
 
 		if cleanFn != nil {
-			if err := cleanFn(o); err != nil { errors = append(errors, err); continue }
+			if err := cleanFn(o); err != nil {
+				errors = append(errors, err)
+				continue
+			}
 		}
 		d.mu.Lock()
 		delete(d.resources, o.ID)
@@ -129,24 +154,31 @@ func (d *Detector) Clean(orphans []*Resource) (cleaned int, errors []error) {
 }
 
 // Stats returns orphan statistics by type.
-func (d *Detector) Stats() map[string]int {
-	d.mu.RLock(); defer d.mu.RUnlock()
+func (d *Detector) Stats() map[string]int { d.mu.RLock(); defer d.mu.RUnlock(); return d.statsLocked() }
+
+// statsLocked assumes the caller holds the lock.
+func (d *Detector) statsLocked() map[string]int {
 	stats := map[string]int{}
-	for _, r := range d.resources { stats[r.Type]++ }
+	for _, r := range d.resources {
+		stats[r.Type]++
+	}
 	return stats
 }
 
 // Report formats an orphan report.
 func (d *Detector) Report() string {
-	d.mu.RLock(); defer d.mu.RUnlock()
+	d.mu.RLock()
+	defer d.mu.RUnlock()
 	var sb strings.Builder
-	stats := d.Stats()
-	orphans := d.Scan()
+	stats := d.statsLocked()
+	orphans := d.scanLocked()
 
 	fmt.Fprintf(&sb, "Orphan Report: %d total resources, %d orphans\n%s\n\n", len(d.resources), len(orphans), strings.Repeat("─", 50))
 
 	fmt.Fprintf(&sb, "By Type:\n")
-	for typ, count := range stats { fmt.Fprintf(&sb, "  %-15s %d\n", typ, count) }
+	for typ, count := range stats {
+		fmt.Fprintf(&sb, "  %-15s %d\n", typ, count)
+	}
 
 	if len(orphans) > 0 {
 		fmt.Fprintf(&sb, "\nOrphans:\n")

@@ -25,14 +25,14 @@ const (
 
 // Message is a single conversation message.
 type Message struct {
-	Role             Role       `json:"role"`
-	Content          string     `json:"content,omitempty"`
-	Images           []string   `json:"images,omitempty"`
-	ReasoningContent string     `json:"reasoning_content,omitempty"`
-	ReasoningSignature string   `json:"reasoning_signature,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID       string     `json:"tool_call_id,omitempty"`
-	Name             string     `json:"name,omitempty"`
+	Role               Role       `json:"role"`
+	Content            string     `json:"content,omitempty"`
+	Images             []string   `json:"images,omitempty"`
+	ReasoningContent   string     `json:"reasoning_content,omitempty"`
+	ReasoningSignature string     `json:"reasoning_signature,omitempty"`
+	ToolCalls          []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID         string     `json:"tool_call_id,omitempty"`
+	Name               string     `json:"name,omitempty"`
 }
 
 // ToolCall is a tool invocation requested by the model. Arguments is raw JSON.
@@ -61,7 +61,7 @@ type Request struct {
 type ChunkType int
 
 const (
-	ChunkText          ChunkType = iota
+	ChunkText ChunkType = iota
 	ChunkReasoning
 	ChunkToolCallStart
 	ChunkToolCall
@@ -75,8 +75,8 @@ type Usage struct {
 	PromptTokens     int    `json:"prompt_tokens"`
 	CompletionTokens int    `json:"completion_tokens"`
 	TotalTokens      int    `json:"total_tokens"`
-	CacheHitTokens   int    `json:"cache_hit_tokens"`   // normalize: DeepSeek prompt_cache_hit_tokens or OpenAI cached_tokens
-	CacheMissTokens  int    `json:"cache_miss_tokens"`  // normalize: DeepSeek prompt_cache_miss_tokens or uncached part
+	CacheHitTokens   int    `json:"cache_hit_tokens"`  // normalize: DeepSeek prompt_cache_hit_tokens or OpenAI cached_tokens
+	CacheMissTokens  int    `json:"cache_miss_tokens"` // normalize: DeepSeek prompt_cache_miss_tokens or uncached part
 	ReasoningTokens  int    `json:"reasoning_tokens"`
 	FinishReason     string `json:"finish_reason,omitempty"`
 }

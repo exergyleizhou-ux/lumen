@@ -28,33 +28,45 @@ const (
 
 func (l Level) String() string {
 	switch l {
-	case LevelDebug: return "DEBUG"
-	case LevelInfo: return "INFO"
-	case LevelWarn: return "WARN"
-	case LevelError: return "ERROR"
-	case LevelFatal: return "FATAL"
-	default: return "???"
+	case LevelDebug:
+		return "DEBUG"
+	case LevelInfo:
+		return "INFO"
+	case LevelWarn:
+		return "WARN"
+	case LevelError:
+		return "ERROR"
+	case LevelFatal:
+		return "FATAL"
+	default:
+		return "???"
 	}
 }
 
 func (l Level) Color() string {
 	switch l {
-	case LevelDebug: return "\x1b[90m"
-	case LevelInfo: return "\x1b[36m"
-	case LevelWarn: return "\x1b[33m"
-	case LevelError: return "\x1b[31m"
-	case LevelFatal: return "\x1b[35m"
-	default: return ""
+	case LevelDebug:
+		return "\x1b[90m"
+	case LevelInfo:
+		return "\x1b[36m"
+	case LevelWarn:
+		return "\x1b[33m"
+	case LevelError:
+		return "\x1b[31m"
+	case LevelFatal:
+		return "\x1b[35m"
+	default:
+		return ""
 	}
 }
 
 // Entry is one structured log entry.
 type Entry struct {
-	Timestamp time.Time         `json:"timestamp"`
-	Level     string            `json:"level"`
-	Message   string            `json:"message"`
-	Fields    map[string]any    `json:"fields,omitempty"`
-	Caller    string            `json:"caller,omitempty"`
+	Timestamp time.Time      `json:"timestamp"`
+	Level     string         `json:"level"`
+	Message   string         `json:"message"`
+	Fields    map[string]any `json:"fields,omitempty"`
+	Caller    string         `json:"caller,omitempty"`
 }
 
 // Logger writes structured log entries.
@@ -86,14 +98,17 @@ func (l *Logger) WithWriter(w io.Writer) *Logger { l.writers = append(l.writers,
 func (l *Logger) WithFile(path string) (*Logger, error) {
 	os.MkdirAll(filepath.Dir(path), 0o755)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil { return l, err }
+	if err != nil {
+		return l, err
+	}
 	l.writers = append(l.writers, f)
 	return l, nil
 }
 
 // WithField adds a field to all future log entries.
 func (l *Logger) WithField(key string, value any) *Logger {
-	l.fields[key] = value; return l
+	l.fields[key] = value
+	return l
 }
 
 // WithJSON enables JSON output format.
@@ -101,14 +116,19 @@ func (l *Logger) WithJSON() *Logger { l.format = "json"; return l }
 
 // Log writes a log entry at the given level.
 func (l *Logger) Log(level Level, msg string, fields ...any) {
-	if level < l.level { return }
-	l.mu.Lock(); defer l.mu.Unlock()
+	if level < l.level {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	entry := Entry{
 		Timestamp: time.Now(), Level: level.String(), Message: msg,
 		Fields: map[string]any{}, Caller: caller(2),
 	}
-	for k, v := range l.fields { entry.Fields[k] = v }
+	for k, v := range l.fields {
+		entry.Fields[k] = v
+	}
 	for i := 0; i+1 < len(fields); i += 2 {
 		k := fmt.Sprint(fields[i])
 		entry.Fields[k] = fields[i+1]
@@ -144,7 +164,9 @@ func (l *Logger) formatText(e Entry) string {
 		fields = " " + strings.Join(pairs, " ")
 	}
 	caller := ""
-	if e.Caller != "" { caller = " " + e.Caller }
+	if e.Caller != "" {
+		caller = " " + e.Caller
+	}
 	return fmt.Sprintf("%s%s%s %-5s %s%s%s\n",
 		color, e.Timestamp.Format("15:04:05.000"), reset,
 		e.Level, e.Message, fields, caller)
@@ -159,17 +181,24 @@ func (l *Logger) Fatal(msg string, fields ...any) { l.Log(LevelFatal, msg, field
 
 func caller(skip int) string {
 	_, file, line, ok := runtime.Caller(skip + 1)
-	if !ok { return "" }
+	if !ok {
+		return ""
+	}
 	return fmt.Sprintf("%s:%d", filepath.Base(file), line)
 }
 
 func parseLevel(s string) (Level, bool) {
 	switch strings.ToUpper(s) {
-	case "DEBUG": return LevelDebug, true
-	case "INFO": return LevelInfo, true
-	case "WARN": return LevelWarn, true
-	case "ERROR": return LevelError, true
-	case "FATAL": return LevelFatal, true
+	case "DEBUG":
+		return LevelDebug, true
+	case "INFO":
+		return LevelInfo, true
+	case "WARN":
+		return LevelWarn, true
+	case "ERROR":
+		return LevelError, true
+	case "FATAL":
+		return LevelFatal, true
 	}
 	return LevelInfo, false
 }
@@ -178,7 +207,7 @@ func parseLevel(s string) (Level, bool) {
 
 var defaultLogger = New(LevelInfo)
 
-func SetLevel(level Level) { defaultLogger.level = level }
+func SetLevel(level Level)            { defaultLogger.level = level }
 func Debug(msg string, fields ...any) { defaultLogger.Debug(msg, fields...) }
 func Info(msg string, fields ...any)  { defaultLogger.Info(msg, fields...) }
 func Warn(msg string, fields ...any)  { defaultLogger.Warn(msg, fields...) }

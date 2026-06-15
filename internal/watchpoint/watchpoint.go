@@ -17,7 +17,7 @@ import (
 type ChangeType int
 
 const (
-	ChangeAdded   ChangeType = iota
+	ChangeAdded ChangeType = iota
 	ChangeRemoved
 	ChangeModified
 	ChangeNoop
@@ -25,10 +25,14 @@ const (
 
 func (c ChangeType) String() string {
 	switch c {
-	case ChangeAdded: return "added"
-	case ChangeRemoved: return "removed"
-	case ChangeModified: return "modified"
-	default: return "noop"
+	case ChangeAdded:
+		return "added"
+	case ChangeRemoved:
+		return "removed"
+	case ChangeModified:
+		return "modified"
+	default:
+		return "noop"
 	}
 }
 
@@ -64,7 +68,8 @@ func NewWatcher() *Watcher {
 
 // Set initializes or updates a path's value.
 func (w *Watcher) Set(path string, value any) *Change {
-	w.mu.Lock(); defer w.mu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 
 	newSnap := w.snapshot(value)
 	oldSnap, existed := w.state[path]
@@ -92,9 +97,12 @@ func (w *Watcher) Set(path string, value any) *Change {
 
 // Delete removes a path.
 func (w *Watcher) Delete(path string) *Change {
-	w.mu.Lock(); defer w.mu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	oldSnap, existed := w.state[path]
-	if !existed { return nil }
+	if !existed {
+		return nil
+	}
 	delete(w.state, path)
 	change := &Change{Path: path, Type: ChangeRemoved, Before: oldSnap, Timestamp: time.Now()}
 	w.record(change)
@@ -104,26 +112,31 @@ func (w *Watcher) Delete(path string) *Change {
 
 // Get returns the current snapshot for a path.
 func (w *Watcher) Get(path string) *Snapshot {
-	w.mu.RLock(); defer w.mu.RUnlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	return w.state[path]
 }
 
 // GetValue returns the current value for a path.
 func (w *Watcher) GetValue(path string) (any, bool) {
 	s := w.Get(path)
-	if s == nil { return nil, false }
+	if s == nil {
+		return nil, false
+	}
 	return s.Value, true
 }
 
 // OnChange registers a callback for a path prefix.
 func (w *Watcher) OnChange(prefix string, fn func(Change)) {
-	w.mu.Lock(); defer w.mu.Unlock()
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	w.callbacks[prefix] = append(w.callbacks[prefix], fn)
 }
 
 // Log returns recent changes.
 func (w *Watcher) Log() []Change {
-	w.mu.RLock(); defer w.mu.RUnlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	out := make([]Change, len(w.log))
 	copy(out, w.log)
 	return out
@@ -131,19 +144,25 @@ func (w *Watcher) Log() []Change {
 
 // ChangedSince returns changes after a timestamp.
 func (w *Watcher) ChangedSince(since time.Time) []Change {
-	w.mu.RLock(); defer w.mu.RUnlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	var out []Change
 	for _, c := range w.log {
-		if c.Timestamp.After(since) { out = append(out, c) }
+		if c.Timestamp.After(since) {
+			out = append(out, c)
+		}
 	}
 	return out
 }
 
 // Paths returns all watched paths.
 func (w *Watcher) Paths() []string {
-	w.mu.RLock(); defer w.mu.RUnlock()
+	w.mu.RLock()
+	defer w.mu.RUnlock()
 	var out []string
-	for p := range w.state { out = append(out, p) }
+	for p := range w.state {
+		out = append(out, p)
+	}
 	sort.Strings(out)
 	return out
 }
@@ -161,7 +180,9 @@ func (w *Watcher) Diff(path string) string {
 // FormatLog formats the change log.
 func (w *Watcher) FormatLog() string {
 	log := w.Log()
-	if len(log) == 0 { return "No changes recorded.\n" }
+	if len(log) == 0 {
+		return "No changes recorded.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Watchpoint Log (%d changes):\n%s\n\n", len(log), strings.Repeat("─", 60))
 	for _, c := range log {
@@ -190,28 +211,38 @@ func (w *Watcher) snapshot(value any) *Snapshot {
 
 func (w *Watcher) record(change *Change) {
 	w.log = append(w.log, *change)
-	if len(w.log) > w.maxLog { w.log = w.log[1:] }
+	if len(w.log) > w.maxLog {
+		w.log = w.log[1:]
+	}
 }
 
 func (w *Watcher) fireCallbacks(path string, change Change) {
 	for prefix, fns := range w.callbacks {
 		if strings.HasPrefix(path, prefix) {
-			for _, fn := range fns { fn(change) }
+			for _, fn := range fns {
+				fn(change)
+			}
 		}
 	}
 }
 
 func iconForChange(c ChangeType) string {
 	switch c {
-	case ChangeAdded: return "🟢"
-	case ChangeRemoved: return "🔴"
-	case ChangeModified: return "🟡"
-	default: return "⚪"
+	case ChangeAdded:
+		return "🟢"
+	case ChangeRemoved:
+		return "🔴"
+	case ChangeModified:
+		return "🟡"
+	default:
+		return "⚪"
 	}
 }
 
 func truncate(s string, n int) string {
-	if len(s) <= n { return s }
+	if len(s) <= n {
+		return s
+	}
 	return s[:n-3] + "..."
 }
 
@@ -231,7 +262,8 @@ func NewDeepWatcher(w *Watcher, prefix string) *DeepWatcher {
 
 // WatchAll sets nested paths from a map.
 func (dw *DeepWatcher) WatchAll(data map[string]any) []*Change {
-	dw.mu.Lock(); defer dw.mu.Unlock()
+	dw.mu.Lock()
+	defer dw.mu.Unlock()
 	return dw.watchAllRec(data, dw.prefix)
 }
 
@@ -241,7 +273,9 @@ func (dw *DeepWatcher) watchAllRec(data any, prefix string) []*Change {
 	case map[string]any:
 		for k, val := range v {
 			path := k
-			if prefix != "" { path = prefix + "." + k }
+			if prefix != "" {
+				path = prefix + "." + k
+			}
 			changes = append(changes, dw.watch.Set(path, val))
 			changes = append(changes, dw.watchAllRec(val, path)...)
 		}
@@ -273,7 +307,8 @@ func NewConditionWatcher(w *Watcher, cond func(old, new any) bool) *ConditionWat
 
 // CheckAndSet sets the value only if the condition passes.
 func (cw *ConditionWatcher) CheckAndSet(path string, value any) (*Change, bool) {
-	cw.mu.Lock(); defer cw.mu.Unlock()
+	cw.mu.Lock()
+	defer cw.mu.Unlock()
 	old, _ := cw.watcher.GetValue(path)
 	if cw.condition != nil && !cw.condition(old, value) {
 		return nil, false

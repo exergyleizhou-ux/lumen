@@ -364,9 +364,9 @@ func TestFlatten(t *testing.T) {
 
 func TestUnflatten(t *testing.T) {
 	flat := map[string]interface{}{
-		"a":     1,
-		"b.c":   2,
-		"b.d":   3,
+		"a":   1,
+		"b.c": 2,
+		"b.d": 3,
 	}
 
 	state := Unflatten(flat)

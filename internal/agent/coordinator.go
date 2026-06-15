@@ -195,16 +195,16 @@ func ShouldUsePlanner(prompt string) bool {
 func PlannerToolRegistry(parent *tool.Registry) *tool.Registry {
 	exclude := map[string]bool{
 		// Exclude meta/writer tools the planner shouldn't use
-		"task":           true,
-		"run_skill":      true,
-		"install_skill":  true,
-		"write_file":     true,
-		"edit_file":      true,
-		"bash":           true,
-		"notebook_edit":  true,
-		"complete_step":  true,
-		"todo_write":     true,
-		"ask":            true,
+		"task":          true,
+		"run_skill":     true,
+		"install_skill": true,
+		"write_file":    true,
+		"edit_file":     true,
+		"bash":          true,
+		"notebook_edit": true,
+		"complete_step": true,
+		"todo_write":    true,
+		"ask":           true,
 	}
 	sub := tool.NewRegistry()
 	for _, name := range parent.Names() {

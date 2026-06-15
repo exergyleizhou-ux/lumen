@@ -30,14 +30,14 @@ const (
 
 // Config tunes sandbox behavior.
 type Config struct {
-	Mode           Mode     // which sandbox to use
-	ReadOnlyRoot   bool     // mount root filesystem read-only
-	NetworkAccess  bool     // allow network access
-	AllowedPaths   []string // paths allowed for read/write (outside workspace)
-	WorkspaceRoot  string   // project root (read-write by default)
-	MaxMemoryMB    int      // memory limit (0 = none)
-	MaxCPUSeconds  int      // CPU time limit in seconds (0 = none)
-	MaxProcesses   int      // max child processes (0 = none)
+	Mode          Mode     // which sandbox to use
+	ReadOnlyRoot  bool     // mount root filesystem read-only
+	NetworkAccess bool     // allow network access
+	AllowedPaths  []string // paths allowed for read/write (outside workspace)
+	WorkspaceRoot string   // project root (read-write by default)
+	MaxMemoryMB   int      // memory limit (0 = none)
+	MaxCPUSeconds int      // CPU time limit in seconds (0 = none)
+	MaxProcesses  int      // max child processes (0 = none)
 }
 
 // Executor runs commands in a sandbox.

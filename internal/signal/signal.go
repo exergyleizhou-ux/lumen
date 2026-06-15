@@ -23,12 +23,12 @@ type Hook struct {
 
 // Manager coordinates graceful shutdown.
 type Manager struct {
-	mu        sync.Mutex
-	hooks     []Hook
-	timeout   time.Duration
-	shutdown  chan os.Signal
-	done      chan struct{}
-	latch     sync.Once
+	mu       sync.Mutex
+	hooks    []Hook
+	timeout  time.Duration
+	shutdown chan os.Signal
+	done     chan struct{}
+	latch    sync.Once
 }
 
 // NewManager creates a signal manager.
@@ -38,7 +38,8 @@ func NewManager(timeout time.Duration) *Manager {
 
 // OnSignal registers a cleanup hook.
 func (m *Manager) OnSignal(name string, priority int, fn func() error) {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.hooks = append(m.hooks, Hook{Name: name, Priority: priority, Fn: fn})
 	sort.Slice(m.hooks, func(i, j int) bool { return m.hooks[i].Priority < m.hooks[j].Priority })
 }
@@ -91,16 +92,21 @@ func (m *Manager) runHooks() {
 
 // ListHooks returns registered hooks in execution order.
 func (m *Manager) ListHooks() []string {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	var out []string
-	for _, h := range m.hooks { out = append(out, fmt.Sprintf("%s (priority=%d)", h.Name, h.Priority)) }
+	for _, h := range m.hooks {
+		out = append(out, fmt.Sprintf("%s (priority=%d)", h.Name, h.Priority))
+	}
 	return out
 }
 
 // FormatHooks formats the hook list.
 func (m *Manager) FormatHooks() string {
 	hooks := m.ListHooks()
-	if len(hooks) == 0 { return "No shutdown hooks registered.\n" }
+	if len(hooks) == 0 {
+		return "No shutdown hooks registered.\n"
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "Shutdown Hooks (%d):\n%s\n\n", len(hooks), strings.Repeat("─", 40))
 	for i, h := range hooks {
@@ -113,8 +119,8 @@ func (m *Manager) FormatHooks() string {
 
 // Pinger is a simple health check that can be used with signal management.
 type Pinger struct {
-	mu      sync.Mutex
-	alive   bool
+	mu       sync.Mutex
+	alive    bool
 	lastPing time.Time
 }
 

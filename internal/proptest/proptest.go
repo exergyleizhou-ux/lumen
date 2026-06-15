@@ -29,7 +29,9 @@ func IntRange(min, max int) *Gen[int] {
 func StringOf(length int, alphabet string) *Gen[string] {
 	return &Gen[string]{Name: "string", Gen: func(r *rand.Rand) string {
 		b := make([]byte, length)
-		for i := range b { b[i] = alphabet[r.Intn(len(alphabet))] }
+		for i := range b {
+			b[i] = alphabet[r.Intn(len(alphabet))]
+		}
 		return string(b)
 	}}
 }
@@ -44,7 +46,9 @@ func SliceOf[T any](g *Gen[T], minLen, maxLen int) *Gen[[]T] {
 	return &Gen[[]T]{Name: "slice", Gen: func(r *rand.Rand) []T {
 		n := minLen + r.Intn(maxLen-minLen+1)
 		s := make([]T, n)
-		for i := range s { s[i] = g.Gen(r) }
+		for i := range s {
+			s[i] = g.Gen(r)
+		}
 		return s
 	}}
 }
@@ -60,12 +64,12 @@ type Property struct {
 
 // Result is the outcome of a property test.
 type Result struct {
-	Property  string   `json:"property"`
-	Passed    bool     `json:"passed"`
-	TestsRun  int      `json:"tests_run"`
-	Duration  time.Duration `json:"duration"`
-	Smallest  string   `json:"smallest,omitempty"`
-	Shrinks   int      `json:"shrinks,omitempty"`
+	Property string        `json:"property"`
+	Passed   bool          `json:"passed"`
+	TestsRun int           `json:"tests_run"`
+	Duration time.Duration `json:"duration"`
+	Smallest string        `json:"smallest,omitempty"`
+	Shrinks  int           `json:"shrinks,omitempty"`
 }
 
 // ── Runner ─────────────────────────────────────────────────
@@ -100,19 +104,25 @@ func (r *Runner) Check(name string, prop func() bool) *Result {
 	result := &Result{Property: name, Passed: true}
 
 	for i := 0; i < r.cfg.MaxTests; i++ {
-		if time.Since(start) > r.cfg.MaxDuration { break }
+		if time.Since(start) > r.cfg.MaxDuration {
+			break
+		}
 		if !prop() {
 			result.Passed = false
 			result.TestsRun = i + 1
 			result.Duration = time.Since(start)
-			r.mu.Lock(); r.results = append(r.results, *result); r.mu.Unlock()
+			r.mu.Lock()
+			r.results = append(r.results, *result)
+			r.mu.Unlock()
 			return result
 		}
 	}
 
 	result.TestsRun = r.cfg.MaxTests
 	result.Duration = time.Since(start)
-	r.mu.Lock(); r.results = append(r.results, *result); r.mu.Unlock()
+	r.mu.Lock()
+	r.results = append(r.results, *result)
+	r.mu.Unlock()
 	return result
 }
 
@@ -121,7 +131,8 @@ func (r *Runner) CheckAll(props []Property) []Result {
 	for _, p := range props {
 		r.Check(p.Name, p.Test)
 	}
-	r.mu.Lock(); defer r.mu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	out := make([]Result, len(r.results))
 	copy(out, r.results)
 	return out
@@ -129,26 +140,42 @@ func (r *Runner) CheckAll(props []Property) []Result {
 
 // AllPassed reports whether all properties passed.
 func (r *Runner) AllPassed() bool {
-	r.mu.Lock(); defer r.mu.Unlock()
-	for _, res := range r.results { if !res.Passed { return false } }
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, res := range r.results {
+		if !res.Passed {
+			return false
+		}
+	}
 	return true
 }
 
 // FormatResults formats all results.
 func (r *Runner) FormatResults() string {
-	r.mu.Lock(); defer r.mu.Unlock()
-	if len(r.results) == 0 { return "No properties tested.\n" }
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.results) == 0 {
+		return "No properties tested.\n"
+	}
 	var sb strings.Builder
 	passed, failed := 0, 0
 	for _, res := range r.results {
-		if res.Passed { passed++ } else { failed++ }
+		if res.Passed {
+			passed++
+		} else {
+			failed++
+		}
 	}
 	fmt.Fprintf(&sb, "Property Tests: %d passed, %d failed (%d total)\n\n", passed, failed, len(r.results))
 	for _, res := range r.results {
 		icon := "✅"
-		if !res.Passed { icon = "❌" }
+		if !res.Passed {
+			icon = "❌"
+		}
 		fmt.Fprintf(&sb, "%s %-30s %d tests %v", icon, res.Property, res.TestsRun, res.Duration)
-		if !res.Passed { fmt.Fprintf(&sb, " — smallest: %s (%d shrinks)", res.Smallest, res.Shrinks) }
+		if !res.Passed {
+			fmt.Fprintf(&sb, " — smallest: %s (%d shrinks)", res.Smallest, res.Shrinks)
+		}
 		sb.WriteByte('\n')
 	}
 	return sb.String()
@@ -180,10 +207,15 @@ func (s *Shrinker) Shrink(failing string, test func(string) bool) string {
 				break
 			}
 		}
-		if !foundSmaller { break }
+		if !foundSmaller {
+			break
+		}
 		// Try halving
 		half := current[:len(current)/2]
-		if !test(half) { current = half; foundSmaller = true }
+		if !test(half) {
+			current = half
+			foundSmaller = true
+		}
 	}
 	return current
 }
@@ -192,11 +224,19 @@ func (s *Shrinker) Shrink(failing string, test func(string) bool) string {
 func (s *Shrinker) ShrinkInt(failing int, test func(int) bool) int {
 	current := failing
 	for i := 0; i < s.maxShrinks; i++ {
-		if current == 0 { break }
+		if current == 0 {
+			break
+		}
 		candidate := current / 2
-		if !test(candidate) { current = candidate; continue }
+		if !test(candidate) {
+			current = candidate
+			continue
+		}
 		candidate = current - 1
-		if !test(candidate) { current = candidate; continue }
+		if !test(candidate) {
+			current = candidate
+			continue
+		}
 		break
 	}
 	return current
@@ -244,6 +284,8 @@ func IsInverse(name string, f func(int) int, g func(int) int, max int) Property 
 func randomString(n int) string {
 	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, n)
-	for i := range b { b[i] = letters[rand.Intn(len(letters))] }
+	for i := range b {
+		b[i] = letters[rand.Intn(len(letters))]
+	}
 	return string(b)
 }

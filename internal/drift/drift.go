@@ -76,12 +76,12 @@ func (dt DriftType) String() string {
 
 // DriftEntry represents a single configuration drift.
 type DriftEntry struct {
-	Key       string      `json:"key"`
-	Type      DriftType   `json:"type"`
-	Desired   interface{} `json:"desired,omitempty"`
-	Actual    interface{} `json:"actual,omitempty"`
-	Path      string      `json:"path"`
-	Severity  string      `json:"severity"` // "critical", "warning", "info"
+	Key      string      `json:"key"`
+	Type     DriftType   `json:"type"`
+	Desired  interface{} `json:"desired,omitempty"`
+	Actual   interface{} `json:"actual,omitempty"`
+	Path     string      `json:"path"`
+	Severity string      `json:"severity"` // "critical", "warning", "info"
 }
 
 // DriftReport holds the complete drift detection results.
@@ -435,9 +435,9 @@ func computeDiffRecursive(desired, actual State, prefix string, results *[]DiffR
 
 // ReconciliationPlan describes actions to reconcile drift.
 type ReconciliationPlan struct {
-	ID        string              `json:"id"`
-	Timestamp time.Time           `json:"timestamp"`
-	Actions   []ReconcileAction   `json:"actions"`
+	ID        string            `json:"id"`
+	Timestamp time.Time         `json:"timestamp"`
+	Actions   []ReconcileAction `json:"actions"`
 }
 
 // ReconcileAction is a single step to reconcile drift.

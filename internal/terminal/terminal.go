@@ -55,8 +55,8 @@ const (
 )
 
 func Color(code, text string) string { return code + text + Reset }
-func BoldText(text string) string   { return Bold + text + Reset }
-func DimText(text string) string    { return Dim + text + Reset }
+func BoldText(text string) string    { return Bold + text + Reset }
+func DimText(text string) string     { return Dim + text + Reset }
 
 // ── Width-aware truncation ─────────────────────────────────
 

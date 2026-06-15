@@ -13,18 +13,18 @@ import (
 
 // ReconcileEngine automates drift reconciliation with approval workflow.
 type ReconcileEngine struct {
-	detector      *Detector
-	pendingPlans  []*ReconciliationPlan
-	appliedPlans  []*ReconciliationPlan
+	detector        *Detector
+	pendingPlans    []*ReconciliationPlan
+	appliedPlans    []*ReconciliationPlan
 	requireApproval bool
 }
 
 // NewReconcileEngine creates a reconciliation engine.
 func NewReconcileEngine(detector *Detector) *ReconcileEngine {
 	return &ReconcileEngine{
-		detector:       detector,
-		pendingPlans:   make([]*ReconciliationPlan, 0),
-		appliedPlans:   make([]*ReconciliationPlan, 0),
+		detector:        detector,
+		pendingPlans:    make([]*ReconciliationPlan, 0),
+		appliedPlans:    make([]*ReconciliationPlan, 0),
 		requireApproval: true,
 	}
 }
@@ -272,8 +272,8 @@ type ConfigPatch struct {
 
 // PatchOperation is a single patch operation.
 type PatchOperation struct {
-	Op    string      `json:"op"`    // "add", "remove", "replace"
-	Path  string      `json:"path"`  // dot-separated path
+	Op    string      `json:"op"`   // "add", "remove", "replace"
+	Path  string      `json:"path"` // dot-separated path
 	Value interface{} `json:"value,omitempty"`
 }
 

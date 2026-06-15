@@ -200,12 +200,12 @@ type Heartbeat struct {
 
 // HeartbeatMonitor tracks heartbeats from cluster nodes.
 type HeartbeatMonitor struct {
-	mu          sync.RWMutex
-	heartbeats  map[NodeID]*Heartbeat
-	timeout     time.Duration
-	onTimeout   func(NodeID)
-	onRecover   func(NodeID)
-	stopCh      chan struct{}
+	mu         sync.RWMutex
+	heartbeats map[NodeID]*Heartbeat
+	timeout    time.Duration
+	onTimeout  func(NodeID)
+	onRecover  func(NodeID)
+	stopCh     chan struct{}
 }
 
 // NewHeartbeatMonitor creates a heartbeat monitor.

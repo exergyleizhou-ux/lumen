@@ -12,11 +12,11 @@ import (
 
 // Metadata carried in agent contexts.
 type Metadata struct {
-	Turn        int       `json:"turn"`
-	ToolCallID  string    `json:"tool_call_id,omitempty"`
-	AgentName   string    `json:"agent_name,omitempty"`
-	StartedAt   time.Time `json:"started_at"`
-	DeadlineAt  time.Time `json:"deadline_at,omitempty"`
+	Turn       int       `json:"turn"`
+	ToolCallID string    `json:"tool_call_id,omitempty"`
+	AgentName  string    `json:"agent_name,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	DeadlineAt time.Time `json:"deadline_at,omitempty"`
 }
 
 type ctxKey struct{}
@@ -28,15 +28,17 @@ func WithMetadata(ctx context.Context, m *Metadata) context.Context {
 
 // GetMetadata extracts agent metadata from a context.
 func GetMetadata(ctx context.Context) *Metadata {
-	if m, ok := ctx.Value(ctxKey{}).(*Metadata); ok { return m }
+	if m, ok := ctx.Value(ctxKey{}).(*Metadata); ok {
+		return m
+	}
 	return nil
 }
 
 // Manager creates and tracks agent contexts.
 type Manager struct {
-	mu      sync.Mutex
-	active  map[string]context.CancelFunc
-	seq     int64
+	mu     sync.Mutex
+	active map[string]context.CancelFunc
+	seq    int64
 }
 
 // NewManager creates a context manager.
@@ -56,7 +58,9 @@ func (m *Manager) NewTurn(parent context.Context, turn int, timeout time.Duratio
 func (m *Manager) NewSubAgent(parent context.Context, toolCallID, agentName string, timeout time.Duration) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	meta := GetMetadata(parent)
-	if meta == nil { meta = &Metadata{StartedAt: time.Now()} }
+	if meta == nil {
+		meta = &Metadata{StartedAt: time.Now()}
+	}
 	newMeta := *meta
 	newMeta.ToolCallID = toolCallID
 	newMeta.AgentName = agentName
@@ -71,20 +75,27 @@ func (m *Manager) NewSubAgent(parent context.Context, toolCallID, agentName stri
 // Cancel stops a tracked context by key.
 func (m *Manager) Cancel(key string) {
 	m.mu.Lock()
-	if cancel, ok := m.active[key]; ok { cancel(); delete(m.active, key) }
+	if cancel, ok := m.active[key]; ok {
+		cancel()
+		delete(m.active, key)
+	}
 	m.mu.Unlock()
 }
 
 // CancelAll stops all tracked contexts.
 func (m *Manager) CancelAll() {
-	m.mu.Lock(); defer m.mu.Unlock()
-	for _, cancel := range m.active { cancel() }
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, cancel := range m.active {
+		cancel()
+	}
 	m.active = map[string]context.CancelFunc{}
 }
 
 // ActiveCount returns the number of active contexts.
 func (m *Manager) ActiveCount() int {
-	m.mu.Lock(); defer m.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return len(m.active)
 }
 
@@ -101,4 +112,3 @@ func WithCancelOnDone(parent context.Context) (context.Context, context.CancelFu
 	}()
 	return ctx, cancel
 }
-

@@ -98,9 +98,9 @@ type ServerCapabilities struct {
 // Client is a real MCP client connected to a child process over stdio.
 // It implements the MCPClient interface used by Manager.
 type Client struct {
-	cmd  *exec.Cmd
-	mu   sync.Mutex
-	reqID int64
+	cmd     *exec.Cmd
+	mu      sync.Mutex
+	reqID   int64
 	pending map[int64]chan *jsonrpcResponse
 	stdin   io.WriteCloser
 	stdout  *bufio.Reader

@@ -14,11 +14,11 @@ import (
 
 // Strategy defines how retries are performed.
 type Strategy struct {
-	MaxRetries   int           // max attempts (0 = no retry)
-	InitialDelay time.Duration // first retry delay
-	MaxDelay     time.Duration // cap on delay
-	Multiplier   float64       // backoff multiplier (e.g., 2.0 for exponential)
-	Jitter       float64       // random jitter factor (0.0-1.0)
+	MaxRetries   int              // max attempts (0 = no retry)
+	InitialDelay time.Duration    // first retry delay
+	MaxDelay     time.Duration    // cap on delay
+	Multiplier   float64          // backoff multiplier (e.g., 2.0 for exponential)
+	Jitter       float64          // random jitter factor (0.0-1.0)
 	RetryableFn  func(error) bool // returns true if the error is retryable
 }
 
@@ -99,15 +99,15 @@ const (
 
 // CircuitBreaker implements the circuit breaker pattern.
 type CircuitBreaker struct {
-	mu            sync.Mutex
-	state         CircuitState
-	failureCount  int
-	successCount  int
+	mu               sync.Mutex
+	state            CircuitState
+	failureCount     int
+	successCount     int
 	failureThreshold int
 	successThreshold int
-	openTimeout   time.Duration
-	lastFailure   time.Time
-	onStateChange func(from, to CircuitState)
+	openTimeout      time.Duration
+	lastFailure      time.Time
+	onStateChange    func(from, to CircuitState)
 }
 
 // NewCircuitBreaker creates a circuit breaker.

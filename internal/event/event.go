@@ -8,18 +8,18 @@ import "time"
 type Kind string
 
 const (
-	TurnStarted   Kind = "turn_started"
-	TurnDone      Kind = "turn_done"
-	Phase         Kind = "phase"
-	Text          Kind = "text"
-	Reasoning     Kind = "reasoning"
-	ToolDispatch  Kind = "tool_dispatch"
-	ToolResult    Kind = "tool_result"
-	ToolProgress  Kind = "tool_progress"
-	UsageKind     Kind = "usage"
-	Notice        Kind = "notice"
-	Ask           Kind = "ask"
-	PlanApproval  Kind = "plan_approval"
+	TurnStarted  Kind = "turn_started"
+	TurnDone     Kind = "turn_done"
+	Phase        Kind = "phase"
+	Text         Kind = "text"
+	Reasoning    Kind = "reasoning"
+	ToolDispatch Kind = "tool_dispatch"
+	ToolResult   Kind = "tool_result"
+	ToolProgress Kind = "tool_progress"
+	UsageKind    Kind = "usage"
+	Notice       Kind = "notice"
+	Ask          Kind = "ask"
+	PlanApproval Kind = "plan_approval"
 )
 
 // Level is the severity of a Notice event.
@@ -63,10 +63,10 @@ type Profile struct {
 
 // AskQuestion is one question for the user (the ask tool).
 type AskQuestion struct {
-	Header      string   `json:"header"`
-	Question    string   `json:"question"`
+	Header      string      `json:"header"`
+	Question    string      `json:"question"`
 	Options     []AskOption `json:"options"`
-	MultiSelect bool     `json:"multi_select"`
+	MultiSelect bool        `json:"multi_select"`
 }
 
 // AskOption is one choice in an AskQuestion.
@@ -83,14 +83,14 @@ type AskAnswer struct {
 
 // Event is one typed event from the agent run loop.
 type Event struct {
-	Kind      Kind         `json:"kind"`
-	Text      string       `json:"text,omitempty"`
-	Tool      Tool         `json:"tool,omitempty"`
-	Usage     *Usage       `json:"usage,omitempty"`
-	Level     Level        `json:"level,omitempty"`
-	Profile   *Profile     `json:"profile,omitempty"`
+	Kind      Kind          `json:"kind"`
+	Text      string        `json:"text,omitempty"`
+	Tool      Tool          `json:"tool,omitempty"`
+	Usage     *Usage        `json:"usage,omitempty"`
+	Level     Level         `json:"level,omitempty"`
+	Profile   *Profile      `json:"profile,omitempty"`
 	Questions []AskQuestion `json:"questions,omitempty"`
-	Timestamp time.Time    `json:"timestamp"`
+	Timestamp time.Time     `json:"timestamp"`
 }
 
 // Sink is a receiver of agent events. The agent no longer formats output itself;

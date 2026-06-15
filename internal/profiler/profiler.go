@@ -14,21 +14,21 @@ import (
 
 // Span represents one measured operation.
 type Span struct {
-	Name      string        `json:"name"`
-	Category  string        `json:"category"` // "tool_call", "stream", "compact", "execute"
-	Start     time.Time     `json:"start"`
-	Duration  time.Duration `json:"duration"`
-	AllocBytes int64        `json:"alloc_bytes,omitempty"`
-	Error     string        `json:"error,omitempty"`
+	Name       string        `json:"name"`
+	Category   string        `json:"category"` // "tool_call", "stream", "compact", "execute"
+	Start      time.Time     `json:"start"`
+	Duration   time.Duration `json:"duration"`
+	AllocBytes int64         `json:"alloc_bytes,omitempty"`
+	Error      string        `json:"error,omitempty"`
 }
 
 // Profile is a collection of spans for one turn or session.
 type Profile struct {
-	mu     sync.Mutex
-	spans  []Span
-	name   string
-	start  time.Time
-	timer  time.Time
+	mu    sync.Mutex
+	spans []Span
+	name  string
+	start time.Time
+	timer time.Time
 }
 
 // NewProfile creates a profiler.
@@ -119,15 +119,21 @@ func (p *Profile) Breakdowns() []Breakdown {
 		}
 		cs.total += s.Duration
 		cs.count++
-		if s.Duration < cs.min { cs.min = s.Duration }
-		if s.Duration > cs.max { cs.max = s.Duration }
+		if s.Duration < cs.min {
+			cs.min = s.Duration
+		}
+		if s.Duration > cs.max {
+			cs.max = s.Duration
+		}
 		grandTotal += s.Duration
 	}
 
 	var out []Breakdown
 	for cat, cs := range cats {
 		pct := 0.0
-		if grandTotal > 0 { pct = float64(cs.total) / float64(grandTotal) * 100 }
+		if grandTotal > 0 {
+			pct = float64(cs.total) / float64(grandTotal) * 100
+		}
 		out = append(out, Breakdown{
 			Category: cat, Count: cs.count, Total: cs.total,
 			Avg: cs.total / time.Duration(cs.count), Min: cs.min, Max: cs.max, Percent: pct,
@@ -141,7 +147,9 @@ func (p *Profile) Breakdowns() []Breakdown {
 func (p *Profile) TopSpans(n int) []Span {
 	spans := p.Spans()
 	sort.Slice(spans, func(i, j int) bool { return spans[i].Duration > spans[j].Duration })
-	if n > len(spans) { n = len(spans) }
+	if n > len(spans) {
+		n = len(spans)
+	}
 	return spans[:n]
 }
 
@@ -192,7 +200,9 @@ func (sp *SessionProfiler) TotalDuration() time.Duration {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
 	var total time.Duration
-	for _, p := range sp.profiles { total += p.TotalDuration() }
+	for _, p := range sp.profiles {
+		total += p.TotalDuration()
+	}
 	return total
 }
 
@@ -200,12 +210,19 @@ func (sp *SessionProfiler) TotalDuration() time.Duration {
 func (sp *SessionProfiler) SlowestTurns(n int) []int {
 	sp.mu.Lock()
 	defer sp.mu.Unlock()
-	type idxDur struct{ idx int; dur time.Duration }
+	type idxDur struct {
+		idx int
+		dur time.Duration
+	}
 	var items []idxDur
-	for i, p := range sp.profiles { items = append(items, idxDur{i, p.TotalDuration()}) }
+	for i, p := range sp.profiles {
+		items = append(items, idxDur{i, p.TotalDuration()})
+	}
 	sort.Slice(items, func(a, b int) bool { return items[a].dur > items[b].dur })
 	out := make([]int, n)
-	for i := 0; i < n && i < len(items); i++ { out[i] = items[i].idx }
+	for i := 0; i < n && i < len(items); i++ {
+		out[i] = items[i].idx
+	}
 	return out
 }
 

@@ -659,8 +659,8 @@ func checkTooComplex(file *ast.File, fset *token.FileSet, src []byte) []Issue {
 					name = recv + "." + name
 				}
 				issues = append(issues, Issue{
-					Line:    pos.Line,
-					Column:  pos.Column,
+					Line:   pos.Line,
+					Column: pos.Column,
 					Message: fmt.Sprintf("function '%s' has cyclomatic complexity %d (max %d)",
 						name, complexity, maxComplexity),
 				})
@@ -884,9 +884,9 @@ func checkErrorCheck(file *ast.File, fset *token.FileSet, src []byte) []Issue {
 						if ident.Name == "_" {
 							pos := fset.Position(assign.Pos())
 							issues = append(issues, Issue{
-								Line:    pos.Line,
-								Column:  pos.Column,
-								Message: "error return value is being discarded with '_'",
+								Line:     pos.Line,
+								Column:   pos.Column,
+								Message:  "error return value is being discarded with '_'",
 								Severity: SevError,
 							})
 						}
@@ -910,9 +910,9 @@ func checkErrorCheck(file *ast.File, fset *token.FileSet, src []byte) []Issue {
 		if hasErrorReturn(call) {
 			pos := fset.Position(call.Pos())
 			issues = append(issues, Issue{
-				Line:    pos.Line,
-				Column:  pos.Column,
-				Message: "error return value from function call is not checked",
+				Line:     pos.Line,
+				Column:   pos.Column,
+				Message:  "error return value from function call is not checked",
 				Severity: SevError,
 			})
 		}
@@ -1370,10 +1370,10 @@ func (bf *BatchFixer) ApplyAll() map[string][]byte {
 
 // LintResult aggregates all lint output for a run.
 type LintResult struct {
-	Issues     []Issue        `json:"issues" yaml:"issues"`
-	Summary    LintSummary    `json:"summary" yaml:"summary"`
-	ConfigFile string         `json:"config_file,omitempty" yaml:"config_file,omitempty"`
-	Files      int            `json:"files" yaml:"files"`
+	Issues     []Issue     `json:"issues" yaml:"issues"`
+	Summary    LintSummary `json:"summary" yaml:"summary"`
+	ConfigFile string      `json:"config_file,omitempty" yaml:"config_file,omitempty"`
+	Files      int         `json:"files" yaml:"files"`
 }
 
 // LintSummary provides a high-level overview.
@@ -1881,19 +1881,19 @@ func (a IssueBySeverity) Less(i, j int) bool {
 // PresetAll enables all rules.
 func PresetAll() map[string]bool {
 	return map[string]bool{
-		"unused-var":           true,
-		"too-complex":          true,
-		"missing-doc":          true,
-		"long-line":            true,
-		"deep-nesting":         true,
-		"magic-number":         true,
-		"error-check":          true,
-		"naming-convention":    true,
-		"import-order":         true,
-		"empty-block":          true,
-		"var-decl":             true,
-		"range-issue":          true,
-		"context-propagation":  true,
+		"unused-var":          true,
+		"too-complex":         true,
+		"missing-doc":         true,
+		"long-line":           true,
+		"deep-nesting":        true,
+		"magic-number":        true,
+		"error-check":         true,
+		"naming-convention":   true,
+		"import-order":        true,
+		"empty-block":         true,
+		"var-decl":            true,
+		"range-issue":         true,
+		"context-propagation": true,
 	}
 }
 

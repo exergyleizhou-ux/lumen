@@ -139,7 +139,7 @@ type PerfResult struct {
 
 // PerfTracker tracks performance across test runs.
 type PerfTracker struct {
-	mu       sync.Mutex
+	mu        sync.Mutex
 	baselines map[string]time.Duration
 	threshold float64 // pct change to flag as regression
 }

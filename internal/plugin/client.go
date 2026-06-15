@@ -67,10 +67,10 @@ func startClient(cfg ServerConfig) (*Client, error) {
 	}
 
 	c := &Client{
-		cmd:   cmd,
-		stdin: stdin,
+		cmd:    cmd,
+		stdin:  stdin,
 		stdout: stdout,
-		resps: map[int64]chan jsonRPCResponse{},
+		resps:  map[int64]chan jsonRPCResponse{},
 	}
 
 	// Start the response reader goroutine
