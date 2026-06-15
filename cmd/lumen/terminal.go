@@ -1,5 +1,5 @@
-// terminal.go — Reasonix-quality terminal UI.
-// Clean output, thinking inline, status footer after each turn.
+// terminal.go — Claude Code / Reasonix color scheme.
+// Every element has a distinct color so the eye can scan naturally.
 package main
 
 import (
@@ -20,25 +20,37 @@ type liveStats struct {
 	tkOut   atomic.Int64
 	tkCache atomic.Int64
 	tools   atomic.Int64
-	costU   atomic.Int64 // micros
+	costU   atomic.Int64
 }
 
-func (s *liveStats) addCost(v float64) {
-	s.costU.Add(int64(v * 1_000_000))
-}
-func (s *liveStats) cost() float64 {
-	return float64(s.costU.Load()) / 1_000_000
-}
+func (s *liveStats) addCost(v float64)     { s.costU.Add(int64(v * 1_000_000)) }
+func (s *liveStats) cost() float64          { return float64(s.costU.Load()) / 1_000_000 }
 
 var stats = &liveStats{}
 
-// ── Sink: Reasonix-style output ────────────────────────────
+// ── Color palette ──────────────────────────────────────────
+// Mirroring Claude Code / Reasonix conventions:
 //
-// Strategy:
-//   - Agent text → stdout (streaming, the main content)
-//   - Thinking → stdout dimmed (Reasonix shows thinking inline)
-//   - Tool calls → stdout dimmed on their own line
-//   - Token bar → stderr at end of turn
+//   User input   → bold cyan (stands out from AI text)
+//   Thinking     → italic dim (whisper, barely visible)
+//   Model output → default white (the content itself)
+//   Tool calls   → bold yellow (draws attention)
+//   Tool OK      → green check
+//   Tool fail    → red cross
+//   Footer       → dim gray (metadata)
+//   Header       → bold white brand + dim gray model
+
+func color(s, code string) string { return code + s + "\033[0m" }
+func white(s string) string  { return color(s, "\033[97m") }
+func bold(s string) string  { return color(s, "\033[1m") }
+func dim(s string) string   { return color(s, "\033[2m") }
+func italic(s string) string { return color(s, "\033[3m") }
+func cyan(s string) string  { return color(s, "\033[36m") }
+func green(s string) string { return color(s, "\033[32m") }
+func red(s string) string   { return color(s, "\033[31m") }
+func yellow(s string) string { return color(s, "\033[33m") }
+
+// ── Sink: colour-coded output ──────────────────────────────
 
 func termSink() event.Sink {
 	thinking := false
@@ -52,15 +64,14 @@ func termSink() event.Sink {
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				fmt.Fprint(os.Stdout, dim(stripMD(e.Text)))
+				fmt.Fprint(os.Stdout, italic(dim(stripMD(e.Text))))
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
-				// First text chunk: clear thinking, print a thin separator
 				thinking = false
 				textStarted = true
-				fmt.Print("\n\n")
+				fmt.Print("\n")
 			}
 			fmt.Fprint(os.Stdout, stripMD(e.Text))
 
@@ -68,15 +79,15 @@ func termSink() event.Sink {
 			thinking = false
 			textStarted = true
 			stats.tools.Add(1)
-			fmt.Printf("\n%s", dim("  ⚙ "+e.Tool.Name))
+			fmt.Printf("\n  %s", dim(yellow("⚡ "+e.Tool.Name)))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
-				fmt.Printf(" %s\n", red("✗"))
+				fmt.Printf("  %s\n", red("✗ "+e.Tool.Err))
 			} else if e.Tool.Blocked {
-				fmt.Printf(" %s\n", dim("⊘ blocked"))
+				fmt.Printf("  %s\n", dim("⊘ blocked"))
 			} else {
-				fmt.Printf(" %s\n", green("✓"))
+				fmt.Printf("  %s\n", green("✓"))
 			}
 
 		case event.UsageKind:
@@ -109,14 +120,11 @@ func drawFooter() {
 	if ti > 0 {
 		cachePct = int(float64(tc) / float64(ti) * 100)
 	}
-
-	fmt.Fprintf(os.Stderr, "%s  %d∶%d tokens  ·  cache %d%%  ·  $%.4f  ·  %d tools  %s\n",
-		dim(""),
-		ti/1000, to/1000,
-		cachePct,
-		cost,
-		tools,
-		dim(""))
+	fmt.Fprintf(os.Stderr, "%s  %s∶%s %s  ·  %scache %d%%%s  ·  %s$%.4f%s  ·  %s%d tools%s\n",
+		dim(""), cyan(fmt.Sprint(ti/1000)), green(fmt.Sprint(to/1000)), dim("tokens"),
+		dim(""), cachePct, dim(""),
+		dim(""), cost, dim(""),
+		dim(""), tools, dim(""))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -129,45 +137,45 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		ctrl.SetPermissionMode(permission.ParseMode(modeOverride))
 	}
 
-	fmt.Printf("\n%s  %s\n\n",
-		bold("lumen"), dim(ctrl.ProviderName()+"/"+ctrl.ModelName()))
+	// ── Header ──
+	fmt.Printf("\n  %s  %s\n\n", bold(white("lumen")), dim(ctrl.ProviderName()+"/"+ctrl.ModelName()))
 
 	sc := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print(cyan("▸ "))
+		fmt.Print("  " + cyan("▸") + " ")
 		if !sc.Scan() { break }
 		text := strings.TrimSpace(sc.Text())
 
 		if text == "" { continue }
 		switch {
 		case text == "/exit" || text == "/quit":
+			fmt.Println()
 			return nil
 		case text == "/help":
-			fmt.Printf("  /exit /mode /mode bypass|plan|default\n\n")
+			fmt.Printf("%s  /exit  /mode  /mode bypass|plan|default\n\n", dim(""))
 			continue
 		case text == "/mode":
-			fmt.Printf("  bypass | plan | default | accept-edits\n\n")
+			fmt.Printf("%s  bypass  plan  default  accept-edits\n\n", dim(""))
 			continue
 		case strings.HasPrefix(text, "/mode "):
 			m := permission.ParseMode(strings.TrimPrefix(text, "/mode "))
 			ctrl.SetPermissionMode(m)
-			fmt.Printf("  %s\n\n", dim("["+string(m)+"]"))
+			fmt.Printf("  %s\n\n", bold(cyan("["+string(m)+"]")))
 			continue
 		}
 
+		// Echo user input back in cyan so they see what they typed.
+		// Claude Code does this too.
+		fmt.Printf("\n  %s %s\n\n", bold(cyan(text)), dim("— you"))
+
 		ctrl.Run(context.Background(), text)
-		fmt.Print("\n\n")
+		fmt.Print("\n")
 	}
 	return nil
 }
 
 // ── ANSI helpers ───────────────────────────────────────────
-
-func bold(s string) string  { return "\033[1m" + s + "\033[0m" }
-func dim(s string) string   { return "\033[2m" + s + "\033[0m" }
-func cyan(s string) string  { return "\033[36m" + s + "\033[0m" }
-func green(s string) string { return "\033[32m" + s + "\033[0m" }
-func red(s string) string   { return "\033[31m" + s + "\033[0m" }
+// Already above; only bold/dim/cyan/green/red/yellow/white are needed.
 
 // ── Markdown stripper ──────────────────────────────────────
 
@@ -178,7 +186,6 @@ func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "####", "")
 	s = strings.ReplaceAll(s, "###", "")
 	s = strings.ReplaceAll(s, "##", "")
-	// Strip all # at line starts (headings)
 	lines := strings.Split(s, "\n")
 	var clean []string
 	for _, l := range lines {
@@ -189,10 +196,7 @@ func stripMD(s string) string {
 		clean = append(clean, l)
 	}
 	s = strings.Join(clean, "\n")
-	// Strip bare * markers that don't form valid italic pairs
-	// Strategy: replace all * with nothing — cleaner output
 	s = strings.ReplaceAll(s, "*", "")
-	// Strip table formatting symbols
 	s = strings.ReplaceAll(s, "|---", "")
 	s = strings.ReplaceAll(s, "| ", "  ")
 	return s
