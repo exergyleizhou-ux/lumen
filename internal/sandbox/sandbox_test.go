@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"context"
 	"testing"
 )
 
@@ -21,7 +22,7 @@ func TestCanDocker(t *testing.T) {
 
 func TestExecutorNative(t *testing.T) {
 	e := NewExecutor(Config{Mode: ModeNone})
-	out, err := e.Run(t.Context(), "echo hello")
+	out, err := e.Run(context.Background(), "echo hello")
 	if err != nil {
 		t.Fatalf("native run: %v", err)
 	}
