@@ -242,6 +242,9 @@ func (a *Agent) SetJobs(jm *jobs.Manager) { a.jobs = jm }
 // When nil (default), the agent falls back to sliding-window compaction.
 func (a *Agent) SetCompactProvider(prov provider.Provider) { a.compactProvider = prov }
 
+// SetProvider swaps the primary provider at runtime (for failover).
+func (a *Agent) SetProvider(p provider.Provider) { a.prov = p }
+
 // SetSink replaces the event sink (used by TUI to redirect output mid-session).
 func (a *Agent) SetSink(s event.Sink) { a.sink = s }
 

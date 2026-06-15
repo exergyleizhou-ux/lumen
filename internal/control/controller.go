@@ -42,6 +42,7 @@ type Controller struct {
 	cfg        *config.File
 	provCfg    *config.ProviderConfig
 	prov       provider.Provider
+	fallbacks  []provider.Provider // for failover
 	reg        *tool.Registry
 	skillStore *skill.Store
 	permMode   permission.Mode
@@ -112,6 +113,22 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	}
 	c.prov = prov
 
+	// 2b. Build fallback providers from remaining configs
+	for i := range cfg.Providers {
+		if cfg.Providers[i].Name == provCfg.Name {
+			continue
+		}
+		fb, err := provider.New(cfg.Providers[i].Kind, provider.Config{
+			Name:    cfg.Providers[i].Name,
+			BaseURL: cfg.Providers[i].BaseURL,
+			Model:   cfg.Providers[i].Model,
+			APIKey:  cfg.Providers[i].APIKey,
+		})
+		if err == nil {
+			c.fallbacks = append(c.fallbacks, fb)
+		}
+	}
+
 	// 3. Build tool registry
 	reg := tool.NewRegistry()
 	for _, t := range tool.Builtins() {
@@ -178,9 +195,26 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 }
 
 // Run executes a one-shot task and returns the agent's final answer.
+// On failure, automatically tries fallback providers if configured.
 func (c *Controller) Run(ctx context.Context, prompt string) error {
 	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
-	return c.ag.Run(ctx, prompt)
+	err := c.ag.Run(ctx, prompt)
+	if err != nil && len(c.fallbacks) > 0 {
+		original := c.prov.Name()
+		for _, fb := range c.fallbacks {
+			c.sink.Emit(event.Event{
+				Kind: event.Notice, Level: event.LevelWarn,
+				Text: fmt.Sprintf(original + " failed — switching to " + fb.Name()),
+			})
+			c.ag.SetProvider(fb)
+			err2 := c.ag.Run(ctx, prompt)
+			if err2 == nil {
+				return nil
+			}
+		}
+		c.ag.SetProvider(c.prov) // restore
+	}
+	return err
 }
 
 // Plan runs in read-only mode and returns the agent's plan.
