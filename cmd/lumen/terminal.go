@@ -21,6 +21,7 @@ type liveStats struct {
 	tkOut   atomic.Int64
 	tkCache atomic.Int64
 	tools   atomic.Int64
+	step    atomic.Int64
 	costU   atomic.Int64
 }
 
@@ -65,6 +66,7 @@ func termSink() event.Sink {
 			thinking = true
 			textStarted = false
 			textLen = 0
+			stats.step.Store(0)
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -79,7 +81,6 @@ func termSink() event.Sink {
 			}
 			cleaned := stripMD(e.Text)
 			if textLen >= maxOutput {
-				// Already over limit — only show notice once
 				return
 			}
 			textLen += len(cleaned)
@@ -94,7 +95,8 @@ func termSink() event.Sink {
 			thinking = false
 			textStarted = true
 			stats.tools.Add(1)
-			fmt.Printf("\n  %s", dim(yellow("⚡ "+e.Tool.Name)))
+			sn := stats.step.Add(1)
+			fmt.Printf("\n  %s  %s", cyan(fmt.Sprintf("[%d]", sn)), dim(yellow("⚡ "+e.Tool.Name)))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
@@ -123,6 +125,7 @@ func termSink() event.Sink {
 			drawFooter()
 			thinking = false
 			textStarted = false
+			stats.step.Store(0)
 		}
 	})
 }
@@ -134,17 +137,17 @@ func drawFooter() {
 	to := stats.tkOut.Load()
 	tc := stats.tkCache.Load()
 	cost := stats.cost()
-	tools := stats.tools.Load()
+	step := stats.step.Load()
 
 	cachePct := 0
 	if ti > 0 {
 		cachePct = int(float64(tc) / float64(ti) * 100)
 	}
-	fmt.Fprintf(os.Stderr, "%s  %s∶%s %s  ·  %scache %d%%%s  ·  %s$%.4f%s  ·  %s%d tools%s\n",
+	fmt.Fprintf(os.Stderr, "%s  %s∶%s %s  ·  %scache %d%%%s  ·  %s$%.4f%s  ·  %s%d steps%s\n",
 		dim(""), cyan(fmt.Sprint(ti/1000)), green(fmt.Sprint(to/1000)), dim("tokens"),
 		dim(""), cachePct, dim(""),
 		dim(""), cost, dim(""),
-		dim(""), tools, dim(""))
+		dim(""), step, dim(""))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
