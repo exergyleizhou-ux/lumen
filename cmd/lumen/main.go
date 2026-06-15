@@ -10,7 +10,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -87,56 +86,12 @@ func makeController(sink event.Sink, modeOverride string) (*control.Controller, 
 // Tool activity shows as a single overwritable status line on stderr so
 // the main output stays clean.  Token counts go to stderr.
 
-func lumenSink() event.Sink {
-	thinking := true
-	return event.FuncSink(func(e event.Event) {
-		switch e.Kind {
-		case event.TurnStarted:
-			thinking = true
-			fmt.Fprint(os.Stderr, "\033[2m…\033[0m")
-
-		case event.Text:
-			if thinking {
-				fmt.Fprint(os.Stderr, "\r\033[2K")
-				thinking = false
-			}
-			fmt.Print(e.Text)
-
-		case event.Reasoning:
-			// silent
-
-		case event.ToolDispatch:
-			fmt.Fprintf(os.Stderr, "\r\033[2K\033[2m  %s\033[0m", e.Tool.Name)
-
-		case event.ToolResult:
-			if e.Tool.Err != "" {
-				fmt.Fprintf(os.Stderr, "\r\033[2K\033[31m  ✗ %s\033[0m\n", e.Tool.Err)
-			} else {
-				fmt.Fprintf(os.Stderr, "\r\033[2K")
-			}
-
-		case event.UsageKind:
-			if e.Usage != nil {
-				fmt.Fprintf(os.Stderr, "\r\033[2K\033[90m  %d tokens\033[0m\n",
-					e.Usage.TotalTokens)
-			}
-
-		case event.TurnDone:
-			fmt.Fprint(os.Stderr, "\r\033[2K")
-
-		case event.Notice:
-			if e.Level == event.LevelErr {
-				fmt.Fprintf(os.Stderr, "\r\033[2K\033[31m  %s\033[0m\n", e.Text)
-			}
-		}
-	})
-}
 
 // ── Setup ──────────────────────────────────────────────────
 
 func runSetup() {
 	ctrl := control.New()
-	if err := ctrl.Configure(lumenSink(), nil, ""); err != nil {
+	if err := ctrl.Configure(termSink(), nil, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
@@ -166,7 +121,7 @@ func runOneShot(args []string) {
 		os.Exit(1)
 	}
 
-	ctrl, err := makeController(lumenSink(), modeOverride)
+	ctrl, err := makeController(termSink(), modeOverride)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
@@ -211,41 +166,11 @@ func parseRunArgs(args []string) (planMode bool, mode, prompt string) {
 // ── Interactive chat ───────────────────────────────────────
 
 func runChat(args []string) {
-	modeOverride := parseModeFlag(args)
-
-	ctrl, err := makeController(lumenSink(), modeOverride)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+	ctrl := control.New()
+	mode := parseModeFlag(args)
+	if err := runChatUI(ctrl, mode); err != nil {
+		fmt.Fprintf(os.Stderr, "chat: %v\n", err)
 		os.Exit(1)
-	}
-
-	fmt.Printf("lumen · %s/%s · /exit\n\n",
-		ctrl.ProviderName(), ctrl.ModelName())
-
-	sc := bufio.NewScanner(os.Stdin)
-	for {
-		fmt.Print("> ")
-		if !sc.Scan() { break }
-		text := strings.TrimSpace(sc.Text())
-		if text == "" { continue }
-		if text == "/exit" || text == "/quit" { return }
-		if text == "/help" {
-			fmt.Println("/exit /mode /mode bypass|plan")
-			continue
-		}
-		if text == "/mode" {
-			fmt.Println("bypass | plan | default | accept-edits")
-			continue
-		}
-		if strings.HasPrefix(text, "/mode ") {
-			m := permission.ParseMode(strings.TrimPrefix(text, "/mode "))
-			ctrl.SetPermissionMode(m)
-			fmt.Printf("[%s]\n", m)
-			continue
-		}
-
-		ctrl.Run(context.Background(), text)
-		fmt.Println()
 	}
 }
 
