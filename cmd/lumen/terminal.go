@@ -52,7 +52,7 @@ func termSink() event.Sink {
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				fmt.Fprint(os.Stdout, dim(e.Text))
+				fmt.Fprint(os.Stdout, dim(stripMD(e.Text)))
 			}
 
 		case event.Text:
@@ -62,7 +62,7 @@ func termSink() event.Sink {
 				textStarted = true
 				fmt.Print("\n\n")
 			}
-			fmt.Fprint(os.Stdout, e.Text)
+			fmt.Fprint(os.Stdout, stripMD(e.Text))
 
 		case event.ToolDispatch:
 			thinking = false
@@ -168,3 +168,32 @@ func dim(s string) string   { return "\033[2m" + s + "\033[0m" }
 func cyan(s string) string  { return "\033[36m" + s + "\033[0m" }
 func green(s string) string { return "\033[32m" + s + "\033[0m" }
 func red(s string) string   { return "\033[31m" + s + "\033[0m" }
+
+// ── Markdown stripper ──────────────────────────────────────
+
+func stripMD(s string) string {
+	s = strings.ReplaceAll(s, "**", "")
+	s = strings.ReplaceAll(s, "__", "")
+	s = strings.ReplaceAll(s, "`", "")
+	s = strings.ReplaceAll(s, "####", "")
+	s = strings.ReplaceAll(s, "###", "")
+	s = strings.ReplaceAll(s, "##", "")
+	// Strip all # at line starts (headings)
+	lines := strings.Split(s, "\n")
+	var clean []string
+	for _, l := range lines {
+		for strings.HasPrefix(l, "#") {
+			l = strings.TrimPrefix(l, "#")
+			l = strings.TrimPrefix(l, " ")
+		}
+		clean = append(clean, l)
+	}
+	s = strings.Join(clean, "\n")
+	// Strip bare * markers that don't form valid italic pairs
+	// Strategy: replace all * with nothing — cleaner output
+	s = strings.ReplaceAll(s, "*", "")
+	// Strip table formatting symbols
+	s = strings.ReplaceAll(s, "|---", "")
+	s = strings.ReplaceAll(s, "| ", "  ")
+	return s
+}
