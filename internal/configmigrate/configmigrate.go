@@ -4,10 +4,12 @@
 package configmigrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -148,24 +150,12 @@ func readJSONFile(path string) (map[string]any, error) {
 	data, err := os.ReadFile(path)
 	if err != nil { return nil, err }
 	var m map[string]any
-	if err := jsonUnmarshal(data, &m); err != nil { return nil, err }
+	if err := json.Unmarshal(data, &m); err != nil { return nil, err }
 	return m, nil
 }
 
 func writeJSONFile(path string, data map[string]any) error {
-	jsonData, err := jsonMarshal(data)
+	jsonData, err := json.Marshal(data)
 	if err != nil { return err }
 	return os.WriteFile(path, jsonData, 0o644)
 }
-
-var jsonUnmarshal = jsonUnmarshalImpl
-var jsonMarshal = jsonMarshalImpl
-
-func jsonUnmarshalImpl(data []byte, v any) error {
-	return importJSONUnmarshal(data, v)
-}
-func jsonMarshalImpl(v any) ([]byte, error) {
-	return importJSONMarshal(v)
-}
-func importJSONUnmarshal(data []byte, v any) error { return nil }
-func importJSONMarshal(v any) ([]byte, error) { return []byte(`{}`), nil }
