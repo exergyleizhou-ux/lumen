@@ -175,12 +175,6 @@ func runOneShot(args []string) {
 
 func runChat(args []string) {
 	ctrl := control.New()
-	sink := chatSink()
-	if err := ctrl.Configure(sink, nil, ""); err != nil {
-		fmt.Fprintf(os.Stderr, "config: %v\n", err)
-		os.Exit(1)
-	}
-
 	if err := runTUIChat(ctrl); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
