@@ -62,13 +62,19 @@ func printUsage() {
 A multi-model coding agent for your terminal. Built in Go, single binary.
 
 Usage:
-  lumen chat              Start interactive chat
-  lumen run "prompt"      Run a one-shot task
-  lumen run --plan "..."  Plan mode (read-only)
-  lumen run --mode M "..." Permission mode: default | accept-edits | bypass | plan
-  lumen doctor            Run health checks
-  lumen setup             Run config wizard
-  lumen version           Print version`)
+  lumen chat [--mode M] [--plan]    Interactive chat (plan = read-only)
+  lumen run "prompt"                Run a one-shot task
+  lumen run --plan "..."            Plan mode (read-only)
+  lumen run --mode M "..."          Permission mode: default | accept-edits | bypass | plan
+  lumen doctor                      Run health checks
+  lumen setup                       Run config wizard
+  lumen version                     Print version
+
+Permission modes:
+  default       Safe tools auto-allowed, writes ask (default)
+  accept-edits  All tools allowed except dangerous ones
+  bypass        All tools bypass the gate
+  plan          Read-only: all writes blocked`)
 }
 
 // ── Setup ─────────────────────────────────────────────────
@@ -142,6 +148,7 @@ func runOneShot(args []string) {
 	mode := ctrl.PermissionMode()
 	if modeOverride != "" {
 		mode = permission.ParseMode(modeOverride)
+		ctrl.SetPermissionMode(mode)
 	}
 	ctrl.Agent().SetGate(permission.NewGate(mode, headlessApprove))
 
@@ -175,10 +182,28 @@ func runOneShot(args []string) {
 
 func runChat(args []string) {
 	ctrl := control.New()
-	if err := runTUIChat(ctrl); err != nil {
+	mode := parseChatArgs(args)
+	if err := runTUIChat(ctrl, mode); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// parseChatArgs returns a mode override, or empty string.
+func parseChatArgs(args []string) string {
+	mode := ""
+	plan := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--mode":
+			i++
+			if i < len(args) { mode = args[i] }
+		case "--plan":
+			plan = true
+		}
+	}
+	if plan { return "plan" }
+	return mode
 }
 
 // chatSink is a clean chat sink: only text output, no tool noise.

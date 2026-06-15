@@ -15,6 +15,7 @@ import (
 
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/permission"
 )
 
 // ── color palette ──────────────────────────────────────
@@ -62,16 +63,25 @@ func costEstimate(in, out int) float64 {
 
 // ── main entry ─────────────────────────────────────────
 
-func runTUIChat(ctrl *control.Controller) error {
-	// ── 1. Configure before anything ──
+func runTUIChat(ctrl *control.Controller, modeOverride string) error {
 	rt := &tuiRuntime{ctrl: ctrl}
 	if err := ctrl.Configure(rt.sink(), nil, ""); err != nil {
 		return err
 	}
+	// Apply CLI mode override AFTER Configure (which resets mode from config)
+	if modeOverride != "" {
+		ctrl.SetPermissionMode(permission.ParseMode(modeOverride))
+	}
 
 	fd := int(os.Stdin.Fd())
 	old, err := term.MakeRaw(fd)
-	if err != nil { return runLineChat(ctrl) }
+	if err != nil {
+		// Save mode override before line fallback reconfigures
+		savedMode := ctrl.PermissionMode()
+		err2 := runLineChat(ctrl)
+		ctrl.SetPermissionMode(savedMode)
+		return err2
+	}
 	defer term.Restore(fd, old)
 
 	rt.w, rt.h, _ = term.GetSize(fd)
@@ -137,6 +147,20 @@ func runTUIChat(ctrl *control.Controller) error {
 				rt.drawWelcome()
 				rt.drawStatusBar()
 				continue
+			case "/mode":
+				// Show mode options
+				rt.drawModeHelp()
+				continue
+			default:
+				// /mode <name> — switch permission mode
+				if strings.HasPrefix(text, "/mode ") {
+					modeStr := strings.TrimPrefix(text, "/mode ")
+					newMode := permission.ParseMode(modeStr)
+					rt.ctrl.SetPermissionMode(newMode)
+					fmt.Printf("\n%s  ✓ Mode switched to %s%s\n", cGreen, newMode, cReset)
+					rt.drawStatusBar()
+					continue
+				}
 			}
 
 			// echo user
@@ -219,7 +243,14 @@ func (t *tuiRuntime) drawWelcome() {
 
 func (t *tuiRuntime) drawStatusBar() {
 	w := t.w
-	left := fmt.Sprintf(" %s %s/%s ", "●", t.ctrl.ProviderName(), t.ctrl.ModelName())
+	mode := t.ctrl.PermissionMode()
+	modeIcon := "●"
+	switch mode {
+	case permission.ModePlan: modeIcon = "⊙"
+	case permission.ModeBypass: modeIcon = "◉"
+	case permission.ModeAcceptEdits: modeIcon = "◒"
+	}
+	left := fmt.Sprintf(" %s %s/%s [%s] ", modeIcon, t.ctrl.ProviderName(), t.ctrl.ModelName(), mode)
 
 	ti, to := t.tokensIn.Load(), t.tokensOut.Load()
 	ct := t.toolCalls.Load()
@@ -243,13 +274,29 @@ func (t *tuiRuntime) drawSeparator() {
 func (t *tuiRuntime) drawHelp() {
 	fmt.Print("\n")
 	fmt.Printf("  %sCommands%s\n", cBold, cReset)
-	fmt.Printf("  %s/exit%s    Quit\n", cCyan, cReset)
-	fmt.Printf("  %s/help%s    This help\n", cCyan, cReset)
-	fmt.Printf("  %s/stats%s   Live statistics\n", cCyan, cReset)
-	fmt.Printf("  %s/clear%s   Clear screen\n", cCyan, cReset)
+	fmt.Printf("  %s/exit%s     Quit\n", cCyan, cReset)
+	fmt.Printf("  %s/help%s     This help\n", cCyan, cReset)
+	fmt.Printf("  %s/stats%s    Live statistics\n", cCyan, cReset)
+	fmt.Printf("  %s/clear%s    Clear screen\n", cCyan, cReset)
+	fmt.Printf("  %s/mode%s     Show / switch permission mode\n", cCyan, cReset)
+	fmt.Printf("           %s/mode bypass%s — allow all tools\n", cDim, cReset)
+	fmt.Printf("           %s/mode default%s — safe tools auto, writes confirm\n", cDim, cReset)
+	fmt.Printf("           %s/mode plan%s — read-only, blocks all writes\n", cDim, cReset)
+	fmt.Printf("           %s/mode accept-edits%s — allow edits, block dangerous\n", cDim, cReset)
 	fmt.Print("\n")
-	fmt.Printf("  %s91 tools%s available — file ops, GitHub, graph algorithms,\n", cBold, cReset)
-	fmt.Printf("  security, LLM queries, diagnostics, and more.\n\n")
+	fmt.Printf("  %s91 tools%s available.\n\n", cBold, cReset)
+}
+
+func (t *tuiRuntime) drawModeHelp() {
+	mode := t.ctrl.PermissionMode()
+	fmt.Print("\n")
+	fmt.Printf("  %sPermission Mode: %s%s\n\n", cBold, mode, cReset)
+	fmt.Printf("  %sbypass%s       Allow all tools — no questions asked\n", cCyan, cReset)
+	fmt.Printf("  %sdefault%s      Safe tools auto-allowed, write tools confirm (recommended)\n", cCyan, cReset)
+	fmt.Printf("  %saccept-edits%s Allow non-dangerous tools, block destructive commands\n", cCyan, cReset)
+	fmt.Printf("  %splan%s         Read-only — all writes blocked, for reviewing plans\n", cCyan, cReset)
+	fmt.Print("\n")
+	fmt.Printf("  Switch: %s/mode <name>%s\n\n", cCyan+cBold, cReset)
 }
 
 func (t *tuiRuntime) drawStats() {
@@ -287,9 +334,9 @@ func runLineChat(ctrl *control.Controller) error {
 
 	fmt.Print("\033[2J\033[H")
 	fmt.Print(cBgCyan + cWhite)
-	fmt.Printf(" %-*s ", w-1, "LUMEN · "+ctrl.ProviderName()+" / "+ctrl.ModelName())
+	fmt.Printf(" %-*s ", w-1, "LUMEN · "+ctrl.ProviderName()+" / "+ctrl.ModelName()+" ["+string(ctrl.PermissionMode())+"]")
 	fmt.Print(cReset + "\n")
-	fmt.Printf("%s%*s%s\n", cDim, w-1, "/exit /help /stats /clear  ·  91 tools", cReset)
+	fmt.Printf("%s%*s%s\n", cDim, w-1, "/exit /help /stats /mode /clear  ·  91 tools", cReset)
 	fmt.Print(cDim + strings.Repeat("─", w) + cReset + "\n\n")
 
 	reader := bufio.NewReader(os.Stdin)
