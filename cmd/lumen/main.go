@@ -12,6 +12,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,7 +26,6 @@ import (
 	"lumen/internal/doctor"
 	"lumen/internal/event"
 	"lumen/internal/permission"
-	"lumen/internal/tui"
 
 	// Ensure openai provider is registered
 	_ "lumen/internal/provider/openai"
@@ -175,19 +175,44 @@ func runOneShot(args []string) {
 
 func runChat(args []string) {
 	ctrl := control.New()
-	if err := ctrl.Configure(nil, nil, ""); err != nil {
+	sink := headlessSink()
+	if err := ctrl.Configure(sink, nil, ""); err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "⚡ Lumen chat — %s/%s (permissions: %s)\n",
-		ctrl.ProviderName(), ctrl.ModelName(), ctrl.PermissionMode())
+	fmt.Fprintf(os.Stderr, "\n⚡ Lumen chat — %s/%s\n", ctrl.ProviderName(), ctrl.ModelName())
+	fmt.Fprintf(os.Stderr, "Type /exit to quit, /help for commands.\n\n")
 
-	if err := tui.RunTUI(ctrl); err != nil {
-		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
-		os.Exit(1)
+	reader := bufio.NewReader(os.Stdin)
+	for {
+		fmt.Fprint(os.Stderr, "> ")
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		switch line {
+		case "/exit", "/quit":
+			fmt.Println("Goodbye.")
+			return
+		case "/help":
+			fmt.Println("Commands: /exit  /help  — or type anything to chat with the agent.")
+			continue
+		}
+
+		ctx := context.Background()
+		fmt.Println()
+		if err := ctrl.Run(ctx, line); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		}
+		fmt.Println()
 	}
 }
+
 
 // ── Headless sink ─────────────────────────────────────────
 
