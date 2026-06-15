@@ -40,8 +40,8 @@ func DefaultLang() Lang {
 	}
 }
 
-// T is a translation function. Call T("key") to get the localized string.
-type T func(key string, args ...any) string
+// TrFunc is a translation function. Call Tr("key") to get the localized string.
+type TrFunc func(key string, args ...any) string
 
 // Catalog holds translations for one locale.
 type Catalog map[string]string
@@ -75,7 +75,7 @@ func GetLang() Lang {
 }
 
 // Tr returns a translation function for the given locale.
-func Tr(lang Lang) T {
+func Tr(lang Lang) TrFunc {
 	catalog, ok := dicts[lang]
 	if !ok {
 		catalog = enCatalog
