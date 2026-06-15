@@ -211,7 +211,7 @@ func chatSink() event.Sink {
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.Text:
-			renderClean(e.Text)
+			fmt.Print(cleanMarkdown(e.Text))
 		case event.ToolResult:
 			if e.Tool.Err != "" && e.Tool.Name != "" {
 				// Minimal: just a one-line tool status
@@ -235,7 +235,7 @@ func headlessSink() event.Sink {
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.Text:
-			renderClean(e.Text)
+			fmt.Print(cleanMarkdown(e.Text))
 		case event.Reasoning:
 			fmt.Fprintf(os.Stderr, "\033[2m%s\033[0m", e.Text)
 		case event.ToolDispatch:
