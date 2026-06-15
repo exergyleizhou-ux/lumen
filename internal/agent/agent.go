@@ -266,8 +266,13 @@ func (a *Agent) SetSession(s *Session) {
 
 // Run executes one user turn. It streams a completion, executes any tool calls,
 // feeds results back, and repeats until the model produces a final answer or
-// maxSteps is exhausted.
+// maxSteps is exhausted. Each turn has a 5-minute hard timeout.
 func (a *Agent) Run(ctx context.Context, input string) error {
+	// Hard per-turn timeout: prevents any single turn from running indefinitely
+	turnCtx, turnCancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer turnCancel()
+	ctx = turnCtx
+
 	// Strip hidden/invisible Unicode characters (indirect injection defense)
 	input = guard.StripHiddenChars(input)
 	if a.sink == nil {

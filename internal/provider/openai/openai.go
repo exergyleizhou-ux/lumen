@@ -32,7 +32,15 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		baseURL: cfg.BaseURL,
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
-		client:  &http.Client{},
+		client:  &http.Client{
+			Transport: &http.Transport{
+				MaxIdleConns:         10,
+				MaxIdleConnsPerHost:  5,
+				IdleConnTimeout:      90 * time.Second,
+				ResponseHeaderTimeout: 30 * time.Second,
+				ExpectContinueTimeout: 1 * time.Second,
+			},
+		},
 	}, nil
 }
 
@@ -58,12 +66,13 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 	return ch, nil
 }
 
-// streamWithRetry wraps the actual HTTP stream with exponential-backoff retry
+// streamWithRetry wraps the actual HTTP stream with exponential-backoff retry  
 // for transient errors (429, 503, connection refused, timeout).
+// Retries are silent — no visible noise in the output stream.
 func (p *Provider) streamWithRetry(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) {
-	const maxRetries = 3
-	baseDelay := 2 * time.Second
-	maxDelay := 30 * time.Second
+	const maxRetries = 2
+	baseDelay := 1 * time.Second
+	maxDelay := 8 * time.Second
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		if ctx.Err() != nil {
@@ -95,12 +104,7 @@ func (p *Provider) streamWithRetry(ctx context.Context, req provider.Request, ch
 			return
 		case <-time.After(delay):
 		}
-
-		// Tell the model what happened
-		ch <- provider.Chunk{
-			Type: provider.ChunkText,
-			Text: fmt.Sprintf("\n[retrying after attempt %d failed — backoff %v]\n", attempt+1, delay),
-		}
+		// silent retry — no noise in output
 	}
 }
 
