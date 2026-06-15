@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"lumen/internal/control"
 	"lumen/internal/event"
@@ -55,12 +56,15 @@ func yellow(s string) string { return color(s, "\033[33m") }
 func termSink() event.Sink {
 	thinking := false
 	textStarted := false
+	textLen := 0
+	const maxOutput = 8 * 1024 // 8KB per turn
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 		case event.TurnStarted:
 			thinking = true
 			textStarted = false
+			textLen = 0
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -73,7 +77,18 @@ func termSink() event.Sink {
 				textStarted = true
 				fmt.Print("\n")
 			}
-			fmt.Fprint(os.Stdout, stripMD(e.Text))
+			cleaned := stripMD(e.Text)
+			if textLen >= maxOutput {
+				// Already over limit — only show notice once
+				return
+			}
+			textLen += len(cleaned)
+			if textLen > maxOutput {
+				fmt.Fprint(os.Stdout, cleaned[:len(cleaned)-(textLen-maxOutput)])
+				fmt.Fprintf(os.Stderr, "\n\n%s", dim(fmt.Sprintf("… output truncated (%d bytes max)", maxOutput)))
+				return
+			}
+			fmt.Fprint(os.Stdout, cleaned)
 
 		case event.ToolDispatch:
 			thinking = false
@@ -137,6 +152,14 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		ctrl.SetPermissionMode(permission.ParseMode(modeOverride))
 	}
 
+	// ── Session file for history ──
+	histDir := os.ExpandEnv("$HOME/.lumen/history")
+	os.MkdirAll(histDir, 0700)
+	histFile, _ := os.Create(histDir + "/" + time.Now().Format("2006-01-02-150405") + ".log")
+	if histFile != nil {
+		defer histFile.Close()
+	}
+
 	// ── Header ──
 	fmt.Printf("\n  %s  %s\n\n", bold(white("lumen")), dim(ctrl.ProviderName()+"/"+ctrl.ModelName()))
 
@@ -167,6 +190,12 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		// Echo user input back in cyan so they see what they typed.
 		// Claude Code does this too.
 		fmt.Printf("\n  %s %s\n\n", bold(cyan(text)), dim("— you"))
+
+		// Save to history file
+		if histFile != nil {
+			fmt.Fprintf(histFile, "--- %s ---\n", time.Now().Format("2006-01-02 15:04:05"))
+			fmt.Fprintf(histFile, "> %s\n\n", text)
+		}
 
 		ctrl.Run(context.Background(), text)
 		fmt.Print("\n")
