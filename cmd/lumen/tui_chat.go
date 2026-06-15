@@ -1,13 +1,13 @@
-// Package main — Full-featured TUI: header, status bar, tool visualization,  
-// live token/cost tracking, and agent output intercept for clean rendering.
+// Package main — Production TUI: Grok Build / Claude Code quality terminal UI.
+// Fixed layout, Grok-style color palette, inline tool status, live metrics.
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,136 +17,92 @@ import (
 	"lumen/internal/event"
 )
 
-// ── TUI Runtime State ──────────────────────────────────
+// ── color palette ──────────────────────────────────────
+const (
+	cReset   = "\033[0m"
+	cBold    = "\033[1m"
+	cDim     = "\033[2m"
+	cRed     = "\033[31m"
+	cGreen   = "\033[32m"
+	cYellow  = "\033[33m"
+	cBlue    = "\033[34m"
+	cMagenta = "\033[35m"
+	cCyan    = "\033[36m"
+	cWhite   = "\033[37m"
+	cGray    = "\033[90m"
+	cBgBlack  = "\033[40m"
+	cBgGray   = "\033[100m"
+	cBgBlue   = "\033[44m"
+	cBgCyan   = "\033[46m"
+)
+
+// ── runtime ────────────────────────────────────────────
 
 type tuiRuntime struct {
-	mu       sync.Mutex
-	ctrl     *control.Controller
-	width    int
-	height   int
+	ctrl    *control.Controller
+	w, h    int
 
-	// Live counters — int64 as fixed-point microdollars
 	tokensIn   atomic.Int64
 	tokensOut  atomic.Int64
-	totalCostMicros atomic.Int64 // USD * 1e6 for atomic storage
-	subAgents  atomic.Int64
+	costMicros atomic.Int64
 	toolCalls  atomic.Int64
-	toolName   atomic.Value // string — current tool name
 
-	// Chat history for scrollback
-	history   []string
-	maxHist   int
+	currentTool atomic.Value // string
 }
 
-func (t *tuiRuntime) addCost(delta float64) {
-	micros := int64(delta * 1_000_000)
-	t.totalCostMicros.Add(micros)
+func (t *tuiRuntime) addCost(v float64) {
+	t.costMicros.Add(int64(v * 1_000_000))
 }
-
 func (t *tuiRuntime) cost() float64 {
-	return float64(t.totalCostMicros.Load()) / 1_000_000
+	return float64(t.costMicros.Load()) / 1_000_000
 }
-
-func newTUIRuntime(ctrl *control.Controller) *tuiRuntime {
-	t := &tuiRuntime{ctrl: ctrl, maxHist: 200}
-	w, h, _ := term.GetSize(int(os.Stdin.Fd()))
-	if w < 40 { w = 80 }
-	if h < 10 { h = 24 }
-	t.width = w
-	t.height = h
-	return t
-}
-
-// tuiSink intercepts agent events and renders them via the TUI.
-func (t *tuiRuntime) sink() event.Sink {
-	return event.FuncSink(func(e event.Event) {
-		switch e.Kind {
-		case event.Text:
-			fmt.Print(e.Text)
-			t.appendHistory(e.Text)
-		case event.ToolDispatch:
-			if e.Tool.Name != "" {
-				t.toolCalls.Add(1)
-				t.toolName.Store(e.Tool.Name)
-				fmt.Printf("\033[90m🔧 %s\033[0m\n", e.Tool.Name)
-			}
-		case event.ToolResult:
-			t.toolName.Store("")
-			if e.Tool.Err != "" {
-				fmt.Printf("\033[31m  ✗ %s\033[0m\n", e.Tool.Err)
-			}
-		case event.UsageKind:
-			if e.Usage != nil {
-				t.tokensIn.Add(int64(e.Usage.PromptTokens))
-				t.tokensOut.Add(int64(e.Usage.CompletionTokens))
-				t.addCost(costEstimate(e.Usage.PromptTokens, e.Usage.CompletionTokens))
-				fmt.Printf("\r\033[K") // clear current line
-			}
-		case event.Reasoning:
-			// Skip verbose reasoning in chat mode
-		}
-	})
-}
-
-func (t *tuiRuntime) appendHistory(text string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.history = append(t.history, text)
-	if len(t.history) > t.maxHist {
-		t.history = t.history[1:]
-	}
-}
-
 func costEstimate(in, out int) float64 {
-	return float64(in)*0.15/1_000_000 + float64(out)*0.60/1_000_000
+	return float64(in)*0.14/1e6 + float64(out)*0.28/1e6
 }
 
-// ── Full TUI Chat ──────────────────────────────────────
+// ── main entry ─────────────────────────────────────────
 
 func runTUIChat(ctrl *control.Controller) error {
-	rt := newTUIRuntime(ctrl)
-
-	fd := int(os.Stdin.Fd())
-	oldState, err := term.MakeRaw(fd)
-	if err != nil {
-		return runLineChat(ctrl)
-	}
-	defer term.Restore(fd, oldState)
-
-	fmt.Print("\033[?25l")
-	defer fmt.Print("\033[?25h")
-
-	// Re-configure with TUI sink
+	// ── 1. Configure before anything ──
+	rt := &tuiRuntime{ctrl: ctrl}
 	if err := ctrl.Configure(rt.sink(), nil, ""); err != nil {
-		term.Restore(fd, oldState)
-		fmt.Printf("config: %v\n", err)
 		return err
 	}
 
-	// Clear and draw initial screen
-	fmt.Print("\033[2J\033[H")
-	rt.drawWelcome()
-	rt.drawStatusBar()
+	fd := int(os.Stdin.Fd())
+	old, err := term.MakeRaw(fd)
+	if err != nil { return runLineChat(ctrl) }
+	defer term.Restore(fd, old)
 
-	var input []byte
+	rt.w, rt.h, _ = term.GetSize(fd)
+	if rt.w < 40 { rt.w = 80 }
+	if rt.h < 12 { rt.h = 24 }
 
-	// Resize goroutine
+	// resize watcher
 	go func() {
-		for {
-			time.Sleep(500 * time.Millisecond)
+		for range time.NewTicker(800 * time.Millisecond).C {
 			w, h, err := term.GetSize(fd)
-			if err == nil {
-				rt.mu.Lock()
-				rt.width = w
-				rt.height = h
-				rt.mu.Unlock()
-			}
+			if err == nil { rt.w, rt.h = w, h }
 		}
 	}()
 
+	defer fmt.Print("\033[?25h")
+	fmt.Print("\033[?25l\033[2J\033[H")
+
+	// ── 2. Draw initial screen ──
+	rt.drawWelcome()
+	rt.drawStatusBar()
+	fmt.Print("\n")
+	rt.drawSeparator()
+
+	var input []byte
+
+	// ── 3. Main loop ──
 	for {
-		// Prompt line
-		rt.drawPrompt(string(input))
+		// prompt at fixed position
+		fmt.Print(cCyan + cBold + "❯ " + cReset)
+		fmt.Print(string(input))
+		fmt.Print(" ") // cursor visible area
 		fmt.Print("\033[?25h")
 
 		buf := make([]byte, 1)
@@ -154,184 +110,225 @@ func runTUIChat(ctrl *control.Controller) error {
 		if err != nil || n == 0 { break }
 		ch := buf[0]
 
+		fmt.Print("\033[?25l") // hide during processing
+
 		switch ch {
 		case 3: // Ctrl+C
-			fmt.Print("\r\033[K\n\033[?25hGoodbye ✨\n")
-			return nil
+			return rt.quit("Cancelled")
 
 		case 13: // Enter
-			text := string(input)
-			fmt.Print("\r\033[K")
+			text := strings.TrimSpace(string(input))
 			input = input[:0]
+			fmt.Print("\r\033[K")
 
-			if text == "" { continue }
-			if text == "/exit" || text == "/quit" {
-				fmt.Print("\n\033[?25hGoodbye ✨\n")
-				return nil
-			}
-			if text == "/help" {
+			switch text {
+			case "":
+				continue
+			case "/exit", "/quit":
+				return rt.quit("Goodbye ✨")
+			case "/help":
 				rt.drawHelp()
 				continue
-			}
-			if text == "/stats" {
+			case "/stats":
 				rt.drawStats()
+				continue
+			case "/clear":
+				fmt.Print("\033[2J\033[H")
+				rt.drawWelcome()
+				rt.drawStatusBar()
 				continue
 			}
 
-			// Print user message
-			fmt.Printf("\033[36m\033[1m🧑 You\033[0m %s\n", time.Now().Format("15:04"))
+			// echo user
+			fmt.Printf("\n%s%s🧑 You%s %s\n", cBold, cCyan, cReset, cDim+time.Now().Format("15:04")+cReset)
 			fmt.Printf("  %s\n\n", text)
 
-			// Run agent with status update
-			rt.drawStatusLine("thinking")
+			// run agent
+			fmt.Print(cYellow + "  … thinking" + cReset)
 			ctx := context.Background()
 			if err := ctrl.Run(ctx, text); err != nil {
-				fmt.Printf("\033[31m  Error: %v\033[0m\n", err)
+				fmt.Printf("\r\033[K%s  ✕ %v%s\n", cRed, err, cReset)
 			}
-			fmt.Println()
-			rt.drawStatusLine("ready")
+			fmt.Printf("\r\033[K")
+			fmt.Print("\n")
 			rt.drawStatusBar()
 
 		case 127, 8: // Backspace
-			if len(input) > 0 {
-				input = input[:len(input)-1]
-			}
+			if len(input) > 0 { input = input[:len(input)-1] }
 
 		default:
-			if ch >= 32 && ch <= 126 {
+			if ch >= 32 {
 				input = append(input, ch)
 			}
 		}
 
+		// redraw prompt line for non-enter
 		if ch != 13 {
 			fmt.Print("\r\033[K")
 		}
 	}
-
 	return nil
 }
 
-// ── Drawing ─────────────────────────────────────────────
+// ── sink ───────────────────────────────────────────────
+
+func (t *tuiRuntime) sink() event.Sink {
+	return event.FuncSink(func(e event.Event) {
+		switch e.Kind {
+		case event.Text:
+			fmt.Print(e.Text)
+		case event.ToolDispatch:
+			if e.Tool.Name != "" {
+				t.toolCalls.Add(1)
+				t.currentTool.Store(e.Tool.Name)
+				fmt.Printf("\n%s  ⚡ %s%s %s   ", cYellow, cReset, cDim, e.Tool.Name)
+				if e.Tool.Description != "" {
+					fmt.Printf("%s", trunc(e.Tool.Description, 50))
+				}
+				fmt.Print(cReset)
+			}
+		case event.ToolResult:
+			if e.Tool.Err != "" {
+				fmt.Printf("\n%s  ✕ %s%s", cRed, e.Tool.Err, cReset)
+			}
+			t.currentTool.Store("")
+		case event.UsageKind:
+			if e.Usage != nil {
+				t.tokensIn.Add(int64(e.Usage.PromptTokens))
+				t.tokensOut.Add(int64(e.Usage.CompletionTokens))
+				t.addCost(costEstimate(e.Usage.PromptTokens, e.Usage.CompletionTokens))
+			}
+		}
+	})
+}
+
+// ── drawing ────────────────────────────────────────────
 
 func (t *tuiRuntime) drawWelcome() {
-	w := t.width
-	fmt.Print("\033[H")
-	fmt.Print("\033[44m\033[37m")
-	fmt.Printf(" %-*s \033[0m\n", w-1, "🪄 LUMEN — Agent Operating System")
-	fmt.Print("\033[100m\033[37m")
-	fmt.Printf(" %-*s \033[0m\n", w-1, fmt.Sprintf("%s / %s  │  %d tools loaded  │  /help /stats /exit",
-		t.ctrl.ProviderName(), t.ctrl.ModelName(), 91))
-}
+	w := t.w
+	brand := "LUMEN"
+	tagline := "Agent Operating System"
+	pad := (w - len(brand) - len(tagline) - 3) / 2
+	if pad < 0 { pad = 0 }
 
-func (t *tuiRuntime) drawPrompt(current string) {
-	fmt.Print("\033[1m\033[36m▸ \033[0m")
-	fmt.Print(current)
-}
-
-func (t *tuiRuntime) drawStatusLine(status string) {
-	w := t.width
-	icon := "●"
-	switch status {
-	case "thinking": icon = "◉"
-	case "ready": icon = "●"
-	case "error": icon = "✕"
-	}
-	line := fmt.Sprintf("%s %s", icon, status)
-	fmt.Printf("\r\033[K\033[90m%s\033[0m", line)
-	_ = w
+	fmt.Printf("%s%s%s%s  %s%s%s%s\n",
+		cBgCyan, cWhite, strings.Repeat(" ", pad),
+		cBold+brand, cReset,
+		cBgCyan, cWhite, cDim+tagline+strings.Repeat(" ", w-pad-len(brand)-len(tagline)-3)+cReset)
 }
 
 func (t *tuiRuntime) drawStatusBar() {
-	w := t.width
-	if w < 40 { w = 80 }
+	w := t.w
+	left := fmt.Sprintf(" %s %s/%s ", "●", t.ctrl.ProviderName(), t.ctrl.ModelName())
 
-	ti := t.tokensIn.Load()
-	to := t.tokensOut.Load()
-	cost := t.cost()
-	subs := t.subAgents.Load()
-	tools := t.toolCalls.Load()
-
-	left := fmt.Sprintf(" ● ready │ %s/%s ", t.ctrl.ProviderName(), t.ctrl.ModelName())
-	right := fmt.Sprintf(" %d:%d tk │ $%.4f │ 🧵 %d │ 🔧 %d │ %s ",
-		ti/1000, to/1000, cost, subs, tools, time.Now().Format("15:04:05"))
+	ti, to := t.tokensIn.Load(), t.tokensOut.Load()
+	ct := t.toolCalls.Load()
+	right := fmt.Sprintf(" %d:%d tk  $%.4f  %d tools  %s ",
+		ti/1000, to/1000, t.cost(), ct, time.Now().Format("15:04:05"))
 
 	pad := w - len(left) - len(right)
 	if pad < 1 { pad = 1 }
 
-	fmt.Print("\r")
-	fmt.Print("\033[44m\033[37m")
-	fmt.Print(left)
+	fmt.Printf("\r%s%s%s%s%s%s",
+		cBgGray, cWhite, left,
+		cReset, cBgGray, cWhite)
 	fmt.Print(strings.Repeat(" ", pad))
-	fmt.Print(right)
-	fmt.Print("\033[0m\n")
+	fmt.Printf("%s%s%s", right, cReset, "\n")
+}
+
+func (t *tuiRuntime) drawSeparator() {
+	fmt.Print(cDim + strings.Repeat("─", t.w) + cReset + "\n")
 }
 
 func (t *tuiRuntime) drawHelp() {
-	fmt.Println()
-	fmt.Println("  \033[1mCommands:\033[0m")
-	fmt.Println("  \033[36m/exit\033[0m    Quit")
-	fmt.Println("  \033[36m/help\033[0m    Show this help")
-	fmt.Println("  \033[36m/stats\033[0m   Show live stats (tokens, cost, tools)")
-	fmt.Println()
-	fmt.Println("  \033[1mType anything\033[0m to chat with the agent.")
-	fmt.Println("  The agent can call 91 built-in tools: file ops, GitHub,")
-	fmt.Println("  graph algorithms, security operations, LLM queries, and more.")
+	fmt.Print("\n")
+	fmt.Printf("  %sCommands%s\n", cBold, cReset)
+	fmt.Printf("  %s/exit%s    Quit\n", cCyan, cReset)
+	fmt.Printf("  %s/help%s    This help\n", cCyan, cReset)
+	fmt.Printf("  %s/stats%s   Live statistics\n", cCyan, cReset)
+	fmt.Printf("  %s/clear%s   Clear screen\n", cCyan, cReset)
+	fmt.Print("\n")
+	fmt.Printf("  %s91 tools%s available — file ops, GitHub, graph algorithms,\n", cBold, cReset)
+	fmt.Printf("  security, LLM queries, diagnostics, and more.\n\n")
 }
 
 func (t *tuiRuntime) drawStats() {
-	ti := t.tokensIn.Load()
-	to := t.tokensOut.Load()
-	cost := t.cost()
-	tools := t.toolCalls.Load()
-	subs := t.subAgents.Load()
-	hist := len(t.history)
-
-	fmt.Println()
-	fmt.Println("  \033[1m📊 Live Stats\033[0m")
-	fmt.Printf("  Tokens:       %d in / %d out\n", ti, to)
-	fmt.Printf("  Cost:         $%.6f\n", cost)
-	fmt.Printf("  Tool calls:   %d\n", tools)
-	fmt.Printf("  Sub-agents:   %d\n", subs)
-	fmt.Printf("  History:      %d lines\n", hist)
-	fmt.Println()
+	fmt.Print("\n")
+	fmt.Printf("  %s📊 Live Stats%s\n\n", cBold, cReset)
+	fmt.Printf("  %sTokens In%s      %d\n", cDim, cReset, t.tokensIn.Load())
+	fmt.Printf("  %sTokens Out%s     %d\n", cDim, cReset, t.tokensOut.Load())
+	fmt.Printf("  %sTotal Cost%s     $%.6f\n", cDim, cReset, t.cost())
+	fmt.Printf("  %sTool Calls%s     %d\n", cDim, cReset, t.toolCalls.Load())
+	fmt.Printf("  %sModel%s          %s/%s\n", cDim, cReset, t.ctrl.ProviderName(), t.ctrl.ModelName())
+	fmt.Print("\n")
 }
 
-// ── Line-mode fallback ──────────────────────────────────
+func (t *tuiRuntime) quit(msg string) error {
+	fmt.Printf("\r\033[K\n%s%s%s\n", cGreen, msg, cReset)
+	return nil
+}
+
+// ── helpers ────────────────────────────────────────────
+
+func trunc(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n-3] + "..."
+}
+
+// ── line-mode fallback ─────────────────────────────────
 
 func runLineChat(ctrl *control.Controller) error {
+	if err := ctrl.Configure(chatSink(), nil, ""); err != nil {
+		return err
+	}
+
 	w, _, _ := term.GetSize(int(os.Stdin.Fd()))
 	if w < 40 { w = 80 }
 
 	fmt.Print("\033[2J\033[H")
-	fmt.Print("\033[44m\033[37m")
-	fmt.Printf(" %-*s \033[0m\n", w-1, "🪄 LUMEN — Agent Operating System")
-	fmt.Print("\033[100m\033[37m")
-	fmt.Printf(" %-*s \033[0m\n\n", w-1, fmt.Sprintf("%s / %s  │  91 tools  │  /exit /help /stats", ctrl.ProviderName(), ctrl.ModelName()))
+	fmt.Print(cBgCyan + cWhite)
+	fmt.Printf(" %-*s ", w-1, "LUMEN · "+ctrl.ProviderName()+" / "+ctrl.ModelName())
+	fmt.Print(cReset + "\n")
+	fmt.Printf("%s%*s%s\n", cDim, w-1, "/exit /help /stats /clear  ·  91 tools", cReset)
+	fmt.Print(cDim + strings.Repeat("─", w) + cReset + "\n\n")
 
-	// Reconfigure with chat sink
-	rt := newTUIRuntime(ctrl)
-	ctrl.Configure(rt.sink(), nil, "")
-
-	var input string
+	reader := bufio.NewReader(os.Stdin)
 	for {
-		fmt.Print("\033[1m\033[36m▸ \033[0m")
-		n, _ := fmt.Scanln(&input)
-		if n == 0 { input = ""; continue }
-		input = strings.TrimSpace(input)
-		if input == "" { continue }
-		if input == "/exit" || input == "/quit" { break }
-		if input == "/help" { fmt.Println("  /exit  /help  /stats  — or type to chat."); continue }
-		if input == "/stats" {
-			fmt.Printf("  %d in / %d out tokens  |  $%.6f  |  %d tool calls\n\n",
-				rt.tokensIn.Load(), rt.tokensOut.Load(), rt.cost(), rt.toolCalls.Load())
+		fmt.Printf("%s❯ %s", cCyan+cBold, cReset)
+		line, err := reader.ReadString('\n')
+		if err != nil { break }
+		line = strings.TrimSpace(line)
+		if line == "" { continue }
+		if line == "/exit" || line == "/quit" { break }
+		if line == "/help" {
+			fmt.Printf("  %s/exit /help /stats /clear%s  —  or type to chat.\n", cDim, cReset)
+			continue
+		}
+		if line == "/stats" {
+			fmt.Printf("  %s91 tools  ·  %s/%s  ·  type /stats for live metrics%s\n\n",
+				cDim, ctrl.ProviderName(), ctrl.ModelName(), cReset)
+			continue
+		}
+		if line == "/clear" {
+			fmt.Print("\033[2J\033[H")
+			fmt.Print(cBgCyan + cWhite)
+			fmt.Printf(" %-*s ", w-1, "LUMEN · "+ctrl.ProviderName()+" / "+ctrl.ModelName())
+			fmt.Print(cReset + "\n")
+			fmt.Print(cDim + strings.Repeat("─", w) + cReset + "\n\n")
 			continue
 		}
 
-		fmt.Printf("\n\033[36m🧑 You\033[0m %s\n  %s\n\n", time.Now().Format("15:04"), input)
+		fmt.Printf("\n%s🧑 You%s %s\n  %s\n\n", cCyan+cBold, cReset, cDim+time.Now().Format("15:04")+cReset, line)
+		fmt.Printf("%s  … thinking%s", cYellow, cReset)
+
 		ctx := context.Background()
-		ctrl.Run(ctx, input)
-		fmt.Println()
+		if err := ctrl.Run(ctx, line); err != nil {
+			fmt.Printf("\r\033[K%s  ✕ %v%s\n", cRed, err, cReset)
+		}
+		fmt.Printf("\r\033[K\n")
+		fmt.Print(cDim + strings.Repeat("─", w) + cReset + "\n")
 	}
-	fmt.Println("\nGoodbye ✨")
+	fmt.Printf("\n%sGoodbye ✨%s\n", cGreen, cReset)
 	return nil
 }
+
