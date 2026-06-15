@@ -3,7 +3,7 @@
 // load management.
 package evacuate
 
-import ("fmt";"sort";"strings";"sync";"sync/atomic";"time")
+import ("fmt";"sort";"strings";"sync";"time")
 
 type State int
 const (StateActive State=iota;StateDraining;StateDrained;StateOffline)

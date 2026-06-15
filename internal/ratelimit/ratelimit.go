@@ -3,7 +3,7 @@
 // parent-child budget allocation.
 package ratelimit
 
-import ("fmt";"math";"strings";"sync";"time")
+import ("fmt";"strings";"sync";"time")
 
 type TokenBucket struct{mu sync.Mutex;rate float64;burst float64;tokens float64;last time.Time}
 func NewTokenBucket(rate,burst float64)*TokenBucket{return &TokenBucket{rate:rate,burst:burst,tokens:burst,last:time.Now()}}

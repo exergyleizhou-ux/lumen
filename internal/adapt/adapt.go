@@ -6,6 +6,7 @@ package adapt
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"

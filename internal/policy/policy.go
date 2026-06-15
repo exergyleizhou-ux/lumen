@@ -5,7 +5,6 @@
 package policy
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"

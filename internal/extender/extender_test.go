@@ -11,7 +11,7 @@ func TestDisable(t *testing.T) {
 	r.Register(&Extension{Name: "ext2", Version: "1.0", InitFn: func() error { return nil }, CloseFn: func() error { return nil }})
 	r.Enable("ext2")
 	r.Disable("ext2")
-	if r.Enabled()[0].Enabled { t.Error("should be disabled") }
+	if len(r.Enabled()) != 0 { t.Error("should be disabled") }
 }
 func TestTools(t *testing.T) {
 	r := NewRegistry()

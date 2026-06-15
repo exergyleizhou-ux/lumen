@@ -3,7 +3,7 @@
 // deduplication and fast "probably seen" checks in agent pipelines.
 package bloom
 
-import ("encoding/binary";"fmt";"hash/fnv";"math";"sync")
+import ("fmt";"hash/fnv";"math";"sync")
 
 type Filter struct{bits []uint64;m uint64;k uint;mu sync.RWMutex}
 func New(size uint64,hashCount uint)*Filter{if size<1{size=1024};if hashCount<1{hashCount=4};return &Filter{bits:make([]uint64,(size+63)/64),m:size,k:hashCount}}

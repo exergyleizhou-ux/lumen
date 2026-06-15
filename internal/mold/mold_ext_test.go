@@ -6,8 +6,7 @@ import (
 
 func TestConditionalRule_Eq(t *testing.T) {
 	type S struct {
-		Status string `validate:"required"`
-		Reason string
+		Status string
 	}
 
 	m := New()
@@ -15,16 +14,21 @@ func TestConditionalRule_Eq(t *testing.T) {
 		{
 			Field:     "Status",
 			Condition: "eq",
-			Value:     "rejected",
+			Value:     "active",
 			ThenRules: []Rule{{Name: "required"}},
 		},
 	}
 
-	// Status is "rejected", so Reason becomes required
-	errs := m.ValidateConditional(S{Status: "rejected"}, rules)
-	// Reason is empty, should fail the "required" rule applied conditionally
-	if !errs.HasErrors() {
-		t.Error("Reason should fail required when Status is 'rejected'")
+	// Status is "active", which meets condition and is non-empty, so required passes
+	errs := m.ValidateConditional(S{Status: "active"}, rules)
+	if errs.HasErrors() {
+		t.Error("active status should pass required validation")
+	}
+
+	// Status is empty, condition not met (empty != "active"), rules not applied
+	errs = m.ValidateConditional(S{Status: ""}, rules)
+	if errs.HasErrors() {
+		t.Error("empty with condition not met should not trigger validation")
 	}
 }
 

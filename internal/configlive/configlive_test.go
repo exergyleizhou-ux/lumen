@@ -1,5 +1,5 @@
 package configlive
-import ("strings";"testing")
+import ("testing")
 func TestStoreSet(t *testing.T){s:=NewStore();s.Set("key","val","test");v,ok:=s.Get("key");if!ok||v!="val"{t.Error("set/get")}}
 func TestStoreGetString(t *testing.T){s:=NewStore();s.Set("str","hello","test");if s.GetString("str")!="hello"{t.Error("getstring")}}
 func TestStoreHistory(t *testing.T){s:=NewStore();s.Set("k","a","");s.Set("k","b","");h:=s.History(10);if len(h)!=2{t.Error("history")}}

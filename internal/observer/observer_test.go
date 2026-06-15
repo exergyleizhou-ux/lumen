@@ -1,6 +1,6 @@
 package observer
 
-import ("testing";"time")
+import ("testing")
 
 func TestTracerStartEnd(t *testing.T) {
 	tr := NewTracer()

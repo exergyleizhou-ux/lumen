@@ -11,7 +11,7 @@ type ringEntry struct{hash uint64;nodeID string}
 func NewRing(virtualNodes int)*Ring{if virtualNodes<1{virtualNodes=128};return &Ring{nodes:map[string]*Node{},virtualNodes:virtualNodes}}
 func(r*Ring)AddNode(node *Node){r.mu.Lock();defer r.mu.Unlock();r.nodes[node.ID]=node;r.rebuild()}
 func(r*Ring)RemoveNode(id string){r.mu.Lock();defer r.mu.Unlock();delete(r.nodes,id);r.rebuild()}
-func(r*Ring)MarkHealthy(id string,bool healthy){r.mu.Lock();defer r.mu.Unlock();if n,ok:=r.nodes[id];ok{n.Healthy=healthy};r.rebuild()}
+func(r*Ring)MarkHealthy(id string,healthy bool){r.mu.Lock();defer r.mu.Unlock();if n,ok:=r.nodes[id];ok{n.Healthy=healthy};r.rebuild()}
 func(r*Ring)GetNode(key string)*Node{r.mu.RLock();defer r.mu.RUnlock();if len(r.ring)==0{return nil};h:=hashKey(key);idx:=sort.Search(len(r.ring),func(i int)bool{return r.ring[i].hash>=h});if idx>=len(r.ring){idx=0};return r.nodes[r.ring[idx].nodeID]}
 func(r*Ring)GetReplicas(key string,count int)[]*Node{r.mu.RLock();defer r.mu.RUnlock();if len(r.ring)==0||count<1{return nil}
   h:=hashKey(key);idx:=sort.Search(len(r.ring),func(i int)bool{return r.ring[i].hash>=h})
