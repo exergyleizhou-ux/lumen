@@ -103,6 +103,9 @@ func (r *Registry) run(ctx context.Context, command, toolName string, args json.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	if toolName != "" {
 		cmd.Env = append(cmd.Environ(), "LUMEN_TOOL_NAME="+toolName)

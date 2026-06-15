@@ -1,60 +1,66 @@
 // Package tui provides a Bubble Tea terminal UI for Lumen.
+// Sub-packages handle diff rendering, plan approval, and thinking-block
+// folding. The main tui.go orchestrates the three-panel layout.
 package tui
 
 import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"lumen/internal/agent"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/timeline"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
 
-// ── Model ─────────────────────────────────────────────────
+// ── Top-level Model ────────────────────────────────────────
 
+// Model is the Bubble Tea application model.
 type Model struct {
-	ctrl   *control.Controller
-	ctx    context.Context
-	cancel context.CancelFunc
+	ctrl    *control.Controller
+	ctx     context.Context
+	cancel  context.CancelFunc
 
-	chat     chatModel
-	status   statusModel
-	approval *approvalModel
-	input    inputModel
+	chat     *ChatModel
+	status   *StatusModel
+	input    *InputModel
+	diff     *DiffPanel
+	plan     *PlanPanel
+	thinking *ThinkingPanel
 
-	width  int
-	height int
-	ready  bool
-
+	width    int
+	height   int
+	ready    bool
 	running  bool
 	quitting bool
 
-	// Event channel from agent goroutine
 	eventCh chan event.Event
 }
 
+// New constructs a TUI model connected to a controller.
 func New(ctrl *control.Controller) *Model {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Model{
-		ctrl:    ctrl,
-		ctx:     ctx,
-		cancel:  cancel,
-		chat:    newChatModel(),
-		status:  newStatusModel(ctrl),
-		input:   newInputModel(),
-		eventCh: make(chan event.Event, 256),
+		ctrl:     ctrl,
+		ctx:      ctx,
+		cancel:   cancel,
+		chat:     NewChatModel(),
+		status:   NewStatusModel(ctrl),
+		input:    NewInputModel(),
+		diff:     NewDiffPanel(),
+		plan:     NewPlanPanel(),
+		thinking: NewThinkingPanel(),
+		eventCh:  make(chan event.Event, 256),
 	}
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
-		tea.EnterAltScreen,
-		waitForEvents(m.eventCh),
-	)
+	return tea.Batch(tea.EnterAltScreen, waitForEvents(m.eventCh))
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -63,53 +69,50 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.ready = true
-		m.chat.setSize(msg.Width, msg.Height-5)
-		m.input.setWidth(msg.Width)
-		m.status.setWidth(msg.Width)
+		m.chat.SetSize(msg.Width, msg.Height-8)
+		m.input.SetWidth(msg.Width)
+		m.status.SetWidth(msg.Width)
+		m.diff.SetSize(msg.Width)
+		m.plan.SetSize(msg.Width, msg.Height)
 		return m, nil
 
 	case tea.KeyMsg:
-		// Dismiss approval first
-		if m.approval != nil {
-			switch msg.String() {
-			case "y", "Y":
-				m.approval.approve()
-				m.approval = nil
-				return m, nil
-			case "n", "N", "esc":
-				m.approval.deny()
-				m.approval = nil
-				return m, nil
-			}
-			return m, nil
+		if m.plan.Active() {
+			return m, m.plan.HandleKey(msg)
 		}
-
+		if m.quitting {
+			return m, tea.Quit
+		}
 		switch msg.String() {
 		case "ctrl+c":
 			m.quitting = true
 			m.cancel()
+			m.ctrl.Close()
 			return m, tea.Quit
 		case "ctrl+r":
 			if rewound, err := m.ctrl.Rewind(); err == nil && len(rewound) > 0 {
-				m.chat.addNotice("rewound " + strings.Join(rewound, ", "))
+				m.chat.AddNotice("rewound " + strings.Join(rewound, ", "))
 			}
+			return m, nil
+		case "ctrl+d":
+			m.diff.Toggle()
 			return m, nil
 		case "enter":
 			if m.input.text != "" && !m.running {
 				text := m.input.text
-				m.input.reset()
+				m.input.Reset()
+				m.chat.AddUser(text)
 				go m.runPrompt(text)
 				return m, nil
 			}
 		case "backspace":
-			m.input.backspace()
+			m.input.Backspace()
 			return m, nil
 		default:
 			if !m.running && len(msg.String()) == 1 {
-				m.input.append(msg.String())
+				m.input.Append(msg.String())
 			}
 		}
-		return m, nil
 
 	case eventMsg:
 		m.handleEvent(msg.event)
@@ -118,8 +121,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doneMsg:
 		m.running = false
 		if msg.err != nil {
-			m.chat.addNotice("error: " + msg.err.Error())
+			m.chat.AddNotice("error: " + msg.err.Error())
 		}
+		m.input.Focus()
 		return m, waitForEvents(m.eventCh)
 	}
 
@@ -128,29 +132,68 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) View() string {
 	if !m.ready {
-		return "initializing...\n"
+		return "Lumen — initializing...\n"
 	}
 	if m.quitting {
 		return "Lumen — 再见\n"
 	}
-	if m.approval != nil {
-		return m.approval.View()
+	if m.plan.Active() {
+		return m.plan.View()
 	}
 
 	chat := m.chat.View()
 	status := m.status.View()
 	input := m.input.View()
 
+	if m.diff.Active() {
+		diff := m.diff.View()
+		return lipgloss.JoinVertical(lipgloss.Left, chat, status, diff, input)
+	}
 	return lipgloss.JoinVertical(lipgloss.Left, chat, status, input)
+}
+
+// ── Event handling ────────────────────────────────────────
+
+func (m *Model) handleEvent(ev event.Event) {
+	switch ev.Kind {
+	case event.Phase:
+		m.status.SetPhase(ev.Text)
+	case event.Text:
+		m.chat.AppendText(ev.Text)
+	case event.Reasoning:
+		m.thinking.Append(ev.Text)
+		m.chat.AppendReasoning(ev.Text)
+	case event.ToolDispatch:
+		m.chat.AddToolCall(ev.Tool)
+	case event.ToolResult:
+		m.chat.AddToolResult(ev.Tool)
+		if ev.Tool.Err == "" && !ev.Tool.Blocked && isWriterTool(ev.Tool.Name) {
+			m.diff.RecordChange(ev.Tool)
+		}
+	case event.UsageKind:
+		if ev.Usage != nil {
+			m.status.UpdateUsage(ev.Usage)
+		}
+	case event.Notice:
+		m.chat.AddNotice(ev.Text)
+	case event.TurnStarted:
+		m.chat.StartTurn()
+	case event.TurnDone:
+	case event.PlanApproval:
+		m.plan.Show(ev.Text)
+	}
+}
+
+func isWriterTool(name string) bool {
+	return name == "write_file" || name == "edit_file" || name == "multi_edit"
 }
 
 // ── Prompt execution ──────────────────────────────────────
 
 func (m *Model) runPrompt(prompt string) {
 	m.running = true
-	m.chat.addUser(prompt)
+	m.thinking.Reset()
 
-	// Check slash commands
 	if strings.HasPrefix(prompt, "/") {
 		m.runSlashCommand(prompt)
 		m.running = false
@@ -158,65 +201,70 @@ func (m *Model) runPrompt(prompt string) {
 	}
 
 	sink := newTuiSink(m.eventCh)
-	ag := m.ctrl.Agent()
-	ag.SetSink(sink)
+	m.ctrl.Agent().SetSink(sink)
 
 	go func() {
 		err := m.ctrl.Run(m.ctx, prompt)
 		sink.ch <- event.Event{Kind: event.TurnDone}
-		// Signal done via channel
 		go func() { sink.ch <- event.Event{Kind: event.TurnDone} }()
 		_ = err
 	}()
 }
 
 func (m *Model) runSlashCommand(cmd string) {
-	cmd = strings.TrimPrefix(cmd, "/")
-	switch strings.ToLower(cmd) {
+	parts := strings.Fields(strings.TrimPrefix(cmd, "/"))
+	if len(parts) == 0 {
+		return
+	}
+	switch strings.ToLower(parts[0]) {
 	case "help", "?":
-		m.chat.addNotice("Slash commands: /status /cost /cache /rewind /skills /help")
+		m.chat.AddNotice("/status /cost /cache /rewind /replay /changes /help /diff /plan")
 	case "status":
-		m.chat.addNotice(fmt.Sprintf("%s/%s — %s mode",
-			m.ctrl.ProviderName(), m.ctrl.ModelName(), m.ctrl.PermissionMode()))
+		m.chat.AddNotice(fmt.Sprintf("%s/%s · %s mode · permissions: %s",
+			m.ctrl.ProviderName(), m.ctrl.ModelName(), "running", m.ctrl.PermissionMode()))
+	case "cost":
+		hit, miss := m.ctrl.Agent().SessionCache()
+		rate := 0.0
+		if hit+miss > 0 {
+			rate = float64(hit) / float64(hit+miss) * 100
+		}
+		m.chat.AddNotice(fmt.Sprintf("cache: %.0f%% hit (%d/%d tokens)", rate, hit, hit+miss))
+	case "cache":
+		reasons := m.ctrl.Agent().CacheReasons()
+		m.chat.AddNotice(fmt.Sprintf("cache churn events: %d", len(reasons)))
+		for _, r := range reasons {
+			m.chat.AddNotice("  · " + r)
+		}
 	case "rewind":
 		if rewound, err := m.ctrl.Rewind(); err == nil {
-			m.chat.addNotice("Rewound " + strings.Join(rewound, ", "))
+			m.chat.AddNotice("rewound " + strings.Join(rewound, ", "))
 		} else {
-			m.chat.addNotice("Rewind: " + err.Error())
+			m.chat.AddNotice("rewind: " + err.Error())
 		}
+	case "replay":
+		entries, err := timeline.LoadTimeline(".lumen/timeline.jsonl")
+		if err != nil {
+			m.chat.AddNotice("no timeline: " + err.Error())
+		} else {
+			m.chat.AddNotice(timeline.FormatTimeline(entries))
+		}
+	case "changes":
+		changes, err := timeline.LoadChanges(".lumen/timeline.jsonl")
+		if err != nil {
+			m.chat.AddNotice("no changes: " + err.Error())
+		} else {
+			m.chat.AddNotice(timeline.FormatChanges(changes))
+		}
+	case "diff":
+		m.diff.Toggle()
+	case "plan":
+		m.plan.Show("Plan mode active — enter your plan or press Esc")
 	default:
-		m.chat.addNotice("Unknown command: /" + cmd)
+		m.chat.AddNotice("unknown: /" + parts[0])
 	}
 }
 
-func (m *Model) handleEvent(ev event.Event) {
-	switch ev.Kind {
-	case event.Phase:
-		m.status.setPhase(ev.Text)
-	case event.Text:
-		m.chat.appendText(ev.Text)
-	case event.Reasoning:
-		m.chat.appendReasoning(ev.Text)
-	case event.ToolDispatch:
-		m.chat.addToolCall(ev.Tool)
-	case event.ToolResult:
-		m.chat.addToolResult(ev.Tool)
-	case event.UsageKind:
-		if ev.Usage != nil {
-			m.status.updateUsage(ev.Usage)
-		}
-	case event.Notice:
-		m.chat.addNotice(ev.Text)
-	case event.TurnStarted:
-		m.chat.startTurn()
-	case event.TurnDone:
-		// handled by doneMsg
-	case event.PlanApproval:
-		m.chat.addPlan(ev.Text)
-	}
-}
-
-// ── Asker ──────────────────────────────────────────────
+// ── Asker implementation ──────────────────────────────────
 
 func (m *Model) Ask(ctx context.Context, questions []event.AskQuestion) ([]event.AskAnswer, error) {
 	answers := make([]event.AskAnswer, len(questions))
@@ -231,12 +279,12 @@ func (m *Model) Ask(ctx context.Context, questions []event.AskQuestion) ([]event
 
 var _ agent.Asker = (*Model)(nil)
 
-// ── Custom messages ─────────────────────────────────────
+// ── Custom messages ────────────────────────────────────────
 
 type eventMsg struct{ event event.Event }
 type doneMsg struct{ err error }
 
-// ── Event sink ──────────────────────────────────────────
+// ── Event sink bridge ──────────────────────────────────────
 
 type tuiSink struct{ ch chan event.Event }
 
@@ -258,22 +306,25 @@ func waitForEvents(ch <-chan event.Event) tea.Cmd {
 
 var _ event.Sink = (*tuiSink)(nil)
 
-// ── Chat model ─────────────────────────────────────────
+// ── Chat model ────────────────────────────────────────────
 
 type chatLine struct {
-	kind string
-	text string
-	tool event.Tool
+	kind      string
+	text      string
+	tool      event.Tool
+	thinking  bool
+	timestamp time.Time
 }
 
-type chatModel struct {
+type ChatModel struct {
 	lines  []chatLine
 	width  int
 	height int
 }
 
-func newChatModel() chatModel { return chatModel{} }
-func (c *chatModel) setSize(w, h int) {
+func NewChatModel() *ChatModel { return &ChatModel{} }
+
+func (c *ChatModel) SetSize(w, h int) {
 	c.width = w
 	if h < 5 {
 		h = 5
@@ -281,47 +332,49 @@ func (c *chatModel) setSize(w, h int) {
 	c.height = h
 }
 
-func (c *chatModel) addUser(text string) {
-	c.lines = append(c.lines, chatLine{kind: "user", text: text})
+func (c *ChatModel) AddUser(text string) {
+	c.lines = append(c.lines, chatLine{kind: "user", text: text, timestamp: time.Now()})
 }
-func (c *chatModel) addNotice(text string) {
-	c.lines = append(c.lines, chatLine{kind: "notice", text: text})
+func (c *ChatModel) AddNotice(text string) {
+	c.lines = append(c.lines, chatLine{kind: "notice", text: text, timestamp: time.Now()})
 }
-func (c *chatModel) addToolCall(t event.Tool) {
-	c.lines = append(c.lines, chatLine{kind: "tool", text: "⚙ " + t.Name, tool: t})
+func (c *ChatModel) AddToolCall(t event.Tool) {
+	c.lines = append(c.lines, chatLine{kind: "tool", text: "⚙ " + t.Name, tool: t, timestamp: time.Now()})
 }
-func (c *chatModel) addToolResult(t event.Tool) {
+func (c *ChatModel) AddToolResult(t event.Tool) {
 	icon := "✓"
 	if t.Err != "" {
 		icon = "✗"
 	} else if t.Blocked {
 		icon = "⊘"
 	}
-	c.lines = append(c.lines, chatLine{kind: "tool", text: fmt.Sprintf("  %s %s", icon, t.Name), tool: t})
-}
-func (c *chatModel) startTurn() {}
-func (c *chatModel) addPlan(text string) {
-	c.lines = append(c.lines, chatLine{kind: "plan", text: text})
+	c.lines = append(c.lines, chatLine{kind: "tool", text: fmt.Sprintf("  %s %s", icon, t.Name), tool: t, timestamp: time.Now()})
 }
 
-func (c *chatModel) appendText(text string) {
+func (c *ChatModel) StartTurn() {}
+func (c *ChatModel) AddPlan(text string) {
+	c.lines = append(c.lines, chatLine{kind: "plan", text: text, timestamp: time.Now()})
+}
+
+func (c *ChatModel) AppendText(text string) {
 	n := len(c.lines)
 	if n > 0 && c.lines[n-1].kind == "assistant" {
 		c.lines[n-1].text += text
 	} else {
-		c.lines = append(c.lines, chatLine{kind: "assistant", text: text})
+		c.lines = append(c.lines, chatLine{kind: "assistant", text: text, timestamp: time.Now()})
 	}
 }
-func (c *chatModel) appendReasoning(text string) {
+
+func (c *ChatModel) AppendReasoning(text string) {
 	n := len(c.lines)
 	if n > 0 && c.lines[n-1].kind == "reasoning" {
 		c.lines[n-1].text += text
 	} else {
-		c.lines = append(c.lines, chatLine{kind: "reasoning", text: text})
+		c.lines = append(c.lines, chatLine{kind: "reasoning", text: text, thinking: true, timestamp: time.Now()})
 	}
 }
 
-func (c *chatModel) View() string {
+func (c *ChatModel) View() string {
 	var sb strings.Builder
 	start := len(c.lines) - c.height
 	if start < 0 {
@@ -335,7 +388,7 @@ func (c *chatModel) View() string {
 		case "assistant":
 			sb.WriteString(assistantStyle.Render(line.text))
 		case "reasoning":
-			sb.WriteString(reasoningStyle.Render(line.text))
+			sb.WriteString(reasoningStyle.Render("💭 " + line.text))
 		case "tool":
 			sb.WriteString(toolStyle.Render(line.text))
 		case "notice":
@@ -348,9 +401,9 @@ func (c *chatModel) View() string {
 	return sb.String()
 }
 
-// ── Status bar ─────────────────────────────────────────
+// ── Status bar ────────────────────────────────────────────
 
-type statusModel struct {
+type StatusModel struct {
 	ctrl       *control.Controller
 	phase      string
 	prompt     int
@@ -360,53 +413,54 @@ type statusModel struct {
 	width      int
 }
 
-func newStatusModel(ctrl *control.Controller) statusModel {
-	return statusModel{ctrl: ctrl, phase: "ready"}
+func NewStatusModel(ctrl *control.Controller) *StatusModel {
+	return &StatusModel{ctrl: ctrl, phase: "ready"}
 }
-func (s *statusModel) setWidth(w int)  { s.width = w }
-func (s *statusModel) setPhase(p string) { s.phase = p }
-func (s *statusModel) updateUsage(u *event.Usage) {
+func (s *StatusModel) SetWidth(w int) { s.width = w }
+func (s *StatusModel) SetPhase(p string) { s.phase = p }
+
+func (s *StatusModel) UpdateUsage(u *event.Usage) {
 	s.prompt += u.PromptTokens
 	s.completion += u.CompletionTokens
 	s.cacheHit += u.CacheHitTokens
 	s.cacheMiss += u.CacheMissTokens
 }
 
-func (s *statusModel) View() string {
+func (s *StatusModel) View() string {
 	cacheRate := 0.0
 	total := s.cacheHit + s.cacheMiss
 	if total > 0 {
 		cacheRate = float64(s.cacheHit) / float64(total) * 100
 	}
-	left := fmt.Sprintf("%s/%s · %s", s.ctrl.ProviderName(), s.ctrl.ModelName(), s.phase)
+	left := fmt.Sprintf("%s/%s · %s · %s",
+		s.ctrl.ProviderName(), s.ctrl.ModelName(), s.phase, s.ctrl.PermissionMode())
 	right := fmt.Sprintf("%dt · cache:%.0f%%", s.prompt+s.completion, cacheRate)
 	padding := s.width - lipgloss.Width(left) - lipgloss.Width(right)
 	if padding < 1 {
 		padding = 1
 	}
-	return statusStyle.Render(left + strings.Repeat(" ", padding) + right)
+	return statusBarStyle.Render(left + strings.Repeat(" ", padding) + right)
 }
 
-// ── Input ─────────────────────────────────────────────
+// ── Input model ────────────────────────────────────────────
 
-type inputModel struct {
+type InputModel struct {
 	text  string
 	width int
 }
 
-func newInputModel() inputModel { return inputModel{} }
-func (i *inputModel) setWidth(w int) {
-	i.width = w
-}
-func (i *inputModel) reset() { i.text = "" }
-func (i *inputModel) backspace() {
+func NewInputModel() *InputModel { return &InputModel{} }
+func (i *InputModel) SetWidth(w int) { i.width = w }
+func (i *InputModel) Reset() { i.text = "" }
+func (i *InputModel) Focus() {}
+func (i *InputModel) Backspace() {
 	if len(i.text) > 0 {
 		i.text = i.text[:len(i.text)-1]
 	}
 }
-func (i *inputModel) append(s string) { i.text += s }
+func (i *InputModel) Append(s string) { i.text += s }
 
-func (i *inputModel) View() string {
+func (i *InputModel) View() string {
 	cursor := "▊"
 	if i.text == "" {
 		return inputStyle.Render("> " + cursor)
@@ -414,55 +468,122 @@ func (i *inputModel) View() string {
 	return inputStyle.Render("> " + i.text + cursor)
 }
 
-// ── Approval dialog ────────────────────────────────────
+// ── Diff panel ─────────────────────────────────────────────
 
-type approvalModel struct {
-	toolName string
-	details  string
-	result   chan bool
+type DiffPanel struct {
+	active  bool
+	changes []event.Tool
 }
 
-func newApproval(toolName, details string) *approvalModel {
-	return &approvalModel{
-		toolName: toolName,
-		details:  details,
-		result:   make(chan bool, 1),
+func NewDiffPanel() *DiffPanel { return &DiffPanel{} }
+func (d *DiffPanel) Toggle()   { d.active = !d.active }
+func (d *DiffPanel) Active() bool { return d.active }
+func (d *DiffPanel) SetSize(w int) {}
+
+func (d *DiffPanel) RecordChange(t event.Tool) {
+	d.changes = append(d.changes, t)
+}
+
+func (d *DiffPanel) View() string {
+	if len(d.changes) == 0 {
+		return diffStyle.Render("No file changes yet")
 	}
-}
-func (a *approvalModel) approve() { a.result <- true }
-func (a *approvalModel) deny()    { a.result <- false }
-
-func (a *approvalModel) View() string {
 	var sb strings.Builder
-	sb.WriteString(approvalStyle.Render("⚠  Approve this tool call?"))
+	sb.WriteString(diffStyle.Render("── Changed files ──"))
 	sb.WriteByte('\n')
-	sb.WriteString(fmt.Sprintf("  Tool: %s\n", a.toolName))
-	sb.WriteString(fmt.Sprintf("  %s\n", a.details))
-	sb.WriteByte('\n')
+	for _, t := range d.changes {
+		icon := "✎"
+		if t.Err != "" {
+			icon = "✗"
+		}
+		sb.WriteString(fmt.Sprintf("  %s %s", icon, t.Name))
+		if t.Args != "" {
+			sb.WriteString(" — " + t.Args)
+		}
+		sb.WriteByte('\n')
+	}
+	return sb.String()
+}
+
+// ── Plan panel ─────────────────────────────────────────────
+
+type PlanPanel struct {
+	active bool
+	text   string
+}
+
+func NewPlanPanel() *PlanPanel { return &PlanPanel{} }
+func (p *PlanPanel) Active() bool { return p.active }
+func (p *PlanPanel) Show(text string) { p.active = true; p.text = text }
+func (p *PlanPanel) SetSize(w, h int) {}
+
+func (p *PlanPanel) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "y", "Y":
+		p.active = false
+		return func() tea.Msg { return eventMsg{event: event.Event{Kind: event.Notice, Text: "plan approved"}} }
+	case "n", "N", "esc":
+		p.active = false
+		return nil
+	}
+	return nil
+}
+
+func (p *PlanPanel) View() string {
+	var sb strings.Builder
+	sb.WriteString(approvalStyle.Render("📋 Plan Approval"))
+	sb.WriteString("\n\n")
+	sb.WriteString(p.text)
+	sb.WriteString("\n\n")
 	sb.WriteString("  [Y] approve  [N] deny  [Esc] dismiss")
 	return sb.String()
 }
 
-// ── Styles ─────────────────────────────────────────────
+// ── Thinking panel ─────────────────────────────────────────
+
+type ThinkingPanel struct {
+	buf   strings.Builder
+	folded bool
+}
+
+func NewThinkingPanel() *ThinkingPanel { return &ThinkingPanel{folded: true} }
+func (t *ThinkingPanel) Append(text string) { t.buf.WriteString(text) }
+func (t *ThinkingPanel) Reset()             { t.buf.Reset(); t.folded = true }
+func (t *ThinkingPanel) Toggle()            { t.folded = !t.folded }
+
+func (t *ThinkingPanel) View() string {
+	if t.buf.Len() == 0 {
+		return ""
+	}
+	if t.folded {
+		return thinkingFoldedStyle.Render("💭 thinking... (click to expand)")
+	}
+	return thinkingExpandedStyle.Render("💭 " + t.buf.String())
+}
+
+// ── Styles ─────────────────────────────────────────────────
 
 var (
-	userStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
-	assistantStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
-	reasoningStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
-	toolStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	noticeStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	planStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
-	statusStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7")).Bold(true)
-	inputStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	approvalStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true).Border(lipgloss.NormalBorder())
+	userStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+	assistantStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	reasoningStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	toolStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	noticeStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	planStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	statusBarStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("7")).Bold(true)
+	inputStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	diffStyle            = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	approvalStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true).Border(lipgloss.NormalBorder())
+	thinkingFoldedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	thinkingExpandedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Italic(true)
 )
 
-// ── Public entry point ─────────────────────────────────
+// ── Public entry point ─────────────────────────────────────
 
+// RunTUI starts the interactive terminal session.
 func RunTUI(ctrl *control.Controller) error {
-	m := New(ctrl)
-	ctrl.SetAsker(m)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	ctrl.SetAsker(New(ctrl))
+	p := tea.NewProgram(New(ctrl), tea.WithAltScreen())
 	_, err := p.Run()
 	return err
 }
