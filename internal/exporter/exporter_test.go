@@ -1,7 +1,6 @@
 package exporter
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
 	"time"

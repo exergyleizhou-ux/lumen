@@ -1,7 +1,6 @@
 package sessionmgr
 
 import (
-	"os"
 	"testing"
 )
 
