@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
@@ -273,13 +275,18 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 // ── Drawing ────────────────────────────────────────────────
 
 func drawBanner(ctrl *control.Controller) {
-	header := fmt.Sprintf("🪄 %s · %s/%s · %s %s",
-		fg(B+W, "LUMEN"), fg(G, ctrl.ProviderName()), fg(C, ctrl.ModelName()),
-		iconForMode(ctrl.PermissionMode()), fg(D, string(ctrl.PermissionMode())))
-	w := len(stripANSII(header)) + 2
-	fmt.Printf("\n%s\n", fg(C+B, "╭"+strings.Repeat("─", w)+"╮"))
-	fmt.Printf("%s\n", fg(C+B, "│")+"  "+header+"  "+fg(C+B, "│"))
-	fmt.Printf("%s\n", fg(C+B, "╰"+strings.Repeat("─", w)+"╯"))
+	style := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("15")).
+		Background(lipgloss.Color("39")).
+		Padding(0, 2).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("39"))
+
+	header := fmt.Sprintf("🪄 LUMEN · %s/%s · %s %s",
+		ctrl.ProviderName(), ctrl.ModelName(),
+		iconForMode(ctrl.PermissionMode()), string(ctrl.PermissionMode()))
+	fmt.Printf("\n%s\n", style.Render(header))
 }
 
 func iconForMode(m permission.Mode) string {
@@ -410,11 +417,6 @@ func runEvolve() {
 
 var lastPlan string; var planReady bool
 
-func stripANSII(s string) string {
-	out := s
-	for strings.Contains(out, "\033") { i := strings.Index(out, "\033"); j := strings.Index(out[i:], "m"); if j >= 0 { out = out[:i] + out[i+j+1:] } else { break } }
-	return out
-}
 
 func loadMemories() []string {
 	wd, _ := os.Getwd(); root := wd
