@@ -16,6 +16,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // maxOutputBytes caps how much raw command output we retain/feed back.
@@ -99,24 +100,41 @@ func New(root string, cfg Config) *Verifier {
 	return &Verifier{root: root, cfg: cfg, run: execRunner{}}
 }
 
-// Verify builds the plan for the changed files and runs each step in order,
-// stopping at the first failure and returning its parsed diagnostics.
-//
-// TODO(claude): wire in Detect (D-V1) and Parse (D-V2) once they land:
-//
-//	for _, step := range Detect(v.root, changed, v.cfg) {
-//	    out, ok := v.run.Run(ctx, step)
-//	    if !ok {
-//	        s := step
-//	        return Result{OK: false, Failed: &s, Diagnostics: Parse(s, out), Output: truncate(out)}
-//	    }
-//	}
-//	return Result{OK: true}
-//
-// Stubbed to OK until the pure helpers exist so the package compiles standalone
-// and DeepSeek's D-V1/D-V2/D-V3 cards are unblocked.
+// Verify builds the plan for the changed files (Detect) and runs each step in
+// order, stopping at the first failure and returning its parsed diagnostics
+// (Parse). Returns OK when every step succeeds.
 func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
+	rel := relativizePaths(v.root, changed)
+	for _, step := range Detect(v.root, rel, v.cfg) {
+		out, ok := v.run.Run(ctx, step)
+		if !ok {
+			s := step
+			return Result{
+				OK:          false,
+				Failed:      &s,
+				Diagnostics: Parse(s, out),
+				Output:      truncate(out),
+			}
+		}
+	}
 	return Result{OK: true}
+}
+
+// relativizePaths converts absolute changed-file paths to paths relative to root
+// so Detect can derive `./<pkg>` test targets. Paths already relative (or not
+// under root) are passed through unchanged.
+func relativizePaths(root string, paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if filepath.IsAbs(p) {
+			if r, err := filepath.Rel(root, p); err == nil {
+				out = append(out, r)
+				continue
+			}
+		}
+		out = append(out, p)
+	}
+	return out
 }
 
 // truncate caps raw output retained for feedback.
