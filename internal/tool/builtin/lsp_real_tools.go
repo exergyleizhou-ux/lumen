@@ -34,7 +34,9 @@ func getGopls(ctx context.Context) (*lsp.LSPClient, error) {
 	}
 
 	wd, _ := os.Getwd()
-	client, err := lsp.StartGopls(ctx, wd)
+	// Use background context for the long-lived gopls process.
+	// The caller's ctx might have a short timeout (per-turn deadline).
+	client, err := lsp.StartGopls(context.Background(), wd)
 	if err != nil {
 		return nil, err
 	}
@@ -84,11 +86,74 @@ func absURI(path string) string {
 // ── Init ────────────────────────────────────────────────────
 
 func init() {
+	tool.RegisterBuiltin(&WorkspaceTool{})
 	tool.RegisterBuiltin(&LSPDiagnosticTool{})
 	tool.RegisterBuiltin(&LSPCompletionTool{})
 	tool.RegisterBuiltin(&LSPHoverTool{})
 	tool.RegisterBuiltin(&LSPDefinitionTool{})
 	tool.RegisterBuiltin(&LSPReferencesTool{})
+}
+
+// ── Workspace ───────────────────────────────────────────────
+
+type WorkspaceTool struct{}
+func (t *WorkspaceTool) Name() string    { return "workspace" }
+func (t *WorkspaceTool) ReadOnly() bool  { return true }
+func (t *WorkspaceTool) Description() string {
+	return "Discover the project workspace: root directory, git branch, go.mod module name, and file tree summary. Use this first to orient yourself."
+}
+func (t *WorkspaceTool) Schema() json.RawMessage {
+	return json.RawMessage(`{"type":"object","properties":{}}`)
+}
+func (t *WorkspaceTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	wd, _ := os.Getwd()
+	var sb strings.Builder
+
+	// Find git root
+	root := wd
+	for dir := wd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			root = dir
+			break
+		}
+	}
+	fmt.Fprintf(&sb, "Workspace: %s\n", root)
+
+	// Git branch
+	cmd := exec.CommandContext(ctx, "git", "branch", "--show-current")
+	cmd.Dir = root
+	if out, err := cmd.Output(); err == nil && len(out) > 0 {
+		fmt.Fprintf(&sb, "Branch:    %s\n", strings.TrimSpace(string(out)))
+	}
+
+	// Go module
+	goMod := filepath.Join(root, "go.mod")
+	if data, err := os.ReadFile(goMod); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "module ") {
+				fmt.Fprintf(&sb, "Module:    %s\n", strings.TrimSpace(line[7:]))
+				break
+			}
+		}
+	}
+
+	// File tree (top level only, fast)
+	entries, _ := os.ReadDir(wd)
+	dirs, files := 0, 0
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") { dirs++ } else if !strings.HasPrefix(e.Name(), ".") { files++ }
+	}
+	fmt.Fprintf(&sb, "Contents:  %d dirs, %d files\n", dirs, files)
+
+	// List top entries
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") { continue }
+		if e.IsDir() {
+			fmt.Fprintf(&sb, "  %s/\n", e.Name())
+		}
+	}
+
+	return sb.String(), nil
 }
 
 // ── Diagnostics ─────────────────────────────────────────────
