@@ -46,6 +46,7 @@ func termSink() event.Sink {
 	textStarted := false
 	textLen := 0
 	truncated := false
+	needClear := false // true after spinner — cleared on next output
 	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
 	thinkingHeader := false // true once "💭 thinking" header is printed
@@ -59,31 +60,34 @@ func termSink() event.Sink {
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
 			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⏳ …"))
+			needClear = true
 
 		case event.Reasoning:
 			if thinking && !textStarted {
 				rt := stripMD(e.Text)
 				if rt == "" { return }
 				if !thinkingHeader {
-					// First reasoning chunk: clear spinner, print header
 					fmt.Fprint(os.Stdout, "\r\033[K")
 					fmt.Fprintf(os.Stdout, "\n  %s\n  %s ", fg(C, "┌─ 💭 thinking"), fg(C, "│"))
 					thinkingHeader = true
+					needClear = false
 				}
-				// Stream reasoning text in real-time
 				for _, line := range strings.Split(rt, "\n") {
 					fmt.Fprintf(os.Stdout, "%s", fg(D, line))
 				}
 			}
 
 		case event.Text:
+			if needClear {
+				fmt.Fprint(os.Stdout, "\r\033[K")
+				needClear = false
+			}
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
-				// Clear spinner / close thinking block
 				if thinkingHeader {
 					fmt.Fprintf(os.Stdout, "\n  %s\n\n", fg(C, "└──────────────────────────────"))
 				} else {
-					fmt.Fprint(os.Stdout, "\r\033[K\n\n")
+					fmt.Fprintf(os.Stdout, "\n\n")
 				}
 				thinkingHeader = false
 			}
@@ -93,7 +97,10 @@ func termSink() event.Sink {
 			fmt.Fprint(os.Stdout, t)
 
 		case event.ToolDispatch:
-			if thinking { fmt.Fprint(os.Stdout, "\r\033[K") } // clear spinner
+			if needClear {
+				fmt.Fprint(os.Stdout, "\r\033[K")
+				needClear = false
+			}
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
@@ -116,6 +123,11 @@ func termSink() event.Sink {
 				}
 				fmt.Fprintf(os.Stdout, "%s%s\n", fg(G, " ✓"), suffix)
 			}
+			// Re-enter spinner: agent will call LLM again after tool results.
+			// Cleared by the next Text or ToolDispatch (which check needClear).
+			thinking = false; textStarted = true
+			fmt.Fprintf(os.Stdout, "  %s", fg(D, "⏳ …"))
+			needClear = true
 
 		case event.UsageKind:
 			if e.Usage != nil {
@@ -132,7 +144,10 @@ func termSink() event.Sink {
 			for _, line := range strings.Split(e.DiffText, "\n") { fmt.Fprintf(os.Stdout, "  %s\n", line) }
 
 		case event.TurnDone:
-			if thinking { fmt.Fprint(os.Stdout, "\r\033[K") } // clear spinner if no output
+			if needClear {
+				fmt.Fprint(os.Stdout, "\r\033[K")
+				needClear = false
+			}
 			drawFooter(); thinking = false; textStarted = false; st.step.Store(0)
 		}
 	})
