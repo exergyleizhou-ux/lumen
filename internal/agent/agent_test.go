@@ -348,7 +348,7 @@ func TestAutoCompactMarkerDoesNotClaimSummary(t *testing.T) {
 	for i := 0; i < 12; i++ {
 		a.session.Add(provider.Message{Role: provider.RoleUser, Content: strings.Repeat("x", 40)})
 	}
-	a.autoCompact()
+	a.autoCompact(context.Background())
 
 	var marker string
 	for _, m := range a.session.Snapshot() {

@@ -299,7 +299,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		// 1. Auto-compact before the prompt nears the context window
-		a.autoCompact()
+		a.autoCompact(ctx)
 
 		// 2. Build request — sanitize messages to satisfy tool-call pairing contract.
 		// Only sanitize when the last assistant message had tool calls (the common
@@ -708,8 +708,18 @@ func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) string {
 
 // ── Auto-compaction ────────────────────────────────────────
 
-func (a *Agent) autoCompact() {
+func (a *Agent) autoCompact(turnCtx context.Context) {
 	if a.compactStuck || a.contextWindow <= 0 {
+		return
+	}
+	// Circuit breaker: if we've compacted 3+ times and the session is still
+	// growing, something is wrong — stop trying and let the context limit clip.
+	if a.consecutiveCompacts >= 3 {
+		a.compactStuck = true
+		a.sink.Emit(event.Event{
+			Kind: event.Notice, Level: event.LevelWarn,
+			Text: "compaction stuck — session still too large after 3 attempts; disabling further compaction this turn",
+		})
 		return
 	}
 	// Estimate tokens from character count (~4 chars/token for English,
@@ -729,9 +739,10 @@ func (a *Agent) autoCompact() {
 	softLimit := int(float64(a.contextWindow) * a.softCompactRatio)
 
 	if a.recentKeep > 0 && estimatedTokens > hardLimit {
-		// Prefer model-based compaction when a compact provider is available
+		// Prefer model-based compaction when a compact provider is available.
+		// Use the turn context so a cancelled turn (Ctrl+C) doesn't wait for compaction.
 		if a.compactProvider != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(turnCtx, 15*time.Second)
 			defer cancel()
 			if err := a.CompactWithModel(ctx, a.compactProvider, a.recentKeep, a.recentKeep); err != nil {
 				a.sink.Emit(event.Event{

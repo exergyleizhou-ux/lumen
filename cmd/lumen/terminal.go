@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"lumen/internal/config"
 	"lumen/internal/control"
@@ -321,7 +322,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 		fmt.Printf("\n%s\n", fg(B+C, text))
-		turnCtx, turnCancel := context.WithCancel(context.Background())
+		turnCtx, turnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
 		go func() { <-sigCh; turnCancel() }()

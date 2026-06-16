@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -32,11 +33,17 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		baseURL: cfg.BaseURL,
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
-		client:  &http.Client{
+		client: &http.Client{
+			Timeout: 5 * time.Minute, // kill stale connections (one turn max)
 			Transport: &http.Transport{
-				MaxIdleConns:         10,
-				MaxIdleConnsPerHost:  5,
-				IdleConnTimeout:      90 * time.Second,
+				DialContext: (&net.Dialer{
+					Timeout:   15 * time.Second,
+					KeepAlive: 30 * time.Second,
+				}).DialContext,
+				MaxIdleConns:          10,
+				MaxIdleConnsPerHost:   5,
+				IdleConnTimeout:       90 * time.Second,
+				TLSHandshakeTimeout:   15 * time.Second,
 				ResponseHeaderTimeout: 30 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
 			},

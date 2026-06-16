@@ -28,10 +28,12 @@ func NewSession(path string) *Session {
 }
 
 // Add appends a message to the session and persists it.
+// The mutex is released before disk I/O to avoid blocking other
+// session operations (Snapshot, Len) during slow filesystem writes.
 func (s *Session) Add(m provider.Message) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Messages = append(s.Messages, m)
+	s.mu.Unlock()
 	s.appendToFile(m)
 }
 
