@@ -61,6 +61,8 @@ func init() {
 		Line:     "#",
 		Keywords: set("true", "false", "null", "yes", "no", "on", "off"),
 	}, "yaml", "yml")
+
+	RegisterLang(&Lang{}, "html", "htm", "xml")
 }
 
 func set(keys ...string) map[string]bool {
