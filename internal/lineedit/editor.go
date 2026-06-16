@@ -257,7 +257,7 @@ func (e *Editor) readCooked() (string, error) {
 }
 
 // redraw repaints the prompt and current buffer, placing the cursor.
-// For multi-line input, clears all previously occupied rows first.
+// Uses per-line clearing — immune to auto-wrap cursor drift.
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -265,32 +265,23 @@ func (e *Editor) redraw() {
 		termW = w
 	}
 
-	prompt := e.prompt
-	text := e.buf.string()
-	prefix := string(e.buf.runes[:e.buf.pos])
-
-	// Step 1: move to prompt start, then UP to cover the first row of previous render.
-	// \r = go to col 0 of current line (which is the prompt's last line from previous render).
-	// Then move up lastRows-1 lines to the top of the old rendering.
-	if e.lastRows > 0 {
-		io.WriteString(e.out, "\r")
-		if e.lastRows > 1 {
-			fmt.Fprintf(e.out, "\x1b[%dA", e.lastRows-1)
-		}
+	// Step 1: clear every row the previous render occupied.
+	// Start from the current line, clear it, move up, repeat.
+	io.WriteString(e.out, "\r\x1b[K") // clear current line
+	for i := 1; i < e.lastRows; i++ {
+		io.WriteString(e.out, "\x1b[A\x1b[K") // up one row, clear it
 	}
 
-	// Step 2: clear from this point to the end of the screen.
-	// This wipes all old text — including any auto-wrapped remnants.
-	io.WriteString(e.out, "\x1b[J")
-
-	// Step 3: write prompt + full buffer.
+	// Step 2: write prompt + full buffer.
+	prompt := e.prompt
+	prefix := string(e.buf.runes[:e.buf.pos])
+	text := e.buf.string()
 	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// Step 4: how many rows does the new text occupy?
+	// Step 3: how many rows does the new text occupy?
 	promptWidth := runewidth.StringWidth(prompt)
-	textWidth := runewidth.StringWidth(text)
-	totalWidth := promptWidth + textWidth
+	totalWidth := promptWidth + runewidth.StringWidth(text)
 	newRows := 1
 	if termW > 0 && totalWidth > 0 {
 		newRows = (totalWidth + termW - 1) / termW
@@ -299,7 +290,7 @@ func (e *Editor) redraw() {
 		newRows = 1
 	}
 
-	// Step 5: place the cursor at the correct (row, col) within the buffer.
+	// Step 4: place cursor at correct (row, col).
 	prefixWidth := runewidth.StringWidth(prefix)
 	cursorTotal := promptWidth + prefixWidth
 	cursorRow := cursorTotal / termW

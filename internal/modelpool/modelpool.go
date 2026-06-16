@@ -226,6 +226,10 @@ func (s *RoundRobinStrategy) Select(ctx context.Context, pool *Pool, required []
 		return nil, fmt.Errorf("no healthy model matching capabilities %v", required)
 	}
 
+	// Map iteration order is randomized in Go; sort for a stable cycle order so
+	// the round-robin index advances deterministically across calls.
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Name < candidates[j].Name })
+
 	s.mu.Lock()
 	idx := s.index % len(candidates)
 	s.index++

@@ -45,6 +45,18 @@ type CompletionItem struct {
 	InsertText    string `json:"insertText"`
 }
 
+// rawCompletionItem mirrors CompletionItem but keeps documentation as raw JSON.
+// gopls sends documentation as either a plain string or a MarkupContent
+// {kind, value} object; decoding into json.RawMessage tolerates both shapes so
+// the object form does not break unmarshaling before we flatten it.
+type rawCompletionItem struct {
+	Label         string          `json:"label"`
+	Kind          int             `json:"kind"`
+	Detail        string          `json:"detail"`
+	Documentation json.RawMessage `json:"documentation"`
+	InsertText    string          `json:"insertText"`
+}
+
 // Hover holds the hover information for a symbol.
 type Hover struct {
 	Contents string `json:"contents"`
@@ -105,15 +117,19 @@ func (c *LSPClient) Shutdown() error {
 		c.mu.Unlock()
 		return nil
 	}
-	c.closed = true
 	c.mu.Unlock()
 
-	// Best-effort shutdown + exit.
-	c.call(context.Background(), "shutdown", nil)
+	// Best-effort graceful handshake first, while the client is still open so
+	// call() will actually send the request. Per the LSP spec gopls exits with
+	// status 0 after a shutdown request followed by an exit notification.
+	hctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	c.call(hctx, "shutdown", nil)
+	cancel()
 	c.notify("exit", nil)
 
-	// Drain pending callers.
+	// Now mark closed and drain any pending callers.
 	c.mu.Lock()
+	c.closed = true
 	for id, ch := range c.pending {
 		ch <- jsonRPCResponse{
 			JSONRPC: "2.0",
@@ -125,10 +141,21 @@ func (c *LSPClient) Shutdown() error {
 	c.mu.Unlock()
 
 	c.stdin.Close()
-	if c.cmd.Process != nil {
-		c.cmd.Process.Kill()
+
+	// Give gopls a moment to exit on its own. Only force-kill if it overstays,
+	// and treat an intentional kill as a clean shutdown rather than an error.
+	done := make(chan error, 1)
+	go func() { done <- c.cmd.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(3 * time.Second):
+		if c.cmd.Process != nil {
+			c.cmd.Process.Kill()
+		}
+		<-done
+		return nil
 	}
-	return c.cmd.Wait()
 }
 
 // ── Document lifecycle ────────────────────────────────────────
@@ -157,29 +184,29 @@ func (c *LSPClient) CloseDocument(uri string) error {
 
 // ── Diagnostics ───────────────────────────────────────────────
 
-// GetDiagnostics requests diagnostics for the given URI via
-// textDocument/diagnostic and returns them. Results are also cached and
-// updated by push notifications from the server.
+// GetDiagnostics returns the diagnostics gopls has published for the given URI.
+// gopls uses push diagnostics (textDocument/publishDiagnostics notifications),
+// not the pull-based textDocument/diagnostic request, so we wait briefly for the
+// read loop to populate the cache and then return it. A present-but-empty entry
+// means the server has reported the file as clean.
 func (c *LSPClient) GetDiagnostics(ctx context.Context, uri string) ([]Diagnostic, error) {
-	result, err := c.call(ctx, "textDocument/diagnostic", map[string]any{
-		"textDocument": map[string]any{"uri": uri},
-	})
-	if err != nil {
-		return nil, err
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		c.diagMu.RLock()
+		diags, ok := c.diagnostics[uri]
+		c.diagMu.RUnlock()
+		if ok {
+			return diags, nil
+		}
+		if time.Now().After(deadline) {
+			return nil, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
 	}
-
-	var wrapper struct {
-		Items []Diagnostic `json:"items"`
-	}
-	if err := json.Unmarshal(result, &wrapper); err != nil {
-		return nil, fmt.Errorf("parse diagnostics: %w", err)
-	}
-
-	c.diagMu.Lock()
-	c.diagnostics[uri] = wrapper.Items
-	c.diagMu.Unlock()
-
-	return wrapper.Items, nil
 }
 
 // ── Completion ────────────────────────────────────────────────
@@ -195,29 +222,28 @@ func (c *LSPClient) GetCompletion(ctx context.Context, uri string, line, col int
 	}
 
 	// The LSP spec allows two shapes: a flat array or {items: [...], isIncomplete: bool}.
-	var items []CompletionItem
-
-	// Try array first.
-	var flat []CompletionItem
-	if json.Unmarshal(result, &flat) == nil {
-		return flat, nil
+	var raws []rawCompletionItem
+	if err := json.Unmarshal(result, &raws); err != nil {
+		var wrapper struct {
+			Items        []rawCompletionItem `json:"items"`
+			IsIncomplete bool                `json:"isIncomplete"`
+		}
+		if err := json.Unmarshal(result, &wrapper); err != nil {
+			return nil, fmt.Errorf("parse completion: %w", err)
+		}
+		raws = wrapper.Items
 	}
 
-	// Try wrapped.
-	var wrapper struct {
-		Items        []CompletionItem `json:"items"`
-		IsIncomplete bool             `json:"isIncomplete"`
+	items := make([]CompletionItem, len(raws))
+	for i, r := range raws {
+		items[i] = CompletionItem{
+			Label:         r.Label,
+			Kind:          r.Kind,
+			Detail:        r.Detail,
+			Documentation: flattenDoc(r.Documentation),
+			InsertText:    r.InsertText,
+		}
 	}
-	if err := json.Unmarshal(result, &wrapper); err != nil {
-		return nil, fmt.Errorf("parse completion: %w", err)
-	}
-	items = wrapper.Items
-
-	// Flatten documentation — it can be a string or {kind, value}.
-	for i := range items {
-		items[i].Documentation = flattenDoc(items[i].Documentation)
-	}
-
 	return items, nil
 }
 
@@ -494,16 +520,27 @@ func (c *LSPClient) handleNotification(notif jsonRPCNotification) {
 
 // ── Helpers ───────────────────────────────────────────────────
 
-func flattenDoc(raw string) string {
-	// Try to parse as MarkupContent.
+// flattenDoc normalizes a completion item's documentation field — which the LSP
+// spec allows to be either a plain string or a MarkupContent {kind, value}
+// object — into a plain string.
+func flattenDoc(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	// Plain string form.
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	// MarkupContent {kind, value} form.
 	var mc struct {
 		Kind  string `json:"kind"`
 		Value string `json:"value"`
 	}
-	if json.Unmarshal([]byte(raw), &mc) == nil && mc.Value != "" {
+	if json.Unmarshal(raw, &mc) == nil {
 		return mc.Value
 	}
-	return raw
+	return ""
 }
 
 func flattenHoverContents(v any) string {

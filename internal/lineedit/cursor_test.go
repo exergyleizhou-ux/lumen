@@ -100,9 +100,9 @@ func TestRedrawColPositioning(t *testing.T) {
 	if !strings.Contains(result, "hello") {
 		t.Fatalf("redraw output missing 'hello': %q", result)
 	}
-	// Must contain \x1b[J (clear to end of screen for multi-line safety)
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatal("redraw missing clear-screen sequence")
+	// Must contain \r\x1b[K (clear current line)
+	if !strings.Contains(result, "\r\x1b[K") {
+		t.Fatal("redraw missing clear-line sequence")
 	}
 	// Cursor positioning: \r then \x1b[5C (> + hel = 5 cols)
 	if !strings.Contains(result, "\r\x1b[5C") {
@@ -151,13 +151,12 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 
 	result := out.String()
 
-	// Must contain \x1b[J (clear to end of screen — covers all old rows)
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatalf("multi-line redraw missing clear-screen: %q", result)
+	// Must contain per-line clears: \r\x1b[K then \x1b[A\x1b[K for the second row
+	if !strings.Contains(result, "\r\x1b[K") {
+		t.Fatalf("multi-line redraw missing first line clear: %q", result)
 	}
-	// Must contain \x1b[1A (move up 1 row to cover previous 2-row draw)
-	if !strings.Contains(result, "\x1b[1A") {
-		t.Fatalf("multi-line redraw missing move-up: %q", result)
+	if !strings.Contains(result, "\x1b[A\x1b[K") {
+		t.Fatalf("multi-line redraw missing second line clear: %q", result)
 	}
 	// Must still contain the full text
 	if !strings.Contains(result, longText) {

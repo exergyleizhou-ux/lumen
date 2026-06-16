@@ -227,8 +227,9 @@ func TestDefinition(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	// Definition of "greet" at line 11 (0-based: 10).
-	locs, err := client.GetDefinition(ctx, uri, 10, 6)
+	// Definition of "greet" in `msg := greet("world")` — line 10 (0-based),
+	// where the identifier begins at column 8.
+	locs, err := client.GetDefinition(ctx, uri, 10, 10)
 	if err != nil {
 		t.Fatalf("GetDefinition: %v", err)
 	}
@@ -265,8 +266,9 @@ func TestReferences(t *testing.T) {
 
 	time.Sleep(1 * time.Second)
 
-	// References of "greet" at line 4 (0-based: 3), which is the definition.
-	locs, err := client.GetReferences(ctx, uri, 3, 5, true)
+	// References of "greet" at its declaration `func greet(...)` — line 5
+	// (0-based), where the identifier begins at column 5.
+	locs, err := client.GetReferences(ctx, uri, 5, 7, true)
 	if err != nil {
 		t.Fatalf("GetReferences: %v", err)
 	}
