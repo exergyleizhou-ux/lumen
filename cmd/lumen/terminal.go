@@ -246,6 +246,10 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			drawStatusLine(ctrl)
 			continue
 		}
+		if text == "/wizard" {
+			runWizard(ctrl)
+			continue
+		}
 		if text == "/execute" && planReady {
 			fmt.Printf("\n  %s\n", fg(B, "── Executing Plan ──"))
 			ctrl.SetPermissionMode(permission.ModeBypass)
@@ -293,6 +297,7 @@ func stripANSII(s string) string {
 
 func drawHelp() {
 	fmt.Printf("\n  %s\n", fg(B, "commands"))
+	fmt.Printf("  %s  AI interviews you, then builds your project\n", fg(C, "/wizard"))
 	fmt.Printf("  %s  quit\n", fg(C, "/exit"))
 	fmt.Printf("  %s  plan → review → execute workflow\n", fg(C, "/workflow <task>"))
 	fmt.Printf("  %s  ultra: plan → auto-execute (minimal confirmations)\n", fg(C, "/ultra <task>"))

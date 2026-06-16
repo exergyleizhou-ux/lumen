@@ -38,6 +38,8 @@ func main() {
 	switch os.Args[1] {
 	case "chat":
 		runChat(os.Args[2:])
+	case "wizard":
+		runWizardEntry()
 	case "run":
 		runOneShot(os.Args[2:])
 	case "setup":
@@ -57,15 +59,16 @@ func printUsage() {
 	fmt.Print(`Lumen — 「你是我绿洲里的光」
 
 Usage:
-  lumen chat [--mode M] [--plan]
-  lumen run "prompt"
-  lumen run --plan "..."
+  lumen wizard            Active onboarding — AI interviews you, then builds
+  lumen chat [--mode M]   Interactive chat
+  lumen run "prompt"      One-shot task
+  lumen run --plan "..."  Plan mode (read-only)
   lumen run --mode M "..."
   lumen doctor
   lumen setup
   lumen version
 
-Modes: bypass (default) | plan | default | accept-edits
+Modes: bypass | plan | default | accept-edits
 `)
 }
 
@@ -163,6 +166,16 @@ func parseRunArgs(args []string) (planMode bool, mode, prompt string) {
 		}
 	}
 	return planMode, mode, strings.Join(rest, " ")
+}
+
+// ── Wizard entry ────────────────────────────────────────────
+
+func runWizardEntry() {
+	ctrl := control.New()
+	if err := runWizard(ctrl); err != nil {
+		fmt.Fprintf(os.Stderr, "wizard: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // ── Interactive chat ───────────────────────────────────────
