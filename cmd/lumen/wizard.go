@@ -1,6 +1,3 @@
-// wizard.go — Active onboarding wizard. Instead of a blank prompt,
-// the agent interviews the user with structured questions and builds
-// a concrete task plan from their answers.
 package main
 
 import (
@@ -14,60 +11,9 @@ import (
 	"lumen/internal/permission"
 )
 
-// ── Question flow ──────────────────────────────────────────
-
-type wizardStep struct {
-	Question string
-	Field    string
-	Hint     string
-	Validate func(string) bool
-}
-
-var onboardingFlow = []wizardStep{
-	{
-		Question: "What do you want to build? (e.g. a website, a mobile app, a data dashboard, an API, a script…)",
-		Field:    "project_type",
-		Hint:     "Just describe what it is — don't worry about technical terms.",
-	},
-	{
-		Question: "Who will use it? (e.g. just me, my team, the public, customers…)",
-		Field:    "audience",
-		Hint:     "This helps me pick the right tooling and security level.",
-	},
-	{
-		Question: "What should it actually DO? Describe 2-3 key features.",
-		Field:    "features",
-		Hint:     "Example: 'Users can sign up, create posts, and comment on posts.'",
-	},
-	{
-		Question: "Any design or style preferences? (e.g. clean and minimal, dark mode, colorful, corporate…)",
-		Field:    "style",
-		Hint:     "Leave blank if you don't have a preference — I'll pick something clean.",
-	},
-	{
-		Question: "Do you have a preferred language or tech stack? (e.g. Python, Go, React, 'whatever you recommend')",
-		Field:    "tech_stack",
-		Hint:     "If you're not sure, just say 'recommend something' and I'll pick the best fit.",
-	},
-	{
-		Question: "When does this need to be ready? (e.g. today, this week, next month, no rush)",
-		Field:    "deadline",
-		Hint:     "This helps me decide how much to build now vs. plan for later.",
-	},
-	{
-		Question: "Is this a brand new project, or are you extending something that already exists?",
-		Field:    "existing",
-		Hint:     "If there's existing code, tell me where it lives.",
-	},
-	{
-		Question: "Anything else I should know? (constraints, must-haves, dealbreakers…)",
-		Field:    "notes",
-		Hint:     "Leave blank if nothing else — we'll figure it out together.",
-	},
-}
-
-// ── Wizard entry ───────────────────────────────────────────
-
+// runWizard — Codex/Claude Code style onboarding.
+// One open-ended starter, then dynamic follow-ups.
+// The AI infers most details; user only fills knowledge gaps.
 func runWizard(ctrl *control.Controller) error {
 	if err := ctrl.Configure(termSink(), nil, ""); err != nil {
 		return err
@@ -75,102 +21,114 @@ func runWizard(ctrl *control.Controller) error {
 	ctrl.SetPermissionMode(permission.ModeDefault)
 
 	drawBanner(ctrl)
+	fmt.Printf("\n  %s\n\n", fg(B, "hey! what are you working on?"))
 
-	fmt.Printf("\n  %s\n\n", fg(B, "👋 Welcome! I'll ask a few questions to understand what you need."))
-	fmt.Printf("  %s\n", fg(D, "Answer in your own words — skip any question with Enter.\n"))
-
-	answers := map[string]string{}
 	sc := bufio.NewScanner(os.Stdin)
 
-	for _, step := range onboardingFlow {
-		fmt.Printf("\n  %s\n", fg(B+C, step.Question))
-		if step.Hint != "" {
-			fmt.Printf("  %s\n", fg(D, "  → "+step.Hint))
-		}
-		fmt.Printf("  %s ", fg(C, "▸"))
-		if !sc.Scan() {
-			break
-		}
-		answer := strings.TrimSpace(sc.Text())
-		if answer == "/exit" {
-			return nil
-		}
-		if answer == "" {
-			fmt.Printf("  %s\n", fg(D, "  (skipped)"))
-			continue
-		}
-		answers[step.Field] = answer
-	}
-
-	// Build prompt from answers
-	prompt := buildProjectPrompt(answers)
-
-	fmt.Printf("\n\n  %s\n", fg(B, "── Project Brief ──"))
-	fmt.Printf("  %s\n\n", fg(D, prompt))
-
-	fmt.Printf("  %s\n", fg(C, "Shall I start building this? (y/n)"))
+	// ── Round 1: open-ended starter ──────────────────────────
 	fmt.Printf("  %s ", fg(C, "▸"))
-	if !sc.Scan() {
-		return nil
-	}
-	confirm := strings.TrimSpace(sc.Text())
-	if confirm != "y" && confirm != "yes" && confirm != "Y" {
-		fmt.Printf("\n  %s\n", fg(D, "No problem. Run /wizard again when you're ready."))
+	if !sc.Scan() { return nil }
+	firstAnswer := strings.TrimSpace(sc.Text())
+	if firstAnswer == "/exit" { return nil }
+	if firstAnswer == "" {
+		fmt.Printf("\n  %s\n", fg(D, "no worries — just describe it whenever you're ready. /wizard to restart."))
 		return nil
 	}
 
-	// Phase 1: Plan
-	fmt.Printf("\n\n  %s\n", fg(B, "── Plan Phase ──"))
+	answers := []string{firstAnswer}
+
+	// ── Round 2: follow up based on what they said ────────────
+	followUp := inferFollowUp(firstAnswer)
+	if followUp != "" {
+		fmt.Printf("\n  %s\n", fg(D, followUp))
+		fmt.Printf("  %s ", fg(C, "▸"))
+		if !sc.Scan() { return nil }
+		a2 := strings.TrimSpace(sc.Text())
+		if a2 == "/exit" { return nil }
+		if a2 != "" { answers = append(answers, a2) }
+	}
+
+	// ── Round 3: one more if needed ──────────────────────────
+	if len(answers) < 2 || len(strings.Join(answers, " ")) < 60 {
+		fmt.Printf("\n  %s\n", fg(D, "anything else I should know? (skip if you're good)"))
+		fmt.Printf("  %s ", fg(C, "▸"))
+		if !sc.Scan() { return nil }
+		a3 := strings.TrimSpace(sc.Text())
+		if a3 == "/exit" { return nil }
+		if a3 != "" && a3 != "no" && a3 != "nope" { answers = append(answers, a3) }
+	}
+
+	// ── Build prompt ─────────────────────────────────────────
+	prompt := buildPrompt(answers)
+	fmt.Printf("\n\n  %s\n", fg(B, "ok, here's what i'm thinking:"))
+	fmt.Printf("  %s\n\n", fg(D, prompt))
+	fmt.Printf("  %s %s\n", fg(C, "look good?"), fg(D, "(y/n)"))
+	fmt.Printf("  %s ", fg(C, "▸"))
+	if !sc.Scan() { return nil }
+	if strings.TrimSpace(sc.Text()) != "y" {
+		fmt.Printf("\n  %s\n", fg(D, "no problem. /wizard to start over."))
+		return nil
+	}
+
+	// ── Plan ─────────────────────────────────────────────────
+	fmt.Printf("\n  %s\n", fg(B, "exploring..."))
 	ctrl.SetPermissionMode(permission.ModePlan)
 	ctx := context.Background()
 	if err := ctrl.Plan(ctx, prompt); err != nil {
-		fmt.Printf("  %s\n", fg(Rd, "plan failed: "+err.Error()))
+		fmt.Printf("  %s\n", fg(Rd, "hmm, something went wrong: "+err.Error()))
 		return err
 	}
 
-	// Execute
-	fmt.Printf("\n  %s\n", fg(B, "── Building ──"))
+	// ── Execute ──────────────────────────────────────────────
+	fmt.Printf("\n  %s\n", fg(B, "building now..."))
+	ctrl.Agent().SetPlanMode(false) // clear plan mode flag from Plan() call
 	ctrl.SetPermissionMode(permission.ModeBypass)
 	if err := ctrl.Run(ctx, prompt); err != nil {
-		fmt.Printf("  %s\n", fg(Rd, "execution failed: "+err.Error()))
+		fmt.Printf("  %s\n", fg(Rd, "error: "+err.Error()))
 	}
-	fmt.Printf("\n  %s\n", fg(G, "done. type /wizard to start another project."))
+	fmt.Printf("\n  %s\n", fg(G, "done! check the README for how to run it."))
 
 	return nil
 }
 
-func buildProjectPrompt(answers map[string]string) string {
+// inferFollowUp picks a natural second question based on what the user said.
+func inferFollowUp(answer string) string {
+	lower := strings.ToLower(answer)
+
+	switch {
+	case strings.Contains(lower, "website") || strings.Contains(lower, "site") || strings.Contains(lower, "web app"):
+		return "nice. is this for yourself, a team, or the public?"
+	case strings.Contains(lower, "app") || strings.Contains(lower, "mobile") || strings.Contains(lower, "ios") || strings.Contains(lower, "android"):
+		return "cool. what's the one thing it absolutely has to do well?"
+	case strings.Contains(lower, "api") || strings.Contains(lower, "backend") || strings.Contains(lower, "server"):
+		return "got it. what kind of data or service are you exposing?"
+	case strings.Contains(lower, "data") || strings.Contains(lower, "dashboard") || strings.Contains(lower, "analytics"):
+		return "makes sense. where's the data coming from? files, database, api?"
+	case strings.Contains(lower, "script") || strings.Contains(lower, "automation") || strings.Contains(lower, "bot"):
+		return "nice. what's the trigger — do you run it manually, on a schedule, or when something happens?"
+	case strings.Contains(lower, "game") || strings.Contains(lower, "animation"):
+		return "fun. what platform or tech are you thinking?"
+	case strings.Contains(lower, "cli") || strings.Contains(lower, "terminal") || strings.Contains(lower, "command"):
+		return "nice. what's the main workflow — does it take input, process files, talk to APIs?"
+	case len(lower) < 30:
+		return "tell me a bit more — what should it actually do?"
+	default:
+		return "anything else i should know before i start?"
+	}
+}
+
+func buildPrompt(answers []string) string {
+	joined := strings.Join(answers, " ")
 	var sb strings.Builder
-	sb.WriteString("Build a new software project based on the following requirements:\n\n")
 
-	if v, ok := answers["project_type"]; ok {
-		sb.WriteString(fmt.Sprintf("Project: %s\n", v))
-	}
-	if v, ok := answers["audience"]; ok {
-		sb.WriteString(fmt.Sprintf("Audience: %s\n", v))
-	}
-	if v, ok := answers["features"]; ok {
-		sb.WriteString(fmt.Sprintf("Features: %s\n", v))
-	}
-	if v, ok := answers["style"]; ok {
-		sb.WriteString(fmt.Sprintf("Style: %s\n", v))
-	}
-	if v, ok := answers["tech_stack"]; ok {
-		sb.WriteString(fmt.Sprintf("Tech stack: %s\n", v))
-	}
-	if v, ok := answers["deadline"]; ok {
-		sb.WriteString(fmt.Sprintf("Deadline: %s\n", v))
-	}
-	if v, ok := answers["existing"]; ok {
-		sb.WriteString(fmt.Sprintf("Existing project: %s\n", v))
-	}
-	if v, ok := answers["notes"]; ok {
-		sb.WriteString(fmt.Sprintf("Notes: %s\n", v))
-	}
-
-	sb.WriteString("\nFirst, plan the architecture and file structure. Then implement it step by step.")
-	sb.WriteString("\nUse reasonable defaults when details are not specified.")
-	sb.WriteString("\nAfter implementation, create a README.md explaining what was built and how to run it.")
+	fmt.Fprintf(&sb, "Build a project based on this description: %s\n\n", joined)
+	sb.WriteString("Rules:\n")
+	sb.WriteString("- Infer reasonable defaults for anything unspecified (tech stack, framework, styling, dependencies)\n")
+	sb.WriteString("- If the description is vague, pick the simplest thing that satisfies it\n")
+	sb.WriteString("- Plan the file structure first, then build each file\n")
+	sb.WriteString("- Use modern best practices but don't over-engineer\n")
+	sb.WriteString("- After building, write a README.md with setup and run instructions\n")
+	sb.WriteString("- The user is new to this — make it easy to understand and run\n")
 
 	return sb.String()
 }

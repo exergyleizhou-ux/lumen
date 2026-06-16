@@ -252,6 +252,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		}
 		if text == "/execute" && planReady {
 			fmt.Printf("\n  %s\n", fg(B, "── Executing Plan ──"))
+			ctrl.Agent().SetPlanMode(false)
 			ctrl.SetPermissionMode(permission.ModeBypass)
 			ctrl.Run(context.Background(), lastPlan)
 			planReady = false
@@ -402,6 +403,7 @@ func runUltra(ctrl *control.Controller, prompt string) {
 	}
 
 	// Auto-execute
+	ctrl.Agent().SetPlanMode(false)
 	ctrl.SetPermissionMode(permission.ModeBypass)
 	fmt.Printf("\n  %s\n", fg(B, "── Executing ──"))
 	if err := ctrl.Run(ctx, lastPlan); err != nil {
