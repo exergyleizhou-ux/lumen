@@ -14,6 +14,8 @@ import (
 	"lumen/internal/permission"
 )
 
+// ── live stats ────────────────────────────────────────────
+
 type liveStats struct {
 	tkIn    atomic.Int64
 	tkOut   atomic.Int64
@@ -29,31 +31,28 @@ var stats = &liveStats{}
 
 // ── ANSI ──────────────────────────────────────────────────
 
-const (
-	r = "\033[0m"
-	b = "\033[1m"
-	d = "\033[2m"
-	i = "\033[3m"
-	C = "\033[36m" // Cyan
-	G = "\033[32m" // Green
-	R = "\033[31m" // Red
-	Y = "\033[33m" // Yellow
-	W = "\033[97m" // White
-)
+const ansiReset  = "\033[0m"
+const ansiBold   = "\033[1m"
+const ansiDim    = "\033[2m"
+const ansiCyan   = "\033[36m"
+const ansiGreen  = "\033[32m"
+const ansiRed    = "\033[31m"
+const ansiWhite  = "\033[97m"
 
-func clr(s, code string) string { return code + s + r }
+func a(code, s string) string { return code + s + ansiReset }
 
-// ── Sink ──────────────────────────────────────────────────
+// ── Sink: Reasonix-style output ────────────────────────────
 
 func termSink() event.Sink {
 	thinking := false
 	textStarted := false
 	textLen := 0
 	truncated := false
-	const maxOutput = 24 * 1024
+	const maxOutput = 32 * 1024
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
+
 		case event.TurnStarted:
 			thinking = true
 			textStarted = false
@@ -63,7 +62,7 @@ func termSink() event.Sink {
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				fmt.Fprint(os.Stdout, clr(stripMD(e.Text), d))
+				fmt.Fprintf(os.Stdout, "%s%s", a(ansiDim, "thinking... "), a(ansiDim, stripMD(e.Text)))
 			}
 
 		case event.Text:
@@ -79,7 +78,7 @@ func termSink() event.Sink {
 			textLen += len(cleaned)
 			if textLen > maxOutput {
 				truncated = true
-				fmt.Fprintf(os.Stdout, "\n%s\n", clr("... output truncated", d))
+				fmt.Fprintf(os.Stdout, "\n%s\n", a(ansiDim, "... output truncated"))
 				return
 			}
 			fmt.Fprint(os.Stdout, cleaned)
@@ -88,15 +87,17 @@ func termSink() event.Sink {
 			thinking = false
 			textStarted = true
 			sn := stats.step.Add(1)
-			fmt.Fprintf(os.Stdout, "\n  %s %s ", clr(fmt.Sprintf("[%d]", sn), C), clr(e.Tool.Name, d+Y))
+			fmt.Fprintf(os.Stdout, "\n  %s  %s ",
+				a(ansiCyan, fmt.Sprintf("[%d]", sn)),
+				e.Tool.Name)
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
-				fmt.Fprintf(os.Stdout, "%s\n", clr("x "+e.Tool.Err, R))
+				fmt.Fprintf(os.Stdout, "  %s\n", a(ansiRed, "x "+e.Tool.Err))
 			} else if e.Tool.Blocked {
-				fmt.Fprintf(os.Stdout, "%s\n", clr("blocked", d))
+				fmt.Fprintf(os.Stdout, "  %s\n", a(ansiDim, "blocked"))
 			} else {
-				fmt.Fprint(os.Stdout, clr("ok", G)+"\n")
+				fmt.Fprint(os.Stdout, a(ansiGreen, "  ok")+"\n")
 			}
 
 		case event.UsageKind:
@@ -109,9 +110,9 @@ func termSink() event.Sink {
 			}
 
 		case event.FilePreview:
-			fmt.Fprintf(os.Stdout, "\n%s\n", clr("--- diff ---", C))
+			fmt.Fprintf(os.Stdout, "\n%s\n", a(ansiCyan, "--- diff ---"))
 			fmt.Fprint(os.Stdout, e.DiffText)
-			fmt.Fprint(os.Stdout, clr("---", C)+"\n")
+			fmt.Fprint(os.Stdout, a(ansiCyan, "---")+"\n")
 
 		case event.TurnDone:
 			drawFooter()
@@ -130,17 +131,22 @@ func drawFooter() {
 	tc := stats.tkCache.Load()
 	cost := stats.cost()
 	steps := stats.step.Load()
-
-	cachePct := 0
-	if ti > 0 {
-		cachePct = int(float64(tc) / float64(ti) * 100)
+	if steps == 0 {
+		steps = 1
 	}
-	fmt.Fprintf(os.Stdout, "\n%s %s:%s tokens  cache %d%%  $%.4f  %d steps%s\n",
-		clr("", d),
-		clr(fmt.Sprint(ti/1000), C),
-		clr(fmt.Sprint(to/1000), G),
-		cachePct, cost, steps,
-		clr("", r))
+
+	pct := 0
+	if ti > 0 {
+		pct = int(float64(tc) / float64(ti) * 100)
+	}
+	tkm := fmt.Sprintf("%.0fk", float64(ti+to)/1000)
+
+	fmt.Fprintf(os.Stdout, "\n%s %s  %s  %s  %s\n",
+		a(ansiDim, "---"),
+		a(ansiCyan, tkm+" tokens"),
+		a(ansiDim, fmt.Sprintf("cache %d%%", pct)),
+		a(ansiDim, fmt.Sprintf("$%.4f", cost)),
+		a(ansiDim, fmt.Sprintf("%d steps", steps)))
 }
 
 // ── Chat loop ─────────────────────────────────────────────
@@ -153,13 +159,14 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		ctrl.SetPermissionMode(permission.ParseMode(modeOverride))
 	}
 
+	// Header
 	fmt.Printf("\n%s %s\n\n",
-		clr("lumen", b+W),
-		clr(ctrl.ProviderName()+"/"+ctrl.ModelName(), d))
+		a(ansiBold+ansiWhite, "lumen"),
+		a(ansiDim, ctrl.ProviderName()+"/"+ctrl.ModelName()))
 
 	sc := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Print(clr("> ", C))
+		fmt.Printf("%s ", a(ansiCyan+ansiBold, ">"))
 		if !sc.Scan() {
 			break
 		}
@@ -167,53 +174,58 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		if text == "" {
 			continue
 		}
-		if text == "/exit" || text == "/quit" {
+
+		// Commands
+		switch {
+		case text == "/exit" || text == "/quit":
 			return nil
-		}
-		if text == "/help" {
-			fmt.Printf("%s\n\n", clr("  /exit  /mode  /mode bypass|plan|default  /models  /model <name>", d))
+		case text == "/help":
+			fmt.Printf("\n%s\n\n", a(ansiDim, "  /exit  /help  /mode  /models  /model <name>"))
 			continue
-		}
-		if text == "/mode" {
-			fmt.Printf("%s\n\n", clr("  bypass  plan  default  accept-edits", d))
+		case text == "/mode":
+			fmt.Printf("\n%s\n\n", a(ansiDim, "  bypass  plan  default  accept-edits"))
 			continue
-		}
-		if strings.HasPrefix(text, "/mode ") {
+		case strings.HasPrefix(text, "/mode "):
 			m := permission.ParseMode(strings.TrimPrefix(text, "/mode "))
 			ctrl.SetPermissionMode(m)
-			fmt.Printf("  %s\n\n", clr("["+string(m)+"]", b+C))
+			fmt.Printf("\n  %s\n\n", a(ansiBold+ansiCyan, "["+string(m)+"]"))
 			continue
-		}
-		if text == "/models" {
-			presets := config.ModelPresets()
-			fmt.Println()
-			lastProvider := ""
-			for _, pr := range presets {
-				if pr.Provider != lastProvider {
-					fmt.Printf("  %s\n", clr(pr.Provider, b+W))
-					lastProvider = pr.Provider
-				}
-				fmt.Printf("    %s%-25s%s  %s\n", clr("", C), pr.Name, clr("", d), pr.Model)
-			}
-			fmt.Printf("\n%s\n\n", clr("  /model <name> to switch", d))
+		case text == "/models":
+			drawModelList()
 			continue
-		}
-		if strings.HasPrefix(text, "/model ") {
+		case strings.HasPrefix(text, "/model "):
 			name := strings.TrimPrefix(text, "/model ")
 			newName, err := ctrl.SwitchModel(name)
 			if err != nil {
-				fmt.Printf("  %s\n\n", clr(err.Error(), R))
+				fmt.Printf("\n  %s\n\n", a(ansiRed, err.Error()))
 			} else {
-				fmt.Printf("  %s\n\n", clr("switched to "+newName, b+G))
+				fmt.Printf("\n  %s\n\n", a(ansiBold+ansiGreen, "switched to "+newName))
 			}
 			continue
 		}
 
-		fmt.Printf("\n%s\n", clr(text, b+C))
+		// Echo + run
+		fmt.Printf("\n%s\n", a(ansiBold+ansiCyan, text))
 		ctrl.Run(context.Background(), text)
 		fmt.Print("\n")
 	}
 	return nil
+}
+
+func drawModelList() {
+	presets := config.ModelPresets()
+	fmt.Println()
+	lastProvider := ""
+	for _, pr := range presets {
+		if pr.Provider != lastProvider {
+			fmt.Printf("  %s\n", a(ansiBold+ansiWhite, pr.Provider))
+			lastProvider = pr.Provider
+		}
+		fmt.Printf("    %s  %s\n",
+			a(ansiCyan, pr.Name),
+			a(ansiDim, pr.Model))
+	}
+	fmt.Printf("\n%s\n\n", a(ansiDim, "  /model <name> to switch"))
 }
 
 // ── Markdown stripper ─────────────────────────────────────
