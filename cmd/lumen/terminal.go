@@ -48,13 +48,14 @@ func termSink() event.Sink {
 	truncated := false
 	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
-	reasonBuf := strings.Builder{}
+	thinkingHeader := false // true once "💭 thinking" header is printed
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
 
 		case event.TurnStarted:
 			thinking = true; textStarted = false; textLen = 0; truncated = false
+			thinkingHeader = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
 			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⏳ …"))
@@ -62,23 +63,29 @@ func termSink() event.Sink {
 		case event.Reasoning:
 			if thinking && !textStarted {
 				rt := stripMD(e.Text)
-				reasonBuf.WriteString(rt)
+				if rt == "" { return }
+				if !thinkingHeader {
+					// First reasoning chunk: clear spinner, print header
+					fmt.Fprint(os.Stdout, "\r\033[K")
+					fmt.Fprintf(os.Stdout, "\n  %s\n  %s ", fg(C, "┌─ 💭 thinking"), fg(C, "│"))
+					thinkingHeader = true
+				}
+				// Stream reasoning text in real-time
+				for _, line := range strings.Split(rt, "\n") {
+					fmt.Fprintf(os.Stdout, "%s", fg(D, line))
+				}
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
-				fmt.Fprint(os.Stdout, "\r\033[K") // clear spinner
-				// Print accumulated reasoning as a compact block
-				if rb := strings.TrimSpace(reasonBuf.String()); len(rb) > 0 {
-					fmt.Fprintf(os.Stdout, "\n  %s\n  %s%s\n",
-						fg(C, "┌─ 💭 thinking"),
-						fg(C, "│ "), fg(D, truncReasonBlock(rb, 200)))
-					fmt.Fprintf(os.Stdout, "  %s\n\n", fg(C, "└──────────────────────────────"))
+				// Clear spinner / close thinking block
+				if thinkingHeader {
+					fmt.Fprintf(os.Stdout, "\n  %s\n\n", fg(C, "└──────────────────────────────"))
 				} else {
-					fmt.Print("\n\n")
+					fmt.Fprint(os.Stdout, "\r\033[K\n\n")
 				}
-				reasonBuf.Reset()
+				thinkingHeader = false
 			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
@@ -459,10 +466,6 @@ func stripMD(s string) string {
 	return s
 }
 func truncProb(s string, n int) string { if len(s) <= n { return s }; return s[:n-3] + "..." }
-func truncReasonBlock(s string, n int) string {
-	if len(s) <= n { return s }
-	return s[:n-3] + "…"
-}
 
 // ── session helpers ───────────────────────────────────────
 
