@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"lumen/internal/agent"
 	"lumen/internal/checkpoint"
@@ -266,6 +267,43 @@ func (c *Controller) SetPermissionMode(m permission.Mode) {
 	if c.ag != nil {
 		c.ag.SetGate(permission.NewGate(m, nil))
 	}
+}
+
+// SwitchModel hot-swaps the active provider at runtime.
+func (c *Controller) SwitchModel(name string) (string, error) {
+	preset := config.FindPreset(name)
+	if preset == nil {
+		return "", fmt.Errorf("model %q not found — use /models to list", name)
+	}
+
+	// Try env var first, fall back to current provider's key
+	apiKey := os.Getenv(strings.ToUpper(strings.ReplaceAll(preset.Provider, "-", "_")) + "_API_KEY")
+	if apiKey == "" {
+		apiKey = c.provCfg.APIKey
+	}
+
+	newProv, err := provider.New(preset.Kind, provider.Config{
+		Name:    preset.Name,
+		BaseURL: preset.BaseURL,
+		Model:   preset.Model,
+		APIKey:  apiKey,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create provider: %w", err)
+	}
+
+	c.provCfg = &config.ProviderConfig{
+		Name:    preset.Name,
+		Kind:    preset.Kind,
+		BaseURL: preset.BaseURL,
+		Model:   preset.Model,
+		APIKey:  apiKey,
+	}
+	c.prov = newProv
+	if c.ag != nil {
+		c.ag.SetProvider(newProv)
+	}
+	return preset.Name, nil
 }
 
 // SetAsker installs an interactive asker (for TUI mode).

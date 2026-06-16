@@ -24,7 +24,9 @@ import (
 	"lumen/internal/event"
 	"lumen/internal/permission"
 
-	// Ensure openai provider is registered
+	// Ensure all providers are registered via init()
+	_ "lumen/internal/provider/anthro"
+	_ "lumen/internal/provider/gemini"
 	_ "lumen/internal/provider/openai"
 )
 

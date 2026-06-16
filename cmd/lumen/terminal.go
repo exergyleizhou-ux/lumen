@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/permission"
@@ -170,7 +171,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			return nil
 		}
 		if text == "/help" {
-			fmt.Printf("%s\n\n", clr("  /exit  /mode  /mode bypass|plan|default", d))
+			fmt.Printf("%s\n\n", clr("  /exit  /mode  /mode bypass|plan|default  /models  /model <name>", d))
 			continue
 		}
 		if text == "/mode" {
@@ -181,6 +182,30 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			m := permission.ParseMode(strings.TrimPrefix(text, "/mode "))
 			ctrl.SetPermissionMode(m)
 			fmt.Printf("  %s\n\n", clr("["+string(m)+"]", b+C))
+			continue
+		}
+		if text == "/models" {
+			presets := config.ModelPresets()
+			fmt.Println()
+			lastProvider := ""
+			for _, pr := range presets {
+				if pr.Provider != lastProvider {
+					fmt.Printf("  %s\n", clr(pr.Provider, b+W))
+					lastProvider = pr.Provider
+				}
+				fmt.Printf("    %s%-25s%s  %s\n", clr("", C), pr.Name, clr("", d), pr.Model)
+			}
+			fmt.Printf("\n%s\n\n", clr("  /model <name> to switch", d))
+			continue
+		}
+		if strings.HasPrefix(text, "/model ") {
+			name := strings.TrimPrefix(text, "/model ")
+			newName, err := ctrl.SwitchModel(name)
+			if err != nil {
+				fmt.Printf("  %s\n\n", clr(err.Error(), R))
+			} else {
+				fmt.Printf("  %s\n\n", clr("switched to "+newName, b+G))
+			}
 			continue
 		}
 
