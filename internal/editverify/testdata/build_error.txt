@@ -1,0 +1,2 @@
+main.go:10:5: undefined: foo
+pkg/helper.go:23:2: imported and not used: "fmt"

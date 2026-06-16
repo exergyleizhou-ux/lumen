@@ -16,6 +16,7 @@ import (
 
 	"lumen/internal/checkpoint"
 	"lumen/internal/diff"
+	"lumen/internal/editverify"
 	"lumen/internal/event"
 	"lumen/internal/evidence"
 	"lumen/internal/guard"
@@ -133,6 +134,20 @@ type Agent struct {
 	compactStuck        bool
 	compactProvider     provider.Provider // model-based compaction (nil = sliding window)
 	consecutiveCompacts int
+
+	// verify-after-edit (C-5): when verifier is non-nil and cfg.Enabled, the loop
+	// runs build/vet/test after a writer batch and feeds failures back to the
+	// model for self-repair. repairCycle/verifyExhausted are per-turn state.
+	verifier        changeVerifier
+	verifyCfg       editverify.Config
+	repairCycle     int
+	verifyExhausted bool
+}
+
+// changeVerifier runs verification (build/vet/test) over the files changed in a
+// writer batch. *editverify.Verifier satisfies it; tests inject a fake.
+type changeVerifier interface {
+	Verify(ctx context.Context, changed []string) editverify.Result
 }
 
 // Options configures a new Agent.
@@ -198,6 +213,13 @@ func (a *Agent) SetGate(g Gate) { a.gate = g }
 
 // SetAsker installs the asker for the `ask` tool.
 func (a *Agent) SetAsker(as Asker) { a.asker = as }
+
+// SetVerifier installs the verify-after-edit verifier and its config. A nil
+// verifier (the default) disables the loop entirely.
+func (a *Agent) SetVerifier(v changeVerifier, cfg editverify.Config) {
+	a.verifier = v
+	a.verifyCfg = cfg
+}
 
 // SetPreEditHook installs the pre-edit snapshot hook.
 func (a *Agent) SetPreEditHook(fn func(diff.Change)) { a.onPreEdit = fn }
@@ -284,6 +306,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.repeatSuccessCounts = nil
 	a.emptyFinalCount = 0
 	a.streamRecoveryCount = 0
+	a.repairCycle = 0
+	a.verifyExhausted = false
 	a.sink.Emit(event.Event{Kind: event.TurnStarted, Timestamp: time.Now()})
 
 	// Ensure the session starts with a system prompt (cache-stable prefix).
@@ -427,6 +451,8 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// 7. Execute tool calls (partitioned: read-only in parallel, writers serial)
 		batches := partitionToolCalls(a.tools, toolCalls)
+		var stepWrote bool
+		var stepChanged []string
 		for _, batch := range batches {
 			results := make([]toolOutcome, len(batch.calls))
 
@@ -444,6 +470,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			// Emit results and add to session
 			for i, outcome := range results {
 				tc := batch.calls[i]
+				if outcome.wroteFile {
+					stepWrote = true
+					if outcome.changedPath != "" {
+						stepChanged = append(stepChanged, outcome.changedPath)
+					}
+				}
 				ev := event.Event{
 					Kind: event.ToolResult,
 					Tool: event.Tool{
@@ -465,6 +497,15 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 					ToolCallID: tc.ID,
 					Name:       tc.Name,
 				})
+			}
+		}
+
+		// 8. Verify-after-edit: if any writer ran this step, build/vet/test the
+		// changes and, on failure, inject feedback so the model self-repairs on
+		// the next step. No-op when no verifier is set or the feature is disabled.
+		if stepWrote {
+			if fb := a.verifyAfterEdits(ctx, stepChanged); fb != "" {
+				a.session.Add(provider.Message{Role: provider.RoleUser, Content: fb})
 			}
 		}
 	}
@@ -492,6 +533,12 @@ type toolOutcome struct {
 	blocked   bool
 	errMsg    string
 	truncated bool
+
+	// wroteFile is true when a writer tool ran successfully; changedPath is the
+	// file it touched (best-effort, via Previewer). Used by the verify-after-edit
+	// loop to decide whether to verify and which packages to test.
+	wroteFile   bool
+	changedPath string
 }
 
 // executeOne runs a single tool call through the full gate→pre-edit→execute→post pipeline.
@@ -548,19 +595,24 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 
-	// Pre-edit snapshot — emit diff preview event
-	if a.onPreEdit != nil && !t.ReadOnly() {
+	// Pre-edit snapshot: compute the change once, BEFORE Execute mutates disk
+	// (previewing afterward would diff against the already-modified file). Used
+	// for both the diff preview event and the verify-after-edit changeset.
+	var changedPath string
+	if !t.ReadOnly() {
 		if pv, ok := t.(tool.Previewer); ok {
 			if change, err := pv.Preview(json.RawMessage(call.Arguments)); err == nil {
-				a.onPreEdit(change)
-				// Compute rendered diff for display
-				diffText := renderFileDiff(change)
-				a.sink.Emit(event.Event{
-					Kind:      event.FilePreview,
-					DiffText:  diffText,
-					Tool:      event.Tool{Name: call.Name, ID: call.ID, Description: change.Path},
-					Timestamp: time.Now(),
-				})
+				changedPath = change.Path
+				if a.onPreEdit != nil {
+					a.onPreEdit(change)
+					diffText := renderFileDiff(change)
+					a.sink.Emit(event.Event{
+						Kind:      event.FilePreview,
+						DiffText:  diffText,
+						Tool:      event.Tool{Name: call.Name, ID: call.ID, Description: change.Path},
+						Timestamp: time.Now(),
+					})
+				}
 			}
 		}
 	}
@@ -582,7 +634,60 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 
 	a.recordRepeatSuccess(call, t)
 	body, truncMsg := truncateToolOutput(result)
-	return toolOutcome{output: body, truncated: truncMsg != ""}
+	return toolOutcome{
+		output:      body,
+		truncated:   truncMsg != "",
+		wroteFile:   !t.ReadOnly(),
+		changedPath: changedPath,
+	}
+}
+
+// verifyAfterEdits runs the verify-after-edit loop after a step's writer batch.
+// It returns the feedback to inject into the session for self-repair, or "" when
+// verification passed, the feature is off, or the repair budget is exhausted.
+func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
+	if a.verifier == nil || !a.verifyCfg.Enabled || a.verifyExhausted {
+		return ""
+	}
+
+	a.sink.Emit(event.Event{Kind: event.VerifyStarted, Timestamp: time.Now()})
+	res := a.verifier.Verify(ctx, changed)
+
+	if res.OK {
+		a.repairCycle = 0
+		a.sink.Emit(event.Event{
+			Kind:      event.VerifyResult,
+			Level:     event.LevelInfo,
+			Text:      "verified ✓",
+			Timestamp: time.Now(),
+		})
+		return ""
+	}
+
+	a.repairCycle++
+	max := a.verifyCfg.MaxRepairCycles
+	if max <= 0 {
+		max = 3
+	}
+
+	failName := "?"
+	if res.Failed != nil {
+		failName = res.Failed.Name
+	}
+	a.sink.Emit(event.Event{
+		Kind:      event.VerifyResult,
+		Level:     event.LevelWarn,
+		Text:      fmt.Sprintf("verify failed: %s (%d diagnostics)", failName, len(res.Diagnostics)),
+		Timestamp: time.Now(),
+	})
+
+	if a.repairCycle > max {
+		a.verifyExhausted = true
+		return fmt.Sprintf("⚠ verification still failing after %d repair attempts (last failure: %s). "+
+			"Stopping auto-verify for this turn — summarize the remaining problem for the user.", max, failName)
+	}
+
+	return editverify.FormatFeedback(res, a.repairCycle, max)
 }
 
 func (a *Agent) executeParallel(ctx context.Context, calls []provider.ToolCall, results []toolOutcome) {

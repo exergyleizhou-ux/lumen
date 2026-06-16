@@ -1,0 +1,5 @@
+panic: runtime error: index out of range [0]
+
+goroutine 1 [running]:
+lumen/pkg.TestCrash(0x14000120000)
+	/Users/lei/lumen/pkg/crash_test.go:9

@@ -1,0 +1,2 @@
+# lumen/cmd/lumen
+cmd/lumen/main.go:42:2: unreachable code

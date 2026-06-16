@@ -21,6 +21,12 @@ const (
 	Notice       Kind = "notice"
 	Ask          Kind = "ask"
 	PlanApproval Kind = "plan_approval"
+
+	// Verify events bracket the verify-after-edit loop. VerifyStarted fires
+	// before running build/vet/test on a writer batch; VerifyResult reports the
+	// outcome (Text = summary, Level = info on success / warn on failure).
+	VerifyStarted Kind = "verify_started"
+	VerifyResult  Kind = "verify_result"
 )
 
 // Level is the severity of a Notice event.

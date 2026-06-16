@@ -1,0 +1,3 @@
+--- FAIL: TestMath (0.00s)
+    math_test.go:15: expected 42, got 0
+FAIL
