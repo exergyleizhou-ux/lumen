@@ -44,7 +44,22 @@ func decodeKey(b []byte) (keyEvent, int) {
 	c := b[0]
 	switch {
 	case c == 0x1b: // ESC — control sequence
+		// X10 mouse: \x1b[M + 3 bytes (button+32, col+32, row+32)
+		// Used by macOS Terminal.app and other terminals that don't support SGR.
+		if len(b) >= 3 && b[1] == '[' && b[2] == 'M' {
+			if len(b) < 6 {
+				return keyEvent{typ: keyUnknown}, 0 // incomplete — wait for 3 payload bytes
+			}
+			btn := int(b[3]) - 32
+			col := int(b[4]) - 32
+			// row := int(b[5]) - 32  // not needed for line editing
+			if btn == 0 && col > 0 {
+				return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseBtn: 0}, 6
+			}
+			return keyEvent{typ: keyUnknown}, 6
+		}
 		// SGR mouse: \x1b[<btn;col;rowM (press) or m (release)
+		// Used by iTerm2, Kitty, Alacritty, VS Code terminal, etc.
 		if len(b) >= 6 && b[1] == '[' && b[2] == '<' {
 			// Find the terminating M or m
 			end := -1
@@ -65,6 +80,7 @@ func decodeKey(b []byte) (keyEvent, int) {
 				fmt.Sscanf(parts[0], "%d", &btn)
 				fmt.Sscanf(parts[1], "%d", &col)
 				fmt.Sscanf(parts[2], "%d", &row)
+				_ = row
 				// Only handle left-click press (button 0, M suffix)
 				if btn == 0 && b[end] == 'M' && col > 0 {
 					return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseBtn: 0}, end + 1

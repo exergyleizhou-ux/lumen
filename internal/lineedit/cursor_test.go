@@ -219,3 +219,25 @@ func TestDecodeSGRMouse(t *testing.T) {
 		t.Fatal("mouse release should not be keyMouse")
 	}
 }
+
+func TestDecodeX10Mouse(t *testing.T) {
+	// X10 left-click at column 10, row 5
+	// button=0 → byte=32, col=10 → byte=42, row=5 → byte=37
+	ev, consumed := decodeKey([]byte{0x1b, '[', 'M', 32, 42, 37})
+	if consumed != 6 {
+		t.Errorf("consumed=%d, want 6", consumed)
+	}
+	if ev.typ != keyMouse {
+		t.Fatalf("typ=%v, want keyMouse", ev.typ)
+	}
+	if ev.mouseCol != 9 { // col 10 → 0-based 9
+		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
+	}
+
+	// Incomplete X10 (only 3 bytes) — should wait for more
+	ev2, consumed2 := decodeKey([]byte{0x1b, '[', 'M'})
+	if consumed2 != 0 {
+		t.Errorf("incomplete X10: consumed=%d, want 0", consumed2)
+	}
+	_ = ev2
+}
