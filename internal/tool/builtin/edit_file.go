@@ -75,15 +75,10 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	}
 	content := string(data)
 
-	count := strings.Count(content, p.OldString)
-	if count == 0 {
-		return "", fmt.Errorf("old_string not found in %s", p.Path)
+	newContent, err := applyReplace(content, p.OldString, p.NewString)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", p.Path, err)
 	}
-	if count > 1 {
-		return "", fmt.Errorf("old_string matches %d times in %s (must be unique — add surrounding context)", count, p.Path)
-	}
-
-	newContent := strings.Replace(content, p.OldString, p.NewString, 1)
 	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(newContent)); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}

@@ -79,19 +79,15 @@ func (t *MultiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	}
 	content := string(data)
 
+	// Apply every edit to an in-memory copy; only persist if ALL succeed, so a
+	// mid-sequence failure leaves the file untouched (atomic).
 	applied := 0
 	for i, edit := range p.Edits {
-		if edit.OldString == "" {
-			return "", fmt.Errorf("edit %d: old_string is required", i)
+		next, err := applyReplace(content, edit.OldString, edit.NewString)
+		if err != nil {
+			return "", fmt.Errorf("edit %d (%s): %w", i, p.Path, err)
 		}
-		count := strings.Count(content, edit.OldString)
-		if count == 0 {
-			return "", fmt.Errorf("edit %d: old_string not found in %s", i, p.Path)
-		}
-		if count > 1 {
-			return "", fmt.Errorf("edit %d: old_string matches %d times in %s (must be unique — add surrounding context)", i, count, p.Path)
-		}
-		content = strings.Replace(content, edit.OldString, edit.NewString, 1)
+		content = next
 		applied++
 	}
 
