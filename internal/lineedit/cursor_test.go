@@ -100,8 +100,8 @@ func TestRedrawColPositioning(t *testing.T) {
 	if !strings.Contains(result, "hello") {
 		t.Fatalf("redraw output missing 'hello': %q", result)
 	}
-	// Must contain \r and \x1b[J (clear to end of screen for multi-line safety)
-	if !strings.Contains(result, "\r\x1b[J") {
+	// Must contain \x1b[J (clear to end of screen for multi-line safety)
+	if !strings.Contains(result, "\x1b[J") {
 		t.Fatal("redraw missing clear-screen sequence")
 	}
 	// Cursor positioning: \r then \x1b[5C (> + hel = 5 cols)
@@ -177,26 +177,26 @@ func TestMouseClickRepositionsCursor(t *testing.T) {
 	}
 	e.buf.home() // cursor at 0
 
-	// Click at column 3: prompt "▸ " = 2 cols, so buffer col = 1
-	// "hello" → col 0='h', col 1='e' → click at col 1 = after 'h', pos should be 1
-	ev := keyEvent{typ: keyMouse, mouseCol: 3, mouseBtn: 0}
+	// Click at (row=0, col=3): prompt "▸ " = 2 cols, so text col = 1
+	// text "hello" → col 0='h', col 1='e' → pos should be 1
+	ev := keyEvent{typ: keyMouse, mouseCol: 3, mouseRow: 0, mouseBtn: 0}
 	e.handle(ev)
 	if e.buf.pos != 1 {
-		t.Fatalf("mouse at col 3: pos=%d, want 1", e.buf.pos)
+		t.Fatalf("mouse at (0,3): pos=%d, want 1", e.buf.pos)
 	}
 
 	// Click past end → cursor should go to end
-	ev = keyEvent{typ: keyMouse, mouseCol: 80, mouseBtn: 0}
+	ev = keyEvent{typ: keyMouse, mouseCol: 80, mouseRow: 1, mouseBtn: 0}
 	e.handle(ev)
 	if e.buf.pos != len(e.buf.runes) {
 		t.Fatalf("mouse past end: pos=%d, want %d", e.buf.pos, len(e.buf.runes))
 	}
 
-	// Click on prompt area (col 0) → cursor should go home
-	ev = keyEvent{typ: keyMouse, mouseCol: 0, mouseBtn: 0}
+	// Click before prompt (col 0, row 0) → cursor should go home
+	ev = keyEvent{typ: keyMouse, mouseCol: 0, mouseRow: 0, mouseBtn: 0}
 	e.handle(ev)
 	if e.buf.pos != 0 {
-		t.Fatalf("mouse on prompt: pos=%d, want 0", e.buf.pos)
+		t.Fatalf("mouse before prompt: pos=%d, want 0", e.buf.pos)
 	}
 }
 
@@ -211,6 +211,9 @@ func TestDecodeSGRMouse(t *testing.T) {
 	}
 	if ev.mouseCol != 9 { // 0-based
 		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
+	}
+	if ev.mouseRow != 0 { // 0-based: row 1 → 0
+		t.Errorf("mouseRow=%d, want 0", ev.mouseRow)
 	}
 
 	// SGR release — should be ignored (not mouse)
@@ -232,6 +235,9 @@ func TestDecodeX10Mouse(t *testing.T) {
 	}
 	if ev.mouseCol != 9 { // col 10 → 0-based 9
 		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
+	}
+	if ev.mouseRow != 4 { // row 5 → 0-based 4
+		t.Errorf("mouseRow=%d, want 4", ev.mouseRow)
 	}
 
 	// Incomplete X10 (only 3 bytes) — should wait for more

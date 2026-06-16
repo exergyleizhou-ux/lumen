@@ -111,18 +111,11 @@ func (e *Editor) handle(ev keyEvent) action {
 		e.buf.end()
 		return actRedraw
 	case keyMouse:
-		// Click-to-position: map terminal column to buffer rune index
-		promptWidth := runewidth.StringWidth(e.prompt)
-		if ev.mouseCol < promptWidth {
-			e.buf.home()
-		} else {
-			col := ev.mouseCol - promptWidth
-			pos := colToPosition(string(e.buf.runes), col)
-			if pos >= 0 {
-				e.buf.pos = pos
-				if e.buf.pos > len(e.buf.runes) {
-					e.buf.pos = len(e.buf.runes)
-				}
+		pos := e.clickToPos(ev.mouseRow, ev.mouseCol)
+		if pos >= 0 {
+			e.buf.pos = pos
+			if e.buf.pos > len(e.buf.runes) {
+				e.buf.pos = len(e.buf.runes)
 			}
 		}
 		return actRedraw
@@ -264,8 +257,7 @@ func (e *Editor) readCooked() (string, error) {
 }
 
 // redraw repaints the prompt and current buffer, placing the cursor.
-// Uses runewidth.StringWidth for CJK/emoji-safe column arithmetic.
-// Handles multi-line input by clearing all rows the previous redraw occupied.
+// For multi-line input, clears all previously occupied rows first.
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -277,7 +269,25 @@ func (e *Editor) redraw() {
 	text := e.buf.string()
 	prefix := string(e.buf.runes[:e.buf.pos])
 
-	// Calculate how many terminal rows this buffer will occupy
+	// Step 1: move to prompt start, then UP to cover the first row of previous render.
+	// \r = go to col 0 of current line (which is the prompt's last line from previous render).
+	// Then move up lastRows-1 lines to the top of the old rendering.
+	if e.lastRows > 0 {
+		io.WriteString(e.out, "\r")
+		if e.lastRows > 1 {
+			fmt.Fprintf(e.out, "\x1b[%dA", e.lastRows-1)
+		}
+	}
+
+	// Step 2: clear from this point to the end of the screen.
+	// This wipes all old text — including any auto-wrapped remnants.
+	io.WriteString(e.out, "\x1b[J")
+
+	// Step 3: write prompt + full buffer.
+	io.WriteString(e.out, prompt)
+	io.WriteString(e.out, text)
+
+	// Step 4: how many rows does the new text occupy?
 	promptWidth := runewidth.StringWidth(prompt)
 	textWidth := runewidth.StringWidth(text)
 	totalWidth := promptWidth + textWidth
@@ -289,28 +299,12 @@ func (e *Editor) redraw() {
 		newRows = 1
 	}
 
-	// Move up to clear previous lines
-	if e.lastRows > 1 {
-		fmt.Fprintf(e.out, "\x1b[%dA", e.lastRows-1)
-	}
-	io.WriteString(e.out, "\r")
-	// Clear from cursor to end of screen (covers all old lines)
-	io.WriteString(e.out, "\x1b[J")
-
-	io.WriteString(e.out, prompt)
-	io.WriteString(e.out, text)
-
-	// Move cursor to correct position within the (possibly multi-line) buffer
+	// Step 5: place the cursor at the correct (row, col) within the buffer.
 	prefixWidth := runewidth.StringWidth(prefix)
 	cursorTotal := promptWidth + prefixWidth
-	cursorRow := 0
-	cursorCol := cursorTotal
-	if termW > 0 {
-		cursorRow = cursorTotal / termW
-		cursorCol = cursorTotal % termW
-	}
+	cursorRow := cursorTotal / termW
+	cursorCol := cursorTotal % termW
 
-	// Move back to start, then down and across to cursor position
 	io.WriteString(e.out, "\r")
 	if cursorRow > 0 {
 		fmt.Fprintf(e.out, "\x1b[%dB", cursorRow)
@@ -322,20 +316,36 @@ func (e *Editor) redraw() {
 	e.lastRows = newRows
 }
 
-// colToPosition maps a display column offset to a rune index in text.
-// Returns -1 if col is beyond the text width.
-func colToPosition(text string, targetCol int) int {
+// clickToPos translates a mouse click at (visual row, visual col) within the
+// rendered buffer into a rune position. Accounts for prompt width, terminal
+// wrapping, and CJK/emoji double-width runes.
+func (e *Editor) clickToPos(clickRow, clickCol int) int {
+	fd := int(e.in.Fd())
+	termW := 80
+	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
+		termW = w
+	}
+	promptWidth := runewidth.StringWidth(e.prompt)
+
+	// Click before prompt on first line → home
+	if clickRow == 0 && clickCol < promptWidth {
+		return 0
+	}
+
+	// Convert (row, col) to flat text display-column offset.
+	// Row 0: first termW-promptWidth cols are text, then terminal wraps.
+	// Row N>0: full termW cols of text after wrapping.
+	targetCol := clickRow*termW + clickCol - promptWidth
+
 	col := 0
-	for i, r := range text {
+	for i, r := range e.buf.runes {
 		w := runewidth.RuneWidth(r)
-		// If the click is within this rune's columns, position before it
 		if targetCol < col+w {
 			return i
 		}
 		col += w
 	}
-	// Click past the last rune → end of buffer
-	return len([]rune(text))
+	return len(e.buf.runes)
 }
 
 // ── history persistence ───────────────────────────────────

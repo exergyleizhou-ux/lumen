@@ -31,6 +31,7 @@ type keyEvent struct {
 	r   rune
 	// Mouse event fields (zero when typ != keyMouse)
 	mouseCol int // 0-based column in terminal
+	mouseRow int // 0-based row within the editor's rendered area (prompt line = 0)
 	mouseBtn int // 0=left, 1=middle, 2=right
 }
 
@@ -52,9 +53,9 @@ func decodeKey(b []byte) (keyEvent, int) {
 			}
 			btn := int(b[3]) - 32
 			col := int(b[4]) - 32
-			// row := int(b[5]) - 32  // not needed for line editing
-			if btn == 0 && col > 0 {
-				return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseBtn: 0}, 6
+			row := int(b[5]) - 32
+			if btn == 0 && col >= 1 && row >= 1 {
+				return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseRow: row - 1, mouseBtn: 0}, 6
 			}
 			return keyEvent{typ: keyUnknown}, 6
 		}
@@ -80,10 +81,9 @@ func decodeKey(b []byte) (keyEvent, int) {
 				fmt.Sscanf(parts[0], "%d", &btn)
 				fmt.Sscanf(parts[1], "%d", &col)
 				fmt.Sscanf(parts[2], "%d", &row)
-				_ = row
 				// Only handle left-click press (button 0, M suffix)
-				if btn == 0 && b[end] == 'M' && col > 0 {
-					return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseBtn: 0}, end + 1
+				if btn == 0 && b[end] == 'M' && col >= 1 && row >= 1 {
+					return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseRow: row - 1, mouseBtn: 0}, end + 1
 				}
 			}
 			return keyEvent{typ: keyUnknown}, end + 1
