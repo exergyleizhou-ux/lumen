@@ -23,7 +23,7 @@
 - 工具分区:写入类工具**串行**执行,只读工具并行(`partitionToolCalls` / `executeParallel`)。
 - 已有 **storm-breaker**(死循环熔断)与 plan-mode 门——自修循环护栏复用它,不另造。
 - 工具抽象 `internal/tool/tool.go`:`Tool{Execute, ReadOnly, ...}` + 可选 `Previewer`。写入类工具:`edit_file` / `write_file` / `multi_edit`(`internal/tool/builtin/`)。
-- 已有 `bash` 工具能跑命令,但本闭环**不经模型**——是 loop 自动跑,故新建 `internal/verify` 直接执行,不复用 bash 工具路径。
+- 已有 `bash` 工具能跑命令,但本闭环**不经模型**——是 loop 自动跑,故新建 `internal/editverify` 直接执行,不复用 bash 工具路径。
 
 **`onPreEdit` 是先例:写入工具前已有钩子;本设计加一个对称的"写入批次后"钩子。**
 
@@ -43,12 +43,12 @@ agent loop (一轮)
                          repairCycle > max → emit + 交回用户,停止自修
 ```
 
-### 2.1 新包 `internal/verify`(Claude 批准新增 — 护城河核心)
+### 2.1 新包 `internal/editverify`(Claude 批准新增 — 护城河核心)
 
 **接口(为隔离/可测而切小):**
 
 ```go
-package verify
+package editverify
 
 // Step 是一条可执行的验证命令。
 type Step struct {
@@ -181,20 +181,20 @@ max_repair_cycles = 3
 
 ## 7. DeepSeek 机械卡(≥3,见 `docs/tasks/2026-06-17-deepseek-batch-2-verify.md`)
 
-- **D-V1** `verify.Detect` 命令探测表(Go 三步;其他语言留 stub)+ 表驱动测试。
-- **D-V2** `verify.Parse`:`go build`/`vet`/`test` 输出 → `[]Diagnostic` + golden fixtures。
-- **D-V3** `verify.Config` 结构 + `lumen.toml [verify]` 加载/默认值 + 测试。
+- **D-V1** `editverify.Detect` 命令探测表(Go 三步;其他语言留 stub)+ 表驱动测试。
+- **D-V2** `editverify.Parse`:`go build`/`vet`/`test` 输出 → `[]Diagnostic` + golden fixtures。
+- **D-V3** `editverify.Config` 结构 + `lumen.toml [verify]` 加载/默认值 + 测试。
 
-> 三张卡共用本 spec §2.1 的签名,**互不冲突**(各自新文件),可并行发。Claude 先落 `internal/verify/verify.go` 骨架,**只含类型(`Step`/`Diagnostic`/`Result`/`Config`)+ `Verifier` + fake-runner 接口**;**不声明** `Detect`/`Parse`/`DefaultConfig`/`ConfigFromTOML`——这些函数体由 DeepSeek 在各自新文件(`detect.go`/`parse.go`/`config.go`)里实现(Go 无前向声明,骨架若也声明会重复定义冲突)。
+> 三张卡共用本 spec §2.1 的签名,**互不冲突**(各自新文件),可并行发。Claude 先落 `internal/editverify/editverify.go` 骨架,**含类型(`Step`/`Diagnostic`/`Result`/`Config`)+ `DefaultConfig()` + `Runner` 接口 + `execRunner` + `Verifier`(`Verify` 暂为 stub)**;**不声明** `Detect`/`Parse`/`ConfigFromTOML`——这三个函数体由 DeepSeek 在各自新文件(`detect.go`/`parse.go`/`config.go`)里实现(Go 无前向声明,骨架若也声明会重复定义冲突)。`DefaultConfig` 放骨架(Claude 的 loop 钩子要立即用),D-V3 在其上实现 `ConfigFromTOML`。
 
 ---
 
 ## 8. 落地顺序(交给 writing-plans 细化)
 
-1. Claude:建 `internal/verify/verify.go` 骨架(接口/类型/`Verifier` 空实现 + fake-runner 接口)。
+1. Claude:建 `internal/editverify/verify.go` 骨架(接口/类型/`Verifier` 空实现 + fake-runner 接口)。
 2. 并行:DeepSeek 三卡(D-V1/2/3)填纯函数;Claude 写 `Verifier.Verify` 编排 + 集成测试。
 3. Claude:agent loop 钩子 + changeset + 自修注入 + 护栏 + 事件,TDD。
 4. Claude:配置接线 + 默认值;端到端在临时模块验证一次完整 edit→fail→repair→pass。
 5. 文档:`lumen.toml` 示例 + README 一节。
 
-**验收(整体):** 在一个故意写坏的临时 Go 模块里,模型一次编辑触发 verify→失败诊断喂回→模型自修→再 verify 通过;`go test -race ./internal/verify/ ./internal/agent/` 全绿;`[verify] enabled=false` 时完全短路。
+**验收(整体):** 在一个故意写坏的临时 Go 模块里,模型一次编辑触发 verify→失败诊断喂回→模型自修→再 verify 通过;`go test -race ./internal/editverify/ ./internal/agent/` 全绿;`[verify] enabled=false` 时完全短路。
