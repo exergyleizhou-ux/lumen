@@ -168,12 +168,27 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 
 	drawBanner(ctrl)
 
+	// ── Load project memory ──
+	memories := loadMemories()
+	if len(memories) > 0 {
+		fmt.Printf("  %s\n", fg(D, fmt.Sprintf("memory: %d context files loaded", len(memories))))
+	}
+
+	// ── Simple history (up to 100 items, no cursor) ──
+	history := make([]string, 0, 100)
+
 	sc := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Printf("\n%s ", fg(C+B, "▸"))
 		if !sc.Scan() { onChatExit(); break }
 		text := strings.TrimSpace(sc.Text())
 		if text == "" { continue }
+
+		// ── History: save non-empty, unique lines ──
+		if len(history) == 0 || history[len(history)-1] != text {
+			history = append(history, text)
+			if len(history) > 100 { history = history[1:] }
+		}
 
 		switch {
 		case text == "/exit" || text == "/quit":
@@ -303,6 +318,25 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		}
 		if text == "/execute" && !planReady {
 			fmt.Printf("\n  %s\n", fg(D, "no plan ready. use /workflow <task> first."))
+			continue
+		}
+		if text == "/history" {
+			fmt.Printf("\n  %s\n", fg(D, "recent:"))
+			start := 0
+			if len(history) > 20 { start = len(history) - 20 }
+			for i := start; i < len(history); i++ {
+				fmt.Printf("    %s\n", fg(D, history[i]))
+			}
+			fmt.Println()
+			continue
+		}
+		if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
+			// Try as skill: /api-design, /golang-patterns, /review etc.
+			skillName := strings.TrimPrefix(text, "/")
+			if dispatchSkill(ctrl, skillName, "") {
+				continue
+			}
+			fmt.Printf("\n  %s\n\n", fg(D, "unknown command. type /help for commands, /models for models."))
 			continue
 		}
 
@@ -466,6 +500,54 @@ var (
 	lastPlan  string
 	planReady bool
 )
+
+// ── Memory loader ──────────────────────────────────────────
+
+func loadMemories() []string {
+	wd, _ := os.Getwd()
+	var loaded []string
+
+	// Walk up to .git root
+	root := wd
+	for dir := wd; dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			root = dir
+			break
+		}
+	}
+
+	// Check common memory file names at project root
+	for _, name := range []string{"CLAUDE.md", "AGENTS.md", "REASONIX.md", "LUMEN.md", "README.md"} {
+		path := filepath.Join(root, name)
+		if _, err := os.Stat(path); err == nil {
+			loaded = append(loaded, name)
+		}
+	}
+	return loaded
+}
+
+// ── Skill dispatch ─────────────────────────────────────────
+
+func dispatchSkill(ctrl *control.Controller, name, rest string) bool {
+	skills := ctrl.Skills()
+	if skills == nil {
+		return false
+	}
+	// Try to find a skill matching the name
+	for _, sk := range skills.List() {
+		if strings.EqualFold(sk.Name, name) || strings.EqualFold(sk.Name, name) {
+			fmt.Printf("\n  %s  %s\n", fg(C, "skill:"), fg(B, sk.Name))
+			prompt := sk.Name
+			if rest != "" {
+				prompt = rest
+			}
+			ctrl.Run(context.Background(), prompt)
+			fmt.Print("\n")
+			return true
+		}
+	}
+	return false
+}
 
 func truncProb(s string, n int) string {
 	if len(s) <= n { return s }
