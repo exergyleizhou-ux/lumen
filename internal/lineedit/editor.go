@@ -110,6 +110,22 @@ func (e *Editor) handle(ev keyEvent) action {
 	case keyEnd:
 		e.buf.end()
 		return actRedraw
+	case keyMouse:
+		// Click-to-position: map terminal column to buffer rune index
+		promptWidth := runewidth.StringWidth(e.prompt)
+		if ev.mouseCol < promptWidth {
+			e.buf.home()
+		} else {
+			col := ev.mouseCol - promptWidth
+			pos := colToPosition(string(e.buf.runes), col)
+			if pos >= 0 {
+				e.buf.pos = pos
+				if e.buf.pos > len(e.buf.runes) {
+					e.buf.pos = len(e.buf.runes)
+				}
+			}
+		}
+		return actRedraw
 	case keyUp:
 		if s, ok := e.hist.up(); ok {
 			e.buf.setLine(s)
@@ -193,6 +209,10 @@ func (e *Editor) ReadLine() (string, error) {
 		return e.readCooked()
 	}
 	defer term.Restore(fd, old)
+
+	// Enable SGR mouse tracking (xterm protocol)
+	io.WriteString(e.out, "\x1b[?1000h\x1b[?1006h")
+	defer io.WriteString(e.out, "\x1b[?1006l\x1b[?1000l")
 
 	e.buf.clear()
 	e.hist.idx = len(e.hist.items)
@@ -300,6 +320,22 @@ func (e *Editor) redraw() {
 	}
 
 	e.lastRows = newRows
+}
+
+// colToPosition maps a display column offset to a rune index in text.
+// Returns -1 if col is beyond the text width.
+func colToPosition(text string, targetCol int) int {
+	col := 0
+	for i, r := range text {
+		w := runewidth.RuneWidth(r)
+		// If the click is within this rune's columns, position before it
+		if targetCol < col+w {
+			return i
+		}
+		col += w
+	}
+	// Click past the last rune → end of buffer
+	return len([]rune(text))
 }
 
 // ── history persistence ───────────────────────────────────

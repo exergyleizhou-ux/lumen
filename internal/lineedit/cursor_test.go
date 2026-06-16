@@ -168,3 +168,54 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 		t.Errorf("lastRows after redraw = %d, want >= 2", e.lastRows)
 	}
 }
+
+func TestMouseClickRepositionsCursor(t *testing.T) {
+	e := NewEditor("▸ ", "", ".")
+	e.buf.clear()
+	for _, r := range "hello" {
+		e.buf.insert(r)
+	}
+	e.buf.home() // cursor at 0
+
+	// Click at column 3: prompt "▸ " = 2 cols, so buffer col = 1
+	// "hello" → col 0='h', col 1='e' → click at col 1 = after 'h', pos should be 1
+	ev := keyEvent{typ: keyMouse, mouseCol: 3, mouseBtn: 0}
+	e.handle(ev)
+	if e.buf.pos != 1 {
+		t.Fatalf("mouse at col 3: pos=%d, want 1", e.buf.pos)
+	}
+
+	// Click past end → cursor should go to end
+	ev = keyEvent{typ: keyMouse, mouseCol: 80, mouseBtn: 0}
+	e.handle(ev)
+	if e.buf.pos != len(e.buf.runes) {
+		t.Fatalf("mouse past end: pos=%d, want %d", e.buf.pos, len(e.buf.runes))
+	}
+
+	// Click on prompt area (col 0) → cursor should go home
+	ev = keyEvent{typ: keyMouse, mouseCol: 0, mouseBtn: 0}
+	e.handle(ev)
+	if e.buf.pos != 0 {
+		t.Fatalf("mouse on prompt: pos=%d, want 0", e.buf.pos)
+	}
+}
+
+func TestDecodeSGRMouse(t *testing.T) {
+	// SGR left-click press at column 10, row 1
+	ev, consumed := decodeKey([]byte("\x1b[<0;10;1M"))
+	if consumed != 10 {
+		t.Errorf("consumed=%d, want 10", consumed)
+	}
+	if ev.typ != keyMouse {
+		t.Fatalf("typ=%v, want keyMouse", ev.typ)
+	}
+	if ev.mouseCol != 9 { // 0-based
+		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
+	}
+
+	// SGR release — should be ignored (not mouse)
+	ev2, _ := decodeKey([]byte("\x1b[<0;10;1m"))
+	if ev2.typ == keyMouse {
+		t.Fatal("mouse release should not be keyMouse")
+	}
+}

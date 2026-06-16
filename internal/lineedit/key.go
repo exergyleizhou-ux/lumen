@@ -1,6 +1,10 @@
 package lineedit
 
-import "unicode/utf8"
+import (
+	"fmt"
+	"strings"
+	"unicode/utf8"
+)
 
 type keyType int
 
@@ -19,11 +23,15 @@ const (
 	keyTab
 	keyCtrlC
 	keyCtrlD
+	keyMouse
 )
 
 type keyEvent struct {
 	typ keyType
 	r   rune
+	// Mouse event fields (zero when typ != keyMouse)
+	mouseCol int // 0-based column in terminal
+	mouseBtn int // 0=left, 1=middle, 2=right
 }
 
 // decodeKey decodes the first key from b and returns the event plus the number
@@ -36,6 +44,34 @@ func decodeKey(b []byte) (keyEvent, int) {
 	c := b[0]
 	switch {
 	case c == 0x1b: // ESC — control sequence
+		// SGR mouse: \x1b[<btn;col;rowM (press) or m (release)
+		if len(b) >= 6 && b[1] == '[' && b[2] == '<' {
+			// Find the terminating M or m
+			end := -1
+			for i := 3; i < len(b) && i < 32; i++ {
+				if b[i] == 'M' || b[i] == 'm' {
+					end = i
+					break
+				}
+			}
+			if end < 0 {
+				return keyEvent{typ: keyUnknown}, 0 // incomplete
+			}
+			// Parse btn;col;row
+			body := string(b[3:end])
+			parts := strings.Split(body, ";")
+			if len(parts) >= 3 {
+				var btn, col, row int
+				fmt.Sscanf(parts[0], "%d", &btn)
+				fmt.Sscanf(parts[1], "%d", &col)
+				fmt.Sscanf(parts[2], "%d", &row)
+				// Only handle left-click press (button 0, M suffix)
+				if btn == 0 && b[end] == 'M' && col > 0 {
+					return keyEvent{typ: keyMouse, mouseCol: col - 1, mouseBtn: 0}, end + 1
+				}
+			}
+			return keyEvent{typ: keyUnknown}, end + 1
+		}
 		if len(b) >= 3 && b[1] == '[' {
 			switch b[2] {
 			case 'A':
