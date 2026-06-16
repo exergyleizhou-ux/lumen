@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
+
 	"golang.org/x/term"
 )
 
@@ -241,17 +243,23 @@ func (e *Editor) readCooked() (string, error) {
 }
 
 // redraw repaints the prompt and current buffer, placing the cursor.
-// Uses save/restore cursor rather than column arithmetic — immune to
-// double-width characters (CJK, emoji, symbols) that break \x1b[%dC.
+// Uses runewidth.StringWidth for CJK/emoji-safe column arithmetic.
 func (e *Editor) redraw() {
-	io.WriteString(e.out, "\r\x1b[K")                // clear line
-	io.WriteString(e.out, e.prompt)                    // prompt
-	prefix := string(e.buf.runes[:e.buf.pos])          // text before cursor
-	suffix := string(e.buf.runes[e.buf.pos:])          // text after cursor
-	io.WriteString(e.out, prefix)                      // write prefix
-	io.WriteString(e.out, "\x1b[s")                    // save — HERE is where cursor should be
-	io.WriteString(e.out, suffix)                      // write suffix
-	io.WriteString(e.out, "\x1b[u")                    // restore — back to correct position
+	io.WriteString(e.out, "\r\x1b[K") // carriage return, clear to end of line
+
+	prompt := e.prompt
+	text := e.buf.string()
+	prefix := string(e.buf.runes[:e.buf.pos])
+
+	io.WriteString(e.out, prompt)
+	io.WriteString(e.out, text)
+
+	// Move cursor to correct position: prompt cols + prefix cols
+	col := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
+	io.WriteString(e.out, "\r")
+	if col > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dC", col)
+	}
 }
 
 // ── history persistence ───────────────────────────────────
