@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -242,34 +241,17 @@ func (e *Editor) readCooked() (string, error) {
 }
 
 // redraw repaints the prompt and current buffer, placing the cursor.
+// Uses save/restore cursor rather than column arithmetic — immune to
+// double-width characters (CJK, emoji, symbols) that break \x1b[%dC.
 func (e *Editor) redraw() {
-	io.WriteString(e.out, "\r\x1b[K")
-	io.WriteString(e.out, e.prompt+e.buf.string())
-	target := visibleWidth(e.prompt) + e.buf.pos
-	io.WriteString(e.out, "\r")
-	if target > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", target)
-	}
-}
-
-// visibleWidth counts display columns, skipping ANSI escape sequences.
-func visibleWidth(s string) int {
-	w := 0
-	for i := 0; i < len(s); {
-		if s[i] == 0x1b {
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			if i < len(s) {
-				i++
-			}
-			continue
-		}
-		_, size := utf8.DecodeRuneInString(s[i:])
-		w++
-		i += size
-	}
-	return w
+	io.WriteString(e.out, "\r\x1b[K")                // clear line
+	io.WriteString(e.out, e.prompt)                    // prompt
+	prefix := string(e.buf.runes[:e.buf.pos])          // text before cursor
+	suffix := string(e.buf.runes[e.buf.pos:])          // text after cursor
+	io.WriteString(e.out, prefix)                      // write prefix
+	io.WriteString(e.out, "\x1b[s")                    // save — HERE is where cursor should be
+	io.WriteString(e.out, suffix)                      // write suffix
+	io.WriteString(e.out, "\x1b[u")                    // restore — back to correct position
 }
 
 // ── history persistence ───────────────────────────────────
