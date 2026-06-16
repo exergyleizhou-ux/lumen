@@ -238,7 +238,6 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		ctrl.Run(context.Background(), text)
 		fmt.Print("\n")
 	}
-	return nil
 }
 
 // ── ANSI helpers ───────────────────────────────────────────
