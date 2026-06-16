@@ -72,6 +72,9 @@ still letting you switch between DeepSeek, Grok, OpenAI, and Ollama in a single 
 ✅ provider: deepseek — 2 models reachable
 ✅ workspace: /Users/lei
 ✅ git: /usr/bin/git
+✅ go: go version go1.23.4 darwin/arm64
+⚠️  gopls: gopls not found — install with …
+✅ verify: enabled scope=changed-pkg tests=on max_repair=3
 All checks passed.
 ```
 
@@ -135,25 +138,37 @@ All checks passed.
 ## Quick Start
 
 ```bash
-# Install
+# Clone & build (≤ 30 seconds)
 git clone https://github.com/exergyleizhou-ux/lumen.git
 cd lumen && go build -o bin/lumen ./cmd/lumen
 
-# Configure — add your API keys
-export DEEPSEEK_API_KEY=sk-...
-export GROK_API_KEY=xai-...
-# or set them in .env / lumen.toml
+# Create minimal config (one provider is enough)
+cat > lumen.toml << 'TOML'
+default_model = "deepseek-chat"
 
-# Verify
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key = "sk-your-deepseek-key"
+TOML
+
+# Or keep the key out of the file:
+#   export DEEPSEEK_API_KEY=sk-...
+# (lumen reads API keys from env vars — omit api_key from the file)
+
+# Verify your setup
 ./bin/lumen doctor
 
-# Run
+# Start coding
 ./bin/lumen run "explain this project"        # one-shot
 ./bin/lumen run --plan "add OAuth"            # plan mode
 ./bin/lumen chat                               # line-mode REPL
-./bin/lumen tui                                # Bubble Tea multi-panel TUI
-./bin/lumen wizard                             # AI interviews you, then builds
+./bin/lumen tui                                # multi-panel Bubble Tea TUI
 ```
+
+*For other providers (OpenAI, Anthropic, Grok, Ollama…), add more `[[providers]]` entries. See `internal/config/model_presets.go` for the full 26-model preset list. Prerequisites: Go 1.23+, optional `gopls` for LSP diagnostics.*
 
 ---
 
@@ -251,4 +266,4 @@ Open an issue before large changes to discuss direction.
 
 ---
 
-*Built with Go · 187 packages · 112 tools · 26 models · 9 providers · zero runtime deps*
+*Built with Go · ~38k lines · 54 packages · 120 tools · 26 models · 9 providers · zero runtime deps*

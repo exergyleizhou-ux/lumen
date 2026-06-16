@@ -10,11 +10,13 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"lumen/internal/config"
+	"lumen/internal/editverify"
 )
 
 // Result holds the outcome of one health check.
@@ -47,6 +49,15 @@ func Run(cfg *config.File) *Report {
 
 	// Check git availability
 	r.checkGit()
+
+	// Check Go toolchain
+	r.checkGoToolchain()
+
+	// Check gopls (LSP)
+	r.checkGopls()
+
+	// Check verify config
+	r.checkVerify()
 
 	return r
 }
@@ -184,6 +195,76 @@ func (r *Report) checkGit() {
 	r.add(Result{Name: "git", Status: "ok", Detail: path})
 }
 
+// checkGoToolchain verifies that the Go toolchain is installed and reports its version.
+func (r *Report) checkGoToolchain() {
+	goPath, err := execLookPath("go")
+	if err != nil {
+		r.add(Result{Name: "go", Status: "fail", Detail: "go not found in PATH — install go 1.23+ from https://go.dev/dl/"})
+		r.AllOk = false
+		return
+	}
+	out, err := exec.Command(goPath, "version").CombinedOutput()
+	if err != nil {
+		r.add(Result{Name: "go", Status: "warn", Detail: fmt.Sprintf("found at %s but version check failed: %v", goPath, err)})
+		return
+	}
+	r.add(Result{Name: "go", Status: "ok", Detail: strings.TrimSpace(string(out))})
+}
+
+// checkGopls verifies the gopls LSP server is installed (warn if missing, ok if found).
+func (r *Report) checkGopls() {
+	goplsPath, err := execLookPath("gopls")
+	if err != nil {
+		r.add(Result{Name: "gopls", Status: "warn", Detail: "gopls not found — install with 'go install golang.org/x/tools/gopls@latest' for LSP diagnostics"})
+		return
+	}
+	r.add(Result{Name: "gopls", Status: "ok", Detail: goplsPath})
+}
+
+// checkVerify loads the verify section from lumen.toml and reports its configuration.
+// Also warns if the config file contains an inline api_key (security concern).
+func (r *Report) checkVerify() {
+	var verifyCfg editverify.Config
+	cfgPath := verifyConfigPath()
+	if cfgPath == "" {
+		r.add(Result{Name: "verify", Status: "warn", Detail: "no lumen.toml found — verify defaults to enabled"})
+		return
+	}
+
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		r.add(Result{Name: "verify", Status: "warn", Detail: fmt.Sprintf("cannot read config: %v", err)})
+		return
+	}
+
+	verifyCfg, err = editverify.ConfigFromTOML(raw)
+	if err != nil {
+		r.add(Result{Name: "verify", Status: "warn", Detail: fmt.Sprintf("parse error: %v — using defaults", err)})
+		return
+	}
+
+	if !verifyCfg.Enabled {
+		r.add(Result{Name: "verify", Status: "warn", Detail: "disabled in config — build/vet/test after edits will not run"})
+	} else {
+		parts := []string{"enabled"}
+		if verifyCfg.Command != "" {
+			parts = append(parts, "command="+verifyCfg.Command)
+		}
+		parts = append(parts, "scope="+verifyCfg.Scope)
+		if verifyCfg.RunTests {
+			parts = append(parts, "tests=on")
+		}
+		parts = append(parts, fmt.Sprintf("max_repair=%d", verifyCfg.MaxRepairCycles))
+		r.add(Result{Name: "verify", Status: "ok", Detail: strings.Join(parts, " ")})
+	}
+
+	// Security: check for inline api_key in config file
+	if strings.Contains(string(raw), "api_key") && strings.Contains(string(raw), "sk-") {
+		r.add(Result{Name: "security:api_key", Status: "warn",
+			Detail: "config contains inline api_key — move to env var and rotate the key"})
+	}
+}
+
 func (r *Report) add(res Result) {
 	r.Results = append(r.Results, res)
 }
@@ -216,6 +297,10 @@ func (r *Report) Print() string {
 var execLookPath = func(file string) (string, error) {
 	return lookPathImpl(file)
 }
+
+// verifyConfigPath returns the config path to read for checkVerify.
+// Aliased for testability.
+var verifyConfigPath = config.FindConfig
 
 func lookPathImpl(file string) (string, error) {
 	// Simple path check
