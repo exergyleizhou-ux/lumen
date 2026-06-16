@@ -1,21 +1,22 @@
+// Package telemetry — upload.go. Lightweight upload dispatcher.
+// Delegates heavy analysis to report.go's BuildInsightReport.
 package telemetry
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 // UploadConfig is how the reporter reaches the dev team.
 type UploadConfig struct {
-	RepoOwner string // github.com/<owner>
-	RepoName  string // github.com/<owner>/<repo>
-	Label     string // issue label to apply (e.g. "feedback")
-	Enabled   bool   // user must opt in
+	RepoOwner string `json:"repo_owner"`
+	RepoName  string `json:"repo_name"`
+	Label     string `json:"label"`
+	Enabled   bool   `json:"enabled"`
 }
 
 // DefaultUploadConfig returns a disabled config pointing at the Lumen repo.
@@ -23,17 +24,16 @@ func DefaultUploadConfig() UploadConfig {
 	return UploadConfig{
 		RepoOwner: "exergyleizhou-ux",
 		RepoName:  "lumen",
-		Label:     "feedback",
-		Enabled:   false, // disabled by default — user must opt in
+		Label:     "report",
+		Enabled:   false,
 	}
 }
 
-// LoadUploadConfig reads uplink settings from disk.
+// LoadUploadConfig reads uplink settings from ~/.lumen/uplink.json.
 func LoadUploadConfig() UploadConfig {
 	cfg := DefaultUploadConfig()
 	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".lumen", "uplink.json")
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(filepath.Join(home, ".lumen", "uplink.json"))
 	if err != nil {
 		return cfg
 	}
@@ -50,87 +50,86 @@ func SaveUploadConfig(cfg UploadConfig) error {
 	return os.WriteFile(filepath.Join(dir, "uplink.json"), data, 0600)
 }
 
-// UploadReport sends a usage report to the configured GitHub repo as an Issue.
-// Uses GITHUB_TOKEN env var or gh CLI for auth. Returns the issue URL on success.
-func UploadReport(bundle *ExportBundle, cfg UploadConfig) (string, error) {
-	if !cfg.Enabled {
-		return "", fmt.Errorf("uplink is disabled — run /uplink on to enable")
-	}
-
-	title := fmt.Sprintf("📊 Usage Report — %s (health: %.0f/100)",
-		bundle.GeneratedAt.Format("2006-01-02"), bundle.HealthScore)
-	body := FormatExport(bundle)
-
-	issueURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/issues", cfg.RepoOwner, cfg.RepoName)
-	payload := map[string]any{
-		"title":  title,
-		"body":   body,
-		"labels": []string{cfg.Label},
-	}
-	payloadBytes, _ := json.Marshal(payload)
-
-	token := os.Getenv("GITHUB_TOKEN")
-	if token == "" {
-		return "", fmt.Errorf("GITHUB_TOKEN not set — run: export GITHUB_TOKEN=ghp_...")
-	}
-
-	req, err := http.NewRequest("POST", issueURL, bytes.NewReader(payloadBytes))
-	if err != nil {
-		return "", fmt.Errorf("create request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("upload: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= 400 {
-		var errBody map[string]any
-		json.NewDecoder(resp.Body).Decode(&errBody)
-		return "", fmt.Errorf("GitHub %d: %v", resp.StatusCode, errBody["message"])
-	}
-
-	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
-	url, _ := result["html_url"].(string)
-	return url, nil
-}
-
-// MaybeUpload is called at session end. Uploads if opt-in is enabled.
-// Returns the issue URL if uploaded, or empty string + error.
+// MaybeUpload is called at session end. Builds an InsightReport,
+// encrypts it with the dev public key, and submits it as a GitHub Issue.
 func MaybeUpload() (string, error) {
 	cfg := LoadUploadConfig()
 	if !cfg.Enabled {
-		return "", nil
+		return "", fmt.Errorf("uplink disabled")
 	}
 
-	// Only upload if we have real data (at least 2 sessions worth)
-	c := NewCollector()
-	defer c.Close()
-	bundle := c.Export()
-	if bundle.SessionCount < 1 {
-		return "", nil
-	}
-
-	// Don't flood — throttle to once every 6 hours per session
-	lastFile := filepath.Join(c.dir, ".last_upload")
+	// Throttle: once per 6 hours
+	home, _ := os.UserHomeDir()
+	lastFile := filepath.Join(home, ".lumen", "telemetry", ".last_upload")
 	info, err := os.Stat(lastFile)
 	if err == nil && time.Since(info.ModTime()) < 6*time.Hour {
-		return "", nil
+		return "", fmt.Errorf("throttled (next upload in %v)", 6*time.Hour-time.Since(info.ModTime()))
 	}
 
-	url, err := UploadReport(bundle, cfg)
+	report := BuildInsightReport(7)
+	url, err := UploadEncryptedReport(report, cfg)
 	if err != nil {
 		return "", err
 	}
 
-	// Touch the timestamp
 	os.WriteFile(lastFile, []byte(time.Now().Format(time.RFC3339)), 0600)
 	return url, nil
+}
+
+// ShareReport writes an unencrypted human-readable report to disk.
+func ShareReport() (string, error) {
+	report := BuildInsightReport(7)
+	home, _ := os.UserHomeDir()
+	shareFile := filepath.Join(home, ".lumen", "share_report.txt")
+
+	f, err := os.Create(shareFile)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	// Write summary + full JSON
+	fmt.Fprintf(f, "Lumen Intelligence Report — %s\n", report.GeneratedAt.Format("2006-01-02 15:04"))
+	fmt.Fprintf(f, "%s\n\n", strings.Repeat("═", 55))
+	fmt.Fprintf(f, "Health: %.0f  ·  Stability: %.0f  ·  Adoption: %.0f\n", report.HealthScore, report.StabilityScore, report.AdoptionScore)
+	fmt.Fprintf(f, "Sessions: %d  ·  Days: %d  ·  Errors: %d (%.1f%%)\n", report.Sessions, report.DaysActive, report.TotalErrors, report.ErrorRate)
+	fmt.Fprintf(f, "Models: %d  ·  Tokens: %d  ·  Cost: $%.4f\n", len(report.ModelUsage), report.TotalTokens, report.TotalCost)
+	fmt.Fprintf(f, "\n")
+
+	// Critical alerts
+	if len(report.CriticalAlerts) > 0 {
+		fmt.Fprintf(f, "CRITICAL:\n")
+		for _, a := range report.CriticalAlerts {
+			fmt.Fprintf(f, "  [%s] %s\n  → %s\n\n", a.Severity, a.Title, a.Detail)
+		}
+	}
+
+	// Top tools
+	fmt.Fprintf(f, "Top Tools:\n")
+	for _, t := range report.TopTools {
+		fmt.Fprintf(f, "  %-25s %5d calls  %d errors  [%s]\n", t.Name, t.Calls, t.Errors, t.Category)
+	}
+
+	// Error categories
+	if len(report.ErrorCategories) > 0 {
+		fmt.Fprintf(f, "\nError Categories:\n")
+		for _, ec := range report.ErrorCategories {
+			fmt.Fprintf(f, "  [%s] %dx — %s\n", ec.Category, ec.Count, strings.Join(ec.Examples, "; "))
+		}
+	}
+
+	// Wins
+	if len(report.Wins) > 0 {
+		fmt.Fprintf(f, "\nWins:\n")
+		for _, w := range report.Wins {
+			fmt.Fprintf(f, "  ✅ %s\n", w)
+		}
+	}
+
+	// Raw JSON
+	fmt.Fprintf(f, "\n--- Raw JSON ---\n")
+	raw, _ := json.MarshalIndent(report, "", "  ")
+	f.Write(raw)
+
+	return shareFile, nil
 }

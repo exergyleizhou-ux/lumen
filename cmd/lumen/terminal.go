@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -226,15 +225,15 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			fmt.Printf("\n  %s\n\n", a(ansiGreen, "feedback recorded. thank you!"))
 			continue
 		case text == "/share":
-			c := telemetry.NewCollector()
-			bundle := c.Export()
-			report := telemetry.FormatExport(bundle)
-			shareFile := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "share_report.txt")
-			os.WriteFile(shareFile, []byte(report), 0600)
+			shareFile, err := telemetry.ShareReport()
+			if err != nil {
+				fmt.Printf("\n  %s\n\n", a(ansiRed, "failed to generate report: "+err.Error()))
+				continue
+			}
 			fmt.Printf("\n  %s\n", a(ansiBold, "Report saved to:"))
 			fmt.Printf("  %s\n\n", a(ansiCyan, shareFile))
-			fmt.Printf("  %s\n", a(ansiDim, "Send this file to the Lumen team — no personal data inside."))
-			fmt.Printf("  %s\n\n", a(ansiDim, "You can also paste it into a GitHub Issue or email."))
+			fmt.Printf("  %s\n", a(ansiDim, "Includes: Health · Stability · Adoption scores, tool usage, error categories, wins."))
+			fmt.Printf("  %s\n\n", a(ansiDim, "No personal data inside — safe to share."))
 			continue
 		case text == "/uplink" || strings.HasPrefix(text, "/uplink "):
 			cfg := telemetry.LoadUploadConfig()
