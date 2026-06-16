@@ -30,37 +30,63 @@ still letting you switch between DeepSeek, Grok, OpenAI, and Ollama in a single 
 
 ## Screenshots
 
-```
-┌─ Chat (60%) ───────────────────────┬─ Plan (40%) ────────────┐
-│                                    │                          │
-│  ▸ add user authentication with JWT│  📋 Auth System          │
-│                                    │  ○ 1. Create user model │
-│   1. 📖 read_file  ✓               │  ○ 2. JWT middleware    │
-│   2. ✏️ write_file ✓               │  ○ 3. Login handler     │
-│   3. ✏️ edit_file  ✓               │  ○ 4. Tests             │
-│                                    │                          │
-│  Here's the implementation:        │  ↵ approve  |  ⌫ dismiss│
-│  I've added JWT auth with refresh  ├──────────────────────────┤
-│  tokens, bcrypt password hashing,  │  📝 diff: auth.go        │
-│  and rate-limited login endpoint.  │  + func NewAuthMiddleware│
-│                                    │  +   return jwt.Verify.. │
-│                                    │  - // TODO: add auth     │
-├────────────────────────────────────┴──────────────────────────┤
-│  🔓 bypass  ·  deepseek/deepseek-chat  ·  📊 14k  ♻ 97%  💰 $0.0039  ⚙  3st · #2  │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
-
-*ASCII mockup — real terminal screenshots coming in v0.3.0*
+**Banner + Model List** — 26 presets across 9 providers, color-coded by provider:
 
 ```
-▸ [🛡 default] 画一个爱心
+  🪄  LUMEN  ·  deepseek/deepseek-chat  ·  🛡 default
 
-  ⏳ …
+  🧠 openai               🔍 deepseek            ⚡ xai
+    ▸ gpt-4o                ▸ deepseek-chat        ▸ grok-3
+    ▸ gpt-4o-mini           ▸ deepseek-reasoner    ▸ grok-3-mini
+    ▸ o4-mini
 
-   1. ⚡ bash ✓  42
-   2. ✏️ write_file ✓
+  🏛 anthropic             🌙 moonshot             🐉 qwen
+    ▸ claude-sonnet-4       ▸ kimi-k2              ▸ qwen-max
+    ▸ claude-opus-4         ▸ moonshot-v1          ▸ qwen-coder
+```
 
-  · deepseek/deepseek-chat  🛡 default  📊 14k  ♻ 99%  💰 $0.0038  ⚙  2st · #1
+**Task Execution** — bash auto-approved, output preview inline:
+
+```
+▸ [🛡 default] run: python3 -c "print(42)"
+
+  ⏳ …                                    ← instant spinner feedback
+
+   1. ⚡ bash ✓  42                       ← first-line output preview
+
+  · 📊 14k  ♻ 99%  💰 $0.0038  ⚙ 1st · turn #1
+```
+
+**Permission Modes** — switch on the fly, mode always visible in prompt:
+
+```
+▸ [🛡 default]      ← initial mode
+▸ [🔒 plan]         ← /mode plan
+▸ [🔓 bypass]       ← /mode bypass
+```
+
+**Health Check** — `lumen doctor` validates everything:
+
+```
+✅ config: ./lumen.toml
+✅ provider: deepseek — 2 models reachable
+✅ workspace: /Users/lei
+✅ git: /usr/bin/git
+All checks passed.
+```
+
+**Slash Commands** — help, model switch, workflow, undo, skills:
+
+```
+/wizard         ✨ AI interviews you, then builds
+/workflow <t>   📋 plan → review → execute
+/ultra <t>      ⚡ plan → auto-execute
+/undo           ↩ undo last file edits
+/models         🗂️  list 26 models
+/model <name>   🔄 switch model
+/mode           🔓🔒🛡 permission modes
+/history        📜 recent messages
+/<skill>        🎯 invoke skill (explore, review, test, …)
 ```
 
 ---

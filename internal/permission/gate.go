@@ -1,6 +1,22 @@
-// Package permission implements the tool-call permission gate. It can run in
-// several modes: "bypass" (allow all), "default" (deny dangerous, prompt for
-// others on interactive runs, allow in headless), "plan" (read-only).
+// Package permission implements the tool-call permission gate.
+//
+// Four modes with precisely defined behavior:
+//
+//   Mode           Read tools   Write tools   Bash        Use case
+//   ─────────────  ───────────  ────────────  ──────────  ──────────────────────
+//   bypass         ✅ auto       ✅ auto       ✅ auto     Full autonomy, trusted
+//   plan           ✅ auto       ❌ blocked     ❌ blocked  Exploration, code review
+//   default        ✅ auto       ✅ auto       ⚠️ auto*    Daily coding (guard on)
+//   accept-edits   ✅ auto       ✅ auto       ⚠️ ask**    Safe editing, manual bash
+//
+//   *  default mode auto-approves bash now (asker is set in terminal mode).
+//      The 5-layer guard still blocks dangerous commands in ALL modes.
+//   ** accept-edits prompts user before running bash commands.
+//
+// The Guard layer (internal/guard) runs BEFORE the mode check — it blocks
+// exfiltration, sensitive reads, recon, destructive ops, and encoded payloads
+// even in bypass mode. The gate only decides what reaches the tool executor;
+// the guard decides what is too dangerous to even consider.
 package permission
 
 import (

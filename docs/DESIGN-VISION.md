@@ -1,4 +1,8 @@
-# Lumen 终极审计报告 — 致 Claude 4.8 审核
+# Lumen 设计愿景 — 长期架构蓝图
+
+> ⚠️ **本文档描述 Lumen 的长期设计愿景和未来架构方向。**
+> 当前实现为 v0.2 阶段核心功能（终端 coding agent），与本文档描述的完整「Agent OS」规模
+> 有显著差距。请以仓库实际代码为准，本文档仅供理解项目方向。
 
 > 生成时间：2025-06-15 · 仓库：`github.com/exergyleizhou-ux/lumen` · 最新提交：`64287a7`
 
@@ -274,3 +278,24 @@ docker compose -f docker/docker-compose.yml up
 ---
 
 **审核建议**：请重点审查 `internal/lsp/lsp_real.go` 的 JSON-RPC Content-Length 帧处理、`internal/mcplife/mcp_real.go` 的 MCP 协议兼容性、`internal/modelpool/modelpool_real.go` 的 SSE streaming 解析、`internal/seal/seal.go` 的 AES-GCM nonce 管理、`internal/audit/audit.go` 的 hash chain 完整性验证逻辑。
+
+---
+
+## 附录：当前实际状态 (v0.2)
+
+截至 2026-06-16，Lumen 实际实现的核心能力：
+
+| 已实现 | 本文档对应愿景 |
+|--------|---------------|
+| `internal/agent/` — 单 agent 循环 + coordinator 双模型 | 第八层 orchestrator (agent 池) |
+| `internal/permission/` — 4 模式权限门禁 | 第四层 policy (策略引擎) |
+| `internal/guard/` — 5 层 bash 命令防护 | 第四层 hardening |
+| `internal/lsp/` — gopls JSON-RPC 客户端 | 第二层 linter (代码分析) |
+| `internal/skill/` — 22 个 skills | 第二层 playbook (剧本) |
+| `internal/timeline/` — 会话时间线 + 变更收件箱 | 第五层 observer (可观测性) |
+| `internal/provider/` — 9 提供商 SSE streaming | 第八层 modelpool (LLM) |
+| `internal/tui/` — Bubble Tea 多面板 TUI | 第三层 TUI |
+| `internal/tool/` — 112 个 agent 工具 | 第二层 toolkit |
+| `internal/plugin/` — MCP stdio 客户端 | 第三层 connector |
+
+**尚未实现的愿景层**：orchestrator (agent 池)、maestro (SAGA 工作流)、seal (信封加密)、audit (审计链)、broker (消息总线)、stream (流处理)、GraphQL 引擎、MapReduce 等。
