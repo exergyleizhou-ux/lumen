@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hermes"
+	"lumen/internal/lineedit"
 	"lumen/internal/permission"
 	"lumen/internal/telemetry"
 )
@@ -225,13 +225,19 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("  %s  %s\n", fg(D, "📂 resume:"), fg(C, lastSess))
 	}
 
-	// ── Scanner-based input (reliable, no cursor issues) ──
+	// ── lineedit: full cursor movement, insert anywhere, ↑↓ history ──
+	histPath := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "input_history")
+	cwd, _ := os.Getwd()
+	ed := lineedit.NewEditor("▸ ", histPath, cwd)
+
 	history := make([]string, 0, 100)
-	sc := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Printf("\n%s %s ", fg(C+B, "▸"), fg(D, "["+iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode())+"]"))
-		if !sc.Scan() { onChatExit(); break }
-		text := strings.TrimSpace(sc.Text())
+		// Print mode line above prompt (outside raw mode)
+		fmt.Fprintf(os.Stdout, "\n%s\n", fg(D, "  ["+iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode())+"]"))
+
+		line, err := ed.ReadLine()
+		if err != nil { onChatExit(); break }
+		text := strings.TrimSpace(line)
 		if text == "" { continue }
 
 		if len(history) == 0 || history[len(history)-1] != text {
