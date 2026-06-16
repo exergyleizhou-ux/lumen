@@ -3,9 +3,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync/atomic"
@@ -13,7 +13,9 @@ import (
 
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/lineedit"
 	"lumen/internal/permission"
+	"lumen/internal/render"
 )
 
 type liveStats struct {
@@ -25,8 +27,8 @@ type liveStats struct {
 	costU   atomic.Int64
 }
 
-func (s *liveStats) addCost(v float64)     { s.costU.Add(int64(v * 1_000_000)) }
-func (s *liveStats) cost() float64          { return float64(s.costU.Load()) / 1_000_000 }
+func (s *liveStats) addCost(v float64) { s.costU.Add(int64(v * 1_000_000)) }
+func (s *liveStats) cost() float64     { return float64(s.costU.Load()) / 1_000_000 }
 
 var stats = &liveStats{}
 
@@ -43,14 +45,14 @@ var stats = &liveStats{}
 //   Header       → bold white brand + dim gray model
 
 func color(s, code string) string { return code + s + "\033[0m" }
-func white(s string) string  { return color(s, "\033[97m") }
-func bold(s string) string  { return color(s, "\033[1m") }
-func dim(s string) string   { return color(s, "\033[2m") }
-func italic(s string) string { return color(s, "\033[3m") }
-func cyan(s string) string  { return color(s, "\033[36m") }
-func green(s string) string { return color(s, "\033[32m") }
-func red(s string) string   { return color(s, "\033[31m") }
-func yellow(s string) string { return color(s, "\033[33m") }
+func white(s string) string       { return color(s, "\033[97m") }
+func bold(s string) string        { return color(s, "\033[1m") }
+func dim(s string) string         { return color(s, "\033[2m") }
+func italic(s string) string      { return color(s, "\033[3m") }
+func cyan(s string) string        { return color(s, "\033[36m") }
+func green(s string) string       { return color(s, "\033[32m") }
+func red(s string) string         { return color(s, "\033[31m") }
+func yellow(s string) string      { return color(s, "\033[33m") }
 
 // ── Sink: colour-coded output ──────────────────────────────
 
@@ -58,7 +60,13 @@ func termSink() event.Sink {
 	thinking := false
 	textStarted := false
 	textLen := 0
-	const maxOutput = 8 * 1024 // 8KB per turn
+	truncated := false
+	const maxOutput = 24 * 1024 // per-turn rendered-text cap
+
+	// rstream renders streamed markdown line-by-line (rich prose + highlighted
+	// code fences). Recreated each turn. Indented to match the chat gutter.
+	rstream := render.NewStream(os.Stdout)
+	rstream.Indent = "  "
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
@@ -66,7 +74,10 @@ func termSink() event.Sink {
 			thinking = true
 			textStarted = false
 			textLen = 0
+			truncated = false
 			stats.step.Store(0)
+			rstream = render.NewStream(os.Stdout)
+			rstream.Indent = "  "
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -79,21 +90,21 @@ func termSink() event.Sink {
 				textStarted = true
 				fmt.Print("\n")
 			}
-			cleaned := stripMD(e.Text)
 			if textLen >= maxOutput {
+				if !truncated {
+					truncated = true
+					rstream.Flush()
+					fmt.Fprintf(os.Stderr, "\n  %s\n", dim(fmt.Sprintf("… output truncated (%d bytes max)", maxOutput)))
+				}
 				return
 			}
-			textLen += len(cleaned)
-			if textLen > maxOutput {
-				fmt.Fprint(os.Stdout, cleaned[:len(cleaned)-(textLen-maxOutput)])
-				fmt.Fprintf(os.Stderr, "\n\n%s", dim(fmt.Sprintf("… output truncated (%d bytes max)", maxOutput)))
-				return
-			}
-			fmt.Fprint(os.Stdout, cleaned)
+			textLen += len(e.Text)
+			rstream.Write(e.Text)
 
 		case event.ToolDispatch:
 			thinking = false
 			textStarted = true
+			rstream.Flush()
 			stats.tools.Add(1)
 			sn := stats.step.Add(1)
 			fmt.Printf("\n  %s  %s", cyan(fmt.Sprintf("[%d]", sn)), dim(yellow("⚡ "+e.Tool.Name)))
@@ -122,6 +133,7 @@ func termSink() event.Sink {
 			fmt.Printf("%s\n", cyan("──────────────────────────────────────────"))
 
 		case event.TurnDone:
+			rstream.Flush()
 			drawFooter()
 			thinking = false
 			textStarted = false
@@ -177,13 +189,23 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	// ── Header ──
 	fmt.Printf("\n  %s  %s\n\n", bold(white("lumen")), dim(ctrl.ProviderName()+"/"+ctrl.ModelName()))
 
-	sc := bufio.NewScanner(os.Stdin)
+	histPath := os.ExpandEnv("$HOME/.lumen/input_history")
+	cwd, _ := os.Getwd()
+	ed := lineedit.NewEditor("  "+cyan("▸")+" ", histPath, cwd)
 	for {
-		fmt.Print("  " + cyan("▸") + " ")
-		if !sc.Scan() { break }
-		text := strings.TrimSpace(sc.Text())
+		line, err := ed.ReadLine()
+		if err == io.EOF {
+			fmt.Println()
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		text := strings.TrimSpace(line)
 
-		if text == "" { continue }
+		if text == "" {
+			continue
+		}
 		switch {
 		case text == "/exit" || text == "/quit":
 			fmt.Println()
@@ -249,23 +271,37 @@ func stripMD(s string) string {
 
 func loadLastSession(dir, currentFile string) string {
 	entries, err := os.ReadDir(dir)
-	if err != nil { return "" }
-	if len(entries) == 0 { return "" }
+	if err != nil {
+		return ""
+	}
+	if len(entries) == 0 {
+		return ""
+	}
 
 	// Find the most recent non-empty log file that isn't the current one
 	var latest os.DirEntry
 	var latestTime time.Time
 	for _, e := range entries {
-		if e.IsDir() { continue }
-		if dir+"/"+e.Name() == currentFile { continue }
+		if e.IsDir() {
+			continue
+		}
+		if dir+"/"+e.Name() == currentFile {
+			continue
+		}
 		info, err := e.Info()
-		if err != nil { continue }
-		if info.Size() == 0 { continue }
+		if err != nil {
+			continue
+		}
+		if info.Size() == 0 {
+			continue
+		}
 		if info.ModTime().After(latestTime) {
 			latestTime = info.ModTime()
 			latest = e
 		}
 	}
-	if latest == nil { return "" }
+	if latest == nil {
+		return ""
+	}
 	return latest.Name()
 }

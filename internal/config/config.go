@@ -159,7 +159,7 @@ func defaults() *File {
 			CompactRatio:      0.8,
 			CompactForceRatio: 1.0,
 		},
-		Permissions: PermissionsConfig{Mode: "bypass"},
+		Permissions: PermissionsConfig{Mode: "default"},
 		Skills:      SkillsConfig{MaxDepth: 3},
 	}
 }

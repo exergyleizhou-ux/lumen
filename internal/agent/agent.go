@@ -21,6 +21,7 @@ import (
 	"lumen/internal/guard"
 	"lumen/internal/jobs"
 	"lumen/internal/provider"
+	"lumen/internal/render"
 	"lumen/internal/tool"
 )
 
@@ -885,80 +886,10 @@ func renderFileDiff(ch diff.Change) string {
 		return fmt.Sprintf("(binary file: %s)", ch.Path)
 	}
 	if ch.New {
-		return fmt.Sprintf("✦ new file: %s\n%s", ch.Path, renderLines("+", ch.After, 60))
+		return fmt.Sprintf("✦ new file: %s\n%s", ch.Path, render.Diff(ch.Path, "", ch.After))
 	}
 	if ch.Removed {
-		return fmt.Sprintf("✕ delete file: %s", ch.Path)
+		return fmt.Sprintf("✕ delete file: %s\n%s", ch.Path, render.Diff(ch.Path, ch.Before, ""))
 	}
-	// Compute simple line diff
-	linesA := strings.Split(ch.Before, "\n")
-	linesB := strings.Split(ch.After, "\n")
-
-	type dl struct {
-		kind string // "+", "-", " "
-		text string
-	}
-	// Simple Myers-like: use LCS to find same lines
-	n, m := len(linesA), len(linesB)
-	dp := make([][]int, n+1)
-	for i := range dp { dp[i] = make([]int, m+1) }
-	for i := 1; i <= n; i++ {
-		for j := 1; j <= m; j++ {
-			if linesA[i-1] == linesB[j-1] {
-				dp[i][j] = dp[i-1][j-1] + 1
-			} else if dp[i-1][j] > dp[i][j-1] {
-				dp[i][j] = dp[i-1][j]
-			} else {
-				dp[i][j] = dp[i][j-1]
-			}
-		}
-	}
-	// Reconstruct
-	var raw []dl
-	i, j := n, m
-	for i > 0 || j > 0 {
-		if i > 0 && j > 0 && linesA[i-1] == linesB[j-1] {
-			raw = append(raw, dl{" ", linesA[i-1]})
-			i--; j--
-		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
-			raw = append(raw, dl{"+", linesB[j-1]})
-			j--
-		} else {
-			raw = append(raw, dl{"-", linesA[i-1]})
-			i--
-		}
-	}
-	var result []dl
-	for k := len(raw) - 1; k >= 0; k-- { result = append(result, raw[k]) }
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "--- %s\n+++ %s\n", ch.Path, ch.Path)
-	count := 0
-	for _, d := range result {
-		if count >= 40 {
-			sb.WriteString("… (truncated)\n")
-			break
-		}
-		sb.WriteString(d.kind + " ")
-		sb.WriteString(d.text)
-		sb.WriteByte('\n')
-		count++
-	}
-	return sb.String()
-}
-
-func renderLines(prefix, text string, maxChars int) string {
-	lines := strings.Split(text, "\n")
-	if len(lines) > 20 {
-		lines = lines[:20]
-		lines = append(lines, "… (truncated)")
-	}
-	var sb strings.Builder
-	for _, l := range lines {
-		if len(l) > maxChars {
-			l = l[:maxChars-3] + "..."
-		}
-		sb.WriteString(prefix + " " + l + "\n")
-	}
-	return sb.String()
+	return render.Diff(ch.Path, ch.Before, ch.After)
 }

@@ -32,13 +32,15 @@ const (
 
 // Watcher monitors a directory tree for file changes using polling.
 type Watcher struct {
-	mu       sync.Mutex
-	root     string
-	events   chan Event
-	done     chan struct{}
-	snapshot map[string]snapshotEntry
-	interval time.Duration
-	ignore   []string
+	mu        sync.Mutex
+	root      string
+	events    chan Event
+	stop      chan struct{} // closed by Close to signal the poll loop to exit
+	done      chan struct{} // closed by the poll loop when it has exited
+	closeOnce sync.Once
+	snapshot  map[string]snapshotEntry
+	interval  time.Duration
+	ignore    []string
 }
 
 type snapshotEntry struct {
@@ -56,6 +58,7 @@ func NewWatcher(root string, interval time.Duration) (*Watcher, error) {
 	w := &Watcher{
 		root:     root,
 		events:   make(chan Event, 256),
+		stop:     make(chan struct{}),
 		done:     make(chan struct{}),
 		snapshot: map[string]snapshotEntry{},
 		interval: interval,
@@ -105,9 +108,19 @@ func (w *Watcher) loop() {
 		select {
 		case <-ticker.C:
 			w.scan()
-		case <-w.events: // drained — channel closed
+		case <-w.stop:
 			return
 		}
+	}
+}
+
+// emit delivers an event without ever blocking the poll loop. If the buffer is
+// full (no consumer is draining), the event is dropped — appropriate for a
+// best-effort change indicator.
+func (w *Watcher) emit(ev Event) {
+	select {
+	case w.events <- ev:
+	default:
 	}
 }
 
@@ -141,14 +154,14 @@ func (w *Watcher) scan() {
 	for path, cur := range current {
 		prev, ok := w.snapshot[path]
 		if !ok {
-			w.events <- Event{Path: path, Op: OpCreate, Size: cur.Size, Timestamp: time.Now()}
+			w.emit(Event{Path: path, Op: OpCreate, Size: cur.Size, Timestamp: time.Now()})
 		} else if cur.Size != prev.Size || !cur.ModTime.Equal(prev.ModTime) {
-			w.events <- Event{Path: path, Op: OpWrite, Size: cur.Size, Timestamp: time.Now()}
+			w.emit(Event{Path: path, Op: OpWrite, Size: cur.Size, Timestamp: time.Now()})
 		}
 	}
 	for path := range w.snapshot {
 		if _, ok := current[path]; !ok {
-			w.events <- Event{Path: path, Op: OpRemove, Size: 0, Timestamp: time.Now()}
+			w.emit(Event{Path: path, Op: OpRemove, Size: 0, Timestamp: time.Now()})
 		}
 	}
 
@@ -161,9 +174,11 @@ func (w *Watcher) Events() <-chan Event { return w.events }
 // Done returns a channel closed when the watcher stops.
 func (w *Watcher) Done() <-chan struct{} { return w.done }
 
-// Close stops the watcher.
+// Close stops the watcher and waits for the poll loop to exit. It is safe to
+// call more than once.
 func (w *Watcher) Close() error {
-	w.done <- struct{}{}
+	w.closeOnce.Do(func() { close(w.stop) })
+	<-w.done
 	return nil
 }
 
