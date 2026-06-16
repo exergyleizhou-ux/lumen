@@ -256,8 +256,8 @@ func (e *Editor) readCooked() (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// redraw repaints the prompt and current buffer, placing the cursor.
-// Uses per-line clearing — immune to auto-wrap cursor drift.
+// redraw repaints the prompt and buffer. Uses save/restore cursor
+// so auto-wrap can't confuse row arithmetic.
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -265,46 +265,47 @@ func (e *Editor) redraw() {
 		termW = w
 	}
 
-	// Step 1: clear every row the previous render occupied.
-	// Start from the current line, clear it, move up, repeat.
-	io.WriteString(e.out, "\r\x1b[K") // clear current line
-	for i := 1; i < e.lastRows; i++ {
-		io.WriteString(e.out, "\x1b[A\x1b[K") // up one row, clear it
+	// Step 0: save cursor. After clearing + writing, we restore to
+	// this exact spot and only move right for the correct column.
+	io.WriteString(e.out, "\x1b7") // DECSC — save cursor
+
+	// Step 1: clear lastRows downward from saved position.
+	// \x1b[K = clear current line, \x1b[B = down one line.
+	for i := 0; i < e.lastRows; i++ {
+		io.WriteString(e.out, "\x1b[K")
+		if i < e.lastRows-1 {
+			io.WriteString(e.out, "\x1b[B")
+		}
 	}
 
-	// Step 2: write prompt + full buffer.
+	// Step 2: restore cursor to the clear-start position.
+	io.WriteString(e.out, "\x1b8") // DECRC — restore cursor
+
+	// Step 3: write prompt + full buffer (may auto-wrap).
 	prompt := e.prompt
-	prefix := string(e.buf.runes[:e.buf.pos])
 	text := e.buf.string()
 	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// Step 3: how many rows does the new text occupy?
+	// Step 4: compute column offset for cursor within the buffer.
+	prefix := string(e.buf.runes[:e.buf.pos])
+	prefixWidth := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
+
+	// Step 5: jump back to saved position + move right to cursor column.
+	io.WriteString(e.out, "\x1b8")
+	if prefixWidth > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dC", prefixWidth)
+	}
+
+	// Step 6: remember how many rows we just wrote (for next redraw's clear).
 	promptWidth := runewidth.StringWidth(prompt)
 	totalWidth := promptWidth + runewidth.StringWidth(text)
-	newRows := 1
 	if termW > 0 && totalWidth > 0 {
-		newRows = (totalWidth + termW - 1) / termW
+		e.lastRows = (totalWidth + termW - 1) / termW
 	}
-	if newRows < 1 {
-		newRows = 1
+	if e.lastRows < 1 {
+		e.lastRows = 1
 	}
-
-	// Step 4: place cursor at correct (row, col).
-	prefixWidth := runewidth.StringWidth(prefix)
-	cursorTotal := promptWidth + prefixWidth
-	cursorRow := cursorTotal / termW
-	cursorCol := cursorTotal % termW
-
-	io.WriteString(e.out, "\r")
-	if cursorRow > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dB", cursorRow)
-	}
-	if cursorCol > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", cursorCol)
-	}
-
-	e.lastRows = newRows
 }
 
 // clickToPos translates a mouse click at (visual row, visual col) within the
