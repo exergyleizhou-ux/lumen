@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
@@ -272,18 +270,13 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 // ── Drawing ────────────────────────────────────────────────
 
 func drawBanner(ctrl *control.Controller) {
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("15")).
-		Background(lipgloss.Color("39")).
-		Padding(0, 2).
-		Border(lipgloss.NormalBorder()).
-		BorderForeground(lipgloss.Color("39"))
-
-	header := fmt.Sprintf("🪄 LUMEN · %s/%s · %s %s",
-		ctrl.ProviderName(), ctrl.ModelName(),
-		iconForMode(ctrl.PermissionMode()), string(ctrl.PermissionMode()))
-	fmt.Printf("\n%s\n", style.Render(header))
+	header := fmt.Sprintf("🪄  %s  ·  %s/%s  ·  %s %s",
+		fg(B+W, "LUMEN"),
+		fg(G, ctrl.ProviderName()),
+		fg(C, ctrl.ModelName()),
+		iconForMode(ctrl.PermissionMode()),
+		fg(D, string(ctrl.PermissionMode())))
+	fmt.Printf("\n  %s\n\n", header)
 }
 
 func iconForMode(m permission.Mode) string {
