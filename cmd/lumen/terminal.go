@@ -46,8 +46,9 @@ func termSink() event.Sink {
 	textStarted := false
 	textLen := 0
 	truncated := false
-	const maxOut = 32 * 1024
+	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
+	reasonBuf := strings.Builder{}
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
@@ -59,11 +60,24 @@ func termSink() event.Sink {
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				fmt.Fprintf(os.Stdout, "%s%s", fg(D, "💭 "), fg(D, stripMD(e.Text)))
+				rt := stripMD(e.Text)
+				reasonBuf.WriteString(rt)
 			}
 
 		case event.Text:
-			if thinking && !textStarted { thinking = false; textStarted = true; fmt.Print("\n\n  ") }
+			if thinking && !textStarted {
+				thinking = false; textStarted = true
+				// Print accumulated reasoning as a compact block
+				if rb := strings.TrimSpace(reasonBuf.String()); len(rb) > 0 {
+					fmt.Fprintf(os.Stdout, "\n  %s\n  %s%s\n",
+						fg(C, "┌─ 💭 thinking"),
+						fg(C, "│ "), fg(D, truncReasonBlock(rb, 200)))
+					fmt.Fprintf(os.Stdout, "  %s\n\n", fg(C, "└──────────────────────────────"))
+				} else {
+					fmt.Print("\n\n")
+				}
+				reasonBuf.Reset()
+			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
 			if textLen > maxOut { truncated = true; fmt.Fprintf(os.Stdout, "\n%s\n", fg(D, "  … too long")); return }
@@ -73,9 +87,10 @@ func termSink() event.Sink {
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
-			icon := toolIcon(e.Tool.Name)
-			fmt.Fprintf(os.Stdout, "\n\n  %s %s%s  %s",
-				fg(C+B, fmt.Sprintf("%d.", sn)), icon, fg(D, ""), fg(D, e.Tool.Name))
+			fmt.Fprintf(os.Stdout, "\n\n  %s %s %s",
+				fg(C+B, fmt.Sprintf("%2d.", sn)),
+				toolIcon(e.Tool.Name),
+				fg(Y, e.Tool.Name))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
@@ -132,10 +147,10 @@ func drawFooter() {
 
 	fmt.Fprintf(os.Stdout, "\n\n%s %s  %s  %s  %s\n\n",
 		fg(D, "  ·"),
-		fg(C, fmt.Sprintf("📊 %.0fk tk", float64(ti+to)/1000)),
-		fg(D, fmt.Sprintf("♻ %d%%", pct)),
-		fg(D, fmt.Sprintf("💰$%.4f", cost)),
-		fg(D, fmt.Sprintf("%d steps  ·  turn #%d", steps, turns)))
+		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
+		fg(G, fmt.Sprintf("♻ %d%%", pct)),
+		fg(Y, fmt.Sprintf("💰 $%.4f", cost)),
+		fg(M, fmt.Sprintf("⚙ %dst · turn #%d", steps, turns)))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -247,7 +262,9 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 // ── Drawing ────────────────────────────────────────────────
 
 func drawBanner(ctrl *control.Controller) {
-	header := fmt.Sprintf("🪄 LUMEN  ·  %s/%s  ·  %s", ctrl.ProviderName(), ctrl.ModelName(), iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode()))
+	header := fmt.Sprintf("🪄 %s · %s/%s · %s %s",
+		fg(B+W, "LUMEN"), fg(G, ctrl.ProviderName()), fg(C, ctrl.ModelName()),
+		iconForMode(ctrl.PermissionMode()), fg(D, string(ctrl.PermissionMode())))
 	w := len(stripANSII(header)) + 2
 	fmt.Printf("\n%s\n", fg(C+B, "╭"+strings.Repeat("─", w)+"╮"))
 	fmt.Printf("%s\n", fg(C+B, "│")+"  "+header+"  "+fg(C+B, "│"))
@@ -279,12 +296,26 @@ func drawHelp() {
 }
 
 func drawModels() {
-	presets := config.ModelPresets(); fmt.Println(); last := ""
+	presets := config.ModelPresets()
+	fmt.Println()
+	last := ""
+	nameW, modelW := 0, 0
 	for _, pr := range presets {
-		if pr.Provider != last { fmt.Printf("  %s\n", fg(B+W, providerIcon(pr.Provider)+" "+pr.Provider)); last = pr.Provider }
-		fmt.Printf("    %s  %s\n", fg(C, pr.Name), fg(D, pr.Model))
+		if len(pr.Name) > nameW { nameW = len(pr.Name) }
+		if len(pr.Model) > modelW { modelW = len(pr.Model) }
 	}
-	fmt.Printf("\n  %s\n\n", fg(D, "/model <name> to switch"))
+	for _, pr := range presets {
+		if pr.Provider != last {
+			if last != "" { fmt.Println() }
+			fmt.Printf("  %s %s\n", fg(B+W, providerIcon(pr.Provider)), fg(B+C, pr.Provider))
+			last = pr.Provider
+		}
+		fmt.Printf("    %s %s%s  %s%s\n",
+			fg(G, "▸"),
+			fg(C, pr.Name), strings.Repeat(" ", nameW-len(pr.Name)+2),
+			fg(D, pr.Model), strings.Repeat(" ", modelW-len(pr.Model)))
+	}
+	fmt.Printf("\n  %s\n\n", fg(D, "▸ /model <name> to switch"))
 }
 
 func providerIcon(p string) string {
@@ -406,3 +437,7 @@ func stripMD(s string) string {
 	return s
 }
 func truncProb(s string, n int) string { if len(s) <= n { return s }; return s[:n-3] + "..." }
+func truncReasonBlock(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n-3] + "…"
+}
