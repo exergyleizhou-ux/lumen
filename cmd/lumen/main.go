@@ -23,6 +23,7 @@ import (
 	"lumen/internal/doctor"
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/tui"
 
 	// Ensure all providers are registered via init()
 	_ "lumen/internal/provider/anthro"
@@ -38,6 +39,8 @@ func main() {
 	switch os.Args[1] {
 	case "chat":
 		runChat(os.Args[2:])
+	case "tui":
+		runTUI(os.Args[2:])
 	case "wizard":
 		runWizardEntry()
 	case "run":
@@ -60,7 +63,8 @@ func printUsage() {
 
 Usage:
   lumen wizard            Active onboarding — AI interviews you, then builds
-  lumen chat [--mode M]   Interactive chat
+  lumen chat [--mode M]   Interactive chat (terminal line-mode)
+  lumen tui [--mode M]    Multi-panel Bubble Tea TUI
   lumen run "prompt"      One-shot task
   lumen run --plan "..."  Plan mode (read-only)
   lumen run --mode M "..."
@@ -185,6 +189,28 @@ func runChat(args []string) {
 	mode := parseModeFlag(args)
 	if err := runChatUI(ctrl, mode); err != nil {
 		fmt.Fprintf(os.Stderr, "chat: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// ── Bubble Tea TUI ─────────────────────────────────────────
+
+func runTUI(args []string) {
+	ctrl, err := makeController(termSink(), parseModeFlag(args))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+	model := tui.NewModel()
+	// Wire controller sink to TUI
+	model.Send(tui.StatusMsg{
+		Model:    ctrl.ModelName(),
+		Provider: ctrl.ProviderName(),
+		Mode:     string(ctrl.PermissionMode()),
+	})
+	// Start the TUI (blocks until quit)
+	if err := tui.RunTUI(model); err != nil {
+		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
 		os.Exit(1)
 	}
 }

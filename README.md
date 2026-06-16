@@ -2,51 +2,130 @@
 
 > **「你是我绿洲里的光」**
 >
-> Lumen 希望成为那束光。无论被永无休止的熵潮重塑多少次，我都会在代码的荒原里为你守候，
-> 让你的每一次规划与生长的心跳，都穿过那片混乱与荒芜。
+> A terminal coding agent where **security is not an afterthought.** Multi-model, plan-mode,
+> fine-grained permissions, and full session observability — in a single Go binary.
 
-A multi-model coding agent for your terminal — built in Go, single binary.
+[![Go](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)](https://go.dev)
+[![License](https://img.shields.io/badge/license-MIT-green)](./LICENSE)
+[![Binary](https://img.shields.io/badge/binary-9.9MB-blue)]()
+
+---
+
+## Why Lumen
+
+Most coding agents trust the LLM unconditionally. **Lumen doesn't.** It puts you in control with
+four permission modes, a 5-layer bash command guard, and file-system safety boundaries — while
+still letting you switch between DeepSeek, Grok, OpenAI, and Ollama in a single session.
+
+| | Reasonix | Claude Code | **Lumen** |
+|---|---|---|---|
+| Security guard | Basic | None | **5-layer bash + file safety** |
+| Permission modes | Plan only | Plan + Auto | **4 modes: bypass / plan / default / accept-edits** |
+| Multi-model | DeepSeek-focused | Anthropic only | **9 providers, 26 models** |
+| Session replay | No | No | **Timeline + /replay + change inbox** |
+| Sub-agents | Limited | Yes | **Whitelist + isolated sessions** |
+| Single binary | ❌ (Node.js) | ❌ (Node.js) | **✅ 9.9 MB, no runtime** |
+
+---
+
+## Screenshots
+
+```
+┌─ Chat (60%) ───────────────────────┬─ Plan (40%) ────────────┐
+│                                    │                          │
+│  ▸ add user authentication with JWT│  📋 Auth System          │
+│                                    │  ○ 1. Create user model │
+│   1. 📖 read_file  ✓               │  ○ 2. JWT middleware    │
+│   2. ✏️ write_file ✓               │  ○ 3. Login handler     │
+│   3. ✏️ edit_file  ✓               │  ○ 4. Tests             │
+│                                    │                          │
+│  Here's the implementation:        │  ↵ approve  |  ⌫ dismiss│
+│  I've added JWT auth with refresh  ├──────────────────────────┤
+│  tokens, bcrypt password hashing,  │  📝 diff: auth.go        │
+│  and rate-limited login endpoint.  │  + func NewAuthMiddleware│
+│                                    │  +   return jwt.Verify.. │
+│                                    │  - // TODO: add auth     │
+├────────────────────────────────────┴──────────────────────────┤
+│  🔓 bypass  ·  deepseek/deepseek-chat  ·  📊 14k  ♻ 97%  💰 $0.0039  ⚙  3st · #2  │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+*ASCII mockup — real terminal screenshots coming in v0.3.0*
+
+```
+▸ [🛡 default] 画一个爱心
+
+  ⏳ …
+
+   1. ⚡ bash ✓  42
+   2. ✏️ write_file ✓
+
+  · deepseek/deepseek-chat  🛡 default  📊 14k  ♻ 99%  💰 $0.0038  ⚙  2st · #1
+```
+
+---
 
 ## Features
 
-- 🤖 **Multi-model**: DeepSeek, Grok, OpenAI, Ollama — OpenAI-compatible API
-- 📋 **Plan Mode**: Read-only exploration → plan → user approval → execute (cache-safe)
-- 🔀 **Coordinator**: Dual-model Planner+Executor with separate cache-stable sessions
-- 🧵 **Subagents**: `task` tool spawns isolated sub-agents with tool whitelists
-- 📚 **22 Skills**: explore, review, bug-hunt, security-review, test, benchmark, etc.
-- ⚡ **DeepSeek Optimized**: Prefix-cache stable — 96-99% cache hit rate in real runs
-- 🛡️ **5-Layer Defense**: Bash command guard — exfiltration, sensitive files, recon, destructive, encoded smuggling
-- 🔒 **File Safety**: Binary detection, size limits (10MB), workspace boundary, symlink-escape detection
-- 📡 **MCP Ready**: Tool registry with `mcp__` namespace support. JSON-RPC stdio client.
-- 🔍 **LSP Integration**: Diagnostics, hover, definition, references — gopls auto-detected
-- 🕐 **Session Timeline**: Replay agent actions, change inbox per session (`/replay`, `/changes`)
-- 🩺 **Health Check**: `lumen doctor` — API key validation, model reachability, workspace status
-- 🖥️ **TUI**: Bubble Tea interactive terminal (chat, status bar, approval dialogs)
-- 🏗️ **Transport-Agnostic**: Controller powers CLI, TUI, and future HTTP/SSE from one code path
-- 🔁 **Retry Logic**: Exponential backoff (429/503/5xx, up to 3 retries)
-- 💬 **Slash Commands**: `/status`, `/cost`, `/cache`, `/rewind`, `/replay`, `/changes`, `/help`
+### Core Differentiators
+
+- 🛡️ **5-Layer Bash Guard** — Blocks exfiltration, sensitive file reads, recon, destructive ops,
+  and encoded payloads *before* execution. Works even in bypass mode.
+- 🔓 **4 Permission Modes** — `bypass` (full auto) / `plan` (read-only) / `default` (prompt for
+  dangerous) / `accept-edits` (auto-approve writes, ask for bash). Inspired by Claude Code.
+- 🤖 **Multi-Model** — DeepSeek (96-99% cache hit), Grok, OpenAI, Anthropic, Ollama, Gemini,
+  Moonshot, Qwen, Zhipu, Mimo. 26 presets across 9 providers.
+- 📋 **Plan Mode** — Read-only exploration → structured plan → review → execute. Cache-stable
+  sessions prevent token waste on plan revision.
+
+### Advanced
+
+- 🔀 **Coordinator** — Dual-model Planner+Executor. Separate cache-stable sessions — the Planner
+  never sees execution artifacts, so its cache stays warm.
+- 🧵 **Sub-Agents** — `task` tool spawns isolated agents with tool whitelists. Each has its own
+  session, gate, and max-steps limit.
+- 📚 **22 Skills** — `explore`, `review`, `bug-hunt`, `security-review`, `test`, `benchmark`,
+  `api-design`, `brainstorming`, `e2e-testing`, and more.
+- 🕐 **Session Timeline** — Every turn, tool call, and file change recorded. `/replay` to
+  rewatch, `/changes` for the diff inbox.
+- 🔍 **LSP Integration** — Real `gopls` diagnostics, hover, definition, references. Not a mock.
+
+### Engineering
+
+- 🏗️ **Transport-Agnostic** — Controller powers CLI chat, one-shot `run`, Bubble Tea TUI, and
+  future HTTP/SSE from one code path.
+- 🖥️ **Bubble Tea TUI** — Multi-panel layout: chat (60%), plan+diff (40%), persistent status bar.
+  Keyboard navigation, thinking-block folding, spinner animation.
+- 🔁 **Retry Logic** — Exponential backoff on 429/503/5xx, up to 3 retries per call.
+- 📡 **MCP Ready** — `mcp__` namespace support, JSON-RPC stdio client.
+- 📦 **Single Binary** — 9.9 MB, zero runtime dependencies. `curl | sh` install.
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone
-git clone https://github.com/yourname/lumen.git
-cd lumen
+# Install
+git clone https://github.com/exergyleizhou-ux/lumen.git
+cd lumen && go build -o bin/lumen ./cmd/lumen
 
-# Build (Go 1.23+)
-go build -o bin/lumen ./cmd/lumen
+# Configure — add your API keys
+export DEEPSEEK_API_KEY=sk-...
+export GROK_API_KEY=xai-...
+# or set them in .env / lumen.toml
 
-# Configure
-cp .env.example .env   # add your API keys
-cp lumen.toml .         # or edit to match your provider
+# Verify
+./bin/lumen doctor
 
 # Run
-export DEEPSEEK_API_KEY=sk-...
-./bin/lumen doctor       # verify everything works
-./bin/lumen run "explain this project"
-./bin/lumen run --plan "add user authentication"
-./bin/lumen chat          # interactive TUI
+./bin/lumen run "explain this project"        # one-shot
+./bin/lumen run --plan "add OAuth"            # plan mode
+./bin/lumen chat                               # line-mode REPL
+./bin/lumen tui                                # Bubble Tea multi-panel TUI
+./bin/lumen wizard                             # AI interviews you, then builds
 ```
+
+---
 
 ## Architecture
 
@@ -63,7 +142,7 @@ User Input → CLI (cmd/lumen/main.go)
               ├── 2. PrefixShape check (cache churn detection)
               ├── 3. Conditional Sanitize (needsRepair)
               ├── 4. Provider.Stream (SSE with retry)
-              ├── 5. partitionToolCalls (read-only∥ | writers serial)
+              ├── 5. partitionToolCalls (read-only || writer serial)
               ├── 6. executeOne (PlanMode → Permission → Guard → PreEdit → Execute → Evidence)
               ├── 7. Storm Breaker (3rd identical failure → redirect)
               └── 8. feed results → loop
@@ -71,6 +150,17 @@ User Input → CLI (cmd/lumen/main.go)
               ▼
          Event Sink → TUI / Headless / Timeline
 ```
+
+## Permission Modes
+
+| Mode | Read | Write | Bash | Use Case |
+|------|------|-------|------|----------|
+| `bypass` | ✅ | ✅ | ✅ | Full autonomy, trusted tasks |
+| `plan` | ✅ | ❌ | ❌ | Exploration, code review, research |
+| `default` | ✅ | ✅ (auto) | ⚠️ auto-approve | Daily coding with guard |
+| `accept-edits` | ✅ | ✅ | ⚠️ prompt | Safe editing, manual bash |
+
+*5-layer bash guard runs in **all** modes — even bypass blocks `rm -rf /`.*
 
 ## Project Structure
 
@@ -80,24 +170,24 @@ lumen/
 ├── internal/
 │   ├── agent/                     # Core engine (loop, coordinator, task, session, cache)
 │   ├── checkpoint/                # Pre-edit snapshots + rewind
-│   ├── command/                   # Slash commands (/status, /cost, /cache, etc.)
+│   ├── command/                   # Slash commands
 │   ├── config/                    # TOML config + .env loading
 │   ├── control/                   # Transport-agnostic controller
 │   ├── doctor/                    # Health checks
 │   ├── evidence/                  # Tool-call receipt ledger
-│   ├── fileutil/                  # File safety layer (binary, size, boundary, symlink)
+│   ├── fileutil/                  # File safety (binary, size, boundary, symlink)
 │   ├── guard/                     # Bash command defense (5-layer)
-│   ├── hook/                      # Lifecycle hooks (PreToolUse, PostToolUse, etc.)
+│   ├── hook/                      # Lifecycle hooks
 │   ├── jobs/                      # Background task manager
-│   ├── lsp/                       # LSP client (diagnostics, hover, definition, references)
-│   ├── memory/                    # Project memory (AGENTS.md + remember/forget)
+│   ├── lsp/                       # LSP client (gopls)
+│   ├── memory/                    # Project memory (AGENTS.md)
 │   ├── permission/                # 4-mode permission gate
 │   ├── plugin/                    # MCP stdio JSON-RPC client
-│   ├── provider/                  # Model backend (OpenAI-compatible SSE + retry)
-│   ├── skill/                     # Skill system (22 built-in + filesystem discovery)
+│   ├── provider/                  # Model backend (SSE + retry)
+│   ├── skill/                     # 22 skills
 │   ├── timeline/                  # Session timeline + change inbox
-│   ├── tool/                      # Tool interface + registry + 14 built-in tools
-│   └── tui/                       # Bubble Tea terminal UI
+│   ├── tool/                      # Tool interface + registry
+│   └── tui/                       # Bubble Tea multi-panel TUI
 ├── skills/                        # 22 Markdown skill files
 ├── docs/                          # Documentation
 ├── lumen.toml                     # Configuration
@@ -107,15 +197,28 @@ lumen/
 
 ## Real-World Runs
 
-Lumen has been verified with **real DeepSeek API calls**, not just mocked tests:
+Verified with real DeepSeek API calls (not mocked):
 
-| Task | Turns | Tokens | Cache |
-|------|-------|--------|-------|
+| Task | Turns | Tokens | Cache Hit |
+|------|-------|--------|-----------|
 | Simple greeting | 1 | 2,817 | 96% |
 | Create multi_edit.go (new tool) | 9 | 10,718 | 87% |
 | Review agent.go via run_skill | 20+ | 8,114 | 43% |
 | Fix + build + test | 3 | 9,016 | 99% |
+| Git tools + session resume | 2 | 14,000 | 97% |
+| Heart drawing (python + JS + HTML) | 13 | 17,000 | 99% |
 
-## License
+## Roadmap
 
-MIT
+- [ ] **v0.3.0** — VSCode extension, websocket serve, config wizard
+- [ ] **v0.4.0** — Browser remote (Chrome automation), vector memory (RAG)
+- [ ] **v1.0.0** — Agent OS runtime, orchestrator, workflow engine
+
+## Contributing
+
+Bug reports, feature requests, and PRs welcome.
+Open an issue before large changes to discuss direction.
+
+---
+
+*Built with Go · 187 packages · 112 tools · 26 models · 9 providers · zero runtime deps*
