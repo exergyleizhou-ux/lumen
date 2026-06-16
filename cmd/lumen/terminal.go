@@ -238,6 +238,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	ed := lineedit.NewEditor("▸ ", histPath, cwd)
 
 	history := make([]string, 0, 100)
+	var lastPrompt string // for /retry after Ctrl+C interruption
 	for {
 		// Print mode line above prompt (outside raw mode)
 		fmt.Fprintf(os.Stdout, "\n%s\n", fg(D, "  ["+iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode())+"]"))
@@ -300,6 +301,10 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		if text == "/rewind" { drawRewind(); continue }
 		if text == "/replay" { drawReplay(); continue }
 		if text == "/changes" { drawChanges(); continue }
+		if text == "/retry" {
+			if lastPrompt == "" { fmt.Printf("\n  %s\n", fg(D, "no previous task to retry")); continue }
+			text = lastPrompt
+		}
 		if text == "/wizard" { runWizard(ctrl); continue }
 		if strings.HasPrefix(text, "/goal ") {
 			go runGoalMode(ctrl, strings.TrimPrefix(text, "/goal "))
@@ -331,6 +336,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 		fmt.Printf("\n%s\n", fg(B+C, text))
+		lastPrompt = text // save for /retry after interruption
 		turnCtx, turnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
@@ -365,6 +371,7 @@ func drawHelp() {
 	fmt.Printf("  %s  📋 plan → review → execute\n", fg(C, "/workflow <task>"))
 	fmt.Printf("  %s  ⚡ plan → auto-execute\n", fg(C, "/ultra <task>"))
 	fmt.Printf("  %s  ↩ undo last file edits\n", fg(C, "/undo"))
+	fmt.Printf("  %s  🔄 retry last task (after Ctrl+C)\n", fg(C, "/retry"))
 	fmt.Printf("  %s  🏥 agent status\n", fg(C, "/status"))
 	fmt.Printf("  %s  🗂️  list 26 models\n", fg(C, "/models"))
 	fmt.Printf("  %s  🔄 switch model\n", fg(C, "/model <name>"))

@@ -72,6 +72,7 @@ type Editor struct {
 	out      io.Writer
 	buf      buffer
 	hist     history
+	lastRows int // number of terminal rows the last redraw occupied
 }
 
 // NewEditor creates an Editor with the given prompt, history file path, and
@@ -244,22 +245,61 @@ func (e *Editor) readCooked() (string, error) {
 
 // redraw repaints the prompt and current buffer, placing the cursor.
 // Uses runewidth.StringWidth for CJK/emoji-safe column arithmetic.
+// Handles multi-line input by clearing all rows the previous redraw occupied.
 func (e *Editor) redraw() {
-	io.WriteString(e.out, "\r\x1b[K") // carriage return, clear to end of line
+	fd := int(e.in.Fd())
+	termW := 80
+	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
+		termW = w
+	}
 
 	prompt := e.prompt
 	text := e.buf.string()
 	prefix := string(e.buf.runes[:e.buf.pos])
 
+	// Calculate how many terminal rows this buffer will occupy
+	promptWidth := runewidth.StringWidth(prompt)
+	textWidth := runewidth.StringWidth(text)
+	totalWidth := promptWidth + textWidth
+	newRows := 1
+	if termW > 0 && totalWidth > 0 {
+		newRows = (totalWidth + termW - 1) / termW
+	}
+	if newRows < 1 {
+		newRows = 1
+	}
+
+	// Move up to clear previous lines
+	if e.lastRows > 1 {
+		fmt.Fprintf(e.out, "\x1b[%dA", e.lastRows-1)
+	}
+	io.WriteString(e.out, "\r")
+	// Clear from cursor to end of screen (covers all old lines)
+	io.WriteString(e.out, "\x1b[J")
+
 	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// Move cursor to correct position: prompt cols + prefix cols
-	col := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
-	io.WriteString(e.out, "\r")
-	if col > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", col)
+	// Move cursor to correct position within the (possibly multi-line) buffer
+	prefixWidth := runewidth.StringWidth(prefix)
+	cursorTotal := promptWidth + prefixWidth
+	cursorRow := 0
+	cursorCol := cursorTotal
+	if termW > 0 {
+		cursorRow = cursorTotal / termW
+		cursorCol = cursorTotal % termW
 	}
+
+	// Move back to start, then down and across to cursor position
+	io.WriteString(e.out, "\r")
+	if cursorRow > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dB", cursorRow)
+	}
+	if cursorCol > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dC", cursorCol)
+	}
+
+	e.lastRows = newRows
 }
 
 // ── history persistence ───────────────────────────────────

@@ -100,9 +100,9 @@ func TestRedrawColPositioning(t *testing.T) {
 	if !strings.Contains(result, "hello") {
 		t.Fatalf("redraw output missing 'hello': %q", result)
 	}
-	// Must contain \r and \x1b[K (clear line)
-	if !strings.Contains(result, "\r\x1b[K") {
-		t.Fatal("redraw missing clear-line sequence")
+	// Must contain \r and \x1b[J (clear to end of screen for multi-line safety)
+	if !strings.Contains(result, "\r\x1b[J") {
+		t.Fatal("redraw missing clear-screen sequence")
 	}
 	// Cursor positioning: \r then \x1b[5C (> + hel = 5 cols)
 	if !strings.Contains(result, "\r\x1b[5C") {
@@ -117,7 +117,7 @@ func TestRedrawCJKCursorPosition(t *testing.T) {
 	for _, r := range "你好" {
 		e.buf.insert(r)
 	}
-	// Move left by 1 rune → cursor after 你 (pos=1, but display col = prompt_width + 2)
+	// Move left by 1 rune → cursor after 你 (pos=1, display col = prompt_width + 你_cols = 0 + 2 = 2)
 	e.buf.left()
 
 	var out bytes.Buffer
@@ -132,5 +132,39 @@ func TestRedrawCJKCursorPosition(t *testing.T) {
 	// ▸  = 2 cols (▸ + space), 你 = 2 cols → cursor at col 4
 	if !strings.Contains(result, "\x1b[4C") {
 		t.Fatalf("CJK cursor not at expected position: %q", result)
+	}
+}
+
+func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	// Insert enough text to span 2 terminal rows (80-col terminal)
+	longText := strings.Repeat("abcdefghij", 10) // 100 chars
+	for _, r := range longText {
+		e.buf.insert(r)
+	}
+	e.lastRows = 2 // simulate previous redraw occupied 2 rows
+
+	var out bytes.Buffer
+	e.out = &out
+	e.redraw()
+
+	result := out.String()
+
+	// Must contain \x1b[J (clear to end of screen — covers all old rows)
+	if !strings.Contains(result, "\x1b[J") {
+		t.Fatalf("multi-line redraw missing clear-screen: %q", result)
+	}
+	// Must contain \x1b[1A (move up 1 row to cover previous 2-row draw)
+	if !strings.Contains(result, "\x1b[1A") {
+		t.Fatalf("multi-line redraw missing move-up: %q", result)
+	}
+	// Must still contain the full text
+	if !strings.Contains(result, longText) {
+		t.Fatal("multi-line redraw lost text content")
+	}
+	// lastRows should be updated to the new row count (100+2=102 cols / 80 = 2 rows)
+	if e.lastRows < 2 {
+		t.Errorf("lastRows after redraw = %d, want >= 2", e.lastRows)
 	}
 }
