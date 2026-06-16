@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"lumen/internal/event"
+	"lumen/internal/jobs"
 	"lumen/internal/provider"
 	"lumen/internal/tool"
 )
@@ -154,6 +155,46 @@ func (t *TaskTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	if parentSink != nil {
 		sink = subSinkFor(parentID, parentSink)
 	}
+
+	// ── Background mode: hand off to jobs manager ──
+	if p.RunInBackground {
+		jm := jobs.FromContext(ctx)
+		if jm == nil {
+			return "", fmt.Errorf("run_in_background: no jobs manager available")
+		}
+		label := p.Description
+		if label == "" {
+			label = p.Prompt
+		}
+		if len(label) > 60 {
+			label = label[:57] + "..."
+		}
+		// Capture locals
+		prov2, reg2, sess2 := prov, subReg, subSess
+		opts := Options{
+			MaxSteps: maxSteps, Temperature: t.temperature,
+			Pricing: pricing, ContextWindow: ctxWin,
+			Gate: t.gate, Sink: sink,
+		}
+		prompt := p.Prompt
+		jm.Start("task", label, func(bgCtx context.Context) (string, error) {
+			subAgent := New(prov2, reg2, sess2, opts)
+			if err := subAgent.Run(bgCtx, prompt); err != nil {
+				return "", fmt.Errorf("sub-agent: %w", err)
+			}
+			// Extract final answer
+			for i := len(sess2.Messages) - 1; i >= 0; i-- {
+				m := sess2.Messages[i]
+				if m.Role == provider.RoleAssistant && strings.TrimSpace(m.Content) != "" {
+					return m.Content, nil
+				}
+			}
+			return "(sub-agent completed, no assistant message)", nil
+		})
+		return fmt.Sprintf("started background task agent"), nil
+	}
+
+	// ── Synchronous mode ──
 
 	// Run the sub-agent
 	subAgent := New(prov, subReg, subSess, Options{
