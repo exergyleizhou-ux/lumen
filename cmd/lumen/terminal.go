@@ -223,6 +223,47 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 
+		if strings.HasPrefix(text, "/workflow ") {
+			prompt := strings.TrimPrefix(text, "/workflow ")
+			runWorkflow(ctrl, prompt)
+			continue
+		}
+		if strings.HasPrefix(text, "/ultra ") {
+			prompt := strings.TrimPrefix(text, "/ultra ")
+			runUltra(ctrl, prompt)
+			continue
+		}
+		if text == "/undo" {
+			rewound, err := ctrl.Rewind()
+			if err != nil {
+				fmt.Printf("\n  %s\n", fg(Rd, "undo: "+err.Error()))
+			} else {
+				fmt.Printf("\n  %s  %v\n", fg(G, "rewound"), rewound)
+			}
+			continue
+		}
+		if text == "/status" {
+			drawStatusLine(ctrl)
+			continue
+		}
+		if text == "/execute" && planReady {
+			fmt.Printf("\n  %s\n", fg(B, "── Executing Plan ──"))
+			ctrl.SetPermissionMode(permission.ModeBypass)
+			ctrl.Run(context.Background(), lastPlan)
+			planReady = false
+			fmt.Printf("\n  %s\n", fg(G, "workflow complete."))
+			continue
+		}
+		if text == "/reject" && planReady {
+			fmt.Printf("\n  %s\n", fg(D, "plan rejected. session continues in plan mode."))
+			planReady = false
+			continue
+		}
+		if text == "/execute" && !planReady {
+			fmt.Printf("\n  %s\n", fg(D, "no plan ready. use /workflow <task> first."))
+			continue
+		}
+
 		fmt.Printf("\n%s\n", fg(B+C, text))
 		ctrl.Run(context.Background(), text)
 		fmt.Print("\n")
@@ -253,6 +294,10 @@ func stripANSII(s string) string {
 func drawHelp() {
 	fmt.Printf("\n  %s\n", fg(B, "commands"))
 	fmt.Printf("  %s  quit\n", fg(C, "/exit"))
+	fmt.Printf("  %s  plan → review → execute workflow\n", fg(C, "/workflow <task>"))
+	fmt.Printf("  %s  ultra: plan → auto-execute (minimal confirmations)\n", fg(C, "/ultra <task>"))
+	fmt.Printf("  %s  undo last file edits\n", fg(C, "/undo"))
+	fmt.Printf("  %s  show agent status\n", fg(C, "/status"))
 	fmt.Printf("  %s  list all 25 models\n", fg(C, "/models"))
 	fmt.Printf("  %s  switch model\n", fg(C, "/model <name>"))
 	fmt.Printf("  %s  permission mode (bypass/plan/default/accept-edits)\n", fg(C, "/mode"))
@@ -314,6 +359,69 @@ func onChatExit() {
 }
 
 // ── Markdown stripper ──────────────────────────────────────
+
+// ── Workflow & Ultra modes ───────────────────────────────────
+
+func runWorkflow(ctrl *control.Controller, prompt string) {
+	// Phase 1: Plan
+	fmt.Printf("\n  %s\n", fg(B, "── Plan Phase ──"))
+	fmt.Printf("  %s\n\n", fg(D, "producing plan in read-only mode..."))
+
+	ctrl.SetPermissionMode(permission.ModePlan)
+	ctx := context.Background()
+	if err := ctrl.Plan(ctx, prompt); err != nil {
+		fmt.Printf("  %s\n", fg(Rd, "plan failed: "+err.Error()))
+		return
+	}
+
+	// Phase 2: Review
+	fmt.Printf("\n  %s\n", fg(B, "── Review ──"))
+	fmt.Printf("  %s\n", fg(C, "plan produced above. review it carefully."))
+	fmt.Printf("  %s  %s  %s\n", fg(C, "/execute"), fg(D, "— to run the plan"), fg(D, "/reject — to discard"))
+
+	// Save plan context for execute
+	lastPlan = prompt
+	planReady = true
+}
+
+func runUltra(ctrl *control.Controller, prompt string) {
+	fmt.Printf("\n  %s\n", fg(B, "── Ultra Mode ──"))
+	fmt.Printf("  %s\n\n", fg(D, "plan → auto-approve → execute"))
+
+	// Plan
+	ctrl.SetPermissionMode(permission.ModePlan)
+	ctx := context.Background()
+	if err := ctrl.Plan(ctx, prompt); err != nil {
+		fmt.Printf("\n  %s\n", fg(Rd, "plan failed: "+err.Error()))
+		return
+	}
+
+	// Auto-execute
+	ctrl.SetPermissionMode(permission.ModeBypass)
+	fmt.Printf("\n  %s\n", fg(B, "── Executing ──"))
+	if err := ctrl.Run(ctx, lastPlan); err != nil {
+		fmt.Printf("\n  %s\n", fg(Rd, "execution failed: "+err.Error()))
+	}
+	fmt.Printf("\n  %s\n", fg(G, "ultra workflow complete."))
+}
+
+func drawStatusLine(ctrl *control.Controller) {
+	agent := ctrl.Agent()
+	fmt.Printf("\n  %s\n", fg(B, "agent status"))
+	fmt.Printf("  model:    %s/%s\n", ctrl.ProviderName(), ctrl.ModelName())
+	fmt.Printf("  mode:     %s\n", ctrl.PermissionMode())
+	fmt.Printf("  plan:     %v\n", agent.IsPlanMode())
+	sess := ctrl.Session()
+	if sess != nil {
+		fmt.Printf("  session:  %d messages\n", sess.Len())
+	}
+	fmt.Printf("  turns:    #%d\n\n", st.turn.Load())
+}
+
+var (
+	lastPlan  string
+	planReady bool
+)
 
 func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "**", "")
