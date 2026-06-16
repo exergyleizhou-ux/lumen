@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 
 	"lumen/internal/config"
 	"lumen/internal/control"
@@ -319,7 +321,13 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 		fmt.Printf("\n%s\n", fg(B+C, text))
-		ctrl.Run(context.Background(), text); fmt.Print("\n")
+		turnCtx, turnCancel := context.WithCancel(context.Background())
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT)
+		go func() { <-sigCh; turnCancel() }()
+		ctrl.Run(turnCtx, text)
+		turnCancel(); signal.Stop(sigCh)
+		fmt.Print("\n")
 	}
 	return nil
 }
