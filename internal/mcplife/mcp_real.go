@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ── JSON-RPC 2.0 wire types ────────────────────────────────────────
@@ -293,14 +294,25 @@ func (c *Client) GetPrompt(name string, args map[string]any) (map[string]any, er
 // Close shuts down the server process and cleans up resources.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
-		// Best-effort: close stdin so the child sees EOF.
+		// Best-effort: close stdin so the child sees EOF and can exit on its own.
 		_ = c.stdin.Close()
 		// Wait for the read loop to finish.
 		<-c.readLoopDone
-		if c.cmd != nil {
-			// Kill the process if it's still running.
+		if c.cmd == nil || c.cmd.Process == nil {
+			return
+		}
+		// Give the child a moment to exit gracefully after stdin EOF; only
+		// force-kill if it overstays, and treat an intentional kill as a clean
+		// close rather than surfacing "signal: killed".
+		done := make(chan error, 1)
+		go func() { done <- c.cmd.Wait() }()
+		select {
+		case err := <-done:
+			c.closeErr = err
+		case <-time.After(2 * time.Second):
 			_ = c.cmd.Process.Kill()
-			c.closeErr = c.cmd.Wait()
+			<-done
+			c.closeErr = nil
 		}
 	})
 	return c.closeErr
