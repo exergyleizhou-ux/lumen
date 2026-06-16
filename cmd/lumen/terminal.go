@@ -1,9 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,6 +13,7 @@ import (
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hermes"
+	"lumen/internal/lineedit"
 	"lumen/internal/permission"
 	"lumen/internal/telemetry"
 )
@@ -168,16 +169,27 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("  %s\n", fg(D, fmt.Sprintf("🧠 %d context file(s) loaded", len(memories))))
 	}
 
+	// ── Session resume ──
+	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	if lastSess := loadLastSession(histDir); lastSess != "" {
+		fmt.Printf("  %s  %s\n", fg(D, "📂 resume:"), fg(C, lastSess))
+	}
+
+	// ── lineedit with history + ↑↓, Scanner fallback ──
+	histPath := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "input_history")
+	cwd, _ := os.Getwd()
+	ed := lineedit.NewEditor(fg(C+B, "▸")+" ", histPath, cwd)
+
 	history := make([]string, 0, 100)
-	sc := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Printf("\n%s ", fg(C+B, "▸"))
-		if !sc.Scan() { onChatExit(); break }
-		text := strings.TrimSpace(sc.Text())
+		line, err := ed.ReadLine()
+		if err == io.EOF || err != nil { onChatExit(); return nil }
+		text := strings.TrimSpace(line)
 		if text == "" { continue }
 
 		if len(history) == 0 || history[len(history)-1] != text {
-			history = append(history, text); if len(history) > 100 { history = history[1:] }
+			history = append(history, text)
+			if len(history) > 100 { history = history[1:] }
 		}
 
 		switch {
@@ -256,7 +268,6 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("\n%s\n", fg(B+C, text))
 		ctrl.Run(context.Background(), text); fmt.Print("\n")
 	}
-	return nil
 }
 
 // ── Drawing ────────────────────────────────────────────────
@@ -440,4 +451,19 @@ func truncProb(s string, n int) string { if len(s) <= n { return s }; return s[:
 func truncReasonBlock(s string, n int) string {
 	if len(s) <= n { return s }
 	return s[:n-3] + "…"
+}
+
+// ── session helpers ───────────────────────────────────────
+
+func loadLastSession(dir string) string {
+	data, err := os.ReadFile(filepath.Join(dir, ".last_session"))
+	if err != nil { return "" }
+	name := strings.TrimSpace(string(data))
+	if _, err := os.Stat(filepath.Join(dir, name)); err == nil { return name }
+	return ""
+}
+
+func saveLastSession(dir, filename string) {
+	os.MkdirAll(dir, 0700)
+	os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filename), 0600)
 }
