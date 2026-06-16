@@ -179,6 +179,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	for {
 		fmt.Printf("%s ", a(ansiCyan+ansiBold, ">"))
 		if !sc.Scan() {
+			onChatExit()
 			break
 		}
 		text := strings.TrimSpace(sc.Text())
@@ -189,6 +190,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		// Commands
 		switch {
 		case text == "/exit" || text == "/quit":
+			onChatExit()
 			return nil
 		case text == "/help":
 			fmt.Printf("\n%s\n\n", a(ansiDim, "  /exit  /help  /mode  /models  /model <name>  /feedback  /analytics"))
@@ -233,6 +235,33 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			fmt.Printf("  %s\n\n", a(ansiCyan, shareFile))
 			fmt.Printf("  %s\n", a(ansiDim, "Send this file to the Lumen team — no personal data inside."))
 			fmt.Printf("  %s\n\n", a(ansiDim, "You can also paste it into a GitHub Issue or email."))
+			continue
+		case text == "/uplink" || strings.HasPrefix(text, "/uplink "):
+			cfg := telemetry.LoadUploadConfig()
+			parts := strings.Fields(text)
+			if len(parts) == 1 {
+				status := "OFF"
+				if cfg.Enabled { status = "ON" }
+				fmt.Printf("\n  %s\n", a(ansiBold, "Uplink: "+status))
+				fmt.Printf("  %s\n", a(ansiDim, "Auto-sends usage reports to GitHub Issues on exit."))
+				fmt.Printf("  %s\n", a(ansiDim, "/uplink on  — enable auto-upload"))
+				fmt.Printf("  %s\n", a(ansiDim, "/uplink off — disable"))
+				fmt.Printf("  %s\n\n", a(ansiDim, "Requires: export GITHUB_TOKEN=ghp_..."))
+				continue
+			}
+			switch parts[1] {
+			case "on":
+				cfg.Enabled = true
+				telemetry.SaveUploadConfig(cfg)
+				fmt.Printf("\n  %s\n", a(ansiGreen, "Uplink ON — reports will be sent to GitHub on exit."))
+				fmt.Printf("  %s\n\n", a(ansiDim, "Make sure GITHUB_TOKEN is set in your environment."))
+			case "off":
+				cfg.Enabled = false
+				telemetry.SaveUploadConfig(cfg)
+				fmt.Printf("\n  %s\n\n", a(ansiDim, "Uplink OFF — no reports will be sent."))
+			default:
+				fmt.Printf("\n  %s\n\n", a(ansiDim, "Usage: /uplink on | /uplink off"))
+			}
 			continue
 		case text == "/analytics":
 			a := telemetry.NewAnalyzer()
@@ -288,4 +317,17 @@ func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "|---", "")
 	s = strings.ReplaceAll(s, "| ", "  ")
 	return s
+}
+
+// ── Auto-upload on exit ──────────────────────────────────
+
+func onChatExit() {
+	url, err := telemetry.MaybeUpload()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  %s: %v\n\n", a(ansiDim, "upload skipped"), err)
+		return
+	}
+	if url != "" {
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n\n", a(ansiGreen, "report sent"), a(ansiCyan, url))
+	}
 }
