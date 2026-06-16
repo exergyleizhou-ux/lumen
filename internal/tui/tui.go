@@ -643,11 +643,7 @@ func (m *Model) renderStatus(w int) string {
 		case "ok":
 			verifyPart = green.Render("✓ verified")
 		case "fail":
-			detail := m.status.verifyDetail
-			if len(detail) > 40 {
-				detail = detail[:37] + "…"
-			}
-			verifyPart = red.Render("✗ " + detail)
+			verifyPart = red.Render("✗ " + trunc(m.status.verifyDetail, 40))
 		}
 		if verifyPart != "" {
 			rightParts = append(rightParts, verifyPart)
@@ -655,8 +651,18 @@ func (m *Model) renderStatus(w int) string {
 	}
 	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render(stepPart))
 
+	// Join the right-side segments with a single space between each (restores the
+	// spacing the original explicit " " separators provided).
+	spaced := make([]string, 0, len(rightParts)*2)
+	for i, p := range rightParts {
+		if i > 0 {
+			spaced = append(spaced, " ")
+		}
+		spaced = append(spaced, p)
+	}
+
 	left := lipgloss.JoinHorizontal(lipgloss.Center, modePart, " ", dim.Render(modelPart))
-	right := lipgloss.JoinHorizontal(lipgloss.Center, rightParts...)
+	right := lipgloss.JoinHorizontal(lipgloss.Center, spaced...)
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)

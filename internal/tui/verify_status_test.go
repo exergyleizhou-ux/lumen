@@ -1,6 +1,25 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+// TestRenderStatusSegmentsSpaced guards against the right-side status segments
+// being glued together (regression: JoinHorizontal without separators).
+func TestRenderStatusSegmentsSpaced(t *testing.T) {
+	m := NewModel()
+	m.Update(StatusMsg{Model: "deepseek-chat", Provider: "deepseek", Mode: "default"})
+	m.Update(VerifyMsg{State: "ok"})
+	out := m.renderStatus(120)
+	// The cache "♻" and verify "✓ verified" must not be directly adjacent.
+	if strings.Contains(out, "%✓") || strings.Contains(out, "verified⚙") {
+		t.Errorf("status segments are glued (missing separators):\n%q", out)
+	}
+	if !strings.Contains(out, "✓ verified") {
+		t.Errorf("verify segment missing: %q", out)
+	}
+}
 
 func TestVerifyMsgUpdatesStatusBar(t *testing.T) {
 	m := NewModel()
