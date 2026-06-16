@@ -629,13 +629,34 @@ func (m *Model) renderStatus(w int) string {
 		stepPart = spinners[m.spinnerTick%len(spinners)] + " thinking…"
 	}
 
+	// Verify segment (P2-1b): inserted between cost and step, only when active.
+	var rightParts []string
+	rightParts = append(rightParts, cyan.Render(tokensPart), green.Render(cachePart),
+		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(costPart))
+
+	vs := m.status.verifyState
+	if vs != "" {
+		var verifyPart string
+		switch vs {
+		case "running":
+			verifyPart = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render("⟳ verifying…")
+		case "ok":
+			verifyPart = green.Render("✓ verified")
+		case "fail":
+			detail := m.status.verifyDetail
+			if len(detail) > 40 {
+				detail = detail[:37] + "…"
+			}
+			verifyPart = red.Render("✗ " + detail)
+		}
+		if verifyPart != "" {
+			rightParts = append(rightParts, verifyPart)
+		}
+	}
+	rightParts = append(rightParts, lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render(stepPart))
+
 	left := lipgloss.JoinHorizontal(lipgloss.Center, modePart, " ", dim.Render(modelPart))
-	right := lipgloss.JoinHorizontal(lipgloss.Center,
-		cyan.Render(tokensPart), " ",
-		green.Render(cachePart), " ",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Render(costPart), " ",
-		lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Render(stepPart),
-	)
+	right := lipgloss.JoinHorizontal(lipgloss.Center, rightParts...)
 
 	leftW := lipgloss.Width(left)
 	rightW := lipgloss.Width(right)
