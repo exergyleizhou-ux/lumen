@@ -33,6 +33,7 @@ type liveStats struct {
 func (s *liveStats) addCost(v float64) { s.costU.Add(int64(v * 1_000_000)) }
 func (s *liveStats) cost() float64     { return float64(s.costU.Load()) / 1_000_000 }
 var st = &liveStats{}
+var currentCtrl *control.Controller // set by runChatUI, used by onChatExit to save session
 
 // ── color / display helpers ───────────────────────────────
 
@@ -213,6 +214,8 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	if err := ctrl.Configure(termSink(), nil, ""); err != nil {
 		return err
 	}
+	currentCtrl = ctrl
+	defer func() { currentCtrl = nil }()
 	if modeOverride != "" { ctrl.SetPermissionMode(permission.ParseMode(modeOverride)) }
 
 	drawBanner(ctrl)
@@ -222,10 +225,9 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("  %s\n", fg(D, fmt.Sprintf("🧠 %d context file(s) loaded", len(memories))))
 	}
 
-	// ── Session resume ──
-	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
-	if lastSess := loadLastSession(histDir); lastSess != "" {
-		fmt.Printf("  %s  %s\n", fg(D, "📂 resume:"), fg(C, lastSess))
+	// ── Session resume — handled by Configure, just show info ──
+	if sess := ctrl.Session(); sess != nil && sess.Len() > 0 {
+		fmt.Printf("  %s  %s\n", fg(D, "📂 resumed:"), fg(C, fmt.Sprintf("%d messages", sess.Len())))
 	}
 
 	// ── lineedit: full cursor movement, insert anywhere, ↑↓ history ──
@@ -410,6 +412,10 @@ func drawUplink(text string) {
 }
 
 func onChatExit() {
+	// Save session mark for next startup resume
+	if ctrl := currentCtrl; ctrl != nil {
+		ctrl.SaveMark()
+	}
 	url, err := telemetry.MaybeUpload()
 	if err != nil { fmt.Fprintf(os.Stderr, "\n  %s\n", fg(D, "☁️ upload: "+err.Error())); return }
 	if url != "" { fmt.Fprintf(os.Stderr, "\n  %s %s\n", fg(G, "☁️ report sent"), fg(C, url)) }

@@ -10,7 +10,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"lumen/internal/agent"
 	"lumen/internal/checkpoint"
@@ -53,9 +55,10 @@ type Controller struct {
 	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
 
 	// Agent (created by Configure)
-	ag   *agent.Agent
-	sess *agent.Session
-	cp   *checkpoint.Store
+	ag      *agent.Agent
+	sess    *agent.Session
+	sessPath string // JSONL path for persistence
+	cp      *checkpoint.Store
 	jm   *jobs.Manager
 	tl   *timeline.Recorder // session timeline for replay + change inbox
 
@@ -180,8 +183,23 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		sink = tlSink
 	}
 
-	// 9. Create session
-	c.sess = agent.NewSession("")
+	// 9. Create session — auto-resume from last session or start fresh.
+	// Sessions live in ~/.lumen/history/ as JSONL files.
+	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	os.MkdirAll(histDir, 0700)
+	sessPath := filepath.Join(histDir, time.Now().Format("2006-01-02-150405")+".jsonl")
+
+	// Check for resume: if .last_session points to a writable file, use it
+	lastBytes, _ := os.ReadFile(filepath.Join(histDir, ".last_session"))
+	lastName := strings.TrimSpace(string(lastBytes))
+	if lastName != "" {
+		candidate := filepath.Join(histDir, lastName)
+		if _, err := os.Stat(candidate); err == nil {
+			sessPath = candidate // reuse existing session
+		}
+	}
+	c.sessPath = sessPath
+	c.sess = agent.NewSession(sessPath)
 
 	// 10. Create agent
 	c.ag = agent.New(prov, reg, c.sess, agent.Options{
@@ -251,6 +269,16 @@ func (c *Controller) SetSink(s event.Sink) {
 	if c.ag != nil {
 		c.ag.SetSink(s)
 	}
+}
+
+// SaveMark writes .last_session so the next run resumes from this conversation.
+func (c *Controller) SaveMark() {
+	if c.sessPath == "" {
+		return
+	}
+	dir := filepath.Dir(c.sessPath)
+	os.MkdirAll(dir, 0700)
+	os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filepath.Base(c.sessPath)), 0600)
 }
 
 // ProviderName returns the active provider instance name.
