@@ -7,6 +7,7 @@ package control
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -46,9 +47,10 @@ type Controller struct {
 	fallbacks  []provider.Provider // for failover
 	reg        *tool.Registry
 	skillStore *skill.Store
-	permMode   permission.Mode
-	sink       event.Sink
-	asker      agent.Asker
+	permMode    permission.Mode
+	sink        event.Sink
+	asker       agent.Asker
+	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
 
 	// Agent (created by Configure)
 	ag   *agent.Agent
@@ -144,8 +146,13 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	// 5. Resolve permission mode
 	c.permMode = permission.ParseMode(cfg.Permissions.Mode)
 
-	// 6. Build permission gate
-	gate := permission.NewGate(c.permMode, nil)
+	// 6. Build permission gate (auto-approve in terminal mode — guard.CheckBash
+	// still blocks known-dangerous patterns regardless)
+	autoApprove := func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+		return true, nil
+	}
+	gate := permission.NewGate(c.permMode, autoApprove)
+	c.autoApprove = autoApprove
 
 	// 7. Wire sub-agent dependencies (shared by run_skill and task tools)
 	c.subDeps = agent.SubagentDeps{
@@ -265,7 +272,7 @@ func (c *Controller) Skills() *skill.Store { return c.skillStore }
 func (c *Controller) SetPermissionMode(m permission.Mode) {
 	c.permMode = m
 	if c.ag != nil {
-		c.ag.SetGate(permission.NewGate(m, nil))
+		c.ag.SetGate(permission.NewGate(m, c.autoApprove))
 	}
 }
 
