@@ -24,8 +24,15 @@ func (r *scriptedRunner) Run(ctx context.Context, step Step) (string, bool) {
 }
 
 func TestVerify_AllPass(t *testing.T) {
+	// Real root with the changed file's package dir present, so the same-module
+	// filter keeps it and a test step is produced.
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "go.mod"), "module testmod\n\ngo 1.21\n")
+	os.MkdirAll(filepath.Join(root, "foo"), 0o755)
+	mustWrite(t, filepath.Join(root, "foo", "bar.go"), "package foo\n")
+
 	r := &scriptedRunner{failStep: ""}
-	v := New("/root", DefaultConfig())
+	v := New(root, DefaultConfig())
 	v.run = r
 	res := v.Verify(context.Background(), []string{"foo/bar.go"})
 	if !res.OK {

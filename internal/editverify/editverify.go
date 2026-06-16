@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // maxOutputBytes caps how much raw command output we retain/feed back.
@@ -104,7 +105,7 @@ func New(root string, cfg Config) *Verifier {
 // order, stopping at the first failure and returning its parsed diagnostics
 // (Parse). Returns OK when every step succeeds.
 func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
-	rel := relativizePaths(v.root, changed)
+	rel := v.sameModulePaths(relativizePaths(v.root, changed))
 	for _, step := range Detect(v.root, rel, v.cfg) {
 		out, ok := v.run.Run(ctx, step)
 		if !ok {
@@ -118,6 +119,46 @@ func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
 		}
 	}
 	return Result{OK: true}
+}
+
+// sameModulePaths filters the (root-relative) changed paths down to those that
+// can become a valid `go test ./<dir>` target for root's module. It drops .go
+// files whose directory: escapes root (".." / absolute), no longer exists
+// (deleted), or belongs to a NESTED module (a go.mod between root and the file).
+// Non-.go paths pass through (Detect ignores them for the test step). This keeps
+// monorepo/nested-module/deleted-file changes from producing a spurious test
+// failure that the model would then try to "fix".
+func (v *Verifier) sameModulePaths(rel []string) []string {
+	out := make([]string, 0, len(rel))
+	for _, p := range rel {
+		if !strings.HasSuffix(p, ".go") {
+			out = append(out, p)
+			continue
+		}
+		if filepath.IsAbs(p) || strings.HasPrefix(p, "..") {
+			continue // escapes root
+		}
+		dir := filepath.Dir(p)
+		if fi, err := os.Stat(filepath.Join(v.root, dir)); err != nil || !fi.IsDir() {
+			continue // dir gone (e.g. file deleted)
+		}
+		if v.hasNestedGoMod(dir) {
+			continue // different module — can't `go test ./dir` from root
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+// hasNestedGoMod reports whether any directory from dir up to (but excluding)
+// root contains a go.mod — i.e. dir lives in a nested module, not root's.
+func (v *Verifier) hasNestedGoMod(dir string) bool {
+	for cur := dir; cur != "." && cur != "" && cur != string(filepath.Separator); cur = filepath.Dir(cur) {
+		if _, err := os.Stat(filepath.Join(v.root, cur, "go.mod")); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // relativizePaths converts absolute changed-file paths to paths relative to root
