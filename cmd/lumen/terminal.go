@@ -55,17 +55,19 @@ func red(s string) string         { return color(s, "\033[31m") }
 func yellow(s string) string      { return color(s, "\033[33m") }
 
 // ── Sink: colour-coded output ──────────────────────────────
+//
+// In chat mode, all agent output goes to stderr so the line editor's
+// stdout cursor management is never disturbed. Run mode shares the same
+// sink but prints to stdout directly (no line editor to clash with).
 
 func termSink() event.Sink {
 	thinking := false
 	textStarted := false
 	textLen := 0
 	truncated := false
-	const maxOutput = 24 * 1024 // per-turn rendered-text cap
+	const maxOutput = 24 * 1024
 
-	// rstream renders streamed markdown line-by-line (rich prose + highlighted
-	// code fences). Recreated each turn. Indented to match the chat gutter.
-	rstream := render.NewStream(os.Stdout)
+	rstream := render.NewStream(os.Stderr)
 	rstream.Indent = "  "
 
 	return event.FuncSink(func(e event.Event) {
@@ -76,19 +78,19 @@ func termSink() event.Sink {
 			textLen = 0
 			truncated = false
 			stats.step.Store(0)
-			rstream = render.NewStream(os.Stdout)
+			rstream = render.NewStream(os.Stderr)
 			rstream.Indent = "  "
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				fmt.Fprint(os.Stdout, italic(dim(stripMD(e.Text))))
+				fmt.Fprint(os.Stderr, italic(dim(render.Markdown(e.Text))))
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false
 				textStarted = true
-				fmt.Print("\n")
+				fmt.Fprint(os.Stderr, "\n")
 			}
 			if textLen >= maxOutput {
 				if !truncated {
@@ -107,15 +109,15 @@ func termSink() event.Sink {
 			rstream.Flush()
 			stats.tools.Add(1)
 			sn := stats.step.Add(1)
-			fmt.Printf("\n  %s  %s", cyan(fmt.Sprintf("[%d]", sn)), dim(yellow("⚡ "+e.Tool.Name)))
+			fmt.Fprintf(os.Stderr, "\n  %s  %s", cyan(fmt.Sprintf("[%d]", sn)), dim(yellow("⚡ "+e.Tool.Name)))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
-				fmt.Printf("  %s\n", red("✗ "+e.Tool.Err))
+				fmt.Fprintf(os.Stderr, "  %s\n", red("✗ "+e.Tool.Err))
 			} else if e.Tool.Blocked {
-				fmt.Printf("  %s\n", dim("⊘ blocked"))
+				fmt.Fprintf(os.Stderr, "  %s\n", dim("⊘ blocked"))
 			} else {
-				fmt.Printf("  %s\n", green("✓"))
+				fmt.Fprintf(os.Stderr, "  %s\n", green("✓"))
 			}
 
 		case event.UsageKind:
@@ -128,9 +130,9 @@ func termSink() event.Sink {
 			}
 
 		case event.FilePreview:
-			fmt.Printf("\n%s\n", cyan("── Preview ──────────────────────────────"))
-			fmt.Print(e.DiffText)
-			fmt.Printf("%s\n", cyan("──────────────────────────────────────────"))
+			fmt.Fprintf(os.Stderr, "\n%s\n", cyan("── Preview ──────────────────────────────"))
+			fmt.Fprint(os.Stderr, e.DiffText)
+			fmt.Fprintf(os.Stderr, "%s\n", cyan("──────────────────────────────────────────"))
 
 		case event.TurnDone:
 			rstream.Flush()
@@ -241,31 +243,6 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 
 // ── ANSI helpers ───────────────────────────────────────────
 // Already above; only bold/dim/cyan/green/red/yellow/white are needed.
-
-// ── Markdown stripper ──────────────────────────────────────
-
-func stripMD(s string) string {
-	s = strings.ReplaceAll(s, "**", "")
-	s = strings.ReplaceAll(s, "__", "")
-	s = strings.ReplaceAll(s, "`", "")
-	s = strings.ReplaceAll(s, "####", "")
-	s = strings.ReplaceAll(s, "###", "")
-	s = strings.ReplaceAll(s, "##", "")
-	lines := strings.Split(s, "\n")
-	var clean []string
-	for _, l := range lines {
-		for strings.HasPrefix(l, "#") {
-			l = strings.TrimPrefix(l, "#")
-			l = strings.TrimPrefix(l, " ")
-		}
-		clean = append(clean, l)
-	}
-	s = strings.Join(clean, "\n")
-	s = strings.ReplaceAll(s, "*", "")
-	s = strings.ReplaceAll(s, "|---", "")
-	s = strings.ReplaceAll(s, "| ", "  ")
-	return s
-}
 
 // ── Session recovery ──────────────────────────────────────
 
