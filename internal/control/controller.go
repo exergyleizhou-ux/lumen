@@ -17,6 +17,7 @@ import (
 	"lumen/internal/agent"
 	"lumen/internal/checkpoint"
 	"lumen/internal/config"
+	"lumen/internal/editverify"
 	"lumen/internal/event"
 	"lumen/internal/jobs"
 	"lumen/internal/permission"
@@ -216,6 +217,25 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	c.ag.SetCheckpoint(c.cp)
 	c.jm = jobs.NewManager()
 	c.ag.SetJobs(c.jm)
+
+	// 12. Verify-after-edit (C-5): after a writer batch the agent auto-runs
+	// build/vet/test and feeds failures back for self-repair. Config from
+	// lumen.toml [verify]; disabled config leaves the loop fully inert.
+	verifyCfg := editverify.DefaultConfig()
+	if p := config.FindConfig(); p != "" {
+		if raw, err := os.ReadFile(p); err == nil {
+			if vc, err := editverify.ConfigFromTOML(raw); err == nil {
+				verifyCfg = vc
+			}
+		}
+	}
+	// MVP is Go-only: only activate when the working dir is a Go module, so the
+	// loop never misfires `go build` in a non-Go project.
+	if verifyCfg.Enabled {
+		if _, err := os.Stat(filepath.Join(wd, "go.mod")); err == nil {
+			c.ag.SetVerifier(editverify.New(wd, verifyCfg), verifyCfg)
+		}
+	}
 
 	return nil
 }

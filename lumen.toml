@@ -10,3 +10,13 @@ api_key = "sk-fa1d1f4db91d48e5b9b33d5375f85e5d"
 [agent]
 max_steps = 30
 temperature = 0.7
+
+# Verify-after-edit: after the agent edits files it auto-runs build/vet/test and
+# feeds failures back to the model to self-repair. Go projects only (activates
+# when a go.mod is present). Values below are the defaults.
+[verify]
+enabled = true             # master switch
+command = ""               # override the whole plan; empty = auto-detect (go build/vet/test)
+scope = "changed-pkg"      # "changed-pkg" = test only changed packages; "all" = go test ./...
+run_tests = true           # run tests (build+vet still run if false)
+max_repair_cycles = 3      # self-repair attempts before handing back to you

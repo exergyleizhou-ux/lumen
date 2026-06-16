@@ -103,6 +103,10 @@ All checks passed.
   Moonshot, Qwen, Zhipu, Mimo. 26 presets across 9 providers.
 - 📋 **Plan Mode** — Read-only exploration → structured plan → review → execute. Cache-stable
   sessions prevent token waste on plan revision.
+- ✅ **Verify-after-edit** — After editing code, Lumen auto-runs `go build`/`go vet`/`go test`
+  (changed packages) and feeds any failures back to the model to **self-repair** — up to a
+  configurable cycle cap, then hands back to you. Go projects only; tune via `[verify]` in
+  `lumen.toml`.
 
 ### Advanced
 
