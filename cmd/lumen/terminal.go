@@ -598,6 +598,17 @@ func tuiSink(model *tui.Model) event.Sink {
 		case event.TurnStarted:
 			textBuf.Reset(); step = 0
 			model.Send(tui.StatusMsg{State: "thinking"})
+			model.Send(tui.VerifyMsg{State: ""}) // clear last turn's verify indicator
+
+		case event.VerifyStarted:
+			model.Send(tui.VerifyMsg{State: "running"})
+
+		case event.VerifyResult:
+			vs := "ok"
+			if e.Level == event.LevelWarn || e.Level == event.LevelErr {
+				vs = "fail"
+			}
+			model.Send(tui.VerifyMsg{State: vs, Detail: e.Text})
 
 		case event.Text:
 			textBuf.WriteString(e.Text)

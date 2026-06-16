@@ -125,6 +125,15 @@ type StatusMsg struct {
 	State      string // "thinking", "running", "idle", "error"
 }
 
+// VerifyMsg updates the verify-after-edit indicator in the status bar. It is a
+// separate message from StatusMsg so partial verify updates never clobber the
+// rest of the bar. State is "running" | "ok" | "fail" ("" clears it); Detail is
+// a short human summary used for the "fail" state, e.g. "build failed (2)".
+type VerifyMsg struct {
+	State  string
+	Detail string
+}
+
 // ── Entry types ────────────────────────────────────────────
 
 // ChatEntry is one visible line/block in the chat panel.
@@ -201,6 +210,9 @@ type DiffPanel struct {
 // StatusBar holds live status.
 type StatusBar struct {
 	status StatusMsg
+	// verify-after-edit indicator, fed by VerifyMsg (independent of status).
+	verifyState  string // "" | "running" | "ok" | "fail"
+	verifyDetail string
 }
 
 // ── Constructor ────────────────────────────────────────────
@@ -260,6 +272,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenMsgs(m.msgChan)
 	case StatusMsg:
 		m.status.status = msg
+
+	case VerifyMsg:
+		m.status.verifyState = msg.State
+		m.status.verifyDetail = msg.Detail
 		return m, listenMsgs(m.msgChan)
 	case spinnerTick:
 		m.spinnerTick++
