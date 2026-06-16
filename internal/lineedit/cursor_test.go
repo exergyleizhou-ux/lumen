@@ -154,12 +154,16 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 
 	result := out.String()
 
-	// Must contain per-line clears: \x1b[K then \x1b[B\x1b[K for the second row
-	if !strings.Contains(result, "\x1b[K") {
-		t.Fatalf("multi-line redraw missing line clear: %q", result)
+	// Must contain \x1b[J (clear from saved position to end of screen)
+	if !strings.Contains(result, "\x1b[J") {
+		t.Fatalf("multi-line redraw missing \x1b[J: %q", result)
 	}
-	if !strings.Contains(result, "\x1b[B") {
-		t.Fatalf("multi-line redraw missing cursor-down: %q", result)
+	// Must contain \x1b7 and \x1b8 (save/restore cursor)
+	if !strings.Contains(result, "\x1b7") {
+		t.Fatal("multi-line redraw missing save-cursor")
+	}
+	if !strings.Contains(result, "\x1b8") {
+		t.Fatal("multi-line redraw missing restore-cursor")
 	}
 	// Must still contain the full text
 	if !strings.Contains(result, longText) {
@@ -248,4 +252,147 @@ func TestDecodeX10Mouse(t *testing.T) {
 		t.Errorf("incomplete X10: consumed=%d, want 0", consumed2)
 	}
 	_ = ev2
+}
+
+// TestStressMultiLineTypeDelete simulates a real typing session:
+// type a lot → text wraps → backspace some → insert in middle → arrow around
+func TestStressMultiLineTypeDelete(t *testing.T) {
+	e := NewEditor("▸ ", "", ".")
+	e.buf.clear()
+	var out bytes.Buffer
+	e.out = &out
+
+	// Phase 1: Type 3 lines of text
+	long := strings.Repeat("abc", 50) // 150 chars → ~3 lines at 80 cols
+	for _, r := range long {
+		e.buf.insert(r)
+	}
+	if e.buf.pos != len([]rune(long)) {
+		t.Fatalf("after typing: pos=%d want %d", e.buf.pos, len([]rune(long)))
+	}
+	e.redraw()
+	result := out.String()
+	if !strings.Contains(result, long) {
+		t.Fatal("typing output lost text")
+	}
+	// Must contain \x1b[J (clear) and \x1b7/\x1b8 (save/restore)
+	if !strings.Contains(result, "\x1b[J") {
+		t.Fatal("multi-line type missing \x1b[J")
+	}
+
+	// Phase 2: Backspace 10 times — should not leave ghost text
+	out.Reset()
+	for i := 0; i < 10; i++ {
+		e.buf.backspace()
+	}
+	e.redraw()
+	result2 := out.String()
+	expected := long[:len([]rune(long))-10]
+	if !strings.Contains(result2, expected) {
+		t.Fatal("backspace output lost text")
+	}
+	// Verify old longer text is NOT in the output
+	if strings.Contains(result2, long) {
+		t.Fatal("backspace left ghost text from previous render")
+	}
+
+	// Phase 3: Move cursor to middle, insert 5 chars
+	out.Reset()
+	for i := 0; i < 50; i++ {
+		e.buf.left()
+	}
+	for _, r := range "INSERT" {
+		e.buf.insert(r)
+	}
+	e.redraw()
+	result3 := out.String()
+	if !strings.Contains(result3, "INSERT") {
+		t.Fatal("insert-in-middle output lost INSERT text")
+	}
+
+	// Phase 4: Delete some chars forward
+	out.Reset()
+	for i := 0; i < 3; i++ {
+		e.buf.deleteFwd()
+	}
+	e.redraw()
+	result4 := out.String()
+	// Must still be valid text
+	if strings.Count(result4, "▸ ") > 1 {
+		t.Fatal("redraw duplicated prompt")
+	}
+
+	// Phase 5: Clear and type a short line — must not leave old multi-line ghost
+	out.Reset()
+	e.buf.clear()
+	e.buf.insertString("short")
+	e.redraw()
+	result5 := out.String()
+	if strings.Contains(result5, "abc") {
+		t.Fatal("after clear, old multi-line text still visible")
+	}
+	if !strings.Contains(result5, "short") {
+		t.Fatal("after clear, new text not shown")
+	}
+}
+
+// TestShrinkMultiLine verifies that when text shrinks from 3 lines to 1,
+// old ghost lines are cleared (the key scenario \x1b[J fixes).
+func TestShrinkMultiLine(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	var out bytes.Buffer
+	e.out = &out
+
+	// Phase 1: 3 lines of text
+	e.buf.insertString(strings.Repeat("x", 200)) // ~3 lines at 80 cols
+	e.redraw()
+	out.Reset()
+
+	// Phase 2: shrink to 1 line
+	e.buf.clear()
+	e.buf.insertString("hi")
+	e.redraw()
+	result := out.String()
+
+	// Must contain "hi"
+	if !strings.Contains(result, "hi") {
+		t.Fatal("shrink lost new text")
+	}
+	// Must NOT contain "xxx" from previous render
+	if strings.Contains(result, "xxx") {
+		t.Fatalf("shrink left ghost text: %q", result)
+	}
+	// Must contain \x1b[J (the fix)
+	if !strings.Contains(result, "\x1b[J") {
+		t.Fatal("shrink missing clear-screen")
+	}
+}
+
+// TestGrowMultiLine verifies that when text grows from 1 line to 3,
+// the entire new text is visible and no truncation happens.
+func TestGrowMultiLine(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	var out bytes.Buffer
+	e.out = &out
+
+	// Phase 1: 1 line
+	e.buf.insertString("short")
+	e.redraw()
+	out.Reset()
+
+	// Phase 2: grow to 3 lines
+	e.buf.clear()
+	longer := strings.Repeat("abcdefghij", 20) // 200 chars
+	e.buf.insertString(longer)
+	e.redraw()
+	result := out.String()
+
+	if !strings.Contains(result, longer) {
+		t.Fatal("grow lost text content")
+	}
+	if !strings.Contains(result, "\x1b[J") {
+		t.Fatal("grow missing clear-screen")
+	}
 }

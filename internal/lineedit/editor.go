@@ -265,43 +265,34 @@ func (e *Editor) redraw() {
 		termW = w
 	}
 
-	// Step 0: save cursor. After clearing + writing, we restore to
-	// this exact spot and only move right for the correct column.
-	io.WriteString(e.out, "\x1b7") // DECSC — save cursor
+	// 1. Save cursor position (the "anchor" — top-left of our buffer area).
+	io.WriteString(e.out, "\x1b7")
 
-	// Step 1: clear lastRows downward from saved position.
-	// \x1b[K = clear current line, \x1b[B = down one line.
-	for i := 0; i < e.lastRows; i++ {
-		io.WriteString(e.out, "\x1b[K")
-		if i < e.lastRows-1 {
-			io.WriteString(e.out, "\x1b[B")
-		}
-	}
+	// 2. Clear from anchor to end of screen — wipes ALL old text regardless
+	//    of how many rows the previous render occupied. No row counting needed.
+	io.WriteString(e.out, "\x1b[J")
 
-	// Step 2: restore cursor to the clear-start position.
-	io.WriteString(e.out, "\x1b8") // DECRC — restore cursor
+	// 3. Restore cursor to anchor.
+	io.WriteString(e.out, "\x1b8")
 
-	// Step 3: write prompt + full buffer (may auto-wrap).
-	prompt := e.prompt
+	// 4. Write prompt + full buffer (auto-wrap is fine — we don't track rows).
 	text := e.buf.string()
-	io.WriteString(e.out, prompt)
+	io.WriteString(e.out, e.prompt)
 	io.WriteString(e.out, text)
 
-	// Step 4: compute column offset for cursor within the buffer.
-	prefix := string(e.buf.runes[:e.buf.pos])
-	prefixWidth := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
-
-	// Step 5: jump back to saved position + move right to cursor column.
+	// 5. Move cursor to correct position: back to anchor, then right.
+	prefixWidth := runewidth.StringWidth(e.prompt) + runewidth.StringWidth(string(e.buf.runes[:e.buf.pos]))
 	io.WriteString(e.out, "\x1b8")
 	if prefixWidth > 0 {
 		fmt.Fprintf(e.out, "\x1b[%dC", prefixWidth)
 	}
 
-	// Step 6: remember how many rows we just wrote (for next redraw's clear).
-	promptWidth := runewidth.StringWidth(prompt)
-	totalWidth := promptWidth + runewidth.StringWidth(text)
-	if termW > 0 && totalWidth > 0 {
-		e.lastRows = (totalWidth + termW - 1) / termW
+	// 6. Compute lastRows for clickToPos. [J handles clearing so this
+	//    is only used for mouse-click row-to-position arithmetic.
+	e.lastRows = 1
+	if termW > 0 {
+		w := runewidth.StringWidth(e.prompt) + runewidth.StringWidth(text)
+		e.lastRows = (w + termW - 1) / termW
 	}
 	if e.lastRows < 1 {
 		e.lastRows = 1
