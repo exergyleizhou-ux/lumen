@@ -12,6 +12,7 @@ import (
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/telemetry"
 )
 
 // ── live stats ────────────────────────────────────────────
@@ -41,7 +42,7 @@ const ansiWhite  = "\033[97m"
 
 func a(code, s string) string { return code + s + ansiReset }
 
-// ── Sink: Reasonix-style output ────────────────────────────
+// ── Sink: Reasonix-style output + auto-telemetry ──────────
 
 func termSink() event.Sink {
 	thinking := false
@@ -49,6 +50,7 @@ func termSink() event.Sink {
 	textLen := 0
 	truncated := false
 	const maxOutput = 32 * 1024
+	tel := telemetry.NewCollector()
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
@@ -59,6 +61,7 @@ func termSink() event.Sink {
 			textLen = 0
 			truncated = false
 			stats.step.Store(0)
+			tel.Record(telemetry.EventSessionStart, map[string]any{})
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -87,12 +90,14 @@ func termSink() event.Sink {
 			thinking = false
 			textStarted = true
 			sn := stats.step.Add(1)
+			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
 			fmt.Fprintf(os.Stdout, "\n  %s  %s ",
 				a(ansiCyan, fmt.Sprintf("[%d]", sn)),
 				e.Tool.Name)
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
+				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
 				fmt.Fprintf(os.Stdout, "  %s\n", a(ansiRed, "x "+e.Tool.Err))
 			} else if e.Tool.Blocked {
 				fmt.Fprintf(os.Stdout, "  %s\n", a(ansiDim, "blocked"))
@@ -102,6 +107,11 @@ func termSink() event.Sink {
 
 		case event.UsageKind:
 			if e.Usage != nil {
+				tel.Record(telemetry.EventModelCall, map[string]any{
+					"tokens_in":  e.Usage.PromptTokens,
+					"tokens_out": e.Usage.CompletionTokens,
+					"total":      e.Usage.TotalTokens,
+				})
 				stats.tkIn.Store(int64(e.Usage.PromptTokens))
 				stats.tkOut.Store(int64(e.Usage.CompletionTokens))
 				stats.tkCache.Store(int64(e.Usage.CacheHitTokens))
@@ -180,7 +190,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		case text == "/exit" || text == "/quit":
 			return nil
 		case text == "/help":
-			fmt.Printf("\n%s\n\n", a(ansiDim, "  /exit  /help  /mode  /models  /model <name>"))
+			fmt.Printf("\n%s\n\n", a(ansiDim, "  /exit  /help  /mode  /models  /model <name>  /feedback  /analytics"))
 			continue
 		case text == "/mode":
 			fmt.Printf("\n%s\n\n", a(ansiDim, "  bypass  plan  default  accept-edits"))
@@ -201,6 +211,21 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			} else {
 				fmt.Printf("\n  %s\n\n", a(ansiBold+ansiGreen, "switched to "+newName))
 			}
+			continue
+		case text == "/feedback" || strings.HasPrefix(text, "/feedback "):
+			parts := strings.Fields(text)
+			msg := ""
+			if len(parts) > 1 {
+				msg = strings.Join(parts[1:], " ")
+			}
+			fs := telemetry.NewFeedbackStore()
+			fs.Submit("text", msg, "chat: "+text, "")
+			fmt.Printf("\n  %s\n\n", a(ansiGreen, "feedback recorded. thank you!"))
+			continue
+		case text == "/analytics":
+			a := telemetry.NewAnalyzer()
+			report := a.Analyze("week")
+			fmt.Printf("\n%s\n", telemetry.FormatReport(report))
 			continue
 		}
 

@@ -1,198 +1,299 @@
-// Package telemetry collects and reports anonymized usage telemetry:
-// turn counts, token usage, tool call frequency, cache hit rates, and
-// session duration. All data is local-only unless explicitly opted in.
-// Adapted from claw-code's telemetry crate.
+// Package telemetry provides anonymous, local-first usage analytics for
+// Lumen. Records tool calls, model usage, sessions, errors, and user
+// feedback. All data stays on the user's machine unless explicitly opted
+// in for sharing. Designed for privacy-first iterative improvement.
 package telemetry
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Event is one telemetry event.
-type Event struct {
-	Name      string         `json:"name"`
-	Timestamp time.Time      `json:"timestamp"`
-	Data      map[string]any `json:"data,omitempty"`
-	SessionID string         `json:"session_id"`
+// EventType classifies telemetry events.
+type EventType string
+
+const (
+	EventSessionStart EventType = "session_start"
+	EventSessionEnd   EventType = "session_end"
+	EventToolCall     EventType = "tool_call"
+	EventToolError    EventType = "tool_error"
+	EventModelCall    EventType = "model_call"
+	EventFeedback     EventType = "feedback"
+	EventError        EventType = "error"
+	EventCrash        EventType = "crash"
+	EventModelSwitch  EventType = "model_switch"
+	EventModeSwitch   EventType = "mode_switch"
+)
+
+// Entry is one telemetry event, stored as JSONL.
+type Entry struct {
+	Type      EventType          `json:"type"`
+	Timestamp time.Time          `json:"ts"`
+	SessionID string             `json:"session"`
+	Data      map[string]any     `json:"data,omitempty"`
 }
 
-// Collector gathers telemetry events and computes aggregates.
+// Collector records telemetry events to local storage.
 type Collector struct {
 	mu        sync.Mutex
-	events    []Event
+	dir       string
 	sessionID string
-	maxEvents int
+	enabled   bool
+	writer    *os.File
+	count     atomic.Int64
 }
 
-// NewCollector creates a telemetry collector.
-func NewCollector(sessionID string, maxEvents int) *Collector {
-	if maxEvents <= 0 {
-		maxEvents = 5000
+// NewCollector creates a telemetry collector. Data is stored in
+// ~/.lumen/telemetry/ as daily JSONL files.
+func NewCollector() *Collector {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = "."
 	}
-	return &Collector{sessionID: sessionID, maxEvents: maxEvents}
+	dir := filepath.Join(home, ".lumen", "telemetry")
+	os.MkdirAll(dir, 0700)
+
+	c := &Collector{
+		dir:     dir,
+		enabled: true,
+	}
+	c.sessionID = fmt.Sprintf("sess-%d", time.Now().Unix())
+	return c
 }
 
-// Record adds a telemetry event.
-func (c *Collector) Record(name string, data map[string]any) {
+// Enable toggles telemetry collection.
+func (c *Collector) Enable(on bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e := Event{Name: name, Timestamp: time.Now(), Data: data, SessionID: c.sessionID}
-	c.events = append(c.events, e)
-	if len(c.events) > c.maxEvents {
-		c.events = c.events[len(c.events)-c.maxEvents:]
+	c.enabled = on
+}
+
+// SessionID returns the current session identifier.
+func (c *Collector) SessionID() string { return c.sessionID }
+
+// Record logs a telemetry event.
+func (c *Collector) Record(typ EventType, data map[string]any) {
+	if !c.enabled {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entry := Entry{
+		Type:      typ,
+		Timestamp: time.Now(),
+		SessionID: c.sessionID,
+		Data:      data,
+	}
+
+	// Open daily file if needed
+	today := time.Now().Format("2006-01-02")
+	filename := filepath.Join(c.dir, today+".jsonl")
+
+	if c.writer == nil || filepath.Base(c.writer.Name()) != today+".jsonl" {
+		if c.writer != nil {
+			c.writer.Close()
+		}
+		f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+		if err != nil {
+			return
+		}
+		c.writer = f
+	}
+
+	line, _ := json.Marshal(entry)
+	c.writer.Write(line)
+	c.writer.Write([]byte("\n"))
+	c.count.Add(1)
+}
+
+// Close flushes and closes the collector.
+func (c *Collector) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.writer != nil {
+		c.writer.Close()
+		c.writer = nil
 	}
 }
 
-// TurnStart records the start of a new turn.
-func (c *Collector) TurnStart(turn int) {
-	c.Record("turn_start", map[string]any{"turn": turn})
+// Count returns total events recorded in this session.
+func (c *Collector) Count() int64 { return c.count.Load() }
+
+// Tail returns the last N events.
+func (c *Collector) Tail(n int) []Entry {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entries, _ := os.ReadDir(c.dir)
+	sort.Slice(entries, func(i, j int) bool {
+		ii, _ := entries[i].Info()
+		ij, _ := entries[j].Info()
+		return ii.ModTime().After(ij.ModTime())
+	})
+
+	var result []Entry
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(c.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+		// Read from end
+		for i := len(lines) - 1; i >= 0 && len(result) < n; i-- {
+			if lines[i] == "" {
+				continue
+			}
+			var entry Entry
+			if json.Unmarshal([]byte(lines[i]), &entry) == nil {
+				result = append(result, entry)
+			}
+		}
+		if len(result) >= n {
+			break
+		}
+	}
+	return result
 }
 
-// TurnEnd records the end of a turn with token usage.
-func (c *Collector) TurnEnd(turn int, promptTokens, completionTokens, cacheHit, cacheMiss int, duration time.Duration) {
-	c.Record("turn_end", map[string]any{
-		"turn": turn, "prompt_tokens": promptTokens, "completion_tokens": completionTokens,
-		"cache_hit": cacheHit, "cache_miss": cacheMiss, "duration_ms": duration.Milliseconds(),
+// ── Feedback ────────────────────────────────────────────
+
+// FeedbackEntry is a user-submitted feedback item.
+type FeedbackEntry struct {
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"ts"`
+	Type      string    `json:"type"` // "thumbs_up", "thumbs_down", "text", "bug", "feature"
+	Message   string    `json:"message"`
+	Context   string    `json:"context,omitempty"` // last prompt or tool used
+	SessionID string    `json:"session"`
+}
+
+// FeedbackStore manages user feedback.
+type FeedbackStore struct {
+	mu     sync.Mutex
+	dir    string
+	items  []FeedbackEntry
+	nextID int64
+}
+
+// NewFeedbackStore creates a feedback store.
+func NewFeedbackStore() *FeedbackStore {
+	home, _ := os.UserHomeDir()
+	dir := filepath.Join(home, ".lumen", "feedback")
+	os.MkdirAll(dir, 0700)
+	fs := &FeedbackStore{dir: dir}
+	fs.load()
+	return fs
+}
+
+func (fs *FeedbackStore) load() {
+	entries, _ := os.ReadDir(fs.dir)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(fs.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var fe FeedbackEntry
+		if json.Unmarshal(data, &fe) == nil {
+			fs.items = append(fs.items, fe)
+		}
+	}
+	sort.Slice(fs.items, func(i, j int) bool {
+		return fs.items[i].Timestamp.After(fs.items[j].Timestamp)
 	})
 }
 
-// ToolCall records a tool invocation.
-func (c *Collector) ToolCall(name string, success bool, duration time.Duration) {
-	c.Record("tool_call", map[string]any{
-		"tool": name, "success": success, "duration_ms": duration.Milliseconds(),
-	})
+// Submit adds feedback.
+func (fs *FeedbackStore) Submit(typ, message, context, sessionID string) *FeedbackEntry {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+
+	fs.nextID++
+	fe := FeedbackEntry{
+		ID:        fmt.Sprintf("fb-%d", fs.nextID),
+		Timestamp: time.Now(),
+		Type:      typ,
+		Message:   message,
+		Context:   context,
+		SessionID: sessionID,
+	}
+
+	fs.items = append([]FeedbackEntry{fe}, fs.items...)
+
+	// Persist
+	filename := filepath.Join(fs.dir, fe.ID+".json")
+	data, _ := json.MarshalIndent(fe, "", "  ")
+	os.WriteFile(filename, data, 0600)
+
+	return &fe
 }
 
-// PermissionDeny records a denied tool call.
-func (c *Collector) PermissionDeny(tool, reason string) {
-	c.Record("permission_deny", map[string]any{"tool": tool, "reason": reason})
-}
-
-// ── Aggregation ──────────────────────────────────────────
-
-// Summary is an aggregate summary of collected telemetry.
-type Summary struct {
-	TotalTurns      int            `json:"total_turns"`
-	TotalToolCalls  int            `json:"total_tool_calls"`
-	SuccessfulCalls int            `json:"successful_calls"`
-	FailedCalls     int            `json:"failed_calls"`
-	DeniedCalls     int            `json:"denied_calls"`
-	TotalPrompt     int64          `json:"total_prompt_tokens"`
-	TotalCompletion int64          `json:"total_completion_tokens"`
-	TotalCacheHit   int64          `json:"total_cache_hit"`
-	TotalCacheMiss  int64          `json:"total_cache_miss"`
-	TotalDuration   time.Duration  `json:"total_duration_ms"`
-	ToolFrequency   map[string]int `json:"tool_frequency"`
-	AvgTurnTokens   int64          `json:"avg_turn_tokens"`
-	CacheHitRate    float64        `json:"cache_hit_rate"`
-}
-
-// Summarize computes aggregate statistics.
-func (c *Collector) Summarize() Summary {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	s := Summary{ToolFrequency: map[string]int{}}
-	for _, e := range c.events {
-		switch e.Name {
-		case "turn_start":
-			s.TotalTurns++
-		case "turn_end":
-			if t, ok := e.Data["prompt_tokens"].(int); ok {
-				s.TotalPrompt += int64(t)
-			}
-			if t, ok := e.Data["completion_tokens"].(int); ok {
-				s.TotalCompletion += int64(t)
-			}
-			if h, ok := e.Data["cache_hit"].(int); ok {
-				s.TotalCacheHit += int64(h)
-			}
-			if m, ok := e.Data["cache_miss"].(int); ok {
-				s.TotalCacheMiss += int64(m)
-			}
-			if d, ok := e.Data["duration_ms"].(int64); ok {
-				s.TotalDuration += time.Duration(d) * time.Millisecond
-			}
-		case "tool_call":
-			s.TotalToolCalls++
-			if success, ok := e.Data["success"].(bool); ok {
-				if success {
-					s.SuccessfulCalls++
-				} else {
-					s.FailedCalls++
-				}
-			}
-			if tool, ok := e.Data["tool"].(string); ok {
-				s.ToolFrequency[tool]++
-			}
-		case "permission_deny":
-			s.DeniedCalls++
-		}
+// List returns recent feedback items.
+func (fs *FeedbackStore) List(limit int) []FeedbackEntry {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if limit <= 0 || limit > len(fs.items) {
+		limit = len(fs.items)
 	}
-	if s.TotalTurns > 0 {
-		s.AvgTurnTokens = (s.TotalPrompt + s.TotalCompletion) / int64(s.TotalTurns)
-	}
-	cacheTotal := s.TotalCacheHit + s.TotalCacheMiss
-	if cacheTotal > 0 {
-		s.CacheHitRate = float64(s.TotalCacheHit) / float64(cacheTotal) * 100
-	}
-	return s
-}
-
-// FormatSummary formats the summary for display.
-func (s Summary) Format() string {
-	var sb strings.Builder
-	sb.WriteString("Session Telemetry\n")
-	sb.WriteString("─────────────────\n")
-	fmt.Fprintf(&sb, "Turns: %d\n", s.TotalTurns)
-	fmt.Fprintf(&sb, "Tool calls: %d (✓%d ✗%d ⊘%d)\n", s.TotalToolCalls, s.SuccessfulCalls, s.FailedCalls, s.DeniedCalls)
-	fmt.Fprintf(&sb, "Tokens: %d prompt + %d completion = %d\n", s.TotalPrompt, s.TotalCompletion, s.TotalPrompt+s.TotalCompletion)
-	fmt.Fprintf(&sb, "Cache: %.1f%% hit (%d/%d)\n", s.CacheHitRate, s.TotalCacheHit, s.TotalCacheHit+s.TotalCacheMiss)
-	fmt.Fprintf(&sb, "Duration: %v\n", s.TotalDuration.Truncate(time.Second))
-	if s.TotalTurns > 0 {
-		fmt.Fprintf(&sb, "Avg tokens/turn: %d\n", s.AvgTurnTokens)
-	}
-	if len(s.ToolFrequency) > 0 {
-		sb.WriteString("\nTool frequency:\n")
-		type tf struct {
-			name  string
-			count int
-		}
-		var freq []tf
-		for n, c := range s.ToolFrequency {
-			freq = append(freq, tf{n, c})
-		}
-		sort.Slice(freq, func(i, j int) bool { return freq[i].count > freq[j].count })
-		for _, f := range freq {
-			fmt.Fprintf(&sb, "  %s: %d\n", f.name, f.count)
-		}
-	}
-	return sb.String()
-}
-
-// Events returns all collected events.
-func (c *Collector) Events() []Event {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	out := make([]Event, len(c.events))
-	copy(out, c.events)
+	out := make([]FeedbackEntry, limit)
+	copy(out, fs.items[:limit])
 	return out
 }
 
-// Count returns the number of collected events.
-func (c *Collector) Count() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.events)
+// Counts returns feedback counts by type.
+func (fs *FeedbackStore) Counts() map[string]int {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	counts := map[string]int{}
+	for _, fe := range fs.items {
+		counts[fe.Type]++
+	}
+	return counts
 }
 
-// Reset clears all events.
-func (c *Collector) Reset() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.events = nil
+// Stats returns feedback summary.
+func (fs *FeedbackStore) Stats() string {
+	counts := fs.Counts()
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	if total == 0 {
+		return "No feedback collected yet. Use /feedback <type> <message> in chat."
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Feedback Summary (%d items):\n\n", total))
+	for typ, count := range counts {
+		icon := "✅"
+		switch typ {
+		case "thumbs_down", "bug":
+			icon = "🔴"
+		case "feature":
+			icon = "💡"
+		}
+		pct := float64(count) / float64(total) * 100
+		fmt.Fprintf(&sb, "  %s %-15s %d (%.0f%%)\n", icon, typ, count, pct)
+	}
+
+	satisfied := counts["thumbs_up"]
+	unsatisfied := counts["thumbs_down"] + counts["bug"]
+	if satisfied+unsatisfied > 0 {
+		rate := float64(satisfied) / float64(satisfied+unsatisfied) * 100
+		fmt.Fprintf(&sb, "\n  Satisfaction rate: %.0f%%\n", rate)
+	}
+
+	return sb.String()
 }
