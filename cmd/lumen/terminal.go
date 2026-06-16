@@ -57,6 +57,7 @@ func termSink() event.Sink {
 			thinking = true; textStarted = false; textLen = 0; truncated = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
+			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⏳ …"))
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -67,6 +68,7 @@ func termSink() event.Sink {
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
+				fmt.Fprint(os.Stdout, "\r\033[K") // clear spinner
 				// Print accumulated reasoning as a compact block
 				if rb := strings.TrimSpace(reasonBuf.String()); len(rb) > 0 {
 					fmt.Fprintf(os.Stdout, "\n  %s\n  %s%s\n",
@@ -84,6 +86,7 @@ func termSink() event.Sink {
 			fmt.Fprint(os.Stdout, t)
 
 		case event.ToolDispatch:
+			if thinking { fmt.Fprint(os.Stdout, "\r\033[K") } // clear spinner
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
@@ -97,7 +100,15 @@ func termSink() event.Sink {
 				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
 				fmt.Fprintf(os.Stdout, "  %s\n", fg(Rd, "✗ "+e.Tool.Err))
 			} else if e.Tool.Blocked { fmt.Fprint(os.Stdout, fg(D, " ⛔")+"\n")
-			} else { fmt.Fprint(os.Stdout, fg(G, " ✓")+"\n") }
+			} else {
+				suffix := ""
+				if out := strings.TrimSpace(e.Tool.Output); out != "" {
+					first := strings.SplitN(out, "\n", 2)[0]
+					if len(first) > 60 { first = first[:57] + "…" }
+					suffix = fg(D, "  "+first)
+				}
+				fmt.Fprintf(os.Stdout, "%s%s\n", fg(G, " ✓"), suffix)
+			}
 
 		case event.UsageKind:
 			if e.Usage != nil {
@@ -114,6 +125,7 @@ func termSink() event.Sink {
 			for _, line := range strings.Split(e.DiffText, "\n") { fmt.Fprintf(os.Stdout, "  %s\n", line) }
 
 		case event.TurnDone:
+			if thinking { fmt.Fprint(os.Stdout, "\r\033[K") } // clear spinner if no output
 			drawFooter(); thinking = false; textStarted = false; st.step.Store(0)
 		}
 	})
@@ -139,13 +151,30 @@ func toolIcon(name string) string {
 
 // ── Footer ─────────────────────────────────────────────────
 
-func drawFooter() {
+func drawStatusLine(ctrl *control.Controller) {
 	ti := st.tkIn.Load(); to := st.tkOut.Load(); tc := st.tkCache.Load()
 	cost := st.cost(); steps := st.step.Load(); turns := st.turn.Load()
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	fmt.Fprintf(os.Stdout, "\n\n%s %s  %s  %s  %s\n\n",
+	fmt.Fprintf(os.Stdout, "\n%s %s  %s%s  %s  %s  %s  %s\n\n",
+		fg(D, "  ·"),
+		fg(C, fmt.Sprintf("%s/%s", ctrl.ProviderName(), ctrl.ModelName())),
+		iconForMode(ctrl.PermissionMode()), fg(D, string(ctrl.PermissionMode())),
+		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
+		fg(G, fmt.Sprintf("♻ %d%%", pct)),
+		fg(Y, fmt.Sprintf("💰 $%.4f", cost)),
+		fg(M, fmt.Sprintf("⚙ %dst · #%d", steps, turns)))
+}
+
+func drawFooter() {
+	// Thin wrapper kept for backwards compat; status line drawn inline.
+	ti := st.tkIn.Load(); to := st.tkOut.Load(); tc := st.tkCache.Load()
+	cost := st.cost(); steps := st.step.Load(); turns := st.turn.Load()
+	if steps == 0 { steps = 1 }
+	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
+
+	fmt.Fprintf(os.Stdout, "\n%s %s  %s  %s  %s\n\n",
 		fg(D, "  ·"),
 		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
 		fg(G, fmt.Sprintf("♻ %d%%", pct)),
@@ -178,7 +207,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	history := make([]string, 0, 100)
 	sc := bufio.NewScanner(os.Stdin)
 	for {
-		fmt.Printf("\n%s ", fg(C+B, "▸"))
+		fmt.Printf("\n%s %s ", fg(C+B, "▸"), fg(D, "["+iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode())+"]"))
 		if !sc.Scan() { onChatExit(); break }
 		text := strings.TrimSpace(sc.Text())
 		if text == "" { continue }
@@ -368,16 +397,6 @@ func runUltra(ctrl *control.Controller, prompt string) {
 	fmt.Printf("\n  %s\n", fg(B, "🚀 Executing"))
 	if err := ctrl.Run(ctx, lastPlan); err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())) }
 	fmt.Printf("\n  %s\n", fg(G, "✅ ultra workflow complete"))
-}
-
-func drawStatusLine(ctrl *control.Controller) {
-	agent := ctrl.Agent()
-	fmt.Printf("\n  %s\n", fg(B, "🏥 agent status"))
-	fmt.Printf("  model:    %s/%s\n", ctrl.ProviderName(), ctrl.ModelName())
-	fmt.Printf("  mode:     %s %s\n", iconForMode(ctrl.PermissionMode()), ctrl.PermissionMode())
-	fmt.Printf("  plan:     %v\n", agent.IsPlanMode())
-	if sess := ctrl.Session(); sess != nil { fmt.Printf("  session:  %d messages\n", sess.Len()) }
-	fmt.Printf("  turns:    #%d\n\n", st.turn.Load())
 }
 
 func runEvolve() {
