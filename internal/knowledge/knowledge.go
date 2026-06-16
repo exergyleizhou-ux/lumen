@@ -163,7 +163,7 @@ func (p *Pipeline) Delete(id string) {
 	delete(p.vectors, id)
 }
 func (p *Pipeline) Count() int           { p.mu.RLock(); defer p.mu.RUnlock(); return len(p.documents) }
-func (p *Pipeline) Stats() PipelineStats { return p.stats }
+func (p *Pipeline) Stats() *PipelineStats { return &p.stats }
 
 type chunkResult struct {
 	Text  string

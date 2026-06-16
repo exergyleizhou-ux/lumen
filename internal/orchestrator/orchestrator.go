@@ -529,18 +529,18 @@ func iconForStatus(s TaskStatus) string {
 
 // UsageSnapshot is a point-in-time usage report.
 type UsageSnapshot struct {
-	Timestamp time.Time             `json:"timestamp"`
-	Agents    map[string]AgentStats `json:"agents"`
-	TotalBusy int                   `json:"total_busy"`
+	Timestamp time.Time              `json:"timestamp"`
+	Agents    map[string]*AgentStats `json:"agents"`
+	TotalBusy int                    `json:"total_busy"`
 }
 
 // Snapshot takes a usage snapshot.
 func (p *AgentPool) Snapshot() *UsageSnapshot {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	s := &UsageSnapshot{Timestamp: time.Now(), Agents: map[string]AgentStats{}}
+	s := &UsageSnapshot{Timestamp: time.Now(), Agents: map[string]*AgentStats{}}
 	for n, st := range p.stats {
-		s.Agents[n] = *st
+		s.Agents[n] = st
 		s.TotalBusy += p.busy[n]
 	}
 	return s
