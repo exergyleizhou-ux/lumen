@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -297,3 +298,164 @@ func (fs *FeedbackStore) Stats() string {
 
 	return sb.String()
 }
+
+// ── Sharing / Export ──────────────────────────────────────
+
+// ExportBundle prepares a shareable, anonymized report of recent activity.
+type ExportBundle struct {
+	GeneratedAt time.Time              `json:"generated_at"`
+	Version     string                 `json:"version"`
+	SessionCount int                   `json:"session_count"`
+	ToolStats    map[string]int        `json:"tool_usage"`
+	ModelStats   map[string]int        `json:"model_usage"`
+	Feedback     []FeedbackEntry       `json:"feedback"`
+	Satisfaction  float64              `json:"satisfaction_rate"`
+	Errors       []AnonymizedError     `json:"recent_errors"`
+	Recommendations []string           `json:"recommendations"`
+	HealthScore   float64              `json:"health_score"`
+	OS           string                 `json:"os"`
+	GoVersion    string                 `json:"go_version"`
+	DaysActive   int                   `json:"days_active"`
+}
+
+// AnonymizedError is a sanitized error — no file paths or user content.
+type AnonymizedError struct {
+	Tool  string `json:"tool"`
+	Error string `json:"error"`
+	Count int    `json:"count"`
+	First time.Time `json:"first_seen"`
+}
+
+// Export creates a shareable bundle from all available data.
+func (c *Collector) Export() *ExportBundle {
+	bundle := &ExportBundle{
+		GeneratedAt: time.Now(),
+		Version:     "0.1", // bump with releases
+		ToolStats:    map[string]int{},
+		ModelStats:   map[string]int{},
+	}
+
+	// Read all telemetry files
+	entries, _ := os.ReadDir(c.dir)
+	sessions := map[string]bool{}
+	errorMap := map[string]*AnonymizedError{}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(c.dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		if len(data) > 0 {
+			bundle.DaysActive++
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			if line == "" {
+				continue
+			}
+			var entry Entry
+			if json.Unmarshal([]byte(line), &entry) != nil {
+				continue
+			}
+			sessions[entry.SessionID] = true
+
+			switch entry.Type {
+			case EventToolCall:
+				if name, ok := entry.Data["name"].(string); ok {
+					bundle.ToolStats[name]++
+				}
+			case EventToolError:
+				name, _ := entry.Data["name"].(string)
+				errMsg, _ := entry.Data["error"].(string)
+				key := name + ":" + errMsg
+				if errorMap[key] == nil {
+					errorMap[key] = &AnonymizedError{Tool: name, Error: errMsg, First: entry.Timestamp}
+				}
+				errorMap[key].Count++
+			case EventModelCall:
+				bundle.ModelStats["total"]++
+			}
+		}
+	}
+
+	bundle.SessionCount = len(sessions)
+	for _, ae := range errorMap {
+		bundle.Errors = append(bundle.Errors, *ae)
+	}
+
+	// Add feedback
+	fs := NewFeedbackStore()
+	bundle.Feedback = fs.List(50)
+	counts := fs.Counts()
+	if counts["thumbs_up"]+counts["thumbs_down"]+counts["bug"] > 0 {
+		bundle.Satisfaction = float64(counts["thumbs_up"]) / float64(counts["thumbs_up"]+counts["thumbs_down"]+counts["bug"]) * 100
+	}
+
+	// Health + recommendations
+	a := NewAnalyzer()
+	report := a.Analyze("week")
+	bundle.HealthScore = report.HealthScore
+	for _, r := range report.Recommendations {
+		bundle.Recommendations = append(bundle.Recommendations, r.Title)
+	}
+
+	// System info (anonymized)
+	bundle.OS = runtime.GOOS + "/" + runtime.GOARCH
+
+	return bundle
+}
+
+// FormatExport renders the export bundle as a human-readable text file
+// suitable for pasting into GitHub Issues, email, or chat.
+func FormatExport(bundle *ExportBundle) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Lumen Usage Report — %s\n", bundle.GeneratedAt.Format("2006-01-02")))
+	sb.WriteString(strings.Repeat("=", 50) + "\n\n")
+
+	sb.WriteString(fmt.Sprintf("Health: %.0f/100  ·  %d sessions  ·  %d days active\n", 
+		bundle.HealthScore, bundle.SessionCount, bundle.DaysActive))
+	sb.WriteString(fmt.Sprintf("OS: %s  ·  Version: %s\n\n", bundle.OS, bundle.Version))
+
+	// Tools
+	sb.WriteString("Tool Usage:\n")
+	type kv struct{ k string; v int }
+	var tools []kv
+	for k, v := range bundle.ToolStats { tools = append(tools, kv{k, v}) }
+	sort.Slice(tools, func(i, j int) bool { return tools[i].v > tools[j].v })
+	for _, t := range tools {
+		sb.WriteString(fmt.Sprintf("  %-25s %5d\n", t.k, t.v))
+	}
+
+	// Errors
+	if len(bundle.Errors) > 0 {
+		sb.WriteString("\nRecent Errors:\n")
+		sort.Slice(bundle.Errors, func(i, j int) bool { return bundle.Errors[i].Count > bundle.Errors[j].Count })
+		for _, e := range bundle.Errors {
+			sb.WriteString(fmt.Sprintf("  [%dx] %s: %s\n", e.Count, e.Tool, e.Error))
+		}
+	}
+
+	// Feedback
+	if len(bundle.Feedback) > 0 {
+		sb.WriteString(fmt.Sprintf("\nFeedback (%.0f%% satisfied):\n", bundle.Satisfaction))
+		for _, fb := range bundle.Feedback {
+			if len(fb.Message) > 100 { fb.Message = fb.Message[:97] + "..." }
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", fb.Type, fb.Message))
+		}
+	}
+
+	// Recommendations
+	if len(bundle.Recommendations) > 0 {
+		sb.WriteString("\nTop Recommendations:\n")
+		for _, r := range bundle.Recommendations {
+			sb.WriteString(fmt.Sprintf("  • %s\n", r))
+		}
+	}
+
+	sb.WriteString("\n---\nGenerated by Lumen telemetry. No personal data, file paths, or API keys included.\n")
+	return sb.String()
+}
+

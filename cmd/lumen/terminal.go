@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
@@ -221,6 +222,17 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			fs := telemetry.NewFeedbackStore()
 			fs.Submit("text", msg, "chat: "+text, "")
 			fmt.Printf("\n  %s\n\n", a(ansiGreen, "feedback recorded. thank you!"))
+			continue
+		case text == "/share":
+			c := telemetry.NewCollector()
+			bundle := c.Export()
+			report := telemetry.FormatExport(bundle)
+			shareFile := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "share_report.txt")
+			os.WriteFile(shareFile, []byte(report), 0600)
+			fmt.Printf("\n  %s\n", a(ansiBold, "Report saved to:"))
+			fmt.Printf("  %s\n\n", a(ansiCyan, shareFile))
+			fmt.Printf("  %s\n", a(ansiDim, "Send this file to the Lumen team — no personal data inside."))
+			fmt.Printf("  %s\n\n", a(ansiDim, "You can also paste it into a GitHub Issue or email."))
 			continue
 		case text == "/analytics":
 			a := telemetry.NewAnalyzer()
