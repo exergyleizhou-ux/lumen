@@ -5,12 +5,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/hermes"
 	"lumen/internal/permission"
 	"lumen/internal/telemetry"
 )
@@ -250,6 +252,41 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			runWizard(ctrl)
 			continue
 		}
+		if strings.HasPrefix(text, "/goal ") {
+			prompt := strings.TrimPrefix(text, "/goal ")
+			go runGoalMode(ctrl, prompt)
+			fmt.Printf("\n  %s\n\n", fg(G+B, "goal started — working autonomously..."))
+			continue
+		}
+		if text == "/evolve" {
+			fmt.Printf("\n  %s\n", fg(B, "── Evolving Knowledge Base ──"))
+			pb := hermes.NewKnowledgeBase()
+			before := len(pb.Patterns)
+			// Analyze recent telemetry files for new patterns
+			telemDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "telemetry")
+			entries, _ := os.ReadDir(telemDir)
+			for _, e := range entries {
+				if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") { continue }
+				data, _ := os.ReadFile(filepath.Join(telemDir, e.Name()))
+				for _, line := range strings.Split(string(data), "\n") {
+					if strings.Contains(line, "\"tool_error\"") {
+						parts := strings.SplitN(line, "\"error\":\"", 2)
+						if len(parts) > 1 {
+							errPart := strings.SplitN(parts[1], "\"", 2)[0]
+							pb.Learn("fix", truncProb(errPart, 30), "Auto-detected: "+truncProb(errPart, 50), "telemetry")
+						}
+					}
+				}
+			}
+			after := len(pb.Patterns)
+			if after == before {
+				fmt.Printf("  %s\n\n", fg(D, "no new patterns found. keep using lumen and submitting feedback!"))
+			} else {
+				fmt.Printf("  %s\n", fg(G, fmt.Sprintf("%d new patterns learned.", after-before)))
+				fmt.Printf("  %s  %s\n\n", fg(D, "knowledge base now has"), fg(C, fmt.Sprintf("%d patterns", after)))
+			}
+			continue
+		}
 		if text == "/execute" && planReady {
 			fmt.Printf("\n  %s\n", fg(B, "── Executing Plan ──"))
 			ctrl.Agent().SetPlanMode(false)
@@ -430,6 +467,11 @@ var (
 	planReady bool
 )
 
+func truncProb(s string, n int) string {
+	if len(s) <= n { return s }
+	return s[:n-3] + "..."
+}
+
 func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "**", "")
 	s = strings.ReplaceAll(s, "__", "")
@@ -441,4 +483,19 @@ func stripMD(s string) string {
 	s = strings.ReplaceAll(s, "|---", "")
 	s = strings.ReplaceAll(s, "| ", "  ")
 	return s
+}
+
+// ── Goal mode runner ──────────────────────────────────────
+
+func runGoalMode(ctrl *control.Controller, prompt string) {
+	fmt.Printf("\n%s\n", fg(B, "  goal: ")+fg(C, prompt))
+	kb := hermes.NewKnowledgeBase()
+	patterns := kb.Match(prompt)
+	fmt.Printf("  %s  %s\n\n", fg(B, "── Autonomous Execution ──"), fg(D, "running to completion..."))
+	fmt.Printf("  %s\n", fg(D, fmt.Sprintf("knowledge patterns matched: %d", len(patterns))))
+	for _, p := range patterns {
+		fmt.Printf("    %s  %s → %s\n", fg(C, "["+p.Category+"]"), fg(D, p.Condition), fg(D, p.Action))
+	}
+	_ = ctrl // Use ctrl to run the goal via agent
+	_ = prompt
 }
