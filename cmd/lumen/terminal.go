@@ -1,9 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +15,6 @@ import (
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hermes"
-	"lumen/internal/lineedit"
 	"lumen/internal/permission"
 	"lumen/internal/telemetry"
 )
@@ -177,16 +176,13 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("  %s  %s\n", fg(D, "📂 resume:"), fg(C, lastSess))
 	}
 
-	// ── lineedit with history + ↑↓, Scanner fallback ──
-	histPath := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "input_history")
-	cwd, _ := os.Getwd()
-	ed := lineedit.NewEditor(fg(C+B, "▸")+" ", histPath, cwd)
-
+	// ── Scanner-based input (reliable, no cursor issues) ──
 	history := make([]string, 0, 100)
+	sc := bufio.NewScanner(os.Stdin)
 	for {
-		line, err := ed.ReadLine()
-		if err == io.EOF || err != nil { onChatExit(); return nil }
-		text := strings.TrimSpace(line)
+		fmt.Printf("\n%s ", fg(C+B, "▸"))
+		if !sc.Scan() { onChatExit(); break }
+		text := strings.TrimSpace(sc.Text())
 		if text == "" { continue }
 
 		if len(history) == 0 || history[len(history)-1] != text {
@@ -270,6 +266,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		fmt.Printf("\n%s\n", fg(B+C, text))
 		ctrl.Run(context.Background(), text); fmt.Print("\n")
 	}
+	return nil
 }
 
 // ── Drawing ────────────────────────────────────────────────
