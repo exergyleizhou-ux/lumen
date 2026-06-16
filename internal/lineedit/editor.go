@@ -65,14 +65,15 @@ const (
 
 // Editor reads a line of input with editing, history, and completion.
 type Editor struct {
-	prompt   string
-	histPath string
-	root     string
-	in       *os.File
-	out      io.Writer
-	buf      buffer
-	hist     history
-	lastRows int // number of terminal rows the last redraw occupied
+	prompt    string
+	histPath  string
+	root      string
+	in        *os.File
+	out       io.Writer
+	buf       buffer
+	hist      history
+	lastRows  int // number of terminal rows the last redraw occupied
+	promptRow int // absolute terminal row where the prompt line starts (1-based)
 }
 
 // NewEditor creates an Editor with the given prompt, history file path, and
@@ -140,9 +141,37 @@ func (e *Editor) handle(ev keyEvent) action {
 		}
 		e.buf.deleteFwd()
 		return actRedraw
+	case keyCtrlW:
+		e.wordBackspace()
+		return actRedraw
+	case keyEsc:
+		// ESC: clear buffer if non-empty, otherwise no-op
+		if len(e.buf.runes) > 0 {
+			e.buf.clear()
+		}
+		return actRedraw
 	default:
 		return actNone
 	}
+}
+
+// wordBackspace deletes from cursor backwards to the previous word boundary.
+func (e *Editor) wordBackspace() {
+	if e.buf.pos == 0 {
+		return
+	}
+	// Skip trailing whitespace
+	pos := e.buf.pos
+	for pos > 0 && e.buf.runes[pos-1] == ' ' {
+		pos--
+		e.buf.runes = append(e.buf.runes[:pos], e.buf.runes[pos+1:]...)
+	}
+	// Delete to next word boundary or beginning
+	for pos > 0 && e.buf.runes[pos-1] != ' ' {
+		pos--
+		e.buf.runes = append(e.buf.runes[:pos], e.buf.runes[pos+1:]...)
+	}
+	e.buf.pos = pos
 }
 
 // complete performs Tab-completion of slash-commands and @-file mentions.
@@ -197,6 +226,20 @@ func (e *Editor) ReadLine() (string, error) {
 	if !term.IsTerminal(fd) {
 		return e.readCooked()
 	}
+
+	// Query cursor position before raw mode so we know what row the prompt is on.
+	// DSR: \x1b[6n → terminal replies \x1b[row;colR
+	e.promptRow = 0
+	io.WriteString(e.out, "\x1b[6n")
+	var reply [32]byte
+	n, _ := e.in.Read(reply[:])
+	if n > 0 {
+		var row, col int
+		if _, err := fmt.Sscanf(string(reply[:n]), "\x1b[%d;%dR", &row, &col); err == nil && row > 0 {
+			e.promptRow = row
+		}
+	}
+
 	old, err := term.MakeRaw(fd)
 	if err != nil {
 		return e.readCooked()
@@ -220,6 +263,15 @@ func (e *Editor) ReadLine() (string, error) {
 		}
 		pending = append(pending, readBuf[:n]...)
 		for len(pending) > 0 {
+			// Bare ESC (no following CSI): if we got exactly 0x1b alone
+			// in this read, treat it as a standalone escape. CSI sequences
+			// come atomically from terminals so they'll never be split.
+			if len(pending) == 1 && pending[0] == 0x1b {
+				pending = nil
+				e.handle(keyEvent{typ: keyEsc})
+				e.redraw()
+				break
+			}
 			ev, consumed := decodeKey(pending)
 			if consumed == 0 {
 				break // incomplete sequence — read more
@@ -256,8 +308,7 @@ func (e *Editor) readCooked() (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// redraw repaints the prompt and buffer. Uses save/restore cursor
-// so auto-wrap can't confuse row arithmetic.
+// redraw repaints the prompt and buffer.
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -265,30 +316,38 @@ func (e *Editor) redraw() {
 		termW = w
 	}
 
-	// 1. Save cursor position (the "anchor" — top-left of our buffer area).
+	// 1. Save cursor position (the "anchor").
 	io.WriteString(e.out, "\x1b7")
 
-	// 2. Clear from anchor to end of screen — wipes ALL old text regardless
-	//    of how many rows the previous render occupied. No row counting needed.
+	// 2. Clear from anchor to end of screen.
 	io.WriteString(e.out, "\x1b[J")
 
-	// 3. Restore cursor to anchor.
+	// 3. Restore to anchor, write prompt + full buffer.
 	io.WriteString(e.out, "\x1b8")
-
-	// 4. Write prompt + full buffer (auto-wrap is fine — we don't track rows).
 	text := e.buf.string()
 	io.WriteString(e.out, e.prompt)
 	io.WriteString(e.out, text)
 
-	// 5. Move cursor to correct position: back to anchor, then right.
-	prefixWidth := runewidth.StringWidth(e.prompt) + runewidth.StringWidth(string(e.buf.runes[:e.buf.pos]))
-	io.WriteString(e.out, "\x1b8")
-	if prefixWidth > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", prefixWidth)
+	// 4. Compute cursor position within the (possibly multi-row) buffer.
+	promptW := runewidth.StringWidth(e.prompt)
+	prefixW := promptW + runewidth.StringWidth(string(e.buf.runes[:e.buf.pos]))
+	cursorRow := 0
+	cursorCol := prefixW
+	if termW > 0 {
+		cursorRow = prefixW / termW
+		cursorCol = prefixW % termW
 	}
 
-	// 6. Compute lastRows for clickToPos. [J handles clearing so this
-	//    is only used for mouse-click row-to-position arithmetic.
+	// 5. Back to anchor, move down to cursor's row, then right to cursor's col.
+	io.WriteString(e.out, "\x1b8")
+	if cursorRow > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dB", cursorRow)
+	}
+	if cursorCol > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dC", cursorCol)
+	}
+
+	// 6. lastRows for mouse clickToPos.
 	e.lastRows = 1
 	if termW > 0 {
 		w := runewidth.StringWidth(e.prompt) + runewidth.StringWidth(text)
@@ -299,10 +358,18 @@ func (e *Editor) redraw() {
 	}
 }
 
-// clickToPos translates a mouse click at (visual row, visual col) within the
-// rendered buffer into a rune position. Accounts for prompt width, terminal
-// wrapping, and CJK/emoji double-width runes.
-func (e *Editor) clickToPos(clickRow, clickCol int) int {
+// clickToPos translates a mouse click at (absolute row, absolute col) from
+// the terminal into a rune position within the buffer.
+func (e *Editor) clickToPos(absRow, absCol int) int {
+	// Convert absolute terminal row to relative row (0 = prompt line)
+	relRow := absRow
+	if e.promptRow > 0 {
+		relRow = absRow - e.promptRow
+	}
+	if relRow < 0 {
+		relRow = 0
+	}
+
 	fd := int(e.in.Fd())
 	termW := 80
 	if w, _, err := term.GetSize(fd); err == nil && w > 0 {
@@ -310,15 +377,15 @@ func (e *Editor) clickToPos(clickRow, clickCol int) int {
 	}
 	promptWidth := runewidth.StringWidth(e.prompt)
 
-	// Click before prompt on first line → home
-	if clickRow == 0 && clickCol < promptWidth {
+	// Click before prompt on first relative line → home
+	if relRow == 0 && absCol < promptWidth {
 		return 0
 	}
 
-	// Convert (row, col) to flat text display-column offset.
+	// Convert (relRow, absCol) to flat text display-column offset.
 	// Row 0: first termW-promptWidth cols are text, then terminal wraps.
 	// Row N>0: full termW cols of text after wrapping.
-	targetCol := clickRow*termW + clickCol - promptWidth
+	targetCol := relRow*termW + absCol - promptWidth
 
 	col := 0
 	for i, r := range e.buf.runes {

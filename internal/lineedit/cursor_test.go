@@ -107,7 +107,7 @@ func TestRedrawColPositioning(t *testing.T) {
 	if !strings.Contains(result, "\x1b8") {
 		t.Fatal("redraw missing restore-cursor sequence")
 	}
-	// Cursor positioning: after restore, \x1b[5C (>  = 2 + hel = 3 more = 5)
+	// Cursor positioning: \x1b[5C (>  = 2 + hel = 3 more = 5)
 	if !strings.Contains(result, "\x1b[5C") {
 		t.Fatalf("redraw missing cursor positioning: %q", result)
 	}
@@ -394,5 +394,79 @@ func TestGrowMultiLine(t *testing.T) {
 	}
 	if !strings.Contains(result, "\x1b[J") {
 		t.Fatal("grow missing clear-screen")
+	}
+}
+
+func TestWordBackspace(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	e.buf.insertString("hello world test")
+	e.buf.end()
+
+	// Ctrl+W once → "hello world "
+	e.wordBackspace()
+	if e.buf.string() != "hello world " {
+		t.Fatalf("after wordBackspace: got %q, want %q", e.buf.string(), "hello world ")
+	}
+
+	// Ctrl+W again → "hello "
+	e.wordBackspace()
+	if e.buf.string() != "hello " {
+		t.Fatalf("after 2nd wordBackspace: got %q, want %q", e.buf.string(), "hello ")
+	}
+}
+
+func TestCtrlWKeyDecode(t *testing.T) {
+	ev, consumed := decodeKey([]byte{0x17})
+	if ev.typ != keyCtrlW {
+		t.Fatalf("0x17 typ=%v want keyCtrlW", ev.typ)
+	}
+	if consumed != 1 {
+		t.Errorf("consumed=%d want 1", consumed)
+	}
+}
+
+func TestEscClearsBuffer(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	e.buf.insertString("some text")
+
+	ev := keyEvent{typ: keyEsc}
+	if act := e.handle(ev); act != actRedraw {
+		t.Fatalf("ESC action=%v want actRedraw", act)
+	}
+	if e.buf.string() != "" {
+		t.Fatalf("ESC should clear buffer, got %q", e.buf.string())
+	}
+
+	// ESC on empty buffer → no-op, still actRedraw
+	if act := e.handle(ev); act != actRedraw {
+		t.Fatalf("ESC on empty action=%v want actRedraw", act)
+	}
+}
+
+func TestMultiRowCursorRowCol(t *testing.T) {
+	e := NewEditor("> ", "", ".")
+	e.buf.clear()
+	// Enough text that cursor wraps to row 1 at 80 cols
+	long := strings.Repeat("x", 100) // prompt=2 + 100 = 102 cols → row 1 at col 22
+	e.buf.insertString(long)
+	e.buf.end() // cursor at end, pos=100
+
+	var out bytes.Buffer
+	e.out = &out
+	e.redraw()
+	result := out.String()
+
+	// Cursor at end of 100 x's: prompt=2 cols, text=100 cols → total=102
+	// At 80-col terminal: row=1 (102/80=1), col=22 (102%80=22)
+	// So we need \x1b[1B\x1b[22C after \x1b8
+	if !strings.Contains(result, "\x1b[1B") || !strings.Contains(result, "\x1b[22C") {
+		if !strings.Contains(result, "\x1b[1B") {
+			t.Errorf("multi-row cursor missing row-down: %q", result)
+		}
+		if !strings.Contains(result, "\x1b[22C") {
+			t.Errorf("multi-row cursor missing col-right: %q", result)
+		}
 	}
 }
