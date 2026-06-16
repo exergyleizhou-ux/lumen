@@ -5,16 +5,37 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"lumen/internal/evidence"
 	"lumen/internal/tool"
+	"lumen/internal/websearch"
 )
+
+// sharedHTTP is a package-level HTTP client with keep-alive.
+// Creating a new http.Client per web_fetch call destroys connection
+// reuse — every call pays TCP+TLS handshake cost (~50-300ms).
+var sharedHTTP = &http.Client{
+	Timeout: 30 * time.Second,
+	Transport: &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   10 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		MaxIdleConns:          20,
+		MaxIdleConnsPerHost:   5,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+	},
+}
 
 func init() {
 	tool.RegisterBuiltin(&WebFetchTool{})
+	tool.RegisterBuiltin(&WebSearchTool{})
 	tool.RegisterBuiltin(&TodoWriteTool{})
 	tool.RegisterBuiltin(&CompleteStepTool{})
 	tool.RegisterBuiltin(&AskTool{})
@@ -51,7 +72,7 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("url is required")
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := sharedHTTP // package-level keep-alive pool
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
 	if err != nil {
 		return "", err
@@ -269,4 +290,54 @@ func (t *AskTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	// In headless mode or when no asker is wired, return a "decide for yourself" result.
 	// The agent detects the asker from the context.
 	return "[ask tool called — in headless mode, decide for yourself and proceed]", nil
+}
+
+// ── Web Search ─────────────────────────────────────────────
+
+// WebSearchTool searches the web via Brave or Bing API.
+type WebSearchTool struct{}
+
+func (t *WebSearchTool) Name() string     { return "web_search" }
+func (t *WebSearchTool) ReadOnly() bool   { return true }
+
+func (t *WebSearchTool) Description() string {
+	return "Search the web using Brave or Bing Search API. Returns title, URL, and description for each result."
+}
+
+func (t *WebSearchTool) Schema() json.RawMessage {
+	return json.RawMessage(`{
+"type":"object",
+"properties":{
+  "query":{"type":"string","description":"Search query string."},
+  "max_results":{"type":"integer","description":"Maximum number of results (default 10)."}
+},
+"required":["query"]
+}`)
+}
+
+func (t *WebSearchTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	var p struct {
+		Query      string `json:"query"`
+		MaxResults int    `json:"max_results"`
+	}
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", fmt.Errorf("invalid args: %w", err)
+	}
+	if p.Query == "" {
+		return "", fmt.Errorf("query is required")
+	}
+
+	engine := websearch.AutoEngine()
+	if engine == nil {
+		return "", fmt.Errorf("no search engine configured: set BRAVE_API_KEY or BING_API_KEY environment variable")
+	}
+	if p.MaxResults <= 0 {
+		p.MaxResults = 10
+	}
+
+	resp, err := engine.Search(ctx, p.Query, p.MaxResults)
+	if err != nil {
+		return "", fmt.Errorf("search failed: %w", err)
+	}
+	return websearch.FormatResults(resp), nil
 }

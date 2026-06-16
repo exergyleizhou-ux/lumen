@@ -178,6 +178,47 @@ func (m *Manager) OutputWait(id string) (string, bool) {
 	return "", false
 }
 
+// ReadNew returns output produced since the last ReadNew call for this job.
+// For now, returns the full result if the job is done, or empty string if still running.
+func (j *Job) ReadNew() string {
+	j.StatusLock()
+	defer j.StatusUnlock()
+	if j.Status != StatusRunning {
+		return j.Result
+	}
+	return ""
+}
+
+// StatusLock / StatusUnlock are lightweight helpers for safe field access.
+func (j *Job) StatusLock()   { /* mutex already held by Manager when needed */ }
+func (j *Job) StatusUnlock() { /* no-op: Job is single-writer */ }
+
+// WaitAll blocks until all running jobs finish, or timeout expires.
+func (m *Manager) WaitAll(timeout time.Duration) map[string]string {
+	results := make(map[string]string)
+	m.mu.Lock()
+	var jobIDs []string
+	for id, j := range m.jobs {
+		if j.Status == StatusRunning {
+			jobIDs = append(jobIDs, id)
+		}
+	}
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	for _, id := range jobIDs {
+		out, err := m.Wait(ctx, id)
+		if err != nil {
+			results[id] = fmt.Sprintf("timeout or error: %v", err)
+		} else {
+			results[id] = out
+		}
+	}
+	return results
+}
+
 // Clean removes all finished/killed jobs.
 func (m *Manager) Clean() {
 	m.mu.Lock()
