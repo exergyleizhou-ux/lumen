@@ -172,6 +172,9 @@ type Model struct {
 	// Message channel from controller
 	msgChan chan any
 
+	// Input channel to external controller
+	inputCh chan string
+
 	// Lock
 	mu sync.Mutex
 }
@@ -304,6 +307,14 @@ func (m *Model) addChatEntry(msg TuiMsg) {
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Handle typed characters (Runes is non-empty for regular keypresses)
+	if len(msg.Runes) > 0 && m.focusPanel == 0 {
+		for _, r := range msg.Runes {
+			m.input.WriteRune(r)
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "ctrl+c", "esc":
 		m.quitting = true
@@ -343,11 +354,36 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "enter":
+		if m.focusPanel == 0 {
+			line := strings.TrimSpace(m.input.String())
+			m.input.Reset()
+			if line != "" {
+				// Display user message in chat
+				m.addChatEntry(TuiMsg{Role: "user", Content: line})
+				// Send to external controller
+				m.mu.Lock()
+				if m.inputCh != nil {
+					select {
+					case m.inputCh <- line:
+					default:
+					}
+				}
+				m.mu.Unlock()
+			}
+		}
 		if m.focusPanel == 1 && m.plan.plan != nil && !m.plan.plan.Approved {
 			m.plan.plan.Approved = true
 		}
 		return m, nil
 	case "backspace":
+		if m.focusPanel == 0 {
+			s := m.input.String()
+			if len(s) > 0 {
+				runes := []rune(s)
+				m.input.Reset()
+				m.input.WriteString(string(runes[:len(runes)-1]))
+			}
+		}
 		if m.focusPanel == 2 && m.diff.diff != nil {
 			m.diff.diff = nil
 		}
@@ -409,8 +445,8 @@ func (m *Model) renderChat(w, h int) string {
 	innerW := w - 4 // Account for border + padding
 	innerH := h - 2
 
-	// Available lines for messages
-	msgH := innerH
+	// Available lines for messages (reserve 1 for input line)
+	msgH := innerH - 1
 	if msgH < 1 { msgH = 1 }
 
 	entries := m.chat.entries
@@ -450,6 +486,17 @@ func (m *Model) renderChat(w, h int) string {
 	}
 
 	content := strings.Join(lines, "\n")
+	// Show input line at bottom when chat has focus
+	if m.focusPanel == 0 {
+		prompt := dim.Render("▸ " + m.input.String())
+		if m.input.Len() > 0 {
+			content = content + "\n" + prompt
+		} else {
+			content = content + "\n" + prompt
+		}
+	} else {
+		content = content + "\n" + dim.Render("▸ ...")
+	}
 	return style.Width(w).Height(h).Render(content)
 }
 
@@ -658,4 +705,16 @@ func RunTUI(model *Model) error {
 	p := tea.NewProgram(model, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
+}
+
+// WaitInput blocks until the user submits a line in the TUI chat panel.
+// Returns the line text, or empty string if the TUI quit.
+func (m *Model) WaitInput() string {
+	m.mu.Lock()
+	if m.inputCh == nil {
+		m.inputCh = make(chan string, 8)
+	}
+	ch := m.inputCh
+	m.mu.Unlock()
+	return <-ch
 }

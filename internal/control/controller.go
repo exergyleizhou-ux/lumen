@@ -55,10 +55,10 @@ type Controller struct {
 	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
 
 	// Agent (created by Configure)
-	ag      *agent.Agent
-	sess    *agent.Session
-	sessPath string // JSONL path for persistence
-	cp      *checkpoint.Store
+	ag             *agent.Agent
+	sess      *agent.Session
+	sessPath  string // JSONL path for persistence
+	cp        *checkpoint.Store
 	jm   *jobs.Manager
 	tl   *timeline.Recorder // session timeline for replay + change inbox
 

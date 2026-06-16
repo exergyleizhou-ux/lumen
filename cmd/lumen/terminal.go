@@ -18,6 +18,8 @@ import (
 	"lumen/internal/lineedit"
 	"lumen/internal/permission"
 	"lumen/internal/telemetry"
+	"lumen/internal/timeline"
+	"lumen/internal/tui"
 )
 
 // ── live stats ────────────────────────────────────────────
@@ -293,6 +295,11 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 		if text == "/status" { drawStatusLine(ctrl); continue }
+		if text == "/cost" { drawCost(); continue }
+		if text == "/cache" { drawCache(); continue }
+		if text == "/rewind" { drawRewind(); continue }
+		if text == "/replay" { drawReplay(); continue }
+		if text == "/changes" { drawChanges(); continue }
 		if text == "/wizard" { runWizard(ctrl); continue }
 		if strings.HasPrefix(text, "/goal ") {
 			go runGoalMode(ctrl, strings.TrimPrefix(text, "/goal "))
@@ -483,7 +490,13 @@ func dispatchSkill(ctrl *control.Controller, name, rest string) bool {
 	for _, sk := range skills.List() {
 		if strings.EqualFold(sk.Name, name) {
 			fmt.Printf("\n  %s  %s\n", fg(C, "🎯 skill:"), fg(B, sk.Name))
-			ctrl.Run(context.Background(), sk.Name); fmt.Print("\n"); return true
+			// Tell the LLM to invoke the skill — includes the skill name so it knows
+			// exactly which run_skill tool call to make.
+			prompt := fmt.Sprintf("run the %s skill", sk.Name)
+			if rest != "" {
+				prompt = fmt.Sprintf("run the %s skill with arguments: %s", sk.Name, rest)
+			}
+			ctrl.Run(context.Background(), prompt); fmt.Print("\n"); return true
 		}
 	}
 	return false
@@ -503,6 +516,55 @@ func stripMD(s string) string {
 }
 func truncProb(s string, n int) string { if len(s) <= n { return s }; return s[:n-3] + "..." }
 
+// ── slash command helpers ─────────────────────────────────
+
+func drawCost() {
+	ag := currentCtrl.Agent()
+	if ag == nil { fmt.Printf("\n  %s\n", fg(Rd, "no agent")); return }
+	var sb strings.Builder
+	sb.WriteString("\n  Token usage\n  ───────────\n")
+	cacheHit, cacheMiss := ag.SessionCache()
+	last := ag.LastUsage()
+	if last != nil {
+		fmt.Fprintf(&sb, "  Last turn: %d tokens\n", last.TotalTokens)
+		if last.CacheHitTokens+last.CacheMissTokens > 0 {
+			rate := float64(last.CacheHitTokens) / float64(last.CacheHitTokens+last.CacheMissTokens) * 100
+			fmt.Fprintf(&sb, "  Cache: %.0f%% (%d hit / %d miss)\n", rate, last.CacheHitTokens, last.CacheHitTokens+last.CacheMissTokens)
+		}
+	}
+	fmt.Fprintf(&sb, "  Session: %d hit + %d miss\n", cacheHit, cacheMiss)
+	ti := st.tkIn.Load(); to := st.tkOut.Load()
+	fmt.Fprintf(&sb, "  Total: %.0fk tokens  ·  $%.4f\n", float64(ti+to)/1000, st.cost())
+	fmt.Print(sb.String())
+}
+
+func drawCache() {
+	ti, tc := st.tkIn.Load(), st.tkCache.Load()
+	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
+	fmt.Printf("\n  Cache efficiency\n  ────────────────\n")
+	fmt.Printf("  Input tokens:  %d\n", ti)
+	fmt.Printf("  Cache hits:    %d (♻ %d%%)\n", tc, pct)
+	fmt.Printf("  Cache misses:  %d\n\n", ti-tc)
+}
+
+func drawRewind() {
+	rewound, err := currentCtrl.Rewind()
+	if err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())); return }
+	fmt.Printf("\n  %s  %v\n", fg(G, "↩ rewound"), rewound)
+}
+
+func drawReplay() {
+	entries, err := timeline.LoadTimeline(".lumen/timeline.jsonl")
+	if err != nil || len(entries) == 0 { fmt.Printf("\n  %s\n", fg(D, "no timeline yet")); return }
+	fmt.Printf("\n%s\n", timeline.FormatTimeline(entries))
+}
+
+func drawChanges() {
+	changes, err := timeline.LoadChanges(".lumen/timeline.jsonl")
+	if err != nil || len(changes) == 0 { fmt.Printf("\n  %s\n", fg(D, "no changes yet")); return }
+	fmt.Printf("\n%s\n", timeline.FormatChanges(changes))
+}
+
 // ── session helpers ───────────────────────────────────────
 
 func loadLastSession(dir string) string {
@@ -516,4 +578,78 @@ func loadLastSession(dir string) string {
 func saveLastSession(dir, filename string) {
 	os.MkdirAll(dir, 0700)
 	os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filename), 0600)
+}
+
+// ── TUI sink bridge ───────────────────────────────────────
+
+func tuiSink(model *tui.Model) event.Sink {
+	textBuf := strings.Builder{}
+	step := int64(0)
+
+	return event.FuncSink(func(e event.Event) {
+		switch e.Kind {
+		case event.TurnStarted:
+			textBuf.Reset(); step = 0
+			model.Send(tui.StatusMsg{State: "thinking"})
+
+		case event.Text:
+			textBuf.WriteString(e.Text)
+
+		case event.ToolDispatch:
+			step++
+			st := "running"
+			if e.Tool.ReadOnly {
+				st = "done"
+			}
+			model.Send(tui.TuiMsg{
+				Role: "tool",
+				ToolCalls: []tui.ToolCall{{
+					Name:   e.Tool.Name,
+					Input:  e.Tool.Args,
+					Status: st,
+					Step:   int(step),
+				}},
+			})
+
+		case event.ToolResult:
+			status := "done"
+			if e.Tool.Err != "" {
+				status = "error"
+			}
+			if e.Tool.Blocked {
+				status = "blocked"
+			}
+			model.Send(tui.TuiMsg{
+				Role: "tool",
+				ToolCalls: []tui.ToolCall{{
+					Name:   e.Tool.Name,
+					Output: e.Tool.Output,
+					Error:  e.Tool.Err,
+					Status: status,
+					Step:   int(step),
+				}},
+			})
+
+		case event.UsageKind:
+			if e.Usage != nil {
+				st.tkIn.Store(int64(e.Usage.PromptTokens))
+				st.tkOut.Store(int64(e.Usage.CompletionTokens))
+				st.tkCache.Store(int64(e.Usage.CacheHitTokens))
+			}
+
+		case event.TurnDone:
+			content := textBuf.String()
+			if content != "" {
+				model.Send(tui.TuiMsg{Role: "assistant", Content: content})
+			}
+			model.Send(tui.StatusMsg{
+				Model:    "", // preserve existing model display
+				Provider: "",
+				TokensIn: st.tkIn.Load(), TokensOut: st.tkOut.Load(),
+				CacheHit: st.tkCache.Load(),
+				Steps:    step,
+				State:    "idle",
+			})
+		}
+	})
 }

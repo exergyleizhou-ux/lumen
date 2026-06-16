@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"lumen/internal/config"
 	"lumen/internal/control"
@@ -196,18 +197,38 @@ func runChat(args []string) {
 // ── Bubble Tea TUI ─────────────────────────────────────────
 
 func runTUI(args []string) {
-	ctrl, err := makeController(termSink(), parseModeFlag(args))
+	ctrl, err := makeController(event.Discard, parseModeFlag(args))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
 	}
 	model := tui.NewModel()
-	// Wire controller sink to TUI
+
+	// Build status
 	model.Send(tui.StatusMsg{
 		Model:    ctrl.ModelName(),
 		Provider: ctrl.ProviderName(),
 		Mode:     string(ctrl.PermissionMode()),
 	})
+
+	// Bridge: agent events → TUI messages
+	ctrl.SetSink(tuiSink(model))
+
+	// Goroutine: read TUI input lines, run agent, feed results back
+	go func() {
+		for {
+			line := model.WaitInput()
+			if line == "" {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			if err := ctrl.Run(ctx, line); err != nil {
+				model.Send(tui.TuiMsg{Role: "system", Content: fmt.Sprintf("error: %v", err)})
+			}
+			cancel()
+		}
+	}()
+
 	// Start the TUI (blocks until quit)
 	if err := tui.RunTUI(model); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
