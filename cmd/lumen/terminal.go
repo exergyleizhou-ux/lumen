@@ -65,6 +65,7 @@ func termSink() event.Sink {
 		// the buffer to stdout between ReadLine() calls, when the
 		// terminal is briefly outside raw mode.
 		w := func(s string) { outputBuf.WriteString(s) }
+		c := func(code, s string) string { return code + s + R }
 
 		switch e.Kind {
 
@@ -76,14 +77,14 @@ func termSink() event.Sink {
 		case event.Reasoning:
 			if thinking && !textStarted {
 				if rt := stripMD(e.Text); rt != "" {
-					w(rt)
+					w(c(D, rt))
 				}
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
-				w("  ⏵ ")
+				w("  " + c(C, "⏵") + " ")
 			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
@@ -94,16 +95,19 @@ func termSink() event.Sink {
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
-			w(fmt.Sprintf("\n  %2d. %s %s", sn, toolIcon(e.Tool.Name), e.Tool.Name))
+			w(fmt.Sprintf("\n  %s %s %s",
+				c(D, fmt.Sprintf("%2d.", sn)),
+				toolIcon(e.Tool.Name),
+				c(Y, e.Tool.Name)))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
 				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
-				w("  ✗ " + e.Tool.Err + "\n")
+				w("  " + c(Rd, "✗") + " " + e.Tool.Err + "\n")
 			} else if e.Tool.Blocked {
-				w("  ⛔\n")
+				w("  " + c(Y, "⛔") + "\n")
 			} else {
-				w("  ✓\n")
+				w("  " + c(G, "✓") + "\n")
 			}
 
 		case event.UsageKind:
@@ -177,9 +181,14 @@ func drawFooter() {
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	bufferedWrite(fmt.Sprintf("\n%s\n",
-		fg(D, fmt.Sprintf("  [%.0fk tokens · ♻ %d%% · $%.4f · turn #%d]",
-			float64(ti+to)/1000, pct, cost, turns))))
+	bufferedWrite(fmt.Sprintf("\n%s %s %s %s\n",
+		fg(D, "  ["),
+		fg(C, fmt.Sprintf("%.0fk tokens", float64(ti+to)/1000)),
+		fg(D, fmt.Sprintf("· ♻ %s · %s · %s",
+			fg(G, fmt.Sprintf("%d%%", pct)),
+			fg(Y, fmt.Sprintf("$%.4f", cost)),
+			fg(M, fmt.Sprintf("turn #%d", turns)))),
+		fg(D, "]")))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -339,9 +348,9 @@ func drawBanner(ctrl *control.Controller) {
 		cwd = strings.Replace(cwd, home, "~", 1)
 	}
 	fmt.Printf("\n%s  %s\n",
-		fg(B+W, "● LUMEN"),
+		fg(C+B, "●") + " " + fg(B+W, "LUMEN"),
 		fg(D, fmt.Sprintf("%s/%s · %s · %s",
-			ctrl.ProviderName(), ctrl.ModelName(),
+			fg(G, ctrl.ProviderName()), fg(C, ctrl.ModelName()),
 			string(ctrl.PermissionMode()), cwd)))
 }
 
