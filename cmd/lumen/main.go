@@ -27,6 +27,7 @@ import (
 	"lumen/internal/permission"
 	"lumen/internal/server"
 	"lumen/internal/tui"
+	"lumen/internal/watch"
 
 	// Ensure all providers are registered via init()
 	_ "lumen/internal/provider/anthro"
@@ -64,6 +65,8 @@ func main() {
 		runOasis(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
+	case "watch":
+		runWatch(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -291,6 +294,57 @@ func runServe(args []string) {
 		fmt.Fprintf(os.Stderr, "server: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// ── File watcher / background agent ─────────────────────────
+
+func runWatch(args []string) {
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+
+	ctrl, err := makeController(event.Discard, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Agent runner for auto-fix
+	runner := &agentRunner{ctrl: ctrl}
+
+	log.Printf("lumen watch: monitoring %s", dir)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() { <-sigCh; cancel() }()
+
+	if err := watch.AutoFix(ctx, watch.Config{
+		Dir:    dir,
+		Runner: runner,
+	}); err != nil && err != context.Canceled {
+		fmt.Fprintf(os.Stderr, "watch: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+type agentRunner struct {
+	ctrl *control.Controller
+}
+
+func (r *agentRunner) Run(ctx context.Context, prompt string) (string, error) {
+	// Re-configure with a capturing sink
+	var buf strings.Builder
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == "text" {
+			buf.WriteString(e.Text)
+		}
+	})
+	r.ctrl.Configure(sink, nil, "")
+	r.ctrl.Run(ctx, prompt)
+	return buf.String(), nil
 }
 
 func parseModeFlag(args []string) string {

@@ -1,0 +1,124 @@
+{
+  "name": "lumen",
+  "displayName": "Lumen — Multi-Model Coding Agent",
+  "description": "Terminal-grade AI coding agent in your editor. 121 tools, 28 models, computer use, MCP, sub-agents.",
+  "version": "0.1.0",
+  "publisher": "lumen-ai",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Machine Learning", "Programming Languages", "Chat"],
+  "keywords": ["ai", "coding", "agent", "llm", "claude", "gpt", "deepseek", "copilot"],
+  "icon": "media/icon.png",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "lumen.chat",
+        "title": "Lumen: Open Chat"
+      },
+      {
+        "command": "lumen.explain",
+        "title": "Lumen: Explain This"
+      },
+      {
+        "command": "lumen.fix",
+        "title": "Lumen: Fix This File"
+      },
+      {
+        "command": "lumen.improve",
+        "title": "Lumen: Improve Selection"
+      },
+      {
+        "command": "lumen.startServer",
+        "title": "Lumen: Start Server"
+      },
+      {
+        "command": "lumen.stopServer",
+        "title": "Lumen: Stop Server"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lumen.chat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      },
+      {
+        "command": "lumen.explain",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e"
+      },
+      {
+        "command": "lumen.fix",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "lumen.explain",
+          "group": "lumen"
+        },
+        {
+          "command": "lumen.fix",
+          "group": "lumen"
+        },
+        {
+          "command": "lumen.improve",
+          "group": "lumen"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Lumen",
+      "properties": {
+        "lumen.binaryPath": {
+          "type": "string",
+          "default": "lumen",
+          "description": "Path to the lumen binary. Defaults to 'lumen' on PATH."
+        },
+        "lumen.serverPort": {
+          "type": "number",
+          "default": 0,
+          "description": "Port for the lumen server (0 = auto-assign random port)."
+        },
+        "lumen.autoStart": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically start lumen serve on VS Code launch."
+        },
+        "lumen.model": {
+          "type": "string",
+          "default": "",
+          "description": "Default model to use (empty = use lumen.toml default)."
+        },
+        "lumen.completion.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline code completions."
+        },
+        "lumen.completion.debounceMs": {
+          "type": "number",
+          "default": 500,
+          "description": "Debounce delay for completion requests (ms)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {}
+}

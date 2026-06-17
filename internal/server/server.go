@@ -86,7 +86,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Prompt string `json:"prompt"`
+		Prompt string   `json:"prompt"`
+		Images []string `json:"images"` // base64-encoded images
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 		http.Error(w, `{"error":"prompt required"}`, http.StatusBadRequest)
@@ -340,8 +341,8 @@ footer span { white-space: nowrap; }
 <div id="chat"></div>
 
 <div id="input-area">
-  <textarea id="input" rows="2" placeholder="Type a message… (Shift+Enter for newline)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-  <button id="send" onclick="send()">Send</button>
+  <textarea id="input" rows="1" placeholder="Type a message… (Shift+Enter for newline, Ctrl+V image to paste)"></textarea>
+  <button id="send">Send</button>
 </div>
 
 <footer>
@@ -353,11 +354,12 @@ footer span { white-space: nowrap; }
 <script>
 let running = false;
 let tokensIn = 0, tokensOut = 0, cost = 0, turn = 0;
+let pendingImages = [];
 
 async function send() {
   const input = document.getElementById('input');
   const prompt = input.value.trim();
-  if (!prompt || running) return;
+  if ((!prompt && !pendingImages.length) || running) return;
   input.value = '';
   running = true;
   document.getElementById('send').disabled = true;
@@ -365,11 +367,19 @@ async function send() {
   appendMsg('user', prompt);
   const el = appendMsg('assistant', '');
 
+  if (pendingImages.length) {
+    div.innerHTML = '<img src="'+pendingImages[0]+'" style="max-width:200px;border-radius:8px;margin:4px 0">';
+    el.appendChild(div);
+  }
+  pendingImages = [];
+
   try {
+    const body = {prompt};
+    if (pendingImages.length) body.images = pendingImages;
     const resp = await fetch('/v1/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({prompt})
+      body: JSON.stringify(body)
     });
 
     const reader = resp.body.getReader();
@@ -476,6 +486,25 @@ fetch('/v1/memories').then(r=>r.json()).then(d=>{
   }
 });
 document.getElementById('input').focus();
+
+// Image paste handler
+document.addEventListener('paste', e => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const blob = item.getAsFile();
+      const reader = new FileReader();
+      reader.onload = () => {
+        pendingImages.push(reader.result);
+        document.getElementById('input').placeholder = 'Image attached! Type a prompt…';
+      };
+      reader.readAsDataURL(blob);
+      break;
+    }
+  }
+});
 </script>
 </body>
 </html>`
