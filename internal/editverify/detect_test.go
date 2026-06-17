@@ -83,6 +83,33 @@ func TestDetect_scopeAll(t *testing.T) {
 	}
 }
 
+func TestDetect_buildVetScopedToChangedPkg(t *testing.T) {
+	cfg := DefaultConfig() // default scope = changed-pkg
+	changed := []string{"internal/foo/a.go"}
+	steps := Detect("/project", changed, cfg)
+
+	// build + vet must target only the changed package, not ./... — otherwise an
+	// unrelated package's pre-existing failure is blamed on this edit.
+	if steps[0].Name != "build" || steps[0].Args[len(steps[0].Args)-1] != "./internal/foo" {
+		t.Errorf("build step = %v, want scoped to ./internal/foo", steps[0].Args)
+	}
+	if steps[1].Name != "vet" || steps[1].Args[len(steps[1].Args)-1] != "./internal/foo" {
+		t.Errorf("vet step = %v, want scoped to ./internal/foo", steps[1].Args)
+	}
+}
+
+func TestDetect_buildVetScopeAllStaysWide(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Scope = "all"
+	steps := Detect("/project", []string{"internal/foo/a.go"}, cfg)
+	if steps[0].Args[len(steps[0].Args)-1] != "./..." {
+		t.Errorf("scope=all build = %v, want ./...", steps[0].Args)
+	}
+	if steps[1].Args[len(steps[1].Args)-1] != "./..." {
+		t.Errorf("scope=all vet = %v, want ./...", steps[1].Args)
+	}
+}
+
 func TestDetect_commandOverride(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Command = "golangci-lint run"
