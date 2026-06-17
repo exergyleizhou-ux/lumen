@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -144,6 +145,7 @@ type Agent struct {
 	verifyCfg       editverify.Config
 	repairCycle     int
 	verifyExhausted bool
+	faultRollback   map[string]int // file → consecutive failure count (R6)
 }
 
 // changeVerifier runs verification (build/vet/test) over the files changed in a
@@ -508,6 +510,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if stepWrote {
 			if fb := a.verifyAfterEdits(ctx, stepChanged); fb != "" {
 				a.session.Add(provider.Message{Role: provider.RoleUser, Content: fb})
+				// Fault rollback (SpaceX Phase 1 R6): if the same file fails verify
+				// twice in a row, git checkout that file to restore it. This prevents
+				// the model from digging itself into a deeper hole.
+				a.checkFaultRollback(stepChanged)
 			}
 		}
 	}
@@ -712,6 +718,41 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	}
 
 	return editverify.FormatFeedback(res, a.repairCycle, max)
+}
+
+// checkFaultRollback implements SpaceX R6: same file failing verify 2+ times
+// in a row triggers automatic git checkout of that file. This prevents the
+// model from digging itself deeper and gives it a clean slate.
+func (a *Agent) checkFaultRollback(changed []string) {
+	if a.faultRollback == nil {
+		a.faultRollback = map[string]int{}
+	}
+	sink := a.sink
+	if sink == nil {
+		sink = event.Discard
+	}
+	for _, f := range changed {
+		if !strings.HasSuffix(f, ".go") {
+			continue
+		}
+		a.faultRollback[f]++
+		if a.faultRollback[f] >= 2 {
+			cmd := exec.Command("git", "checkout", f)
+			cmd.Dir, _ = os.Getwd()
+			if err := cmd.Run(); err != nil {
+				sink.Emit(event.Event{
+					Kind: event.Notice, Level: event.LevelWarn,
+					Text: fmt.Sprintf("fault rollback failed for %s: %v", f, err),
+				})
+			} else {
+				sink.Emit(event.Event{
+					Kind: event.Notice, Level: event.LevelWarn,
+					Text: fmt.Sprintf("↩ rollback %s (failed verify %d times — restored from git)", f, a.faultRollback[f]),
+				})
+			}
+			delete(a.faultRollback, f) // reset counter regardless
+		}
+	}
 }
 
 func (a *Agent) executeParallel(ctx context.Context, calls []provider.ToolCall, results []toolOutcome) {
