@@ -72,7 +72,6 @@ func termSink() event.Sink {
 			thinking = true; textStarted = false; textLen = 0; truncated = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
-			w("\n  \u23f3\n")
 
 		case event.Reasoning:
 			if thinking && !textStarted {
@@ -84,7 +83,7 @@ func termSink() event.Sink {
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
-				w("\n")
+				w("  ⏵ ")
 			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
@@ -95,24 +94,17 @@ func termSink() event.Sink {
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
-			w(fmt.Sprintf("\n\n  %2d. %s %s", sn, toolIcon(e.Tool.Name), e.Tool.Name))
+			w(fmt.Sprintf("\n  %2d. %s %s", sn, toolIcon(e.Tool.Name), e.Tool.Name))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
 				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
-				w(fmt.Sprintf("  \u2717 %s\n", e.Tool.Err))
+				w("  ✗ " + e.Tool.Err + "\n")
 			} else if e.Tool.Blocked {
-				w("  \u26d4\n")
+				w("  ⛔\n")
 			} else {
-				suffix := ""
-				if out := strings.TrimSpace(e.Tool.Output); out != "" {
-					first := strings.SplitN(out, "\n", 2)[0]
-					if len(first) > 60 { first = first[:57] + "..." }
-					suffix = "  " + first
-				}
-				w(" \u2713" + suffix + "\n")
+				w("  ✓\n")
 			}
-			w("  \u23f3\n")
 
 		case event.UsageKind:
 			if e.Usage != nil {
@@ -132,9 +124,7 @@ func termSink() event.Sink {
 
 		case event.Notice:
 			if e.Level == event.LevelWarn || e.Level == event.LevelErr {
-				w("\n  \u26a1 " + e.Text + "\n")
-			} else {
-				w("\n  i " + e.Text + "\n")
+				w("\n  " + e.Text + "\n")
 			}
 
 		case event.VerifyStarted:
@@ -175,29 +165,21 @@ func drawStatusLine(ctrl *control.Controller) {
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	fmt.Fprintf(os.Stdout, "\n%s %s  %s%s  %s  %s  %s  %s\n\n",
-		fg(D, "  ·"),
-		fg(C, fmt.Sprintf("%s/%s", ctrl.ProviderName(), ctrl.ModelName())),
-		iconForMode(ctrl.PermissionMode()), fg(D, string(ctrl.PermissionMode())),
-		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
-		fg(G, fmt.Sprintf("♻ %d%%", pct)),
-		fg(Y, fmt.Sprintf("💰 $%.4f", cost)),
-		fg(M, fmt.Sprintf("⚙ %dst · #%d", steps, turns)))
+	fmt.Printf("\n  %s %s%s  [%.0fk tokens · ♻ %d%% · $%.4f · turn #%d]\n\n",
+		fg(G, ctrl.ProviderName()), fg(C, ctrl.ModelName()),
+		iconForMode(ctrl.PermissionMode()),
+		float64(ti+to)/1000, pct, cost, turns)
 }
 
 func drawFooter() {
-	// Thin wrapper kept for backwards compat; status line drawn inline.
 	ti := st.tkIn.Load(); to := st.tkOut.Load(); tc := st.tkCache.Load()
 	cost := st.cost(); steps := st.step.Load(); turns := st.turn.Load()
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	bufferedWrite(fmt.Sprintf("\n%s %s  %s  %s  %s\n\n",
-		fg(D, "  ·"),
-		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
-		fg(G, fmt.Sprintf("♻ %d%%", pct)),
-		fg(Y, fmt.Sprintf("💰 $%.4f", cost)),
-		fg(M, fmt.Sprintf("⚙ %dst · turn #%d", steps, turns))))
+	bufferedWrite(fmt.Sprintf("\n%s\n",
+		fg(D, fmt.Sprintf("  [%.0fk tokens · ♻ %d%% · $%.4f · turn #%d]",
+			float64(ti+to)/1000, pct, cost, turns))))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -213,13 +195,12 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	drawBanner(ctrl)
 
 	memories := loadMemories()
-	if len(memories) > 0 {
-		fmt.Printf("  %s\n", fg(D, fmt.Sprintf("🧠 %d context file(s) loaded", len(memories))))
-	}
-
-	// ── Session resume — handled by Configure, just show info ──
-	if sess := ctrl.Session(); sess != nil && sess.Len() > 0 {
-		fmt.Printf("  %s  %s\n", fg(D, "📂 resumed:"), fg(C, fmt.Sprintf("%d messages", sess.Len())))
+	sess := ctrl.Session()
+	if len(memories) > 0 || (sess != nil && sess.Len() > 0) {
+		var parts []string
+		if len(memories) > 0 { parts = append(parts, fmt.Sprintf("🧠 %d memories", len(memories))) }
+		if sess != nil && sess.Len() > 0 { parts = append(parts, fmt.Sprintf("📂 %d msgs", sess.Len())) }
+		fmt.Printf("  %s\n", fg(D, strings.Join(parts, " · ")))
 	}
 
 	// ── lineedit: full cursor movement, insert anywhere, ↑↓ history ──
@@ -230,8 +211,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	history := make([]string, 0, 100)
 	var lastPrompt string // for /retry after Ctrl+C interruption
 	for {
-		// Print mode line above prompt (outside raw mode)
-		fmt.Fprintf(os.Stdout, "\n%s\n", fg(D, "  ["+iconForMode(ctrl.PermissionMode())+" "+string(ctrl.PermissionMode())+"]"))
+	
 
 		line, err := ed.ReadLine()
 		if err != nil { onChatExit(); break }
@@ -322,10 +302,9 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		}
 		if strings.HasPrefix(text, "/") && !strings.Contains(text, " ") {
 			if dispatchSkill(ctrl, strings.TrimPrefix(text, "/"), "") { continue }
-			fmt.Printf("\n  %s\n\n", fg(D, "unknown command · /help for help · /models for models"))
+			fmt.Printf("\n  %s\n", fg(D, "unknown command · /help for help · /models for models"))
 			continue
 		}
-		fmt.Printf("\n%s\n", fg(B+C, text))
 		lastPrompt = text // save for /retry after interruption
 		turnCtx, turnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		sigCh := make(chan os.Signal, 1)
@@ -338,18 +317,16 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			os.Stdout.WriteString(out)
 			outputBuf.Reset()
 		}
-		// Always show token usage even if output buf was empty
+		// Guard against completely silent turns
 		ti := st.tkIn.Load(); to := st.tkOut.Load()
 		if ti+to == 0 {
-			fmt.Fprint(os.Stdout, "\n  ⚡ no response — check API key (lumen doctor) or try /model to switch\n")
+			os.Stdout.WriteString("\n  ⚡ no response — try /model to switch\n")
 		}
 		drawFooter()
-		// drawFooter writes to outputBuf — flush it
 		if out := outputBuf.String(); out != "" {
 			os.Stdout.WriteString(out)
 			outputBuf.Reset()
 		}
-		fmt.Print("\n")
 	}
 	return nil
 }
@@ -357,13 +334,15 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 // ── Drawing ────────────────────────────────────────────────
 
 func drawBanner(ctrl *control.Controller) {
-	header := fmt.Sprintf("🪄  %s  ·  %s/%s  ·  %s %s",
-		fg(B+W, "LUMEN"),
-		fg(G, ctrl.ProviderName()),
-		fg(C, ctrl.ModelName()),
-		iconForMode(ctrl.PermissionMode()),
-		fg(D, string(ctrl.PermissionMode())))
-	fmt.Printf("\n  %s\n\n", header)
+	cwd, _ := os.Getwd()
+	if home, _ := os.UserHomeDir(); home != "" {
+		cwd = strings.Replace(cwd, home, "~", 1)
+	}
+	fmt.Printf("\n%s  %s\n",
+		fg(B+W, "● LUMEN"),
+		fg(D, fmt.Sprintf("%s/%s · %s · %s",
+			ctrl.ProviderName(), ctrl.ModelName(),
+			string(ctrl.PermissionMode()), cwd)))
 }
 
 func iconForMode(m permission.Mode) string {
@@ -371,24 +350,20 @@ func iconForMode(m permission.Mode) string {
 }
 
 func drawHelp() {
-	fmt.Printf("\n  %s\n", fg(B, "commands"))
-	fmt.Printf("  %s  ✨ AI interviews you, then builds\n", fg(C, "/wizard"))
-	fmt.Printf("  %s  🎯 autonomous goal execution\n", fg(C, "/goal <task>"))
-	fmt.Printf("  %s  📋 plan → review → execute\n", fg(C, "/workflow <task>"))
-	fmt.Printf("  %s  ⚡ plan → auto-execute\n", fg(C, "/ultra <task>"))
-	fmt.Printf("  %s  ↩ undo last file edits\n", fg(C, "/undo"))
-	fmt.Printf("  %s  🔄 retry last task (after Ctrl+C)\n", fg(C, "/retry"))
-	fmt.Printf("  %s  🏥 agent status\n", fg(C, "/status"))
-	fmt.Printf("  %s  🗂️  list 26 models\n", fg(C, "/models"))
-	fmt.Printf("  %s  🔄 switch model\n", fg(C, "/model <name>"))
-	fmt.Printf("  %s  🔓🔒🛡 permission modes\n", fg(C, "/mode"))
-	fmt.Printf("  %s  💬 submit feedback\n", fg(C, "/feedback"))
-	fmt.Printf("  %s  📊 generate report\n", fg(C, "/share"))
-	fmt.Printf("  %s  📈 view analytics\n", fg(C, "/analytics"))
-	fmt.Printf("  %s  ☁️  auto-upload\n", fg(C, "/uplink"))
-	fmt.Printf("  %s  🧬 evolve knowledge base\n", fg(C, "/evolve"))
-	fmt.Printf("  %s  📜 recent messages\n", fg(C, "/history"))
-	fmt.Printf("  %s  🎯 invoke skill\n\n", fg(C, "/<skill>"))
+	fmt.Printf("\n%s\n", fg(B, "  Commands"))
+	fmt.Printf("  %s  %s\n", fg(C, "/wizard"),    fg(D, "AI interviews you, then builds"))
+	fmt.Printf("  %s  %s\n", fg(C, "/goal <t>"),   fg(D, "autonomous goal execution"))
+	fmt.Printf("  %s  %s\n", fg(C, "/workflow"),   fg(D, "plan → review → execute"))
+	fmt.Printf("  %s  %s\n", fg(C, "/ultra"),      fg(D, "plan → auto-execute"))
+	fmt.Printf("  %s  %s\n", fg(C, "/models"),     fg(D, "list available models"))
+	fmt.Printf("  %s  %s\n", fg(C, "/model <n>"),  fg(D, "switch model"))
+	fmt.Printf("  %s  %s\n", fg(C, "/mode"),       fg(D, "🔓 bypass  🔒 plan  🛡 default  ✅ accept-edits"))
+	fmt.Printf("  %s  %s\n", fg(C, "/undo"),       fg(D, "undo last file edits"))
+	fmt.Printf("  %s  %s\n", fg(C, "/retry"),      fg(D, "retry last task after Ctrl+C"))
+	fmt.Printf("  %s  %s\n", fg(C, "/status"),     fg(D, "agent stats"))
+	fmt.Printf("  %s  %s\n", fg(C, "/feedback"),   fg(D, "submit feedback"))
+	fmt.Printf("  %s  %s\n", fg(C, "/history"),    fg(D, "recent messages"))
+	fmt.Printf("  %s  %s\n\n", fg(C, "/<skill>"),  fg(D, "invoke skill"))
 }
 
 func drawModels() {
@@ -437,8 +412,14 @@ func onChatExit() {
 		ctrl.SaveMark()
 	}
 	url, err := telemetry.MaybeUpload()
-	if err != nil { fmt.Fprintf(os.Stderr, "\n  %s\n", fg(D, "☁️ upload: "+err.Error())); return }
-	if url != "" { fmt.Fprintf(os.Stderr, "\n  %s %s\n", fg(G, "☁️ report sent"), fg(C, url)) }
+	if err != nil {
+		// Suppress non-actionable errors — user hasn't configured upload
+		if !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+			fmt.Fprintf(os.Stderr, "\n  %s\n", fg(D, "☁️ upload: "+err.Error()))
+		}
+	} else if url != "" {
+		fmt.Fprintf(os.Stderr, "\n  %s %s\n", fg(G, "☁️ report sent"), fg(C, url))
+	}
 }
 
 

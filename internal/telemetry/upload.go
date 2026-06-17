@@ -55,7 +55,7 @@ func SaveUploadConfig(cfg UploadConfig) error {
 func MaybeUpload() (string, error) {
 	cfg := LoadUploadConfig()
 	if !cfg.Enabled {
-		return "", fmt.Errorf("uplink disabled")
+		return "", nil // disabled is not an error — silence is golden
 	}
 
 	// Throttle: once per 6 hours
@@ -63,7 +63,7 @@ func MaybeUpload() (string, error) {
 	lastFile := filepath.Join(home, ".lumen", "telemetry", ".last_upload")
 	info, err := os.Stat(lastFile)
 	if err == nil && time.Since(info.ModTime()) < 6*time.Hour {
-		return "", fmt.Errorf("throttled (next upload in %v)", 6*time.Hour-time.Since(info.ModTime()))
+		return "", nil // throttled silently
 	}
 
 	report := BuildInsightReport(7)

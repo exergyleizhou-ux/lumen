@@ -165,8 +165,13 @@ func runOneShot(args []string) {
 		ctrl.Run(ctx, prompt)
 		if out := outputBuf.String(); out != "" {
 			os.Stdout.WriteString(out)
-			os.Stdout.Sync()
+			outputBuf.Reset()
 		}
+		drawFooter()
+		if out := outputBuf.String(); out != "" {
+			os.Stdout.WriteString(out)
+		}
+		fmt.Print("\n")
 	}
 }
 
