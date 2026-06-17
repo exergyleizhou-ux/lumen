@@ -63,39 +63,57 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 		p.EditMode = "replace"
 	}
 
-	data, err := os.ReadFile(p.Path)
+	resolved, err := fileutil.ResolvePath(p.Path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
+	}
+	if wsRoot := fileutil.WorkspaceRoot(); wsRoot != "" {
+		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
+			return "", err
+		}
+	}
+
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
 	}
 
-	var nb struct {
-		Cells []map[string]any `json:"cells"`
-	}
+	// Unmarshal the WHOLE notebook so the top-level envelope (nbformat,
+	// nbformat_minor, metadata/kernelspec) survives the round-trip — operating on
+	// only the cells array would write a spec-invalid file Jupyter can't open.
+	var nb map[string]any
 	if err := json.Unmarshal(data, &nb); err != nil {
 		return "", fmt.Errorf("invalid notebook JSON: %w", err)
+	}
+	rawCells, _ := nb["cells"].([]any)
+	cells := make([]map[string]any, 0, len(rawCells))
+	for _, rc := range rawCells {
+		if m, ok := rc.(map[string]any); ok {
+			cells = append(cells, m)
+		}
 	}
 
 	switch p.EditMode {
 	case "replace":
 		idx := p.CellNumber
 		if p.CellID != "" {
-			for i, c := range nb.Cells {
+			for i, c := range cells {
 				if id, _ := c["id"].(string); id == p.CellID {
 					idx = i
 					break
 				}
 			}
 		}
-		if idx < 0 || idx >= len(nb.Cells) {
-			return "", fmt.Errorf("cell %d out of range (0..%d)", idx, len(nb.Cells)-1)
+		if idx < 0 || idx >= len(cells) {
+			return "", fmt.Errorf("cell %d out of range (0..%d)", idx, len(cells)-1)
 		}
-		nb.Cells[idx]["source"] = p.NewSource
+		cells[idx]["source"] = p.NewSource
 		// Clear outputs for code cells
-		if ct, _ := nb.Cells[idx]["cell_type"].(string); ct == "code" {
-			nb.Cells[idx]["outputs"] = []any{}
-			nb.Cells[idx]["execution_count"] = nil
+		if ct, _ := cells[idx]["cell_type"].(string); ct == "code" {
+			cells[idx]["outputs"] = []any{}
+			cells[idx]["execution_count"] = nil
 		}
-		return writeNotebook(p.Path, nb, "replaced cell", idx)
+		return writeNotebook(resolved, nb, cells, "replaced cell", idx)
 
 	case "insert":
 		newCell := map[string]any{
@@ -109,31 +127,31 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 		}
 		idx := p.CellNumber + 1 // insert after
 		if p.CellNumber < 0 {
-			nb.Cells = append([]map[string]any{newCell}, nb.Cells...)
-			return writeNotebook(p.Path, nb, "prepended cell", 0)
+			cells = append([]map[string]any{newCell}, cells...)
+			return writeNotebook(resolved, nb, cells, "prepended cell", 0)
 		}
-		if idx >= len(nb.Cells) {
-			nb.Cells = append(nb.Cells, newCell)
+		if idx >= len(cells) {
+			cells = append(cells, newCell)
 		} else {
-			nb.Cells = append(nb.Cells[:idx], append([]map[string]any{newCell}, nb.Cells[idx:]...)...)
+			cells = append(cells[:idx], append([]map[string]any{newCell}, cells[idx:]...)...)
 		}
-		return writeNotebook(p.Path, nb, "inserted cell", idx)
+		return writeNotebook(resolved, nb, cells, "inserted cell", idx)
 
 	case "delete":
 		idx := p.CellNumber
 		if p.CellID != "" {
-			for i, c := range nb.Cells {
+			for i, c := range cells {
 				if id, _ := c["id"].(string); id == p.CellID {
 					idx = i
 					break
 				}
 			}
 		}
-		if idx < 0 || idx >= len(nb.Cells) {
+		if idx < 0 || idx >= len(cells) {
 			return "", fmt.Errorf("cell %d out of range", idx)
 		}
-		nb.Cells = append(nb.Cells[:idx], nb.Cells[idx+1:]...)
-		return writeNotebook(p.Path, nb, "deleted cell", idx)
+		cells = append(cells[:idx], cells[idx+1:]...)
+		return writeNotebook(resolved, nb, cells, "deleted cell", idx)
 	}
 
 	return "", fmt.Errorf("unknown edit_mode: %s", p.EditMode)
@@ -148,14 +166,14 @@ func (t *NotebookEditTool) Preview(args json.RawMessage) (diff.Change, error) {
 	return diff.Change{Path: p.Path, Before: string(data)}, nil
 }
 
-func writeNotebook(path string, nb struct {
-	Cells []map[string]any `json:"cells"`
-}, action string, idx int) (string, error) {
+func writeNotebook(path string, nb map[string]any, cells []map[string]any, action string, idx int) (string, error) {
+	nb["cells"] = cells
 	data, err := json.MarshalIndent(nb, "", " ")
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	// Atomic + workspace-boundary-checked write (temp file + rename under SafeWriteFile).
+	if err := fileutil.SafeWriteFile(path, fileutil.WorkspaceRoot(), data); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	return fmt.Sprintf("%s at index %d", action, idx), nil
@@ -219,23 +237,37 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 	content := string(data)
 	lines := strings.Split(content, "\n")
 
-	// Find anchors
-	startLine := -1
-	endLine := -1
+	// Anchors must be unique (per the schema contract) — otherwise we'd silently
+	// re-anchor to the first occurrence and over-delete. Fail closed on ambiguity,
+	// exactly like edit_file/multi_edit's applyReplace.
+	startCount, endCount := 0, 0
+	startLine, endLine := -1, -1
 	for i, line := range lines {
-		if line == p.StartAnchor && startLine < 0 {
-			startLine = i
+		if line == p.StartAnchor {
+			startCount++
+			if startLine < 0 {
+				startLine = i
+			}
 		}
-		if line == p.EndAnchor && i >= startLine {
+		if line == p.EndAnchor {
+			endCount++
 			endLine = i
-			break
 		}
 	}
-	if startLine < 0 {
+	if startCount == 0 {
 		return "", fmt.Errorf("start_anchor not found")
 	}
-	if endLine < 0 {
-		return "", fmt.Errorf("end_anchor not found after start_anchor")
+	if startCount > 1 {
+		return "", fmt.Errorf("start_anchor matches %d lines (must be unique — add more surrounding context)", startCount)
+	}
+	if endCount == 0 {
+		return "", fmt.Errorf("end_anchor not found")
+	}
+	if endCount > 1 {
+		return "", fmt.Errorf("end_anchor matches %d lines (must be unique — add more surrounding context)", endCount)
+	}
+	if endLine < startLine {
+		return "", fmt.Errorf("end_anchor appears before start_anchor")
 	}
 
 	inclusive := true
@@ -255,7 +287,7 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 	newLines := append(lines[:delStart], lines[delEnd:]...)
 	newContent := strings.Join(newLines, "\n")
 
-	if err := os.WriteFile(resolved, []byte(newContent), 0o644); err != nil {
+	if err := fileutil.SafeWriteFile(resolved, wsRoot, []byte(newContent)); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 
