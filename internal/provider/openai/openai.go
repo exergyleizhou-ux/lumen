@@ -138,13 +138,6 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 	}
 	defer resp.Body.Close()
 
-	// Wrap the body with a read deadline: if no data arrives within 30s
-	// of any read, scanner.Scan() returns an error instead of hanging forever.
-	bodyWithDeadline := &deadlineReader{
-		Reader:  resp.Body,
-		timeout: 30 * time.Second,
-	}
-
 	if resp.StatusCode == 401 || resp.StatusCode == 403 {
 		return &provider.AuthError{
 			Provider: p.name,
@@ -161,7 +154,7 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	p.parseSSE(ctx, bodyWithDeadline, ch)
+	p.parseSSE(ctx, resp.Body, ch)
 	return nil
 }
 
@@ -466,39 +459,4 @@ func buildRequest(req provider.Request, model string) chatRequest {
 		Stream:      true,
 		StreamOpts:  &streamOptions{IncludeUsage: true},
 	}
-}
-
-// deadlineReader wraps an io.ReadCloser with a per-read timeout.
-// On a live SSE stream, data arrives within milliseconds. On a dead
-// connection, Read() returns an error after the timeout, which causes
-// scanner.Scan() to fail and the stream loop to exit cleanly instead
-// of showing the user a frozen '⏳ …'.
-type deadlineReader struct {
-	Reader  io.ReadCloser
-	timeout time.Duration
-}
-
-func (d *deadlineReader) Read(p []byte) (int, error) {
-	// Use a timer goroutine to enforce the timeout per read.
-	// The standard library doesn't give us SetReadDeadline on
-	// arbitrary io.Readers, so we use a channel race.
-	type result struct {
-		n   int
-		err error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		n, err := d.Reader.Read(p)
-		ch <- result{n, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.n, r.err
-	case <-time.After(d.timeout):
-		return 0, fmt.Errorf("read timeout after %v", d.timeout)
-	}
-}
-
-func (d *deadlineReader) Close() error {
-	return d.Reader.Close()
 }

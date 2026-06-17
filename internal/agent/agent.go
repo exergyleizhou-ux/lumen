@@ -43,7 +43,7 @@ const (
 	maxToolOutputBytes      = 32 * 1024
 	stormBreakThreshold     = 3
 	maxStreamRecoveries     = 1
-	maxEmptyFinalBlocks     = 3
+	maxEmptyFinalBlocks     = 1 // one nudge, then tell user
 	maxFinalReadinessBlocks = 3
 )
 
@@ -428,11 +428,21 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// 5. If no tool calls → check readiness, then final answer
 		if len(toolCalls) == 0 {
-			// 5a. Empty final guard — model produced no text at all
+			// 5a. Empty final guard — model produced no text at all.
+			//     Give it one more chance, then stop — don't spin forever.
 			if a.handleEmptyFinal(text) {
-				continue // retry with a nudge
+				continue // retry with ONE nudge only
 			}
-			// 5b. Check whether the model has actually finished its work
+
+			// 5b. Still empty after the nudge? Don't keep asking.
+			//     The LLM is not responding usefully. Feedback to user.
+			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
+				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				fmt.Fprintln(os.Stderr, "  ⚡ model not responding — try /model to switch, or check https://status.deepseek.com")
+				return nil
+			}
+
+			// 5c. Check whether the model has actually finished its work
 			if !a.finalAnswerReady(text) {
 				continue // retry with a prompt to finish
 			}
