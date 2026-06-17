@@ -54,6 +54,8 @@ func main() {
 		runConfig()
 	case "stats":
 		runStats()
+	case "reliability":
+		runReliability()
 	case "version":
 		fmt.Println("Lumen v0.1.0")
 	case "oasis":

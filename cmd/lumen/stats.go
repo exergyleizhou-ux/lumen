@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"lumen/internal/reliability"
 )
 
 // sessionStats holds aggregated statistics for one session file.
@@ -186,4 +188,19 @@ func avg(a, b int) int {
 		return 0
 	}
 	return a / b
+}
+
+// ── Monthly Reliability Report (SpaceX Phase 3) ──────────
+
+func runReliability() {
+	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	now := time.Now()
+	r := reliability.Generate(histDir, now.Year(), now.Month())
+	fmt.Print(r.Print())
+	path, err := r.Save()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "\n  ⚠️  save report: %v\n", err)
+	} else {
+		fmt.Printf("\n  📄 saved: %s\n", path)
+	}
 }
