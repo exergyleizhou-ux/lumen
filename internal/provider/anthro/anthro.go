@@ -191,6 +191,10 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 
 		var event struct {
 			Type  string `json:"type"`
+			Error struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
 			Delta struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -216,6 +220,10 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		}
 
 		switch event.Type {
+		case "error":
+			// In-band error event: surface it instead of a silent empty turn.
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("provider error: %s", event.Error.Message)}
+			return
 		case "content_block_delta":
 			switch event.Delta.Type {
 			case "text_delta":

@@ -44,6 +44,33 @@ func TestAnthroRetriesTransient(t *testing.T) {
 	}
 }
 
+func TestAnthroInBandError(t *testing.T) {
+	// Anthropic can send an in-band error event (200 + {"type":"error",...}).
+	// It must surface as a ChunkError, not a silent empty turn.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte("data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"overloaded\"}}\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "anthro", BaseURL: srv.URL, Model: "claude-x"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+	var gotErr error
+	for c := range ch {
+		if c.Type == provider.ChunkError {
+			gotErr = c.Err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("in-band error event should surface as a ChunkError")
+	}
+	if !strings.Contains(gotErr.Error(), "overloaded") {
+		t.Errorf("error should carry the provider message, got %q", gotErr.Error())
+	}
+}
+
 func TestAnthroFailsFastOnPermanent(t *testing.T) {
 	var hits int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

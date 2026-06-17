@@ -29,6 +29,25 @@ func (m *mockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 	return ch, nil
 }
 
+// emptyStreamProvider streams zero chunks then closes — simulating a dead
+// connection or a 200 response with no usable body.
+type emptyStreamProvider struct{}
+
+func (emptyStreamProvider) Name() string { return "empty" }
+func (emptyStreamProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	ch := make(chan provider.Chunk)
+	close(ch)
+	return ch, nil
+}
+
+func TestRunReturnsErrorOnEmptyStream(t *testing.T) {
+	a := New(emptyStreamProvider{}, testRegistry(), NewSession(""), Options{MaxSteps: 3})
+	err := a.Run(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("a zero-chunk stream is a provider failure and must return an error, not nil (silent success)")
+	}
+}
+
 // ── Simple test tool ────────────────────────────────────────
 
 type testReadOnlyTool struct{}

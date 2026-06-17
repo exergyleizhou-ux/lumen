@@ -439,23 +439,23 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// 5. If no tool calls → check readiness, then final answer
 		if len(toolCalls) == 0 {
 			// 5a. SSE stream produced zero chunks — model connection dead.
+			//     This is a provider failure: return an error (surfaced by the
+			//     controller via the event sink) instead of a silent success.
 			if chunkCount == 0 {
-				fmt.Fprint(os.Stdout, "\n  ⚡ stream empty — try /model to switch provider\n")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
-				return nil
+				return fmt.Errorf("the model returned an empty stream (0 chunks) — the provider may be unreachable; try /model to switch provider")
 			}
 			// 5b. Empty final guard — model produced no text at all.
 			//     One nudge, then stop. Don't spin silently.
 			if a.handleEmptyFinal(text) {
 				continue // retry with ONE nudge only
 			}
-			// 5c. Still empty after the nudge? Stop immediately.
+			// 5c. Still empty after the nudge? It's a failure, not a success.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
-				fmt.Fprint(os.Stdout, "\n  ⚡ model returned empty — try /model to switch\n")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
-				return nil
+				return fmt.Errorf("the model returned an empty response after a retry; try /model to switch provider")
 			}
 
 			// 5c. Always write to stderr what the agent is about to reply.

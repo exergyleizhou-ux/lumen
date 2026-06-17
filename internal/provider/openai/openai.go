@@ -155,6 +155,11 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		}
 
 		var sse struct {
+			Error *struct {
+				Message string `json:"message"`
+				Type    string `json:"type"`
+				Code    string `json:"code"`
+			} `json:"error"`
 			Choices []struct {
 				Delta struct {
 					Role             string `json:"role"`
@@ -191,6 +196,13 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 
 		if err := json.Unmarshal([]byte(data), &sse); err != nil {
 			continue
+		}
+
+		// In-band error event (200 OK + {"error":...}): surface it instead of
+		// ending the turn as a silent empty success.
+		if sse.Error != nil && sse.Error.Message != "" {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("provider error: %s", sse.Error.Message)}
+			return
 		}
 
 		// Emit usage when present, normalizing cache accounting across providers.

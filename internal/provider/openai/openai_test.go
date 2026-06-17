@@ -344,6 +344,35 @@ func TestStreamRetriesTransient(t *testing.T) {
 	}
 }
 
+func TestSSEInBandError(t *testing.T) {
+	// OpenAI-compatible proxies often return 200 + an in-band {"error":...} event
+	// (rate limit / quota / overloaded). It must surface as a ChunkError, not be
+	// silently dropped into an empty turn.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+	var gotErr error
+	for c := range ch {
+		if c.Type == provider.ChunkError {
+			gotErr = c.Err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("in-band error event should surface as a ChunkError")
+	}
+	if !strings.Contains(gotErr.Error(), "rate limit exceeded") {
+		t.Errorf("error should carry the provider message, got %q", gotErr.Error())
+	}
+}
+
 func TestBuildRequest(t *testing.T) {
 	req := provider.Request{
 		Messages: []provider.Message{
