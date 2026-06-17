@@ -57,33 +57,38 @@ func termSink() event.Sink {
 	textStarted := false
 	textLen := 0
 	truncated := false
+	hadReasoning := false
 	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
 
 	return event.FuncSink(func(e event.Event) {
-		// Buffer ALL output during the turn. The chat loop flushes
-		// the buffer to stdout between ReadLine() calls, when the
-		// terminal is briefly outside raw mode.
 		w := func(s string) { outputBuf.WriteString(s) }
 		c := func(code, s string) string { return code + s + R }
 
 		switch e.Kind {
 
 		case event.TurnStarted:
-			thinking = true; textStarted = false; textLen = 0; truncated = false
+			thinking = true; textStarted = false; textLen = 0; truncated = false; hadReasoning = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
 
 		case event.Reasoning:
 			if thinking && !textStarted {
 				if rt := stripMD(e.Text); rt != "" {
-					w(c(D, rt))
+					if !hadReasoning {
+						w("\n  " + c(D, "⋯")) // first reasoning chunk: dim ellipsis
+						hadReasoning = true
+					}
+					w(c(D, rt)) // reasoning in dim gray, inline streaming
 				}
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
+				if hadReasoning {
+					w("\n\n") // visual break between reasoning and answer
+				}
 				w("  " + c(C, "⏵") + " ")
 			}
 			if truncated { return }
