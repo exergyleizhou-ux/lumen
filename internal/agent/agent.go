@@ -435,17 +435,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			}
 
 			// 5b. Still empty after the nudge? Stop immediately.
-			//     Don't keep asking — the model is not responding.
+			//     Write to stderr directly so the user ALWAYS sees it,
+			//     regardless of event sink state.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
-				a.sink.Emit(event.Event{
-					Kind:      event.Notice,
-					Level:     event.LevelWarn,
-					Text:      "model returned empty — try /model to switch, verify API key, or check status.deepseek.com",
-					Timestamp: time.Now(),
-				})
+				fmt.Fprintln(os.Stderr, "  ⚡ model returned empty — try /model to switch, verify API key")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				return nil
 			}
+
+			// 5c. Always write to stderr what the agent is about to reply.
+			//     Invisible when text is normal, critical when debugging silence.
+			fmt.Fprintf(os.Stderr, "  → agent reply: %q\n", truncStr(text, 80))
 
 			// 5c. Check whether the model has actually finished its work
 			if !a.finalAnswerReady(text) {
@@ -1088,4 +1088,11 @@ func renderFileDiff(ch diff.Change) string {
 		return fmt.Sprintf("✕ delete file: %s\n%s", ch.Path, render.Diff(ch.Path, ch.Before, ""))
 	}
 	return render.Diff(ch.Path, ch.Before, ch.After)
+}
+
+func truncStr(s string, n int) string {
+	if n <= 0 { return "" }
+	if len(s) <= n { return s }
+	if n <= 3 { return s[:n] }
+	return s[:n-1] + "…"
 }
