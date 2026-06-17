@@ -336,14 +336,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// 1. Auto-compact before the prompt nears the context window
 		a.autoCompact(ctx)
 
-		// 2. Build request — sanitize messages to satisfy tool-call pairing contract.
-		// Only sanitize when the last assistant message had tool calls (the common
-		// case for unpaired calls); otherwise the snapshot is already clean.
-		snapshot := a.session.Snapshot()
-		needsRepair := len(snapshot) > 0 && snapshot[len(snapshot)-1].Role == provider.RoleTool
-		if needsRepair {
-			snapshot = provider.SanitizeToolPairing(snapshot)
-		}
+		// 2. Build request — always sanitize to satisfy the tool-call pairing
+		// contract. Orphans can appear mid-sequence (compaction cutting a
+		// tool_call from its result, a malformed JSONL line dropped on resume),
+		// not just at the tail, and a single orphan makes the provider 400 the
+		// whole turn. SanitizeToolPairing is a passthrough on clean sequences, so
+		// the cache-stable prefix is unaffected in the common case.
+		snapshot := provider.SanitizeToolPairing(a.session.Snapshot())
 
 		// 3. Cache schemas — compute once per agent lifetime, reuse every turn
 		if a.cachedSchemas == nil {

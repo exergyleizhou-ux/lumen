@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"strings"
@@ -149,6 +150,29 @@ func (s *Session) Compact(keepFirst, keepLast int, summary string) {
 	})
 	compacted = append(compacted, s.Messages[len(s.Messages)-keepLast:]...)
 	s.Messages = compacted
+
+	// Keep the persisted JSONL in sync with the compacted memory — otherwise the
+	// file keeps the dropped middle (growing unbounded) and a resume replays a
+	// transcript that diverges from what the model actually saw.
+	if err := s.rewriteFileLocked(); err != nil && s.persistErr == nil {
+		s.persistErr = err
+	}
+}
+
+// rewriteFileLocked overwrites the JSONL with the current in-memory messages.
+// The caller must hold s.mu. No-op when persistence is disabled.
+func (s *Session) rewriteFileLocked() error {
+	if s.Path == "" {
+		return nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	for _, m := range s.Messages {
+		if err := enc.Encode(m); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(s.Path, buf.Bytes(), 0o644)
 }
 
 // ── JSONL persistence ─────────────────────────────────────

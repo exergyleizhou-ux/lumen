@@ -1,12 +1,32 @@
 package agent
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"lumen/internal/provider"
 )
+
+func TestCompactRewritesPersistedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	s := NewSession(path)
+	for i := 0; i < 10; i++ {
+		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("m%d", i)})
+	}
+	s.Compact(2, 2, "summary")
+	want := s.Len() // 2 + marker + 2 = 5 in memory
+
+	// Reloading from disk must yield the compacted history, not the original 10 —
+	// otherwise the file diverges, grows unbounded, and resume replays a scrambled
+	// transcript.
+	reloaded := NewSession(path)
+	if reloaded.Len() != want {
+		t.Fatalf("reloaded %d messages from file, want %d (file must match compacted memory)", reloaded.Len(), want)
+	}
+}
 
 func TestSessionAddRecordsPersistError(t *testing.T) {
 	// Parent dir does not exist, so the append must fail. The session must record

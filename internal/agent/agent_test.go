@@ -81,6 +81,50 @@ func TestRunRecoversFromStreamInterruption(t *testing.T) {
 	}
 }
 
+// recordingProvider captures the request it was asked to stream.
+type recordingProvider struct {
+	lastReq provider.Request
+	calls   int
+}
+
+func (p *recordingProvider) Name() string { return "rec" }
+func (p *recordingProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.lastReq = req
+	p.calls++
+	ch := make(chan provider.Chunk, 2)
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "ok"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunSanitizesOrphanedToolCallBeforeRequest(t *testing.T) {
+	p := &recordingProvider{}
+	a := New(p, testRegistry(), NewSession(""), Options{MaxSteps: 1})
+	// Seed an assistant tool_call with NO matching tool result, then a later
+	// non-tool message — so the last message is not a tool result and the old
+	// narrow "needsRepair" gate would skip sanitization, sending an orphaned
+	// tool_call the provider rejects with HTTP 400.
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	a.session.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "x", Name: "read_test"}}})
+
+	a.Run(context.Background(), "continue")
+
+	if p.calls == 0 {
+		t.Fatal("provider was never called")
+	}
+	msgs := p.lastReq.Messages
+	for i, m := range msgs {
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "x" {
+			if i+1 >= len(msgs) || msgs[i+1].Role != provider.RoleTool || msgs[i+1].ToolCallID != "x" {
+				t.Fatalf("orphaned tool_call sent to provider: assistant tool_call 'x' not followed by its tool result; got %+v", msgs)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected the assistant tool_call in the request, messages=%+v", msgs)
+}
+
 // ── Simple test tool ────────────────────────────────────────
 
 type testReadOnlyTool struct{}
