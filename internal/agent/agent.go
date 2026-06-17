@@ -379,13 +379,15 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// 4. Collect text and tool calls
 		var (
-			textBuf   strings.Builder
-			toolCalls []provider.ToolCall
-			usage     *provider.Usage
-			reasonBuf strings.Builder
+			textBuf     strings.Builder
+			toolCalls   []provider.ToolCall
+			usage       *provider.Usage
+			reasonBuf   strings.Builder
+			chunkCount  int
 		)
 
 		for chunk := range ch {
+			chunkCount++
 			switch chunk.Type {
 			case provider.ChunkText:
 				textBuf.WriteString(chunk.Text)
@@ -428,17 +430,20 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// 5. If no tool calls → check readiness, then final answer
 		if len(toolCalls) == 0 {
-			// 5a. Empty final guard — model produced no text at all.
+			// 5a. SSE stream produced zero chunks — model connection dead.
+			if chunkCount == 0 {
+				fmt.Fprint(os.Stdout, "\n  ⚡ stream empty — try /model to switch provider\n")
+				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				return nil
+			}
+			// 5b. Empty final guard — model produced no text at all.
 			//     One nudge, then stop. Don't spin silently.
 			if a.handleEmptyFinal(text) {
 				continue // retry with ONE nudge only
 			}
-
-			// 5b. Still empty after the nudge? Stop immediately.
-			//     Write to stderr directly so the user ALWAYS sees it,
-			//     regardless of event sink state.
+			// 5c. Still empty after the nudge? Stop immediately.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
-				fmt.Fprintln(os.Stderr, "  ⚡ model returned empty — try /model to switch, verify API key")
+				fmt.Fprint(os.Stdout, "\n  ⚡ model returned empty — try /model to switch\n")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				return nil
 			}

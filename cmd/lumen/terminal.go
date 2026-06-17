@@ -331,10 +331,15 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		outputBuf.Reset()
 		ctrl.Run(turnCtx, text)
 		turnCancel(); signal.Stop(sigCh)
-		// Flush buffered agent output before lineedit re-enters raw mode
 		if out := outputBuf.String(); out != "" {
-			fmt.Fprint(os.Stdout, out)
+			os.Stdout.WriteString(out)
 		}
+		// Always show token usage even if output buf was empty
+		ti := st.tkIn.Load(); to := st.tkOut.Load()
+		if ti+to == 0 {
+			fmt.Fprint(os.Stdout, "\n  ⚡ no response — check API key (lumen doctor) or try /model to switch\n")
+		}
+		drawFooter()
 		drawFooter()
 		fmt.Print("\n")
 	}
