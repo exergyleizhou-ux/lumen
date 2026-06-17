@@ -184,10 +184,10 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		sink = tlSink
 	}
 
-	// 9. Create session — auto-resume from last session if it's not too large.
+	// 9. Create session — auto-resume from last session if it's small enough.
 	// Sessions live in ~/.lumen/history/ as JSONL files.
-	// If the last session has grown beyond ~200KB (roughly >60 messages), the
-	// LLM context window may be exceeded. Start fresh to avoid request failures.
+	// Large sessions (>30 messages) are not reused to avoid context window overflow
+	// on the first turn of a new run.
 	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
 	os.MkdirAll(histDir, 0700)
 	sessPath := filepath.Join(histDir, time.Now().Format("2006-01-02-150405")+".jsonl")
@@ -196,8 +196,8 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	lastName := strings.TrimSpace(string(lastBytes))
 	if lastName != "" {
 		candidate := filepath.Join(histDir, lastName)
-		if info, err := os.Stat(candidate); err == nil && info.Size() < 200*1024 {
-			sessPath = candidate // reuse reasonably-sized session
+		if info, err := os.Stat(candidate); err == nil && info.Size() < 50*1024 {
+			sessPath = candidate // reuse only small sessions
 		}
 	}
 	c.sessPath = sessPath

@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,7 +14,6 @@ import (
 	"net"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"lumen/internal/provider"
@@ -35,7 +35,7 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
 		client: &http.Client{
-			Timeout: 5 * time.Minute, // kill stale connections (one turn max)
+			Timeout: 5 * time.Minute,
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   15 * time.Second,
@@ -45,8 +45,9 @@ func New(cfg provider.Config) (provider.Provider, error) {
 				MaxIdleConnsPerHost:   5,
 				IdleConnTimeout:       90 * time.Second,
 				TLSHandshakeTimeout:   15 * time.Second,
-				ResponseHeaderTimeout: 30 * time.Second,
+				ResponseHeaderTimeout: 15 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
+				TLSNextProto:          make(map[string]func(authority string, c *tls.Conn) http.RoundTripper), // disable HTTP/2
 			},
 		},
 	}, nil
@@ -155,17 +156,15 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Wrap the body so a stalled connection fails within 30s instead of
-	// blocking scanner.Scan() forever. On timeout, the connection is closed
-	// and bufio.Scanner returns an error → parseSSE exits → agent loop handles
-	// the error gracefully instead of showing frozen '⏳ …'.
-	sr := newTimeoutReader(resp.Body, 30*time.Second)
-	p.parseSSE(ctx, sr, ch)
+	p.parseSSE(ctx, resp.Body, ch)
 	return nil
 }
 
 func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider.Chunk) {
-	scanner := bufio.NewScanner(r)
+	// Wrap the reader with context awareness so bufio.Scanner.Scan()
+	// cannot block forever when ctx is cancelled. Each Read() checks ctx.Err().
+	cr := &ctxReader{ctx: ctx, r: r}
+	scanner := bufio.NewScanner(cr)
 	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
 
 	var (
@@ -467,39 +466,18 @@ func buildRequest(req provider.Request, model string) chatRequest {
 	}
 }
 
-// timeoutReader wraps an io.ReadCloser with a per-read timeout. Unlike
-// goroutine-per-read approaches, this uses a single deadline that gets
-// refreshed on each successful read. If data arrives, the deadline extends
-// forward. If the connection stalls, Close() kills the blocked Read.
-type timeoutReader struct {
-	rc      io.ReadCloser
-	timeout time.Duration
-	timer   *time.Timer
-	mu      sync.Mutex
+// ── Read-deadline transport ──────────────────────────
+
+// ctxReader wraps an io.Reader so that every Read() call first checks context.
+// This ensures bufio.Scanner cannot block forever when the context is cancelled.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
 }
 
-func newTimeoutReader(rc io.ReadCloser, timeout time.Duration) *timeoutReader {
-	return &timeoutReader{rc: rc, timeout: timeout}
-}
-
-func (r *timeoutReader) Read(p []byte) (int, error) {
-	r.mu.Lock()
-	if r.timer == nil {
-		r.timer = time.AfterFunc(r.timeout, func() {
-			r.rc.Close() // force-fail the blocked read
-		})
-	} else {
-		r.timer.Reset(r.timeout)
+func (cr *ctxReader) Read(p []byte) (int, error) {
+	if err := cr.ctx.Err(); err != nil {
+		return 0, err
 	}
-	r.mu.Unlock()
-
-	n, err := r.rc.Read(p)
-
-	r.mu.Lock()
-	if r.timer != nil {
-		r.timer.Stop()
-	}
-	r.mu.Unlock()
-
-	return n, err
+	return cr.r.Read(p)
 }
