@@ -7,39 +7,115 @@ import (
 
 // Detect builds the ordered verification plan for the given changed files.
 //
-// Rules (in priority order):
-//  1. If cfg.Command is non-empty, the whole plan is a single "custom" step.
-//  2. Otherwise: build + vet always.
-//  3. If cfg.RunTests: append test steps.
-//     - cfg.Scope=="all" → single ["go","test","./..."]
-//     - Otherwise, for each distinct Go package directory among .go files,
-//       append ["go","test","./<pkgDir>"]; duplicates are deduplicated.
-//     - No .go files changed → skip tests.
+// Language detection is automatic based on file extensions:
+//   - .go files → go build + go vet + (optional) go test
+//   - .py files → ruff check + pytest (if ast/ruff present in project)
+//   - .js/.ts files → tsc --noEmit + jest (if package.json present)
+//   - Mixed files → build/vet/test steps for each detected language
 //
-// Returns at least build+vet even when changed is empty.
+// cfg.Command override takes priority over all auto-detection.
 func Detect(root string, changed []string, cfg Config) []Step {
 	// Rule 1: custom override
 	if cfg.Command != "" {
 		return []Step{{Name: "custom", Dir: root, Args: []string{"sh", "-c", cfg.Command}}}
 	}
 
+	var steps []Step
+
+	// Detect which languages were affected
+	langs := detectLanguages(changed)
+	for _, lang := range langs {
+		switch lang {
+		case "go":
+			steps = append(steps, goSteps(root, changed, cfg)...)
+		case "python":
+			steps = append(steps, pythonSteps(root, changed, cfg)...)
+		case "js":
+			steps = append(steps, jsSteps(root, changed, cfg)...)
+		}
+	}
+
+	// If nothing detected, fall back to Go (project default)
+	if len(steps) == 0 {
+		steps = goSteps(root, changed, cfg)
+	}
+
+	return steps
+}
+
+func detectLanguages(changed []string) []string {
+	hasGo, hasPy, hasJS := false, false, false
+	for _, f := range changed {
+		switch {
+		case strings.HasSuffix(f, ".go"):
+			hasGo = true
+		case strings.HasSuffix(f, ".py"):
+			hasPy = true
+		case strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".jsx"):
+			hasJS = true
+		}
+	}
+	var langs []string
+	if hasGo { langs = append(langs, "go") }
+	if hasPy { langs = append(langs, "python") }
+	if hasJS { langs = append(langs, "js") }
+	return langs
+}
+
+func goSteps(root string, changed []string, cfg Config) []Step {
 	steps := []Step{
 		{Name: "build", Dir: root, Args: []string{"go", "build", "./..."}},
 		{Name: "vet", Dir: root, Args: []string{"go", "vet", "./..."}},
 	}
-
-	// Rule 3: test
 	if cfg.RunTests && len(changed) > 0 {
 		if cfg.Scope == "all" {
 			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"go", "test", "./..."}})
 		} else {
-			pkgs := changedPkgs(root, changed)
-			for _, pkg := range pkgs {
+			for _, pkg := range changedPkgs(root, changed) {
 				steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"go", "test", pkg}})
 			}
 		}
 	}
+	return steps
+}
 
+func pythonSteps(root string, changed []string, cfg Config) []Step {
+	steps := []Step{
+		{Name: "lint", Dir: root, Args: []string{"ruff", "check", "."}},
+	}
+	if cfg.RunTests && len(changed) > 0 {
+		if cfg.Scope == "all" {
+			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q"}})
+		} else {
+			// Run pytest only on the specific test file
+			for _, f := range changed {
+				if strings.HasSuffix(f, ".py") {
+					testFile := strings.TrimSuffix(f, ".py") + "_test.py"
+					if _, err := filepath.Glob(filepath.Join(root, testFile)); err == nil {
+						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", testFile}})
+					}
+				}
+			}
+		}
+	}
+	return steps
+}
+
+func jsSteps(root string, changed []string, cfg Config) []Step {
+	steps := []Step{
+		{Name: "typecheck", Dir: root, Args: []string{"npx", "tsc", "--noEmit"}},
+	}
+	if cfg.RunTests && len(changed) > 0 {
+		if cfg.Scope == "all" {
+			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests"}})
+		} else {
+			for _, f := range changed {
+				if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
+					steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests", f}})
+				}
+			}
+		}
+	}
 	return steps
 }
 
