@@ -88,6 +88,8 @@ type Agent struct {
 	// The system prompt and tool list never change, so the prefix cache stays hot.
 	planMode atomic.Bool
 
+	memoryPrompt string // injected after system prompt on first turn
+
 	gate  Gate
 	asker Asker
 
@@ -167,6 +169,7 @@ type Options struct {
 	Sink              event.Sink
 	Gate              Gate
 	Asker             Asker
+	MemoryPrompt      string // injected after system prompt (persistent user memories)
 }
 
 // New creates an Agent.
@@ -196,6 +199,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		sink:              opts.Sink,
 		gate:              opts.Gate,
 		asker:             opts.Asker,
+		memoryPrompt:      opts.MemoryPrompt,
 		contextWindow:     opts.ContextWindow,
 		softCompactRatio:  opts.SoftCompactRatio,
 		compactRatio:      opts.CompactRatio,
@@ -318,6 +322,9 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	// Only add it once — the session may already have one from a resume.
 	if a.session.Len() == 0 {
 		a.session.Add(provider.Message{Role: provider.RoleSystem, Content: DefaultSystemPrompt})
+		if a.memoryPrompt != "" {
+			a.session.Add(provider.Message{Role: provider.RoleSystem, Content: "[MEMORY]\n" + a.memoryPrompt})
+		}
 	}
 	sessionLen := a.session.Len() // snapshot for rollback on failed turns
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})

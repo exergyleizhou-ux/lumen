@@ -20,15 +20,16 @@ import (
 	"lumen/internal/editverify"
 	"lumen/internal/event"
 	"lumen/internal/jobs"
+	"lumen/internal/memory"
 	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/skill"
 	"lumen/internal/timeline"
 	"lumen/internal/tool"
+	"lumen/internal/tool/builtin"
 
-	// Side-effect: register builtin tools and providers
+	// Side-effect: register builtin providers
 	_ "lumen/internal/provider/openai"
-	_ "lumen/internal/tool/builtin"
 )
 
 // Mode selects the agent run mode.
@@ -56,12 +57,13 @@ type Controller struct {
 	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
 
 	// Agent (created by Configure)
-	ag             *agent.Agent
-	sess      *agent.Session
-	sessPath  string // JSONL path for persistence
-	cp        *checkpoint.Store
-	jm   *jobs.Manager
-	tl   *timeline.Recorder // session timeline for replay + change inbox
+	ag       *agent.Agent
+	sess     *agent.Session
+	sessPath string // JSONL path for persistence
+	cp       *checkpoint.Store
+	jm       *jobs.Manager
+	tl       *timeline.Recorder // session timeline for replay + change inbox
+	memStore *memory.Store     // persistent user memories
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -203,7 +205,21 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	c.sessPath = sessPath
 	c.sess = agent.NewSession(sessPath)
 
-	// 10. Create agent
+	// 10. Init persistent memory store (~/.lumen/memories/)
+	memDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
+	memStore, err := memory.NewStore(memDir)
+	if err != nil {
+		c.logf("memory: %v (disabled)", err)
+		memStore = nil
+	}
+	c.memStore = memStore
+	builtin.SetMemStore(memStore) // wire tools: remember / forget / memories
+
+	// 11. Create agent
+	var memPrompt string
+	if memStore != nil {
+		memPrompt = memStore.SystemPrompt()
+	}
 	c.ag = agent.New(prov, reg, c.sess, agent.Options{
 		MaxSteps:      cfg.Agent.MaxSteps,
 		Temperature:   cfg.Agent.Temperature,
@@ -211,15 +227,16 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		Sink:          sink,
 		Gate:          gate,
 		Asker:         asker,
+		MemoryPrompt:  memPrompt,
 	})
 
-	// 11. Wire infrastructure
+	// 12. Wire infrastructure
 	c.cp = checkpoint.New()
 	c.ag.SetCheckpoint(c.cp)
 	c.jm = jobs.NewManager()
 	c.ag.SetJobs(c.jm)
 
-	// 12. Verify-after-edit (C-5): after a writer batch the agent auto-runs
+	// 13. Verify-after-edit (C-5): after a writer batch the agent auto-runs
 	// build/vet/test and feeds failures back for self-repair. Config from
 	// lumen.toml [verify]; disabled config leaves the loop fully inert.
 	verifyCfg := editverify.DefaultConfig()

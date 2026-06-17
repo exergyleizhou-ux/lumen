@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"lumen/internal/doctor"
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/server"
 	"lumen/internal/tui"
 
 	// Ensure all providers are registered via init()
@@ -60,6 +62,8 @@ func main() {
 		fmt.Println("Lumen v0.1.0")
 	case "oasis":
 		runOasis(os.Args[2:])
+	case "serve":
+		runServe(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -73,6 +77,7 @@ func printUsage() {
 Usage:
   lumen wizard            Active onboarding — AI interviews you, then builds
   lumen chat [--mode M]   Interactive chat (terminal line-mode)
+  lumen serve [--addr :8080]  Start HTTP+SSE server with web UI
   lumen tui [--mode M]    Multi-panel Bubble Tea TUI
   lumen run "prompt"      One-shot task
   lumen run --plan "..."  Plan mode (read-only)
@@ -252,6 +257,38 @@ func runTUI(args []string) {
 	// Start the TUI (blocks until quit)
 	if err := tui.RunTUI(model); err != nil {
 		fmt.Fprintf(os.Stderr, "tui: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// ── HTTP/SSE server ────────────────────────────────────────
+
+func runServe(args []string) {
+	addr := ":8080"
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--addr" && i+1 < len(args) {
+			addr = args[i+1]
+			i++
+		}
+	}
+
+	ctrl, err := makeController(event.Discard, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "config: %v\n", err)
+		os.Exit(1)
+	}
+
+	srv, err := server.New(server.Config{
+		Addr: addr,
+		Ctrl: ctrl,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "server: %v\n", err)
+		os.Exit(1)
+	}
+	log.Printf("lumen serve: listening on %s", addr)
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "server: %v\n", err)
 		os.Exit(1)
 	}
 }
