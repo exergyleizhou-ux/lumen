@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -230,5 +231,30 @@ func TestJobSnapshotRaceWithCompletion(t *testing.T) {
 		}()
 	}
 	close(release) // job completes → completion goroutine writes fields concurrently
+	wg.Wait()
+}
+
+func TestJobMarshalJSONRaceFree(t *testing.T) {
+	// json.Marshal-ing a job must lock its fields, so it can't race the completion
+	// goroutine. Run under -race.
+	m := NewManager()
+	release := make(chan struct{})
+	job := m.Start("bash", "x", func(ctx context.Context) (string, error) {
+		<-release
+		return "out", nil
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if _, err := json.Marshal(job); err != nil {
+					t.Errorf("marshal: %v", err)
+				}
+			}
+		}()
+	}
+	close(release)
 	wg.Wait()
 }

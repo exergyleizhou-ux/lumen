@@ -6,6 +6,7 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -210,6 +211,23 @@ func (j *Job) statusSafe() JobStatus {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	return j.Status
+}
+
+// MarshalJSON serializes the job under its lock, so json.Marshal-ing a *Job
+// (e.g. from List()) never races the completion goroutine writing its fields.
+func (j *Job) MarshalJSON() ([]byte, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	type alias struct {
+		ID        string    `json:"id"`
+		Type      string    `json:"type"`
+		Label     string    `json:"label"`
+		StartedAt time.Time `json:"started_at"`
+		Status    JobStatus `json:"status"`
+		Result    string    `json:"result,omitempty"`
+		Err       string    `json:"err,omitempty"`
+	}
+	return json.Marshal(alias{j.ID, j.Type, j.Label, j.StartedAt, j.Status, j.Result, j.Err})
 }
 
 // WaitAll blocks until all running jobs finish, or timeout expires.

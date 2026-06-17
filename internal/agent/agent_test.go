@@ -5,12 +5,41 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"lumen/internal/event"
 	"lumen/internal/provider"
 	"lumen/internal/tool"
 )
+
+func TestAgentSetSinkConcurrentWithEmit(t *testing.T) {
+	// SetSink (e.g. a TUI redirect) must be safe against the turn goroutine
+	// reading the sink. Run under -race.
+	a := New(&mockProvider{name: "test"}, testRegistry(), NewSession(""), Options{MaxSteps: 1})
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				a.Sink().Emit(event.Event{Kind: event.Text})
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			a.SetSink(event.Discard)
+		}
+		close(stop)
+	}()
+	wg.Wait()
+}
 
 // ── Mock provider for testing ──────────────────────────────
 

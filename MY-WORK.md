@@ -187,7 +187,6 @@
 | `internal/tool/builtin/cron_tools.go` | ~? | 3 个 Cron 工具 |
 | `internal/tool/builtin/schema_tools.go` | ~? | 3 个 Schema 工具 |
 | `internal/tool/builtin/policy_tools.go` | ~? | 3 个策略工具 |
-| `internal/tool/builtin/flowcontrol_tools.go` | ~? | 4 个流控工具 |
 | `internal/tool/builtin/orchestrator_tools.go` | ~? | 3 个编排工具 |
 | `internal/tool/builtin/codemap_tools.go` | ~? | 6 个 CodeMap 工具 |
 | `internal/tool/builtin/diff_tools.go` | ~? | 2 个 Diff 工具 |

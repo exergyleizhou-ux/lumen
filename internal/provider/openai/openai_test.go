@@ -408,6 +408,43 @@ func TestSSEInBandError(t *testing.T) {
 	}
 }
 
+func TestSSEInBandErrorAfterContentPreservesText(t *testing.T) {
+	// A trailing in-band error AFTER valid content was streamed must NOT discard
+	// the partial answer — keep it and append a marker, ending normally.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"Here is the answer"}}]}` + "\n\n"))
+		w.Write([]byte(`data: {"error":{"message":"upstream hiccup"}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+	var texts []string
+	var gotErr error
+	for c := range ch {
+		switch c.Type {
+		case provider.ChunkText:
+			texts = append(texts, c.Text)
+		case provider.ChunkError:
+			gotErr = c.Err
+		}
+	}
+	joined := strings.Join(texts, "")
+	if gotErr != nil {
+		t.Errorf("trailing error after content must not become a ChunkError, got %v", gotErr)
+	}
+	if !strings.Contains(joined, "Here is the answer") {
+		t.Errorf("partial answer must be preserved, got %q", joined)
+	}
+	if !strings.Contains(joined, "upstream hiccup") {
+		t.Errorf("error marker should be appended, got %q", joined)
+	}
+}
+
 func TestBuildRequest(t *testing.T) {
 	req := provider.Request{
 		Messages: []provider.Message{

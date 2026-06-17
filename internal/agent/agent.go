@@ -76,7 +76,7 @@ type Agent struct {
 
 	temperature float64
 	pricing     *provider.Pricing
-	sink        event.Sink
+	sinkRef     atomic.Pointer[event.Sink] // accessed via Sink()/SetSink (safe vs SetSink-mid-turn)
 
 	lastUsage atomic.Pointer[provider.Usage]
 
@@ -188,14 +188,13 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if opts.CompactForceRatio <= 0 {
 		opts.CompactForceRatio = 1.0
 	}
-	return &Agent{
+	a := &Agent{
 		prov:              prov,
 		tools:             tools,
 		session:           session,
 		maxSteps:          opts.MaxSteps,
 		temperature:       opts.Temperature,
 		pricing:           opts.Pricing,
-		sink:              opts.Sink,
 		gate:              opts.Gate,
 		asker:             opts.Asker,
 		memoryPrompt:      opts.MemoryPrompt,
@@ -206,6 +205,8 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		recentKeep:        opts.RecentKeep,
 		cache:             newCacheTracker(),
 	}
+	a.SetSink(opts.Sink)
+	return a
 }
 
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
@@ -276,7 +277,21 @@ func (a *Agent) SetCompactProvider(prov provider.Provider) { a.compactProvider =
 func (a *Agent) SetProvider(p provider.Provider) { a.prov = p }
 
 // SetSink replaces the event sink (used by TUI to redirect output mid-session).
-func (a *Agent) SetSink(s event.Sink) { a.sink = s }
+// Stored atomically so a redirect can't race the turn goroutine reading it.
+func (a *Agent) SetSink(s event.Sink) {
+	if s == nil {
+		s = event.Discard
+	}
+	a.sinkRef.Store(&s)
+}
+
+// Sink returns the current event sink (never nil).
+func (a *Agent) Sink() event.Sink {
+	if p := a.sinkRef.Load(); p != nil {
+		return *p
+	}
+	return event.Discard
+}
 
 // Session returns the agent's current session.
 func (a *Agent) Session() *Session {
@@ -305,9 +320,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 	// Strip hidden/invisible Unicode characters (indirect injection defense)
 	input = guard.StripHiddenChars(input)
-	if a.sink == nil {
-		a.sink = event.Discard
-	}
 	// Fresh evidence ledger for this user turn
 	a.evidence = evidence.NewLedger()
 	a.repeatSuccessCounts = nil
@@ -315,7 +327,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.streamRecoveryCount = 0
 	a.repairCycle = 0
 	a.verifyExhausted = false
-	a.sink.Emit(event.Event{Kind: event.TurnStarted, Timestamp: time.Now()})
+	a.Sink().Emit(event.Event{Kind: event.TurnStarted, Timestamp: time.Now()})
 
 	// Ensure the session starts with a system prompt (cache-stable prefix).
 	// Only add it once — the session may already have one from a resume.
@@ -360,7 +372,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			}
 			_, churn := a.cache.check(DefaultSystemPrompt, a.cachedSchemas, firstUser, false)
 			if churn {
-				a.sink.Emit(event.Event{
+				a.Sink().Emit(event.Event{
 					Kind: event.Notice, Level: event.LevelInfo,
 					Text: "prefix cache churn detected — next turn may have reduced cache hit rate",
 				})
@@ -398,17 +410,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			switch chunk.Type {
 			case provider.ChunkText:
 				textBuf.WriteString(chunk.Text)
-				a.sink.Emit(event.Event{Kind: event.Text, Text: chunk.Text, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.Text, Text: chunk.Text, Timestamp: time.Now()})
 			case provider.ChunkReasoning:
 				reasonBuf.WriteString(chunk.Text)
-				a.sink.Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.Reasoning, Text: chunk.Text, Timestamp: time.Now()})
 			case provider.ChunkToolCall:
 				toolCalls = append(toolCalls, *chunk.ToolCall)
 				// ToolCall delivers the complete call — dispatch once with full args.
 				// (ChunkToolCallStart was already dispatched without args; skip re-dispatch.)
 			case provider.ChunkToolCallStart:
 				// Dispatch the start of a tool call (ID + Name, no args yet)
-				a.sink.Emit(event.Event{
+				a.Sink().Emit(event.Event{
 					Kind: event.ToolDispatch,
 					Tool: event.Tool{
 						ID:       chunk.ToolCall.ID,
@@ -441,7 +453,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.lastUsage.Store(usage)
 			a.sessCacheHit.Add(int64(usage.CacheHitTokens))
 			a.sessCacheMiss.Add(int64(usage.CacheMissTokens))
-			a.sink.Emit(event.Event{Kind: event.UsageKind, Usage: convertUsage(usage), Timestamp: time.Now()})
+			a.Sink().Emit(event.Event{Kind: event.UsageKind, Usage: convertUsage(usage), Timestamp: time.Now()})
 		}
 
 		text := textBuf.String()
@@ -453,7 +465,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			//     This is a provider failure: return an error (surfaced by the
 			//     controller via the event sink) instead of a silent success.
 			if chunkCount == 0 {
-				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
 				return fmt.Errorf("the model returned an empty stream (0 chunks) — the provider may be unreachable; try /model to switch provider")
 			}
@@ -464,7 +476,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			}
 			// 5c. Still empty after the nudge? It's a failure, not a success.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
-				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
 				return fmt.Errorf("the model returned an empty response after a retry; try /model to switch provider")
 			}
@@ -481,7 +493,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				Content:          text,
 				ReasoningContent: reasoning,
 			})
-			a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+			a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 			return nil
 		}
 
@@ -533,7 +545,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 					},
 					Timestamp: time.Now(),
 				}
-				a.sink.Emit(ev)
+				a.Sink().Emit(ev)
 
 				a.session.Add(provider.Message{
 					Role:       provider.RoleTool,
@@ -558,13 +570,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	}
 
 	// Max steps exhausted
-	a.sink.Emit(event.Event{
+	a.Sink().Emit(event.Event{
 		Kind:      event.Notice,
 		Level:     event.LevelWarn,
 		Text:      fmt.Sprintf("max steps (%d) reached — stopping", a.maxSteps),
 		Timestamp: time.Now(),
 	})
-	a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+	a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
 	return nil
 }
 
@@ -600,7 +612,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 	// Stamp this call's identity + sink so sub-agent-spawning tools (task,
 	// run_skill) nest their child events under this call instead of discarding.
-	ctx = withCallContext(ctx, call.ID, a.sink, a.asker, a.planMode.Load())
+	ctx = withCallContext(ctx, call.ID, a.Sink(), a.asker, a.planMode.Load())
 
 	t, ok := a.tools.Get(call.Name)
 	if !ok {
@@ -653,7 +665,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				if a.onPreEdit != nil {
 					a.onPreEdit(change)
 					diffText := renderFileDiff(change)
-					a.sink.Emit(event.Event{
+					a.Sink().Emit(event.Event{
 						Kind:      event.FilePreview,
 						DiffText:  diffText,
 						Tool:      event.Tool{Name: call.Name, ID: call.ID, Description: change.Path},
@@ -713,7 +725,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 
 	// Emit VerifyStarted BEFORE the blocking call so the terminal sink
 	// has time to display the spinner before go build starts.
-	a.sink.Emit(event.Event{Kind: event.VerifyStarted, Timestamp: time.Now()})
+	a.Sink().Emit(event.Event{Kind: event.VerifyStarted, Timestamp: time.Now()})
 
 	// Run verify with a hard timeout — on a slow machine or large project,
 	// go build ./... can take multiple seconds. Without a timeout, the agent
@@ -726,7 +738,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	// build would otherwise be reported as broken, burning a repair cycle (and
 	// previously triggering rollback) for an edit that may be entirely correct.
 	if verifyCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
-		a.sink.Emit(event.Event{
+		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelWarn,
 			Text:      "verify timed out — skipped (not counted as a failure)",
@@ -737,7 +749,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 
 	if res.OK {
 		a.repairCycle = 0
-		a.sink.Emit(event.Event{
+		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelInfo,
 			Text:      "✓",
@@ -756,7 +768,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	if res.Failed != nil {
 		failName = res.Failed.Name
 	}
-	a.sink.Emit(event.Event{
+	a.Sink().Emit(event.Event{
 		Kind:      event.VerifyResult,
 		Level:     event.LevelWarn,
 		Text:      fmt.Sprintf("✗ %s (%d diagnostics)", failName, len(res.Diagnostics)),
@@ -784,10 +796,7 @@ func (a *Agent) checkFaultRollback(changed []string) {
 	if a.faultRollback == nil {
 		a.faultRollback = map[string]int{}
 	}
-	sink := a.sink
-	if sink == nil {
-		sink = event.Discard
-	}
+	sink := a.Sink()
 	for _, f := range changed {
 		if !strings.HasSuffix(f, ".go") {
 			continue
@@ -934,7 +943,7 @@ func (a *Agent) autoCompact(turnCtx context.Context) {
 	// growing, something is wrong — stop trying and let the context limit clip.
 	if a.consecutiveCompacts >= 3 {
 		a.compactStuck = true
-		a.sink.Emit(event.Event{
+		a.Sink().Emit(event.Event{
 			Kind: event.Notice, Level: event.LevelWarn,
 			Text: "compaction stuck — session still too large after 3 attempts; disabling further compaction this turn",
 		})
@@ -963,7 +972,7 @@ func (a *Agent) autoCompact(turnCtx context.Context) {
 			ctx, cancel := context.WithTimeout(turnCtx, 15*time.Second)
 			defer cancel()
 			if err := a.CompactWithModel(ctx, a.compactProvider, a.recentKeep, a.recentKeep); err != nil {
-				a.sink.Emit(event.Event{
+				a.Sink().Emit(event.Event{
 					Kind: event.Notice, Level: event.LevelWarn,
 					Text: fmt.Sprintf("model compaction failed, falling back to sliding window: %v", err),
 				})
@@ -987,7 +996,7 @@ func (a *Agent) autoCompact(turnCtx context.Context) {
 	}
 	if estimatedTokens > softLimit && !a.softCompactNoticed {
 		a.softCompactNoticed = true
-		a.sink.Emit(event.Event{
+		a.Sink().Emit(event.Event{
 			Kind:  event.Notice,
 			Level: event.LevelInfo,
 			Text:  fmt.Sprintf("context approaching limit (~%d / %d tokens)", estimatedTokens, a.contextWindow),
@@ -1032,7 +1041,7 @@ func (a *Agent) handleEmptyFinal(text string) bool {
 		Role:    provider.RoleUser,
 		Content: "[system: your response was empty. If you are finished, say so. Otherwise continue.]",
 	})
-	a.sink.Emit(event.Event{
+	a.Sink().Emit(event.Event{
 		Kind: event.Notice, Level: event.LevelWarn,
 		Text: "empty assistant response — nudging model",
 	})
@@ -1053,7 +1062,7 @@ func (a *Agent) handleStreamRecovery(err error) bool {
 		Role:    provider.RoleUser,
 		Content: "[system: the previous response was interrupted mid-stream. Continue from where you left off without repeating completed work. Re-state the last complete sentence, then proceed.]",
 	})
-	a.sink.Emit(event.Event{
+	a.Sink().Emit(event.Event{
 		Kind: event.Notice, Level: event.LevelWarn,
 		Text: "stream interrupted — recovering once",
 	})

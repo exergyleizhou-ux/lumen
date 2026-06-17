@@ -278,9 +278,11 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 	delStart := startLine
 	delEnd := endLine + 1
 	if !inclusive {
+		// Exclude BOTH anchor lines — delete only the lines between them.
 		delStart = startLine + 1
-		if delStart > endLine {
-			return "", fmt.Errorf("nothing to delete (start and end anchors are the same line with inclusive=false)")
+		delEnd = endLine
+		if delStart >= delEnd {
+			return "", fmt.Errorf("nothing to delete between the anchors (with inclusive=false)")
 		}
 	}
 

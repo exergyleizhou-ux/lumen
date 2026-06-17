@@ -30,7 +30,6 @@
 | 蓝图/DI | blueprint_build, blueprint_validate | ✅ |
 | 策略引擎 | policy_evaluate, policy_list, policy_audit_log | ✅ |
 | 代码地图 | find_symbol, find_callers, find_callees, get_call_graph, detect_circular_deps | ✅ |
-| 流控 | rate_limit_check, backpressure_status, circuit_breaker_status | ✅ |
 | 定时任务 | cron_parse, cron_next, cron_describe | ✅ |
 | Schema | schema_register, schema_check_compat, schema_list | ✅ |
 | 编排 | run_workflow, create_workflow, list_workflows | ✅ |

@@ -36,7 +36,8 @@ func collectErrNotices(t *testing.T, run func(c *Controller, sink event.Sink) er
 	})
 	failing := &errProvider{name: "test"}
 	ag := agent.New(failing, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 2, Sink: sink})
-	c := &Controller{prov: failing, sink: sink, ag: ag}
+	c := &Controller{prov: failing, ag: ag}
+	c.storeSink(sink)
 	err := run(c, sink)
 	if err == nil {
 		t.Fatal("expected the provider error to propagate, got nil")
@@ -69,7 +70,8 @@ func TestRunSurfacesLastProviderErrorAfterFallbacks(t *testing.T) {
 	primary := &errProvider{name: "primary"}
 	fb := &errProvider{name: "fallback"}
 	ag := agent.New(primary, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 2, Sink: sink})
-	c := &Controller{prov: primary, fallbacks: []provider.Provider{fb}, sink: sink, ag: ag}
+	c := &Controller{prov: primary, fallbacks: []provider.Provider{fb}, ag: ag}
+	c.storeSink(sink)
 
 	err := c.Run(context.Background(), "do something")
 	if err == nil {

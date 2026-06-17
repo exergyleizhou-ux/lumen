@@ -11,7 +11,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// processUmask is the process file-creation mask, read once at startup (the
+// read/restore dance is single-threaded here, so no per-write race). New files
+// honor it — matching os.WriteFile semantics — instead of always landing 0644.
+var processUmask = func() os.FileMode {
+	old := syscall.Umask(0)
+	syscall.Umask(old)
+	return os.FileMode(old)
+}()
+
+// newFileMode returns the mode a freshly created file should get: 0644 with the
+// umask applied (e.g. umask 077 → 0600).
+func newFileMode(umask os.FileMode) os.FileMode { return 0o644 &^ umask }
 
 // ── Limits ──────────────────────────────────────────────────
 
@@ -232,8 +246,9 @@ func SafeWriteFile(path, workspaceRoot string, content []byte) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	// Preserve the existing file's mode if it exists, else 0644.
-	mode := os.FileMode(0o644)
+	// Preserve the existing file's mode if it exists; for a new file use 0644
+	// with the process umask applied (so a restrictive umask still yields 0600).
+	mode := newFileMode(processUmask)
 	if fi, statErr := os.Stat(resolved); statErr == nil {
 		mode = fi.Mode().Perm()
 	}

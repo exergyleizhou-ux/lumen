@@ -82,7 +82,6 @@
 | `websocket` | WebSocket hub、命名 channel、心跳管理、事件日志、broadcast |
 | `mux` | 连接多路复用、流隔离、flow control |
 | `selector` | K8s 风格 label selector (eq/neq/in/notin/exists)、过滤器 |
-| `flowcontrol` | 固定窗口/滑动窗口限流、信号量、admission control、背压 |
 
 ### 🔒 第四层：安全加密 (9 包)
 

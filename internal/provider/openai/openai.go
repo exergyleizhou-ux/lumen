@@ -128,6 +128,7 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		textBuf     strings.Builder
 		reasonBuf   strings.Builder
 		toolCallBuf *partialToolCall
+		streamed    bool // any content/tool-call already emitted this stream
 	)
 
 	for scanner.Scan() {
@@ -198,10 +199,17 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 			continue
 		}
 
-		// In-band error event (200 OK + {"error":...}): surface it instead of
-		// ending the turn as a silent empty success.
+		// In-band error event (200 OK + {"error":...}). If nothing was streamed
+		// yet, the whole turn failed → surface a ChunkError. If content was already
+		// streamed, this is a trailing error annotation — keep the partial answer,
+		// append a visible marker, and end normally rather than discarding it.
 		if sse.Error != nil && sse.Error.Message != "" {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("provider error: %s", sse.Error.Message)}
+			if streamed {
+				ch <- provider.Chunk{Type: provider.ChunkText, Text: "\n[provider error: " + sse.Error.Message + "]"}
+				ch <- provider.Chunk{Type: provider.ChunkDone}
+			} else {
+				ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("provider error: %s", sse.Error.Message)}
+			}
 			return
 		}
 
@@ -238,11 +246,15 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 
 		// Text content
 		if delta.Content != "" {
+			streamed = true
 			textBuf.WriteString(delta.Content)
 			ch <- provider.Chunk{Type: provider.ChunkText, Text: delta.Content}
 		}
 
 		// Tool calls (streaming fragments)
+		if len(delta.ToolCalls) > 0 {
+			streamed = true
+		}
 		for _, tc := range delta.ToolCalls {
 			if toolCallBuf == nil || toolCallBuf.index != tc.Index {
 				// Flush previous tool call

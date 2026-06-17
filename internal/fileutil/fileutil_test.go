@@ -132,3 +132,17 @@ func TestSafeWriteFileAtomicAndPreservesMode(t *testing.T) {
 		}
 	}
 }
+
+func TestNewFileMode(t *testing.T) {
+	cases := []struct{ umask, want os.FileMode }{
+		{0o022, 0o644}, // default umask → 0644
+		{0o077, 0o600}, // restrictive umask → 0600 (not a wide-open 0644)
+		{0o000, 0o644},
+		{0o027, 0o640},
+	}
+	for _, c := range cases {
+		if got := newFileMode(c.umask); got != c.want {
+			t.Errorf("newFileMode(%#o) = %#o, want %#o", c.umask, got, c.want)
+		}
+	}
+}

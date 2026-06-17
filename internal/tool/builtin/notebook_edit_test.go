@@ -63,6 +63,42 @@ func TestDeleteRangeRejectsAmbiguousAnchor(t *testing.T) {
 	}
 }
 
+func TestDeleteRangeNonInclusiveExcludesBothAnchors(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("a\nSTART\nb\nEND\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := &DeleteRangeTool{}
+	inclusiveFalse := `{"path":%q,"start_anchor":"START","end_anchor":"END","inclusive":false}`
+	args := fmt.Sprintf(inclusiveFalse, path)
+	if _, err := tool.Execute(context.Background(), json.RawMessage(args)); err != nil {
+		t.Fatal(err)
+	}
+	out, _ := os.ReadFile(path)
+	// inclusive=false deletes only the lines BETWEEN the anchors, keeping both.
+	if string(out) != "a\nSTART\nEND\nc\n" {
+		t.Errorf("non-inclusive delete = %q, want %q (both anchors kept)", out, "a\nSTART\nEND\nc\n")
+	}
+}
+
+func TestDeleteRangeNonInclusiveAdjacentNothingToDelete(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	const content = "START\nEND\n"
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tool := &DeleteRangeTool{}
+	args := fmt.Sprintf(`{"path":%q,"start_anchor":"START","end_anchor":"END","inclusive":false}`, path)
+	if _, err := tool.Execute(context.Background(), json.RawMessage(args)); err == nil {
+		t.Error("adjacent anchors with inclusive=false should error (nothing between to delete)")
+	}
+	if out, _ := os.ReadFile(path); string(out) != content {
+		t.Errorf("file must be unchanged, got %q", out)
+	}
+}
+
 func TestDeleteRangeUniqueAnchorsWork(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "f.txt")

@@ -11,7 +11,6 @@ import (
 func TestFaultRollbackCountsConsecutiveFailures(t *testing.T) {
 	a := &Agent{
 		faultRollback: map[string]int{},
-		sink:          event.Discard,
 	}
 	changed := []string{"pkg/broken.go"}
 
@@ -29,7 +28,6 @@ func TestFaultRollbackCountsConsecutiveFailures(t *testing.T) {
 func TestFaultRollbackSkipsNonGoFiles(t *testing.T) {
 	a := &Agent{
 		faultRollback: map[string]int{},
-		sink:          event.Discard,
 	}
 	changed := []string{"README.md", "lumen.toml"}
 	a.checkFaultRollback(changed)
@@ -54,12 +52,12 @@ func TestFaultRollbackDoesNotTouchFile(t *testing.T) {
 	var warned bool
 	a := &Agent{
 		faultRollback: map[string]int{"test.go": 1},
-		sink: event.FuncSink(func(e event.Event) {
-			if e.Kind == event.Notice && e.Level == event.LevelWarn {
-				warned = true
-			}
-		}),
 	}
+	a.SetSink(event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice && e.Level == event.LevelWarn {
+			warned = true
+		}
+	}))
 	a.checkFaultRollback([]string{"test.go"})
 
 	got, _ := os.ReadFile(filePath)
