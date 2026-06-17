@@ -429,16 +429,21 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		// 5. If no tool calls → check readiness, then final answer
 		if len(toolCalls) == 0 {
 			// 5a. Empty final guard — model produced no text at all.
-			//     Give it one more chance, then stop — don't spin forever.
+			//     One nudge, then stop. Don't spin silently.
 			if a.handleEmptyFinal(text) {
 				continue // retry with ONE nudge only
 			}
 
-			// 5b. Still empty after the nudge? Don't keep asking.
-			//     The LLM is not responding usefully. Feedback to user.
+			// 5b. Still empty after the nudge? Stop immediately.
+			//     Don't keep asking — the model is not responding.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
+				a.sink.Emit(event.Event{
+					Kind:      event.Notice,
+					Level:     event.LevelWarn,
+					Text:      "model returned empty — try /model to switch, verify API key, or check status.deepseek.com",
+					Timestamp: time.Now(),
+				})
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
-				fmt.Fprintln(os.Stderr, "  ⚡ model not responding — try /model to switch, or check https://status.deepseek.com")
 				return nil
 			}
 
