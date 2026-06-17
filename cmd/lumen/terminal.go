@@ -35,7 +35,8 @@ type liveStats struct {
 func (s *liveStats) addCost(v float64) { s.costU.Add(int64(v * 1_000_000)) }
 func (s *liveStats) cost() float64     { return float64(s.costU.Load()) / 1_000_000 }
 var st = &liveStats{}
-var currentCtrl *control.Controller // set by runChatUI, used by onChatExit to save session
+var currentCtrl *control.Controller
+var outputBuf strings.Builder // accumulates agent output during raw mode
 
 // ── color / display helpers ───────────────────────────────
 
@@ -56,10 +57,10 @@ func termSink() event.Sink {
 	tel := telemetry.NewCollector()
 
 	return event.FuncSink(func(e event.Event) {
-		// Write directly to os.Stderr with Sync after every chunk.
-		// This bypasses line buffering and ensures text is visible
-		// immediately even when lineedit is in raw terminal mode.
-		w := func(s string) { os.Stderr.WriteString(s); os.Stderr.Sync() }
+		// Buffer ALL output during the turn. The chat loop flushes
+		// the buffer to stdout between ReadLine() calls, when the
+		// terminal is briefly outside raw mode.
+		w := func(s string) { outputBuf.WriteString(s) }
 
 		switch e.Kind {
 
@@ -327,8 +328,14 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
 		go func() { <-sigCh; turnCancel() }()
+		outputBuf.Reset()
 		ctrl.Run(turnCtx, text)
 		turnCancel(); signal.Stop(sigCh)
+		// Flush buffered agent output before lineedit re-enters raw mode
+		if out := outputBuf.String(); out != "" {
+			fmt.Fprint(os.Stdout, out)
+		}
+		drawFooter()
 		fmt.Print("\n")
 	}
 	return nil
