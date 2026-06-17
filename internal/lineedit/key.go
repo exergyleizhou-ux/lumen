@@ -24,6 +24,7 @@ const (
 	keyCtrlC
 	keyCtrlD
 	keyCtrlW
+	keyCtrlK
 	keyEsc
 	keyMouse
 )
@@ -128,6 +129,8 @@ func decodeKey(b []byte) (keyEvent, int) {
 		return keyEvent{typ: keyCtrlD}, 1
 	case c == 0x17:
 		return keyEvent{typ: keyCtrlW}, 1 // Ctrl-W: delete word backwards
+	case c == 0x0b:
+		return keyEvent{typ: keyCtrlK}, 1 // Ctrl-K: delete to end of line
 	case c == 0x01:
 		return keyEvent{typ: keyHome}, 1 // Ctrl-A
 	case c == 0x05:

@@ -50,6 +50,8 @@ func main() {
 		runSetup()
 	case "doctor":
 		runDoctor()
+	case "config":
+		runConfig()
 	case "version":
 		fmt.Println("Lumen v0.1.0")
 	case "oasis":
@@ -73,6 +75,7 @@ Usage:
   lumen run --mode M "..."
   lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy)
   lumen doctor
+  lumen config
   lumen setup
   lumen version
 

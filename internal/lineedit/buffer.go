@@ -67,3 +67,14 @@ func (b *buffer) clear() {
 	b.runes = b.runes[:0]
 	b.pos = 0
 }
+
+// killToEnd deletes all runes from the cursor position to the end of the line.
+// Returns the deleted text. If the cursor is already at the end, it's a no-op.
+func (b *buffer) killToEnd() string {
+	if b.pos >= len(b.runes) {
+		return ""
+	}
+	deleted := string(b.runes[b.pos:])
+	b.runes = b.runes[:b.pos]
+	return deleted
+}

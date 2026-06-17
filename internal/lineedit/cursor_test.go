@@ -426,6 +426,16 @@ func TestCtrlWKeyDecode(t *testing.T) {
 	}
 }
 
+func TestCtrlKKeyDecode(t *testing.T) {
+	ev, consumed := decodeKey([]byte{0x0b})
+	if ev.typ != keyCtrlK {
+		t.Fatalf("0x0b typ=%v want keyCtrlK", ev.typ)
+	}
+	if consumed != 1 {
+		t.Errorf("consumed=%d want 1", consumed)
+	}
+}
+
 func TestEscClearsBuffer(t *testing.T) {
 	e := NewEditor("> ", "", ".")
 	e.buf.clear()
@@ -468,5 +478,97 @@ func TestMultiRowCursorRowCol(t *testing.T) {
 		if !strings.Contains(result, "\x1b[22C") {
 			t.Errorf("multi-row cursor missing col-right: %q", result)
 		}
+	}
+}
+
+// ── Ctrl-K (kill to end of line) ──────────────────────────
+
+func TestBufferKillToEndMiddle(t *testing.T) {
+	var b buffer
+	b.insertString("hello world")
+	b.pos = 5 // cursor after "hello"
+	got := b.killToEnd()
+	if got != " world" {
+		t.Fatalf("killToEnd at pos 5: got %q, want %q", got, " world")
+	}
+	if b.string() != "hello" {
+		t.Fatalf("buffer after killToEnd: got %q, want %q", b.string(), "hello")
+	}
+	if b.pos != 5 {
+		t.Fatalf("pos after killToEnd: %d, want 5", b.pos)
+	}
+}
+
+func TestBufferKillToEndAtStart(t *testing.T) {
+	var b buffer
+	b.insertString("hello world")
+	b.home()
+	got := b.killToEnd()
+	if got != "hello world" {
+		t.Fatalf("killToEnd at start: got %q, want %q", got, "hello world")
+	}
+	if b.string() != "" {
+		t.Fatalf("buffer after killToEnd at start: got %q, want empty", b.string())
+	}
+	if b.pos != 0 {
+		t.Fatalf("pos after killToEnd at start: %d, want 0", b.pos)
+	}
+}
+
+func TestBufferKillToEndAtEnd(t *testing.T) {
+	var b buffer
+	b.insertString("hello")
+	b.end()
+	got := b.killToEnd()
+	if got != "" {
+		t.Fatalf("killToEnd at end: got %q, want empty", got)
+	}
+	if b.string() != "hello" {
+		t.Fatalf("buffer unchanged after killToEnd at end: got %q", b.string())
+	}
+}
+
+func TestBufferKillToEndCJK(t *testing.T) {
+	var b buffer
+	b.insertString("你好世界")
+	b.pos = 2 // cursor after "你好"
+	got := b.killToEnd()
+	if got != "世界" {
+		t.Fatalf("killToEnd CJK: got %q, want %q", got, "世界")
+	}
+	if b.string() != "你好" {
+		t.Fatalf("buffer after killToEnd CJK: got %q, want %q", b.string(), "你好")
+	}
+}
+
+func TestHandleCtrlKKillToEnd(t *testing.T) {
+	e := newTestEditor(t)
+	e.buf.insertString("hello world")
+	e.buf.pos = 5 // cursor after "hello"
+
+	ev := keyEvent{typ: keyCtrlK}
+	if act := e.handle(ev); act != actRedraw {
+		t.Fatalf("Ctrl-K action=%v want actRedraw", act)
+	}
+	if e.buf.string() != "hello" {
+		t.Fatalf("buffer after Ctrl-K: got %q, want %q", e.buf.string(), "hello")
+	}
+	if e.buf.pos != 5 {
+		t.Fatalf("pos after Ctrl-K: %d, want 5", e.buf.pos)
+	}
+}
+
+func TestHandleCtrlKAtEndIsNoop(t *testing.T) {
+	e := newTestEditor(t)
+	e.buf.insertString("hello")
+	e.buf.end()
+
+	ev := keyEvent{typ: keyCtrlK}
+	act := e.handle(ev)
+	if act != actRedraw {
+		t.Fatalf("Ctrl-K at end action=%v want actRedraw", act)
+	}
+	if e.buf.string() != "hello" {
+		t.Fatalf("buffer unchanged after Ctrl-K at end: got %q", e.buf.string())
 	}
 }

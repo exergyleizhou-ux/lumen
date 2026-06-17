@@ -144,6 +144,9 @@ func (e *Editor) handle(ev keyEvent) action {
 	case keyCtrlW:
 		e.wordBackspace()
 		return actRedraw
+	case keyCtrlK:
+		e.buf.killToEnd()
+		return actRedraw
 	case keyEsc:
 		// ESC: clear buffer if non-empty, otherwise no-op
 		if len(e.buf.runes) > 0 {
