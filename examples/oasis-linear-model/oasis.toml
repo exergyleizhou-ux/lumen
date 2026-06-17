@@ -1,0 +1,7 @@
+name = "linear-model"
+runtime = "docker"
+image = "registry.example.com/algo/linear-model:latest"
+entrypoint = "/algo"
+output_kind = "model"
+version = 1
+params_schema = "{\"n_estimators\":{\"type\":\"integer\",\"default\":100},\"learning_rate\":{\"type\":\"number\",\"default\":0.1}}"

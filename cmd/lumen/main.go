@@ -52,6 +52,8 @@ func main() {
 		runDoctor()
 	case "version":
 		fmt.Println("Lumen v0.1.0")
+	case "oasis":
+		runOasis(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -69,6 +71,7 @@ Usage:
   lumen run "prompt"      One-shot task
   lumen run --plan "..."  Plan mode (read-only)
   lumen run --mode M "..."
+  lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy)
   lumen doctor
   lumen setup
   lumen version
