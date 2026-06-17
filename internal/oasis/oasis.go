@@ -128,6 +128,7 @@ ENTRYPOINT ["/algo"]
 	mainGo := fmt.Sprintf(`package main
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -137,8 +138,9 @@ import (
 // 'lumen oasis check'):
 //   - the dataset is mounted READ-ONLY at /data
 //   - the runner provides params at /out/input.json
-//   - write your JSON result to STDOUT — the runner saves it as /out/output.json,
-//     then hashes + Ed25519-attests it
+//   - write your result to /out/output.bin — the runner reads exactly that file,
+//     then hashes + Ed25519-attests it. For output_kind "model" it is a zip of
+//     model.json (+ metrics.json).
 //   - the container runs with --network none --read-only (no internet, ro root)
 func main() {
 	datasetPath := "/data/dataset.csv"
@@ -157,15 +159,30 @@ func main() {
 	_ = datasetPath // TODO: read your dataset from here (under /data, read-only)
 	_ = params      // TODO: apply params (e.g. n_estimators, learning_rate)
 
-	// TODO: replace with your real result.
-	result := map[string]interface{}{
-		"algorithm": "%s",
-		"status":    "ok",
-	}
+	// TODO: replace with your real model + metrics.
+	model := map[string]interface{}{"algorithm": "%s", "format": "vo-model-1"}
+	metrics := map[string]interface{}{"status": "ok"}
 
-	// Write the result to stdout — the runner captures it as /out/output.json.
-	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: encode output: %%v\n", err)
+	// Write /out/output.bin as a zip of model.json + metrics.json.
+	f, err := os.Create("/out/output.bin")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: create output: %%v\n", err)
+		os.Exit(1)
+	}
+	defer f.Close()
+	zw := zip.NewWriter(f)
+	write := func(name string, v interface{}) {
+		w, e := zw.Create(name)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "ERROR: zip %%s: %%v\n", name, e)
+			os.Exit(1)
+		}
+		json.NewEncoder(w).Encode(v)
+	}
+	write("model.json", model)
+	write("metrics.json", metrics)
+	if err := zw.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: finalize output: %%v\n", err)
 		os.Exit(1)
 	}
 }

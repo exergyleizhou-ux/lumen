@@ -117,7 +117,7 @@ func validateAlgo(dir string) {
 
 // checkAlgo runs the C2D runtime contract self-check: it executes the algorithm
 // image under the exact marketplace isolation and verifies it produces a valid
-// output.json — so the author catches contract violations before pushing.
+// /out/output.bin — so the author catches contract violations before pushing.
 func checkAlgo(dir string) {
 	m, err := loadManifest(dir)
 	if err != nil {
@@ -138,7 +138,7 @@ func checkAlgo(dir string) {
 	res := oasis.RunContractCheck(ctx, tag, m.OutputKind, nil)
 
 	if res.OK {
-		fmt.Printf("✅ contract OK — runs isolated and produced a valid %s output.json\n", m.OutputKind)
+		fmt.Printf("✅ contract OK — runs isolated and produced a valid %s /out/output.bin\n", m.OutputKind)
 		fmt.Printf("   Next: lumen oasis deploy\n")
 		return
 	}

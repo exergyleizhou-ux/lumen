@@ -1,9 +1,9 @@
 package oasis
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,50 +14,55 @@ import (
 //
 // The marketplace runner executes an algorithm image with strict isolation
 // (`docker run --network none --read-only -v <data>:/data:ro -v <out>:/out`),
-// pre-writes the params to /out/input.json, and captures the container's STDOUT
-// as /out/output.json — which it then hashes + Ed25519-attests. So a
+// pre-writes the params to /out/input.json, and reads **/out/output.bin** as the
+// single result object — which it then hashes + Ed25519-attests. So a
 // contract-compliant algorithm must: read its dataset from /data and params from
-// /out/input.json, run with no network and a read-only root, and write a valid
-// JSON document to stdout. CheckContract runs the image exactly that way and
-// validates the result, so authors catch violations before pushing to Oasis.
+// /out/input.json, run with no network and a read-only root, and write its result
+// to /out/output.bin. For a "model" output_kind that file is a zip of model.json
+// (+ metrics.json). CheckContract runs the image exactly that way and validates
+// the result, so authors catch violations before pushing to Oasis.
 
-// CheckOutput validates an algorithm's output.json against the contract: it must
-// be non-empty, valid JSON. For the structured kinds (model/metrics/report) the
-// top level must be a JSON object. Returns a list of violations (empty = OK).
+// CheckOutput validates the bytes of /out/output.bin against the contract: it
+// must be non-empty (the runner reads exactly this file). For output_kind
+// "model" it must be a zip archive containing model.json. Returns violations
+// (empty = OK).
 func CheckOutput(data []byte, kind string) []string {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return []string{"output is empty — the algorithm must write a JSON result to stdout (the runner saves it as /out/output.json)"}
+	if len(data) == 0 {
+		return []string{"output is empty — the algorithm must write its result to /out/output.bin (the runner reads exactly that file)"}
 	}
-	var v any
-	if err := json.Unmarshal(data, &v); err != nil {
-		return []string{fmt.Sprintf("output is not valid JSON: %v", err)}
-	}
-	switch kind {
-	case "model", "metrics", "report":
-		if _, ok := v.(map[string]any); !ok {
-			return []string{fmt.Sprintf("output_kind %q expects a JSON object at the top level", kind)}
+	if kind == "model" {
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return []string{`output_kind "model" expects /out/output.bin to be a zip of model.json (+ metrics.json), but it is not a valid zip`}
+		}
+		has := map[string]bool{}
+		for _, f := range zr.File {
+			has[f.Name] = true
+		}
+		if !has["model.json"] {
+			return []string{`model output.bin (zip) must contain model.json`}
 		}
 	}
 	return nil
 }
 
-// SandboxRunner runs an algorithm image under the C2D isolation contract and
-// returns the captured stdout (the would-be output.json) and combined logs.
-// Abstracted so the self-check can be unit-tested without Docker.
+// SandboxRunner runs an algorithm image under the C2D isolation contract; the
+// algorithm writes its result to <outDir>/output.bin. Abstracted so the
+// self-check can be unit-tested without Docker.
 type SandboxRunner interface {
-	Run(ctx context.Context, image, dataDir, outDir string) (stdout []byte, logs string, err error)
+	Run(ctx context.Context, image, dataDir, outDir string) (logs string, err error)
 }
 
 // dockerSandbox runs the image exactly as the marketplace runner does.
 type dockerSandbox struct{}
 
-func (dockerSandbox) Run(ctx context.Context, image, dataDir, outDir string) ([]byte, string, error) {
+func (dockerSandbox) Run(ctx context.Context, image, dataDir, outDir string) (string, error) {
 	return runDockerSandbox(ctx, image, dataDir, outDir)
 }
 
 // runDockerSandbox runs the image with exactly the marketplace runner's
 // isolation: no network, read-only root, dataset read-only, /out writable.
-func runDockerSandbox(ctx context.Context, image, dataDir, outDir string) ([]byte, string, error) {
+func runDockerSandbox(ctx context.Context, image, dataDir, outDir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
 		"--network", "none",
 		"--read-only",
@@ -66,11 +71,10 @@ func runDockerSandbox(ctx context.Context, image, dataDir, outDir string) ([]byt
 		"-v", outDir+":/out",
 		image,
 	)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
-	return stdout.Bytes(), stderr.String(), err
+	return stderr.String(), err
 }
 
 // CheckResult is the outcome of a contract self-check.
@@ -93,8 +97,8 @@ func RunContractCheck(ctx context.Context, image, kind string, sampleData []byte
 
 // CheckContract runs the algorithm image under the real C2D isolation against a
 // synthetic dataset and validates that it produces a contract-compliant
-// output.json. run is the sandbox (use dockerSandbox{} in production, a fake in
-// tests). sampleData seeds /data; kind is the declared output_kind.
+// /out/output.bin. run is the sandbox (use dockerSandbox{} in production, a fake
+// in tests). sampleData seeds /data; kind is the declared output_kind.
 func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, sampleData []byte) CheckResult {
 	dataDir, err := os.MkdirTemp("", "oasis-data-*")
 	if err != nil {
@@ -118,7 +122,7 @@ func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, s
 		return CheckResult{Violations: []string{fmt.Sprintf("could not seed input.json: %v", err)}}
 	}
 
-	stdout, logs, err := run.Run(ctx, image, dataDir, outDir)
+	logs, err := run.Run(ctx, image, dataDir, outDir)
 	if err != nil {
 		return CheckResult{
 			Violations: []string{fmt.Sprintf("algorithm did not run cleanly under `--network none --read-only`: %v", err)},
@@ -126,11 +130,13 @@ func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, s
 		}
 	}
 
-	// Prefer an explicitly written /out/output.json; fall back to stdout (the
-	// runner captures stdout when the container writes nothing to /out).
-	out := stdout
-	if data, rerr := os.ReadFile(filepath.Join(outDir, "output.json")); rerr == nil && len(bytes.TrimSpace(data)) > 0 {
-		out = data
+	// The runner reads exactly /out/output.bin — so do we.
+	out, rerr := os.ReadFile(filepath.Join(outDir, "output.bin"))
+	if rerr != nil {
+		return CheckResult{
+			Violations: []string{"the algorithm did not write /out/output.bin — that is the single result file the runner reads"},
+			Logs:       logs,
+		}
 	}
 
 	violations := CheckOutput(out, kind)

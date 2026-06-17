@@ -41,7 +41,7 @@ func TestScaffoldGeneratesContractAccurateGo(t *testing.T) {
 	if _, err := parser.ParseFile(token.NewFileSet(), "main.go", src, parser.AllErrors); err != nil {
 		t.Fatalf("scaffolded main.go is not valid Go: %v", err)
 	}
-	// Must follow the real C2D contract, not the stdin/stdout shape.
+	// Must follow the real C2D contract: read /out/input.json, write /out/output.bin.
 	s := string(src)
 	if !strings.Contains(s, "/out/input.json") {
 		t.Error("template should read params from /out/input.json (the runner provides them there)")
@@ -49,7 +49,7 @@ func TestScaffoldGeneratesContractAccurateGo(t *testing.T) {
 	if strings.Contains(s, "os.Stdin") {
 		t.Error("template must not read params from stdin — that is not the C2D contract")
 	}
-	if !strings.Contains(s, "os.Stdout") {
-		t.Error("template should write the result to stdout (the runner captures it as output.json)")
+	if !strings.Contains(s, "/out/output.bin") {
+		t.Error("template should write the result to /out/output.bin (the file the runner reads)")
 	}
 }
