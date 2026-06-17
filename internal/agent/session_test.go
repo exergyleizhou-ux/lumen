@@ -1,11 +1,22 @@
 package agent
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"lumen/internal/provider"
 )
+
+func TestSessionAddRecordsPersistError(t *testing.T) {
+	// Parent dir does not exist, so the append must fail. The session must record
+	// that failure instead of silently dropping persisted turns.
+	s := NewSession(filepath.Join(t.TempDir(), "missing", "s.jsonl"))
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	if s.PersistErr() == nil {
+		t.Fatal("Add should record a persistence error when the file can't be written")
+	}
+}
 
 func TestSessionAdd(t *testing.T) {
 	s := NewSession("")

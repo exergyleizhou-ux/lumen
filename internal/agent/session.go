@@ -13,9 +13,10 @@ import (
 // It is prepend-only: messages are only appended, never modified in place,
 // so the prefix cache stays warm across turns.
 type Session struct {
-	mu       sync.Mutex
-	Messages []provider.Message
-	Path     string // JSONL file path for persistence
+	mu         sync.Mutex
+	Messages   []provider.Message
+	Path       string // JSONL file path for persistence
+	persistErr error  // first persistence failure, if any (guarded by mu)
 }
 
 // NewSession creates an empty session, optionally loading from path.
@@ -34,7 +35,22 @@ func (s *Session) Add(m provider.Message) {
 	s.mu.Lock()
 	s.Messages = append(s.Messages, m)
 	s.mu.Unlock()
-	s.appendToFile(m)
+	if err := s.appendToFile(m); err != nil {
+		s.mu.Lock()
+		if s.persistErr == nil {
+			s.persistErr = err
+		}
+		s.mu.Unlock()
+	}
+}
+
+// PersistErr returns the first error encountered while persisting the session to
+// disk, or nil. Callers surface it so a session that silently stops persisting
+// (and thus won't resume) is not mistaken for a healthy one.
+func (s *Session) PersistErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persistErr
 }
 
 // Snapshot returns a copy of the current message list.
@@ -137,16 +153,16 @@ func (s *Session) Compact(keepFirst, keepLast int, summary string) {
 
 // ── JSONL persistence ─────────────────────────────────────
 
-func (s *Session) appendToFile(m provider.Message) {
+func (s *Session) appendToFile(m provider.Message) error {
 	if s.Path == "" {
-		return
+		return nil
 	}
 	f, err := os.OpenFile(s.Path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
-		return
+		return err
 	}
 	defer f.Close()
-	json.NewEncoder(f).Encode(m)
+	return json.NewEncoder(f).Encode(m)
 }
 
 func (s *Session) load() {

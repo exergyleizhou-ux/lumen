@@ -2,7 +2,7 @@ package control
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -21,7 +21,7 @@ func (p *errProvider) Stream(ctx context.Context, req provider.Request) (<-chan 
 	ch := make(chan provider.Chunk, 1)
 	go func() {
 		defer close(ch)
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: errors.New("HTTP 402: Insufficient Balance")}
+		ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("HTTP 402 from %s", p.name)}
 	}()
 	return ch, nil
 }
@@ -53,6 +53,33 @@ func TestRunSurfacesProviderError(t *testing.T) {
 	}
 	if !strings.Contains(notices[len(notices)-1].Text, "402") {
 		t.Errorf("error notice should name the cause, got %q", notices[len(notices)-1].Text)
+	}
+}
+
+func TestRunSurfacesLastProviderErrorAfterFallbacks(t *testing.T) {
+	// When the primary and every fallback fail, the surfaced error must name the
+	// provider actually tried last, not the original — otherwise the diagnostic
+	// points at the wrong provider.
+	var notices []event.Event
+	sink := event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice && e.Level == event.LevelErr {
+			notices = append(notices, e)
+		}
+	})
+	primary := &errProvider{name: "primary"}
+	fb := &errProvider{name: "fallback"}
+	ag := agent.New(primary, tool.NewRegistry(), agent.NewSession(""), agent.Options{MaxSteps: 2, Sink: sink})
+	c := &Controller{prov: primary, fallbacks: []provider.Provider{fb}, sink: sink, ag: ag}
+
+	err := c.Run(context.Background(), "do something")
+	if err == nil {
+		t.Fatal("expected an error after all providers failed")
+	}
+	if !strings.Contains(err.Error(), "fallback") {
+		t.Errorf("returned error should name the last provider tried, got %q", err.Error())
+	}
+	if len(notices) == 0 || !strings.Contains(notices[len(notices)-1].Text, "fallback") {
+		t.Errorf("surfaced notice should name the last provider tried, got %v", notices)
 	}
 }
 

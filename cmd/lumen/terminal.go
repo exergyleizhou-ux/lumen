@@ -256,8 +256,11 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		case text == "/feedback" || strings.HasPrefix(text, "/feedback "):
 			parts := strings.Fields(text); msg := ""
 			if len(parts) > 1 { msg = strings.Join(parts[1:], " ") }
-			telemetry.NewFeedbackStore().Submit("text", msg, "chat: "+text, "")
-			fmt.Printf("\n  %s\n", fg(G, "💬 feedback recorded — thank you!"))
+			if _, err := telemetry.NewFeedbackStore().Submit("text", msg, "chat: "+text, ""); err != nil {
+				fmt.Printf("\n  %s\n", fg(Rd, "✗ feedback not saved: "+err.Error()))
+			} else {
+				fmt.Printf("\n  %s\n", fg(G, "💬 feedback recorded — thank you!"))
+			}
 			continue
 		case text == "/share":
 			f, err := telemetry.ShareReport()
@@ -292,8 +295,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		}
 		if text == "/wizard" { runWizard(ctrl); continue }
 		if strings.HasPrefix(text, "/goal ") {
-			go runGoalMode(ctrl, strings.TrimPrefix(text, "/goal "))
-			fmt.Printf("\n  %s\n\n", fg(G+B, "🎯 goal started · working autonomously…"))
+			runGoalMode(ctrl, strings.TrimPrefix(text, "/goal "))
 			continue
 		}
 		if text == "/evolve" {
@@ -408,8 +410,20 @@ func drawUplink(text string) {
 		return
 	}
 	switch parts[1] {
-	case "on": cfg.Enabled = true; telemetry.SaveUploadConfig(cfg); fmt.Printf("\n  %s\n", fg(G+B, "☁️ uplink = ON"))
-	case "off": cfg.Enabled = false; telemetry.SaveUploadConfig(cfg); fmt.Printf("\n  %s\n", fg(D, "☁️ uplink = OFF"))
+	case "on":
+		cfg.Enabled = true
+		if err := telemetry.SaveUploadConfig(cfg); err != nil {
+			fmt.Printf("\n  %s\n", fg(Rd, "✗ uplink not saved: "+err.Error()))
+		} else {
+			fmt.Printf("\n  %s\n", fg(G+B, "☁️ uplink = ON"))
+		}
+	case "off":
+		cfg.Enabled = false
+		if err := telemetry.SaveUploadConfig(cfg); err != nil {
+			fmt.Printf("\n  %s\n", fg(Rd, "✗ uplink not saved: "+err.Error()))
+		} else {
+			fmt.Printf("\n  %s\n", fg(D, "☁️ uplink = OFF"))
+		}
 	}
 }
 
@@ -435,7 +449,7 @@ func onChatExit() {
 func runWorkflow(ctrl *control.Controller, prompt string) {
 	fmt.Printf("\n  %s\n  %s\n\n", fg(B, "📋 Plan Phase"), fg(D, "producing plan in read-only mode…"))
 	ctrl.SetPermissionMode(permission.ModePlan); ctx := context.Background()
-	if err := ctrl.Plan(ctx, prompt); err != nil { fmt.Printf("  %s\n", fg(Rd, "✗ "+err.Error())); return }
+	if err := ctrl.Plan(ctx, prompt); err != nil { return } // error shown via sink
 	fmt.Printf("\n  %s\n  %s\n  %s  %s\n", fg(B, "👀 Review"), fg(C, "plan above — review carefully."), fg(C, "/execute"), fg(D, "/reject"))
 	lastPlan = prompt; planReady = true
 }
@@ -506,9 +520,17 @@ func dispatchSkill(ctrl *control.Controller, name, rest string) bool {
 func runGoalMode(ctrl *control.Controller, prompt string) {
 	fmt.Printf("\n%s\n", fg(B, "🎯 goal: ")+fg(C, prompt))
 	kb := hermes.NewKnowledgeBase(); patterns := kb.Match(prompt)
+	if len(patterns) > 0 {
+		fmt.Printf("  %s\n", fg(D, fmt.Sprintf("🧠 %d knowledge patterns matched", len(patterns))))
+		for _, p := range patterns { fmt.Printf("    %s  %s → %s\n", fg(C, "["+p.Category+"]"), fg(D, p.Condition), fg(D, p.Action)) }
+	}
 	fmt.Printf("  %s  %s\n\n", fg(B, "🤖 Autonomous Execution"), fg(D, "running to completion…"))
-	fmt.Printf("  %s\n", fg(D, fmt.Sprintf("🧠 %d knowledge patterns matched", len(patterns))))
-	for _, p := range patterns { fmt.Printf("    %s  %s → %s\n", fg(C, "["+p.Category+"]"), fg(D, p.Condition), fg(D, p.Action)) }
+	// Actually run the agent to completion. Previously this printed the banner
+	// but never invoked the model — a no-op that claimed success.
+	if err := ctrl.Run(context.Background(), prompt); err != nil {
+		return // error already surfaced via the event sink
+	}
+	fmt.Printf("\n  %s\n", fg(G, "✅ goal complete"))
 }
 
 func stripMD(s string) string {

@@ -335,15 +335,24 @@ type agentRunner struct {
 }
 
 func (r *agentRunner) Run(ctx context.Context, prompt string) (string, error) {
-	// Re-configure with a capturing sink
+	// Re-configure with a capturing sink. Capture both the model's text and any
+	// surfaced error Notice so a failed auto-fix is reported, not logged as an
+	// empty success.
 	var buf strings.Builder
 	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == "text" {
+		switch {
+		case e.Kind == event.Text:
 			buf.WriteString(e.Text)
+		case e.Kind == event.Notice && e.Level == event.LevelErr:
+			buf.WriteString("\n[error] " + e.Text)
 		}
 	})
-	r.ctrl.Configure(sink, nil, "")
-	r.ctrl.Run(ctx, prompt)
+	if err := r.ctrl.Configure(sink, nil, ""); err != nil {
+		return "", err
+	}
+	if err := r.ctrl.Run(ctx, prompt); err != nil {
+		return buf.String(), err
+	}
 	return buf.String(), nil
 }
 

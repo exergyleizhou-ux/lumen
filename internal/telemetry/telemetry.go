@@ -217,7 +217,7 @@ func (fs *FeedbackStore) load() {
 }
 
 // Submit adds feedback.
-func (fs *FeedbackStore) Submit(typ, message, context, sessionID string) *FeedbackEntry {
+func (fs *FeedbackStore) Submit(typ, message, context, sessionID string) (*FeedbackEntry, error) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
 
@@ -233,12 +233,16 @@ func (fs *FeedbackStore) Submit(typ, message, context, sessionID string) *Feedba
 
 	fs.items = append([]FeedbackEntry{fe}, fs.items...)
 
-	// Persist
+	// Persist — report failure so callers don't claim success on a dropped write.
 	filename := filepath.Join(fs.dir, fe.ID+".json")
-	data, _ := json.MarshalIndent(fe, "", "  ")
-	os.WriteFile(filename, data, 0600)
-
-	return &fe
+	data, err := json.MarshalIndent(fe, "", "  ")
+	if err != nil {
+		return &fe, err
+	}
+	if err := os.WriteFile(filename, data, 0600); err != nil {
+		return &fe, fmt.Errorf("persist feedback: %w", err)
+	}
+	return &fe, nil
 }
 
 // List returns recent feedback items.

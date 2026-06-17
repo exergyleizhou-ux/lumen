@@ -67,6 +67,8 @@ type Controller struct {
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
+
+	persistWarned bool // session-persistence failure surfaced once
 }
 
 // New creates an unconfigured Controller. Call Configure() before use.
@@ -275,12 +277,14 @@ func (c *Controller) Run(ctx context.Context, prompt string) error {
 			if err2 == nil {
 				return nil
 			}
+			err = err2 // surface the error from the provider actually tried last
 		}
 		c.ag.SetProvider(c.prov) // restore
 	}
 	if err != nil {
 		c.emitError(err)
 	}
+	c.warnIfNotPersisting()
 	return err
 }
 
@@ -288,6 +292,23 @@ func (c *Controller) Run(ctx context.Context, prompt string) error {
 // Without this, callers that ignore Run/Plan's return value (one-shot, the
 // interactive loop) would fail silently — the user sees "Thinking…" and nothing
 // else when the provider returns e.g. HTTP 402.
+// warnIfNotPersisting surfaces, once, a session that has silently stopped saving
+// to disk — otherwise the user loses conversation resume with no warning.
+func (c *Controller) warnIfNotPersisting() {
+	if c.persistWarned || c.sess == nil || c.sink == nil {
+		return
+	}
+	if pe := c.sess.PersistErr(); pe != nil {
+		c.persistWarned = true
+		c.sink.Emit(event.Event{
+			Kind:      event.Notice,
+			Level:     event.LevelWarn,
+			Text:      "session not being saved: " + pe.Error() + " (this conversation may not resume)",
+			Timestamp: time.Now(),
+		})
+	}
+}
+
 func (c *Controller) emitError(err error) {
 	if c.sink == nil {
 		return
@@ -338,8 +359,21 @@ func (c *Controller) SaveMark() {
 		return
 	}
 	dir := filepath.Dir(c.sessPath)
-	os.MkdirAll(dir, 0700)
-	os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filepath.Base(c.sessPath)), 0600)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		c.warn("could not save resume marker: " + err.Error())
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filepath.Base(c.sessPath)), 0600); err != nil {
+		c.warn("could not save resume marker: " + err.Error())
+	}
+}
+
+// warn surfaces a non-fatal warning via the event sink.
+func (c *Controller) warn(text string) {
+	if c.sink == nil {
+		return
+	}
+	c.sink.Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text, Timestamp: time.Now()})
 }
 
 // ProviderName returns the active provider instance name.
@@ -434,7 +468,9 @@ func (c *Controller) TimelinePath() string {
 // Close shuts down infrastructure (timeline, jobs, etc).
 func (c *Controller) Close() {
 	if c.tl != nil {
-		c.tl.Close()
+		if err := c.tl.Close(); err != nil {
+			c.warn("timeline not fully saved: " + err.Error())
+		}
 	}
 }
 
