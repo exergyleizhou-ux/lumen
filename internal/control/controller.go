@@ -83,6 +83,10 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if sink == nil {
 		sink = event.Discard
 	}
+	// Serialize the sink: the foreground turn and any background run_in_background
+	// sub-agent emit into it concurrently. Both c.sink and the agent's sink use
+	// this same wrapped value.
+	sink = event.NewSyncSink(sink)
 	c.sink = sink
 	c.asker = asker
 
@@ -347,6 +351,7 @@ func (c *Controller) Session() *agent.Session { return c.sess }
 
 // SetSink replaces the event sink at runtime (used by SSE/TUI to redirect events).
 func (c *Controller) SetSink(s event.Sink) {
+	s = event.NewSyncSink(s) // foreground + background sub-agents emit concurrently
 	c.sink = s
 	if c.ag != nil {
 		c.ag.SetSink(s)

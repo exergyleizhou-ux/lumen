@@ -26,11 +26,14 @@ type Job struct {
 	Type      string    `json:"type"` // "bash" or "task"
 	Label     string    `json:"label"`
 	StartedAt time.Time `json:"started_at"`
-	Status    JobStatus `json:"status"`
-	Result    string    `json:"result,omitempty"`
-	Err       string    `json:"err,omitempty"`
-	resultCh  chan jobResult
-	cancel    func()
+	// mu guards the mutable fields below: the completion goroutine writes them
+	// while bash_output/kill_shell read/write them from other goroutines.
+	mu       sync.Mutex
+	Status   JobStatus `json:"status"`
+	Result   string    `json:"result,omitempty"`
+	Err      string    `json:"err,omitempty"`
+	resultCh chan jobResult
+	cancel   func()
 }
 
 // JobStatus is the lifecycle state of a background job.
@@ -91,7 +94,7 @@ func (m *Manager) Start(jobType, label string, fn func(ctx context.Context) (str
 	go func() {
 		output, err := fn(ctx)
 		job.resultCh <- jobResult{output: output, err: err}
-		m.mu.Lock()
+		job.mu.Lock()
 		if job.Status == StatusRunning {
 			if err != nil {
 				job.Status = StatusFailed
@@ -101,7 +104,7 @@ func (m *Manager) Start(jobType, label string, fn func(ctx context.Context) (str
 			}
 			job.Result = output
 		}
-		m.mu.Unlock()
+		job.mu.Unlock()
 	}()
 
 	return job
@@ -136,9 +139,14 @@ func (m *Manager) Kill(id string) *Job {
 	delete(m.jobs, id)
 	m.mu.Unlock()
 
-	if job.Status == StatusRunning {
-		job.cancel()
+	job.mu.Lock()
+	wasRunning := job.Status == StatusRunning
+	if wasRunning {
 		job.Status = StatusKilled
+	}
+	job.mu.Unlock()
+	if wasRunning {
+		job.cancel() // outside job.mu; the completion goroutine only writes when StatusRunning, so it won't clobber StatusKilled
 	}
 	return job
 }
@@ -170,8 +178,8 @@ func (m *Manager) OutputWait(id string) (string, bool) {
 	if job == nil {
 		return "", false
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	job.mu.Lock()
+	defer job.mu.Unlock()
 	if job.Status != StatusRunning {
 		return job.Result, true
 	}
@@ -181,29 +189,45 @@ func (m *Manager) OutputWait(id string) (string, bool) {
 // ReadNew returns output produced since the last ReadNew call for this job.
 // For now, returns the full result if the job is done, or empty string if still running.
 func (j *Job) ReadNew() string {
-	j.StatusLock()
-	defer j.StatusUnlock()
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	if j.Status != StatusRunning {
 		return j.Result
 	}
 	return ""
 }
 
-// StatusLock / StatusUnlock are lightweight helpers for safe field access.
-func (j *Job) StatusLock()   { /* mutex already held by Manager when needed */ }
-func (j *Job) StatusUnlock() { /* no-op: Job is single-writer */ }
+// Snapshot returns a consistent copy of the job's mutable state under the lock,
+// so readers (bash_output / kill_shell) never touch the fields directly while
+// the completion goroutine is writing them.
+func (j *Job) Snapshot() (status JobStatus, result, errStr string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.Status, j.Result, j.Err
+}
+
+func (j *Job) statusSafe() JobStatus {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.Status
+}
 
 // WaitAll blocks until all running jobs finish, or timeout expires.
 func (m *Manager) WaitAll(timeout time.Duration) map[string]string {
 	results := make(map[string]string)
 	m.mu.Lock()
-	var jobIDs []string
-	for id, j := range m.jobs {
-		if j.Status == StatusRunning {
-			jobIDs = append(jobIDs, id)
-		}
+	allJobs := make([]*Job, 0, len(m.jobs))
+	for _, j := range m.jobs {
+		allJobs = append(allJobs, j)
 	}
 	m.mu.Unlock()
+
+	var jobIDs []string
+	for _, j := range allJobs {
+		if j.statusSafe() == StatusRunning {
+			jobIDs = append(jobIDs, j.ID)
+		}
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -224,7 +248,7 @@ func (m *Manager) Clean() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for id, j := range m.jobs {
-		if j.Status != StatusRunning {
+		if j.statusSafe() != StatusRunning {
 			delete(m.jobs, id)
 		}
 	}

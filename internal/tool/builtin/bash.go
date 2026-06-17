@@ -141,12 +141,16 @@ func (t *BashOutputTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("job %q not found", p.JobID)
 	}
 
-	out := job.ReadNew()
-	if out == "" && job.Status == jobs.StatusDone {
+	status, result, errStr := job.Snapshot()
+	out := ""
+	if status != jobs.StatusRunning {
+		out = result
+	}
+	if out == "" && status == jobs.StatusDone {
 		return fmt.Sprintf("[job %s done]", p.JobID), nil
 	}
-	if out == "" && job.Status == jobs.StatusFailed {
-		return fmt.Sprintf("[job %s failed: %s]", p.JobID, job.Err), nil
+	if out == "" && status == jobs.StatusFailed {
+		return fmt.Sprintf("[job %s failed: %s]", p.JobID, errStr), nil
 	}
 	if out == "" {
 		return fmt.Sprintf("[job %s still running]", p.JobID), nil
