@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,13 +17,20 @@ import (
 // runOasis dispatches `lumen oasis <subcommand>`.
 func runOasis(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|build|deploy>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy>\n")
 		os.Exit(1)
 	}
 	sub := args[0]
 	rest := args[1:]
 
 	switch sub {
+	case "check":
+		dir := "."
+		if len(rest) > 0 {
+			dir = rest[0]
+		}
+		checkAlgo(dir)
+
 	case "init":
 		if len(rest) < 1 {
 			fmt.Fprintf(os.Stderr, "Usage: lumen oasis init <name>\n")
@@ -58,7 +66,7 @@ func runOasis(args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown oasis subcommand: %s\n", sub)
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|build|deploy>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy>\n")
 		os.Exit(1)
 	}
 }
@@ -107,6 +115,47 @@ func validateAlgo(dir string) {
 	fmt.Printf("   Next: lumen oasis build\n")
 }
 
+// checkAlgo runs the C2D runtime contract self-check: it executes the algorithm
+// image under the exact marketplace isolation and verifies it produces a valid
+// output.json — so the author catches contract violations before pushing.
+func checkAlgo(dir string) {
+	m, err := loadManifest(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "oasis check: %v\n", err)
+		os.Exit(1)
+	}
+	if !oasis.DockerAvailable() {
+		fmt.Fprintf(os.Stderr, "oasis check: docker not found on PATH — the contract self-check runs the image in a sandbox.\n")
+		os.Exit(1)
+	}
+
+	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	fmt.Printf("🔬 C2D contract self-check on %s\n", tag)
+	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /out\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	res := oasis.RunContractCheck(ctx, tag, m.OutputKind, nil)
+
+	if res.OK {
+		fmt.Printf("✅ contract OK — runs isolated and produced a valid %s output.json\n", m.OutputKind)
+		fmt.Printf("   Next: lumen oasis deploy\n")
+		return
+	}
+
+	fmt.Println("❌ contract violations:")
+	for _, v := range res.Violations {
+		fmt.Printf("   - %s\n", v)
+	}
+	if strings.TrimSpace(res.Logs) != "" {
+		fmt.Println("   --- container logs ---")
+		for _, line := range strings.Split(strings.TrimRight(res.Logs, "\n"), "\n") {
+			fmt.Printf("   %s\n", line)
+		}
+	}
+	os.Exit(1)
+}
+
 func buildAlgo(dir string) {
 	m, err := loadManifest(dir)
 	if err != nil {
@@ -150,7 +199,7 @@ func buildAlgo(dir string) {
 
 	fmt.Printf("✅ built %s (source sha256: %s)\n", tag, srcHash[:12])
 	fmt.Printf("   Lockfile: %s\n", lockPath)
-	fmt.Printf("   Next: lumen oasis deploy\n")
+	fmt.Printf("   Next: lumen oasis check  (verify the C2D contract before deploy)\n")
 }
 
 func deployAlgo(dir string) {
