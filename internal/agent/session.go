@@ -66,6 +66,52 @@ func (s *Session) SystemPrompt(basePrompt, memory string) string {
 	return sb.String()
 }
 
+// DropLast removes the most recently appended message from both the
+// in-memory slice and the JSONL file. Used to undo a user message when
+// the turn failed before an assistant reply could be added.
+func (s *Session) DropLast() {
+	s.mu.Lock()
+	if len(s.Messages) == 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.Messages = s.Messages[:len(s.Messages)-1]
+	s.mu.Unlock()
+
+	if s.Path == "" {
+		return
+	}
+	// Truncate JSONL: remove the last line
+	data, err := os.ReadFile(s.Path)
+	if err != nil || len(data) == 0 {
+		return
+	}
+	// Find last complete line boundary (skip trailing newline if any)
+	end := len(data)
+	if data[end-1] == '\n' {
+		end--
+	}
+	lastNL := -1
+	for i := end - 1; i >= 0; i-- {
+		if data[i] == '\n' {
+			lastNL = i
+			break
+		}
+	}
+	if lastNL >= 0 {
+		os.WriteFile(s.Path, data[:lastNL+1], 0o644)
+	} else {
+		os.WriteFile(s.Path, nil, 0o644) // only one line — clear
+	}
+}
+
+// DropTo truncates the session back to n messages (both memory and file).
+func (s *Session) DropTo(n int) {
+	for s.Len() > n {
+		s.DropLast()
+	}
+}
+
 // Compact drops the middle of the session, keeping the first keepFirst and
 // last keepLast messages verbatim and inserting a short marker (the summary
 // arg) in their place. This is a sliding window — the omitted messages are

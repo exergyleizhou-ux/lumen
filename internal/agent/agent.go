@@ -319,6 +319,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	if a.session.Len() == 0 {
 		a.session.Add(provider.Message{Role: provider.RoleSystem, Content: DefaultSystemPrompt})
 	}
+	sessionLen := a.session.Len() // snapshot for rollback on failed turns
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
 
 	for step := 0; step < a.maxSteps; step++ {
@@ -434,6 +435,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			if chunkCount == 0 {
 				fmt.Fprint(os.Stdout, "\n  ⚡ stream empty — try /model to switch provider\n")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.session.DropTo(sessionLen)
 				return nil
 			}
 			// 5b. Empty final guard — model produced no text at all.
@@ -445,6 +447,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
 				fmt.Fprint(os.Stdout, "\n  ⚡ model returned empty — try /model to switch\n")
 				a.sink.Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.session.DropTo(sessionLen)
 				return nil
 			}
 
