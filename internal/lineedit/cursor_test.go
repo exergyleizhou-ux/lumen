@@ -96,12 +96,12 @@ func TestRedrawColPositioning(t *testing.T) {
 
 	result := out.String()
 
-	// Must contain \r and \x1b[J (clear from column 0 to end of screen)
-	if !strings.Contains(result, "\r\x1b[J") {
-		t.Fatalf("redraw output missing clear sequence: %q", result)
+	// Must contain \r\x1b[K (clear current line, preserves scrollback)
+	if !strings.Contains(result, "\r\x1b[K") {
+		t.Fatalf("redraw output missing per-line clear: %q", result)
 	}
 
-	// Must contain \x1b[5C for cursor positioning (prompt "> "=2 + "hel"=3 = 5)
+	// Cursor positioning: \x1b[5C (prompt "> "=2 + "hel"=3 = 5)
 	if !strings.Contains(result, "\x1b[5C") {
 		t.Fatalf("redraw missing cursor positioning: %q", result)
 	}
@@ -158,12 +158,12 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 
 	result := out.String()
 
-	// Must contain \x1b[J and \x1b[A (move up then clear for multi-row)
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatalf("multi-line redraw missing \x1b[J: %q", result)
+	// Must contain per-line clears: \x1b[K for each row, \x1b[A to move up
+	if !strings.Contains(result, "\r\x1b[K") {
+		t.Fatalf("multi-line redraw missing first-line clear: %q", result)
 	}
-	if !strings.Contains(result, "\x1b[A") {
-		t.Fatalf("multi-line redraw missing \x1b[A move-up: %q", result)
+	if !strings.Contains(result, "\x1b[A\x1b[K") {
+		t.Fatalf("multi-line redraw missing second-line clear: %q", result)
 	}
 	// Must still contain the full text
 	if !strings.Contains(result, longText) {
@@ -176,86 +176,23 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 }
 
 func TestMouseClickRepositionsCursor(t *testing.T) {
+	// Mouse tracking disabled (blocked scrollback/text selection).
+	// Keyboard cursor movement is the primary navigation.
 	e := NewEditor("▸ ", "", ".")
 	e.buf.clear()
 	for _, r := range "hello" {
 		e.buf.insert(r)
 	}
-	e.buf.home() // cursor at 0
-
-	// Click at (row=0, col=3): prompt "▸ " = 2 cols, so text col = 1
-	// text "hello" → col 0='h', col 1='e' → pos should be 1
-	ev := keyEvent{typ: keyMouse, mouseCol: 3, mouseRow: 0, mouseBtn: 0}
-	e.handle(ev)
-	if e.buf.pos != 1 {
-		t.Fatalf("mouse at (0,3): pos=%d, want 1", e.buf.pos)
-	}
-
-	// Click past end → cursor should go to end
-	ev = keyEvent{typ: keyMouse, mouseCol: 80, mouseRow: 1, mouseBtn: 0}
-	e.handle(ev)
-	if e.buf.pos != len(e.buf.runes) {
-		t.Fatalf("mouse past end: pos=%d, want %d", e.buf.pos, len(e.buf.runes))
-	}
-
-	// Click before prompt (col 0, row 0) → cursor should go home
-	ev = keyEvent{typ: keyMouse, mouseCol: 0, mouseRow: 0, mouseBtn: 0}
-	e.handle(ev)
-	if e.buf.pos != 0 {
-		t.Fatalf("mouse before prompt: pos=%d, want 0", e.buf.pos)
-	}
+	e.buf.home()
+	if e.buf.pos != 0 { t.Fatalf("home: pos=%d want 0", e.buf.pos) }
+	e.buf.left() // can't go before 0
+	if e.buf.pos != 0 { t.Fatalf("left at home: pos=%d want 0", e.buf.pos) }
+	e.buf.right(); e.buf.right()
+	if e.buf.pos != 2 { t.Fatalf("right×2: pos=%d want 2", e.buf.pos) }
+	e.buf.insert('X')
+	if e.buf.string() != "heXllo" { t.Fatalf("insert: got %q want heXllo", e.buf.string()) }
 }
 
-func TestDecodeSGRMouse(t *testing.T) {
-	// SGR left-click press at column 10, row 1
-	ev, consumed := decodeKey([]byte("\x1b[<0;10;1M"))
-	if consumed != 10 {
-		t.Errorf("consumed=%d, want 10", consumed)
-	}
-	if ev.typ != keyMouse {
-		t.Fatalf("typ=%v, want keyMouse", ev.typ)
-	}
-	if ev.mouseCol != 9 { // 0-based
-		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
-	}
-	if ev.mouseRow != 0 { // 0-based: row 1 → 0
-		t.Errorf("mouseRow=%d, want 0", ev.mouseRow)
-	}
-
-	// SGR release — should be ignored (not mouse)
-	ev2, _ := decodeKey([]byte("\x1b[<0;10;1m"))
-	if ev2.typ == keyMouse {
-		t.Fatal("mouse release should not be keyMouse")
-	}
-}
-
-func TestDecodeX10Mouse(t *testing.T) {
-	// X10 left-click at column 10, row 5
-	// button=0 → byte=32, col=10 → byte=42, row=5 → byte=37
-	ev, consumed := decodeKey([]byte{0x1b, '[', 'M', 32, 42, 37})
-	if consumed != 6 {
-		t.Errorf("consumed=%d, want 6", consumed)
-	}
-	if ev.typ != keyMouse {
-		t.Fatalf("typ=%v, want keyMouse", ev.typ)
-	}
-	if ev.mouseCol != 9 { // col 10 → 0-based 9
-		t.Errorf("mouseCol=%d, want 9", ev.mouseCol)
-	}
-	if ev.mouseRow != 4 { // row 5 → 0-based 4
-		t.Errorf("mouseRow=%d, want 4", ev.mouseRow)
-	}
-
-	// Incomplete X10 (only 3 bytes) — should wait for more
-	ev2, consumed2 := decodeKey([]byte{0x1b, '[', 'M'})
-	if consumed2 != 0 {
-		t.Errorf("incomplete X10: consumed=%d, want 0", consumed2)
-	}
-	_ = ev2
-}
-
-// TestStressMultiLineTypeDelete simulates a real typing session:
-// type a lot → text wraps → backspace some → insert in middle → arrow around
 func TestStressMultiLineTypeDelete(t *testing.T) {
 	e := NewEditor("▸ ", "", ".")
 	e.buf.clear()
@@ -275,9 +212,12 @@ func TestStressMultiLineTypeDelete(t *testing.T) {
 	if !strings.Contains(result, long) {
 		t.Fatal("typing output lost text")
 	}
-	// Must contain \x1b[J (clear) and \x1b7/\x1b8 (save/restore)
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatal("multi-line type missing \x1b[J")
+	// Must contain per-line clear (scrollback-safe, no \x1b[J)
+	if strings.Contains(result, "\x1b[J") {
+		t.Fatal("multi-line type should not use \\x1b[J (destroys scrollback)")
+	}
+	if !strings.Contains(result, "\x1b[K") {
+		t.Fatal("multi-line type missing line clear")
 	}
 
 	// Phase 2: Backspace 10 times — should not leave ghost text
@@ -363,9 +303,13 @@ func TestShrinkMultiLine(t *testing.T) {
 	if strings.Contains(result, "xxx") {
 		t.Fatalf("shrink left ghost text: %q", result)
 	}
-	// Must contain \x1b[J (the fix)
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatal("shrink missing clear-screen")
+	// Must NOT contain \x1b[J (would destroy scrollback)
+	if strings.Contains(result, "\x1b[J") {
+		t.Fatal("shrink should not use \\x1b[J")
+	}
+	// Must use per-line clearing instead
+	if !strings.Contains(result, "\x1b[K") {
+		t.Fatal("shrink missing per-line clear")
 	}
 }
 
@@ -392,8 +336,8 @@ func TestGrowMultiLine(t *testing.T) {
 	if !strings.Contains(result, longer) {
 		t.Fatal("grow lost text content")
 	}
-	if !strings.Contains(result, "\x1b[J") {
-		t.Fatal("grow missing clear-screen")
+	if strings.Contains(result, "\x1b[J") {
+		t.Fatal("grow should not use \\x1b[J (destroys scrollback)")
 	}
 }
 
@@ -475,9 +419,12 @@ func TestMultiRowCursorRowCol(t *testing.T) {
 		t.Logf("got: %q", result)
 		t.Errorf("multi-row cursor: expected \\x1b[102C (wraps to row 1 col 22)")
 	}
-	// Must contain \r\x1b[J (clear sequence at column 0)
-	if !strings.Contains(result, "\r\x1b[J") {
-		t.Errorf("multi-row redraw missing \\r\\x1b[J: %q", result)
+	// Must contain per-line clear (scrollback-safe)
+	if strings.Contains(result, "\x1b[J") {
+		t.Errorf("multi-row should not use \\x1b[J (destroys scrollback)")
+	}
+	if !strings.Contains(result, "\r\x1b[K") {
+		t.Errorf("multi-row redraw missing per-line clear: %q", result)
 	}
 }
 

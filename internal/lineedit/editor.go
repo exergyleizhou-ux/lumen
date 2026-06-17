@@ -111,15 +111,6 @@ func (e *Editor) handle(ev keyEvent) action {
 	case keyEnd:
 		e.buf.end()
 		return actRedraw
-	case keyMouse:
-		pos := e.clickToPos(ev.mouseRow, ev.mouseCol)
-		if pos >= 0 {
-			e.buf.pos = pos
-			if e.buf.pos > len(e.buf.runes) {
-				e.buf.pos = len(e.buf.runes)
-			}
-		}
-		return actRedraw
 	case keyUp:
 		if s, ok := e.hist.up(); ok {
 			e.buf.setLine(s)
@@ -245,10 +236,6 @@ func (e *Editor) ReadLine() (string, error) {
 	}
 	defer term.Restore(fd, old)
 
-	// Enable SGR mouse tracking (xterm protocol)
-	io.WriteString(e.out, "\x1b[?1000h\x1b[?1006h")
-	defer io.WriteString(e.out, "\x1b[?1006l\x1b[?1000l")
-
 	e.buf.clear()
 	e.hist.idx = len(e.hist.items)
 	e.redraw()
@@ -307,9 +294,9 @@ func (e *Editor) readCooked() (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// redraw repaints the prompt and buffer. Uses the most portable and
-// reliable strategy: \r to column 0, then for multi-row buffers move up
-// to clear old content, then write new content.
+// redraw repaints the prompt and buffer. Uses ONLY per-line \x1b[K so the
+// terminal's native scrollback buffer is never destroyed. \x1b[J would
+// clear scrollback history on many terminals (macOS Terminal, iTerm2).
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -320,35 +307,27 @@ func (e *Editor) redraw() {
 	prompt := e.prompt
 	text := e.buf.string()
 
-	// For multi-row buffers (>1 line), the cursor is below the first line
-	// of the previous render because auto-wrap may have moved it.
-	// \r brings us to col 0 of the CURRENT line, then \x1b[A moves up.
-	// For single-row buffers, \r is enough.
-	io.WriteString(e.out, "\r")
+	// Step 1: Move to start of current line, then clear every row the
+	// previous render occupied — one \x1b[K at a time, moving upward.
+	// \x1b[K only clears a single line; it NEVER touches scrollback.
+	io.WriteString(e.out, "\r\x1b[K")
 	for i := 1; i < e.lastRows; i++ {
-		io.WriteString(e.out, "\x1b[A")
+		io.WriteString(e.out, "\x1b[A\x1b[K")
 	}
 
-	// Clear from cursor to end of screen. This wipes ALL old text regardless
-	// of row count because we moved to the first row of the previous render.
-	io.WriteString(e.out, "\x1b[J")
-
-	// Write prompt + full buffer.
+	// Step 2: Write prompt + full buffer (may auto-wrap).
 	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// Compute cursor column within the buffer (using runewidth for CJK safety).
+	// Step 3: Position cursor at correct column.
 	prefix := string(e.buf.runes[:e.buf.pos])
 	cursorOffset := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
-
-	// Move to column 0, then to cursor column. For the single-row case this
-	// is just \r + \x1b[%dC. For multi-row, \x1b[%dC wraps by row.
 	io.WriteString(e.out, "\r")
 	if cursorOffset > 0 {
 		fmt.Fprintf(e.out, "\x1b[%dC", cursorOffset)
 	}
 
-	// Track how many rows we wrote for the next redraw.
+	// Step 4: Track rows for next clear.
 	promptW := runewidth.StringWidth(prompt)
 	textW := runewidth.StringWidth(text)
 	e.lastRows = 1
