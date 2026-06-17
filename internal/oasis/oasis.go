@@ -133,32 +133,57 @@ import (
 	"os"
 )
 
+// C2D algorithm contract (enforced by the Oasis runner; check with
+// 'lumen oasis check'):
+//   - the dataset is mounted READ-ONLY at /data
+//   - the runner provides params at /out/input.json
+//   - write your JSON result to STDOUT — the runner saves it as /out/output.json,
+//     then hashes + Ed25519-attests it
+//   - the container runs with --network none --read-only (no internet, ro root)
 func main() {
-	// Read input parameters from stdin (JSON)
-	var params struct {
-		DatasetPath string                 json:"dataset_path"
-		Params      map[string]interface{} json:"params"
+	datasetPath := "/data/dataset.csv"
+	var params map[string]interface{}
+	if data, err := os.ReadFile("/out/input.json"); err == nil {
+		var input map[string]interface{}
+		if json.Unmarshal(data, &input) == nil {
+			if dp, ok := input["dataset_path"].(string); ok && dp != "" {
+				datasetPath = dp
+			}
+			if p, ok := input["params"].(map[string]interface{}); ok {
+				params = p
+			}
+		}
 	}
-	if err := json.NewDecoder(os.Stdin).Decode(&params); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: invalid input: %%v\n", err)
+	_ = datasetPath // TODO: read your dataset from here (under /data, read-only)
+	_ = params      // TODO: apply params (e.g. n_estimators, learning_rate)
+
+	// TODO: replace with your real result.
+	result := map[string]interface{}{
+		"algorithm": "%s",
+		"status":    "ok",
+	}
+
+	// Write the result to stdout — the runner captures it as /out/output.json.
+	if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+		fmt.Fprintf(os.Stderr, "ERROR: encode output: %%v\n", err)
 		os.Exit(1)
 	}
-
-	// TODO: implement your algorithm logic here.
-	// 1. Read data from params.DatasetPath
-	// 2. Apply params.Params (e.g., n_estimators, learning_rate)
-	// 3. Write output to stdout as JSON
-
-	result := map[string]interface{}{
-		"status": "ok",
-		"algorithm": "%s",
-	}
-	json.NewEncoder(os.Stdout).Encode(result)
 }
 `, m.Name)
 	mainGoPath := filepath.Join(mainDir, "main.go")
 	if err := os.WriteFile(mainGoPath, []byte(mainGo), 0644); err != nil {
 		return fmt.Errorf("write main.go: %w", err)
+	}
+
+	// Write go.mod so the algorithm builds — the Dockerfile runs `go build
+	// ./cmd/algo` in the build context, which needs a module.
+	module := m.Name
+	if module == "" {
+		module = "algo"
+	}
+	goMod := fmt.Sprintf("module %s\n\ngo 1.23\n", module)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
+		return fmt.Errorf("write go.mod: %w", err)
 	}
 
 	// Write .gitignore

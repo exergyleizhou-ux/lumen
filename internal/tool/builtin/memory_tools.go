@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"lumen/internal/memory"
@@ -19,10 +20,15 @@ func init() {
 
 // ── Memory source ────────────────────────────────────────────
 
-var globalMemStore *memory.Store
+// globalMemStore is written by Configure on every request and read by the memory
+// tools during Execute on other goroutines — atomic so overlapping server
+// requests don't race on the pointer.
+var globalMemStore atomic.Pointer[memory.Store]
 
 // SetMemStore wires the shared memory store for the builtin tools package.
-func SetMemStore(s *memory.Store) { globalMemStore = s }
+func SetMemStore(s *memory.Store) { globalMemStore.Store(s) }
+
+func memStore() *memory.Store { return globalMemStore.Load() }
 
 // ── remember tool ────────────────────────────────────────────
 
@@ -47,7 +53,7 @@ func (t *RememberTool) Schema() json.RawMessage {
 }
 
 func (t *RememberTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if globalMemStore == nil {
+	if memStore() == nil {
 		return "", fmt.Errorf("memory store not available")
 	}
 	var req struct {
@@ -81,7 +87,7 @@ func (t *RememberTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		Description: req.Description,
 		Kind:        kind,
 	}
-	if err := globalMemStore.Save(entry); err != nil {
+	if err := memStore().Save(entry); err != nil {
 		return "", fmt.Errorf("remember: %w", err)
 	}
 	return fmt.Sprintf("✓ memory '%s' saved (%s)", req.Name, kind), nil
@@ -106,7 +112,7 @@ func (t *ForgetTool) Schema() json.RawMessage {
 }
 
 func (t *ForgetTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if globalMemStore == nil {
+	if memStore() == nil {
 		return "", fmt.Errorf("memory store not available")
 	}
 	var req struct {
@@ -115,7 +121,7 @@ func (t *ForgetTool) Execute(ctx context.Context, args json.RawMessage) (string,
 	if err := json.Unmarshal(args, &req); err != nil {
 		return "", fmt.Errorf("forget: %w", err)
 	}
-	if err := globalMemStore.Delete(req.Name); err != nil {
+	if err := memStore().Delete(req.Name); err != nil {
 		return "", fmt.Errorf("forget: %w", err)
 	}
 	return fmt.Sprintf("✓ memory '%s' deleted", req.Name), nil
@@ -134,10 +140,10 @@ func (t *MemoriesTool) Schema() json.RawMessage {
 }
 
 func (t *MemoriesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	if globalMemStore == nil {
+	if memStore() == nil {
 		return "", fmt.Errorf("memory store not available")
 	}
-	entries := globalMemStore.List()
+	entries := memStore().List()
 	if len(entries) == 0 {
 		return "No memories saved yet. Use /remember to save facts, preferences, or guidance.", nil
 	}

@@ -141,7 +141,7 @@ enabled = true
 [[providers]]
 name = "deepseek"
 kind = "openai"
-api_key = "sk-fa1d1f4db91d48e5b9b33d5375f85e5d"
+api_key = "sk-FAKE-inline-key-for-test"
 `), 0644)
 
 	oldFn := verifyConfigPath

@@ -46,17 +46,21 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 	ch := make(chan provider.Chunk, 64)
 	go func() {
 		defer close(ch)
-		p.stream(ctx, req, ch)
+		provider.StreamWithRetry(ctx, ch, func(int) error {
+			return p.stream(ctx, req, ch)
+		})
 	}()
 	return ch, nil
 }
 
-func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) {
+// stream performs one streaming attempt. It returns a typed error for setup and
+// HTTP-status failures (so StreamWithRetry can classify/retry); successful SSE
+// bodies are streamed to ch and it returns nil.
+func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) error {
 	body := p.buildRequest(req)
 	b, err := json.Marshal(body)
 	if err != nil {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
-		return
+		return err
 	}
 
 	url := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse&key=%s",
@@ -64,31 +68,23 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(b))
 	if err != nil {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
-		return
+		return err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := p.client.Do(httpReq)
 	if err != nil {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: err}
-		return
+		return err // network error — retryable
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.AuthError{
-			Provider: p.name, Status: resp.StatusCode,
-		}}
-		return
-	}
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))}
-		return
+		return provider.ClassifyHTTPError(p.name, resp.StatusCode, body)
 	}
 
 	p.parseSSE(ctx, resp.Body, ch)
+	return nil
 }
 
 type geminiRequest struct {
@@ -259,4 +255,12 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 			}
 		}
 	}
+
+	// Mid-stream transport cut: surface it instead of silently truncating the
+	// reply (mirrors the openai provider). ctx.Err()==nil skips normal cancels.
+	if err := sc.Err(); err != nil && ctx.Err() == nil {
+		ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: err}}
+		return
+	}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
 }

@@ -105,3 +105,44 @@ func (s *stubFileInfo) Size() int64        { return 0 }
 func (s *stubFileInfo) Mode() os.FileMode  { return 0 }
 func (s *stubFileInfo) ModTime() time.Time { return time.Time{} }
 func (s *stubFileInfo) Sys() any           { return nil }
+
+func TestSafeWriteFileAtomicAndPreservesMode(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f.txt")
+	if err := os.WriteFile(path, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SafeWriteFile(path, "", []byte("new content")); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if string(got) != "new content" {
+		t.Errorf("content = %q, want %q", got, "new content")
+	}
+	// Existing file mode (0600) must be preserved across the temp+rename.
+	fi, _ := os.Stat(path)
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v, want 0600 (preserved)", fi.Mode().Perm())
+	}
+	// No temp file must be left behind in the directory.
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.Name() != "f.txt" {
+			t.Errorf("unexpected leftover file after atomic write: %s", e.Name())
+		}
+	}
+}
+
+func TestNewFileMode(t *testing.T) {
+	cases := []struct{ umask, want os.FileMode }{
+		{0o022, 0o644}, // default umask → 0644
+		{0o077, 0o600}, // restrictive umask → 0600 (not a wide-open 0644)
+		{0o000, 0o644},
+		{0o027, 0o640},
+	}
+	for _, c := range cases {
+		if got := newFileMode(c.umask); got != c.want {
+			t.Errorf("newFileMode(%#o) = %#o, want %#o", c.umask, got, c.want)
+		}
+	}
+}

@@ -29,8 +29,8 @@ func (t *FeedbackTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	var p struct{ Type, Message, Context string }
 	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 	fs := telemetry.NewFeedbackStore()
-	fe := fs.Submit(p.Type, p.Message, p.Context, "")
-	if fe == nil { return "", fmt.Errorf("failed to submit feedback") }
+	fe, err := fs.Submit(p.Type, p.Message, p.Context, "")
+	if err != nil { return "", fmt.Errorf("failed to submit feedback: %w", err) }
 	return fmt.Sprintf("Feedback submitted. ID: %s. Thank you!", fe.ID), nil
 }
 

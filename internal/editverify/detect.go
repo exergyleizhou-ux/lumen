@@ -63,6 +63,12 @@ func detectLanguages(changed []string) []string {
 }
 
 func goSteps(root string, changed []string, cfg Config) []Step {
+	// build + vet are always module-wide. `go build ./...` is cheap (compile
+	// cache) and is the reliable signal that catches a DEPENDENT package the edit
+	// just broke — narrowing to the changed package alone (e.g. a signature change)
+	// would let an importer break slip through as a false success. Only the test
+	// step is scoped: a pre-existing/flaky test in an unrelated package shouldn't
+	// be blamed on this edit (and the feedback already caveats test failures).
 	steps := []Step{
 		{Name: "build", Dir: root, Args: []string{"go", "build", "./..."}},
 		{Name: "vet", Dir: root, Args: []string{"go", "vet", "./..."}},

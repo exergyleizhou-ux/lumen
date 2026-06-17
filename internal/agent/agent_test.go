@@ -5,12 +5,41 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 
 	"lumen/internal/event"
 	"lumen/internal/provider"
 	"lumen/internal/tool"
 )
+
+func TestAgentSetSinkConcurrentWithEmit(t *testing.T) {
+	// SetSink (e.g. a TUI redirect) must be safe against the turn goroutine
+	// reading the sink. Run under -race.
+	a := New(&mockProvider{name: "test"}, testRegistry(), NewSession(""), Options{MaxSteps: 1})
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				a.Sink().Emit(event.Event{Kind: event.Text})
+			}
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			a.SetSink(event.Discard)
+		}
+		close(stop)
+	}()
+	wg.Wait()
+}
 
 // ── Mock provider for testing ──────────────────────────────
 
@@ -27,6 +56,102 @@ func (m *mockProvider) Stream(ctx context.Context, req provider.Request) (<-chan
 		ch <- provider.Chunk{Type: provider.ChunkDone}
 	}()
 	return ch, nil
+}
+
+// emptyStreamProvider streams zero chunks then closes — simulating a dead
+// connection or a 200 response with no usable body.
+type emptyStreamProvider struct{}
+
+func (emptyStreamProvider) Name() string { return "empty" }
+func (emptyStreamProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	ch := make(chan provider.Chunk)
+	close(ch)
+	return ch, nil
+}
+
+func TestRunReturnsErrorOnEmptyStream(t *testing.T) {
+	a := New(emptyStreamProvider{}, testRegistry(), NewSession(""), Options{MaxSteps: 3})
+	err := a.Run(context.Background(), "hi")
+	if err == nil {
+		t.Fatal("a zero-chunk stream is a provider failure and must return an error, not nil (silent success)")
+	}
+}
+
+// interruptThenOKProvider interrupts the first stream mid-output, then succeeds.
+type interruptThenOKProvider struct{ calls int }
+
+func (p *interruptThenOKProvider) Name() string { return "interrupt" }
+func (p *interruptThenOKProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	n := p.calls
+	ch := make(chan provider.Chunk, 4)
+	go func() {
+		defer close(ch)
+		if n == 1 {
+			ch <- provider.Chunk{Type: provider.ChunkText, Text: "partial"}
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: errors.New("connection reset")}}
+			return
+		}
+		ch <- provider.Chunk{Type: provider.ChunkText, Text: "recovered answer."}
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+	}()
+	return ch, nil
+}
+
+func TestRunRecoversFromStreamInterruption(t *testing.T) {
+	p := &interruptThenOKProvider{}
+	a := New(p, testRegistry(), NewSession(""), Options{MaxSteps: 5})
+	err := a.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("a mid-stream interruption should auto-recover, got error: %v", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("expected 2 stream attempts (interrupt + 1 recovery), got %d", p.calls)
+	}
+}
+
+// recordingProvider captures the request it was asked to stream.
+type recordingProvider struct {
+	lastReq provider.Request
+	calls   int
+}
+
+func (p *recordingProvider) Name() string { return "rec" }
+func (p *recordingProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.lastReq = req
+	p.calls++
+	ch := make(chan provider.Chunk, 2)
+	ch <- provider.Chunk{Type: provider.ChunkText, Text: "ok"}
+	ch <- provider.Chunk{Type: provider.ChunkDone}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunSanitizesOrphanedToolCallBeforeRequest(t *testing.T) {
+	p := &recordingProvider{}
+	a := New(p, testRegistry(), NewSession(""), Options{MaxSteps: 1})
+	// Seed an assistant tool_call with NO matching tool result, then a later
+	// non-tool message — so the last message is not a tool result and the old
+	// narrow "needsRepair" gate would skip sanitization, sending an orphaned
+	// tool_call the provider rejects with HTTP 400.
+	a.session.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	a.session.Add(provider.Message{Role: provider.RoleAssistant, ToolCalls: []provider.ToolCall{{ID: "x", Name: "read_test"}}})
+
+	a.Run(context.Background(), "continue")
+
+	if p.calls == 0 {
+		t.Fatal("provider was never called")
+	}
+	msgs := p.lastReq.Messages
+	for i, m := range msgs {
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 && m.ToolCalls[0].ID == "x" {
+			if i+1 >= len(msgs) || msgs[i+1].Role != provider.RoleTool || msgs[i+1].ToolCallID != "x" {
+				t.Fatalf("orphaned tool_call sent to provider: assistant tool_call 'x' not followed by its tool result; got %+v", msgs)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected the assistant tool_call in the request, messages=%+v", msgs)
 }
 
 // ── Simple test tool ────────────────────────────────────────

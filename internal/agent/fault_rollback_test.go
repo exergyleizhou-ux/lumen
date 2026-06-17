@@ -2,9 +2,7 @@ package agent
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"lumen/internal/event"
@@ -13,25 +11,23 @@ import (
 func TestFaultRollbackCountsConsecutiveFailures(t *testing.T) {
 	a := &Agent{
 		faultRollback: map[string]int{},
-		sink:          event.Discard,
 	}
 	changed := []string{"pkg/broken.go"}
-	
+
 	a.checkFaultRollback(changed)
 	if a.faultRollback["pkg/broken.go"] != 1 {
 		t.Errorf("first failure: count=%d want 1", a.faultRollback["pkg/broken.go"])
 	}
-	
+
 	a.checkFaultRollback(changed)
 	if a.faultRollback["pkg/broken.go"] != 0 {
-		t.Errorf("after rollback count=%d want 0", a.faultRollback["pkg/broken.go"])
+		t.Errorf("after warning, count should reset: count=%d want 0", a.faultRollback["pkg/broken.go"])
 	}
 }
 
 func TestFaultRollbackSkipsNonGoFiles(t *testing.T) {
 	a := &Agent{
 		faultRollback: map[string]int{},
-		sink:          event.Discard,
 	}
 	changed := []string{"README.md", "lumen.toml"}
 	a.checkFaultRollback(changed)
@@ -40,32 +36,35 @@ func TestFaultRollbackSkipsNonGoFiles(t *testing.T) {
 	}
 }
 
-func TestFaultRollbackRealGitCheckout(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
+// Repeated verify failure must NOT destroy the file's uncommitted contents — it
+// only warns. (Previously it ran `git checkout`, silently discarding work.)
+func TestFaultRollbackDoesNotTouchFile(t *testing.T) {
 	dir := t.TempDir()
-	exec.Command("git", "init", dir).Run()
-	
 	filePath := filepath.Join(dir, "test.go")
-	os.WriteFile(filePath, []byte("package pkg\nfunc Original() {}\n"), 0644)
-	exec.Command("git", "-C", dir, "add", "test.go").Run()
-	exec.Command("git", "-C", dir, "commit", "-m", "init").Run()
-	
-	os.WriteFile(filePath, []byte("package pkg\nfunc Broken() {!!!}\n"), 0644)
-	
+	const edited = "package pkg\nfunc Edited() {}\n"
+	if err := os.WriteFile(filePath, []byte(edited), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	oldWd, _ := os.Getwd()
 	os.Chdir(dir)
 	defer os.Chdir(oldWd)
-	
+
+	var warned bool
 	a := &Agent{
 		faultRollback: map[string]int{"test.go": 1},
-		sink:          event.Discard,
 	}
+	a.SetSink(event.FuncSink(func(e event.Event) {
+		if e.Kind == event.Notice && e.Level == event.LevelWarn {
+			warned = true
+		}
+	}))
 	a.checkFaultRollback([]string{"test.go"})
-	
-	content, _ := os.ReadFile(filePath)
-	if !strings.Contains(string(content), "func Original") {
-		t.Errorf("expected Original after rollback, got: %s", string(content))
+
+	got, _ := os.ReadFile(filePath)
+	if string(got) != edited {
+		t.Errorf("file contents must be untouched, got: %s", got)
+	}
+	if !warned {
+		t.Error("expected a warning about the repeatedly-failing file")
 	}
 }

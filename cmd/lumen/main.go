@@ -132,7 +132,7 @@ func runSetup() {
 // ── Doctor ─────────────────────────────────────────────────
 
 func runDoctor() {
-	cfg, err := config.Load(config.FindConfig())
+	cfg, err := config.LoadWithEnv(config.FindConfig(), config.FindDotEnv())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
@@ -165,13 +165,21 @@ func runOneShot(args []string) {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-sigCh; cancel() }()
 
+	// The error itself is shown to the user via the event sink (Controller emits
+	// a LevelErr Notice). Here we only need the exit code so scripts and CI can
+	// tell a failed run from a successful one.
 	if planMode {
 		fmt.Fprintf(os.Stderr, "[plan — read-only]\n\n")
-		ctrl.Plan(ctx, prompt)
+		if err := ctrl.Plan(ctx, prompt); err != nil {
+			os.Exit(1)
+		}
 	} else {
-		ctrl.Run(ctx, prompt)
+		err := ctrl.Run(ctx, prompt)
 		drawFooter()
 		fmt.Print("\n")
+		if err != nil {
+			os.Exit(1)
+		}
 	}
 }
 
@@ -327,15 +335,24 @@ type agentRunner struct {
 }
 
 func (r *agentRunner) Run(ctx context.Context, prompt string) (string, error) {
-	// Re-configure with a capturing sink
+	// Re-configure with a capturing sink. Capture both the model's text and any
+	// surfaced error Notice so a failed auto-fix is reported, not logged as an
+	// empty success.
 	var buf strings.Builder
 	sink := event.FuncSink(func(e event.Event) {
-		if e.Kind == "text" {
+		switch {
+		case e.Kind == event.Text:
 			buf.WriteString(e.Text)
+		case e.Kind == event.Notice && e.Level == event.LevelErr:
+			buf.WriteString("\n[error] " + e.Text)
 		}
 	})
-	r.ctrl.Configure(sink, nil, "")
-	r.ctrl.Run(ctx, prompt)
+	if err := r.ctrl.Configure(sink, nil, ""); err != nil {
+		return "", err
+	}
+	if err := r.ctrl.Run(ctx, prompt); err != nil {
+		return buf.String(), err
+	}
 	return buf.String(), nil
 }
 

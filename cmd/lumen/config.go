@@ -12,7 +12,7 @@ import (
 // It is read-only and does not modify any files.
 func runConfig() {
 	path := config.FindConfig()
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config: %v\n", err)
 		os.Exit(1)
@@ -84,7 +84,7 @@ func keySource(p config.ProviderConfig) string {
 // Used by tests to verify the output contains expected values.
 func configSummary() string {
 	path := config.FindConfig()
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
 	if err != nil {
 		return fmt.Sprintf("error: %v", err)
 	}

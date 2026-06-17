@@ -111,3 +111,27 @@ func TestSinkNilInterface(t *testing.T) {
 		t.Skip("sink is not nil, but Discard is always safe")
 	}
 }
+
+func TestSyncSinkSerializesConcurrentEmit(t *testing.T) {
+	// Background sub-agent jobs emit to the same sink as the foreground turn. The
+	// wrapper must serialize Emit so unsynchronized inner state is safe and no
+	// updates are lost (and -race is clean).
+	count := 0
+	inner := FuncSink(func(e Event) { count++ }) // intentionally non-atomic
+	s := NewSyncSink(inner)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 50; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				s.Emit(Event{Kind: Text})
+			}
+		}()
+	}
+	wg.Wait()
+	if count != 50*100 {
+		t.Errorf("count = %d, want 5000 — concurrent Emit lost updates (not serialized)", count)
+	}
+}

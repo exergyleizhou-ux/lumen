@@ -11,7 +11,21 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
+
+// processUmask is the process file-creation mask, read once at startup (the
+// read/restore dance is single-threaded here, so no per-write race). New files
+// honor it — matching os.WriteFile semantics — instead of always landing 0644.
+var processUmask = func() os.FileMode {
+	old := syscall.Umask(0)
+	syscall.Umask(old)
+	return os.FileMode(old)
+}()
+
+// newFileMode returns the mode a freshly created file should get: 0644 with the
+// umask applied (e.g. umask 077 → 0600).
+func newFileMode(umask os.FileMode) os.FileMode { return 0o644 &^ umask }
 
 // ── Limits ──────────────────────────────────────────────────
 
@@ -228,10 +242,43 @@ func SafeWriteFile(path, workspaceRoot string, content []byte) error {
 			return err
 		}
 	}
-	if err := os.MkdirAll(filepath.Dir(resolved), 0o755); err != nil {
+	dir := filepath.Dir(resolved)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
 	}
-	return os.WriteFile(resolved, content, 0o644)
+	// Preserve the existing file's mode if it exists; for a new file use 0644
+	// with the process umask applied (so a restrictive umask still yields 0600).
+	mode := newFileMode(processUmask)
+	if fi, statErr := os.Stat(resolved); statErr == nil {
+		mode = fi.Mode().Perm()
+	}
+	// Atomic write: temp file in the same dir (same filesystem) → fsync → rename
+	// over the target. A crash or disk-full mid-write leaves the original intact
+	// rather than a truncated/half-written file.
+	tmp, err := os.CreateTemp(dir, ".lumen-*.tmp")
+	if err != nil {
+		return fmt.Errorf("temp: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed; cleans up on any error path
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpName, resolved); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
 }
 
 // ── Directory listing helpers ──────────────────────────────

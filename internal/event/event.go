@@ -2,7 +2,10 @@
 // (TUI, HTTP/SSE, headless) consume these to render the agent's activity.
 package event
 
-import "time"
+import (
+	"sync"
+	"time"
+)
 
 // Kind identifies the type of event.
 type Kind string
@@ -114,3 +117,30 @@ func (f FuncSink) Emit(e Event) { f(e) }
 
 // Discard is a sink that drops all events (headless runs, tests).
 var Discard Sink = FuncSink(func(e Event) {})
+
+// syncSink serializes Emit so an unsynchronized inner sink (e.g. a terminal/TUI/
+// SSE closure with non-atomic state) is safe when emitted from multiple
+// goroutines — the agent's foreground turn and a background run_in_background
+// sub-agent both emit into the same sink concurrently.
+type syncSink struct {
+	mu    sync.Mutex
+	inner Sink
+}
+
+func (s *syncSink) Emit(e Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inner.Emit(e)
+}
+
+// NewSyncSink returns a goroutine-safe wrapper around inner. nil → Discard; an
+// already-synchronized sink is returned unchanged (idempotent).
+func NewSyncSink(inner Sink) Sink {
+	if inner == nil {
+		return Discard
+	}
+	if _, ok := inner.(*syncSink); ok {
+		return inner
+	}
+	return &syncSink{inner: inner}
+}

@@ -56,6 +56,37 @@ func TestSanitizeToolPairingUnansweredCalls(t *testing.T) {
 	}
 }
 
+func TestSanitizeToolPairingPartialResults(t *testing.T) {
+	// 2 tool_calls but only ONE result — the second must be backfilled, else the
+	// provider 400s on the unpaired call.
+	msgs := []Message{
+		{Role: RoleAssistant, ToolCalls: []ToolCall{
+			{ID: "1", Name: "bash"},
+			{ID: "2", Name: "read_file"},
+		}},
+		{Role: RoleTool, ToolCallID: "1", Name: "bash", Content: "ok"},
+		{Role: RoleUser, Content: "next"},
+	}
+	out := SanitizeToolPairing(msgs)
+
+	// Every tool_call ID must have a following tool result.
+	paired := map[string]bool{}
+	for _, m := range out {
+		if m.Role == RoleTool {
+			paired[m.ToolCallID] = true
+		}
+	}
+	if !paired["1"] || !paired["2"] {
+		t.Fatalf("both tool_calls must be paired; got %+v", out)
+	}
+	// The real result for "1" must be preserved (not replaced by a placeholder).
+	for _, m := range out {
+		if m.Role == RoleTool && m.ToolCallID == "1" && m.Content != "ok" {
+			t.Errorf("result for call 1 should be preserved, got %q", m.Content)
+		}
+	}
+}
+
 func TestSanitizeToolPairingOrphanToolMessages(t *testing.T) {
 	msgs := []Message{
 		{Role: RoleUser, Content: "hi"},

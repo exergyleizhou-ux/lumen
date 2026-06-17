@@ -2,7 +2,9 @@ package jobs
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -10,16 +12,19 @@ import (
 func TestStartAndGet(t *testing.T) {
 	m := NewManager()
 
+	release := make(chan struct{})
 	job := m.Start("bash", "test command", func(ctx context.Context) (string, error) {
+		<-release // stay running until the assertions below have run
 		return "hello", nil
 	})
 
 	if job.ID == "" {
 		t.Error("job should have an ID")
 	}
-	if job.Status != StatusRunning {
-		t.Errorf("new job should be running, got %s", job.Status)
+	if st := job.statusSafe(); st != StatusRunning {
+		t.Errorf("new job should be running, got %s", st)
 	}
+	close(release)
 
 	got := m.Get(job.ID)
 	if got == nil {
@@ -69,8 +74,8 @@ func TestKill(t *testing.T) {
 	if killed == nil {
 		t.Error("Kill should return the job")
 	}
-	if killed.Status != StatusKilled {
-		t.Errorf("killed job status: want killed, got %s", killed.Status)
+	if st := killed.statusSafe(); st != StatusKilled {
+		t.Errorf("killed job status: want killed, got %s", st)
 	}
 
 	// Job should be removed
@@ -203,4 +208,53 @@ func TestWithManagerContext(t *testing.T) {
 	if got2 != nil {
 		t.Error("FromContext should return nil without WithManager")
 	}
+}
+
+func TestJobSnapshotRaceWithCompletion(t *testing.T) {
+	// A background job completing (writing Status/Result/Err) must not race
+	// readers (bash_output's Snapshot) or a concurrent Kill. Run under -race.
+	m := NewManager()
+	release := make(chan struct{})
+	job := m.Start("bash", "x", func(ctx context.Context) (string, error) {
+		<-release
+		return "done-output", nil
+	})
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_, _, _ = job.Snapshot()
+			}
+		}()
+	}
+	close(release) // job completes → completion goroutine writes fields concurrently
+	wg.Wait()
+}
+
+func TestJobMarshalJSONRaceFree(t *testing.T) {
+	// json.Marshal-ing a job must lock its fields, so it can't race the completion
+	// goroutine. Run under -race.
+	m := NewManager()
+	release := make(chan struct{})
+	job := m.Start("bash", "x", func(ctx context.Context) (string, error) {
+		<-release
+		return "out", nil
+	})
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				if _, err := json.Marshal(job); err != nil {
+					t.Errorf("marshal: %v", err)
+				}
+			}
+		}()
+	}
+	close(release)
+	wg.Wait()
 }

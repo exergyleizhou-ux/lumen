@@ -1,11 +1,48 @@
 package agent
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"lumen/internal/provider"
 )
+
+func TestCompactRewritesPersistedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "s.jsonl")
+	s := NewSession(path)
+	for i := 0; i < 10; i++ {
+		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("m%d", i)})
+	}
+	s.Compact(2, 2, "summary")
+	want := s.Len() // 2 + marker + 2 = 5 in memory
+
+	// Reloading from disk must yield the compacted history (first 2 + marker +
+	// last 2) in order — not the original 10, and not a scrambled set.
+	reloaded := NewSession(path)
+	if reloaded.Len() != want {
+		t.Fatalf("reloaded %d messages from file, want %d (file must match compacted memory)", reloaded.Len(), want)
+	}
+	got := reloaded.Snapshot()
+	wantContent := []string{"m0", "m1", "[SESSION COMPACTED]\n\nsummary", "m8", "m9"}
+	for i, wc := range wantContent {
+		if got[i].Content != wc {
+			t.Errorf("reloaded msg[%d] = %q, want %q (compaction scrambled order/content)", i, got[i].Content, wc)
+		}
+	}
+}
+
+func TestSessionAddRecordsPersistError(t *testing.T) {
+	// Parent dir does not exist, so the append must fail. The session must record
+	// that failure instead of silently dropping persisted turns.
+	s := NewSession(filepath.Join(t.TempDir(), "missing", "s.jsonl"))
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hi"})
+	if s.PersistErr() == nil {
+		t.Fatal("Add should record a persistence error when the file can't be written")
+	}
+}
 
 func TestSessionAdd(t *testing.T) {
 	s := NewSession("")

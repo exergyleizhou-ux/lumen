@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"lumen/internal/provider"
@@ -269,6 +270,179 @@ func TestSSEHTTPError(t *testing.T) {
 		}
 	}
 	t.Error("expected an error chunk from 500 response")
+}
+
+func TestStreamDoesNotRetryNonRetryable(t *testing.T) {
+	// 402 Insufficient Balance is a permanent error — retrying wastes time and
+	// muddies the error message. The provider must fail fast: one request, then
+	// surface a clear error chunk.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(402)
+		w.Write([]byte(`{"error":{"message":"Insufficient Balance"}}`))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var gotErr error
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			gotErr = chunk.Err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected an error chunk from 402")
+	}
+	if !strings.Contains(gotErr.Error(), "402") {
+		t.Errorf("error should name the HTTP status, got %q", gotErr.Error())
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("402 is permanent — want exactly 1 request, got %d (a non-retryable error was retried)", n)
+	}
+}
+
+func TestStreamRetriesTransient(t *testing.T) {
+	// 503 is transient — the provider should retry and recover. Guards the retry
+	// path so the no-retry fix above does not disable legitimate retries.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.WriteHeader(503)
+			w.Write([]byte("temporarily unavailable"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"ok"}}]}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var text string
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkText:
+			text += chunk.Text
+		case provider.ChunkError:
+			t.Fatalf("503 should be retried and recover, got error: %v", chunk.Err)
+		}
+	}
+	if text != "ok" {
+		t.Errorf("want recovered text 'ok', got %q", text)
+	}
+	if n := atomic.LoadInt32(&hits); n != 2 {
+		t.Fatalf("want 2 requests (1 failed + 1 retry), got %d", n)
+	}
+}
+
+func TestSSEFinishReasonLength(t *testing.T) {
+	// finish_reason "length" means the model was cut off by max_tokens. Surface a
+	// visible marker so the user can tell the answer is truncated.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"Partial answer"}}]}` + "\n\n"))
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":" that got cut"}}]}` + "\n\n"))
+		w.Write([]byte(`data: {"choices":[{"finish_reason":"length"}]}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var texts []string
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkText:
+			texts = append(texts, chunk.Text)
+		case provider.ChunkError:
+			t.Fatalf("unexpected error: %v", chunk.Err)
+		}
+	}
+	joined := strings.Join(texts, "")
+	if !strings.Contains(joined, "Partial answer that got cut") {
+		t.Errorf("expected streamed text, got %q", joined)
+	}
+	if !strings.Contains(joined, "truncated") {
+		t.Errorf("expected a truncation marker, got %q", joined)
+	}
+}
+
+func TestSSEInBandError(t *testing.T) {
+	// OpenAI-compatible proxies often return 200 + an in-band {"error":...} event
+	// (rate limit / quota / overloaded). It must surface as a ChunkError, not be
+	// silently dropped into an empty turn.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"error":{"message":"rate limit exceeded","type":"rate_limit_error"}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+	var gotErr error
+	for c := range ch {
+		if c.Type == provider.ChunkError {
+			gotErr = c.Err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("in-band error event should surface as a ChunkError")
+	}
+	if !strings.Contains(gotErr.Error(), "rate limit exceeded") {
+		t.Errorf("error should carry the provider message, got %q", gotErr.Error())
+	}
+}
+
+func TestSSEInBandErrorAfterContentPreservesText(t *testing.T) {
+	// A trailing in-band error AFTER valid content was streamed must NOT discard
+	// the partial answer — keep it and append a marker, ending normally.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"Here is the answer"}}]}` + "\n\n"))
+		w.Write([]byte(`data: {"error":{"message":"upstream hiccup"}}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+	var texts []string
+	var gotErr error
+	for c := range ch {
+		switch c.Type {
+		case provider.ChunkText:
+			texts = append(texts, c.Text)
+		case provider.ChunkError:
+			gotErr = c.Err
+		}
+	}
+	joined := strings.Join(texts, "")
+	if gotErr != nil {
+		t.Errorf("trailing error after content must not become a ChunkError, got %v", gotErr)
+	}
+	if !strings.Contains(joined, "Here is the answer") {
+		t.Errorf("partial answer must be preserved, got %q", joined)
+	}
+	if !strings.Contains(joined, "upstream hiccup") {
+		t.Errorf("error marker should be appended, got %q", joined)
+	}
 }
 
 func TestBuildRequest(t *testing.T) {

@@ -5,7 +5,9 @@ name = "deepseek"
 kind = "openai"
 base_url = "https://api.deepseek.com/v1"
 model = "deepseek-chat"
-api_key = "sk-fa1d1f4db91d48e5b9b33d5375f85e5d"
+# API key is read from the environment (or .env, which is gitignored) — never
+# committed inline. Set DEEPSEEK_API_KEY in .env or your shell. See .env.example.
+api_key_env = "DEEPSEEK_API_KEY"
 
 [agent]
 max_steps = 30

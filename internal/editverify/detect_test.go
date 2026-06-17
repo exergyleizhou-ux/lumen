@@ -83,6 +83,23 @@ func TestDetect_scopeAll(t *testing.T) {
 	}
 }
 
+func TestDetect_buildVetAlwaysModuleWide(t *testing.T) {
+	// build + vet must stay ./... under BOTH scopes so a dependent package broken
+	// by the edit is caught (a scoped build would miss the importer). Only test is
+	// scoped.
+	for _, scope := range []string{"changed-pkg", "all"} {
+		cfg := DefaultConfig()
+		cfg.Scope = scope
+		steps := Detect("/project", []string{"internal/foo/a.go"}, cfg)
+		if steps[0].Name != "build" || steps[0].Args[len(steps[0].Args)-1] != "./..." {
+			t.Errorf("scope=%s build = %v, want ./...", scope, steps[0].Args)
+		}
+		if steps[1].Name != "vet" || steps[1].Args[len(steps[1].Args)-1] != "./..." {
+			t.Errorf("scope=%s vet = %v, want ./...", scope, steps[1].Args)
+		}
+	}
+}
+
 func TestDetect_commandOverride(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Command = "golangci-lint run"

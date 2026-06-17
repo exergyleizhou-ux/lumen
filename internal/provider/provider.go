@@ -165,6 +165,23 @@ func (e *AuthError) Error() string {
 		e.Provider, e.Status, key)
 }
 
+// APIError reports a non-auth HTTP error from a provider. Retryable is true for
+// transient failures (429, 503, 5xx) that may succeed on retry, and false for
+// permanent ones (e.g. 402 Insufficient Balance, 400 Bad Request) that will not.
+type APIError struct {
+	Provider  string
+	Status    int
+	Body      string
+	Retryable bool
+}
+
+func (e *APIError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("HTTP %d (provider %s)", e.Status, e.Provider)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body)
+}
+
 // Factory builds a Provider from a resolved Config.
 type Factory func(cfg Config) (Provider, error)
 
@@ -223,11 +240,17 @@ func SanitizeToolPairing(msgs []Message) []Message {
 				j++
 			}
 			out = append(out, m)
-			// Pair results by call ID or position
+			// Keep the real results, then backfill a placeholder for ANY tool_call
+			// that has no matching result — a single unpaired call 400s the turn,
+			// and a partial set (some calls answered, some not) is just as invalid.
 			results := msgs[i+1 : j]
-			if len(results) == 0 {
-				// Backfill placeholder results
-				for _, tc := range m.ToolCalls {
+			out = append(out, results...)
+			present := make(map[string]bool, len(results))
+			for _, r := range results {
+				present[r.ToolCallID] = true
+			}
+			for _, tc := range m.ToolCalls {
+				if !present[tc.ID] {
 					out = append(out, Message{
 						Role:       RoleTool,
 						ToolCallID: tc.ID,
@@ -235,8 +258,6 @@ func SanitizeToolPairing(msgs []Message) []Message {
 						Content:    "[no result: interrupted]",
 					})
 				}
-			} else {
-				out = append(out, results...)
 			}
 			i = j
 			continue

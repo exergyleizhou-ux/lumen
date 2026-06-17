@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"lumen/internal/agent"
@@ -52,7 +53,7 @@ type Controller struct {
 	reg        *tool.Registry
 	skillStore *skill.Store
 	permMode    permission.Mode
-	sink        event.Sink
+	sinkRef     atomic.Pointer[event.Sink] // via sink()/store; safe vs a mid-turn redirect
 	asker       agent.Asker
 	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
 
@@ -67,11 +68,29 @@ type Controller struct {
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
+
+	persistWarned bool // session-persistence failure surfaced once
 }
 
 // New creates an unconfigured Controller. Call Configure() before use.
 func New() *Controller {
 	return &Controller{}
+}
+
+// sink returns the current event sink (never nil).
+func (c *Controller) sink() event.Sink {
+	if p := c.sinkRef.Load(); p != nil {
+		return *p
+	}
+	return event.Discard
+}
+
+// storeSink atomically sets the sink, so a redirect can't race a turn reading it.
+func (c *Controller) storeSink(s event.Sink) {
+	if s == nil {
+		s = event.Discard
+	}
+	c.sinkRef.Store(&s)
 }
 
 // Configure resolves config, providers, tools, skills, permissions, and
@@ -81,7 +100,11 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if sink == nil {
 		sink = event.Discard
 	}
-	c.sink = sink
+	// Serialize the sink: the foreground turn and any background run_in_background
+	// sub-agent emit into it concurrently. Both c.sink and the agent's sink use
+	// this same wrapped value.
+	sink = event.NewSyncSink(sink)
+	c.storeSink(sink)
 	c.asker = asker
 
 	// 1. Load config
@@ -89,7 +112,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if path == "" {
 		path = config.FindConfig()
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -261,12 +284,12 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 // Run executes a one-shot task and returns the agent's final answer.
 // On failure, automatically tries fallback providers if configured.
 func (c *Controller) Run(ctx context.Context, prompt string) error {
-	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
+	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
 	err := c.ag.Run(ctx, prompt)
 	if err != nil && len(c.fallbacks) > 0 {
 		original := c.prov.Name()
 		for _, fb := range c.fallbacks {
-			c.sink.Emit(event.Event{
+			c.sink().Emit(event.Event{
 				Kind: event.Notice, Level: event.LevelWarn,
 				Text: fmt.Sprintf(original + " failed — switching to " + fb.Name()),
 			})
@@ -275,17 +298,56 @@ func (c *Controller) Run(ctx context.Context, prompt string) error {
 			if err2 == nil {
 				return nil
 			}
+			err = err2 // surface the error from the provider actually tried last
 		}
 		c.ag.SetProvider(c.prov) // restore
 	}
+	if err != nil {
+		c.emitError(err)
+	}
+	c.warnIfNotPersisting()
 	return err
+}
+
+// emitError surfaces a turn-ending error to every front-end via the event sink.
+// Without this, callers that ignore Run/Plan's return value (one-shot, the
+// interactive loop) would fail silently — the user sees "Thinking…" and nothing
+// else when the provider returns e.g. HTTP 402.
+// warnIfNotPersisting surfaces, once, a session that has silently stopped saving
+// to disk — otherwise the user loses conversation resume with no warning.
+func (c *Controller) warnIfNotPersisting() {
+	if c.persistWarned || c.sess == nil {
+		return
+	}
+	if pe := c.sess.PersistErr(); pe != nil {
+		c.persistWarned = true
+		c.sink().Emit(event.Event{
+			Kind:      event.Notice,
+			Level:     event.LevelWarn,
+			Text:      "session not being saved: " + pe.Error() + " (this conversation may not resume)",
+			Timestamp: time.Now(),
+		})
+	}
+}
+
+func (c *Controller) emitError(err error) {
+	c.sink().Emit(event.Event{
+		Kind:      event.Notice,
+		Level:     event.LevelErr,
+		Text:      err.Error(),
+		Timestamp: time.Now(),
+	})
 }
 
 // Plan runs in read-only mode and returns the agent's plan.
 func (c *Controller) Plan(ctx context.Context, prompt string) error {
 	c.ag.SetPlanMode(true)
-	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
-	return c.ag.Run(ctx, prompt)
+	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
+	err := c.ag.Run(ctx, prompt)
+	if err != nil {
+		c.emitError(err)
+	}
+	return err
 }
 
 // Chat runs an interactive session. (TUI placeholder — falls back to Run)
@@ -303,7 +365,8 @@ func (c *Controller) Session() *agent.Session { return c.sess }
 
 // SetSink replaces the event sink at runtime (used by SSE/TUI to redirect events).
 func (c *Controller) SetSink(s event.Sink) {
-	c.sink = s
+	s = event.NewSyncSink(s) // foreground + background sub-agents emit concurrently
+	c.storeSink(s)
 	if c.ag != nil {
 		c.ag.SetSink(s)
 	}
@@ -315,8 +378,18 @@ func (c *Controller) SaveMark() {
 		return
 	}
 	dir := filepath.Dir(c.sessPath)
-	os.MkdirAll(dir, 0700)
-	os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filepath.Base(c.sessPath)), 0600)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		c.warn("could not save resume marker: " + err.Error())
+		return
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".last_session"), []byte(filepath.Base(c.sessPath)), 0600); err != nil {
+		c.warn("could not save resume marker: " + err.Error())
+	}
+}
+
+// warn surfaces a non-fatal warning via the event sink.
+func (c *Controller) warn(text string) {
+	c.sink().Emit(event.Event{Kind: event.Notice, Level: event.LevelWarn, Text: text, Timestamp: time.Now()})
 }
 
 // ProviderName returns the active provider instance name.
@@ -411,7 +484,9 @@ func (c *Controller) TimelinePath() string {
 // Close shuts down infrastructure (timeline, jobs, etc).
 func (c *Controller) Close() {
 	if c.tl != nil {
-		c.tl.Close()
+		if err := c.tl.Close(); err != nil {
+			c.warn("timeline not fully saved: " + err.Error())
+		}
 	}
 }
 

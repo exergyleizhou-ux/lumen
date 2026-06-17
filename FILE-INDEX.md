@@ -98,7 +98,6 @@
 /Users/lei/lumen/internal/tool/builtin/cron_tools.go     — Cron 3工具
 /Users/lei/lumen/internal/tool/builtin/schema_tools.go   — Schema 3工具
 /Users/lei/lumen/internal/tool/builtin/policy_tools.go   — 策略 3工具
-/Users/lei/lumen/internal/tool/builtin/flowcontrol_tools.go — 流控 4工具
 /Users/lei/lumen/internal/tool/builtin/orchestrator_tools.go — 编排 3工具
 /Users/lei/lumen/internal/tool/builtin/codemap_tools.go  — CodeMap 6工具
 /Users/lei/lumen/internal/tool/builtin/diff_tools.go     — Diff 2工具
@@ -139,7 +138,6 @@
 /Users/lei/lumen/internal/websocket/websocket.go    — WebSocket Hub (channels + 心跳)
 /Users/lei/lumen/internal/mux/mux.go                — 连接多路复用
 /Users/lei/lumen/internal/selector/selector.go      — K8s 风格 label selector
-/Users/lei/lumen/internal/flowcontrol/flowcontrol.go — 限流+信号量+背压+Governor
 /Users/lei/lumen/internal/circuitbreaker/circuitbreaker.go — 断路器模式
 
 [安全加密]
