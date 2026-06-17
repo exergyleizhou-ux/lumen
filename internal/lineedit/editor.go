@@ -230,18 +230,14 @@ func (e *Editor) ReadLine() (string, error) {
 		return e.readCooked()
 	}
 
-	// Query cursor position before raw mode so we know what row the prompt is on.
-	// DSR: \x1b[6n → terminal replies \x1b[row;colR
+	// promptRow=0 means clickToPos assumes the prompt is on row 0.
+	// This is correct for a full-screen app where the prompt is always
+	// at the same position, and avoids DSR round-trip latency + leaked
+	// control sequences. In line-mode chat (multiple output lines above
+	// the prompt), mouse clicks on wrapped lines will still position
+	// correctly within the buffer row; only the absolute-row-offset
+	// correction is skipped.
 	e.promptRow = 0
-	io.WriteString(e.out, "\x1b[6n")
-	var reply [32]byte
-	n, _ := e.in.Read(reply[:])
-	if n > 0 {
-		var row, col int
-		if _, err := fmt.Sscanf(string(reply[:n]), "\x1b[%d;%dR", &row, &col); err == nil && row > 0 {
-			e.promptRow = row
-		}
-	}
 
 	old, err := term.MakeRaw(fd)
 	if err != nil {
