@@ -11,6 +11,25 @@ func TestFormatFeedback_OK(t *testing.T) {
 	}
 }
 
+func TestFormatFeedback_testFailureCaveat(t *testing.T) {
+	// A failing test step may be pre-existing/flaky, not caused by the edit. The
+	// feedback must tell the model to confirm causality before "fixing" it.
+	r := Result{OK: false, Failed: &Step{Name: "test", Args: []string{"go", "test", "./pkg"}}, Output: "--- FAIL: TestX"}
+	got := FormatFeedback(r, 1, 3)
+	if !strings.Contains(got, "may predate") && !strings.Contains(got, "pre-existing") {
+		t.Errorf("test-step feedback should caveat that failures may be pre-existing, got %q", got)
+	}
+}
+
+func TestFormatFeedback_buildFailureNoCaveat(t *testing.T) {
+	// A build failure is the edit's fault — keep the direct "fix these" instruction.
+	r := Result{OK: false, Failed: &Step{Name: "build", Args: []string{"go", "build", "./pkg"}}, Output: "syntax error"}
+	got := FormatFeedback(r, 1, 3)
+	if strings.Contains(got, "may predate") {
+		t.Errorf("build-step feedback should not carry the pre-existing caveat, got %q", got)
+	}
+}
+
 func TestFormatFeedback_Diagnostics(t *testing.T) {
 	r := Result{
 		OK:     false,
