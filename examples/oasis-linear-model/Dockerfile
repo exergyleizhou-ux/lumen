@@ -1,10 +1,7 @@
-FROM golang:1.23-alpine AS builder
-WORKDIR /build
-COPY . .
-RUN go build -o /algo ./cmd/algo
-
+# SpaceX-style: build artifact outside, ship minimal container.
+# No compiler in the runtime image. No build tools. Just the binary + data.
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
-COPY --from=builder /algo /algo
+COPY algo /algo
 COPY testdata/ /testdata/
 ENTRYPOINT ["/algo"]
