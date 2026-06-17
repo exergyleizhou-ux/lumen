@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
 	"net"
 	"net/http"
 	"strings"
@@ -75,51 +74,13 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 	return ch, nil
 }
 
-// streamWithRetry wraps the actual HTTP stream with exponential-backoff retry  
-// for transient errors (429, 503, connection refused, timeout).
-// Retries are silent — no visible noise in the output stream.
+// streamWithRetry wraps the actual HTTP stream with the shared exponential-
+// backoff retry (transient errors only; AuthError and permanent APIError fail
+// fast). Retries are silent — no visible noise in the output stream.
 func (p *Provider) streamWithRetry(ctx context.Context, req provider.Request, ch chan<- provider.Chunk) {
-	const maxRetries = 2
-	baseDelay := 1 * time.Second
-	maxDelay := 8 * time.Second
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if ctx.Err() != nil {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
-			return
-		}
-
-		err := p.stream(ctx, req, ch, attempt)
-		if err == nil {
-			return // success
-		}
-
-		// Don't retry auth errors (401/403) — the key is bad.
-		if ae, ok := err.(*provider.AuthError); ok {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: ae}
-			return
-		}
-		// Don't retry permanent API errors (402, 400, 404, …) — fail fast.
-		if apiErr, ok := err.(*provider.APIError); ok && !apiErr.Retryable {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: apiErr}
-			return
-		}
-
-		if attempt == maxRetries {
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("stream failed after %d retries: %w", maxRetries, err)}
-			return
-		}
-
-		// Exponential backoff with jitter
-		delay := time.Duration(math.Min(float64(baseDelay)*math.Pow(2, float64(attempt)), float64(maxDelay)))
-		select {
-		case <-ctx.Done():
-			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
-			return
-		case <-time.After(delay):
-		}
-		// silent retry — no noise in output
-	}
+	provider.StreamWithRetry(ctx, ch, func(attempt int) error {
+		return p.stream(ctx, req, ch, attempt)
+	})
 }
 
 func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- provider.Chunk, attempt int) error {
@@ -145,22 +106,11 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == 401 || resp.StatusCode == 403 {
-		return &provider.AuthError{
-			Provider: p.name,
-			Status:   resp.StatusCode,
-			HasKey:   p.apiKey != "",
-		}
-	}
-	if resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode >= 500 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &provider.APIError{Provider: p.name, Status: resp.StatusCode, Body: string(body), Retryable: true}
-	}
 	if resp.StatusCode >= 400 {
-		// Permanent 4xx (402 Insufficient Balance, 400 Bad Request, 404, …).
-		// Retrying cannot help — fail fast with a clear message.
+		// Shared classification: 401/403 → AuthError; 429/503/5xx → retryable;
+		// other 4xx (402 Insufficient Balance, 400, 404, …) → permanent.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &provider.APIError{Provider: p.name, Status: resp.StatusCode, Body: string(body), Retryable: false}
+		return provider.ClassifyHTTPError(p.name, resp.StatusCode, body)
 	}
 
 	p.parseSSE(ctx, resp.Body, ch)
