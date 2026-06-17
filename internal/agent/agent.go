@@ -445,7 +445,6 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 			// 5c. Always write to stderr what the agent is about to reply.
 			//     Invisible when text is normal, critical when debugging silence.
-			fmt.Fprintf(os.Stderr, "  → agent reply: %q\n", truncStr(text, 80))
 
 			// 5c. Check whether the model has actually finished its work
 			if !a.finalAnswerReady(text) {

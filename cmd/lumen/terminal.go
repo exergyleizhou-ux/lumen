@@ -54,83 +54,60 @@ func termSink() event.Sink {
 	truncated := false
 	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
-	thinkingHeader := false
 
 	return event.FuncSink(func(e event.Event) {
-		// flushStdout flushes os.Stdout so line-buffered terminals
-		// show content immediately instead of waiting for a newline.
-		flushStdout := func() { os.Stdout.Sync() }
+		// Write directly to os.Stderr with Sync after every chunk.
+		// This bypasses line buffering and ensures text is visible
+		// immediately even when lineedit is in raw terminal mode.
+		w := func(s string) { os.Stderr.WriteString(s); os.Stderr.Sync() }
 
 		switch e.Kind {
 
 		case event.TurnStarted:
 			thinking = true; textStarted = false; textLen = 0; truncated = false
-			thinkingHeader = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
-			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⏳ …"))
-			flushStdout()
+			w("\n  \u23f3\n")
 
 		case event.Reasoning:
 			if thinking && !textStarted {
-				rt := stripMD(e.Text)
-				if rt == "" { return }
-				if !thinkingHeader {
-					fmt.Fprint(os.Stdout, "\r\033[K")
-					fmt.Fprintf(os.Stdout, "\n  %s\n  %s ", fg(C, "┌─ 💭 thinking"), fg(C, "│"))
-					thinkingHeader = true
+				if rt := stripMD(e.Text); rt != "" {
+					w(rt)
 				}
-				for _, line := range strings.Split(rt, "\n") {
-					fmt.Fprintf(os.Stdout, "%s", fg(D, line))
-				}
-				flushStdout()
 			}
 
 		case event.Text:
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
-				fmt.Fprint(os.Stdout, "\r\033[K")
-				if thinkingHeader {
-					fmt.Fprintf(os.Stdout, "\n  %s\n\n", fg(C, "└──────────────────────────────"))
-				} else {
-					fmt.Fprint(os.Stdout, "\n\n")
-				}
-				thinkingHeader = false
+				w("\n")
 			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
-			if textLen > maxOut { truncated = true; fmt.Fprintf(os.Stdout, "\n%s\n", fg(D, "  … too long")); return }
-			fmt.Fprint(os.Stdout, t)
-			flushStdout()
+			if textLen > maxOut { truncated = true; w("\n  ... too long\n"); return }
+			w(t)
 
 		case event.ToolDispatch:
-			fmt.Fprint(os.Stdout, "\r\033[K")
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
-			fmt.Fprintf(os.Stdout, "\n\n  %s %s %s",
-				fg(C+B, fmt.Sprintf("%2d.", sn)),
-				toolIcon(e.Tool.Name),
-				fg(Y, e.Tool.Name))
-			flushStdout()
+			w(fmt.Sprintf("\n\n  %2d. %s %s", sn, toolIcon(e.Tool.Name), e.Tool.Name))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
 				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
-				fmt.Fprintf(os.Stdout, "  %s\n", fg(Rd, "✗ "+e.Tool.Err))
-			} else if e.Tool.Blocked { fmt.Fprint(os.Stdout, fg(D, " ⛔")+"\n")
+				w(fmt.Sprintf("  \u2717 %s\n", e.Tool.Err))
+			} else if e.Tool.Blocked {
+				w("  \u26d4\n")
 			} else {
 				suffix := ""
 				if out := strings.TrimSpace(e.Tool.Output); out != "" {
 					first := strings.SplitN(out, "\n", 2)[0]
-					if len(first) > 60 { first = first[:57] + "…" }
-					suffix = fg(D, "  "+first)
+					if len(first) > 60 { first = first[:57] + "..." }
+					suffix = "  " + first
 				}
-				fmt.Fprintf(os.Stdout, "%s%s\n", fg(G, " ✓"), suffix)
+				w(" \u2713" + suffix + "\n")
 			}
-			thinking = false; textStarted = true
-			fmt.Fprintf(os.Stdout, "  %s", fg(D, "⏳ …"))
-			flushStdout()
+			w("  \u23f3\n")
 
 		case event.UsageKind:
 			if e.Usage != nil {
@@ -143,26 +120,27 @@ func termSink() event.Sink {
 			}
 
 		case event.FilePreview:
-			fmt.Fprintf(os.Stdout, "\n  %s\n", fg(C, "📝 diff ──────────────"))
-			for _, line := range strings.Split(e.DiffText, "\n") { fmt.Fprintf(os.Stdout, "  %s\n", line) }
+			w("\n  diff\n")
+			for _, line := range strings.Split(e.DiffText, "\n") {
+				w("  " + line + "\n")
+			}
 
 		case event.Notice:
 			if e.Level == event.LevelWarn || e.Level == event.LevelErr {
-				fmt.Fprintf(os.Stdout, "\n  %s %s\n", fg(Y, "⚡"), fg(D, e.Text))
+				w("\n  \u26a1 " + e.Text + "\n")
 			} else {
-				fmt.Fprintf(os.Stdout, "\n  %s %s\n", fg(D, "ℹ"), fg(D, e.Text))
+				w("\n  i " + e.Text + "\n")
 			}
 
 		case event.VerifyStarted:
-			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⟳ verifying…"))
-			flushStdout()
+			w("\n  verifying...\n")
 
 		case event.VerifyResult:
-			fmt.Fprint(os.Stdout, "\r\033[K")
-			flushStdout()
+			// nothing
 
 		case event.TurnDone:
-			drawFooter(); thinking = false; textStarted = false; st.step.Store(0)
+			thinking = false; textStarted = false; st.step.Store(0)
+			drawFooter()
 		}
 	})
 }
