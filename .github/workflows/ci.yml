@@ -1,24 +1,28 @@
-name: CI
+name: Lumen CI
 
 on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
-  check:
-    name: build · vet · test
+  ci:
+    name: build + vet + test -race
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: "1.23"
           cache: true
 
-      # The hard gate: compile + vet + tests must all pass.
-      # gopls-dependent LSP tests self-skip when gopls is absent.
-      - name: make check
-        run: make check
+      - name: Build
+        run: GOTOOLCHAIN=local go build -o bin/lumen ./cmd/lumen
+
+      - name: Vet
+        run: GOTOOLCHAIN=local go vet ./...
+
+      - name: Test (race)
+        run: GOTOOLCHAIN=local go test -race -count=1 -timeout=90s ./...
