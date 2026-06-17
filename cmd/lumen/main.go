@@ -52,6 +52,8 @@ func main() {
 		runDoctor()
 	case "config":
 		runConfig()
+	case "stats":
+		runStats()
 	case "version":
 		fmt.Println("Lumen v0.1.0")
 	case "oasis":
@@ -76,6 +78,7 @@ Usage:
   lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy)
   lumen doctor
   lumen config
+  lumen stats
   lumen setup
   lumen version
 
