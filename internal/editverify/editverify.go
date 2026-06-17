@@ -45,6 +45,7 @@ type Result struct {
 	Failed      *Step        // first failing step (nil when OK)
 	Diagnostics []Diagnostic // parsed from the failing step's output
 	Output      string       // raw output of the failing step (truncated)
+	LSPDiags    []Diagnostic // LSP diagnostics from gopls (even when build passes)
 }
 
 // Config controls verification behavior; loaded from lumen.toml [verify].
@@ -91,9 +92,10 @@ func (execRunner) Run(ctx context.Context, step Step) (string, bool) {
 
 // Verifier runs a verification plan against a project root.
 type Verifier struct {
-	root string
-	cfg  Config
-	run  Runner
+	root     string
+	cfg      Config
+	run      Runner
+	lspDiags []Diagnostic // collected across steps, returned in final result
 }
 
 // New returns a Verifier that shells out via the real toolchain.
@@ -104,6 +106,10 @@ func New(root string, cfg Config) *Verifier {
 // Verify builds the plan for the changed files (Detect) and runs each step in
 // order, stopping at the first failure and returning its parsed diagnostics
 // (Parse). Returns OK when every step succeeds.
+//
+// Even when build/vet/test all pass, it also collects LSP diagnostics from gopls
+// for every changed .go file — the model sees compiler-level errors/warnings
+// that tools like gopls surface before the builds break (P3 wire-in).
 func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
 	rel := v.sameModulePaths(relativizePaths(v.root, changed))
 	for _, step := range Detect(v.root, rel, v.cfg) {
@@ -118,7 +124,16 @@ func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
 			}
 		}
 	}
-	return Result{OK: true}
+
+	// Build/vet/test all passed — collect LSP diagnostics for changed .go files.
+	// These are informational — the model can see issues gopls would flag even
+	// though the code compiled. Pass empty changed list → skip (too expensive).
+	res := Result{OK: true}
+	if len(rel) > 0 {
+		v.collectLSPDiags(ctx, rel)
+		res.LSPDiags = v.lspDiags
+	}
+	return res
 }
 
 // sameModulePaths filters the (root-relative) changed paths down to those that
@@ -185,3 +200,61 @@ func truncate(s string) string {
 	}
 	return s[:maxOutputBytes] + "\n…(truncated)"
 }
+
+// ── LSP diagnostics (P3) ──────────────────────────────────
+
+// collectLSPDiags runs gopls check on each changed .go file and appends
+// findings to the Verifier's in-progress Result. This feeds gopls diagnostics
+// into the verify-after-edit loop so the model can see compiler-level warnings
+// even when go build passes.
+func (v *Verifier) collectLSPDiags(ctx context.Context, rel []string) {
+	gopls, err := exec.LookPath("gopls")
+	if err != nil {
+		return // gopls not installed — skip
+	}
+	for _, f := range rel {
+		if !strings.HasSuffix(f, ".go") {
+			continue
+		}
+		abs := filepath.Join(v.root, f)
+		if _, err := os.Stat(abs); err != nil {
+			continue // file doesn't exist (was deleted)
+		}
+		// gopls check <file> — fast, per-file, no server needed
+		c := exec.CommandContext(ctx, gopls, "check", abs)
+		out, _ := c.CombinedOutput()
+		if len(out) == 0 {
+			continue
+		}
+		// Parse gopls check output: each line is file.go:line:col: msg
+		for _, raw := range strings.Split(string(out), "\n") {
+			line := strings.TrimSpace(raw)
+			if line == "" {
+				continue
+			}
+			if m := standardDiag.FindStringSubmatch(line); m != nil {
+				d := Diagnostic{
+					File: m[1],
+					Msg:  strings.TrimSpace(m[4]),
+					Sev:  "warning", // gopls issues are warnings unless build fails
+				}
+				if n, err := parseNum(m[2]); err == nil {
+					d.Line = n
+				}
+				if m[3] != "" {
+					if n, err := parseNum(m[3]); err == nil {
+						d.Col = n
+					}
+				}
+				// gopls check uses absolute paths — relativize back
+				if filepath.IsAbs(d.File) {
+					if relPath, err := filepath.Rel(v.root, d.File); err == nil {
+						d.File = relPath
+					}
+				}
+				v.lspDiags = append(v.lspDiags, d)
+			}
+		}
+	}
+}
+

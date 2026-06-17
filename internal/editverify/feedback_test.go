@@ -48,3 +48,36 @@ func TestFormatFeedback_FallbackToOutput(t *testing.T) {
 		t.Errorf("missing cycle marker, got %q", got)
 	}
 }
+
+func TestFormatFeedback_LSPDiags(t *testing.T) {
+	// LSP diagnostics when build passes — informational, not failure
+	r := Result{
+		OK: true,
+		LSPDiags: []Diagnostic{
+			{File: "internal/foo/bar.go", Line: 10, Col: 2, Msg: "unused variable", Sev: "warning"},
+			{File: "internal/foo/bar.go", Line: 15, Msg: "should use strings.Builder", Sev: "warning"},
+		},
+	}
+	got := FormatFeedback(r, 1, 3)
+	if got == "" {
+		t.Fatal("LSP diags should produce feedback even when OK=true")
+	}
+	if !strings.Contains(got, "gopls reported issues") {
+		t.Errorf("missing gopls header, got %q", got)
+	}
+	if !strings.Contains(got, "unused variable") {
+		t.Errorf("missing LSP diagnostic, got %q", got)
+	}
+	if strings.Contains(got, "repair cycle") {
+		t.Errorf("LSP-only feedback should NOT show repair cycle, got %q", got)
+	}
+}
+
+func TestFormatFeedback_LSPDiagsEmpty(t *testing.T) {
+	// Fully clean — no build failure, no LSP diags
+	r := Result{OK: true}
+	got := FormatFeedback(r, 1, 3)
+	if got != "" {
+		t.Errorf("fully clean should return empty, got %q", got)
+	}
+}

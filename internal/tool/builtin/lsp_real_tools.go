@@ -27,20 +27,31 @@ var (
 
 func getGopls(ctx context.Context) (*lsp.LSPClient, error) {
 	goplsMu.Lock()
+	client := goplsClient
+	started := goplsStarted
+	goplsMu.Unlock()
+
+	if client != nil && started {
+		return client, nil
+	}
+
+	goplsMu.Lock()
 	defer goplsMu.Unlock()
 
+	// Double-check: someone else may have started it while we waited
 	if goplsClient != nil && goplsStarted {
 		return goplsClient, nil
 	}
 
 	wd, _ := os.Getwd()
-	// Use background context for the long-lived gopls process.
-	// The caller's ctx might have a short timeout (per-turn deadline).
-	client, err := lsp.StartGopls(context.Background(), wd)
+	// Use background context for the long-lived gopls process with a startup timeout.
+	bgCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client2, err := lsp.StartGopls(bgCtx, wd)
 	if err != nil {
 		return nil, err
 	}
-	goplsClient = client
+	goplsClient = client2
 	goplsStarted = true
 	goplsWorkspace = wd
 	return goplsClient, nil
@@ -54,7 +65,12 @@ func openInGopls(ctx context.Context, filePath string) error {
 
 	abs, _ := filepath.Abs(filePath)
 	uri := "file://" + abs
-	if goplsDocs[uri] {
+
+	goplsMu.Lock()
+	alreadyOpen := goplsDocs[uri]
+	goplsMu.Unlock()
+
+	if alreadyOpen {
 		return nil
 	}
 
@@ -66,11 +82,12 @@ func openInGopls(ctx context.Context, filePath string) error {
 	if err := client.OpenDocument(uri, string(data)); err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
+
 	goplsMu.Lock()
 	goplsDocs[uri] = true
 	goplsMu.Unlock()
 
-	// Brief pause for server-side analysis
+	// Brief pause for server-side analysis — release lock during wait
 	select {
 	case <-ctx.Done():
 	case <-time.After(200 * time.Millisecond):
