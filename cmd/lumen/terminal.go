@@ -38,6 +38,10 @@ var st = &liveStats{}
 var currentCtrl *control.Controller
 var outputBuf strings.Builder // accumulates agent output during raw mode
 
+func bufferedWrite(s string) {
+	outputBuf.WriteString(s)
+}
+
 // ── color / display helpers ───────────────────────────────
 
 const R = "\033[0m"; const B = "\033[1m"; const D = "\033[2m"
@@ -141,7 +145,6 @@ func termSink() event.Sink {
 
 		case event.TurnDone:
 			thinking = false; textStarted = false; st.step.Store(0)
-			drawFooter()
 		}
 	})
 }
@@ -189,12 +192,12 @@ func drawFooter() {
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	fmt.Fprintf(os.Stdout, "\n%s %s  %s  %s  %s\n\n",
+	bufferedWrite(fmt.Sprintf("\n%s %s  %s  %s  %s\n\n",
 		fg(D, "  ·"),
 		fg(C, fmt.Sprintf("📊 %.0fk", float64(ti+to)/1000)),
 		fg(G, fmt.Sprintf("♻ %d%%", pct)),
 		fg(Y, fmt.Sprintf("💰 $%.4f", cost)),
-		fg(M, fmt.Sprintf("⚙ %dst · turn #%d", steps, turns)))
+		fg(M, fmt.Sprintf("⚙ %dst · turn #%d", steps, turns))))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -333,6 +336,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		turnCancel(); signal.Stop(sigCh)
 		if out := outputBuf.String(); out != "" {
 			os.Stdout.WriteString(out)
+			outputBuf.Reset()
 		}
 		// Always show token usage even if output buf was empty
 		ti := st.tkIn.Load(); to := st.tkOut.Load()
@@ -340,7 +344,11 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			fmt.Fprint(os.Stdout, "\n  ⚡ no response — check API key (lumen doctor) or try /model to switch\n")
 		}
 		drawFooter()
-		drawFooter()
+		// drawFooter writes to outputBuf — flush it
+		if out := outputBuf.String(); out != "" {
+			os.Stdout.WriteString(out)
+			outputBuf.Reset()
+		}
 		fmt.Print("\n")
 	}
 	return nil
