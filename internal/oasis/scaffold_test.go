@@ -4,10 +4,29 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestScaffoldedAlgoBuilds(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not in PATH")
+	}
+	dir := t.TempDir()
+	if err := Scaffold(dir, DefaultManifest("demo")); err != nil {
+		t.Fatal(err)
+	}
+	// The Dockerfile runs `go build ./cmd/algo` in the build context, so the
+	// scaffold must produce a buildable module (it was missing go.mod).
+	cmd := exec.Command("go", "build", "./cmd/algo")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("scaffolded algorithm should build out of the box: %v\n%s", err, out)
+	}
+}
 
 func TestScaffoldGeneratesContractAccurateGo(t *testing.T) {
 	dir := t.TempDir()

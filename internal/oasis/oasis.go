@@ -175,6 +175,17 @@ func main() {
 		return fmt.Errorf("write main.go: %w", err)
 	}
 
+	// Write go.mod so the algorithm builds — the Dockerfile runs `go build
+	// ./cmd/algo` in the build context, which needs a module.
+	module := m.Name
+	if module == "" {
+		module = "algo"
+	}
+	goMod := fmt.Sprintf("module %s\n\ngo 1.23\n", module)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
+		return fmt.Errorf("write go.mod: %w", err)
+	}
+
 	// Write .gitignore
 	gitignorePath := filepath.Join(dir, ".gitignore")
 	if err := os.WriteFile(gitignorePath, []byte("/algo\n/oasis-lock.json\n"), 0644); err != nil {
