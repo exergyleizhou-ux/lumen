@@ -392,6 +392,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			usage       *provider.Usage
 			reasonBuf   strings.Builder
 			chunkCount  int
+			recovered   bool
 		)
 
 		for chunk := range ch {
@@ -421,8 +422,20 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			case provider.ChunkUsage:
 				usage = chunk.Usage
 			case provider.ChunkError:
+				// A mid-stream interruption (connection cut) can be recovered by
+				// re-prompting the model to continue — bounded by maxStreamRecoveries.
+				// Any other error ends the turn.
+				if a.handleStreamRecovery(chunk.Err) {
+					recovered = true
+					continue
+				}
 				return chunk.Err
 			}
+		}
+
+		// Stream was interrupted but recovery is allowed — re-stream the turn.
+		if recovered {
+			continue
 		}
 
 		// Track usage

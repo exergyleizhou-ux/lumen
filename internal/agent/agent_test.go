@@ -48,6 +48,39 @@ func TestRunReturnsErrorOnEmptyStream(t *testing.T) {
 	}
 }
 
+// interruptThenOKProvider interrupts the first stream mid-output, then succeeds.
+type interruptThenOKProvider struct{ calls int }
+
+func (p *interruptThenOKProvider) Name() string { return "interrupt" }
+func (p *interruptThenOKProvider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	n := p.calls
+	ch := make(chan provider.Chunk, 4)
+	go func() {
+		defer close(ch)
+		if n == 1 {
+			ch <- provider.Chunk{Type: provider.ChunkText, Text: "partial"}
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: errors.New("connection reset")}}
+			return
+		}
+		ch <- provider.Chunk{Type: provider.ChunkText, Text: "recovered answer."}
+		ch <- provider.Chunk{Type: provider.ChunkDone}
+	}()
+	return ch, nil
+}
+
+func TestRunRecoversFromStreamInterruption(t *testing.T) {
+	p := &interruptThenOKProvider{}
+	a := New(p, testRegistry(), NewSession(""), Options{MaxSteps: 5})
+	err := a.Run(context.Background(), "hi")
+	if err != nil {
+		t.Fatalf("a mid-stream interruption should auto-recover, got error: %v", err)
+	}
+	if p.calls != 2 {
+		t.Fatalf("expected 2 stream attempts (interrupt + 1 recovery), got %d", p.calls)
+	}
+}
+
 // ── Simple test tool ────────────────────────────────────────
 
 type testReadOnlyTool struct{}
