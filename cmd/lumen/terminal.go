@@ -36,11 +36,6 @@ func (s *liveStats) addCost(v float64) { s.costU.Add(int64(v * 1_000_000)) }
 func (s *liveStats) cost() float64     { return float64(s.costU.Load()) / 1_000_000 }
 var st = &liveStats{}
 var currentCtrl *control.Controller
-var outputBuf strings.Builder // accumulates agent output during raw mode
-
-func bufferedWrite(s string) {
-	outputBuf.WriteString(s)
-}
 
 // ── color / display helpers ───────────────────────────────
 
@@ -62,7 +57,10 @@ func termSink() event.Sink {
 	tel := telemetry.NewCollector()
 
 	return event.FuncSink(func(e event.Event) {
-		w := func(s string) { outputBuf.WriteString(s) }
+		w := func(s string) {
+			os.Stdout.WriteString(s)
+			os.Stdout.Sync()
+		}
 		c := func(code, s string) string { return code + s + R }
 
 		switch e.Kind {
@@ -71,15 +69,18 @@ func termSink() event.Sink {
 			thinking = true; textStarted = false; textLen = 0; truncated = false; hadReasoning = false
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
+			w("  " + c(D, "⏵ Thinking…")) // show immediately so user knows it's working
 
 		case event.Reasoning:
 			if thinking && !textStarted {
 				if rt := stripMD(e.Text); rt != "" {
 					if !hadReasoning {
-						w("\n  " + c(D, "⋯")) // first reasoning chunk: dim ellipsis
+						// first reasoning: replace "Thinking…" with real thought
+						w(c(D, rt))
 						hadReasoning = true
+					} else {
+						w(c(D, rt)) // continue streaming reasoning
 					}
-					w(c(D, rt)) // reasoning in dim gray, inline streaming
 				}
 			}
 
@@ -87,9 +88,9 @@ func termSink() event.Sink {
 			if thinking && !textStarted {
 				thinking = false; textStarted = true
 				if hadReasoning {
-					w("\n\n") // visual break between reasoning and answer
+					w("\n") // extra blank line: reasoning → answer gap
 				}
-				w("  " + c(C, "⏵") + " ")
+				w("\n" + c(C, "  ⏵ "))
 			}
 			if truncated { return }
 			t := stripMD(e.Text); textLen += len(t)
@@ -186,14 +187,14 @@ func drawFooter() {
 	if steps == 0 { steps = 1 }
 	pct := 0; if ti > 0 { pct = int(float64(tc) / float64(ti) * 100) }
 
-	bufferedWrite(fmt.Sprintf("\n%s %s %s %s\n",
+	fmt.Printf("\n%s %s %s %s\n",
 		fg(D, "  ["),
 		fg(C, fmt.Sprintf("%.0fk tokens", float64(ti+to)/1000)),
 		fg(D, fmt.Sprintf("· ♻ %s · %s · %s",
 			fg(G, fmt.Sprintf("%d%%", pct)),
 			fg(Y, fmt.Sprintf("$%.4f", cost)),
 			fg(M, fmt.Sprintf("turn #%d", turns)))),
-		fg(D, "]")))
+		fg(D, "]"))
 }
 
 // ── Chat loop ──────────────────────────────────────────────
@@ -324,23 +325,15 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
 		go func() { <-sigCh; turnCancel() }()
-		outputBuf.Reset()
 		ctrl.Run(turnCtx, text)
 		turnCancel(); signal.Stop(sigCh)
-		if out := outputBuf.String(); out != "" {
-			os.Stdout.WriteString(out)
-			outputBuf.Reset()
-		}
 		// Guard against completely silent turns
 		ti := st.tkIn.Load(); to := st.tkOut.Load()
 		if ti+to == 0 {
 			os.Stdout.WriteString("\n  ⚡ no response — try /model to switch\n")
 		}
 		drawFooter()
-		if out := outputBuf.String(); out != "" {
-			os.Stdout.WriteString(out)
-			outputBuf.Reset()
-		}
+		fmt.Print("\n")
 	}
 	return nil
 }

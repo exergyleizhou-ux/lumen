@@ -169,16 +169,8 @@ func runOneShot(args []string) {
 		fmt.Fprintf(os.Stderr, "[plan — read-only]\n\n")
 		ctrl.Plan(ctx, prompt)
 	} else {
-		outputBuf.Reset()
 		ctrl.Run(ctx, prompt)
-		if out := outputBuf.String(); out != "" {
-			os.Stdout.WriteString(out)
-			outputBuf.Reset()
-		}
 		drawFooter()
-		if out := outputBuf.String(); out != "" {
-			os.Stdout.WriteString(out)
-		}
 		fmt.Print("\n")
 	}
 }
