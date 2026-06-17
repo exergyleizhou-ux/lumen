@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -649,16 +651,38 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	if a.verifier == nil || !a.verifyCfg.Enabled || a.verifyExhausted {
 		return ""
 	}
+	// Quick skip: if none of the changed files are in the workspace root,
+	// go build won't help — the model was editing something outside the project.
+	// Avoids 2-5s of silent go build on every external file write.
+	workspaceRoot, _ := os.Getwd()
+	anyInWorkspace := false
+	for _, f := range changed {
+		if strings.HasPrefix(f, workspaceRoot) || !filepath.IsAbs(f) {
+			anyInWorkspace = true
+			break
+		}
+	}
+	if !anyInWorkspace {
+		return ""
+	}
 
+	// Emit VerifyStarted BEFORE the blocking call so the terminal sink
+	// has time to display the spinner before go build starts.
 	a.sink.Emit(event.Event{Kind: event.VerifyStarted, Timestamp: time.Now()})
-	res := a.verifier.Verify(ctx, changed)
+
+	// Run verify with a hard timeout — on a slow machine or large project,
+	// go build ./... can take multiple seconds. Without a timeout, the agent
+	// loop blocks silently and the user sees a frozen terminal.
+	verifyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res := a.verifier.Verify(verifyCtx, changed)
 
 	if res.OK {
 		a.repairCycle = 0
 		a.sink.Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelInfo,
-			Text:      "verified ✓",
+			Text:      "✓",
 			Timestamp: time.Now(),
 		})
 		return ""
@@ -677,7 +701,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	a.sink.Emit(event.Event{
 		Kind:      event.VerifyResult,
 		Level:     event.LevelWarn,
-		Text:      fmt.Sprintf("verify failed: %s (%d diagnostics)", failName, len(res.Diagnostics)),
+		Text:      fmt.Sprintf("✗ %s (%d diagnostics)", failName, len(res.Diagnostics)),
 		Timestamp: time.Now(),
 	})
 

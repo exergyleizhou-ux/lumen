@@ -149,6 +149,14 @@ func termSink() event.Sink {
 			fmt.Fprintf(os.Stdout, "\n  %s\n", fg(C, "📝 diff ──────────────"))
 			for _, line := range strings.Split(e.DiffText, "\n") { fmt.Fprintf(os.Stdout, "  %s\n", line) }
 
+		case event.VerifyStarted:
+			// Show inline verify progress so user knows the agent isn't frozen
+			fmt.Fprintf(os.Stdout, "\n  %s", fg(D, "⟳ verifying…"))
+
+		case event.VerifyResult:
+			// Clear the inline verify indicator
+			fmt.Fprint(os.Stdout, "\r\033[K")
+
 		case event.TurnDone:
 			if needClear {
 				fmt.Fprint(os.Stdout, "\r\033[K")
