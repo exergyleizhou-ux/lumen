@@ -277,12 +277,20 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		}
 
 		// Finish reason (from non-streaming field on last chunk)
-		if sse.Choices[0].FinishReason != "" && toolCallBuf != nil && toolCallBuf.name != "" {
-			ch <- provider.Chunk{
-				Type:     provider.ChunkToolCall,
-				ToolCall: toolCallBuf.finalize(),
+		if sse.Choices[0].FinishReason != "" {
+			// Flush a pending tool call before handling the finish reason.
+			if toolCallBuf != nil && toolCallBuf.name != "" {
+				ch <- provider.Chunk{
+					Type:     provider.ChunkToolCall,
+					ToolCall: toolCallBuf.finalize(),
+				}
+				toolCallBuf = nil
 			}
-			toolCallBuf = nil
+			// "length" means the response was cut off by max_tokens — surface a
+			// visible marker so the user knows the answer is truncated.
+			if sse.Choices[0].FinishReason == "length" {
+				ch <- provider.Chunk{Type: provider.ChunkText, Text: "\n[truncated: hit max_tokens]"}
+			}
 		}
 	}
 
