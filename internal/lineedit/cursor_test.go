@@ -96,20 +96,24 @@ func TestRedrawColPositioning(t *testing.T) {
 
 	result := out.String()
 
-	// Full "hello" must be contiguous in output (no split)
+	// Must contain \r and \x1b[J (clear from column 0 to end of screen)
+	if !strings.Contains(result, "\r\x1b[J") {
+		t.Fatalf("redraw output missing clear sequence: %q", result)
+	}
+
+	// Must contain \x1b[5C for cursor positioning (prompt "> "=2 + "hel"=3 = 5)
+	if !strings.Contains(result, "\x1b[5C") {
+		t.Fatalf("redraw missing cursor positioning: %q", result)
+	}
+
+	// Full "hello" must be in output
 	if !strings.Contains(result, "hello") {
 		t.Fatalf("redraw output missing 'hello': %q", result)
 	}
-	// Must contain \x1b7 (save cursor) and \x1b8 (restore cursor)
-	if !strings.Contains(result, "\x1b7") {
-		t.Fatal("redraw missing save-cursor sequence")
-	}
-	if !strings.Contains(result, "\x1b8") {
-		t.Fatal("redraw missing restore-cursor sequence")
-	}
-	// Cursor positioning: \x1b[5C (>  = 2 + hel = 3 more = 5)
-	if !strings.Contains(result, "\x1b[5C") {
-		t.Fatalf("redraw missing cursor positioning: %q", result)
+
+	// lastRows should be 1 (fit on one row at 80 cols)
+	if e.lastRows != 1 {
+		t.Errorf("lastRows=%d, want 1", e.lastRows)
 	}
 }
 
@@ -154,16 +158,12 @@ func TestRedrawMultiLineClearsPreviousRows(t *testing.T) {
 
 	result := out.String()
 
-	// Must contain \x1b[J (clear from saved position to end of screen)
+	// Must contain \x1b[J and \x1b[A (move up then clear for multi-row)
 	if !strings.Contains(result, "\x1b[J") {
 		t.Fatalf("multi-line redraw missing \x1b[J: %q", result)
 	}
-	// Must contain \x1b7 and \x1b8 (save/restore cursor)
-	if !strings.Contains(result, "\x1b7") {
-		t.Fatal("multi-line redraw missing save-cursor")
-	}
-	if !strings.Contains(result, "\x1b8") {
-		t.Fatal("multi-line redraw missing restore-cursor")
+	if !strings.Contains(result, "\x1b[A") {
+		t.Fatalf("multi-line redraw missing \x1b[A move-up: %q", result)
 	}
 	// Must still contain the full text
 	if !strings.Contains(result, longText) {
@@ -469,15 +469,15 @@ func TestMultiRowCursorRowCol(t *testing.T) {
 	result := out.String()
 
 	// Cursor at end of 100 x's: prompt=2 cols, text=100 cols → total=102
-	// At 80-col terminal: row=1 (102/80=1), col=22 (102%80=22)
-	// So we need \x1b[1B\x1b[22C after \x1b8
-	if !strings.Contains(result, "\x1b[1B") || !strings.Contains(result, "\x1b[22C") {
-		if !strings.Contains(result, "\x1b[1B") {
-			t.Errorf("multi-row cursor missing row-down: %q", result)
-		}
-		if !strings.Contains(result, "\x1b[22C") {
-			t.Errorf("multi-row cursor missing col-right: %q", result)
-		}
+	// \x1b[%dC at col 102 wraps to row 1 col 22 in an 80-col terminal.
+	// So we just need \x1b[102C (which will auto-wrap).
+	if !strings.Contains(result, "\x1b[102C") {
+		t.Logf("got: %q", result)
+		t.Errorf("multi-row cursor: expected \\x1b[102C (wraps to row 1 col 22)")
+	}
+	// Must contain \r\x1b[J (clear sequence at column 0)
+	if !strings.Contains(result, "\r\x1b[J") {
+		t.Errorf("multi-row redraw missing \\r\\x1b[J: %q", result)
 	}
 }
 

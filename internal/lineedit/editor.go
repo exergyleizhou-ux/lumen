@@ -307,7 +307,9 @@ func (e *Editor) readCooked() (string, error) {
 	return strings.TrimRight(line, "\r\n"), nil
 }
 
-// redraw repaints the prompt and buffer.
+// redraw repaints the prompt and buffer. Uses the most portable and
+// reliable strategy: \r to column 0, then for multi-row buffers move up
+// to clear old content, then write new content.
 func (e *Editor) redraw() {
 	fd := int(e.in.Fd())
 	termW := 80
@@ -315,42 +317,43 @@ func (e *Editor) redraw() {
 		termW = w
 	}
 
-	// 1. Save cursor position (the "anchor").
-	io.WriteString(e.out, "\x1b7")
+	prompt := e.prompt
+	text := e.buf.string()
 
-	// 2. Clear from anchor to end of screen.
+	// For multi-row buffers (>1 line), the cursor is below the first line
+	// of the previous render because auto-wrap may have moved it.
+	// \r brings us to col 0 of the CURRENT line, then \x1b[A moves up.
+	// For single-row buffers, \r is enough.
+	io.WriteString(e.out, "\r")
+	for i := 1; i < e.lastRows; i++ {
+		io.WriteString(e.out, "\x1b[A")
+	}
+
+	// Clear from cursor to end of screen. This wipes ALL old text regardless
+	// of row count because we moved to the first row of the previous render.
 	io.WriteString(e.out, "\x1b[J")
 
-	// 3. Restore to anchor, write prompt + full buffer.
-	io.WriteString(e.out, "\x1b8")
-	text := e.buf.string()
-	io.WriteString(e.out, e.prompt)
+	// Write prompt + full buffer.
+	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// 4. Compute cursor position within the (possibly multi-row) buffer.
-	promptW := runewidth.StringWidth(e.prompt)
-	prefixW := promptW + runewidth.StringWidth(string(e.buf.runes[:e.buf.pos]))
-	cursorRow := 0
-	cursorCol := prefixW
-	if termW > 0 {
-		cursorRow = prefixW / termW
-		cursorCol = prefixW % termW
+	// Compute cursor column within the buffer (using runewidth for CJK safety).
+	prefix := string(e.buf.runes[:e.buf.pos])
+	cursorOffset := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
+
+	// Move to column 0, then to cursor column. For the single-row case this
+	// is just \r + \x1b[%dC. For multi-row, \x1b[%dC wraps by row.
+	io.WriteString(e.out, "\r")
+	if cursorOffset > 0 {
+		fmt.Fprintf(e.out, "\x1b[%dC", cursorOffset)
 	}
 
-	// 5. Back to anchor, move down to cursor's row, then right to cursor's col.
-	io.WriteString(e.out, "\x1b8")
-	if cursorRow > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dB", cursorRow)
-	}
-	if cursorCol > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", cursorCol)
-	}
-
-	// 6. lastRows for mouse clickToPos.
+	// Track how many rows we wrote for the next redraw.
+	promptW := runewidth.StringWidth(prompt)
+	textW := runewidth.StringWidth(text)
 	e.lastRows = 1
 	if termW > 0 {
-		w := runewidth.StringWidth(e.prompt) + runewidth.StringWidth(text)
-		e.lastRows = (w + termW - 1) / termW
+		e.lastRows = (promptW + textW + termW - 1) / termW
 	}
 	if e.lastRows < 1 {
 		e.lastRows = 1
