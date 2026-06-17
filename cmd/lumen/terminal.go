@@ -443,10 +443,10 @@ func runWorkflow(ctrl *control.Controller, prompt string) {
 func runUltra(ctrl *control.Controller, prompt string) {
 	fmt.Printf("\n  %s\n  %s\n\n", fg(B, "⚡ Ultra Mode"), fg(D, "plan → auto-approve → execute"))
 	ctrl.SetPermissionMode(permission.ModePlan); ctx := context.Background()
-	if err := ctrl.Plan(ctx, prompt); err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())); return }
+	if err := ctrl.Plan(ctx, prompt); err != nil { return } // error shown via sink
 	ctrl.Agent().SetPlanMode(false); ctrl.SetPermissionMode(permission.ModeBypass)
 	fmt.Printf("\n  %s\n", fg(B, "🚀 Executing"))
-	if err := ctrl.Run(ctx, lastPlan); err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())) }
+	if err := ctrl.Run(ctx, lastPlan); err != nil { return } // error shown via sink
 	fmt.Printf("\n  %s\n", fg(G, "✅ ultra workflow complete"))
 }
 

@@ -89,7 +89,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if path == "" {
 		path = config.FindConfig()
 	}
-	cfg, err := config.Load(path)
+	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -278,14 +278,37 @@ func (c *Controller) Run(ctx context.Context, prompt string) error {
 		}
 		c.ag.SetProvider(c.prov) // restore
 	}
+	if err != nil {
+		c.emitError(err)
+	}
 	return err
+}
+
+// emitError surfaces a turn-ending error to every front-end via the event sink.
+// Without this, callers that ignore Run/Plan's return value (one-shot, the
+// interactive loop) would fail silently — the user sees "Thinking…" and nothing
+// else when the provider returns e.g. HTTP 402.
+func (c *Controller) emitError(err error) {
+	if c.sink == nil {
+		return
+	}
+	c.sink.Emit(event.Event{
+		Kind:      event.Notice,
+		Level:     event.LevelErr,
+		Text:      err.Error(),
+		Timestamp: time.Now(),
+	})
 }
 
 // Plan runs in read-only mode and returns the agent's plan.
 func (c *Controller) Plan(ctx context.Context, prompt string) error {
 	c.ag.SetPlanMode(true)
 	c.sink.Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
-	return c.ag.Run(ctx, prompt)
+	err := c.ag.Run(ctx, prompt)
+	if err != nil {
+		c.emitError(err)
+	}
+	return err
 }
 
 // Chat runs an interactive session. (TUI placeholder — falls back to Run)

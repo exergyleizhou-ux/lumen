@@ -94,9 +94,14 @@ func (p *Provider) streamWithRetry(ctx context.Context, req provider.Request, ch
 			return // success
 		}
 
-		// Don't retry auth errors or 4xx (except 429)
+		// Don't retry auth errors (401/403) — the key is bad.
 		if ae, ok := err.(*provider.AuthError); ok {
 			ch <- provider.Chunk{Type: provider.ChunkError, Err: ae}
+			return
+		}
+		// Don't retry permanent API errors (402, 400, 404, …) — fail fast.
+		if apiErr, ok := err.(*provider.APIError); ok && !apiErr.Retryable {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: apiErr}
 			return
 		}
 
@@ -149,11 +154,13 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 	}
 	if resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode >= 500 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("HTTP %d: %s (retryable)", resp.StatusCode, string(body))
+		return &provider.APIError{Provider: p.name, Status: resp.StatusCode, Body: string(body), Retryable: true}
 	}
 	if resp.StatusCode >= 400 {
+		// Permanent 4xx (402 Insufficient Balance, 400 Bad Request, 404, …).
+		// Retrying cannot help — fail fast with a clear message.
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return &provider.APIError{Provider: p.name, Status: resp.StatusCode, Body: string(body), Retryable: false}
 	}
 
 	p.parseSSE(ctx, resp.Body, ch)

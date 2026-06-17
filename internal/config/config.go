@@ -83,6 +83,20 @@ func Load(path string) (*File, error) {
 	return cfg, nil
 }
 
+// LoadWithEnv loads a .env file (filling any unset environment variables) and
+// then loads + resolves the config. This is the standard startup path: it lets
+// API keys live in .env (gitignored) and be referenced from lumen.toml via
+// api_key_env, so no secret is ever committed inline. A missing .env is fine
+// (envPath "" skips it).
+func LoadWithEnv(configPath, envPath string) (*File, error) {
+	if envPath != "" {
+		if err := LoadDotEnv(envPath); err != nil {
+			return nil, fmt.Errorf("load %s: %w", envPath, err)
+		}
+	}
+	return Load(configPath)
+}
+
 // LoadDotEnv reads KEY=VALUE pairs from a .env file and sets them in the
 // process environment. Variables already present in the environment win — the
 // .env file only fills in what is unset. A missing file is not an error.
@@ -141,6 +155,21 @@ func FindConfig() string {
 		paths = append(paths, p)
 	}
 	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
+
+// FindDotEnv locates a .env file: ./.env first, then alongside the user config.
+// Returns "" when none exists.
+func FindDotEnv() string {
+	candidates := []string{"./.env"}
+	if p, err := UserConfigPath(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(p), ".env"))
+	}
+	for _, p := range candidates {
 		if _, err := os.Stat(p); err == nil {
 			return p
 		}

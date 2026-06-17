@@ -6,6 +6,39 @@ import (
 	"testing"
 )
 
+func TestLoadWithEnvResolvesKeyFromDotEnv(t *testing.T) {
+	// The security posture: no secret inline in lumen.toml. The key lives in
+	// .env (gitignored) and is referenced via api_key_env. LoadWithEnv must load
+	// the .env, then resolve the provider key from the environment.
+	dir := t.TempDir()
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("DEEPSEEK_API_KEY=sk-from-dotenv-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, "lumen.toml")
+	cfgBody := `default_model = "deepseek"
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.Unsetenv("DEEPSEEK_API_KEY")
+	t.Cleanup(func() { os.Unsetenv("DEEPSEEK_API_KEY") })
+
+	cfg, err := LoadWithEnv(cfgPath, envPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Providers[0].APIKey; got != "sk-from-dotenv-secret" {
+		t.Fatalf("api key should resolve from .env via api_key_env, got %q", got)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	cfg := defaults()
 	if cfg.DefaultModel != "deepseek-flash" {

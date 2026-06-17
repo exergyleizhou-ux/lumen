@@ -132,7 +132,7 @@ func runSetup() {
 // ── Doctor ─────────────────────────────────────────────────
 
 func runDoctor() {
-	cfg, err := config.Load(config.FindConfig())
+	cfg, err := config.LoadWithEnv(config.FindConfig(), config.FindDotEnv())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "config: %v\n", err)
 		os.Exit(1)
@@ -165,13 +165,21 @@ func runOneShot(args []string) {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() { <-sigCh; cancel() }()
 
+	// The error itself is shown to the user via the event sink (Controller emits
+	// a LevelErr Notice). Here we only need the exit code so scripts and CI can
+	// tell a failed run from a successful one.
 	if planMode {
 		fmt.Fprintf(os.Stderr, "[plan — read-only]\n\n")
-		ctrl.Plan(ctx, prompt)
+		if err := ctrl.Plan(ctx, prompt); err != nil {
+			os.Exit(1)
+		}
 	} else {
-		ctrl.Run(ctx, prompt)
+		err := ctrl.Run(ctx, prompt)
 		drawFooter()
 		fmt.Print("\n")
+		if err != nil {
+			os.Exit(1)
+		}
 	}
 }
 

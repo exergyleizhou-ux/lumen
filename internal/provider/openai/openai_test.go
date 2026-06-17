@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"lumen/internal/provider"
@@ -269,6 +270,78 @@ func TestSSEHTTPError(t *testing.T) {
 		}
 	}
 	t.Error("expected an error chunk from 500 response")
+}
+
+func TestStreamDoesNotRetryNonRetryable(t *testing.T) {
+	// 402 Insufficient Balance is a permanent error — retrying wastes time and
+	// muddies the error message. The provider must fail fast: one request, then
+	// surface a clear error chunk.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(402)
+		w.Write([]byte(`{"error":{"message":"Insufficient Balance"}}`))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var gotErr error
+	for chunk := range ch {
+		if chunk.Type == provider.ChunkError {
+			gotErr = chunk.Err
+		}
+	}
+	if gotErr == nil {
+		t.Fatal("expected an error chunk from 402")
+	}
+	if !strings.Contains(gotErr.Error(), "402") {
+		t.Errorf("error should name the HTTP status, got %q", gotErr.Error())
+	}
+	if n := atomic.LoadInt32(&hits); n != 1 {
+		t.Fatalf("402 is permanent — want exactly 1 request, got %d (a non-retryable error was retried)", n)
+	}
+}
+
+func TestStreamRetriesTransient(t *testing.T) {
+	// 503 is transient — the provider should retry and recover. Guards the retry
+	// path so the no-retry fix above does not disable legitimate retries.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&hits, 1) == 1 {
+			w.WriteHeader(503)
+			w.Write([]byte("temporarily unavailable"))
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Write([]byte(`data: {"choices":[{"delta":{"content":"ok"}}]}` + "\n\n"))
+		w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	prov, _ := New(provider.Config{Name: "test", BaseURL: srv.URL, Model: "test"})
+	ch, _ := prov.Stream(context.Background(), provider.Request{
+		Messages: []provider.Message{{Role: provider.RoleUser, Content: "hi"}},
+	})
+
+	var text string
+	for chunk := range ch {
+		switch chunk.Type {
+		case provider.ChunkText:
+			text += chunk.Text
+		case provider.ChunkError:
+			t.Fatalf("503 should be retried and recover, got error: %v", chunk.Err)
+		}
+	}
+	if text != "ok" {
+		t.Errorf("want recovered text 'ok', got %q", text)
+	}
+	if n := atomic.LoadInt32(&hits); n != 2 {
+		t.Fatalf("want 2 requests (1 failed + 1 retry), got %d", n)
+	}
 }
 
 func TestBuildRequest(t *testing.T) {
