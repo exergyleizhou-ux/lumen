@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,17 +174,57 @@ func deployAlgo(dir string) {
 	}
 
 	// Get image digest
-	digestCmd := exec.Command("docker", "inspect", "--format={{index .RepoDigests 0}}", tag)
-	digestOut, _ := digestCmd.Output()
-	digest := strings.TrimSpace(string(digestOut))
+	digest := getImageDigest(tag)
 
 	fmt.Printf("✅ deployed %s\n", tag)
 	if digest != "" && digest != "<no value>" {
 		fmt.Printf("   Digest: %s\n", digest)
 	}
-	fmt.Printf("   Next: register in marketplace admin panel\n")
-	fmt.Printf("   Image: %s\n", m.Image)
-	fmt.Printf("   Digest: %s\n", digest)
+
+	// ── Conveyor belt: auto-register to marketplace ──
+	marketplaceURL := os.Getenv("MARKETPLACE_URL")
+	if marketplaceURL == "" {
+		marketplaceURL = "http://localhost:8080"
+	}
+	registerURL := strings.TrimRight(marketplaceURL, "/") + "/api/compute/algorithms"
+
+	payload := fmt.Sprintf(`{"name":%q,"runtime":%q,"image":%q,"image_digest":%q,"entrypoint":%q,"output_kind":%q,"version":%d,"params_schema":%q}`,
+		m.Name, m.Runtime, m.Image, digest, m.Entrypoint, m.OutputKind, m.Version, m.ParamsSchema)
+
+	req, _ := http.NewRequest("POST", registerURL, strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	if token := os.Getenv("MARKETPLACE_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("   ⚠️  Marketplace register failed (network): %v\n", err)
+		fmt.Printf("   Register manually: POST %s\n", registerURL)
+		fmt.Printf("   Payload: %s\n", payload)
+	} else {
+		defer resp.Body.Close()
+		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == 200 || resp.StatusCode == 201 {
+			fmt.Printf("   ✅ Registered on marketplace: %s\n", strings.TrimSpace(string(body)))
+		} else {
+			fmt.Printf("   ⚠️  Marketplace returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+	}
+}
+
+// ── Helpers ────────────────────────────────────────────────
+
+func getImageDigest(tag string) string {
+	digestCmd := exec.Command("docker", "inspect", "--format={{index .RepoDigests 0}}", tag)
+	digestOut, _ := digestCmd.Output()
+	digest := strings.TrimSpace(string(digestOut))
+	// Extract just the sha256:... part
+	if idx := strings.Index(digest, "@sha256:"); idx >= 0 {
+		digest = digest[idx+1:] // skip the @
+	}
+	return digest
 }
 
 // ── Helpers ────────────────────────────────────────────────
