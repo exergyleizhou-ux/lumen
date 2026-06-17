@@ -496,7 +496,13 @@ func (c *Client) readLoop() {
 		ch, ok := c.pending[resp.ID]
 		c.mu.Unlock()
 		if ok {
-			ch <- resp
+			// Non-blocking: the channel is cap-1, but a duplicate/orphaned response
+			// (or a caller that already left via timeout) must never stall the read
+			// loop. Drop what can't be delivered.
+			select {
+			case ch <- resp:
+			default:
+			}
 		}
 	}
 }

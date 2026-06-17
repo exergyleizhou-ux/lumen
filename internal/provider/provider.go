@@ -240,11 +240,17 @@ func SanitizeToolPairing(msgs []Message) []Message {
 				j++
 			}
 			out = append(out, m)
-			// Pair results by call ID or position
+			// Keep the real results, then backfill a placeholder for ANY tool_call
+			// that has no matching result — a single unpaired call 400s the turn,
+			// and a partial set (some calls answered, some not) is just as invalid.
 			results := msgs[i+1 : j]
-			if len(results) == 0 {
-				// Backfill placeholder results
-				for _, tc := range m.ToolCalls {
+			out = append(out, results...)
+			present := make(map[string]bool, len(results))
+			for _, r := range results {
+				present[r.ToolCallID] = true
+			}
+			for _, tc := range m.ToolCalls {
+				if !present[tc.ID] {
 					out = append(out, Message{
 						Role:       RoleTool,
 						ToolCallID: tc.ID,
@@ -252,8 +258,6 @@ func SanitizeToolPairing(msgs []Message) []Message {
 						Content:    "[no result: interrupted]",
 					})
 				}
-			} else {
-				out = append(out, results...)
 			}
 			i = j
 			continue

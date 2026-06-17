@@ -19,12 +19,18 @@ func TestCompactRewritesPersistedFile(t *testing.T) {
 	s.Compact(2, 2, "summary")
 	want := s.Len() // 2 + marker + 2 = 5 in memory
 
-	// Reloading from disk must yield the compacted history, not the original 10 —
-	// otherwise the file diverges, grows unbounded, and resume replays a scrambled
-	// transcript.
+	// Reloading from disk must yield the compacted history (first 2 + marker +
+	// last 2) in order — not the original 10, and not a scrambled set.
 	reloaded := NewSession(path)
 	if reloaded.Len() != want {
 		t.Fatalf("reloaded %d messages from file, want %d (file must match compacted memory)", reloaded.Len(), want)
+	}
+	got := reloaded.Snapshot()
+	wantContent := []string{"m0", "m1", "[SESSION COMPACTED]\n\nsummary", "m8", "m9"}
+	for i, wc := range wantContent {
+		if got[i].Content != wc {
+			t.Errorf("reloaded msg[%d] = %q, want %q (compaction scrambled order/content)", i, got[i].Content, wc)
+		}
 	}
 }
 
