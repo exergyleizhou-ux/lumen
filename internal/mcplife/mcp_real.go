@@ -412,16 +412,25 @@ func (c *Client) call(method string, params any) (json.RawMessage, error) {
 		return nil, err
 	}
 
-	// Wait for the response.
-	resp := <-ch
-	if resp == nil {
-		return nil, fmt.Errorf("mcplife: channel closed for request %d", id)
+	// Wait for the response, but never block the agent forever on a hung server.
+	// ch is buffered (cap 1), so a late response after the timeout won't block the
+	// read loop, and the deferred cleanup removes the pending entry.
+	select {
+	case resp := <-ch:
+		if resp == nil {
+			return nil, fmt.Errorf("mcplife: channel closed for request %d", id)
+		}
+		if resp.Error != nil {
+			return nil, fmt.Errorf("mcplife: rpc error code=%d: %s", resp.Error.Code, resp.Error.Message)
+		}
+		return resp.Result, nil
+	case <-time.After(mcpCallTimeout):
+		return nil, fmt.Errorf("mcplife: timeout after %s waiting for response to %q (request %d)", mcpCallTimeout, method, id)
 	}
-	if resp.Error != nil {
-		return nil, fmt.Errorf("mcplife: rpc error code=%d: %s", resp.Error.Code, resp.Error.Message)
-	}
-	return resp.Result, nil
 }
+
+// mcpCallTimeout bounds how long a single MCP JSON-RPC call waits for a response.
+const mcpCallTimeout = 30 * time.Second
 
 // notify sends a JSON-RPC notification (no id, no response expected).
 func (c *Client) notify(method string, params any) error {

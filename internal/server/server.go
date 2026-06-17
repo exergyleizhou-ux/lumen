@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"lumen/internal/control"
@@ -37,6 +38,11 @@ type Server struct {
 	cfg    Config
 	mux    *http.ServeMux
 	memDir string
+	// turnMu serializes chat turns: every request shares one Controller/Agent/
+	// Session, which Configure+Run mutate without internal locking. Without this,
+	// two concurrent POST /v1/chat requests race those fields and interleave
+	// messages into one session.
+	turnMu sync.Mutex
 }
 
 // New creates a new Server.
@@ -107,6 +113,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// SSE sink — emits each event as an SSE data frame
 	sink := sseSink{w: w, flusher: flusher}
+
+	// Serialize turns: the shared Controller/Agent/Session is not safe for
+	// concurrent Configure+Run. One chat at a time (acceptable for a single-
+	// session agent); concurrent requests queue here rather than corrupt state.
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+
 	s.cfg.Ctrl.Configure(sink, nil, "")
 
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)

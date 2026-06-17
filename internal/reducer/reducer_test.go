@@ -18,3 +18,17 @@ func TestIdentity(t *testing.T) {
 		t.Error("map")
 	}
 }
+
+func TestRunMapPhaseConcurrentAppendRace(t *testing.T) {
+	// Many records across multiple workers all append into the shared shuffle
+	// slice — must be synchronized. Run under -race.
+	e := NewEngine()
+	input := make([]Record, 300)
+	for i := range input {
+		input[i] = Record{Value: "alpha beta gamma delta epsilon"}
+	}
+	job := &Job{Name: "race", Mapper: mapAdapter{WordCountMapper()}, Reducer: reduceAdapter{SumReducer()}, Partitions: 4, Workers: 4, Input: input}
+	if r := e.Run(job); r == nil {
+		t.Fatal("nil result")
+	}
+}

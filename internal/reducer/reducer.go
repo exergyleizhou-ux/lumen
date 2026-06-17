@@ -96,6 +96,7 @@ func (e *Engine) Run(job *Job) *JobResult {
 	shuffle := make([][]keyval, job.Partitions)
 
 	var mapWg sync.WaitGroup
+	var shuffleMu sync.Mutex // guards concurrent appends into shuffle from workers
 	sem := make(chan struct{}, job.Workers)
 	mapCount := len(job.Input)
 
@@ -107,7 +108,9 @@ func (e *Engine) Run(job *Job) *JobResult {
 			defer func() { <-sem }()
 			job.Mapper.Map(r, func(key string, value any) {
 				partition := hashKeyPartition(key, job.Partitions)
+				shuffleMu.Lock()
 				shuffle[partition] = append(shuffle[partition], keyval{key, value})
+				shuffleMu.Unlock()
 			})
 		}(rec)
 	}
