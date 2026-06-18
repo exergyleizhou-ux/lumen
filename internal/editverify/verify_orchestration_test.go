@@ -46,8 +46,15 @@ func TestVerify_AllPass(t *testing.T) {
 }
 
 func TestVerify_StopsAtFirstFailure(t *testing.T) {
+	// Real Go-module root with the changed file present, so the same-module
+	// filter keeps it and goSteps produces the build step the runner fails.
+	root := t.TempDir()
+	mustWrite(t, filepath.Join(root, "go.mod"), "module testmod\n\ngo 1.21\n")
+	os.MkdirAll(filepath.Join(root, "foo"), 0o755)
+	mustWrite(t, filepath.Join(root, "foo", "bar.go"), "package foo\n")
+
 	r := &scriptedRunner{failStep: "build", output: "foo/bar.go:3:5: undefined: x"}
-	v := New("/root", DefaultConfig())
+	v := New(root, DefaultConfig())
 	v.run = r
 	res := v.Verify(context.Background(), []string{"foo/bar.go"})
 	if res.OK {

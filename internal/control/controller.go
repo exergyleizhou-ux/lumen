@@ -270,15 +270,22 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 			}
 		}
 	}
-	// MVP is Go-only: only activate when the working dir is a Go module, so the
-	// loop never misfires `go build` in a non-Go project.
-	if verifyCfg.Enabled {
-		if _, err := os.Stat(filepath.Join(wd, "go.mod")); err == nil {
-			c.ag.SetVerifier(editverify.New(wd, verifyCfg), verifyCfg)
-		}
-	}
+	c.setupEditVerify(wd, verifyCfg)
 
 	return nil
+}
+
+// setupEditVerify installs the verify-after-edit verifier when verification is
+// enabled and wd is a recognized project (Go / JS-TS / Python). Detect chooses
+// the commands per changed file and the runner skips uninstalled tools, so it
+// never misfires `go build` in a non-Go repo nor false-fails on an absent
+// linter. Returns whether the loop was activated.
+func (c *Controller) setupEditVerify(wd string, cfg editverify.Config) bool {
+	if !cfg.Enabled || !editverify.IsSupportedProject(wd) {
+		return false
+	}
+	c.ag.SetVerifier(editverify.New(wd, cfg), cfg)
+	return true
 }
 
 // Run executes a one-shot task and returns the agent's final answer.

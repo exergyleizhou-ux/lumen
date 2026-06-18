@@ -35,9 +35,17 @@ func Detect(root string, changed []string, cfg Config) []Step {
 		}
 	}
 
-	// If nothing detected, fall back to Go (project default)
+	// If a change touched no recognized source file, fall back to Go's build/vet
+	// ONLY when root is actually a Go module. Running `go build` in a non-Go
+	// project (e.g. a pure Python/JS repo) would be a guaranteed spurious failure
+	// that triggers a bogus self-repair cycle, so otherwise we run nothing.
 	if len(steps) == 0 {
-		steps = goSteps(root, changed, cfg)
+		for _, l := range projectLanguages(root) {
+			if l == "go" {
+				steps = goSteps(root, changed, cfg)
+				break
+			}
+		}
 	}
 
 	return steps
@@ -97,7 +105,11 @@ func pythonSteps(root string, changed []string, cfg Config) []Step {
 			for _, f := range changed {
 				if strings.HasSuffix(f, ".py") {
 					testFile := strings.TrimSuffix(f, ".py") + "_test.py"
-					if _, err := filepath.Glob(filepath.Join(root, testFile)); err == nil {
+					// Only schedule pytest when the sibling test file actually
+					// exists — `pytest <missing>` errors "file not found" and would
+					// false-fail verification. (filepath.Glob's error is nil even
+					// when nothing matches, so it can't gate existence.)
+					if fileExists(filepath.Join(root, testFile)) {
 						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", testFile}})
 					}
 				}

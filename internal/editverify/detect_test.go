@@ -1,12 +1,24 @@
 package editverify
 
 import (
+	"path/filepath"
 	"testing"
 )
 
+// goModRoot returns a temp dir marked as a Go module, for tests exercising the
+// Go-project fallback (build/vet when a change touches no .go source). The old
+// tests passed a fake "/project" root and relied on Go being the implicit
+// default; the verifier now only falls back to `go build` in a real Go module.
+func goModRoot(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "go.mod"), "module testmod\n\ngo 1.23\n")
+	return dir
+}
+
 func TestDetect_noChanges(t *testing.T) {
 	cfg := DefaultConfig()
-	steps := Detect("/project", nil, cfg)
+	steps := Detect(goModRoot(t), nil, cfg)
 
 	// Must return build+vet even with no changed files
 	if len(steps) < 2 {
@@ -120,7 +132,7 @@ func TestDetect_commandOverride(t *testing.T) {
 func TestDetect_nonGoFilesOnly(t *testing.T) {
 	cfg := DefaultConfig()
 	changed := []string{"README.md", "lumen.toml", "docs/spec.md"}
-	steps := Detect("/project", changed, cfg)
+	steps := Detect(goModRoot(t), changed, cfg)
 
 	// No .go files → only build+vet
 	if len(steps) != 2 {

@@ -83,6 +83,13 @@ func (execRunner) Run(ctx context.Context, step Step) (string, bool) {
 	if len(step.Args) == 0 {
 		return "", true
 	}
+	// If the tool isn't installed, SKIP the step (inconclusive → treated as ok)
+	// rather than reporting a failure: a missing linter/test runner must not
+	// trigger a bogus self-repair cycle. This keeps multi-language verify safe in
+	// a partial toolchain. Mirrors collectLSPDiags skipping an absent gopls.
+	if _, err := exec.LookPath(step.Args[0]); err != nil {
+		return "", true
+	}
 	cmd := exec.CommandContext(ctx, step.Args[0], step.Args[1:]...)
 	cmd.Dir = step.Dir
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
