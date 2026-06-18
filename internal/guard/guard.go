@@ -175,7 +175,9 @@ var destructivePatterns = []struct {
 	{regexp.MustCompile(`mkfs\.|mke2fs|newfs`), "filesystem formatting"},
 	{regexp.MustCompile(`dd\s+if=/dev/zero\s+of=/dev/`), "disk zeroing"},
 	{regexp.MustCompile(`>\s*/dev/(sd[a-z]|nvme|hd[a-z]|disk)`), "raw device overwrite"},
-	{regexp.MustCompile(`chmod\s+-r\s+777\s+/`), "world-writable root"},
+	{regexp.MustCompile(`chmod\s+-r\w*\s+[0-7]{3,4}\s+/(\s|$)`), "recursive permission change on root"},
+	{regexp.MustCompile(`chown\s+-r\w*\s+\S+\s+/(\s|$)`), "recursive ownership change on root"},
+	{regexp.MustCompile(`>\s*/proc/sysrq-trigger`), "kernel sysrq trigger (instant reboot/crash)"},
 	{regexp.MustCompile(`:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:`), "fork bomb"},
 }
 
@@ -191,7 +193,7 @@ func checkDestructive(cmd string) CheckResult {
 var (
 	rmPresent         = regexp.MustCompile(`(^|[;&|]|\s)rm\s`)
 	rmRecursive       = regexp.MustCompile(`\s-[a-z]*r`)
-	rmDangerousTarget = regexp.MustCompile(`\s(/|~|\*|/\*)(\s|$)`)
+	rmDangerousTarget = regexp.MustCompile(`\s(/|~|\*|/\*|\$\{?home\}?)(\s|$)`)
 )
 
 // checkDestructiveRm catches recursive rm of a dangerous target across flag
