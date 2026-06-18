@@ -16,10 +16,14 @@ import (
 	"lumen/internal/oasis"
 )
 
+// oasisPipeline is set while `oasis publish` runs the build→check→deploy chain,
+// so intermediate steps suppress their standalone "Next: ..." hints.
+var oasisPipeline bool
+
 // runOasis dispatches `lumen oasis <subcommand>`.
 func runOasis(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|publish>\n")
 		os.Exit(1)
 	}
 	sub := args[0]
@@ -66,9 +70,16 @@ func runOasis(args []string) {
 		}
 		deployAlgo(dir)
 
+	case "publish":
+		dir := "."
+		if len(rest) > 0 {
+			dir = rest[0]
+		}
+		publishAlgo(dir)
+
 	default:
 		fmt.Fprintf(os.Stderr, "unknown oasis subcommand: %s\n", sub)
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|publish>\n")
 		os.Exit(1)
 	}
 }
@@ -135,7 +146,9 @@ func checkAlgo(dir string) {
 
 	if res.OK {
 		fmt.Printf("✅ contract OK — runs isolated and produced a valid %s /out/output.bin\n", m.OutputKind)
-		fmt.Printf("   Next: lumen oasis deploy\n")
+		if !oasisPipeline {
+			fmt.Printf("   Next: lumen oasis deploy\n")
+		}
 		return
 	}
 
@@ -195,7 +208,21 @@ func buildAlgo(dir string) {
 
 	fmt.Printf("✅ built %s (source sha256: %s)\n", tag, srcHash[:12])
 	fmt.Printf("   Lockfile: %s\n", lockPath)
-	fmt.Printf("   Next: lumen oasis check  (verify the C2D contract before deploy)\n")
+	if !oasisPipeline {
+		fmt.Printf("   Next: lumen oasis check  (verify the C2D contract before deploy)\n")
+	}
+}
+
+// publishAlgo is the author one-shot: build → check → deploy. Each step exits
+// non-zero on failure, so a broken or contract-violating algorithm is never
+// pushed or registered.
+func publishAlgo(dir string) {
+	oasisPipeline = true
+	fmt.Println("📦 oasis publish: build → check → deploy")
+	buildAlgo(dir)
+	checkAlgo(dir)
+	deployAlgo(dir)
+	fmt.Println("🎉 published — built, contract-verified, pushed, and registered")
 }
 
 func deployAlgo(dir string) {
