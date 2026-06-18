@@ -13,14 +13,14 @@ import (
 // ── C2D runtime contract self-check ────────────────────────
 //
 // The marketplace runner executes an algorithm image with strict isolation
-// (`docker run --network none --read-only -v <data>:/data:ro -v <out>:/out`),
-// pre-writes the params to /out/input.json, and reads **/out/output.bin** as the
-// single result object — which it then hashes + Ed25519-attests. So a
-// contract-compliant algorithm must: read its dataset from /data and params from
-// /out/input.json, run with no network and a read-only root, and write its result
-// to /out/output.bin. For a "model" output_kind that file is a zip of model.json
-// (+ metrics.json). CheckContract runs the image exactly that way and validates
-// the result, so authors catch violations before pushing to Oasis.
+// (`docker run --network none --read-only -v <data>:/data:ro -v <params>:/params.json:ro -v <out>:/out`),
+// mounts the params at /params.json, and reads **/out/output.bin** as the single
+// result object — which it then hashes + Ed25519-attests. So a contract-compliant
+// algorithm must: read its dataset from /data and params from /params.json, run
+// with no network and a read-only root, and write its result to /out/output.bin.
+// For a "model" output_kind that file is a zip of model.json (+ metrics.json).
+// CheckContract runs the image exactly that way and validates the result, so
+// authors catch violations before pushing to Oasis.
 
 // CheckOutput validates the bytes of /out/output.bin against the contract: it
 // must be non-empty (the runner reads exactly this file). For output_kind
@@ -50,24 +50,25 @@ func CheckOutput(data []byte, kind string) []string {
 // algorithm writes its result to <outDir>/output.bin. Abstracted so the
 // self-check can be unit-tested without Docker.
 type SandboxRunner interface {
-	Run(ctx context.Context, image, dataDir, outDir string) (logs string, err error)
+	Run(ctx context.Context, image, dataDir, paramsFile, outDir string) (logs string, err error)
 }
 
 // dockerSandbox runs the image exactly as the marketplace runner does.
 type dockerSandbox struct{}
 
-func (dockerSandbox) Run(ctx context.Context, image, dataDir, outDir string) (string, error) {
-	return runDockerSandbox(ctx, image, dataDir, outDir)
+func (dockerSandbox) Run(ctx context.Context, image, dataDir, paramsFile, outDir string) (string, error) {
+	return runDockerSandbox(ctx, image, dataDir, paramsFile, outDir)
 }
 
 // runDockerSandbox runs the image with exactly the marketplace runner's
 // isolation: no network, read-only root, dataset read-only, /out writable.
-func runDockerSandbox(ctx context.Context, image, dataDir, outDir string) (string, error) {
+func runDockerSandbox(ctx context.Context, image, dataDir, paramsFile, outDir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
 		"--network", "none",
 		"--read-only",
 		"--tmpfs", "/tmp",
 		"-v", dataDir+":/data:ro",
+		"-v", paramsFile+":/params.json:ro",
 		"-v", outDir+":/out",
 		image,
 	)
@@ -111,18 +112,24 @@ func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, s
 	}
 	defer os.RemoveAll(outDir)
 
-	// Seed a sample dataset and the params the runner provides via /out/input.json.
+	// Seed a sample dataset (/data) and the params the runner mounts (/params.json).
 	if len(sampleData) == 0 {
 		sampleData = []byte("col_a,col_b\n1,2\n3,4\n")
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, "dataset.csv"), sampleData, 0o644); err != nil {
 		return CheckResult{Violations: []string{fmt.Sprintf("could not seed dataset: %v", err)}}
 	}
-	if err := os.WriteFile(filepath.Join(outDir, "input.json"), []byte(`{"dataset_path":"/data/dataset.csv","params":{}}`), 0o644); err != nil {
-		return CheckResult{Violations: []string{fmt.Sprintf("could not seed input.json: %v", err)}}
+	paramsDir, err := os.MkdirTemp("", "oasis-params-*")
+	if err != nil {
+		return CheckResult{Violations: []string{fmt.Sprintf("could not create scratch params dir: %v", err)}}
+	}
+	defer os.RemoveAll(paramsDir)
+	paramsFile := filepath.Join(paramsDir, "params.json")
+	if err := os.WriteFile(paramsFile, []byte(`{}`), 0o644); err != nil {
+		return CheckResult{Violations: []string{fmt.Sprintf("could not seed params.json: %v", err)}}
 	}
 
-	logs, err := run.Run(ctx, image, dataDir, outDir)
+	logs, err := run.Run(ctx, image, dataDir, paramsFile, outDir)
 	if err != nil {
 		return CheckResult{
 			Violations: []string{fmt.Sprintf("algorithm did not run cleanly under `--network none --read-only`: %v", err)},

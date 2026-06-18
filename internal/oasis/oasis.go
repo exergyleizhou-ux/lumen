@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -250,13 +251,21 @@ func ComputeSrcHash(dir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		h.Write([]byte(rel))
 		f, err := os.Open(path)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		io.Copy(h, f)
+		fh := sha256.New()
+		_, cerr := io.Copy(fh, f)
+		f.Close()
+		if cerr != nil {
+			return cerr
+		}
+		// Fixed-width per-file record: sha256(rel) || sha256(content). Unframed
+		// concatenation would let distinct trees alias to the same digest.
+		relSum := sha256.Sum256([]byte(rel))
+		h.Write(relSum[:])
+		h.Write(fh.Sum(nil))
 		return nil
 	})
 	if err != nil {
@@ -326,7 +335,11 @@ func ParseManifest(raw string) (Manifest, error) {
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
-		val = strings.Trim(val, "\"")
+		if uq, uerr := strconv.Unquote(val); uerr == nil {
+			val = uq // honors escaped JSON (e.g. params_schema's \" → ")
+		} else {
+			val = strings.Trim(val, "\"")
+		}
 		switch key {
 		case "name":
 			m.Name = val

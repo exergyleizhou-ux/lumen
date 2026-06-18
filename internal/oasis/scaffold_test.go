@@ -103,3 +103,24 @@ func TestComputeSrcHashCoversNonGoFiles(t *testing.T) {
 		t.Error("ComputeSrcHash should change when the source changes")
 	}
 }
+
+func TestComputeSrcHashNoCollision(t *testing.T) {
+	// Distinct trees must not alias to the same digest. Without per-record
+	// framing, {ab:"X", c:"Y"} and {a:"bXcY"} concatenate to the same bytes.
+	d1 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d1, "ab"), []byte("X"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(d1, "c"), []byte("Y"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	d2 := t.TempDir()
+	if err := os.WriteFile(filepath.Join(d2, "a"), []byte("bXcY"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	h1, _ := ComputeSrcHash(d1)
+	h2, _ := ComputeSrcHash(d2)
+	if h1 == h2 {
+		t.Errorf("distinct source trees collided to the same hash: %s", h1)
+	}
+}

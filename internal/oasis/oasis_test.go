@@ -1,6 +1,7 @@
 package oasis
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -167,5 +168,23 @@ func TestComputeSrcHash(t *testing.T) {
 	}
 	if hash1 != hash2 {
 		t.Errorf("hash mismatch: %s vs %s", hash1, hash2)
+	}
+}
+
+func TestParamsSchemaRoundTrip(t *testing.T) {
+	// A real params_schema must survive formatTOML -> ParseManifest intact (the
+	// %q-escaped JSON was previously trimmed but never unescaped, silently
+	// corrupting it and getting dropped from the register payload).
+	m := DefaultManifest("demo")
+	m.ParamsSchema = `{"n_estimators":{"type":"integer","default":100}}`
+	parsed, err := ParseManifest(formatTOML(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ParamsSchema != m.ParamsSchema {
+		t.Errorf("params_schema round-trip lost data:\n  in:  %s\n  out: %s", m.ParamsSchema, parsed.ParamsSchema)
+	}
+	if !json.Valid([]byte(parsed.ParamsSchema)) {
+		t.Errorf("round-tripped params_schema is not valid JSON: %s", parsed.ParamsSchema)
 	}
 }

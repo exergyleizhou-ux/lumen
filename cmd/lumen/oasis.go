@@ -127,7 +127,7 @@ func checkAlgo(dir string) {
 
 	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("🔬 C2D contract self-check on %s\n", tag)
-	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /out\n")
+	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /params.json:ro -v /out\n")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
