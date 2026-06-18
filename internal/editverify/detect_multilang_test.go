@@ -55,22 +55,6 @@ func TestDetect_mixedLanguages(t *testing.T) {
 	}
 }
 
-func TestDetect_jsFile(t *testing.T) {
-	cfg := DefaultConfig()
-	changed := []string{"src/app.ts"}
-	steps := Detect("/project", changed, cfg)
-
-	foundTsc := false
-	for _, s := range steps {
-		if s.Name == "typecheck" && s.Args[0] == "npx" && s.Args[1] == "tsc" {
-			foundTsc = true
-		}
-	}
-	if !foundTsc {
-		t.Errorf("expected npx tsc --noEmit step for .ts file, got: %v", stepNames(steps))
-	}
-}
-
 func TestDetect_onlyNonCodeFiles(t *testing.T) {
 	cfg := DefaultConfig()
 	changed := []string{"README.md", "lumen.toml"}

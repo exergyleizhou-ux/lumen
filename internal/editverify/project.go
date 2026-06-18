@@ -32,6 +32,18 @@ func IsSupportedProject(root string) bool {
 	return len(projectLanguages(root)) > 0
 }
 
+// nodeBin returns the path to a project-local node tool
+// (root/node_modules/.bin/<tool>), or "" if absent. We deliberately do NOT fall
+// back to a global install or `npx`: a verify loop must use the project's pinned
+// toolchain and must never auto-fetch a tool from the network.
+func nodeBin(root, tool string) string {
+	p := filepath.Join(root, "node_modules", ".bin", tool)
+	if fileExists(p) {
+		return p
+	}
+	return ""
+}
+
 func fileExists(p string) bool {
 	info, err := os.Stat(p)
 	return err == nil && !info.IsDir()

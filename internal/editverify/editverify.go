@@ -264,4 +264,3 @@ func (v *Verifier) collectLSPDiags(ctx context.Context, rel []string) {
 		}
 	}
 }
-

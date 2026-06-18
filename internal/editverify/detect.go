@@ -9,9 +9,11 @@ import (
 //
 // Language detection is automatic based on file extensions:
 //   - .go files → go build + go vet + (optional) go test
-//   - .py files → ruff check + pytest (if ast/ruff present in project)
-//   - .js/.ts files → tsc --noEmit + jest (if package.json present)
-//   - Mixed files → build/vet/test steps for each detected language
+//   - .py files → ruff check + pytest (only with a sibling <name>_test.py)
+//   - .js/.ts files → tsc --noEmit (local tsc + tsconfig) + jest (local jest)
+//   - Mixed files → steps for each detected language
+//
+// Uninstalled tools are skipped at run time, never reported as a failure.
 //
 // cfg.Command override takes priority over all auto-detection.
 func Detect(root string, changed []string, cfg Config) []Step {
@@ -64,9 +66,15 @@ func detectLanguages(changed []string) []string {
 		}
 	}
 	var langs []string
-	if hasGo { langs = append(langs, "go") }
-	if hasPy { langs = append(langs, "python") }
-	if hasJS { langs = append(langs, "js") }
+	if hasGo {
+		langs = append(langs, "go")
+	}
+	if hasPy {
+		langs = append(langs, "python")
+	}
+	if hasJS {
+		langs = append(langs, "js")
+	}
 	return langs
 }
 
@@ -120,16 +128,24 @@ func pythonSteps(root string, changed []string, cfg Config) []Step {
 }
 
 func jsSteps(root string, changed []string, cfg Config) []Step {
-	steps := []Step{
-		{Name: "typecheck", Dir: root, Args: []string{"npx", "tsc", "--noEmit"}},
+	var steps []Step
+	// Typecheck only when TypeScript is installed locally AND a tsconfig.json
+	// exists. Scheduling `npx tsc` unconditionally would auto-download tsc from
+	// the network (or fail in a plain-JS repo with no tsconfig) — a false verify
+	// failure. Run the resolved binary, never npx.
+	if tsc := nodeBin(root, "tsc"); tsc != "" && fileExists(filepath.Join(root, "tsconfig.json")) {
+		steps = append(steps, Step{Name: "typecheck", Dir: root, Args: []string{tsc, "--noEmit"}})
 	}
 	if cfg.RunTests && len(changed) > 0 {
-		if cfg.Scope == "all" {
-			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests"}})
-		} else {
-			for _, f := range changed {
-				if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
-					steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests", f}})
+		// Run jest only when it is installed locally (resolved binary, not npx).
+		if jest := nodeBin(root, "jest"); jest != "" {
+			if cfg.Scope == "all" {
+				steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests"}})
+			} else {
+				for _, f := range changed {
+					if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
+						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests", f}})
+					}
 				}
 			}
 		}
