@@ -46,12 +46,12 @@ func DefaultManifest(name string) Manifest {
 	return Manifest{
 		Name:       name,
 		Runtime:    "docker",
-		Image:      fmt.Sprintf("registry.example.com/algo/%s:latest", name),
-		OutputKind: "model",
-		Version:    1,
-		Builder:    "docker",
-		Dockerfile: "Dockerfile",
-		ParamsSchema: `{"n_estimators":{"type":"integer","default":100}}`,
+		Image:        fmt.Sprintf("registry.example.com/algo/%s", name),
+		OutputKind:   "model",
+		Version:      1,
+		Builder:      "docker",
+		Dockerfile:   "Dockerfile",
+		ParamsSchema: `{}`,
 	}
 }
 
@@ -104,108 +104,113 @@ func Scaffold(dir string, m Manifest) error {
 	}
 
 	// Write Dockerfile template
-	dockerfile := fmt.Sprintf(`# Oasis C2D algorithm: %s
-FROM golang:1.23-alpine AS builder
-WORKDIR /build
-COPY . .
-RUN go build -o /algo ./cmd/algo
-
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates
-COPY --from=builder /algo /algo
-ENTRYPOINT ["/algo"]
-`, m.Name)
+	dockerfile := `FROM python:3.11-slim
+COPY train.py /app/train.py
+WORKDIR /app
+USER 65534:65534
+ENTRYPOINT ["python", "/app/train.py"]
+`
 	dockerfilePath := filepath.Join(dir, m.Dockerfile)
 	if err := os.WriteFile(dockerfilePath, []byte(dockerfile), 0644); err != nil {
 		return fmt.Errorf("write dockerfile: %w", err)
 	}
 
-	// Write main.go template
-	mainDir := filepath.Join(dir, "cmd", "algo")
-	if err := os.MkdirAll(mainDir, 0755); err != nil {
-		return fmt.Errorf("mkdir cmd/algo: %w", err)
-	}
-	mainGo := fmt.Sprintf(`package main
+	// Write train.py — pure-Python-stdlib C2D algorithm skeleton
+	trainPy := fmt.Sprintf(`#!/usr/bin/env python3
+"""C2D algorithm: %s — pure-Python-stdlib skeleton.
 
-import (
-	"archive/zip"
-	"encoding/json"
-	"fmt"
-	"os"
-)
+Container contract: read /data (the dataset, read-only), write /out/output.bin
+(a zip of model.json + metrics.json). Paths overridable via env for testing.
+Optional /params.json for hyper-parameters.
+"""
+import csv
+import io
+import json
+import os
+import sys
+import zipfile
 
-// C2D algorithm contract (enforced by the Oasis runner; check with
-// 'lumen oasis check'):
-//   - the dataset is mounted READ-ONLY at /data
-//   - the runner provides params at /out/input.json
-//   - write your result to /out/output.bin — the runner reads exactly that file,
-//     then hashes + Ed25519-attests it. For output_kind "model" it is a zip of
-//     model.json (+ metrics.json).
-//   - the container runs with --network none --read-only (no internet, ro root)
-func main() {
-	datasetPath := "/data/dataset.csv"
-	var params map[string]interface{}
-	if data, err := os.ReadFile("/out/input.json"); err == nil {
-		var input map[string]interface{}
-		if json.Unmarshal(data, &input) == nil {
-			if dp, ok := input["dataset_path"].(string); ok && dp != "" {
-				datasetPath = dp
-			}
-			if p, ok := input["params"].(map[string]interface{}); ok {
-				params = p
-			}
-		}
-	}
-	_ = datasetPath // TODO: read your dataset from here (under /data, read-only)
-	_ = params      // TODO: apply params (e.g. n_estimators, learning_rate)
+DATA_DIR = os.environ.get("VO_DATA_DIR", "/data")
+OUT_DIR = os.environ.get("VO_OUT_DIR", "/out")
+PARAMS_FILE = os.environ.get("VO_PARAMS", "/params.json")
 
-	// TODO: replace with your real model + metrics.
-	model := map[string]interface{}{"algorithm": "%s", "format": "vo-model-1"}
-	metrics := map[string]interface{}{"status": "ok"}
 
-	// Write /out/output.bin as a zip of model.json + metrics.json.
-	f, err := os.Create("/out/output.bin")
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: create output: %%v\n", err)
-		os.Exit(1)
-	}
-	defer f.Close()
-	zw := zip.NewWriter(f)
-	write := func(name string, v interface{}) {
-		w, e := zw.Create(name)
-		if e != nil {
-			fmt.Fprintf(os.Stderr, "ERROR: zip %%s: %%v\n", name, e)
-			os.Exit(1)
-		}
-		json.NewEncoder(w).Encode(v)
-	}
-	write("model.json", model)
-	write("metrics.json", metrics)
-	if err := zw.Close(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERROR: finalize output: %%v\n", err)
-		os.Exit(1)
-	}
-}
+def log(stage, **kw):
+    """Structured progress log — counts/metrics only, never raw data."""
+    print(json.dumps({"stage": stage, **kw}), flush=True)
+
+
+def die(reason, code=2):
+    log("error", reason=reason)
+    sys.exit(code)
+
+
+def load_params():
+    if os.path.exists(PARAMS_FILE):
+        try:
+            with open(PARAMS_FILE) as f:
+                return json.load(f) or {}
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def find_input():
+    if not os.path.isdir(DATA_DIR):
+        die("no_data_dir")
+    names = sorted(os.listdir(DATA_DIR))
+    for n in names:
+        if n.lower().endswith((".csv", ".tsv")):
+            return os.path.join(DATA_DIR, n)
+    if names:
+        return os.path.join(DATA_DIR, names[0])
+    die("no_input_file")
+
+
+def read_dataset(path):
+    """Read a CSV or TSV into a list of dicts using only the stdlib."""
+    sep = "\t" if path.lower().endswith(".tsv") else ","
+    with open(path, newline="") as f:
+        reader = csv.DictReader(f, delimiter=sep)
+        rows = list(reader)
+    return rows
+
+
+def write_output(model, metrics):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("model.json", json.dumps(model))
+        z.writestr("metrics.json", json.dumps(metrics))
+    with open(os.path.join(OUT_DIR, "output.bin"), "wb") as f:
+        f.write(buf.getvalue())
+
+
+def main():
+    params = load_params()
+    inp = find_input()
+    rows = read_dataset(inp)
+    log("loaded", rows=len(rows))
+
+    # TODO: compute your model from rows + params here (aggregates only).
+    model = {"format": "vo-model-1"}
+    metrics = {"status": "ok"}
+
+    write_output(model, metrics)
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
 `, m.Name)
-	mainGoPath := filepath.Join(mainDir, "main.go")
-	if err := os.WriteFile(mainGoPath, []byte(mainGo), 0644); err != nil {
-		return fmt.Errorf("write main.go: %w", err)
-	}
-
-	// Write go.mod so the algorithm builds — the Dockerfile runs `go build
-	// ./cmd/algo` in the build context, which needs a module.
-	module := m.Name
-	if module == "" {
-		module = "algo"
-	}
-	goMod := fmt.Sprintf("module %s\n\ngo 1.23\n", module)
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644); err != nil {
-		return fmt.Errorf("write go.mod: %w", err)
+	trainPyPath := filepath.Join(dir, "train.py")
+	if err := os.WriteFile(trainPyPath, []byte(trainPy), 0644); err != nil {
+		return fmt.Errorf("write train.py: %w", err)
 	}
 
 	// Write .gitignore
 	gitignorePath := filepath.Join(dir, ".gitignore")
-	if err := os.WriteFile(gitignorePath, []byte("/algo\n/oasis-lock.json\n"), 0644); err != nil {
+	if err := os.WriteFile(gitignorePath, []byte("__pycache__/\n*.pyc\n/oasis-lock.json\n"), 0644); err != nil {
 		return fmt.Errorf("write .gitignore: %w", err)
 	}
 
@@ -223,8 +228,8 @@ type Lock struct {
 	SrcHash   string   `json:"source_sha256"`
 }
 
-// ComputeSrcHash computes the SHA-256 hash of all Go source files in dir
-// (not including vendor/ or hidden directories).
+// ComputeSrcHash computes the SHA-256 hash of all regular files in dir
+// (not including hidden dirs, vendor, __pycache__, *.pyc, or oasis-lock.json).
 func ComputeSrcHash(dir string) (string, error) {
 	h := sha256.New()
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -233,14 +238,19 @@ func ComputeSrcHash(dir string) (string, error) {
 		}
 		name := info.Name()
 		if info.IsDir() {
-			if name == ".git" || name == "vendor" || strings.HasPrefix(name, ".") {
+			if name == ".git" || name == "vendor" || name == "__pycache__" || strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !strings.HasSuffix(name, ".go") {
+		if name == "oasis-lock.json" || strings.HasSuffix(name, ".pyc") {
 			return nil
 		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		h.Write([]byte(rel))
 		f, err := os.Open(path)
 		if err != nil {
 			return err

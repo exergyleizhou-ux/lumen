@@ -113,8 +113,8 @@ func TestScaffold(t *testing.T) {
 			t.Errorf("missing file %s: %v", name, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(algoDir, "cmd", "algo", "main.go")); err != nil {
-		t.Errorf("missing cmd/algo/main.go: %v", err)
+	if _, err := os.Stat(filepath.Join(algoDir, "train.py")); err != nil {
+		t.Errorf("missing train.py: %v", err)
 	}
 
 	// Check manifest content
