@@ -22,7 +22,13 @@ type CheckResult struct {
 // CheckBash analyzes a shell command for dangerous patterns. It returns
 // Safe=false when the command should be blocked regardless of permission mode.
 func CheckBash(command string) CheckResult {
-	// Normalize: strip empty-string quote obfuscation (e.g. sh''adow -> shadow),
+	// Normalize before pattern matching. Strip hidden/zero-width Unicode FIRST —
+	// otherwise a destructive command with invisible chars spliced into its tokens
+	// (e.g. "rm<ZWSP> -rf /") slips past every pattern below. The model emits
+	// tool-call args and indirect injection (repo/web content) can induce such
+	// obfuscation, so this guard — not just the user-input path — must strip them.
+	command = StripHiddenChars(command)
+	// Then strip empty-string quote obfuscation (e.g. sh''adow -> shadow),
 	// collapse whitespace, lowercase for pattern matching.
 	unquoted := strings.NewReplacer("'", "", "\"", "").Replace(command)
 	normalized := strings.ToLower(strings.Join(strings.Fields(unquoted), " "))
