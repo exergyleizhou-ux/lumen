@@ -23,6 +23,19 @@ func TestModeBypass(t *testing.T) {
 	if allow {
 		t.Error("destructive command should be blocked even in bypass mode")
 	}
+
+	// Writes to sensitive/persistence paths are blocked even in bypass mode.
+	for _, p := range []string{"~/.ssh/authorized_keys", ".git/hooks/pre-commit", "~/.bashrc", "/etc/cron.d/x"} {
+		allow, _, _ = g.Check(context.Background(), "write_file", json.RawMessage(`{"path":"`+p+`"}`), false)
+		if allow {
+			t.Errorf("write to sensitive path %q should be blocked even in bypass mode", p)
+		}
+	}
+	// A normal project write still passes in bypass.
+	allow, _, _ = g.Check(context.Background(), "write_file", json.RawMessage(`{"path":"internal/foo.go"}`), false)
+	if !allow {
+		t.Error("normal project write should be allowed in bypass mode")
+	}
 }
 
 func TestModePlan(t *testing.T) {

@@ -2,21 +2,23 @@
 //
 // Four modes with precisely defined behavior:
 //
-//   Mode           Read tools   Write tools   Bash        Use case
-//   ─────────────  ───────────  ────────────  ──────────  ──────────────────────
-//   bypass         ✅ auto       ✅ auto       ✅ auto     Full autonomy, trusted
-//   plan           ✅ auto       ❌ blocked     ❌ blocked  Exploration, code review
-//   default        ✅ auto       ✅ auto       ⚠️ auto*    Daily coding (guard on)
-//   accept-edits   ✅ auto       ✅ auto       ⚠️ ask**    Safe editing, manual bash
+//	Mode           Read tools   Write tools   Bash        Use case
+//	─────────────  ───────────  ────────────  ──────────  ──────────────────────
+//	bypass         ✅ auto       ✅ auto       ✅ auto     Full autonomy, trusted
+//	plan           ✅ auto       ❌ blocked     ❌ blocked  Exploration, code review
+//	default        ✅ auto       ✅ auto       ⚠️ auto*    Daily coding (guard on)
+//	accept-edits   ✅ auto       ✅ auto       ⚠️ ask**    Safe editing, manual bash
 //
-//   *  default mode auto-approves bash now (asker is set in terminal mode).
-//      The 5-layer guard still blocks dangerous commands in ALL modes.
-//   ** accept-edits prompts user before running bash commands.
+//	*  default mode auto-approves bash now (asker is set in terminal mode).
+//	   The 5-layer guard still blocks dangerous commands in ALL modes.
+//	** accept-edits prompts user before running bash commands.
 //
 // The Guard layer (internal/guard) runs BEFORE the mode check — it blocks
-// exfiltration, sensitive reads, recon, destructive ops, and encoded payloads
-// even in bypass mode. The gate only decides what reaches the tool executor;
-// the guard decides what is too dangerous to even consider.
+// dangerous bash (exfiltration, sensitive reads, recon, destructive ops,
+// download-and-execute, encoded payloads) AND writes to sensitive/persistence
+// paths (SSH keys, shell rc, git hooks, cron, system dirs) even in bypass mode.
+// The gate only decides what reaches the tool executor; the guard decides what
+// is too dangerous to even consider.
 package permission
 
 import (
@@ -78,6 +80,21 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		}
 		if err := json.Unmarshal(args, &p); err == nil && p.Command != "" {
 			if r := guard.CheckBash(p.Command); !r.Safe {
+				return false, "blocked: " + r.Reason, nil
+			}
+		}
+	}
+
+	// ── Write-path inspection (fires for ALL modes) ────────
+	// Writer tools are auto-approved in bypass/headless mode, so without this a
+	// prompt-injected model could plant persistence (SSH keys, shell rc, git
+	// hooks) or clobber system files. The guard runs before the mode check.
+	if toolName == "write_file" || toolName == "edit_file" {
+		var p struct {
+			Path string `json:"path"`
+		}
+		if err := json.Unmarshal(args, &p); err == nil && p.Path != "" {
+			if r := guard.CheckWritePath(p.Path); !r.Safe {
 				return false, "blocked: " + r.Reason, nil
 			}
 		}
