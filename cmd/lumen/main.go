@@ -85,7 +85,7 @@ Usage:
   lumen run "prompt"      One-shot task
   lumen run --plan "..."  Plan mode (read-only)
   lumen run --mode M "..."
-  lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy)
+  lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy/publish)
   lumen doctor
   lumen config
   lumen stats
