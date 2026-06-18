@@ -255,6 +255,20 @@ func ComputeSrcHash(dir string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// ImageTag returns the docker image reference for build/push/check.
+// If the image is already tagged (the final path segment after the last "/"
+// contains ":"), it is returned unchanged. Otherwise it appends :version.
+// This avoids the invalid double-tag like "repo:1:1" when the image already
+// carries a tag, while correctly handling registry ports like "127.0.0.1:5000/repo".
+func ImageTag(image string, version int) string {
+	lastSlash := strings.LastIndex(image, "/")
+	lastSegment := image[lastSlash+1:]
+	if strings.Contains(lastSegment, ":") {
+		return image
+	}
+	return fmt.Sprintf("%s:%d", image, version)
+}
+
 // ── Helpers ────────────────────────────────────────────────
 
 func formatTOML(m Manifest) string {

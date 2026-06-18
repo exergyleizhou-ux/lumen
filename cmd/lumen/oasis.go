@@ -129,7 +129,7 @@ func checkAlgo(dir string) {
 		os.Exit(1)
 	}
 
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("🔬 C2D contract self-check on %s\n", tag)
 	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /out\n")
 
@@ -167,7 +167,7 @@ func buildAlgo(dir string) {
 	fmt.Printf("🔨 Building %s…\n", m.Name)
 
 	// Build docker image
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	cmd := exec.Command("docker", "build", "-t", tag, "-f", dockerfile, dir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -209,7 +209,7 @@ func deployAlgo(dir string) {
 		os.Exit(1)
 	}
 
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("📤 Pushing %s…\n", tag)
 
 	// Push docker image
