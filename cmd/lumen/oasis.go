@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -103,16 +105,10 @@ func validateAlgo(dir string) {
 		fmt.Printf("⚠️  Dockerfile %q not found — will be needed for build\n", m.Dockerfile)
 	}
 
-	// Check cmd/algo/main.go exists
-	mainGo := filepath.Join(dir, "cmd", "algo", "main.go")
-	if _, err := os.Stat(mainGo); err != nil {
-		fmt.Printf("⚠️  cmd/algo/main.go not found — algorithm entrypoint missing\n")
-	}
-
 	fmt.Printf("✅ manifest validated: %s v%d (runtime=%s, output=%s)\n",
 		m.Name, m.Version, m.Runtime, m.OutputKind)
 	fmt.Printf("   Image: %s\n", m.Image)
-	fmt.Printf("   Next: lumen oasis build\n")
+	fmt.Printf("   Next: lumen oasis build, then 'lumen oasis check' to verify the container contract\n")
 }
 
 // checkAlgo runs the C2D runtime contract self-check: it executes the algorithm
@@ -129,9 +125,9 @@ func checkAlgo(dir string) {
 		os.Exit(1)
 	}
 
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("🔬 C2D contract self-check on %s\n", tag)
-	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /out\n")
+	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /params.json:ro -v /out\n")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -167,7 +163,7 @@ func buildAlgo(dir string) {
 	fmt.Printf("🔨 Building %s…\n", m.Name)
 
 	// Build docker image
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	cmd := exec.Command("docker", "build", "-t", tag, "-f", dockerfile, dir)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -209,7 +205,7 @@ func deployAlgo(dir string) {
 		os.Exit(1)
 	}
 
-	tag := fmt.Sprintf("%s:%d", m.Image, m.Version)
+	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("📤 Pushing %s…\n", tag)
 
 	// Push docker image
@@ -235,14 +231,14 @@ func deployAlgo(dir string) {
 	if marketplaceURL == "" {
 		marketplaceURL = "http://localhost:8080"
 	}
-	registerURL := strings.TrimRight(marketplaceURL, "/") + "/api/compute/algorithms"
+	registerURL := oasisRegisterURL(marketplaceURL)
 
-	payload := fmt.Sprintf(`{"name":%q,"runtime":%q,"image":%q,"image_digest":%q,"entrypoint":%q,"output_kind":%q,"version":%d,"params_schema":%q}`,
-		m.Name, m.Runtime, m.Image, digest, m.Entrypoint, m.OutputKind, m.Version, m.ParamsSchema)
+	payload := buildRegisterPayload(m, digest)
 
-	req, _ := http.NewRequest("POST", registerURL, strings.NewReader(payload))
+	token := os.Getenv("MARKETPLACE_TOKEN")
+	req, _ := http.NewRequest("POST", registerURL, bytes.NewReader(payload))
 	req.Header.Set("Content-Type", "application/json")
-	if token := os.Getenv("MARKETPLACE_TOKEN"); token != "" {
+	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
@@ -252,14 +248,32 @@ func deployAlgo(dir string) {
 		fmt.Printf("   ⚠️  Marketplace register failed (network): %v\n", err)
 		fmt.Printf("   Register manually: POST %s\n", registerURL)
 		fmt.Printf("   Payload: %s\n", payload)
-	} else {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		if resp.StatusCode == 200 || resp.StatusCode == 201 {
-			fmt.Printf("   ✅ Registered on marketplace: %s\n", strings.TrimSpace(string(body)))
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		fmt.Printf("   ⚠️  Marketplace returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+		return
+	}
+	id := algoIDFromResponse(body)
+	fmt.Printf("   ✅ Registered on marketplace (pending review): %s\n", id)
+
+	// approve+trust is an ops decision (on L1 the audited code is the privacy
+	// boundary), so auto-do it only when explicitly opted in (a dev/demo
+	// one-shot). Otherwise leave it pending and print the ops command.
+	if id == "" {
+		return
+	}
+	if os.Getenv("MARKETPLACE_TRUST") == "1" {
+		if err := reviewAlgo(client, marketplaceURL, id, token); err != nil {
+			fmt.Printf("   ⚠️  approve+trust failed: %v\n", err)
 		} else {
-			fmt.Printf("   ⚠️  Marketplace returned %d: %s\n", resp.StatusCode, strings.TrimSpace(string(body)))
+			fmt.Printf("   ✅ Approved + trusted (L1): %s\n", id)
 		}
+	} else {
+		fmt.Printf("   Next (ops): POST %s {\"status\":\"approved\",\"trusted\":true}\n", oasisReviewURL(marketplaceURL, id))
+		fmt.Printf("   or re-run with MARKETPLACE_TRUST=1 to approve+trust now\n")
 	}
 }
 
@@ -274,6 +288,75 @@ func getImageDigest(tag string) string {
 		digest = digest[idx+1:] // skip the @
 	}
 	return digest
+}
+
+// oasisRegisterURL is the marketplace admin endpoint that registers an algorithm.
+func oasisRegisterURL(base string) string {
+	return strings.TrimRight(base, "/") + "/api/v1/admin/compute/algorithms"
+}
+
+// oasisReviewURL approves/rejects + (un)trusts a registered algorithm (ops only).
+func oasisReviewURL(base, id string) string {
+	return strings.TrimRight(base, "/") + "/api/v1/admin/compute/algorithms/" + id + "/review"
+}
+
+// algoIDFromResponse pulls data.id out of the register response
+// ({"code":0,"data":{"id":...}}). Returns "" if the body isn't that shape.
+func algoIDFromResponse(body []byte) string {
+	var r struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(body, &r) == nil {
+		return r.Data.ID
+	}
+	return ""
+}
+
+// reviewAlgo approves + trusts a just-registered algorithm (an ops action).
+func reviewAlgo(client *http.Client, base, id, token string) error {
+	req, _ := http.NewRequest("POST", oasisReviewURL(base, id), strings.NewReader(`{"status":"approved","trusted":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 && resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	return nil
+}
+
+// buildRegisterPayload encodes the marketplace register request. params_schema is
+// emitted as a JSON OBJECT (the admin endpoint binds it to map[string]any) — the
+// old code sent it as a quoted string, which the API rejected with 400.
+func buildRegisterPayload(m oasis.Manifest, digest string) []byte {
+	type reg struct {
+		Name         string          `json:"name"`
+		Runtime      string          `json:"runtime"`
+		Image        string          `json:"image"`
+		ImageDigest  string          `json:"image_digest"`
+		Entrypoint   string          `json:"entrypoint"`
+		OutputKind   string          `json:"output_kind"`
+		Version      int             `json:"version"`
+		SourceRef    string          `json:"source_ref"`
+		ParamsSchema json.RawMessage `json:"params_schema,omitempty"`
+	}
+	r := reg{
+		Name: m.Name, Runtime: m.Runtime, Image: m.Image, ImageDigest: digest,
+		Entrypoint: m.Entrypoint, OutputKind: m.OutputKind, Version: m.Version, SourceRef: m.SourceRef,
+	}
+	if s := strings.TrimSpace(m.ParamsSchema); s != "" && json.Valid([]byte(s)) {
+		r.ParamsSchema = json.RawMessage(s)
+	}
+	b, _ := json.Marshal(r)
+	return b
 }
 
 // ── Helpers ────────────────────────────────────────────────

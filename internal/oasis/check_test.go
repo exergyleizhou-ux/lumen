@@ -62,7 +62,7 @@ type fakeSandbox struct {
 	err      error
 }
 
-func (f fakeSandbox) Run(ctx context.Context, image, dataDir, outDir string) (string, error) {
+func (f fakeSandbox) Run(ctx context.Context, image, dataDir, paramsFile, outDir string) (string, error) {
 	if f.writeBin != nil {
 		os.WriteFile(filepath.Join(outDir, "output.bin"), f.writeBin, 0o644)
 	}
