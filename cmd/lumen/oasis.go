@@ -103,16 +103,10 @@ func validateAlgo(dir string) {
 		fmt.Printf("⚠️  Dockerfile %q not found — will be needed for build\n", m.Dockerfile)
 	}
 
-	// Check cmd/algo/main.go exists
-	mainGo := filepath.Join(dir, "cmd", "algo", "main.go")
-	if _, err := os.Stat(mainGo); err != nil {
-		fmt.Printf("⚠️  cmd/algo/main.go not found — algorithm entrypoint missing\n")
-	}
-
 	fmt.Printf("✅ manifest validated: %s v%d (runtime=%s, output=%s)\n",
 		m.Name, m.Version, m.Runtime, m.OutputKind)
 	fmt.Printf("   Image: %s\n", m.Image)
-	fmt.Printf("   Next: lumen oasis build\n")
+	fmt.Printf("   Next: lumen oasis build, then 'lumen oasis check' to verify the container contract\n")
 }
 
 // checkAlgo runs the C2D runtime contract self-check: it executes the algorithm
