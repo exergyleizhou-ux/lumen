@@ -402,30 +402,34 @@ func TestEscClearsBuffer(t *testing.T) {
 func TestMultiRowCursorRowCol(t *testing.T) {
 	e := NewEditor("> ", "", ".")
 	e.buf.clear()
-	// Enough text that cursor wraps to row 1 at 80 cols
-	long := strings.Repeat("x", 100) // prompt=2 + 100 = 102 cols → row 1 at col 22
+	// Enough text that prompt+text wraps across rows on a normal terminal.
+	long := strings.Repeat("x", 100) // prompt=2 + 100 = 102 cols
 	e.buf.insertString(long)
-	e.buf.end() // cursor at end, pos=100
+	e.buf.end() // cursor at end
 
 	var out bytes.Buffer
 	e.out = &out
 	e.redraw()
 	result := out.String()
 
-	// Cursor at end of 100 x's: prompt=2 cols, text=100 cols → total=102
-	// \x1b[%dC at col 102 wraps to row 1 col 22 in an 80-col terminal.
-	// So we just need \x1b[102C (which will auto-wrap).
-	if !strings.Contains(result, "\x1b[102C") {
-		t.Logf("got: %q", result)
-		t.Errorf("multi-row cursor: expected \\x1b[102C (wraps to row 1 col 22)")
+	// With the cursor at the end, Step 2 already leaves it in the right place, so
+	// redraw must NOT append a spurious cursor move. The old code emitted
+	// "\x1b[102C" — a single CUF that clamps at the margin and never reaches row 1
+	// col 22 — which jumped the cursor to the far right of the last row.
+	if strings.Contains(result, "\x1b[102C") {
+		t.Errorf("cursor-at-end must not emit the clamping CUF \\x1b[102C: %q", result)
 	}
-	// Must contain per-line clear (scrollback-safe)
+	if !strings.HasSuffix(result, long) {
+		t.Errorf("cursor-at-end redraw should end at the text (no trailing move), got tail %q", result[max(0, len(result)-12):])
+	}
+	// Must use per-line clear, never \x1b[J (which destroys scrollback).
 	if strings.Contains(result, "\x1b[J") {
 		t.Errorf("multi-row should not use \\x1b[J (destroys scrollback)")
 	}
 	if !strings.Contains(result, "\r\x1b[K") {
 		t.Errorf("multi-row redraw missing per-line clear: %q", result)
 	}
+	// (Exhaustive row/col cursor math is covered in editor_cursor_test.go.)
 }
 
 // ── Ctrl-K (kill to end of line) ──────────────────────────
