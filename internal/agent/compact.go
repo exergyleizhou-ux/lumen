@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"lumen/internal/provider"
 )
@@ -119,5 +120,14 @@ func truncateForCompact(s string, maxLen int) string {
 	if len(s) <= maxLen {
 		return s
 	}
-	return s[:maxLen-3] + "..."
+	cut := maxLen - 3
+	if cut < 0 {
+		cut = 0
+	}
+	// Snap back to a UTF-8 boundary so a multibyte (CJK) rune isn't split into
+	// invalid UTF-8 fed to the compaction model.
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
 }
