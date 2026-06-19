@@ -485,8 +485,7 @@ func (m *Model) renderChat(w, h int) string {
 			preview := ""
 			if out := strings.TrimSpace(e.Tool.Output); out != "" {
 				first := strings.SplitN(out, "\n", 2)[0]
-				if len(first) > 40 { first = first[:37] + "…" }
-				preview = dim.Render("  " + first)
+				preview = dim.Render("  " + trunc(first, 40))
 			}
 			step := ""
 			if e.Tool.Step > 0 { step = fmt.Sprintf("%2d. ", e.Tool.Step) }
