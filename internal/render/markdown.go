@@ -10,10 +10,15 @@ import (
 // delimiters) so arithmetic ("a * b") and shell globs ("*.go") are not
 // mistaken for emphasis — matching CommonMark's left/right-flanking rule.
 var (
-	reInlineCode  = regexp.MustCompile("`([^`]+)`")
-	reBoldStar    = regexp.MustCompile(`\*\*([^*\s]|[^*\s][^*]*?[^*\s])\*\*`)
-	reBoldUnder   = regexp.MustCompile(`__([^_]+)__`)
-	reItalicStar  = regexp.MustCompile(`\*([^*\s]|[^*\s][^*]*?[^*\s])\*`)
+	reInlineCode = regexp.MustCompile("`([^`]+)`")
+	reBoldStar   = regexp.MustCompile(`\*\*([^*\s]|[^*\s][^*]*?[^*\s])\*\*`)
+	reBoldUnder  = regexp.MustCompile(`__([^_]+)__`)
+	reItalicStar = regexp.MustCompile(`\*([^*\s]|[^*\s][^*]*?[^*\s])\*`)
+	// Single-underscore italic, guarded so it doesn't fire on snake_case: the
+	// delimiters must be flanked by a non-word char (start/space/punctuation),
+	// which Go regexp (no lookaround) captures in groups 1 and 3 and the
+	// replacement restores.
+	reItalicUnder = regexp.MustCompile(`(^|[^\p{L}\p{N}_])_([^_\s]|[^_\s][^_]*?[^_\s])_($|[^\p{L}\p{N}_])`)
 	reHeading     = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
 	reOrderedList = regexp.MustCompile(`^(\s*)(\d+)([.)])\s+(.*)$`)
 )
@@ -112,6 +117,7 @@ func inline(s string) string {
 	s = reInlineCode.ReplaceAllString(s, ansiCyan+"$1"+ansiReset)
 	s = reBoldStar.ReplaceAllString(s, ansiBold+"$1"+ansiReset)
 	s = reBoldUnder.ReplaceAllString(s, ansiBold+"$1"+ansiReset)
+	s = reItalicUnder.ReplaceAllString(s, "${1}"+ansiItalic+"${2}"+ansiReset+"${3}")
 	s = reItalicStar.ReplaceAllString(s, ansiItalic+"$1"+ansiReset)
 	return s
 }
