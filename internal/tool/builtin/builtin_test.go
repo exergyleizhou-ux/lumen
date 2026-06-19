@@ -46,9 +46,18 @@ func TestBashToolEmptyCommand(t *testing.T) {
 
 func TestBashToolExitCode(t *testing.T) {
 	bt := &BashTool{}
-	result, _ := bt.Execute(context.Background(), json.RawMessage(`{"command":"exit 1"}`))
-	if !strings.Contains(result, "exit code") {
-		t.Errorf("exit code should be in output, got %q", result)
+	// A non-zero exit must surface as a non-nil error so the agent marks the
+	// step failed (✗) instead of a misleading green ✓ — while the command output
+	// is still preserved so the model can see what went wrong and self-correct.
+	result, err := bt.Execute(context.Background(), json.RawMessage(`{"command":"echo boom; exit 7"}`))
+	if err == nil {
+		t.Fatal("non-zero exit should return a non-nil error, got nil")
+	}
+	if !strings.Contains(err.Error(), "7") {
+		t.Errorf("error should report the exit code 7, got %v", err)
+	}
+	if !strings.Contains(result, "boom") {
+		t.Errorf("command output should be preserved for the model, got %q", result)
 	}
 }
 
