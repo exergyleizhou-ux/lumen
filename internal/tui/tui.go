@@ -167,11 +167,7 @@ type Model struct {
 	// 0 = chat, 1 = plan, 2 = diff
 
 	// Input state (chat panel)
-	input         strings.Builder
-	cursorPos     int
-
-	// Scroll
-	chatScroll    int
+	input strings.Builder
 
 	// Quit
 	quitting bool
@@ -191,9 +187,8 @@ type Model struct {
 
 // ChatPanel holds chat entries.
 type ChatPanel struct {
-	entries     []ChatEntry
-	scrollPos   int
-	maxVisible  int
+	entries   []ChatEntry
+	scrollPos int
 }
 
 // PlanPanel holds current plan state.
@@ -238,7 +233,10 @@ func (m *Model) Send(msg any) {
 // ── Bubble Tea Interface ───────────────────────────────────
 
 func (m *Model) Init() tea.Cmd {
-	return listenMsgs(m.msgChan)
+	// Start the spinner tick alongside the message listener — without this the
+	// braille "thinking…" spinner never animated (the tick was self-sustaining
+	// once fired, but nothing fired it).
+	return tea.Batch(listenMsgs(m.msgChan), tickSpinner())
 }
 
 func listenMsgs(ch chan any) tea.Cmd {
@@ -505,6 +503,9 @@ func (m *Model) renderChat(w, h int) string {
 		default: // text
 			wrapped := wordWrap(e.Content, innerW-2)
 			for _, l := range strings.Split(wrapped, "\n") {
+				if len(lines) >= msgH {
+					break // one tall entry must not overflow the panel budget
+				}
 				lines = append(lines, "  "+l)
 			}
 		}
@@ -513,11 +514,10 @@ func (m *Model) renderChat(w, h int) string {
 	content := strings.Join(lines, "\n")
 	// Show input line at bottom when chat has focus
 	if m.focusPanel == 0 {
-		prompt := dim.Render("▸ " + m.input.String())
 		if m.input.Len() > 0 {
-			content = content + "\n" + prompt
+			content = content + "\n" + dim.Render("▸ "+m.input.String())
 		} else {
-			content = content + "\n" + prompt
+			content = content + "\n" + dim.Render("▸ type a message · Tab to switch panels")
 		}
 	} else {
 		content = content + "\n" + dim.Render("▸ ...")
