@@ -27,6 +27,8 @@ const (
 	keyCtrlK
 	keyEsc
 	keyMouse
+	keyPasteStart // ESC[200~ — terminal entered bracketed-paste
+	keyPasteEnd   // ESC[201~ — terminal left bracketed-paste
 )
 
 type keyEvent struct {
@@ -105,6 +107,24 @@ func decodeKey(b []byte) (keyEvent, int) {
 				return keyEvent{typ: keyHome}, 3
 			case 'F':
 				return keyEvent{typ: keyEnd}, 3
+			case '2':
+				// Bracketed paste: ESC[200~ (start) / ESC[201~ (end).
+				// ESC[2~ (Insert) is the only other CSI starting with '2'.
+				if len(b) >= 4 && b[3] == '~' {
+					return keyEvent{typ: keyUnknown}, 4 // ESC[2~ Insert — ignore
+				}
+				if len(b) < 6 {
+					return keyEvent{typ: keyUnknown}, 0 // incomplete marker — wait
+				}
+				if b[3] == '0' && b[5] == '~' {
+					switch b[4] {
+					case '0':
+						return keyEvent{typ: keyPasteStart}, 6
+					case '1':
+						return keyEvent{typ: keyPasteEnd}, 6
+					}
+				}
+				return keyEvent{typ: keyUnknown}, 3 // unrecognized CSI 2… — skip
 			case '3':
 				if len(b) >= 4 && b[3] == '~' {
 					return keyEvent{typ: keyDelete}, 4

@@ -72,8 +72,10 @@ type Editor struct {
 	out       io.Writer
 	buf       buffer
 	hist      history
-	lastRows  int // number of terminal rows the last redraw occupied
-	promptRow int // absolute terminal row where the prompt line starts (1-based)
+	lastRows  int    // number of terminal rows the last redraw occupied
+	promptRow int    // absolute terminal row where the prompt line starts (1-based)
+	pending   []byte // input bytes read but not yet consumed (carries across ReadLine calls)
+	pasting   bool   // true between ESC[200~ and ESC[201~ (bracketed paste)
 }
 
 // NewEditor creates an Editor with the given prompt, history file path, and
@@ -92,7 +94,21 @@ func (e *Editor) handle(ev keyEvent) action {
 		e.buf.insert(ev.r)
 		return actRedraw
 	case keyEnter:
+		if e.pasting {
+			// A newline INSIDE a bracketed paste is pasted content, not a submit.
+			// Flatten it to a space so a multi-line paste becomes one editable
+			// line the user submits with a single explicit Enter — instead of N
+			// lines that each auto-submit as their own agent turn.
+			e.buf.insert(' ')
+			return actRedraw
+		}
 		return actSubmit
+	case keyPasteStart:
+		e.pasting = true
+		return actNone
+	case keyPasteEnd:
+		e.pasting = false
+		return actRedraw
 	case keyBackspace:
 		e.buf.backspace()
 		return actRedraw
@@ -236,53 +252,89 @@ func (e *Editor) ReadLine() (string, error) {
 	}
 	defer term.Restore(fd, old)
 
+	// Enable bracketed-paste mode so the terminal wraps pasted text in
+	// ESC[200~ … ESC[201~. Without this a multi-line paste arrives as a stream
+	// of keystrokes whose embedded newlines each submit a separate line.
+	io.WriteString(e.out, "\x1b[?2004h")
+	defer io.WriteString(e.out, "\x1b[?2004l")
+
 	e.buf.clear()
+	e.pasting = false
 	e.hist.idx = len(e.hist.items)
 	e.redraw()
 
-	var pending []byte
-	readBuf := make([]byte, 64)
+	// e.pending carries unconsumed bytes across reads (and across ReadLine
+	// calls). Anything already read past a submitting newline — or the partial
+	// tail of a multibyte rune split by a read boundary — stays here instead of
+	// being dropped. Dropping a partial UTF-8 rune is what produced the leading
+	// "�" on every line of a pasted multi-line block.
+	readBuf := make([]byte, 4096) // pastes arrive in large chunks
 	for {
+		line, act, dirty := e.drain()
+		// Repaint at most once per read batch — a large paste touches the buffer
+		// many times but only the final state needs to be drawn.
+		if dirty {
+			e.redraw()
+		}
+		switch act {
+		case actSubmit:
+			io.WriteString(e.out, "\r\n")
+			if t := strings.TrimSpace(line); t != "" {
+				e.hist.add(t)
+				e.saveHistory(t)
+			}
+			return line, nil
+		case actCancel:
+			io.WriteString(e.out, "^C\r\n")
+			return "", nil
+		case actEOF:
+			io.WriteString(e.out, "\r\n")
+			return "", io.EOF
+		}
+		// actNone → e.pending holds only an incomplete sequence (or is empty):
+		// read more and retry.
 		n, err := e.in.Read(readBuf)
 		if err != nil {
 			return "", err
 		}
-		pending = append(pending, readBuf[:n]...)
-		for len(pending) > 0 {
-			// Bare ESC (no following CSI): if we got exactly 0x1b alone
-			// in this read, treat it as a standalone escape. CSI sequences
-			// come atomically from terminals so they'll never be split.
-			if len(pending) == 1 && pending[0] == 0x1b {
-				pending = nil
-				e.handle(keyEvent{typ: keyEsc})
-				e.redraw()
-				break
-			}
-			ev, consumed := decodeKey(pending)
-			if consumed == 0 {
-				break // incomplete sequence — read more
-			}
-			pending = pending[consumed:]
-			switch e.handle(ev) {
-			case actSubmit:
-				line := e.buf.string()
-				io.WriteString(e.out, "\r\n")
-				if t := strings.TrimSpace(line); t != "" {
-					e.hist.add(t)
-					e.saveHistory(t)
-				}
-				return line, nil
-			case actCancel:
-				io.WriteString(e.out, "^C\r\n")
-				return "", nil
-			case actEOF:
-				io.WriteString(e.out, "\r\n")
-				return "", io.EOF
-			default:
-				e.redraw()
-			}
+		e.pending = append(e.pending, readBuf[:n]...)
+	}
+}
+
+// drain consumes complete key events from e.pending, applying each to the
+// buffer/paste state. It stops at the first submit (Enter outside a paste),
+// cancel (Ctrl-C), or EOF (Ctrl-D on empty), returning that action; otherwise
+// it returns actNone, meaning e.pending is empty or holds only an incomplete
+// escape sequence or partial UTF-8 rune that the caller must complete with more
+// input. Leftover bytes always remain in e.pending. dirty reports whether the
+// visible buffer changed (so the caller can repaint once per batch). drain does
+// no I/O, so it is fully unit-testable.
+func (e *Editor) drain() (line string, act action, dirty bool) {
+	for len(e.pending) > 0 {
+		// Bare ESC (no following CSI): a lone 0x1b is a standalone Escape. Real
+		// CSI sequences arrive atomically, so they're never a single byte here.
+		if len(e.pending) == 1 && e.pending[0] == 0x1b {
+			e.pending = e.pending[:0]
+			e.handle(keyEvent{typ: keyEsc})
+			return "", actNone, true
+		}
+		ev, consumed := decodeKey(e.pending)
+		if consumed == 0 {
+			return "", actNone, dirty // incomplete — wait for more bytes
+		}
+		e.pending = e.pending[consumed:]
+		switch e.handle(ev) {
+		case actSubmit:
+			return e.buf.string(), actSubmit, true
+		case actCancel:
+			return "", actCancel, dirty
+		case actEOF:
+			return "", actEOF, dirty
+		default:
+			dirty = true
 		}
 	}
+	return "", actNone, dirty
 }
 
 func (e *Editor) readCooked() (string, error) {

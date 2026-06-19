@@ -323,16 +323,20 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 			continue
 		}
 		lastPrompt = text // save for /retry after interruption
+		costBefore := st.cost()
 		turnCtx, turnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
 		go func() { <-sigCh; turnCancel() }()
-		ctrl.Run(turnCtx, text)
+		err = ctrl.Run(turnCtx, text)
 		turnCancel(); signal.Stop(sigCh)
-		// Guard against completely silent turns
-		ti := st.tkIn.Load(); to := st.tkOut.Load()
-		if ti+to == 0 {
-			os.Stdout.WriteString("\n  ⚡ no response — try /model to switch\n")
+		// Guard against silent turns. A real completion always bills output
+		// tokens, so the (cumulative) cost strictly increases. If it didn't move
+		// and the agent surfaced no error, the model produced nothing — most
+		// often because the context grew too long. Tell the user how to recover
+		// instead of leaving a frozen "⏵ Thinking…" on screen.
+		if err == nil && st.cost() == costBefore {
+			os.Stdout.WriteString("\n  ⚡ no model response — the context may be too long. Try /undo to trim history, /model to switch provider, or restart the chat.\n")
 		}
 		drawFooter()
 		fmt.Print("\n")
