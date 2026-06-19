@@ -17,6 +17,7 @@ import (
 	"lumen/internal/hermes"
 	"lumen/internal/lineedit"
 	"lumen/internal/permission"
+	"lumen/internal/provider"
 	"lumen/internal/telemetry"
 	"lumen/internal/timeline"
 	"lumen/internal/tui"
@@ -50,6 +51,28 @@ func deepseekCost(promptTokens, cacheHitTokens, completionTokens int) float64 {
 	}
 	return float64(miss)*missRate + float64(cacheHitTokens)*hitRate + float64(completionTokens)*outRate
 }
+
+// usageCost returns the spend for a usage record using the active provider's
+// configured pricing when set, and the built-in DeepSeek default rate otherwise
+// (so a DeepSeek user with no [providers.pricing] block is unaffected, while any
+// other provider's cost can be made accurate via config).
+func usageCost(p *provider.Pricing, u *event.Usage) float64 {
+	if p != nil {
+		return (float64(u.CacheHitTokens)*p.CacheHit +
+			float64(u.CacheMissTokens)*p.Input +
+			float64(u.CompletionTokens)*p.Output) / 1e6
+	}
+	return deepseekCost(u.PromptTokens, u.CacheHitTokens, u.CompletionTokens)
+}
+
+// activePricing reports the active provider's configured rates, if any.
+func activePricing() *provider.Pricing {
+	if currentCtrl == nil {
+		return nil
+	}
+	return currentCtrl.Pricing()
+}
+
 var st = &liveStats{}
 var currentCtrl *control.Controller
 
@@ -150,7 +173,7 @@ func termSink() event.Sink {
 				// tokens with session-total cost across a multi-step turn.
 				st.tkIn.Add(int64(e.Usage.PromptTokens)); st.tkOut.Add(int64(e.Usage.CompletionTokens))
 				st.tkCache.Add(int64(e.Usage.CacheHitTokens))
-				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
+				st.addCost(usageCost(activePricing(), e.Usage))
 			}
 
 		case event.FilePreview:
@@ -735,7 +758,7 @@ func tuiSink(model *tui.Model) event.Sink {
 				st.tkIn.Add(int64(e.Usage.PromptTokens))
 				st.tkOut.Add(int64(e.Usage.CompletionTokens))
 				st.tkCache.Add(int64(e.Usage.CacheHitTokens))
-				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
+				st.addCost(usageCost(activePricing(), e.Usage))
 			}
 
 		case event.TurnDone:

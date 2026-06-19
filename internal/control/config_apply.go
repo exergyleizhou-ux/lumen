@@ -3,8 +3,24 @@ package control
 import (
 	"lumen/internal/agent"
 	"lumen/internal/config"
+	"lumen/internal/provider"
 	"lumen/internal/skill"
 )
+
+// pricingFromConfig maps an optional [providers.pricing] block to a
+// provider.Pricing, or nil when unset (the caller then falls back to the
+// built-in default rate). Keeps config decoupled from the provider package.
+func pricingFromConfig(pc *config.PricingConfig) *provider.Pricing {
+	if pc == nil {
+		return nil
+	}
+	return &provider.Pricing{
+		Input:    pc.Input,
+		Output:   pc.Output,
+		CacheHit: pc.CacheHit,
+		Currency: pc.Currency,
+	}
+}
 
 // agentOptionsFromConfig builds the config-derived agent options. Runtime-only
 // fields (Sink, Gate, Asker, MemoryPrompt) are filled in by the caller.

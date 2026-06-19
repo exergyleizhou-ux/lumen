@@ -9,6 +9,15 @@ model = "deepseek-chat"
 # committed inline. Set DEEPSEEK_API_KEY in .env or your shell. See .env.example.
 api_key_env = "DEEPSEEK_API_KEY"
 
+# Optional: per-1M-token rates so the cost readout is accurate for THIS provider.
+# Omit it and Lumen uses the built-in DeepSeek default. Add it under any provider
+# (e.g. OpenAI/Anthropic) to see real spend for that provider.
+# [providers.pricing]
+# input = 0.14      # cache-miss input, per 1M tokens
+# cache_hit = 0.014 # cached input, per 1M tokens
+# output = 0.28     # completion, per 1M tokens
+# currency = "USD"
+
 [agent]
 max_steps = 30
 temperature = 0.7

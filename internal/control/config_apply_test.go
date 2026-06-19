@@ -6,6 +6,19 @@ import (
 	"lumen/internal/config"
 )
 
+func TestPricingFromConfig(t *testing.T) {
+	if pricingFromConfig(nil) != nil {
+		t.Error("nil pricing config must map to nil (fall back to default rate)")
+	}
+	p := pricingFromConfig(&config.PricingConfig{Input: 0.14, Output: 0.28, CacheHit: 0.014, Currency: "USD"})
+	if p == nil {
+		t.Fatal("a configured pricing block must map to a Pricing")
+	}
+	if p.Input != 0.14 || p.Output != 0.28 || p.CacheHit != 0.014 || p.Currency != "USD" {
+		t.Errorf("pricing fields not mapped through: %+v", p)
+	}
+}
+
 // The compaction ratios are parsed from [agent] in lumen.toml and consumed by
 // the agent's autoCompact loop. They must reach agent.Options, not be silently
 // replaced by hardcoded defaults.

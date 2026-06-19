@@ -1,6 +1,32 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"lumen/internal/event"
+	"lumen/internal/provider"
+)
+
+// With a configured provider pricing block, cost uses those rates (not the
+// hardcoded DeepSeek default) so non-DeepSeek users see accurate spend.
+func TestUsageCostUsesConfiguredPricing(t *testing.T) {
+	p := &provider.Pricing{Input: 1.0, Output: 2.0, CacheHit: 0.5} // per 1M tokens
+	u := &event.Usage{CacheMissTokens: 1_000_000, CacheHitTokens: 1_000_000, CompletionTokens: 1_000_000}
+	// (1M*0.5 + 1M*1.0 + 1M*2.0) / 1e6 = 3.5
+	if got := usageCost(p, u); got != 3.5 {
+		t.Errorf("configured pricing: got %v want 3.5", got)
+	}
+}
+
+// With no pricing configured, fall back to the built-in DeepSeek rate (current
+// behavior — the default DeepSeek user is unaffected).
+func TestUsageCostFallsBackToDefault(t *testing.T) {
+	u := &event.Usage{PromptTokens: 1_000_000, CacheHitTokens: 0, CompletionTokens: 0}
+	// deepseekCost(1M, 0, 0) = 1M * 0.14/1e6 = 0.14
+	if got := usageCost(nil, u); got != 0.14 {
+		t.Errorf("default fallback: got %v want 0.14", got)
+	}
+}
 
 // Cache-hit input tokens are ~10x cheaper on DeepSeek, so a mostly-cached call
 // must cost much less than billing the whole prompt at the miss rate. The footer
