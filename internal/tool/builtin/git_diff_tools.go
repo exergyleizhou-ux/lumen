@@ -35,7 +35,7 @@ func (t *GitDiffTool) Execute(ctx context.Context, args json.RawMessage) (string
 	}
 	s := string(out)
 	if strings.TrimSpace(s) == "" { return "Working tree clean — no changes.", nil }
-	if len(s) > 8192 { s = s[:8192] + "\n… (truncated)" }
+	if len(s) > 8192 { s = cutRunes(s, 8192) + "\n… (truncated)" }
 	return s, nil
 }
 
