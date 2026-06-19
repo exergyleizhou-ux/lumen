@@ -3,6 +3,7 @@ package lineedit
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -112,6 +113,24 @@ func TestDecodeKeyControls(t *testing.T) {
 	}
 }
 
+func TestDecodeKeyBracketedPaste(t *testing.T) {
+	// ESC[200~ starts a paste, ESC[201~ ends it. Each is 6 bytes.
+	if ev, n := decodeKey([]byte("\x1b[200~")); ev.typ != keyPasteStart || n != 6 {
+		t.Fatalf("paste-start: got typ=%v n=%d", ev.typ, n)
+	}
+	if ev, n := decodeKey([]byte("\x1b[201~")); ev.typ != keyPasteEnd || n != 6 {
+		t.Fatalf("paste-end: got typ=%v n=%d", ev.typ, n)
+	}
+	// A marker split across a read boundary must NOT be misdecoded — wait for more.
+	if _, n := decodeKey([]byte("\x1b[20")); n != 0 {
+		t.Fatalf("partial paste marker should consume 0, got n=%d", n)
+	}
+	// The start marker must take priority over the generic CSI fallthrough.
+	if ev, n := decodeKey([]byte("\x1b[200~hello")); ev.typ != keyPasteStart || n != 6 {
+		t.Fatalf("paste-start with trailing bytes: got typ=%v n=%d", ev.typ, n)
+	}
+}
+
 // ── history ───────────────────────────────────────────────
 
 func TestHistoryNavigation(t *testing.T) {
@@ -172,6 +191,86 @@ func TestHandleTabCompletesCommand(t *testing.T) {
 	e.handle(keyEvent{typ: keyTab})
 	if e.buf.string() != "/exit " {
 		t.Fatalf("tab should complete /exi → '/exit ', got %q", e.buf.string())
+	}
+}
+
+func TestHandlePasteDoesNotSubmit(t *testing.T) {
+	e := newTestEditor(t)
+	// Enter the bracketed paste, then feed pasted content containing a newline.
+	if act := e.handle(keyEvent{typ: keyPasteStart}); act == actSubmit {
+		t.Fatal("paste-start must not submit")
+	}
+	for _, r := range "line1" {
+		e.handle(keyEvent{typ: keyRune, r: r})
+	}
+	// A newline WITHIN a paste is content, not a submit.
+	if act := e.handle(keyEvent{typ: keyEnter}); act == actSubmit {
+		t.Fatal("a newline inside a paste must NOT submit the line")
+	}
+	for _, r := range "line2" {
+		e.handle(keyEvent{typ: keyRune, r: r})
+	}
+	e.handle(keyEvent{typ: keyPasteEnd})
+	// The multi-line paste flattened into one editable line (newline → space).
+	if got := e.buf.string(); got != "line1 line2" {
+		t.Fatalf("paste should flatten to one line, got %q", got)
+	}
+	// A real Enter AFTER the paste submits the whole thing.
+	if act := e.handle(keyEvent{typ: keyEnter}); act != actSubmit {
+		t.Fatalf("Enter after paste should submit, got %v", act)
+	}
+}
+
+func TestDrainMultilineCJKPasteSplitRunes(t *testing.T) {
+	e := newTestEditor(t)
+	// Reproduce the real failure: a terminal delivers the ESC[200~…ESC[201~
+	// markers atomically but splits the pasted CJK content across read
+	// boundaries — including in the MIDDLE of a 3-byte rune. The old code
+	// discarded the partial-rune tail on submit, so the next read began
+	// mid-rune and decoded to U+FFFD ("�"), the reported 乱码.
+	start := []byte("\x1b[200~")
+	end := []byte("\x1b[201~")
+	content := []byte("你好\n世界") // 你=3B 好=3B \n=1B 世=3B 界=3B
+	// Chunks chosen so a read boundary lands inside 你 (after 2 of its 3 bytes)
+	// and inside 世 (after 1 byte). Markers stay whole; no chunk leaves a lone ESC.
+	chunks := [][]byte{
+		append(append([]byte{}, start...), content[0:2]...), // ESC[200~ + 你[:2]
+		content[2:8],                            // 你[2:] 好 \n 世[:1]
+		append(append([]byte{}, content[8:]...), append(end, '\r')...), // 世[1:] 界 ESC[201~ \r
+	}
+	var submitted string
+	var submits int
+	for _, ch := range chunks {
+		e.pending = append(e.pending, ch...)
+		if line, act, _ := e.drain(); act == actSubmit {
+			submitted = line
+			submits++
+		}
+	}
+	if submits != 1 {
+		t.Fatalf("a single multi-line paste must submit exactly once, got %d submits", submits)
+	}
+	if submitted != "你好 世界" {
+		t.Fatalf("paste corrupted: got %q want %q", submitted, "你好 世界")
+	}
+	if strings.ContainsRune(submitted, '�') {
+		t.Fatalf("paste contains the replacement char (the reported 乱码): %q", submitted)
+	}
+}
+
+func TestDrainPreservesTypeahead(t *testing.T) {
+	// Two complete lines arriving in one batch: drain returns the first and
+	// keeps the rest in e.pending (previously the tail was discarded).
+	e := newTestEditor(t)
+	e.pending = []byte("one\rtwo\r")
+	line, act, _ := e.drain()
+	if act != actSubmit || line != "one" {
+		t.Fatalf("first drain: got act=%v line=%q", act, line)
+	}
+	e.buf.clear()
+	line, act, _ = e.drain()
+	if act != actSubmit || line != "two" {
+		t.Fatalf("second drain must recover the buffered line, got act=%v line=%q", act, line)
 	}
 }
 
