@@ -59,8 +59,8 @@ func main() {
 		runStats()
 	case "reliability":
 		runReliability()
-	case "version":
-		fmt.Println("Lumen v0.1.0")
+	case "version", "--version", "-v":
+		fmt.Println(versionString())
 	case "oasis":
 		runOasis(os.Args[2:])
 	case "serve":

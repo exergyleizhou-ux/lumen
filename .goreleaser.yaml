@@ -1,0 +1,55 @@
+# goreleaser config for Lumen — cuts cross-platform release binaries on a `v*`
+# tag. Validate locally with `goreleaser check`; CI runs `goreleaser release`.
+version: 2
+
+project_name: lumen
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: lumen
+    main: ./cmd/lumen
+    binary: lumen
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    # Version/commit/date are injected here; the source defaults are dev values.
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .ShortCommit }}
+      - -X main.date={{ .Date }}
+
+archives:
+  - id: lumen
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  draft: false
+  prerelease: auto

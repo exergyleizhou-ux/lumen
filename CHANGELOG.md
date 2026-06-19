@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased — experience + error-correction polish
+
+Deep-polish pass over rendering and the error-correction loop, each fix landed as
+a single-concern PR with a failing test first (TDD) and verified on a real
+`lumen run`. Plus the first release pipeline.
+
+### Experience (pixel-level)
+- **render/markdown** — headings keep their style after an inline `code`/`**bold**`
+  span; numbered lists are styled like bullets; spaced asterisks (`a * b`) no
+  longer false-italicize (CommonMark flanking).
+- **render/highlight** — apostrophes and Rust lifetimes (`'a`) no longer swallow
+  the rest of a line as a string (new per-language `CharQuote`); the number lexer
+  stops at letters (`10abc` → `10`).
+- **render/diff** — a truncated diff now says how many lines it hid.
+- **cmd/lumen sink** — parallel read-only tool batches no longer orphan their `✓`
+  onto bare lines; the verify-after-edit result (`✓ verified` / `✗ …`) is shown in
+  `lumen run` instead of being dropped.
+
+### Error-correction
+- **tool/bash** — a non-zero exit is now an error (red `✗ exit code N`) instead of
+  a misleading green `✓`, while the command output still reaches the model.
+- **control** — `[agent]` compaction ratios and `[skills] max_depth` from
+  `lumen.toml` are actually applied (were parsed then ignored).
+
+### Release
+- `LICENSE` (MIT), `VERSION`, `.goreleaser.yaml`, and a tag-driven Release
+  workflow; `lumen version` reports the injected version/commit/date.
+
 ## v1.0.0 (2026-06-17) — SpaceX Production Grade
 
 ### Core
