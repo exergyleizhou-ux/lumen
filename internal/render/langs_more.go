@@ -5,6 +5,7 @@ func init() {
 		Line:       "//",
 		BlockOpen:  "/*",
 		BlockClose: "*/",
+		CharQuote:  true,
 		Keywords: set(
 			"fn", "let", "mut", "const", "struct", "enum", "impl", "trait",
 			"pub", "use", "mod", "match", "if", "else", "for", "while", "loop",
@@ -18,6 +19,7 @@ func init() {
 		Line:       "//",
 		BlockOpen:  "/*",
 		BlockClose: "*/",
+		CharQuote:  true,
 		Keywords: set(
 			"class", "interface", "public", "private", "protected", "static",
 			"final", "void", "int", "long", "double", "boolean", "new", "return",
