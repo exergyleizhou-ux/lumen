@@ -86,6 +86,25 @@ func NewEditor(prompt, histPath, root string) *Editor {
 	return e
 }
 
+// EnableBracketedPaste turns on terminal bracketed-paste reporting for the whole
+// session. Call once when the REPL starts (and DisableBracketedPaste on exit).
+// Enabling it session-wide — rather than per ReadLine — means a paste that
+// arrives while a turn is running is still wrapped in ESC[200~ … ESC[201~ and
+// handled as one block on the next prompt. No-op when stdin is not a terminal.
+func (e *Editor) EnableBracketedPaste() {
+	if term.IsTerminal(int(e.in.Fd())) {
+		io.WriteString(e.out, "\x1b[?2004h")
+	}
+}
+
+// DisableBracketedPaste turns bracketed-paste reporting back off so the shell
+// the user returns to doesn't inherit it. No-op when stdin is not a terminal.
+func (e *Editor) DisableBracketedPaste() {
+	if term.IsTerminal(int(e.in.Fd())) {
+		io.WriteString(e.out, "\x1b[?2004l")
+	}
+}
+
 // handle applies one key event to the editor state and returns the resulting
 // action. It performs no I/O, so it is fully unit-testable.
 func (e *Editor) handle(ev keyEvent) action {
@@ -252,11 +271,11 @@ func (e *Editor) ReadLine() (string, error) {
 	}
 	defer term.Restore(fd, old)
 
-	// Enable bracketed-paste mode so the terminal wraps pasted text in
-	// ESC[200~ … ESC[201~. Without this a multi-line paste arrives as a stream
-	// of keystrokes whose embedded newlines each submit a separate line.
-	io.WriteString(e.out, "\x1b[?2004h")
-	defer io.WriteString(e.out, "\x1b[?2004l")
+	// Bracketed-paste mode (ESC[200~ … ESC[201~) is enabled once for the whole
+	// REPL via EnableBracketedPaste, NOT per ReadLine. Toggling it per call left
+	// a window — between turns, while a turn was running — where a paste was not
+	// wrapped and resumed submitting line-by-line. drain() handles the markers
+	// whenever they arrive.
 
 	e.buf.clear()
 	e.pasting = false
