@@ -48,7 +48,18 @@ func NewRecorder(path string) (*Recorder, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Recorder{file: f, pending: map[string]string{}}, nil
+	rec := &Recorder{file: f, pending: map[string]string{}}
+	// Seed the turn counter from any existing entries so a resumed session
+	// continues numbering instead of restarting at 1 (which would collide with
+	// the turn 1 already in the file → duplicate "Turn 1" headers on replay).
+	if existing, err := LoadTimeline(path); err == nil {
+		for _, e := range existing {
+			if e.Turn > rec.turn {
+				rec.turn = e.Turn
+			}
+		}
+	}
+	return rec, nil
 }
 
 // NewTurn advances the turn counter. Call at the start of each user turn.
