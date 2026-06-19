@@ -41,6 +41,7 @@ IMPORTANT: If asked what model you are, say "I'm Lumen running on the model show
 const (
 	maxToolOutputBytes      = 32 * 1024
 	stormBreakThreshold     = 3
+	repeatSuccessThreshold  = 3
 	maxStreamRecoveries     = 1
 	maxEmptyFinalBlocks     = 1 // one nudge, then tell user
 	maxFinalReadinessBlocks = 3
@@ -703,8 +704,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		return toolOutcome{output: body, errMsg: firstLine(err.Error()), truncated: truncMsg != ""}
 	}
 
-	a.recordRepeatSuccess(call, t)
 	body, truncMsg := truncateToolOutput(result)
+	if n := a.recordRepeatSuccess(call, t); n >= repeatSuccessThreshold {
+		body += fmt.Sprintf("\n\n[loop guard] you have written identical content via %s %d times — "+
+			"the file is already in that state. Stop repeating this write; move on or change approach.", call.Name, n)
+	}
 	return toolOutcome{
 		output:      body,
 		truncated:   truncMsg != "",
@@ -783,7 +787,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	a.Sink().Emit(event.Event{
 		Kind:      event.VerifyResult,
 		Level:     event.LevelWarn,
-		Text:      fmt.Sprintf("✗ %s (%d diagnostics)", failName, len(res.Diagnostics)),
+		Text:      verifyFailText(failName, len(res.Diagnostics)),
 		Timestamp: time.Now(),
 	})
 
@@ -919,18 +923,32 @@ func batchStormSignature(calls []provider.ToolCall, outcomes []toolOutcome) (str
 
 // ── Repeat success guard ───────────────────────────────────
 
-func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) {
+// recordRepeatSuccess counts identical successful write-like calls and returns
+// the running count, so the loop guard can warn when the model rewrites the same
+// content over and over (the count was previously recorded but never read).
+func (a *Agent) recordRepeatSuccess(call provider.ToolCall, t tool.Tool) int {
 	if t.ReadOnly() {
-		return
+		return 0
 	}
 	sig := repeatSuccessSignature(call, t)
 	if sig == "" {
-		return
+		return 0
 	}
 	if a.repeatSuccessCounts == nil {
 		a.repeatSuccessCounts = make(map[string]int)
 	}
 	a.repeatSuccessCounts[sig]++
+	return a.repeatSuccessCounts[sig]
+}
+
+// verifyFailText renders a verify-failure label. With no structured diagnostics
+// (e.g. a pytest/jest failure the parser doesn't structure) the count is
+// meaningless, so report "✗ <step> failed" instead of "✗ <step> (0 diagnostics)".
+func verifyFailText(name string, diagCount int) string {
+	if diagCount == 0 {
+		return fmt.Sprintf("✗ %s failed", name)
+	}
+	return fmt.Sprintf("✗ %s (%d diagnostics)", name, diagCount)
 }
 
 func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) string {
