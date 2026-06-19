@@ -327,6 +327,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.streamRecoveryCount = 0
 	a.repairCycle = 0
 	a.verifyExhausted = false
+	// The auto-compaction circuit breaker is a per-turn guard (its warning says
+	// "this turn"). Reset it so a long, healthy multi-turn session that compacts
+	// a few times over its life doesn't permanently disable compaction.
+	a.consecutiveCompacts = 0
+	a.compactStuck = false
+	a.softCompactNoticed = false
 	a.Sink().Emit(event.Event{Kind: event.TurnStarted, Timestamp: time.Now()})
 
 	// Ensure the session starts with a system prompt (cache-stable prefix).
@@ -397,12 +403,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 
 		// 4. Collect text and tool calls
 		var (
-			textBuf     strings.Builder
-			toolCalls   []provider.ToolCall
-			usage       *provider.Usage
-			reasonBuf   strings.Builder
-			chunkCount  int
-			recovered   bool
+			textBuf    strings.Builder
+			toolCalls  []provider.ToolCall
+			usage      *provider.Usage
+			reasonBuf  strings.Builder
+			chunkCount int
+			recovered  bool
 		)
 
 		for chunk := range ch {
@@ -993,6 +999,10 @@ func (a *Agent) autoCompact(turnCtx context.Context) {
 				"the opening and most recent messages are preserved verbatim. "+
 				"If you need omitted detail, re-read the relevant files.]",
 				estimatedTokens, hardLimit))
+		// Count this attempt too, so the circuit breaker also protects the
+		// no-compact-provider path (a turn whose preserved head+tail alone
+		// exceed the limit can't shrink — stop retrying every step).
+		a.consecutiveCompacts++
 	}
 	if estimatedTokens > softLimit && !a.softCompactNoticed {
 		a.softCompactNoticed = true
@@ -1133,8 +1143,14 @@ func renderFileDiff(ch diff.Change) string {
 }
 
 func truncStr(s string, n int) string {
-	if n <= 0 { return "" }
-	if len(s) <= n { return s }
-	if n <= 3 { return s[:n] }
+	if n <= 0 {
+		return ""
+	}
+	if len(s) <= n {
+		return s
+	}
+	if n <= 3 {
+		return s[:n]
+	}
 	return s[:n-1] + "…"
 }
