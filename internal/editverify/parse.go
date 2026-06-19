@@ -19,6 +19,13 @@ var testFail = regexp.MustCompile(`^--- FAIL:\s+(\S+)`)
 // panicLine matches "panic: " at the start of a line.
 var panicLine = regexp.MustCompile(`^panic:\s*(.+)`)
 
+// tscDiag matches TypeScript compiler diagnostics: file.ts(LINE,COL): message.
+// Group 1=file, 2=line, 3=col, 4=msg. tsc uses a paren format the Go-style
+// file:line:col matcher misses. Example:
+//
+//	src/app.ts(3,5): error TS2304: Cannot find name 'foo'.
+var tscDiag = regexp.MustCompile(`^(\S+\.[jt]sx?)\((\d+),(\d+)\):\s*(.+)$`)
+
 // Parse extracts structured Diagnostics from the raw output of one Step.
 //
 // Rules by step.Name:
@@ -65,6 +72,18 @@ func Parse(step Step, output string) []Diagnostic {
 			diags = append(diags, Diagnostic{
 				Msg: "panic: " + m[1],
 				Sev: "error",
+			})
+			continue
+		}
+
+		// tsc: file.ts(LINE,COL): message
+		if m := tscDiag.FindStringSubmatch(line); m != nil {
+			diags = append(diags, Diagnostic{
+				File: m[1],
+				Line: parseInt(m[2]),
+				Col:  parseInt(m[3]),
+				Msg:  strings.TrimSpace(m[4]),
+				Sev:  sev,
 			})
 			continue
 		}

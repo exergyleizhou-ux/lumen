@@ -9,9 +9,11 @@ import (
 //
 // Language detection is automatic based on file extensions:
 //   - .go files → go build + go vet + (optional) go test
-//   - .py files → ruff check + pytest (if ast/ruff present in project)
-//   - .js/.ts files → tsc --noEmit + jest (if package.json present)
-//   - Mixed files → build/vet/test steps for each detected language
+//   - .py files → ruff check + pytest (only with a sibling <name>_test.py)
+//   - .js/.ts files → tsc --noEmit (local tsc + tsconfig) + jest (local jest)
+//   - Mixed files → steps for each detected language
+//
+// Uninstalled tools are skipped at run time, never reported as a failure.
 //
 // cfg.Command override takes priority over all auto-detection.
 func Detect(root string, changed []string, cfg Config) []Step {
@@ -35,9 +37,17 @@ func Detect(root string, changed []string, cfg Config) []Step {
 		}
 	}
 
-	// If nothing detected, fall back to Go (project default)
+	// If a change touched no recognized source file, fall back to Go's build/vet
+	// ONLY when root is actually a Go module. Running `go build` in a non-Go
+	// project (e.g. a pure Python/JS repo) would be a guaranteed spurious failure
+	// that triggers a bogus self-repair cycle, so otherwise we run nothing.
 	if len(steps) == 0 {
-		steps = goSteps(root, changed, cfg)
+		for _, l := range projectLanguages(root) {
+			if l == "go" {
+				steps = goSteps(root, changed, cfg)
+				break
+			}
+		}
 	}
 
 	return steps
@@ -56,9 +66,15 @@ func detectLanguages(changed []string) []string {
 		}
 	}
 	var langs []string
-	if hasGo { langs = append(langs, "go") }
-	if hasPy { langs = append(langs, "python") }
-	if hasJS { langs = append(langs, "js") }
+	if hasGo {
+		langs = append(langs, "go")
+	}
+	if hasPy {
+		langs = append(langs, "python")
+	}
+	if hasJS {
+		langs = append(langs, "js")
+	}
 	return langs
 }
 
@@ -93,12 +109,19 @@ func pythonSteps(root string, changed []string, cfg Config) []Step {
 		if cfg.Scope == "all" {
 			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q"}})
 		} else {
-			// Run pytest only on the specific test file
+			// Schedule pytest on the test file(s) for each changed .py, covering
+			// both conventions (test_<name>.py and <name>_test.py) and a changed
+			// file that is itself a test. Only existing files are scheduled —
+			// `pytest <missing>` errors "file not found" and would false-fail.
+			seen := map[string]bool{}
 			for _, f := range changed {
-				if strings.HasSuffix(f, ".py") {
-					testFile := strings.TrimSuffix(f, ".py") + "_test.py"
-					if _, err := filepath.Glob(filepath.Join(root, testFile)); err == nil {
-						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", testFile}})
+				if !strings.HasSuffix(f, ".py") {
+					continue
+				}
+				for _, tf := range pytestTargets(root, f) {
+					if !seen[tf] {
+						seen[tf] = true
+						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", tf}})
 					}
 				}
 			}
@@ -107,17 +130,50 @@ func pythonSteps(root string, changed []string, cfg Config) []Step {
 	return steps
 }
 
+// pytestTargets returns the existing pytest target files for a changed .py file:
+// the file itself when it is a test (test_*.py or *_test.py), otherwise its
+// sibling tests under both common conventions (test_<name>.py, <name>_test.py).
+func pytestTargets(root, f string) []string {
+	base := filepath.Base(f)
+	if strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") {
+		if fileExists(filepath.Join(root, f)) {
+			return []string{f}
+		}
+		return nil
+	}
+	dir := filepath.Dir(f)
+	name := strings.TrimSuffix(base, ".py")
+	var out []string
+	for _, cand := range []string{
+		filepath.Join(dir, "test_"+name+".py"),
+		filepath.Join(dir, name+"_test.py"),
+	} {
+		if fileExists(filepath.Join(root, cand)) {
+			out = append(out, cand)
+		}
+	}
+	return out
+}
+
 func jsSteps(root string, changed []string, cfg Config) []Step {
-	steps := []Step{
-		{Name: "typecheck", Dir: root, Args: []string{"npx", "tsc", "--noEmit"}},
+	var steps []Step
+	// Typecheck only when TypeScript is installed locally AND a tsconfig.json
+	// exists. Scheduling `npx tsc` unconditionally would auto-download tsc from
+	// the network (or fail in a plain-JS repo with no tsconfig) — a false verify
+	// failure. Run the resolved binary, never npx.
+	if tsc := nodeBin(root, "tsc"); tsc != "" && fileExists(filepath.Join(root, "tsconfig.json")) {
+		steps = append(steps, Step{Name: "typecheck", Dir: root, Args: []string{tsc, "--noEmit"}})
 	}
 	if cfg.RunTests && len(changed) > 0 {
-		if cfg.Scope == "all" {
-			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests"}})
-		} else {
-			for _, f := range changed {
-				if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
-					steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"npx", "jest", "--passWithNoTests", f}})
+		// Run jest only when it is installed locally (resolved binary, not npx).
+		if jest := nodeBin(root, "jest"); jest != "" {
+			if cfg.Scope == "all" {
+				steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests"}})
+			} else {
+				for _, f := range changed {
+					if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
+						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests", f}})
+					}
 				}
 			}
 		}

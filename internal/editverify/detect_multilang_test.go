@@ -55,30 +55,15 @@ func TestDetect_mixedLanguages(t *testing.T) {
 	}
 }
 
-func TestDetect_jsFile(t *testing.T) {
-	cfg := DefaultConfig()
-	changed := []string{"src/app.ts"}
-	steps := Detect("/project", changed, cfg)
-
-	foundTsc := false
-	for _, s := range steps {
-		if s.Name == "typecheck" && s.Args[0] == "npx" && s.Args[1] == "tsc" {
-			foundTsc = true
-		}
-	}
-	if !foundTsc {
-		t.Errorf("expected npx tsc --noEmit step for .ts file, got: %v", stepNames(steps))
-	}
-}
-
 func TestDetect_onlyNonCodeFiles(t *testing.T) {
 	cfg := DefaultConfig()
 	changed := []string{"README.md", "lumen.toml"}
+	// Root "/project" is not a Go module (no go.mod on disk), so a non-code-only
+	// change must NOT fall back to `go build` — that would be a spurious failure.
 	steps := Detect("/project", changed, cfg)
 
-	// Falls back to Go steps (default)
-	if len(steps) < 2 {
-		t.Fatalf("expected go build+vet as fallback, got %d steps", len(steps))
+	if len(steps) != 0 {
+		t.Fatalf("non-Go root + non-code change should yield no steps, got %v", stepNames(steps))
 	}
 }
 
