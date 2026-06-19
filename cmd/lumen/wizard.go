@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/permission"
 )
@@ -14,7 +15,39 @@ import (
 // runWizard — Codex/Claude Code style onboarding.
 // One open-ended starter, then dynamic follow-ups.
 // The AI infers most details; user only fills knowledge gaps.
+// scaffoldDefaultConfig writes a starter lumen.toml (DeepSeek preset, API key via
+// env) at path, so a fresh install with no config isn't a dead end.
+func scaffoldDefaultConfig(path string) error {
+	const tmpl = `default_model = "deepseek-chat"
+
+[[providers]]
+name = "deepseek"
+kind = "openai"
+base_url = "https://api.deepseek.com/v1"
+model = "deepseek-chat"
+# API key is read from the environment (or .env). Set DEEPSEEK_API_KEY.
+api_key_env = "DEEPSEEK_API_KEY"
+
+[agent]
+max_steps = 30
+temperature = 0.7
+`
+	return os.WriteFile(path, []byte(tmpl), 0o644)
+}
+
 func runWizard(ctrl *control.Controller) error {
+	// Fresh install: scaffold a starter config instead of dead-ending on
+	// "no providers configured" inside Configure.
+	if config.FindConfig() == "" {
+		if err := scaffoldDefaultConfig("./lumen.toml"); err != nil {
+			return fmt.Errorf("could not create lumen.toml: %w", err)
+		}
+		fmt.Printf("\n  %s\n", fg(G, "✓ created lumen.toml (DeepSeek)"))
+		if os.Getenv("DEEPSEEK_API_KEY") == "" {
+			fmt.Printf("  %s\n", fg(D, "Set DEEPSEEK_API_KEY (export it or add it to .env), then run 'lumen' again."))
+			return nil
+		}
+	}
 	if err := ctrl.Configure(termSink(), nil, ""); err != nil {
 		return err
 	}
