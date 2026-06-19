@@ -174,7 +174,7 @@ func getMCPClient(key string) *mcplife.Client {
 
 func truncDesc(s string, n int) string {
 	if len(s) <= n { return s }
-	return s[:n-3] + "..."
+	return cutRunes(s, n-3) + "..."
 }
 
 func descOr(desc, fallback string) string {

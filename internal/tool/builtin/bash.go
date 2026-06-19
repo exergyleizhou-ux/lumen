@@ -65,7 +65,7 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 		label := p.Command
 		if len(label) > 60 {
-			label = label[:57] + "..."
+			label = cutRunes(label, 57) + "..."
 		}
 		job := jm.Start("bash", label, func(bgCtx context.Context) (string, error) {
 			cmd := exec.CommandContext(bgCtx, "sh", "-c", p.Command)

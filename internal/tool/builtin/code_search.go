@@ -118,7 +118,7 @@ func (t *CodeSearchTool) Execute(ctx context.Context, args json.RawMessage) (str
 		// Truncate snippet to 300 chars
 		snip := r.Snippet
 		if len(snip) > 300 {
-			snip = snip[:297] + "..."
+			snip = cutRunes(snip, 297) + "..."
 		}
 		// Strip common project prefix for cleaner display
 		path := r.Path
