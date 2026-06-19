@@ -310,6 +310,13 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: err}}
 		return
 	}
+	// Flush a tool call still pending when the stream ends without a [DONE]
+	// sentinel or a finish_reason chunk (some servers/proxies close the stream
+	// abruptly) — otherwise the finalized call + its arguments are dropped.
+	if toolCallBuf != nil && toolCallBuf.name != "" {
+		ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: toolCallBuf.finalize()}
+		toolCallBuf = nil
+	}
 	ch <- provider.Chunk{Type: provider.ChunkDone}
 }
 
