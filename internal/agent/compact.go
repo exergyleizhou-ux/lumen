@@ -38,7 +38,7 @@ func (a *Agent) CompactWithModel(ctx context.Context, compactProv provider.Provi
 			{Role: provider.RoleUser, Content: prompt},
 		},
 		Temperature: 0,
-		MaxTokens:   min(keepFirst*200, 4096),
+		MaxTokens:   compactSummaryBudget(len(prompt)),
 	})
 	if err != nil {
 		return fmt.Errorf("compact model: %w", err)
@@ -113,6 +113,22 @@ func buildCompactPrompt(messages []provider.Message) string {
 		}
 	}
 	return sb.String()
+}
+
+// compactSummaryBudget sizes the model-compaction summary to the content being
+// compressed (~1 summary token per ~8 prompt tokens) with a sane floor/ceiling.
+// The old min(keepFirst*200, 4096) gave only 600 tokens for the default
+// keepFirst=3, truncating summaries of long sessions. Stub — see TDD below.
+func compactSummaryBudget(promptChars int) int {
+	const floor, ceil = 1024, 4096
+	est := promptChars / 3 / 8 // ≈ (chars→tokens)/8 compression
+	if est < floor {
+		return floor
+	}
+	if est > ceil {
+		return ceil
+	}
+	return est
 }
 
 func truncateForCompact(s string, maxLen int) string {

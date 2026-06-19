@@ -133,7 +133,6 @@ type Agent struct {
 	contextWindow       int
 	softCompactRatio    float64
 	compactRatio        float64
-	compactForceRatio   float64
 	recentKeep          int
 	softCompactNoticed  bool
 	compactStuck        bool
@@ -164,7 +163,6 @@ type Options struct {
 	ContextWindow     int
 	SoftCompactRatio  float64
 	CompactRatio      float64
-	CompactForceRatio float64
 	RecentKeep        int
 	Sink              event.Sink
 	Gate              Gate
@@ -186,9 +184,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = 0.8
 	}
-	if opts.CompactForceRatio <= 0 {
-		opts.CompactForceRatio = 1.0
-	}
 	a := &Agent{
 		prov:              prov,
 		tools:             tools,
@@ -202,7 +197,6 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		contextWindow:     opts.ContextWindow,
 		softCompactRatio:  opts.SoftCompactRatio,
 		compactRatio:      opts.CompactRatio,
-		compactForceRatio: opts.CompactForceRatio,
 		recentKeep:        opts.RecentKeep,
 		cache:             newCacheTracker(),
 	}

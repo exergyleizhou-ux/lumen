@@ -43,12 +43,11 @@ type CoordinatorConfig struct {
 
 // AgentConfig tunes the agent loop.
 type AgentConfig struct {
-	MaxSteps          int     `toml:"max_steps"`
-	Temperature       float64 `toml:"temperature"`
-	ContextWindow     int     `toml:"context_window"`
-	SoftCompactRatio  float64 `toml:"soft_compact_ratio"`
-	CompactRatio      float64 `toml:"compact_ratio"`
-	CompactForceRatio float64 `toml:"compact_force_ratio"`
+	MaxSteps         int     `toml:"max_steps"`
+	Temperature      float64 `toml:"temperature"`
+	ContextWindow    int     `toml:"context_window"`
+	SoftCompactRatio float64 `toml:"soft_compact_ratio"`
+	CompactRatio     float64 `toml:"compact_ratio"`
 }
 
 // PermissionsConfig controls the tool-call permission gate.
@@ -181,12 +180,11 @@ func defaults() *File {
 	return &File{
 		DefaultModel: "deepseek-chat",
 		Agent: AgentConfig{
-			MaxSteps:          50,
-			Temperature:       0.0,
-			ContextWindow:     128000,
-			SoftCompactRatio:  0.5,
-			CompactRatio:      0.8,
-			CompactForceRatio: 1.0,
+			MaxSteps:         50,
+			Temperature:      0.0,
+			ContextWindow:    128000,
+			SoftCompactRatio: 0.5,
+			CompactRatio:     0.8,
 		},
 		Permissions: PermissionsConfig{Mode: "default"},
 		Skills:      SkillsConfig{MaxDepth: 3},
