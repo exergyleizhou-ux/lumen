@@ -3,6 +3,7 @@ package builtin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -91,7 +92,15 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	}
 
 	if err != nil {
-		return fmt.Sprintf("%s\n\nexit code: %v", string(out), err), nil
+		// Preserve the command output as the result so the model can see what
+		// failed and self-correct, but return a non-nil error so the step is
+		// marked failed (✗) rather than rendering a misleading green ✓.
+		text := strings.TrimRight(string(out), "\n")
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return text, fmt.Errorf("exit code %d", ee.ExitCode())
+		}
+		return text, err
 	}
 	return strings.TrimRight(string(out), "\n"), nil
 }
