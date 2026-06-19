@@ -145,8 +145,11 @@ func termSink() event.Sink {
 				tel.Record(telemetry.EventModelCall, map[string]any{
 					"tokens_in": e.Usage.PromptTokens, "tokens_out": e.Usage.CompletionTokens, "total": e.Usage.TotalTokens,
 				})
-				st.tkIn.Store(int64(e.Usage.PromptTokens)); st.tkOut.Store(int64(e.Usage.CompletionTokens))
-				st.tkCache.Store(int64(e.Usage.CacheHitTokens))
+				// Accumulate (not Store) so the token counts share the cumulative
+				// basis of the cost below — otherwise the footer mixed last-call
+				// tokens with session-total cost across a multi-step turn.
+				st.tkIn.Add(int64(e.Usage.PromptTokens)); st.tkOut.Add(int64(e.Usage.CompletionTokens))
+				st.tkCache.Add(int64(e.Usage.CacheHitTokens))
 				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
 			}
 
@@ -728,9 +731,10 @@ func tuiSink(model *tui.Model) event.Sink {
 
 		case event.UsageKind:
 			if e.Usage != nil {
-				st.tkIn.Store(int64(e.Usage.PromptTokens))
-				st.tkOut.Store(int64(e.Usage.CompletionTokens))
-				st.tkCache.Store(int64(e.Usage.CacheHitTokens))
+				// Accumulate to share the cumulative basis of the cost (see termSink).
+				st.tkIn.Add(int64(e.Usage.PromptTokens))
+				st.tkOut.Add(int64(e.Usage.CompletionTokens))
+				st.tkCache.Add(int64(e.Usage.CacheHitTokens))
 				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
 			}
 
