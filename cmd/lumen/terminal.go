@@ -660,6 +660,7 @@ func saveLastSession(dir, filename string) {
 func tuiSink(model *tui.Model) event.Sink {
 	textBuf := strings.Builder{}
 	step := int64(0)
+	stepByID := map[string]int{} // tool call ID → its dispatch step (parallel-safe)
 
 	return event.FuncSink(func(e event.Event) {
 		switch e.Kind {
@@ -676,6 +677,10 @@ func tuiSink(model *tui.Model) event.Sink {
 			if e.Level == event.LevelWarn || e.Level == event.LevelErr {
 				vs = "fail"
 			}
+			// A timeout is inconclusive, not a failure — show it neutrally.
+			if strings.HasPrefix(e.Text, "verify timed out") {
+				vs = "skip"
+			}
 			model.Send(tui.VerifyMsg{State: vs, Detail: e.Text})
 
 		case event.Text:
@@ -683,6 +688,7 @@ func tuiSink(model *tui.Model) event.Sink {
 
 		case event.ToolDispatch:
 			step++
+			stepByID[e.Tool.ID] = int(step)
 			st := "running"
 			if e.Tool.ReadOnly {
 				st = "done"
@@ -705,6 +711,10 @@ func tuiSink(model *tui.Model) event.Sink {
 			if e.Tool.Blocked {
 				status = "blocked"
 			}
+			// Use THIS tool's dispatch step (parallel batches share the counter),
+			// so the result coalesces onto its own row, not the latest dispatch's.
+			s := stepByID[e.Tool.ID]
+			delete(stepByID, e.Tool.ID)
 			model.Send(tui.TuiMsg{
 				Role: "tool",
 				ToolCalls: []tui.ToolCall{{
@@ -712,7 +722,7 @@ func tuiSink(model *tui.Model) event.Sink {
 					Output: e.Tool.Output,
 					Error:  e.Tool.Err,
 					Status: status,
-					Step:   int(step),
+					Step:   s,
 				}},
 			})
 

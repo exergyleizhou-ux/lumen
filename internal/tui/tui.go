@@ -311,6 +311,26 @@ func (m *Model) addChatEntry(msg TuiMsg) {
 	if len(msg.ToolCalls) > 0 {
 		entry.Tool = msg.ToolCalls[0]
 		entry.Kind = "tool"
+		// A tool's dispatch and result share a Step — update the existing row in
+		// place (keeping dispatch fields, overlaying result fields) instead of
+		// appending a duplicate row.
+		if entry.Tool.Step > 0 {
+			for i := len(m.chat.entries) - 1; i >= 0; i-- {
+				if m.chat.entries[i].Kind == "tool" && m.chat.entries[i].Tool.Step == entry.Tool.Step {
+					merged := m.chat.entries[i].Tool
+					merged.Status = entry.Tool.Status
+					if entry.Tool.Output != "" {
+						merged.Output = entry.Tool.Output
+					}
+					if entry.Tool.Error != "" {
+						merged.Error = entry.Tool.Error
+					}
+					m.chat.entries[i].Tool = merged
+					m.chat.scrollPos = len(m.chat.entries)
+					return
+				}
+			}
+		}
 	}
 	if msg.Role == "system" {
 		entry.Kind = "divider"
@@ -653,6 +673,8 @@ func (m *Model) renderStatus(w int) string {
 			verifyPart = green.Render("✓ verified")
 		case "fail":
 			verifyPart = red.Render("✗ " + trunc(m.status.verifyDetail, 40))
+		case "skip":
+			verifyPart = dim.Render("⊘ verify skipped")
 		}
 		if verifyPart != "" {
 			rightParts = append(rightParts, verifyPart)
