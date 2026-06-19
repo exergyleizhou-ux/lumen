@@ -110,7 +110,13 @@ func (t *MultiEditTool) Preview(args json.RawMessage) (diff.Change, error) {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return diff.Change{}, err
 	}
-	data, err := os.ReadFile(p.Path)
+	// Resolve the path like Execute does, so the diff isn't dropped and the
+	// reported changed-file matches what Execute mutates (verify-after-edit).
+	resolved, err := fileutil.ResolvePath(p.Path)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return diff.Change{}, err
 	}
@@ -120,7 +126,7 @@ func (t *MultiEditTool) Preview(args json.RawMessage) (diff.Change, error) {
 		after = strings.Replace(after, edit.OldString, edit.NewString, 1)
 	}
 	return diff.Change{
-		Path:   p.Path,
+		Path:   resolved,
 		Before: before,
 		After:  after,
 	}, nil

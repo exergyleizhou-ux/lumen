@@ -96,13 +96,19 @@ func (t *EditFileTool) Preview(args json.RawMessage) (diff.Change, error) {
 	if err := json.Unmarshal(args, &p); err != nil {
 		return diff.Change{}, err
 	}
-	data, err := os.ReadFile(p.Path)
+	// Resolve the path the same way Execute does, so the diff isn't dropped and
+	// the reported changed-file matches what Execute mutates (verify-after-edit).
+	resolved, err := fileutil.ResolvePath(p.Path)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return diff.Change{}, err
 	}
 	before := string(data)
 	return diff.Change{
-		Path:   p.Path,
+		Path:   resolved,
 		Before: before,
 		After:  strings.Replace(before, p.OldString, p.NewString, 1),
 	}, nil
