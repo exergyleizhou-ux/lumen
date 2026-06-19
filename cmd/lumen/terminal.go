@@ -68,6 +68,7 @@ func termSink() event.Sink {
 	hadReasoning := false
 	const maxOut = 48 * 1024
 	tel := telemetry.NewCollector()
+	steps := newToolStepRenderer()
 
 	return event.FuncSink(func(e event.Event) {
 		w := func(s string) {
@@ -80,6 +81,7 @@ func termSink() event.Sink {
 
 		case event.TurnStarted:
 			thinking = true; textStarted = false; textLen = 0; truncated = false; hadReasoning = false
+			steps.reset()
 			st.step.Store(0); st.turn.Add(1)
 			tel.Record(telemetry.EventSessionStart, map[string]any{})
 			w("  " + c(D, "⏵ Thinking…")) // show immediately so user knows it's working
@@ -114,20 +116,13 @@ func termSink() event.Sink {
 			thinking = false; textStarted = true
 			sn := st.step.Add(1)
 			tel.Record(telemetry.EventToolCall, map[string]any{"name": e.Tool.Name, "step": sn})
-			w(fmt.Sprintf("\n  %s %s %s",
-				c(D, fmt.Sprintf("%2d.", sn)),
-				toolIcon(e.Tool.Name),
-				c(Y, e.Tool.Name)))
+			w(steps.dispatch(e.Tool.ID, e.Tool.Name, e.Tool.ReadOnly, int(sn)))
 
 		case event.ToolResult:
 			if e.Tool.Err != "" {
 				tel.Record(telemetry.EventToolError, map[string]any{"name": e.Tool.Name, "error": e.Tool.Err})
-				w("  " + c(Rd, "✗") + " " + e.Tool.Err + "\n")
-			} else if e.Tool.Blocked {
-				w("  " + c(Y, "⛔") + "\n")
-			} else {
-				w("  " + c(G, "✓") + "\n")
 			}
+			w(steps.result(e.Tool.ID, e.Tool.Name, e.Tool.Err, e.Tool.Blocked))
 
 		case event.UsageKind:
 			if e.Usage != nil {
