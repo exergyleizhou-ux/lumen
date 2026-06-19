@@ -109,22 +109,50 @@ func pythonSteps(root string, changed []string, cfg Config) []Step {
 		if cfg.Scope == "all" {
 			steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q"}})
 		} else {
-			// Run pytest only on the specific test file
+			// Schedule pytest on the test file(s) for each changed .py, covering
+			// both conventions (test_<name>.py and <name>_test.py) and a changed
+			// file that is itself a test. Only existing files are scheduled —
+			// `pytest <missing>` errors "file not found" and would false-fail.
+			seen := map[string]bool{}
 			for _, f := range changed {
-				if strings.HasSuffix(f, ".py") {
-					testFile := strings.TrimSuffix(f, ".py") + "_test.py"
-					// Only schedule pytest when the sibling test file actually
-					// exists — `pytest <missing>` errors "file not found" and would
-					// false-fail verification. (filepath.Glob's error is nil even
-					// when nothing matches, so it can't gate existence.)
-					if fileExists(filepath.Join(root, testFile)) {
-						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", testFile}})
+				if !strings.HasSuffix(f, ".py") {
+					continue
+				}
+				for _, tf := range pytestTargets(root, f) {
+					if !seen[tf] {
+						seen[tf] = true
+						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{"pytest", "-q", tf}})
 					}
 				}
 			}
 		}
 	}
 	return steps
+}
+
+// pytestTargets returns the existing pytest target files for a changed .py file:
+// the file itself when it is a test (test_*.py or *_test.py), otherwise its
+// sibling tests under both common conventions (test_<name>.py, <name>_test.py).
+func pytestTargets(root, f string) []string {
+	base := filepath.Base(f)
+	if strings.HasPrefix(base, "test_") || strings.HasSuffix(base, "_test.py") {
+		if fileExists(filepath.Join(root, f)) {
+			return []string{f}
+		}
+		return nil
+	}
+	dir := filepath.Dir(f)
+	name := strings.TrimSuffix(base, ".py")
+	var out []string
+	for _, cand := range []string{
+		filepath.Join(dir, "test_"+name+".py"),
+		filepath.Join(dir, name+"_test.py"),
+	} {
+		if fileExists(filepath.Join(root, cand)) {
+			out = append(out, cand)
+		}
+	}
+	return out
 }
 
 func jsSteps(root string, changed []string, cfg Config) []Step {
