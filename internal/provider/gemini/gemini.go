@@ -196,6 +196,7 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 	for sc.Scan() {
 		select {
 		case <-ctx.Done():
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
 			return
 		default:
 		}
@@ -229,7 +230,11 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 						Text string `json:"text"`
 					} `json:"parts"`
 				} `json:"content"`
+				FinishReason string `json:"finishReason"`
 			} `json:"candidates"`
+			PromptFeedback struct {
+				BlockReason string `json:"blockReason"`
+			} `json:"promptFeedback"`
 			UsageMetadata struct {
 				PromptTokenCount     int `json:"promptTokenCount"`
 				CandidatesTokenCount int `json:"candidatesTokenCount"`
@@ -241,12 +246,33 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 			continue
 		}
 
+		// A blocked prompt returns 200 + a blockReason and no usable text — surface
+		// it as an error instead of ending the turn as a silent empty success.
+		if event.PromptFeedback.BlockReason != "" {
+			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("gemini blocked the prompt: %s", event.PromptFeedback.BlockReason)}
+			return
+		}
+
 		for _, cand := range event.Candidates {
+			hasText := false
 			for _, part := range cand.Content.Parts {
 				if part.Text != "" {
+					hasText = true
 					textBuf.WriteString(part.Text)
 					ch <- provider.Chunk{Type: provider.ChunkText, Text: part.Text}
 				}
+			}
+			// A response cut off for safety/recitation with no text is a failure,
+			// not a clean completion (STOP = normal). MAX_TOKENS gets a visible
+			// truncation marker, mirroring the openai provider.
+			switch cand.FinishReason {
+			case "SAFETY", "RECITATION", "OTHER":
+				if !hasText {
+					ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("gemini stopped the response: %s", cand.FinishReason)}
+					return
+				}
+			case "MAX_TOKENS":
+				ch <- provider.Chunk{Type: provider.ChunkText, Text: "\n[truncated: hit max_tokens]"}
 			}
 		}
 
@@ -264,9 +290,15 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		}
 	}
 
+	// A cancelled/timed-out turn that ended the scan must surface as an error, not
+	// a clean done that looks like a successful (truncated) completion.
+	if ctx.Err() != nil {
+		ch <- provider.Chunk{Type: provider.ChunkError, Err: ctx.Err()}
+		return
+	}
 	// Mid-stream transport cut: surface it instead of silently truncating the
-	// reply (mirrors the openai provider). ctx.Err()==nil skips normal cancels.
-	if err := sc.Err(); err != nil && ctx.Err() == nil {
+	// reply (mirrors the openai provider).
+	if err := sc.Err(); err != nil {
 		ch <- provider.Chunk{Type: provider.ChunkError, Err: &provider.StreamInterruptedError{Err: err}}
 		return
 	}
