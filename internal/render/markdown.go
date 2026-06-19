@@ -6,12 +6,16 @@ import (
 )
 
 // Inline-formatting patterns. Applied in order so ** is consumed before *.
+// The star emphasis patterns require flanking (no whitespace just inside the
+// delimiters) so arithmetic ("a * b") and shell globs ("*.go") are not
+// mistaken for emphasis — matching CommonMark's left/right-flanking rule.
 var (
-	reInlineCode = regexp.MustCompile("`([^`]+)`")
-	reBoldStar   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
-	reBoldUnder  = regexp.MustCompile(`__([^_]+)__`)
-	reItalicStar = regexp.MustCompile(`\*([^*]+)\*`)
-	reHeading    = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	reInlineCode  = regexp.MustCompile("`([^`]+)`")
+	reBoldStar    = regexp.MustCompile(`\*\*([^*\s]|[^*\s][^*]*?[^*\s])\*\*`)
+	reBoldUnder   = regexp.MustCompile(`__([^_]+)__`)
+	reItalicStar  = regexp.MustCompile(`\*([^*\s]|[^*\s][^*]*?[^*\s])\*`)
+	reHeading     = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
+	reOrderedList = regexp.MustCompile(`^(\s*)(\d+)([.)])\s+(.*)$`)
 )
 
 // Markdown renders a markdown string into ANSI-styled terminal text. It handles
@@ -65,7 +69,11 @@ func renderLine(line string) string {
 	trimmed := strings.TrimSpace(line)
 
 	if m := reHeading.FindStringSubmatch(line); m != nil {
-		return ansiBold + ansiWhite + ansiUnder + inline(m[2]) + ansiReset
+		// The heading style must span the whole line, but inline() emits its own
+		// reset after each span. Re-assert the style after every such reset so
+		// text following an inline span stays styled.
+		style := ansiBold + ansiWhite + ansiUnder
+		return style + strings.ReplaceAll(inline(m[2]), ansiReset, ansiReset+style) + ansiReset
 	}
 
 	if strings.HasPrefix(trimmed, "> ") {
@@ -77,6 +85,12 @@ func renderLine(line string) string {
 		body := strings.TrimSpace(trimmed[len(bullet):])
 		indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
 		return indent + ansiCyan + "• " + ansiReset + inline(body)
+	}
+
+	// Ordered (numbered) lists get the same marker styling as bullets, keeping
+	// the original ordinal and delimiter (e.g. "1." or "2)").
+	if m := reOrderedList.FindStringSubmatch(line); m != nil {
+		return m[1] + ansiCyan + m[2] + m[3] + ansiReset + " " + inline(m[4])
 	}
 
 	return inline(line)
