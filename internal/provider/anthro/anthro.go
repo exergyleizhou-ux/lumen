@@ -105,6 +105,13 @@ type anthroMsg struct {
 type anthroBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text,omitempty"`
+	// tool_use blocks (assistant)
+	ID    string          `json:"id,omitempty"`
+	Name  string          `json:"name,omitempty"`
+	Input json.RawMessage `json:"input,omitempty"`
+	// tool_result blocks (user)
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Content   string `json:"content,omitempty"`
 }
 
 func (p *Provider) buildRequest(req provider.Request) anthroRequest {
@@ -121,36 +128,37 @@ func (p *Provider) buildRequest(req provider.Request) anthroRequest {
 			text = m.ReasoningContent
 		}
 
-		content := []anthroBlock{{Type: "text", Text: text}}
-		// Handle tool results
-		if m.Role == provider.RoleTool && m.ToolCallID != "" {
-			msgs = append(msgs, anthroMsg{
-				Role: "user",
-				Content: []anthroBlock{{
-					Type: "tool_result",
-					Text: fmt.Sprintf(`{"tool_use_id":"%s","content":"%s"}`, m.ToolCallID, text),
-				}},
-			})
-			continue
-		}
+		// Tool result → a structured tool_result block (not JSON-in-text, which
+		// Anthropic rejects, and which broke on quotes/newlines in the content).
 		if m.Role == provider.RoleTool {
-			continue
-		}
-
-		role := string(m.Role)
-		msgs = append(msgs, anthroMsg{Role: role, Content: content})
-
-		// Assistant tool calls
-		if len(m.ToolCalls) > 0 {
-			msg := anthroMsg{Role: "assistant"}
-			for _, tc := range m.ToolCalls {
-				msg.Content = append(msg.Content, anthroBlock{
-					Type: "tool_use",
-					Text: fmt.Sprintf(`{"name":"%s","id":"%s","input":%s}`, tc.Name, tc.ID, tc.Arguments),
+			if m.ToolCallID != "" {
+				msgs = append(msgs, anthroMsg{
+					Role:    "user",
+					Content: []anthroBlock{{Type: "tool_result", ToolUseID: m.ToolCallID, Content: text}},
 				})
 			}
-			msgs = append(msgs, msg)
+			continue
 		}
+
+		// Assistant turn with tool calls → ONE message holding the optional text
+		// block plus structured tool_use blocks (id/name/input as native fields).
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			var blocks []anthroBlock
+			if text != "" {
+				blocks = append(blocks, anthroBlock{Type: "text", Text: text})
+			}
+			for _, tc := range m.ToolCalls {
+				input := json.RawMessage(tc.Arguments)
+				if len(input) == 0 {
+					input = json.RawMessage("{}")
+				}
+				blocks = append(blocks, anthroBlock{Type: "tool_use", ID: tc.ID, Name: tc.Name, Input: input})
+			}
+			msgs = append(msgs, anthroMsg{Role: "assistant", Content: blocks})
+			continue
+		}
+
+		msgs = append(msgs, anthroMsg{Role: string(m.Role), Content: []anthroBlock{{Type: "text", Text: text}}})
 	}
 
 	maxTokens := 4096
