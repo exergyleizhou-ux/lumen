@@ -941,6 +941,27 @@ func repeatSuccessSignature(call provider.ToolCall, t tool.Tool) string {
 
 // ── Auto-compaction ────────────────────────────────────────
 
+// estimateTokens approximates the prompt size (~3 chars/token for mixed
+// content) so auto-compaction fires before the real limit. It counts message
+// text, reasoning, tool-call arguments, image payloads (base64/URL strings sent
+// each request), and the tool schemas sent on every request.
+func estimateTokens(msgs []provider.Message, schemas []provider.ToolSchema) int {
+	totalChars := 0
+	for _, m := range msgs {
+		totalChars += len(m.Content) + len(m.ReasoningContent)
+		for _, tc := range m.ToolCalls {
+			totalChars += len(tc.Arguments)
+		}
+		for _, img := range m.Images {
+			totalChars += len(img)
+		}
+	}
+	for _, s := range schemas {
+		totalChars += len(s.Name) + len(s.Description) + len(s.Parameters)
+	}
+	return totalChars / 3
+}
+
 func (a *Agent) autoCompact(turnCtx context.Context) {
 	if a.compactStuck || a.contextWindow <= 0 {
 		return
@@ -959,14 +980,7 @@ func (a *Agent) autoCompact(turnCtx context.Context) {
 	// ~2 chars/token for CJK). Under-estimate slightly to compact before
 	// the actual limit is hit.
 	msgs := a.session.Snapshot()
-	totalChars := 0
-	for _, m := range msgs {
-		totalChars += len(m.Content) + len(m.ReasoningContent)
-		for _, tc := range m.ToolCalls {
-			totalChars += len(tc.Arguments)
-		}
-	}
-	estimatedTokens := totalChars / 3 // conservative for mixed content
+	estimatedTokens := estimateTokens(msgs, a.cachedSchemas)
 
 	hardLimit := int(float64(a.contextWindow) * a.compactRatio)
 	softLimit := int(float64(a.contextWindow) * a.softCompactRatio)
