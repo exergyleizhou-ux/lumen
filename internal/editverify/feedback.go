@@ -69,10 +69,12 @@ func FormatFeedback(r Result, cycle, max int) string {
 	}
 
 	if !r.OK {
-		// A failing test may predate the edit or be flaky; a build/vet failure is
-		// almost always the edit's fault. Don't let the model "fix" unrelated tests.
-		if r.Failed != nil && r.Failed.Name == "test" {
-			fmt.Fprintf(&b, "Note: these test failures may predate your edit or be flaky. Confirm your change actually caused them before fixing; if they are unrelated to your edit, say so and stop rather than modifying unrelated code. (repair cycle %d/%d)", cycle, max)
+		// A failing test (flaky/pre-existing) or a whole-repo lint (ruff check .
+		// scans files the edit never touched) may be unrelated to the edit; a
+		// build/vet failure is almost always the edit's fault (and build is the
+		// dependent-break signal). Don't let the model "fix" unrelated files.
+		if r.Failed != nil && (r.Failed.Name == "test" || r.Failed.Name == "lint") {
+			fmt.Fprintf(&b, "Note: these failures may predate your edit, be flaky, or come from a whole-repo scan of files you didn't touch. Confirm your change actually caused them before fixing; if they are unrelated to your edit, say so and stop rather than modifying unrelated code. (repair cycle %d/%d)", cycle, max)
 		} else {
 			fmt.Fprintf(&b, "Fix these, then continue. (repair cycle %d/%d)", cycle, max)
 		}

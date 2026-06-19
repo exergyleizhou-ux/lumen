@@ -61,7 +61,8 @@ func detectLanguages(changed []string) []string {
 			hasGo = true
 		case strings.HasSuffix(f, ".py"):
 			hasPy = true
-		case strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".jsx"):
+		case strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".jsx") ||
+			strings.HasSuffix(f, ".mjs") || strings.HasSuffix(f, ".cjs") || strings.HasSuffix(f, ".mts") || strings.HasSuffix(f, ".cts"):
 			hasJS = true
 		}
 	}
@@ -171,7 +172,8 @@ func jsSteps(root string, changed []string, cfg Config) []Step {
 				steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests"}})
 			} else {
 				for _, f := range changed {
-					if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") {
+					if strings.HasSuffix(f, ".ts") || strings.HasSuffix(f, ".tsx") || strings.HasSuffix(f, ".js") || strings.HasSuffix(f, ".jsx") ||
+						strings.HasSuffix(f, ".mjs") || strings.HasSuffix(f, ".cjs") || strings.HasSuffix(f, ".mts") || strings.HasSuffix(f, ".cts") {
 						steps = append(steps, Step{Name: "test", Dir: root, Args: []string{jest, "--passWithNoTests", f}})
 					}
 				}
