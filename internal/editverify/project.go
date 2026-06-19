@@ -32,6 +32,24 @@ func IsSupportedProject(root string) bool {
 	return len(projectLanguages(root)) > 0
 }
 
+// FindProjectRoot walks upward from start (bounded) to the nearest directory
+// containing a recognized project marker, so the verify loop activates even when
+// lumen runs from a monorepo subdirectory. Returns "" if none is found.
+func FindProjectRoot(start string) string {
+	dir := start
+	for i := 0; i < 16; i++ {
+		if IsSupportedProject(dir) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
 // nodeBin returns the path to a project-local node tool
 // (root/node_modules/.bin/<tool>), or "" if absent. We deliberately do NOT fall
 // back to a global install or `npx`: a verify loop must use the project's pinned

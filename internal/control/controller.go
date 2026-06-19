@@ -275,10 +275,16 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 // never misfires `go build` in a non-Go repo nor false-fails on an absent
 // linter. Returns whether the loop was activated.
 func (c *Controller) setupEditVerify(wd string, cfg editverify.Config) bool {
-	if !cfg.Enabled || !editverify.IsSupportedProject(wd) {
+	if !cfg.Enabled {
 		return false
 	}
-	c.ag.SetVerifier(editverify.New(wd, cfg), cfg)
+	// Walk up to the project root so verify still activates when lumen runs from
+	// a monorepo subdirectory (the go.mod/package.json may be a level or two up).
+	root := editverify.FindProjectRoot(wd)
+	if root == "" {
+		return false
+	}
+	c.ag.SetVerifier(editverify.New(root, cfg), cfg)
 	return true
 }
 
