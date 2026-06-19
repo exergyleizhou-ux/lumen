@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ── Styles ─────────────────────────────────────────────────
@@ -674,34 +675,27 @@ func (m *Model) renderStatus(w int) string {
 
 // ── Helpers ────────────────────────────────────────────────
 
+// trunc truncates s to at most n DISPLAY columns (CJK/wide runes = 2), never
+// splitting a multibyte rune, appending an ellipsis when it cuts.
 func trunc(s string, n int) string {
-	if n <= 0 { return "" }
-	runes := []rune(s)
-	if len(runes) <= n { return s }
-	return string(runes[:n-1]) + "…"
+	if n <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= n {
+		return s
+	}
+	return ansi.Truncate(s, n, "…")
 }
 
+// wordWrap wraps text to width DISPLAY columns: word-wrap at spaces, then
+// hard-break any run still over width (e.g. spaceless CJK). Display-width and
+// rune-aware, so it never overflows or splits a multibyte rune (the old
+// byte-sliced version corrupted CJK into invalid UTF-8).
 func wordWrap(text string, width int) string {
-	if width <= 0 { return text }
-	var sb strings.Builder
-	for _, paragraph := range strings.Split(text, "\n") {
-		if len(paragraph) <= width {
-			sb.WriteString(paragraph + "\n")
-			continue
-		}
-		for len(paragraph) > width {
-			split := width
-			// Try to break at space
-			idx := strings.LastIndexByte(paragraph[:width+1], ' ')
-			if idx > 0 { split = idx }
-			sb.WriteString(paragraph[:split] + "\n")
-			paragraph = strings.TrimSpace(paragraph[split:])
-		}
-		if len(paragraph) > 0 {
-			sb.WriteString(paragraph + "\n")
-		}
+	if width <= 0 {
+		return text
 	}
-	return strings.TrimSuffix(sb.String(), "\n")
+	return ansi.Hardwrap(ansi.Wordwrap(text, width, ""), width, false)
 }
 
 // DiffLine represents one line in a computed diff.
