@@ -89,8 +89,17 @@ func splitLines(s string) []string {
 
 // lcsDiff produces an ordered line diff (context/deletion/addition) using a
 // longest-common-subsequence DP.
+// lcsBudget caps the LCS DP matrix (n*m cells). Above it, lcsDiff falls back to
+// a cheap prefix/suffix-trimmed diff: the O(n*m) matrix would blow up memory on
+// large files (a 50k-line edit is ~20 GB), and the render is capped at maxLines
+// anyway, so a precise LCS over a huge file is both dangerous and wasted.
+const lcsBudget = 1_000_000
+
 func lcsDiff(a, b []string) []diffLine {
 	n, m := len(a), len(b)
+	if int64(n)*int64(m) > lcsBudget {
+		return cheapDiff(a, b)
+	}
 	dp := make([][]int, n+1)
 	for i := range dp {
 		dp[i] = make([]int, m+1)
@@ -127,6 +136,29 @@ func lcsDiff(a, b []string) []diffLine {
 	}
 	for ; j < m; j++ {
 		out = append(out, diffLine{'+', b[j]})
+	}
+	return out
+}
+
+// cheapDiff is the O(n+m) fallback for large inputs: trim the common prefix and
+// suffix, then emit the differing middle as deletions followed by additions. It
+// drops the (equal) common context so the render cap shows the ACTUAL change
+// rather than truncating in a sea of unchanged leading lines.
+func cheapDiff(a, b []string) []diffLine {
+	p := 0
+	for p < len(a) && p < len(b) && a[p] == b[p] {
+		p++
+	}
+	s := 0
+	for s < len(a)-p && s < len(b)-p && a[len(a)-1-s] == b[len(b)-1-s] {
+		s++
+	}
+	var out []diffLine
+	for _, l := range a[p : len(a)-s] {
+		out = append(out, diffLine{'-', l})
+	}
+	for _, l := range b[p : len(b)-s] {
+		out = append(out, diffLine{'+', l})
 	}
 	return out
 }
