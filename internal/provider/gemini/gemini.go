@@ -32,11 +32,11 @@ func New(cfg provider.Config) (provider.Provider, error) {
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
 	return &Provider{
-		name:   cfg.Name,
+		name:    cfg.Name,
 		baseURL: cfg.BaseURL,
-		model:  cfg.Model,
-		apiKey: cfg.APIKey,
-		client: &http.Client{Timeout: 120 * time.Second},
+		model:   cfg.Model,
+		apiKey:  cfg.APIKey,
+		client:  &http.Client{Timeout: 120 * time.Second},
 	}, nil
 }
 
@@ -88,15 +88,15 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 }
 
 type geminiRequest struct {
-	Contents         []geminiContent    `json:"contents"`
-	SystemInstruction *geminiContent     `json:"systemInstruction,omitempty"`
-	GenerationConfig geminiGenConfig    `json:"generationConfig"`
-	Tools            []geminiToolDecl   `json:"tools,omitempty"`
+	Contents          []geminiContent  `json:"contents"`
+	SystemInstruction *geminiContent   `json:"systemInstruction,omitempty"`
+	GenerationConfig  geminiGenConfig  `json:"generationConfig"`
+	Tools             []geminiToolDecl `json:"tools,omitempty"`
 }
 
 type geminiContent struct {
-	Role  string        `json:"role,omitempty"`
-	Parts []geminiPart  `json:"parts"`
+	Role  string       `json:"role,omitempty"`
+	Parts []geminiPart `json:"parts"`
 }
 
 type geminiPart struct {
@@ -206,11 +206,19 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		}
 		data := strings.TrimPrefix(line, "data: ")
 
-		// Gemini SSE chunks are wrapped in brackets: [{"candidates": [...]}]
-		// Some versions send plain JSON objects
+		// Gemini SSE chunks are wrapped in a JSON array: [{"candidates": [...]}]
+		// (some versions send plain objects, and the brackets may arrive on their
+		// own line). Strip them with TrimPrefix/TrimSuffix — which can't panic,
+		// unlike data[1:len-1] when len<2 (e.g. a bare "[") — and skip the
+		// resulting empty / bracket-only / comma-only lines.
 		data = strings.TrimSpace(data)
-		if strings.HasPrefix(data, "[") {
-			data = data[1 : len(data)-1] // unwrap array
+		data = strings.TrimPrefix(data, "[")
+		data = strings.TrimSuffix(data, "]")
+		data = strings.TrimSpace(data)
+		data = strings.TrimSuffix(data, ",")
+		data = strings.TrimSpace(data)
+		if data == "" {
+			continue
 		}
 
 		var event struct {
