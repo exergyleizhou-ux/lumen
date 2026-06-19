@@ -440,7 +440,13 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			case provider.ChunkError:
 				// A mid-stream interruption (connection cut) can be recovered by
 				// re-prompting the model to continue — bounded by maxStreamRecoveries.
-				// Any other error ends the turn.
+				// Any other error ends the turn. Preserve any partial assistant text
+				// streamed before the cut (as an assistant message, BEFORE the
+				// recovery prompt) so the model sees what it already said and doesn't
+				// repeat or lose work.
+				if provider.IsStreamInterrupted(chunk.Err) && textBuf.Len() > 0 {
+					a.session.Add(provider.Message{Role: provider.RoleAssistant, Content: textBuf.String()})
+				}
 				if a.handleStreamRecovery(chunk.Err) {
 					recovered = true
 					continue
