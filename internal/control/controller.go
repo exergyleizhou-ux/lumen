@@ -49,6 +49,8 @@ type Controller struct {
 	cfg        *config.File
 	provCfg    *config.ProviderConfig
 	prov       provider.Provider
+	// pricing is the active provider's configured rates (nil → use default).
+	pricing    *provider.Pricing
 	fallbacks  []provider.Provider // for failover
 	reg        *tool.Registry
 	skillStore *skill.Store
@@ -130,6 +132,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		})
 	}
 	c.provCfg = provCfg
+	c.pricing = pricingFromConfig(provCfg.Pricing)
 
 	prov, err := provider.New(provCfg.Kind, provider.Config{
 		Name:    provCfg.Name,
@@ -245,6 +248,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	agOpts.Gate = gate
 	agOpts.Asker = asker
 	agOpts.MemoryPrompt = memPrompt
+	agOpts.Pricing = c.pricing
 	c.ag = agent.New(prov, reg, c.sess, agOpts)
 
 	// 12. Wire infrastructure
@@ -400,6 +404,10 @@ func (c *Controller) warn(text string) {
 }
 
 // ProviderName returns the active provider instance name.
+// Pricing returns the active provider's configured rates, or nil when none are
+// configured (the cost readout then uses the built-in default).
+func (c *Controller) Pricing() *provider.Pricing { return c.pricing }
+
 func (c *Controller) ProviderName() string { return c.provCfg.Name }
 
 // ModelName returns the active model ID.

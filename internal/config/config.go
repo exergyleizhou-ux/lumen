@@ -27,12 +27,23 @@ type File struct {
 
 // ProviderConfig is one model provider entry.
 type ProviderConfig struct {
-	Name      string `toml:"name"`
-	Kind      string `toml:"kind"`
-	BaseURL   string `toml:"base_url"`
-	Model     string `toml:"model"`
-	APIKeyEnv string `toml:"api_key_env"`
-	APIKey    string `toml:"api_key,omitempty"` // from toml or resolved from env
+	Name      string         `toml:"name"`
+	Kind      string         `toml:"kind"`
+	BaseURL   string         `toml:"base_url"`
+	Model     string         `toml:"model"`
+	APIKeyEnv string         `toml:"api_key_env"`
+	APIKey    string         `toml:"api_key,omitempty"` // from toml or resolved from env
+	Pricing   *PricingConfig `toml:"pricing,omitempty"` // optional per-1M-token rates for accurate cost display
+}
+
+// PricingConfig holds a provider's per-1M-token rates so the cost readout is
+// accurate for any provider, not just the built-in DeepSeek default. All fields
+// are in the same currency unit (e.g. USD or CNY) per 1M tokens.
+type PricingConfig struct {
+	Input    float64 `toml:"input"`     // cache-miss / uncached input tokens
+	Output   float64 `toml:"output"`    // completion tokens
+	CacheHit float64 `toml:"cache_hit"` // cached input tokens (usually far cheaper)
+	Currency string  `toml:"currency,omitempty"`
 }
 
 // CoordinatorConfig configures the two-model planner+executor mode.
