@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -71,7 +72,7 @@ func Diff(path, before, after string) string {
 	var b strings.Builder
 	for i, dl := range lines {
 		if i >= maxLines {
-			b.WriteString(ansiDim + "… (diff truncated)" + ansiReset + "\n")
+			fmt.Fprintf(&b, "%s… (%d more lines)%s\n", ansiDim, len(lines)-maxLines, ansiReset)
 			break
 		}
 		b.WriteString(DiffLine(dl.kind, Highlight(dl.text, lang)))
