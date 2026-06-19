@@ -59,7 +59,26 @@ func Run(cfg *config.File) *Report {
 	// Check verify config
 	r.checkVerify()
 
+	// Check default_model resolves to a configured provider
+	r.checkDefaultModel(cfg)
+
 	return r
+}
+
+// checkDefaultModel validates that default_model resolves to a configured
+// provider by its name or model. A mismatch silently falls back to the first
+// provider, so warn (not fail) so the user can see it.
+func (r *Report) checkDefaultModel(cfg *config.File) {
+	if cfg == nil || len(cfg.Providers) == 0 || cfg.DefaultModel == "" {
+		return
+	}
+	for _, pc := range cfg.Providers {
+		if pc.Name == cfg.DefaultModel || pc.Model == cfg.DefaultModel {
+			r.add(Result{Name: "default_model", Status: "ok", Detail: cfg.DefaultModel + " → provider " + pc.Name})
+			return
+		}
+	}
+	r.add(Result{Name: "default_model", Status: "warn", Detail: fmt.Sprintf("%q matches no provider's name or model — will fall back to %q", cfg.DefaultModel, cfg.Providers[0].Name)})
 }
 
 func (r *Report) checkConfig() {

@@ -26,6 +26,25 @@ func TestAgentOptionsFromConfigAppliesCompactionRatios(t *testing.T) {
 	}
 }
 
+// default_model should resolve a provider by its Name OR its Model, and signal
+// (ok=false) when it matched nothing so the caller can warn instead of silently
+// using a different provider.
+func TestResolveProvider_MatchesByNameOrModel(t *testing.T) {
+	providers := []config.ProviderConfig{
+		{Name: "deepseek", Model: "deepseek-chat"},
+		{Name: "openai", Model: "gpt-4"},
+	}
+	if p, ok := resolveProvider(providers, "openai"); !ok || p.Name != "openai" {
+		t.Errorf("by name: got %v ok=%v", p, ok)
+	}
+	if p, ok := resolveProvider(providers, "gpt-4"); !ok || p.Name != "openai" {
+		t.Errorf("by model: should match openai via its Model, got %v ok=%v", p, ok)
+	}
+	if p, ok := resolveProvider(providers, "nope"); ok || p == nil || p.Name != "deepseek" {
+		t.Errorf("fallback: want first provider with ok=false, got %v ok=%v", p, ok)
+	}
+}
+
 // [skills] max_depth controls how deep skill discovery recurses; it must reach
 // the skill store instead of falling back to the hardcoded default.
 func TestSkillOptionsFromConfigAppliesMaxDepth(t *testing.T) {

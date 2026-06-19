@@ -179,7 +179,7 @@ func FindDotEnv() string {
 
 func defaults() *File {
 	return &File{
-		DefaultModel: "deepseek-flash",
+		DefaultModel: "deepseek-chat",
 		Agent: AgentConfig{
 			MaxSteps:          50,
 			Temperature:       0.0,
