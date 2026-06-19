@@ -47,6 +47,19 @@ func fg(code, s string) string { return code + s + R }
 
 // ── Sink: emoji-rich streaming output ──────────────────────
 
+// verifyResultLine renders a verify-after-edit outcome for the non-interactive
+// sink. The self-repair loop is Lumen's differentiator, but its result was
+// previously dropped here (the case was a no-op), so a `lumen run` showed
+// "verifying..." and then nothing. Success → green "✓ verified"; a failure or
+// timeout → its text (which already carries the ✗ / "timed out" marker) in
+// yellow, the attention-but-not-fatal color (a failure starts a repair cycle).
+func verifyResultLine(level event.Level, text string) string {
+	if level == event.LevelInfo {
+		return "  " + G + "✓ verified" + R + "\n"
+	}
+	return "  " + Y + text + R + "\n"
+}
+
 func termSink() event.Sink {
 	thinking := false
 	textStarted := false
@@ -141,7 +154,7 @@ func termSink() event.Sink {
 			w("\n  verifying...\n")
 
 		case event.VerifyResult:
-			// nothing
+			w(verifyResultLine(e.Level, e.Text))
 
 		case event.TurnDone:
 			thinking = false; textStarted = false; st.step.Store(0)
