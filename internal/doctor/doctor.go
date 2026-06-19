@@ -195,12 +195,39 @@ func (r *Report) checkGit() {
 	r.add(Result{Name: "git", Status: "ok", Detail: path})
 }
 
+// goProjectInWorkspace reports whether the current workspace (cwd or an
+// ancestor, up to a bounded depth) is a Go module, so the Go-toolchain checks
+// know whether Go is actually required here.
+func goProjectInWorkspace() bool {
+	dir, err := os.Getwd()
+	if err != nil {
+		return false
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return false
+}
+
 // checkGoToolchain verifies that the Go toolchain is installed and reports its version.
 func (r *Report) checkGoToolchain() {
 	goPath, err := execLookPath("go")
 	if err != nil {
-		r.add(Result{Name: "go", Status: "fail", Detail: "go not found in PATH — install go 1.23+ from https://go.dev/dl/"})
-		r.AllOk = false
+		// A missing Go toolchain only fails the report when this workspace is
+		// actually a Go project; in a Python/JS repo it's irrelevant.
+		if goProjectInWorkspace() {
+			r.add(Result{Name: "go", Status: "fail", Detail: "go not found in PATH — this is a Go project; install go 1.23+ from https://go.dev/dl/"})
+			r.AllOk = false
+		} else {
+			r.add(Result{Name: "go", Status: "warn", Detail: "go not found — not required here (no go.mod in this workspace)"})
+		}
 		return
 	}
 	out, err := exec.Command(goPath, "version").CombinedOutput()
