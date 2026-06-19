@@ -200,7 +200,7 @@ func drawFooter() {
 // ── Chat loop ──────────────────────────────────────────────
 
 func runChatUI(ctrl *control.Controller, modeOverride string) error {
-	if err := ctrl.Configure(termSink(), nil, ""); err != nil {
+	if err := ctrl.Configure(termSink(), newLineAsker(), ""); err != nil {
 		return err
 	}
 	currentCtrl = ctrl
@@ -222,6 +222,11 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	histPath := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "input_history")
 	cwd, _ := os.Getwd()
 	ed := lineedit.NewEditor("▸ ", histPath, cwd)
+	// Enable bracketed paste once for the whole session so a paste that lands
+	// while a turn is running is still wrapped as one block (not re-split into
+	// line-by-line submits). Disabled on exit so the shell doesn't inherit it.
+	ed.EnableBracketedPaste()
+	defer ed.DisableBracketedPaste()
 
 	history := make([]string, 0, 100)
 	var lastPrompt string // for /retry after Ctrl+C interruption
@@ -327,9 +332,19 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		turnCtx, turnCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT)
-		go func() { <-sigCh; turnCancel() }()
+		// sigDone lets the watcher goroutine exit when the turn ends. Without it
+		// the goroutine blocks on <-sigCh forever (signal.Stop doesn't close the
+		// channel), leaking one goroutine per turn over a long session.
+		sigDone := make(chan struct{})
+		go func() {
+			select {
+			case <-sigCh:
+				turnCancel()
+			case <-sigDone:
+			}
+		}()
 		err = ctrl.Run(turnCtx, text)
-		turnCancel(); signal.Stop(sigCh)
+		turnCancel(); signal.Stop(sigCh); close(sigDone)
 		// Guard against silent turns. A real completion always bills output
 		// tokens, so the (cumulative) cost strictly increases. If it didn't move
 		// and the agent surfaced no error, the model produced nothing — most

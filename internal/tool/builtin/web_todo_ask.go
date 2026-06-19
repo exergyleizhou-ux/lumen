@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"lumen/internal/event"
 	"lumen/internal/evidence"
 	"lumen/internal/tool"
 	"lumen/internal/websearch"
@@ -287,9 +288,76 @@ func (t *AskTool) Schema() json.RawMessage {
 }
 
 func (t *AskTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	// In headless mode or when no asker is wired, return a "decide for yourself" result.
-	// The agent detects the asker from the context.
-	return "[ask tool called — in headless mode, decide for yourself and proceed]", nil
+	ask, ok := tool.AskerFrom(ctx)
+	if !ok {
+		// No interactive user attached (one-shot / piped / headless): tell the
+		// model to decide for itself rather than blocking forever.
+		return "[ask tool called — no interactive user available (headless); decide for yourself and proceed]", nil
+	}
+
+	// Parse against the tool's own schema (note: schema uses "multiSelect",
+	// event.AskQuestion's JSON tag is "multi_select", so parse explicitly).
+	var in struct {
+		Questions []struct {
+			Header      string `json:"header"`
+			Question    string `json:"question"`
+			Options     []struct {
+				Label       string `json:"label"`
+				Description string `json:"description"`
+			} `json:"options"`
+			MultiSelect bool `json:"multiSelect"`
+		} `json:"questions"`
+	}
+	if err := json.Unmarshal(args, &in); err != nil {
+		return "", fmt.Errorf("ask: invalid arguments: %w", err)
+	}
+	if len(in.Questions) == 0 {
+		return "[ask tool called with no questions]", nil
+	}
+
+	questions := make([]event.AskQuestion, len(in.Questions))
+	for i, q := range in.Questions {
+		opts := make([]event.AskOption, len(q.Options))
+		for j, o := range q.Options {
+			opts[j] = event.AskOption{Label: o.Label, Description: o.Description}
+		}
+		questions[i] = event.AskQuestion{
+			Header:      q.Header,
+			Question:    q.Question,
+			Options:     opts,
+			MultiSelect: q.MultiSelect,
+		}
+	}
+
+	answers, err := ask(ctx, questions)
+	if err != nil {
+		return "", fmt.Errorf("ask: %w", err)
+	}
+	return formatAskAnswers(questions, answers), nil
+}
+
+// formatAskAnswers renders the user's selections back to the model as plain
+// text it can act on.
+func formatAskAnswers(questions []event.AskQuestion, answers []event.AskAnswer) string {
+	byHeader := make(map[string][]string, len(answers))
+	for _, a := range answers {
+		byHeader[a.Header] = a.Answers
+	}
+	var b strings.Builder
+	b.WriteString("The user answered:\n")
+	for _, q := range questions {
+		sel := byHeader[q.Header]
+		label := q.Header
+		if label == "" {
+			label = q.Question
+		}
+		if len(sel) == 0 {
+			fmt.Fprintf(&b, "- %s: (no answer)\n", label)
+			continue
+		}
+		fmt.Fprintf(&b, "- %s: %s\n", label, strings.Join(sel, ", "))
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // ── Web Search ─────────────────────────────────────────────

@@ -267,12 +267,18 @@ type callContext struct {
 // sub-agents spawned by a tool (task / run_skill) can nest their tool events
 // under the parent call instead of discarding them.
 func withCallContext(ctx context.Context, parentID string, sink event.Sink, asker Asker, planMode bool) context.Context {
-	return context.WithValue(ctx, callContextKey{}, callContext{
+	ctx = context.WithValue(ctx, callContextKey{}, callContext{
 		parentID: parentID,
 		sink:     sink,
 		asker:    asker,
 		planMode: planMode,
 	})
+	// Also expose the asker through the neutral tool package so the `ask`
+	// built-in (which can't import this package) can reach it from its context.
+	if asker != nil {
+		ctx = tool.WithAsker(ctx, asker.Ask)
+	}
+	return ctx
 }
 
 // subSinkFor builds a nesting sink that forwards sub-agent tool events under a parent call.
