@@ -3,7 +3,8 @@ package render
 import (
 	"path/filepath"
 	"strings"
-	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 const ansiRed = "\x1b[31m"
@@ -163,54 +164,13 @@ func cheapDiff(a, b []string) []diffLine {
 	return out
 }
 
-// TruncateVisible truncates s to at most max visible columns, ignoring ANSI
-// escape sequences when counting, and appends an ellipsis if it cut anything.
+// TruncateVisible truncates s to at most max visible columns and appends an
+// ellipsis if it cut anything. Width is the terminal DISPLAY width — CJK/wide
+// runes count as 2 columns, ANSI escape sequences as 0 — so it never overflows
+// or splits a multibyte rune.
 func TruncateVisible(s string, max int) string {
-	if visibleLen(s) <= max {
+	if ansi.StringWidth(s) <= max {
 		return s
 	}
-	var b strings.Builder
-	vis := 0
-	for i := 0; i < len(s); {
-		if s[i] == 0x1b {
-			j := i + 1
-			for j < len(s) && s[j] != 'm' {
-				j++
-			}
-			if j < len(s) {
-				j++
-			}
-			b.WriteString(s[i:j])
-			i = j
-			continue
-		}
-		if vis >= max {
-			break
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		b.WriteRune(r)
-		vis++
-		i += size
-	}
-	b.WriteString(ansiReset + "…")
-	return b.String()
-}
-
-func visibleLen(s string) int {
-	count := 0
-	for i := 0; i < len(s); {
-		if s[i] == 0x1b {
-			for i < len(s) && s[i] != 'm' {
-				i++
-			}
-			if i < len(s) {
-				i++
-			}
-			continue
-		}
-		_, size := utf8.DecodeRuneInString(s[i:])
-		count++
-		i += size
-	}
-	return count
+	return ansi.Truncate(s, max, ansiReset+"…")
 }
