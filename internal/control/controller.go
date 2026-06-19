@@ -122,15 +122,12 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if len(cfg.Providers) == 0 {
 		return fmt.Errorf("no providers configured — add one in lumen.toml or run 'lumen setup'")
 	}
-	var provCfg *config.ProviderConfig
-	for i := range cfg.Providers {
-		if cfg.Providers[i].Name == cfg.DefaultModel {
-			provCfg = &cfg.Providers[i]
-			break
-		}
-	}
-	if provCfg == nil {
-		provCfg = &cfg.Providers[0]
+	provCfg, matched := resolveProvider(cfg.Providers, cfg.DefaultModel)
+	if !matched && cfg.DefaultModel != "" {
+		sink.Emit(event.Event{
+			Kind: event.Notice, Level: event.LevelWarn,
+			Text: fmt.Sprintf("default_model %q matched no provider's name or model — falling back to %q", cfg.DefaultModel, provCfg.Name),
+		})
 	}
 	c.provCfg = provCfg
 

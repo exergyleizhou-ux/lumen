@@ -41,8 +41,8 @@ api_key_env = "DEEPSEEK_API_KEY"
 
 func TestDefaults(t *testing.T) {
 	cfg := defaults()
-	if cfg.DefaultModel != "deepseek-flash" {
-		t.Errorf("default model: want deepseek-flash, got %s", cfg.DefaultModel)
+	if cfg.DefaultModel != "deepseek-chat" {
+		t.Errorf("default model: want deepseek-chat, got %s", cfg.DefaultModel)
 	}
 	if cfg.Agent.MaxSteps <= 0 {
 		t.Errorf("maxSteps should be positive, got %d", cfg.Agent.MaxSteps)
@@ -63,7 +63,7 @@ func TestLoadEmptyPath(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("Load('') returned nil")
 	}
-	if cfg.DefaultModel != "deepseek-flash" {
+	if cfg.DefaultModel != "deepseek-chat" {
 		t.Errorf("default model mismatch: %s", cfg.DefaultModel)
 	}
 }
