@@ -34,6 +34,22 @@ type liveStats struct {
 }
 func (s *liveStats) addCost(v float64) { s.costU.Add(int64(v * 1_000_000)) }
 func (s *liveStats) cost() float64     { return float64(s.costU.Load()) / 1_000_000 }
+
+// deepseekCost estimates the USD cost of one model call. Cache-hit input tokens
+// bill at ~1/10 the miss rate on DeepSeek, so charging the whole prompt at the
+// miss rate overstated the cost — badly on cached runs (often >90% hits).
+func deepseekCost(promptTokens, cacheHitTokens, completionTokens int) float64 {
+	const (
+		missRate = 0.14 / 1e6  // input, cache miss
+		hitRate  = 0.014 / 1e6 // input, cache hit (~10x cheaper)
+		outRate  = 0.28 / 1e6  // output
+	)
+	miss := promptTokens - cacheHitTokens
+	if miss < 0 {
+		miss = 0
+	}
+	return float64(miss)*missRate + float64(cacheHitTokens)*hitRate + float64(completionTokens)*outRate
+}
 var st = &liveStats{}
 var currentCtrl *control.Controller
 
@@ -131,7 +147,7 @@ func termSink() event.Sink {
 				})
 				st.tkIn.Store(int64(e.Usage.PromptTokens)); st.tkOut.Store(int64(e.Usage.CompletionTokens))
 				st.tkCache.Store(int64(e.Usage.CacheHitTokens))
-				st.addCost(float64(e.Usage.PromptTokens)*0.14/1e6 + float64(e.Usage.CompletionTokens)*0.28/1e6)
+				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
 			}
 
 		case event.FilePreview:
@@ -696,6 +712,7 @@ func tuiSink(model *tui.Model) event.Sink {
 				st.tkIn.Store(int64(e.Usage.PromptTokens))
 				st.tkOut.Store(int64(e.Usage.CompletionTokens))
 				st.tkCache.Store(int64(e.Usage.CacheHitTokens))
+				st.addCost(deepseekCost(e.Usage.PromptTokens, e.Usage.CacheHitTokens, e.Usage.CompletionTokens))
 			}
 
 		case event.TurnDone:
@@ -708,6 +725,7 @@ func tuiSink(model *tui.Model) event.Sink {
 				Provider: "",
 				TokensIn: st.tkIn.Load(), TokensOut: st.tkOut.Load(),
 				CacheHit: st.tkCache.Load(),
+				Cost:     st.cost(),
 				Steps:    step,
 				State:    "idle",
 			})
