@@ -169,7 +169,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 
 	// 4. Build skill store
 	wd, _ := os.Getwd()
-	c.skillStore = skill.New(skill.Options{ProjectRoot: wd})
+	c.skillStore = skill.New(skillOptionsFromConfig(cfg, wd))
 	skills := c.skillStore.List()
 	_ = skills
 	// 5. Resolve permission mode
@@ -243,15 +243,12 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	if memStore != nil {
 		memPrompt = memStore.SystemPrompt()
 	}
-	c.ag = agent.New(prov, reg, c.sess, agent.Options{
-		MaxSteps:      cfg.Agent.MaxSteps,
-		Temperature:   cfg.Agent.Temperature,
-		ContextWindow: cfg.Agent.ContextWindow,
-		Sink:          sink,
-		Gate:          gate,
-		Asker:         asker,
-		MemoryPrompt:  memPrompt,
-	})
+	agOpts := agentOptionsFromConfig(cfg)
+	agOpts.Sink = sink
+	agOpts.Gate = gate
+	agOpts.Asker = asker
+	agOpts.MemoryPrompt = memPrompt
+	c.ag = agent.New(prov, reg, c.sess, agOpts)
 
 	// 12. Wire infrastructure
 	c.cp = checkpoint.New()
