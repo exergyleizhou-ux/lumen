@@ -468,6 +468,15 @@ func (m *Model) renderChat(w, h int) string {
 
 	entries := m.chat.entries
 	scrollPos := m.chat.scrollPos
+	// The loop below is top-anchored (scrollPos = index of the first visible
+	// entry). Auto-scroll sets scrollPos to len(entries) ("stick to bottom"), so
+	// clamp it to show the most recent msgH entries instead of rendering blank.
+	if maxStart := len(entries) - msgH; scrollPos > maxStart {
+		scrollPos = maxStart
+	}
+	if scrollPos < 0 {
+		scrollPos = 0
+	}
 
 	// Build visible lines
 	var lines []string
@@ -664,10 +673,32 @@ func (m *Model) renderStatus(w int) string {
 	left := lipgloss.JoinHorizontal(lipgloss.Center, modePart, " ", dim.Render(modelPart))
 	right := lipgloss.JoinHorizontal(lipgloss.Center, spaced...)
 
+	// statusStyle has Padding(0,2), so the inner content budget is w-4. lipgloss
+	// .Width() WRAPS content wider than that onto extra rows (it doesn't
+	// truncate), and View() reserves exactly one row for the status bar — so fit
+	// the content to one row: keep left, then truncate the right group to fit
+	// beside it with at least a 1-column gap.
+	avail := w - 4
+	if avail < 1 {
+		avail = 1
+	}
 	leftW := lipgloss.Width(left)
+	if leftW > avail-1 {
+		left = trunc(left, avail-1)
+		leftW = lipgloss.Width(left)
+	}
+	rightBudget := avail - leftW - 1
+	if rightBudget < 0 {
+		rightBudget = 0
+	}
+	if lipgloss.Width(right) > rightBudget {
+		right = trunc(right, rightBudget)
+	}
 	rightW := lipgloss.Width(right)
-	gap := w - leftW - rightW - 2
-	if gap < 1 { gap = 1 }
+	gap := avail - leftW - rightW
+	if gap < 1 {
+		gap = 1
+	}
 
 	return statusStyle.Width(w).Render(left + strings.Repeat(" ", gap) + right)
 }
