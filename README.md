@@ -138,8 +138,18 @@ All checks passed.
 
 ## Quick Start
 
+**Install a release binary** (no Go toolchain needed) — pick your platform from the
+[latest release](https://github.com/exergyleizhou-ux/lumen/releases/latest):
+
 ```bash
-# Clone & build (≤ 30 seconds)
+# macOS arm64 example — swap the asset for your OS/arch
+curl -L https://github.com/exergyleizhou-ux/lumen/releases/latest/download/lumen_1.0.0_darwin_arm64.tar.gz | tar xz
+./lumen version
+```
+
+**…or build from source** (≤ 30 seconds):
+
+```bash
 git clone https://github.com/exergyleizhou-ux/lumen.git
 cd lumen && go build -o bin/lumen ./cmd/lumen
 
@@ -264,6 +274,17 @@ Verified with real DeepSeek API calls (not mocked):
 
 Bug reports, feature requests, and PRs welcome.
 Open an issue before large changes to discuss direction.
+
+## Releases
+
+Tagged releases publish cross-platform binaries (macOS/Linux, amd64/arm64) via
+[goreleaser](https://goreleaser.com). To cut one: bump `VERSION`, tag it
+`vX.Y.Z` (must match `VERSION`), and push — the [Release workflow](.github/workflows/release.yml)
+builds and uploads the archives + checksums. `lumen version` reports the build.
+
+## License
+
+[MIT](./LICENSE) © 2026 exergyleizhou-ux
 
 ---
 
