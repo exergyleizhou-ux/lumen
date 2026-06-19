@@ -112,7 +112,7 @@ func parseSessionFile(path string, entry os.DirEntry) *sessionStats {
 	if strings.HasSuffix(entry.Name(), ".jsonl") {
 		scanner := bufio.NewScanner(f)
 		buf := make([]byte, 0, 64*1024)
-		scanner.Buffer(buf, 1024*1024)
+		scanner.Buffer(buf, 4*1024*1024) // tolerate long lines (base64 images, big files)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" {
@@ -139,6 +139,7 @@ func parseSessionFile(path string, entry os.DirEntry) *sessionStats {
 		}
 	} else if strings.HasSuffix(entry.Name(), ".log") {
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024) // was the default 64KB cap — long lines silently stopped the scan
 		for scanner.Scan() {
 			line := scanner.Text()
 			ss.Lines++

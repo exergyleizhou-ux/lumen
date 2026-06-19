@@ -35,9 +35,6 @@ const (
 
 	// MaxWriteSize is the largest content that can be written (10 MB).
 	MaxWriteSize = 10 * 1024 * 1024
-
-	// MaxToolOutputBytes caps a single tool result (32 KB).
-	MaxToolOutputBytes = 32 * 1024
 )
 
 // ── Binary detection ───────────────────────────────────────
