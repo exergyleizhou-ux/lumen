@@ -85,7 +85,13 @@ func splitLines(s string) []string {
 	if s == "" {
 		return nil
 	}
-	return strings.Split(s, "\n")
+	lines := strings.Split(s, "\n")
+	// Strip a trailing CR so CRLF (\r\n) files don't render a literal ^M at the
+	// end of every diff line.
+	for i := range lines {
+		lines[i] = strings.TrimSuffix(lines[i], "\r")
+	}
+	return lines
 }
 
 // lcsDiff produces an ordered line diff (context/deletion/addition) using a
