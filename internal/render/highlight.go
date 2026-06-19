@@ -7,7 +7,10 @@
 // display path, so the prefix cache stays byte-stable.
 package render
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // ── ANSI palette ──────────────────────────────────────────
 // Kept local to render so callers don't depend on cmd/lumen's palette.
@@ -43,6 +46,11 @@ type Lang struct {
 	Line       string // line-comment prefix, e.g. "//" or "#"
 	BlockOpen  string // block-comment open, e.g. "/*"
 	BlockClose string // block-comment close, e.g. "*/"
+	// CharQuote marks languages where ' is a char/rune literal ('a', '\n') rather
+	// than a string delimiter (Go, C, C++, Rust, Java). In those languages a lone
+	// apostrophe or a Rust lifetime ('a) must NOT open a string span. Languages
+	// that use ' for strings (Python, JS, Ruby, …) leave this false.
+	CharQuote bool
 }
 
 var langs = map[string]*Lang{}
@@ -90,7 +98,7 @@ func keywordSet(words ...string) map[string]bool {
 
 func init() {
 	RegisterLang(&Lang{
-		Line: "//", BlockOpen: "/*", BlockClose: "*/",
+		Line: "//", BlockOpen: "/*", BlockClose: "*/", CharQuote: true,
 		Keywords: keywordSet("break", "case", "chan", "const", "continue", "default",
 			"defer", "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
 			"interface", "map", "package", "range", "return", "select", "struct", "switch",
@@ -126,7 +134,7 @@ func init() {
 	}, "json")
 
 	RegisterLang(&Lang{
-		Line: "//", BlockOpen: "/*", BlockClose: "*/",
+		Line: "//", BlockOpen: "/*", BlockClose: "*/", CharQuote: true,
 		Keywords: keywordSet("int", "char", "void", "float", "double", "long", "short",
 			"unsigned", "signed", "struct", "union", "enum", "typedef", "const", "static",
 			"return", "if", "else", "for", "while", "do", "switch", "case", "break",
@@ -170,6 +178,19 @@ func Highlight(code, lang string) string {
 		}
 
 		c := code[i]
+		// Single quote in a char-literal language (Go/Rust/C/Java) only opens a
+		// string span if it forms a real char literal; otherwise it is a stray
+		// apostrophe or a Rust lifetime ('a) and must be emitted raw.
+		if c == '\'' && l.CharQuote {
+			if cl := charLiteralLen(code, i); cl > 0 {
+				writeColored(&b, colString, code[i:i+cl])
+				i += cl
+			} else {
+				b.WriteByte(c)
+				i++
+			}
+			continue
+		}
 		if c == '"' || c == '\'' || c == '`' {
 			j := i + 1
 			for j < n {
@@ -189,10 +210,7 @@ func Highlight(code, lang string) string {
 		}
 
 		if c >= '0' && c <= '9' {
-			j := i + 1
-			for j < n && (isAlnum(code[j]) || code[j] == '.') {
-				j++
-			}
+			j := scanNumber(code, i)
 			writeColored(&b, colNumber, code[i:j])
 			i = j
 			continue
@@ -231,8 +249,70 @@ func isIdentStart(c byte) bool {
 
 func isIdentPart(c byte) bool { return isIdentStart(c) || (c >= '0' && c <= '9') }
 
-func isAlnum(c byte) bool {
-	return isIdentPart(c) || c == 'x' || (c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f')
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// scanNumber returns the end index of a numeric literal starting at code[i]
+// (which must be a digit). It accepts a 0x/0X hex literal, decimal digits with
+// at most a fraction and an exponent, and Go-style "_" separators — but stops
+// at any other letter so "10abc" / "3px" no longer swallow the identifier.
+func scanNumber(code string, i int) int {
+	n := len(code)
+	j := i + 1
+	if code[i] == '0' && j < n && (code[j] == 'x' || code[j] == 'X') {
+		j++
+		for j < n && (isHexDigit(code[j]) || code[j] == '_') {
+			j++
+		}
+		return j
+	}
+	for j < n && ((code[j] >= '0' && code[j] <= '9') || code[j] == '.' || code[j] == '_') {
+		j++
+	}
+	if j < n && (code[j] == 'e' || code[j] == 'E') {
+		k := j + 1
+		if k < n && (code[k] == '+' || code[k] == '-') {
+			k++
+		}
+		if k < n && code[k] >= '0' && code[k] <= '9' {
+			j = k + 1
+			for j < n && code[j] >= '0' && code[j] <= '9' {
+				j++
+			}
+		}
+	}
+	return j
+}
+
+// charLiteralLen returns the byte length of a valid char/rune literal starting
+// at code[i] (which must be a single-quote byte), or 0 if it does not open one —
+// used to tell a real literal ('a', '\n', 'λ') from a stray apostrophe or a
+// Rust lifetime ('a).
+func charLiteralLen(code string, i int) int {
+	n := len(code)
+	j := i + 1
+	if j >= n || code[j] == '\'' || code[j] == '\n' {
+		return 0
+	}
+	if code[j] == '\\' {
+		j++
+		for k := 0; j < n && k < 12; k, j = k+1, j+1 {
+			if code[j] == '\n' {
+				return 0
+			}
+			if code[j] == '\'' {
+				return j - i + 1
+			}
+		}
+		return 0
+	}
+	_, sz := utf8.DecodeRuneInString(code[j:])
+	j += sz
+	if j < n && code[j] == '\'' {
+		return j - i + 1
+	}
+	return 0
 }
 
 func min(a, b int) int {
