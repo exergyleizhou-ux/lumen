@@ -390,20 +390,20 @@ func (e *Editor) redraw() {
 	io.WriteString(e.out, prompt)
 	io.WriteString(e.out, text)
 
-	// Step 3: Position cursor at correct column.
-	prefix := string(e.buf.runes[:e.buf.pos])
-	cursorOffset := runewidth.StringWidth(prompt) + runewidth.StringWidth(prefix)
-	io.WriteString(e.out, "\r")
-	if cursorOffset > 0 {
-		fmt.Fprintf(e.out, "\x1b[%dC", cursorOffset)
-	}
-
-	// Step 4: Track rows for next clear.
+	// Step 3: Position the cursor at the target column-offset, walking up to the
+	// correct row when the content wrapped — a single CUF can't cross a wrapped
+	// row and clamps at the margin, which left the cursor on the wrong line.
 	promptW := runewidth.StringWidth(prompt)
 	textW := runewidth.StringWidth(text)
+	total := promptW + textW
+	prefix := string(e.buf.runes[:e.buf.pos])
+	cursorOffset := promptW + runewidth.StringWidth(prefix)
+	io.WriteString(e.out, cursorMoves(total, cursorOffset, termW))
+
+	// Step 4: Track rows for next clear.
 	e.lastRows = 1
 	if termW > 0 {
-		e.lastRows = (promptW + textW + termW - 1) / termW
+		e.lastRows = (total + termW - 1) / termW
 	}
 	if e.lastRows < 1 {
 		e.lastRows = 1
