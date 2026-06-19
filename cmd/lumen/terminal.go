@@ -309,7 +309,7 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 		}
 		if text == "/undo" {
 			rewound, err := ctrl.Rewind()
-			if err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())) } else { fmt.Printf("\n  %s  %v\n", fg(G, "↩ rewound"), rewound) }
+			if err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())) } else { fmt.Printf("\n  %s\n", formatRewound(rewound)) }
 			continue
 		}
 		if text == "/status" { drawStatusLine(ctrl); continue }
@@ -616,7 +616,16 @@ func drawCache() {
 func drawRewind() {
 	rewound, err := currentCtrl.Rewind()
 	if err != nil { fmt.Printf("\n  %s\n", fg(Rd, "✗ "+err.Error())); return }
-	fmt.Printf("\n  %s  %v\n", fg(G, "↩ rewound"), rewound)
+	fmt.Printf("\n  %s\n", formatRewound(rewound))
+}
+
+// formatRewound renders the rewound-file list for humans instead of dumping a
+// raw Go slice ("[a.go b.go]").
+func formatRewound(rewound []string) string {
+	if len(rewound) == 0 {
+		return fg(D, "↩ nothing to undo")
+	}
+	return fmt.Sprintf("%s: %s", fg(G, fmt.Sprintf("↩ rewound %d file(s)", len(rewound))), strings.Join(rewound, ", "))
 }
 
 func drawReplay() {
