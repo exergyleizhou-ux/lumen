@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"lumen/internal/mcplife"
 	"lumen/internal/tool"
@@ -14,7 +15,42 @@ import (
 
 // ── Shared MCP clients ─────────────────────────────────────────────
 
-var mcpClients = map[string]*mcplife.Client{}
+var (
+	mcpMu      sync.RWMutex
+	mcpClients = map[string]*mcplife.Client{}
+)
+
+// setMCPClient stores a client under key, closing any prior client at that key
+// first so reconnecting to the same server doesn't leak the old subprocess +
+// pipes.
+func setMCPClient(key string, c *mcplife.Client) {
+	mcpMu.Lock()
+	old := mcpClients[key]
+	mcpClients[key] = c
+	mcpMu.Unlock()
+	if old != nil {
+		old.Close() // outside the lock: Close may block on the subprocess
+	}
+}
+
+// mcpClientByKey returns the client stored under key (nil if absent or empty).
+func mcpClientByKey(key string) *mcplife.Client {
+	mcpMu.RLock()
+	defer mcpMu.RUnlock()
+	return mcpClients[key]
+}
+
+// mcpClientsSnapshot returns a shallow copy so callers can range the clients
+// without holding a lock across MCP network I/O.
+func mcpClientsSnapshot() map[string]*mcplife.Client {
+	mcpMu.RLock()
+	defer mcpMu.RUnlock()
+	out := make(map[string]*mcplife.Client, len(mcpClients))
+	for k, v := range mcpClients {
+		out[k] = v
+	}
+	return out
+}
 
 func init() {
 	tool.RegisterBuiltin(&MCPConnectTool{})
@@ -48,7 +84,7 @@ func (t *MCPConnectTool) Execute(ctx context.Context, args json.RawMessage) (str
 
 	key := p.Command
 	if len(p.Args) > 0 { key = p.Command + " " + strings.Join(p.Args, " ") }
-	mcpClients[key] = client
+	setMCPClient(key, client)
 
 	// List tools/resources/prompts counts
 	tools, _ := client.ListTools()
@@ -71,12 +107,13 @@ func (t *MCPListToolsTool) Schema() json.RawMessage {
 func (t *MCPListToolsTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct{ Server string }
 	json.Unmarshal(args, &p)
-	client := mcpClients[p.Server]
+	client := mcpClientByKey(p.Server)
 	if client == nil {
 		// Return all servers' tools
-		if len(mcpClients) == 0 { return "No MCP servers connected. Use mcp_connect first.", nil }
+		clients := mcpClientsSnapshot()
+		if len(clients) == 0 { return "No MCP servers connected. Use mcp_connect first.", nil }
 		var sb strings.Builder
-		for key, c := range mcpClients {
+		for key, c := range clients {
 			tools, err := c.ListTools()
 			if err != nil { fmt.Fprintf(&sb, "%s: error %v\n", key, err); continue }
 			fmt.Fprintf(&sb, "%s: %d tools\n", key, len(tools))
@@ -109,7 +146,7 @@ func (t *MCPCallToolTool) Schema() json.RawMessage {
 func (t *MCPCallToolTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct{ Server, Tool string; Args map[string]any }
 	if err := json.Unmarshal(args, &p); err != nil { return "", err }
-	client := mcpClients[p.Server]
+	client := mcpClientByKey(p.Server)
 	if client == nil { return "", fmt.Errorf("server %q not connected. Use mcp_connect first.", p.Server) }
 
 	result, err := client.CallTool(p.Tool, p.Args)
@@ -167,8 +204,8 @@ func (t *MCPListPromptsTool) Execute(ctx context.Context, args json.RawMessage) 
 }
 
 func getMCPClient(key string) *mcplife.Client {
-	if key != "" { return mcpClients[key] }
-	for _, c := range mcpClients { return c }
+	if key != "" { return mcpClientByKey(key) }
+	for _, c := range mcpClientsSnapshot() { return c }
 	return nil
 }
 
