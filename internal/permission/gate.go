@@ -60,6 +60,18 @@ var DangerousTools = map[string]bool{
 	"bash": true,
 }
 
+// writePathGuardedTools are the path-taking disk writers whose destination is
+// checked against guard.CheckWritePath in ALL modes (incl. bypass/headless), so
+// a prompt-injected model can't plant persistence via ANY writer. Keep in sync
+// with the set of non-read-only tools that take a "path" argument.
+var writePathGuardedTools = map[string]bool{
+	"write_file":    true,
+	"edit_file":     true,
+	"multi_edit":    true,
+	"notebook_edit": true,
+	"delete_range":  true,
+}
+
 // Gate implements agent.Gate with mode-based decision logic.
 type Gate struct {
 	mode  Mode
@@ -88,8 +100,10 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 	// ── Write-path inspection (fires for ALL modes) ────────
 	// Writer tools are auto-approved in bypass/headless mode, so without this a
 	// prompt-injected model could plant persistence (SSH keys, shell rc, git
-	// hooks) or clobber system files. The guard runs before the mode check.
-	if toolName == "write_file" || toolName == "edit_file" {
+	// hooks) or clobber system files. The guard runs before the mode check and
+	// must cover EVERY path-taking disk writer — write_file/edit_file AND
+	// multi_edit/notebook_edit/delete_range.
+	if writePathGuardedTools[toolName] {
 		var p struct {
 			Path string `json:"path"`
 		}
