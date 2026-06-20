@@ -1,17 +1,20 @@
 # Changelog
 
-## v1.0.0 — pending tag (built, awaiting release)
+## v1.0.0-rc1 — first public release candidate
 
-> The `v1.0.0` tag has **not been pushed** yet — the latest published release is
-> `v0.2.0`. This section is the staged release note; pushing `v1.0.0` runs the
-> goreleaser pipeline (4 cross-platform tarballs + `checksums.txt`).
+> Pre-release. The previous published release was `v0.2.0`. This is a **1.0
+> candidate**, not GA: the core is solid and well-tested, but the multi-provider
+> and coding-quality claims are not yet live-verified at scale (see scope below).
+> Pushing `v1.0.0-rc1` runs the goreleaser pipeline (4 cross-platform tarballs +
+> `checksums.txt`); GitHub marks it a pre-release.
 
 Lumen is a terminal coding agent (Go). Honest scope: a solid, well-tested
 single-path agent that does tool-calling on **OpenAI-compatible** backends
 (exercised daily on DeepSeek + local LM Studio) and, as of this release, on
 **native Anthropic and Gemini** (wire-format verified against mock servers, not
 yet live-burned-in). It is **not** yet a measured rival to Cursor/Claude Code —
-the first coding-quality baseline is small (6 tasks). See `docs/eval-baseline.md`.
+the first coding-quality baseline is small (a 6-task baseline; the harness now
+ships 8 tasks). See `docs/eval-baseline.md`.
 
 ### Measurement (the new spine)
 - **`lumen eval`** — coding-quality harness: each task runs through the real
