@@ -33,9 +33,11 @@ var (
 	notaryOnce  sync.Once
 	hashChain   *notary.HashChain
 	hashOnce    sync.Once
-	auditTrail  *audit.Trail
-	auditOnce   sync.Once
 )
+
+// auditStoreFn returns the audit store the audit_query tool reads. It is a var so
+// tests can substitute a fixture store without touching the process-wide default.
+var auditStoreFn = audit.Default
 
 func getSealManager() *seal.Manager {
 	sealOnce.Do(func() {
@@ -59,12 +61,6 @@ func getHashChain() *notary.HashChain {
 	return hashChain
 }
 
-func getAuditTrail() *audit.Trail {
-	auditOnce.Do(func() {
-		auditTrail = audit.NewTrail(10000)
-	})
-	return auditTrail
-}
 
 // ── seal_data ───────────────────────────────────────────────────────────────
 
@@ -297,7 +293,7 @@ func (t *AuditQueryTool) Name() string   { return "audit_query" }
 func (t *AuditQueryTool) ReadOnly() bool { return true }
 
 func (t *AuditQueryTool) Description() string {
-	return "Query the audit trail for entries matching optional actor, action, and resource filters. Returns matching audit entries."
+	return "Query the persistent audit trail (every tool call the agent ran, with the recorded reason/args/result) for entries matching optional actor, action, and resource filters. Reads the on-disk JSONL store, so it answers \"why did the agent do X\" across restarts."
 }
 
 func (t *AuditQueryTool) Schema() json.RawMessage {
@@ -321,15 +317,8 @@ func (t *AuditQueryTool) Execute(ctx context.Context, args json.RawMessage) (str
 		return "", fmt.Errorf("invalid args: %w", err)
 	}
 
-	// Auto-record the query itself
-	trail := getAuditTrail()
-	trail.Record("agent", "audit_query", "audit-trail", "success", map[string]interface{}{
-		"filter_actor":    p.Actor,
-		"filter_action":   p.Action,
-		"filter_resource": p.Resource,
-	})
-
-	entries := trail.Query(p.Actor, p.Action, p.Resource, time.Time{}, time.Time{})
+	// Read the persistent default store (nil-safe when auditing is disabled).
+	entries := auditStoreFn().Query(p.Actor, p.Action, p.Resource, time.Time{}, time.Time{})
 	return audit.FormatTrail(entries), nil
 }
 

@@ -79,6 +79,19 @@ func (t *Trail) Record(actor, action, resource, result string, details map[strin
 	return entry
 }
 
+// restore appends a pre-built entry (e.g. loaded from a JSONL file), preserving
+// its original Hash/PrevHash so a reopened trail stays verifiable. Unlike
+// Record it does not recompute the chain.
+func (t *Trail) restore(e *Entry) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.entries = append(t.entries, e)
+	t.lastHash = e.Hash
+	if len(t.entries) > t.maxSize {
+		t.entries = t.entries[1:]
+	}
+}
+
 // Query filters audit entries.
 func (t *Trail) Query(actor, action, resource string, since, until time.Time) []*Entry {
 	t.mu.Lock()
