@@ -303,4 +303,4 @@ builds and uploads the archives + checksums. `lumen version` reports the build.
 
 ---
 
-*Built with Go · ~35k non-test LOC · 65 packages · 132 test files · ~117 builtin tools · 26 model presets · zero runtime deps. Run `make facts` for live counts.*
+*Built with Go · ~37k non-test LOC · 69 packages · 162 test files · ~117 builtin tools · 29 model presets · zero runtime deps. Run `make facts` for live counts.*
