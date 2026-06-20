@@ -52,6 +52,9 @@ type Controller struct {
 	prov    provider.Provider
 	// pricing is the active provider's configured rates (nil → use default).
 	pricing     *provider.Pricing
+	// turnTimeout bounds each provider HTTP request, matched to the per-turn
+	// deadline; resolved once at Configure and reused when switching presets.
+	turnTimeout time.Duration
 	fallbacks   []provider.Provider // for failover
 	reg         *tool.Registry
 	skillStore  *skill.Store
@@ -134,12 +137,14 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	}
 	c.provCfg = provCfg
 	c.pricing = pricingFromConfig(provCfg.Pricing)
+	c.turnTimeout = parseTurnTimeout(cfg.Agent.TurnTimeout)
 
 	prov, err := provider.New(provCfg.Kind, provider.Config{
 		Name:    provCfg.Name,
 		BaseURL: provCfg.BaseURL,
 		Model:   provCfg.Model,
 		APIKey:  provCfg.APIKey,
+		Timeout: c.turnTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("provider %s: %w", provCfg.Name, err)
@@ -157,6 +162,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 			BaseURL: cfg.Providers[i].BaseURL,
 			Model:   cfg.Providers[i].Model,
 			APIKey:  cfg.Providers[i].APIKey,
+			Timeout: c.turnTimeout,
 		})
 		if err == nil {
 			c.fallbacks = append(c.fallbacks, fb)
@@ -487,6 +493,7 @@ func (c *Controller) SwitchModel(name string) (string, error) {
 		BaseURL: preset.BaseURL,
 		Model:   preset.Model,
 		APIKey:  apiKey,
+		Timeout: c.turnTimeout,
 	})
 	if err != nil {
 		return "", fmt.Errorf("create provider: %w", err)

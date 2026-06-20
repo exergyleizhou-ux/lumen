@@ -135,6 +135,7 @@ type Agent struct {
 	contextWindow       int
 	softCompactRatio    float64
 	compactRatio        float64
+	turnTimeout         time.Duration
 	recentKeep          int
 	softCompactNoticed  bool
 	compactStuck        bool
@@ -169,7 +170,8 @@ type Options struct {
 	Sink              event.Sink
 	Gate              Gate
 	Asker             Asker
-	MemoryPrompt      string // injected after system prompt (persistent user memories)
+	MemoryPrompt      string        // injected after system prompt (persistent user memories)
+	TurnTimeout       time.Duration // per-turn wall; zero = 5m default
 }
 
 // New creates an Agent.
@@ -186,6 +188,9 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 	if opts.CompactRatio <= 0 {
 		opts.CompactRatio = 0.8
 	}
+	if opts.TurnTimeout <= 0 {
+		opts.TurnTimeout = 5 * time.Minute
+	}
 	a := &Agent{
 		prov:              prov,
 		tools:             tools,
@@ -199,6 +204,7 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		contextWindow:     opts.ContextWindow,
 		softCompactRatio:  opts.SoftCompactRatio,
 		compactRatio:      opts.CompactRatio,
+		turnTimeout:       opts.TurnTimeout,
 		recentKeep:        opts.RecentKeep,
 		cache:             newCacheTracker(),
 	}
@@ -308,10 +314,11 @@ func (a *Agent) SetSession(s *Session) {
 
 // Run executes one user turn. It streams a completion, executes any tool calls,
 // feeds results back, and repeats until the model produces a final answer or
-// maxSteps is exhausted. Each turn has a 5-minute hard timeout.
+// maxSteps is exhausted. Each turn has a configurable timeout (default 5m).
 func (a *Agent) Run(ctx context.Context, input string) error {
-	// Hard per-turn timeout: prevents any single turn from running indefinitely
-	turnCtx, turnCancel := context.WithTimeout(ctx, 5*time.Minute)
+	// Per-turn timeout (configurable via [agent] turn_timeout): prevents any
+	// single turn from running indefinitely. Raise it for slow local models.
+	turnCtx, turnCancel := context.WithTimeout(ctx, a.turnTimeout)
 	defer turnCancel()
 	ctx = turnCtx
 

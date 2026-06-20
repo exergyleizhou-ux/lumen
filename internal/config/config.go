@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
@@ -70,6 +71,10 @@ type AgentConfig struct {
 	ContextWindow    int     `toml:"context_window"`
 	SoftCompactRatio float64 `toml:"soft_compact_ratio"`
 	CompactRatio     float64 `toml:"compact_ratio"`
+	// TurnTimeout is a Go duration string (e.g. "5m", "20m") bounding a single
+	// agent turn. Empty = the 5m default. Raise it for slow local models whose
+	// first-turn prompt prefill can exceed 5 minutes.
+	TurnTimeout string `toml:"turn_timeout"`
 }
 
 // PermissionsConfig controls the tool-call permission gate.
@@ -94,6 +99,13 @@ func Load(path string) (*File, error) {
 	}
 	if _, err := toml.DecodeFile(path, cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	// Validate a non-empty turn_timeout up front so a typo fails loudly at load
+	// rather than silently falling back at runtime.
+	if cfg.Agent.TurnTimeout != "" {
+		if _, err := time.ParseDuration(cfg.Agent.TurnTimeout); err != nil {
+			return nil, fmt.Errorf("config: invalid agent.turn_timeout %q: %w", cfg.Agent.TurnTimeout, err)
+		}
 	}
 	// Resolve env vars
 	for i := range cfg.Providers {
@@ -207,6 +219,7 @@ func defaults() *File {
 			ContextWindow:    128000,
 			SoftCompactRatio: 0.5,
 			CompactRatio:     0.8,
+			TurnTimeout:      "5m",
 		},
 		Permissions: PermissionsConfig{Mode: "default"},
 		Skills:      SkillsConfig{MaxDepth: 3},

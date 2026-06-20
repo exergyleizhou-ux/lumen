@@ -2,12 +2,24 @@ package control
 
 import (
 	"strings"
+	"time"
 
 	"lumen/internal/agent"
 	"lumen/internal/config"
 	"lumen/internal/provider"
 	"lumen/internal/skill"
 )
+
+// parseTurnTimeout converts an [agent] turn_timeout duration string to a
+// duration, falling back to 5m for empty/unparseable values (config.Load already
+// rejects bad values from a file; this guards the programmatic &config.File{} path
+// so the per-turn deadline is never accidentally zero/disabled).
+func parseTurnTimeout(s string) time.Duration {
+	if d, err := time.ParseDuration(s); err == nil && d > 0 {
+		return d
+	}
+	return 5 * time.Minute
+}
 
 // isLoopbackURL reports whether a provider base_url points at an on-machine
 // (loopback) endpoint — i.e. a local model. Used to give local backends routing
@@ -46,6 +58,7 @@ func agentOptionsFromConfig(cfg *config.File) agent.Options {
 		ContextWindow:    cfg.Agent.ContextWindow,
 		SoftCompactRatio: cfg.Agent.SoftCompactRatio,
 		CompactRatio:     cfg.Agent.CompactRatio,
+		TurnTimeout:      parseTurnTimeout(cfg.Agent.TurnTimeout),
 	}
 }
 

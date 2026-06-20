@@ -28,13 +28,19 @@ func New(cfg provider.Config) (provider.Provider, error) {
 		cfg.BaseURL = "https://api.openai.com/v1"
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	// The client timeout equals the per-turn budget (no slack): turnCtx and the
+	// client deadline both mean "this turn exceeded its budget". Zero = 5m default.
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
 	return &Provider{
 		name:    cfg.Name,
 		baseURL: cfg.BaseURL,
 		model:   cfg.Model,
 		apiKey:  cfg.APIKey,
 		client: &http.Client{
-			Timeout: 5 * time.Minute,
+			Timeout: timeout,
 			Transport: &http.Transport{
 				DialContext: (&net.Dialer{
 					Timeout:   15 * time.Second,
