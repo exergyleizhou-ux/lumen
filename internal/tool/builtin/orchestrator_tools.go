@@ -20,18 +20,54 @@ func init() {
 
 var (
 	orchestratorExecutor *orchestrator.Executor
-	orchestratorOnce     sync.Once
+	orchestratorPool     *orchestrator.AgentPool
+	orchestratorMu       sync.Mutex
 	workflowPlans        = map[string]*orchestrator.Plan{}
 	workflowMu           sync.Mutex
 )
 
+// ensureExecutorLocked lazily builds the shared executor + pool. orchestratorMu
+// must be held by the caller.
+func ensureExecutorLocked() {
+	if orchestratorExecutor == nil {
+		orchestratorPool = orchestrator.NewAgentPool()
+		orchestratorExecutor = orchestrator.NewExecutor(orchestrator.DefaultConfig(), orchestratorPool)
+	}
+}
+
 func getExecutor() *orchestrator.Executor {
-	orchestratorOnce.Do(func() {
-		pool := orchestrator.NewAgentPool()
-		cfg := orchestrator.DefaultConfig()
-		orchestratorExecutor = orchestrator.NewExecutor(cfg, pool)
-	})
+	orchestratorMu.Lock()
+	defer orchestratorMu.Unlock()
+	ensureExecutorLocked()
 	return orchestratorExecutor
+}
+
+// SetWorkflowAgent registers a real agent into the shared orchestrator pool so
+// that create_workflow + run_workflow execute actual work. Without this the
+// pool is empty and every task fails "no agent available". The controller wires
+// this at startup with a closure that spawns a real lumen sub-agent; exec is
+// invoked once per workflow task, in parallel up to maxConcurrency.
+func SetWorkflowAgent(name string, exec func(ctx context.Context, prompt string) (string, error), maxConcurrency int) {
+	orchestratorMu.Lock()
+	defer orchestratorMu.Unlock()
+	ensureExecutorLocked()
+	orchestratorPool.Register(&orchestrator.FuncAgent{
+		AgentName:   name,
+		Concurrency: maxConcurrency,
+		Exec:        exec,
+	})
+}
+
+// resetWorkflowState clears the shared executor, pool, and registered plans.
+// Test-only: keeps package-global workflow state from leaking between tests.
+func resetWorkflowState() {
+	orchestratorMu.Lock()
+	orchestratorExecutor = nil
+	orchestratorPool = nil
+	orchestratorMu.Unlock()
+	workflowMu.Lock()
+	workflowPlans = map[string]*orchestrator.Plan{}
+	workflowMu.Unlock()
 }
 
 // ── run_workflow ────────────────────────────────────────────────────────────

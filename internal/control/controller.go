@@ -199,6 +199,28 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		cfg.Agent.Temperature, "", gate, "", "", nil))
 	c.reg = reg
 
+	// 7b. Wire the orchestrator's workflow pool to real sub-agents so
+	// create_workflow + run_workflow execute actual work in parallel (the pool
+	// was previously empty → every task failed "no agent available"). Each task
+	// spawns a one-shot lumen sub-agent; workflow/task meta-tools are excluded so
+	// a workflow task can't recursively spawn more workflows.
+	spawnCfg := agent.SpawnConfig{
+		Provider:      prov,
+		ParentReg:     reg,
+		MaxSteps:      cfg.Agent.MaxSteps,
+		ContextWindow: cfg.Agent.ContextWindow,
+		Temperature:   cfg.Agent.Temperature,
+		Gate:          gate,
+		ExcludeTools:  append([]string{"run_workflow", "create_workflow", "list_workflows"}, agent.SubagentMetaTools...),
+	}
+	maxParallel := cfg.Agent.MaxSteps
+	if maxParallel <= 0 {
+		maxParallel = 8
+	}
+	builtin.SetWorkflowAgent("lumen", func(ctx context.Context, prompt string) (string, error) {
+		return agent.Spawn(ctx, spawnCfg, prompt)
+	}, maxParallel)
+
 	// 8. Init timeline recorder (session replay + change inbox)
 	tl, err := timeline.NewRecorder(".lumen/timeline.jsonl")
 	if err != nil {
