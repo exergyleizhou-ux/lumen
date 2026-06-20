@@ -3,6 +3,8 @@
 // can list, switch, and auto-configure.
 package config
 
+import "strings"
+
 // ModelPreset describes one pre-configured model.
 type ModelPreset struct {
 	Name     string `json:"name"`
@@ -58,7 +60,41 @@ func ModelPresets() []ModelPreset {
 		{Name: "gemini-2.5-pro", Provider: "google", Kind: "gemini", BaseURL: "https://generativelanguage.googleapis.com", Model: "gemini-2.5-pro-exp-03-25"},
 		{Name: "gemini-2.5-flash", Provider: "google", Kind: "gemini", BaseURL: "https://generativelanguage.googleapis.com", Model: "gemini-2.5-flash"},
 		{Name: "gemini-2.0-flash", Provider: "google", Kind: "gemini", BaseURL: "https://generativelanguage.googleapis.com", Model: "gemini-2.0-flash"},
+
+		// ── Local (OpenAI-compatible, free, runs on the user's machine) ──
+		// These speak the OpenAI wire protocol on a loopback endpoint and accept
+		// an empty or placeholder API key. The Model field is a sensible default;
+		// the actual served id can be discovered at runtime via GET /v1/models
+		// (the capability probe does this). Local inference is a first-class
+		// engine — the new bottleneck is latency, not cost (cost ≈ $0).
+		{Name: "lmstudio", Provider: "lmstudio", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "local-model"},
+		{Name: "ollama", Provider: "ollama", Kind: "openai", BaseURL: "http://localhost:11434/v1", Model: "qwen2.5-coder"},
+		{Name: "vllm", Provider: "vllm", Kind: "openai", BaseURL: "http://localhost:8000/v1", Model: "local-model"},
 	}
+}
+
+// IsLocal reports whether the preset targets a loopback (on-machine) endpoint.
+// Local presets are free, need no real API key, and are probed by `lumen
+// probe-local` for tool-call capability.
+func (p ModelPreset) IsLocal() bool {
+	host := p.BaseURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	return strings.HasPrefix(host, "localhost") ||
+		strings.HasPrefix(host, "127.0.0.1") ||
+		strings.HasPrefix(host, "[::1]")
+}
+
+// LocalPresets returns only the presets that target a local endpoint.
+func LocalPresets() []ModelPreset {
+	var out []ModelPreset
+	for _, p := range ModelPresets() {
+		if p.IsLocal() {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // FindPreset locates a preset by name.

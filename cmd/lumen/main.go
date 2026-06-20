@@ -53,6 +53,8 @@ func main() {
 		runSetup()
 	case "doctor":
 		runDoctor()
+	case "probe-local":
+		runProbeLocal(os.Args[2:])
 	case "config":
 		runConfig()
 	case "stats":
@@ -89,6 +91,7 @@ Usage:
   lumen run --mode M "..."
   lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy/publish)
   lumen doctor
+  lumen probe-local        Check which local models can drive the agent (tool_call capability)
   lumen config
   lumen stats
   lumen eval [--tasks DIR] [--list]   Coding-quality benchmark (pass-rate)
