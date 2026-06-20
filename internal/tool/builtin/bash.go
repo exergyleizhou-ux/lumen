@@ -11,8 +11,38 @@ import (
 	"time"
 
 	"lumen/internal/jobs"
+	"lumen/internal/sandbox"
 	"lumen/internal/tool"
 )
+
+// bashCmd builds the *exec.Cmd that runs a shell command, routing it through an
+// OS-level sandbox (mac seatbelt / Linux bwrap) when the user opts in via
+// LUMEN_BASH_SANDBOX. Default (env unset) is the historical direct `sh -c`
+// path, so behavior is unchanged unless explicitly enabled. The API-key scrub
+// is applied either way. See internal/sandbox/runner.go and docs/sandbox.md.
+func bashCmd(ctx context.Context, command string) (*exec.Cmd, error) {
+	runner, required := sandbox.ForBash()
+	if runner != nil {
+		wd, _ := os.Getwd()
+		cmd, err := runner.Command(ctx, command, sandbox.RunOptions{
+			Workdir: wd,
+			Network: sandbox.BashNetwork(),
+		})
+		if err == nil {
+			cmd.Env = scrubSecrets(os.Environ())
+			return cmd, nil
+		}
+		if required {
+			return nil, fmt.Errorf("bash sandbox required (%s) but unavailable: %w", sandbox.EnvBashSandbox, err)
+		}
+		// auto mode: fall through to direct execution
+	} else if required {
+		return nil, fmt.Errorf("bash sandbox required (%s) but no sandbox backend is available on this platform", sandbox.EnvBashSandbox)
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
+	return cmd, nil
+}
 
 func init() {
 	tool.RegisterBuiltin(&BashTool{})
@@ -70,8 +100,10 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 			label = cutRunes(label, 57) + "..."
 		}
 		job := jm.Start("bash", label, func(bgCtx context.Context) (string, error) {
-			cmd := exec.CommandContext(bgCtx, "sh", "-c", p.Command)
-			cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
+			cmd, err := bashCmd(bgCtx, p.Command)
+			if err != nil {
+				return "", err
+			}
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		})
@@ -83,8 +115,10 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", p.Command)
-	cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
+	cmd, err := bashCmd(ctx, p.Command)
+	if err != nil {
+		return "", err
+	}
 	out, err := cmd.CombinedOutput()
 
 	if ctx.Err() != nil {
