@@ -264,6 +264,10 @@ func runChatUI(ctrl *control.Controller, modeOverride string) error {
 	if err := ctrl.Configure(termSink(), newLineAsker(), ""); err != nil {
 		return err
 	}
+	// Interactive permission prompts: in default/accept-edits modes the gate now
+	// actually asks before bash/risky writes (the terminal is in cooked mode
+	// during turn execution — lineedit defers term.Restore on each line read).
+	ctrl.SetApprover(newConfirmApprover(os.Stdin, os.Stdout))
 	currentCtrl = ctrl
 	defer func() { currentCtrl = nil }()
 	if modeOverride != "" { ctrl.SetPermissionMode(permission.ParseMode(modeOverride)) }
