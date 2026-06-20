@@ -30,6 +30,47 @@ build_from_source() {
   ( cd "$tmp" && GOTOOLCHAIN=local go build -o "$BIN_DIR/lumen" ./cmd/lumen )
 }
 
+# sha256_of prints the SHA-256 of a file using whichever tool is present
+# (sha256sum on Linux, shasum on macOS), or nothing if neither exists.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# verify_checksum checks $1 (a downloaded file) named $2 against the release's
+# checksums.txt for tag $3, downloading it into $4. Mismatch → hard abort.
+# Missing checksums.txt or no sha256 tool → warn and proceed.
+verify_checksum() {
+  local file="$1" asset="$2" tag="$3" tmp="$4"
+  local sums_url="https://github.com/$REPO/releases/download/${tag}/checksums.txt"
+  if ! curl -fsSL "$sums_url" -o "$tmp/checksums.txt" 2>/dev/null; then
+    echo "⚠️  no checksums.txt for $tag — cannot verify integrity, proceeding."
+    return 0
+  fi
+  local want got
+  want="$(awk -v a="$asset" '$2==a {print $1}' "$tmp/checksums.txt" | head -1)"
+  got="$(sha256_of "$file")"
+  if [ -z "$want" ]; then
+    echo "⚠️  no checksum entry for $asset — proceeding without verification."
+    return 0
+  fi
+  if [ -z "$got" ]; then
+    echo "⚠️  no sha256 tool (sha256sum/shasum) — proceeding without verification."
+    return 0
+  fi
+  if [ "$want" != "$got" ]; then
+    echo "❌ checksum MISMATCH for $asset — aborting (possible tampering or corrupt download)."
+    echo "   expected: $want"
+    echo "   actual:   $got"
+    rm -rf "$tmp"
+    exit 1
+  fi
+  echo "🔒 checksum verified ($asset)"
+}
+
 install_binary() {
   # Resolve the release tag (latest or pinned) and download the tarball.
   local tag="$LUMEN_VERSION"
@@ -39,10 +80,15 @@ install_binary() {
   fi
   [ -n "$tag" ] || return 1
   local ver="${tag#v}"
-  local url="https://github.com/$REPO/releases/download/${tag}/lumen_${ver}_${os}_${arch}.tar.gz"
+  local asset="lumen_${ver}_${os}_${arch}.tar.gz"
+  local url="https://github.com/$REPO/releases/download/${tag}/${asset}"
   echo "⬇️  Downloading $url"
   local tmp; tmp="$(mktemp -d)"
   curl -fsSL "$url" -o "$tmp/lumen.tar.gz" 2>/dev/null || { rm -rf "$tmp"; return 1; }
+  # Supply-chain integrity: verify the tarball against the release checksums.txt
+  # BEFORE extracting/installing. A mismatch aborts hard (possible tampering);
+  # an absent checksums.txt warns but proceeds (older releases).
+  verify_checksum "$tmp/lumen.tar.gz" "$asset" "$tag" "$tmp"
   tar -xzf "$tmp/lumen.tar.gz" -C "$tmp" 2>/dev/null || { rm -rf "$tmp"; return 1; }
   [ -f "$tmp/lumen" ] || { rm -rf "$tmp"; return 1; }
   install -m 0755 "$tmp/lumen" "$BIN_DIR/lumen"
