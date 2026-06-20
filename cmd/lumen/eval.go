@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -27,10 +28,19 @@ func runEval(args []string) {
 	keep := fs.Bool("keep", false, "keep each task's workspace for inspection")
 	repeat := fs.Int("repeat", 1, "run each task N times (local models are non-deterministic)")
 	asJSON := fs.Bool("json", false, "emit machine-readable JSON instead of the pretty report")
+	// Research cell coordinates (failure-mode study). The server context window is
+	// an operator-asserted axis: the harness can't read LM Studio's `-c` from an
+	// OpenAI endpoint, so it's passed in for ρ = first_prompt_tokens / window and
+	// stamped onto each result for reproducibility. tool-profile/model-label are
+	// record-only labels (the actual profile is set in lumen.toml).
+	effWindow := fs.Int("eff-window", 0, "server context window (LM Studio -c) for ρ + the record; 0 = unknown")
+	toolProfile := fs.String("tool-profile", "", "tool-profile label for the result record (core/full/micro)")
+	modelLabel := fs.String("model-label", "", "model label for the result record; empty = the active model id")
 	_ = fs.Parse(args)
 	if *repeat < 1 {
 		*repeat = 1
 	}
+	meta := cellMeta{model: *modelLabel, toolProfile: *toolProfile, serverWindow: *effWindow}
 
 	tasks, err := eval.LoadTasks(*tasksDir)
 	if err != nil {
@@ -71,7 +81,9 @@ func runEval(args []string) {
 				}
 				fmt.Printf("\n[%d/%d] %s\n", i+1, len(tasks), label)
 			}
-			r, out := runOneTask(task, cfgPath, orig, *keep)
+			m := meta
+			m.rep = rep
+			r, out := runOneTask(task, cfgPath, orig, *keep, m)
 			results = append(results, r)
 			if !*asJSON {
 				mark := col(Rd, "✗")
@@ -107,9 +119,19 @@ func runEval(args []string) {
 	}
 }
 
+// cellMeta carries the experiment-cell coordinates stamped onto each result so a
+// JSON run is self-describing (which model / profile / server window produced it).
+type cellMeta struct {
+	model        string
+	toolProfile  string
+	serverWindow int
+	rep          int
+}
+
 // runOneTask copies a task to a fresh workspace, runs the prompt through the
-// agent there, and scores it. Returns the result and the check's failure output.
-func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, string) {
+// agent there, scores it, and classifies any failure from the event stream.
+// Returns the result and the check's failure output.
+func runOneTask(task eval.Task, cfgPath, orig string, keep bool, meta cellMeta) (eval.Result, string) {
 	ws, err := os.MkdirTemp("", "lumen-eval-")
 	if err != nil {
 		return eval.Result{Task: task.Name, Err: err.Error()}, ""
@@ -121,10 +143,11 @@ func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, s
 		return eval.Result{Task: task.Name, Err: "copy: " + err.Error()}, ""
 	}
 	ctr := &evalCounters{}
+	coll := &eval.SignalCollector{}
 	start := time.Now()
 	_ = os.Chdir(ws)
 	ctrl := control.New()
-	cerr := ctrl.Configure(evalSink(ctr), nil, cfgPath)
+	cerr := ctrl.Configure(evalSink(ctr, coll), nil, cfgPath)
 	var rerr error
 	if cerr == nil {
 		rerr = ctrl.Run(context.Background(), task.Prompt)
@@ -136,12 +159,15 @@ func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, s
 	// Anti-cheat: a green check earned by editing/deleting a *_test.go is not a
 	// pass — the task said don't modify the tests. Compare against the committed
 	// fixture and reject if the protected tests changed.
+	tampered := false
 	if passed {
 		if ok, changed := eval.ProtectedTestsUnchanged(task.Workspace, ws); !ok {
 			passed = false
+			tampered = true
 			out = "rejected: modified protected test file(s): " + strings.Join(changed, ", ")
 		}
 	}
+
 	r := eval.Result{Task: task.Name, Passed: passed, Turns: ctr.steps, CostUSD: cost, Seconds: time.Since(start).Seconds()}
 	switch {
 	case cerr != nil:
@@ -149,6 +175,33 @@ func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, s
 	case rerr != nil:
 		r.Err = "run: " + firstLine(rerr.Error(), 80)
 	}
+
+	// Build the classification signals from the event stream + post-run state.
+	sig := coll.Partial()
+	sig.Passed = passed
+	sig.TestTampered = tampered
+	sig.RunErr = r.Err // lets Classify route configure:/copy: to HarnessBreak (F10)
+	sig.FilesChanged = len(eval.ChangedNonTestFiles(task.Workspace, ws))
+	// A turn-timeout cancels the context before a clean TurnDone, so it is read
+	// from Run's error (checked before stringify) rather than a StopReason event.
+	if rerr != nil && errors.Is(rerr, context.DeadlineExceeded) {
+		sig.StopReason = "timeout"
+	}
+	sig.ServerContextWindow = meta.serverWindow
+
+	r.FailureMode = eval.Classify(sig)
+	r.FirstPromptTokens = sig.FirstPromptTokens
+	r.ToolResultCount = sig.ToolResultCount
+	r.FilesChanged = sig.FilesChanged
+	r.StopReason = sig.StopReason
+	r.Rho = sig.Rho()
+	r.Model = meta.model
+	if r.Model == "" {
+		r.Model = ctrl.ModelName()
+	}
+	r.ToolProfile = meta.toolProfile
+	r.ServerContextWindow = meta.serverWindow
+	r.Rep = meta.rep
 	return r, out
 }
 
@@ -168,8 +221,9 @@ type evalCounters struct {
 	in, out, hit, miss int
 }
 
-func evalSink(ctr *evalCounters) event.Sink {
+func evalSink(ctr *evalCounters, coll *eval.SignalCollector) event.Sink {
 	return event.FuncSink(func(e event.Event) {
+		coll.Observe(e)
 		if e.Kind == event.UsageKind && e.Usage != nil {
 			ctr.steps++
 			ctr.in += e.Usage.PromptTokens
