@@ -46,6 +46,12 @@ func New(cfg provider.Config) (provider.Provider, error) {
 func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	// This backend does not send tool schemas or parse tool_use, so a request
+	// carrying tools (every agent turn) cannot work. Fail loudly instead of
+	// silently returning a plain-chat reply that never edits a file.
+	if len(req.Tools) > 0 {
+		return nil, &provider.UnsupportedToolsError{Provider: p.name, Backend: "Anthropic"}
+	}
 	ch := make(chan provider.Chunk, 64)
 	go func() {
 		defer close(ch)
