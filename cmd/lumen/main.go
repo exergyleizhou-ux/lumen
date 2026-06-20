@@ -57,6 +57,8 @@ func main() {
 		runConfig()
 	case "stats":
 		runStats()
+	case "eval":
+		runEval(os.Args[2:])
 	case "reliability":
 		runReliability()
 	case "version", "--version", "-v":
@@ -89,6 +91,7 @@ Usage:
   lumen doctor
   lumen config
   lumen stats
+  lumen eval [--tasks DIR] [--list]   Coding-quality benchmark (pass-rate)
   lumen setup
   lumen version
 
