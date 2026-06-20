@@ -13,6 +13,7 @@ import (
 	"lumen/internal/event"
 	"lumen/internal/evidence"
 	"lumen/internal/tool"
+	"lumen/internal/untrusted"
 	"lumen/internal/websearch"
 )
 
@@ -25,6 +26,9 @@ var sharedHTTP = &http.Client{
 		DialContext: (&net.Dialer{
 			Timeout:   10 * time.Second,
 			KeepAlive: 30 * time.Second,
+			// SSRF guard: validate the ACTUAL resolved IP at connect time, which
+			// also defeats DNS rebinding. See ssrf.go.
+			Control: ssrfDialControl,
 		}).DialContext,
 		MaxIdleConns:          20,
 		MaxIdleConnsPerHost:   5,
@@ -72,6 +76,12 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if p.URL == "" {
 		return "", fmt.Errorf("url is required")
 	}
+	// SSRF pre-flight: reject non-http(s) schemes and known-bad literal-IP hosts
+	// before any connection. The dialer Control hook (sharedHTTP) is the
+	// authoritative, rebinding-safe check for hostname targets and redirects.
+	if err := checkFetchURL(p.URL); err != nil {
+		return "", err
+	}
 
 	client := sharedHTTP // package-level keep-alive pool
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.URL, nil)
@@ -97,7 +107,10 @@ func (t *WebFetchTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if strings.Contains(contentType, "text/html") {
 		content = stripHTML(content)
 	}
-	return content, nil
+	// Fetched web content is untrusted external data. Wrap it so the model
+	// treats it as information, not as instructions to follow (indirect prompt
+	// injection mitigation; docs/threat-model.md §7 G3).
+	return untrusted.Wrap(p.URL, content), nil
 }
 
 func stripHTML(s string) string {

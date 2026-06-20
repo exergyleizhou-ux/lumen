@@ -8,6 +8,7 @@ import (
 	"lumen/internal/diff"
 	"lumen/internal/fileutil"
 	"lumen/internal/tool"
+	"lumen/internal/untrusted"
 )
 
 func init() {
@@ -51,6 +52,12 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 	wsRoot := fileutil.WorkspaceRoot()
 	content, _, _, err := fileutil.SafeReadFile(p.Path, wsRoot, p.Offset, p.Limit)
+	if err == nil && untrusted.ReadsWrapped() {
+		// Opt-in (LUMEN_UNTRUSTED_READS): treat file contents as untrusted when
+		// working in a repo whose contents may carry injection payloads. Off by
+		// default because wrapping interferes with exact-string edit workflows.
+		content = untrusted.Wrap("file: "+p.Path, content)
+	}
 	return content, err
 }
 
