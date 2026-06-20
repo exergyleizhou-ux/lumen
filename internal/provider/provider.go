@@ -187,21 +187,6 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Body)
 }
 
-// UnsupportedToolsError reports that a backend cannot run Lumen's coding agent
-// because it does not implement tool-calling (sending tool schemas to the model
-// and parsing the tool calls it returns). It is returned synchronously from
-// Stream when a request carries tools, so the failure is LOUD instead of a silent
-// degrade to a plain-chat reply that never edits a file.
-type UnsupportedToolsError struct {
-	Provider string // configured provider name
-	Backend  string // human backend label, e.g. "Anthropic"
-}
-
-func (e *UnsupportedToolsError) Error() string {
-	return fmt.Sprintf("provider %q (%s backend) does not support tool-calling in Lumen, so the coding agent cannot run on it. Use an OpenAI-compatible endpoint (kind=\"openai\") — DeepSeek, LM Studio, Ollama, and vLLM all expose one.",
-		e.Provider, e.Backend)
-}
-
 // Factory builds a Provider from a resolved Config.
 type Factory func(cfg Config) (Provider, error)
 
