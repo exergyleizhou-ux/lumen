@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"lumen/internal/audit"
 	"lumen/internal/checkpoint"
 	"lumen/internal/diff"
 	"lumen/internal/editverify"
@@ -715,6 +716,18 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
 		a.evidence.Record(rec)
 	}
+	// Audit trail: one disk-backed line per tool call so `audit_query` can later
+	// answer "why did the agent run X". A no-op when auditing is disabled.
+	auditResult := firstLine(result)
+	if err != nil {
+		auditResult = "error: " + firstLine(err.Error())
+	}
+	audit.Record(audit.ToolCall{
+		Tool:   call.Name,
+		Args:   call.Arguments,
+		Result: auditResult,
+		OK:     err == nil,
+	})
 	if err != nil {
 		detail := result
 		if !json.Valid([]byte(call.Arguments)) {
