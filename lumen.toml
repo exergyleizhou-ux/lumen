@@ -18,6 +18,15 @@ api_key_env = "DEEPSEEK_API_KEY"
 # output = 0.28     # completion, per 1M tokens
 # currency = "USD"
 
+# Which built-in tools the model is offered each turn. "full" (default) exposes
+# every built-in (~116); "core" offers only the coding-focused ~42 (files, search,
+# code-nav, bash, git, LSP, web, memory, MCP, model-switch) — 64% fewer tools per
+# turn = less context burned and sharper tool selection. Anything dropped is still
+# reachable via an MCP server. Validate the trade-off with `lumen eval` before
+# switching your default.
+# [tools]
+# profile = "core"
+
 [agent]
 max_steps = 30
 temperature = 0.7

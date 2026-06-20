@@ -23,6 +23,17 @@ type File struct {
 	Agent        AgentConfig        `toml:"agent"`
 	Permissions  PermissionsConfig  `toml:"permissions"`
 	Skills       SkillsConfig       `toml:"skills"`
+	Tools        ToolsConfig        `toml:"tools"`
+}
+
+// ToolsConfig selects which built-in tools the model is offered each turn.
+// Profile "full" (default) exposes every built-in — backward compatible.
+// Profile "core" exposes only the coding-focused set, so the model isn't handed
+// (and billed context for) ~116 tools including seal_data/topology_build_graph/
+// cron_parse/screen_capture in a coding agent. Anything dropped from core stays
+// reachable as an opt-in MCP server.
+type ToolsConfig struct {
+	Profile string `toml:"profile"` // "full" (default) | "core"
 }
 
 // ProviderConfig is one model provider entry.

@@ -161,9 +161,10 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		}
 	}
 
-	// 3. Build tool registry
+	// 3. Build tool registry — honoring [tools] profile (default "full"; "core"
+	// offers only the coding set so the model isn't handed ~116 tools per turn).
 	reg := tool.NewRegistry()
-	for _, t := range tool.Builtins() {
+	for _, t := range selectTools(tool.Builtins(), cfg.Tools.Profile) {
 		reg.Add(t)
 	}
 
