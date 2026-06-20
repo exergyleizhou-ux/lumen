@@ -46,6 +46,14 @@ correct `if len(nums) == 0 { return 0 }` fix, Lumen's verify ran `go test` → g
 
 > Lesson for any small local model + Lumen: **context must exceed the core-profile
 > prompt (~11k).** 8k is too small; 16k works for these tasks.
+>
+> **Guard added:** the agent now runs a pre-flight overflow check on the first
+> turn — if the stable prefix (system prompt + tool schemas) + input already
+> crowds the configured `[agent] context_window`, it emits a WARN pointing at
+> `[tools] profile="core"` / a larger window, instead of letting the window
+> silently slide and degrade the model into a greeting. (Note: it keys off the
+> *configured* window — set `context_window` to your server's value, since the
+> OpenAI `/v1/models` endpoint doesn't report context length.)
 
 ---
 

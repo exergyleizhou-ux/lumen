@@ -346,6 +346,15 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		if a.memoryPrompt != "" {
 			a.session.Add(provider.Message{Role: provider.RoleSystem, Content: "[MEMORY]\n" + a.memoryPrompt})
 		}
+		// Pre-flight overflow guard (first turn only): the stable prefix (system
+		// prompt + tool schemas) can't be shrunk by auto-compaction, so warn
+		// before the first stream if it already crowds the window. Schemas are
+		// otherwise lazily cached inside the loop below; hoist that here so the
+		// estimate is accurate.
+		if a.cachedSchemas == nil {
+			a.cachedSchemas = a.tools.Schemas()
+		}
+		a.preflightOverflowCheck(input)
 	}
 	sessionLen := a.session.Len() // snapshot for rollback on failed turns
 	a.session.Add(provider.Message{Role: provider.RoleUser, Content: input})
@@ -1030,6 +1039,30 @@ func estimateTokens(msgs []provider.Message, schemas []provider.ToolSchema) int 
 		totalChars += len(s.Name) + len(s.Description) + len(s.Parameters)
 	}
 	return totalChars / 3
+}
+
+// preflightOverflowCheck warns once, before the first turn streams, when the
+// un-compactable stable prefix (system prompt + tool schemas) plus the first
+// user input already crowds the context window. estimateTokens is a ~3 chars/
+// token heuristic, so this WARNs (never aborts) — a noisy over-count (CJK is
+// denser) must not block a turn. It is the missing "before the first turn" half
+// of the existing auto-compaction circuit breaker, keyed off the same
+// contextWindow*compactRatio threshold; auto-compaction can't help here because
+// it preserves the head+tail prefix.
+func (a *Agent) preflightOverflowCheck(input string) {
+	if a.contextWindow <= 0 {
+		return
+	}
+	base := estimateTokens(a.session.Snapshot(), a.cachedSchemas) +
+		estimateTokens([]provider.Message{{Content: input}}, nil)
+	threshold := int(float64(a.contextWindow) * a.compactRatio)
+	if base >= threshold {
+		a.Sink().Emit(event.Event{
+			Kind: event.Notice, Level: event.LevelWarn,
+			Text: fmt.Sprintf("system prompt + tools (~%d tokens) approach the %d-token context window; auto-compaction can't shrink the stable prefix — set [tools] profile=\"core\" or raise [agent] context_window",
+				base, a.contextWindow),
+		})
+	}
 }
 
 func (a *Agent) autoCompact(turnCtx context.Context) {
