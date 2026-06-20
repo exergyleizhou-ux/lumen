@@ -4,11 +4,19 @@
 export GOTOOLCHAIN := local
 export GOFLAGS := -mod=mod
 
-.PHONY: check build vet test race lint clean facts
+.PHONY: check build vet test race lint clean facts eval
 
 ## check: the merge gate — compile, vet, and run all tests. Fail = red.
+## (The eval harness's loader/scorer/aggregator are covered here in internal/eval;
+## the live, model-driven `make eval` run is separate — it needs a model + key.)
 check: build vet test
 	@echo "✓ check passed"
+
+## eval: coding-quality benchmark — run the eval tasks end-to-end through the
+## configured model and print pass-rate / median steps / cost. Needs a provider
+## key (e.g. DEEPSEEK_API_KEY) or a local model. `lumen eval --list` needs neither.
+eval: bin
+	./bin/lumen eval
 
 ## facts: print the real, script-generated repo counts. Docs cite this, not
 ## hand-typed numbers that drift (and have drifted) from reality.

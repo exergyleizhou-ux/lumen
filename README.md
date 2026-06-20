@@ -249,10 +249,26 @@ lumen/
 └── go.mod
 ```
 
+## Evaluation
+
+Coding quality is measured, not asserted. `lumen eval` runs a fixed set of real tasks
+(`evals/tasks/` — each a broken project + a deterministic check) end-to-end through the
+configured model and reports **pass-rate / median steps / cost**:
+
+```bash
+lumen eval --list            # list tasks (no model needed)
+lumen eval                   # run them through your configured model → pass-rate
+make eval
+```
+
+It scores by compiling + running each task's tests, so it works against any model — cloud
+or local (point `base_url` at LM Studio/Ollama and compare). A published baseline pass-rate
+is pending a model run; the harness itself (loader/scorer/aggregator) is unit-tested in CI.
+
 ## Real-World Runs
 
 Real DeepSeek API calls (not mocked). **These are cost/efficiency numbers — turns, tokens,
-cache-hit — not a coding-quality benchmark.** A pass-rate benchmark is still TODO (see Roadmap).
+cache-hit — not a coding-quality benchmark** (that's `lumen eval`, above).
 
 | Task | Turns | Tokens | Cache Hit |
 |------|-------|--------|-----------|
