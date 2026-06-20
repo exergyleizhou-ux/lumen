@@ -1,97 +1,82 @@
 # Changelog
 
-## Unreleased — experience + error-correction polish
+## v1.0.0 — pending tag (built, awaiting release)
 
-Deep-polish pass over rendering and the error-correction loop, each fix landed as
-a single-concern PR with a failing test first (TDD) and verified on a real
-`lumen run`. Plus the first release pipeline.
+> The `v1.0.0` tag has **not been pushed** yet — the latest published release is
+> `v0.2.0`. This section is the staged release note; pushing `v1.0.0` runs the
+> goreleaser pipeline (4 cross-platform tarballs + `checksums.txt`).
 
-### Experience (pixel-level)
-- **render/markdown** — headings keep their style after an inline `code`/`**bold**`
-  span; numbered lists are styled like bullets; spaced asterisks (`a * b`) no
-  longer false-italicize (CommonMark flanking).
-- **render/highlight** — apostrophes and Rust lifetimes (`'a`) no longer swallow
-  the rest of a line as a string (new per-language `CharQuote`); the number lexer
-  stops at letters (`10abc` → `10`).
-- **render/diff** — a truncated diff now says how many lines it hid.
-- **cmd/lumen sink** — parallel read-only tool batches no longer orphan their `✓`
-  onto bare lines; the verify-after-edit result (`✓ verified` / `✗ …`) is shown in
-  `lumen run` instead of being dropped.
+Lumen is a terminal coding agent (Go). Honest scope: a solid, well-tested
+single-path agent that does tool-calling on **OpenAI-compatible** backends
+(exercised daily on DeepSeek + local LM Studio) and, as of this release, on
+**native Anthropic and Gemini** (wire-format verified against mock servers, not
+yet live-burned-in). It is **not** yet a measured rival to Cursor/Claude Code —
+the first coding-quality baseline is small (6 tasks). See `docs/eval-baseline.md`.
 
-### Error-correction
-- **tool/bash** — a non-zero exit is now an error (red `✗ exit code N`) instead of
-  a misleading green `✓`, while the command output still reaches the model.
-- **control** — `[agent]` compaction ratios and `[skills] max_depth` from
-  `lumen.toml` are actually applied (were parsed then ignored).
+### Measurement (the new spine)
+- **`lumen eval`** — coding-quality harness: each task runs through the real
+  agent and is scored by `go test`. `--json` / `--repeat` / latency reporting.
+- **First local baseline recorded** — `google/gemma-4-12b` via LM Studio: 5/6
+  (ceiling 6/6; the one miss was a memory-pressure timeout). `docs/eval-baseline.md`.
+- **CI gate** — a scripted-provider fixture drives the eval in CI so a pass-rate
+  regression fails the build; protected-test-file edits can't fake a pass.
 
-### Release
-- `LICENSE` (MIT), `VERSION`, `.goreleaser.yaml`, and a tag-driven Release
-  workflow; `lumen version` reports the injected version/commit/date.
+### Multi-provider tool-calling (3 backend families)
+- **OpenAI-compatible** — DeepSeek, OpenAI, Grok, Ollama, Qwen, Moonshot, Zhipu,
+  Mimo, and any local LM Studio / vLLM server.
+- **Native Anthropic** — sends tool schemas + parses streamed `tool_use`
+  (was previously a silent degrade to plain chat). Mock-verified.
+- **Native Gemini** — parses `functionCall`, sends structured
+  `functionCall`/`functionResponse` history. Mock-verified.
+- The Anthropic and Gemini paths are **not yet live-burned-in** (no cloud keys in
+  the dev env) — the README and this note say so plainly.
 
-## v1.0.0 (2026-06-17)
+### Local daily-driver
+- **Configurable `[agent] turn_timeout`** — the per-turn deadline (was a hardcoded
+  5 minutes) so a slow local model's first-turn prefill isn't killed.
+- **Context-overflow pre-flight guard** — warns before the first turn when the
+  system prompt + tool schemas crowd the configured `context_window`, instead of
+  letting the window silently slide (the gemma "greeting instead of editing" trap).
+- **`[tools] profile`** — `core` (~42 coding tools) vs `full` (~116) to fit small
+  local context windows.
 
-### Core
+### Safety
+- **Real interactive approval** — the permission gate now actually prompts in
+  chat (default/accept-edits modes) instead of a hardcoded always-yes; headless
+  runs auto-approve (no human to ask) with the guard still enforced.
+- **Heuristic bash guard** — blocks exfiltration, sensitive reads, recon,
+  destructive ops, download-and-execute, encoded payloads in all modes. (A
+  denylist, not a sandbox — see `docs/threat-model.md`.)
+- **Write-path guard** — every path-taking writer is checked against sensitive /
+  persistence paths even in bypass mode.
+- **Audit trail** (hash-chained JSONL), **injection isolation** + SSRF guard for
+  web/tool content, and an **opt-in OS sandbox** for bash (Seatbelt/bwrap, default
+  off — it would block the agent's own builds).
 
-- **verify-after-edit** — automatic build+vet+test after every file edit, with model self-repair (up to 3 cycles). Supports Go, Python (ruff+pytest), JavaScript/TypeScript (tsc+jest).
-- **LSP diagnostics** — gopls check results collected after build passes, fed to model via FormatFeedback.
-- **Fault rollback** — same file failing verify 2+ consecutive times triggers automatic `git checkout` restore.
-- **Multi-model** — 9 providers, 26 presets. DeepSeek optimized (96-99% cache hit).
-- **4 permission modes** — bypass / plan / default / accept-edits, with 5-layer bash command guard.
+### Agent core & reliability
+- Streaming tool-loop with plan-mode gating, prefix-cache stability, model
+  compaction (circuit-breakered), checkpoint/rewind, stream-recovery.
+- Verify-after-edit: auto build+vet+test after edits with model self-repair
+  (Go / Python ruff+pytest / JS-TS tsc+jest); fault rollback via `git checkout`.
+- Session persistence (JSONL, auto-resume), background jobs, sub-agents (`task`).
 
-### Input & Terminal
+### Terminal & TUI
+- Line editing: full cursor movement incl. wrapped-line cursor, CJK/emoji-safe,
+  history, bracketed paste. Bubble Tea multi-panel TUI.
 
-- **Line editing** — full cursor movement (← → Home End), CJK/emoji-safe, mouse scrollback, text selection. 47 tests.
-- **Keyboard shortcuts** — Ctrl+W (delete word), Ctrl+K (kill to end), ESC (clear buffer), Tab (command completion), Ctrl+A/Ctrl+E (home/end).
-- **Slash commands** — `/cost`, `/cache`, `/rewind`, `/replay`, `/changes`, `/retry`, `/undo`, `/help`, `/stats`, `/reliability`.
-- **Multi-line input** — warp-free, no ghost text on multi-row terminals.
-- **Scrollback preserved** — `\x1b[K` per-line clearing, never destroys terminal history.
+### C2D (Compute-to-Data) author toolchain
+- **`lumen oasis init|validate|build|deploy`** — author algorithms for the Oasis
+  marketplace; `--network none` sandbox execution + Ed25519 attestation of results.
 
-### Agent Reliability
-
-- **Session persistence** — JSONL history files, auto-resume on restart (`📂 resumed: 168 messages`).
-- **Context compaction** — model-based auto-compact with circuit breaker (3 consecutive → disabled).
-- **Per-turn timeout** — 5-minute hard limit, Ctrl+C cancels within the same turn.
-- **Session timeline** — every turn, tool call, and file change recorded. `/replay` to rewatch, `/changes` for diff inbox.
-- **Sub-agents** — `task` tool spawns isolated agents with tool whitelists.
-- **Background jobs** — `bash` and `task` support `run_in_background` with `bash_output`, `wait`, `kill_shell`.
-- **Monthly reliability reports** — `lumen reliability` generates per-month crash/verify/rollback/token/cost metrics.
-
-### C2D (Compute-to-Data) — SpaceX Factory→Shelf
-
-- **`lumen oasis init|validate|build|deploy`** — full algorithm author toolchain.
-- **Marketplace compute module** — `POST /api/v1/compute/algorithms` → `POST /compute/jobs` → Worker polls pending → DockerRunner executes with `--network none` isolation → Ed25519 attestation → result persistence.
-- **Conveyor belt** — `lumen oasis deploy` auto-registers algorithm on marketplace API.
-- **Regression fixtures** — every successful C2D run becomes a permanent regression test in `RegressionStore`.
-- **Real C2D flight** — linear-model container executed with `--network none`, `--read-only`, producing verified output (mae=0.2571).
-
-### TUI
-
-- **Bubble Tea multi-panel** — chat (60%), plan+diff (40%), persistent status bar.
-- **Verify indicator** — `⟳ verifying…` / `✓ verified` / `✗ detail` in status bar.
-- **Event bridge** — agent events stream to TUI via `tuiSink`, text typed in TUI flows to controller.
-- **8 TUI tests** — running, ok, fail, empty, truncated, status-msg independence.
-
-### Operations
-
-- **`lumen doctor`** — 8 health checks: config, provider reachability, git, go version, gopls, verify config, workspace.
-- **`lumen stats`** — per-session message/turn/token/line table with totals.
-- **`lumen reliability`** — monthly crash/verify/rollback report.
-- **`lumen config`** — current configuration display (model, providers, key sources, permissions).
-- **Binary** — 11MB single Go binary, zero runtime dependencies.
-- **CI** — GitHub Actions: go build + vet + test -race on push.
-
-### Security
-
-- **Key rotation** — leaked API key purged from shell config files. Key stored as env var only.
-- **5-layer bash guard** — exfiltration, sensitive reads, recon, destructive, encoded payloads blocked in all modes.
-- **File safety** — binary detection, 10MB size limit, workspace boundary enforcement.
-
-### Engineering
-
-- **Package count** — 54 packages (down from 192 in earlier releases).
-- **Test coverage** — 51+ test packages passing (editverify: 47, lineedit: 44, agent: 3 fault rollback, tui: 8, oasis: 9, reliability: 4, marketplace compute: 14).
-- **Race detector** — all tests pass with `-race`.
-- **Vet** — zero warnings across all packages.
+### Operations & distribution
+- **`lumen doctor` / `stats` / `reliability` / `config` / `probe-local`**.
+- **Release pipeline** — `LICENSE` (MIT), `VERSION`, `.goreleaser.yaml` (darwin/
+  linux × amd64/arm64 + checksums), tag-driven workflow; `lumen version` reports
+  the injected version/commit/date. **`install.sh` verifies the tarball checksum**
+  before installing (fail-closed on mismatch).
+- **CI** — `go build` + `vet` + `test -race` on push, plus the eval gate.
+- Dependencies: Go stdlib plus BurntSushi/toml and charmbracelet bubbletea/lipgloss
+  (it is *not* zero-dependency).
 
 ---
-*Built with Go 1.23+ · single binary · zero runtime deps*
+*Go 1.23+ · single binary · honest-status README*
