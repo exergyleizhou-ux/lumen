@@ -23,6 +23,7 @@ import (
 	"lumen/internal/evidence"
 	"lumen/internal/guard"
 	"lumen/internal/jobs"
+	"lumen/internal/perf"
 	"lumen/internal/provider"
 	"lumen/internal/render"
 	"lumen/internal/tool"
@@ -387,6 +388,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		}
 
 		// 5. Stream the completion
+		streamStart := time.Now()
 		ch, err := a.prov.Stream(ctx, req)
 		if err != nil {
 			// Recovery: interrupted stream after some output already delivered
@@ -404,10 +406,17 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			reasonBuf  strings.Builder
 			chunkCount int
 			recovered  bool
+			firstChunk time.Time // set on first content/reasoning/tool chunk (TTFT)
 		)
 
 		for chunk := range ch {
 			chunkCount++
+			if firstChunk.IsZero() {
+				switch chunk.Type {
+				case provider.ChunkText, provider.ChunkReasoning, provider.ChunkToolCall, provider.ChunkToolCallStart:
+					firstChunk = time.Now()
+				}
+			}
 			switch chunk.Type {
 			case provider.ChunkText:
 				textBuf.WriteString(chunk.Text)
@@ -461,6 +470,23 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			a.sessCacheHit.Add(int64(usage.CacheHitTokens))
 			a.sessCacheMiss.Add(int64(usage.CacheMissTokens))
 			a.Sink().Emit(event.Event{Kind: event.UsageKind, Usage: convertUsage(usage), Timestamp: time.Now()})
+		}
+
+		// Emit per-turn performance (TTFT / decode tok/s / turn wall-clock). Uses
+		// real usage for the token count; falls back to 0 throughput when usage
+		// is absent. Skipped for zero-chunk streams (nothing was generated).
+		if chunkCount > 0 {
+			completion := 0
+			if usage != nil {
+				completion = usage.CompletionTokens
+			}
+			p := perf.Compute(perf.Sample{
+				StreamStart:      streamStart,
+				FirstChunk:       firstChunk,
+				Done:             time.Now(),
+				CompletionTokens: completion,
+			})
+			a.Sink().Emit(event.Event{Kind: event.PerfKind, Perf: &p, Timestamp: time.Now()})
 		}
 
 		text := textBuf.String()

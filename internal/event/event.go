@@ -30,7 +30,20 @@ const (
 	// outcome (Text = summary, Level = info on success / warn on failure).
 	VerifyStarted Kind = "verify_started"
 	VerifyResult  Kind = "verify_result"
+
+	// PerfKind reports per-turn performance: time-to-first-token, decode
+	// throughput, and turn wall-clock. On local inference latency is the real
+	// bottleneck (cost ≈ $0), so these are first-class.
+	PerfKind Kind = "perf"
 )
+
+// Perf carries per-turn performance metrics for the perf HUD.
+type Perf struct {
+	TTFTMs           int64   `json:"ttft_ms"`            // time to first token (stream start → first chunk)
+	TurnMs           int64   `json:"turn_ms"`            // stream start → stream done (wall clock)
+	TokensPerSec     float64 `json:"tokens_per_sec"`     // decode throughput (completion tokens / generation window)
+	CompletionTokens int     `json:"completion_tokens"`  // real usage when reported, else 0
+}
 
 // Level is the severity of a Notice event.
 type Level string
@@ -99,6 +112,7 @@ type Event struct {
 	Usage     *Usage        `json:"usage,omitempty"`
 	Level     Level         `json:"level,omitempty"`
 	Profile   *Profile      `json:"profile,omitempty"`
+	Perf      *Perf         `json:"perf,omitempty"`
 	Questions []AskQuestion `json:"questions,omitempty"`
 	DiffText  string        `json:"diff,omitempty"`
 	Timestamp time.Time     `json:"timestamp"`
