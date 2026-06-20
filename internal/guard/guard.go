@@ -194,6 +194,11 @@ var (
 	rmPresent         = regexp.MustCompile(`(^|[;&|]|\s)rm\s`)
 	rmRecursive       = regexp.MustCompile(`\s-[a-z]*r`)
 	rmDangerousTarget = regexp.MustCompile(`\s(/|~|\*|/\*|\$\{?home\}?)(\s|$)`)
+	// rmHomeDataDir catches wiping an ENTIRE home data directory — never a
+	// legitimate target for a coding agent, and high-harm. Matches the whole-dir
+	// form (~/documents, $home/downloads, /users/x/pictures) but NOT a subpath
+	// (~/documents/proj/node_modules stays allowed), so real cleanups still pass.
+	rmHomeDataDir = regexp.MustCompile(`(~|\$\{?home\}?|/home/[^/ ]+|/users/[^/ ]+)/(documents|desktop|downloads|pictures|movies|music|library)/?(\s|$|;|&|\|)`)
 )
 
 // checkDestructiveRm catches recursive rm of a dangerous target across flag
@@ -210,6 +215,9 @@ func checkDestructiveRm(cmd string) CheckResult {
 	}
 	if strings.Contains(cmd, "--no-preserve-root") || rmDangerousTarget.MatchString(cmd) {
 		return CheckResult{Safe: false, Reason: "recursive removal of a dangerous target (root / home / wildcard)"}
+	}
+	if rmHomeDataDir.MatchString(cmd) {
+		return CheckResult{Safe: false, Reason: "recursive removal of a home data directory (Documents/Desktop/Downloads/Pictures/Music/Movies/Library)"}
 	}
 	return CheckResult{Safe: true}
 }

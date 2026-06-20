@@ -13,11 +13,32 @@ func TestCheckBashSafeCommands(t *testing.T) {
 		"mkdir -p /tmp/test",
 		"git status",
 		"go test -count=1 ./...",
+		"rm -rf $HOME/code/node_modules",        // non-data $HOME subdir — allowed
+		"rm -rf $HOME/Documents/myproj/build",   // a SUBPATH of a data dir — allowed (only whole-dir wipe is blocked)
 	}
 	for _, cmd := range safe {
 		r := CheckBash(cmd)
 		if !r.Safe {
 			t.Errorf("safe command %q blocked: %s", cmd, r.Reason)
+		}
+	}
+}
+
+// Wiping an entire home data directory is high-harm and never a coding-agent
+// task — block it across ~ / $HOME / absolute spellings, while leaving subdir
+// cleanups (covered by the safe list above) alone.
+func TestCheckBashBlocksHomeDataDirWipe(t *testing.T) {
+	blocked := []string{
+		"rm -rf ~/Documents",
+		"rm -rf $HOME/Downloads",
+		"rm -rf ~/Desktop/",
+		"rm -rf /Users/lei/Pictures",
+		"rm -rf ~/Library",
+		"rm -rf ${HOME}/Movies",
+	}
+	for _, cmd := range blocked {
+		if r := CheckBash(cmd); r.Safe {
+			t.Errorf("home data-dir wipe %q should be blocked", cmd)
 		}
 	}
 }
