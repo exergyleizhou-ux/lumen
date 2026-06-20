@@ -42,6 +42,7 @@ type Diagnostic struct {
 // Result is the outcome of one Verify call.
 type Result struct {
 	OK          bool
+	Ran         int          // steps that actually executed (0 = nothing verified, e.g. no toolchain)
 	Failed      *Step        // first failing step (nil when OK)
 	Diagnostics []Diagnostic // parsed from the failing step's output
 	Output      string       // raw output of the failing step (truncated)
@@ -76,18 +77,30 @@ type Runner interface {
 	Run(ctx context.Context, step Step) (output string, ok bool)
 }
 
+// availabilityChecker lets a runner report that a step's tool isn't installed so
+// the plan can SKIP the step (not run it, not fail it) — and, crucially, not
+// count it as verified. A missing linter/test runner must never trigger a bogus
+// self-repair cycle NOR a false "✓ verified" on code nothing actually checked.
+type availabilityChecker interface {
+	available(step Step) bool
+}
+
 // execRunner runs steps as real subprocesses with the project's toolchain env.
 type execRunner struct{}
 
+// available reports whether the step's tool is on PATH. Mirrors collectLSPDiags
+// skipping an absent gopls — keeps multi-language verify safe on a partial
+// toolchain.
+func (execRunner) available(step Step) bool {
+	if len(step.Args) == 0 {
+		return false
+	}
+	_, err := exec.LookPath(step.Args[0])
+	return err == nil
+}
+
 func (execRunner) Run(ctx context.Context, step Step) (string, bool) {
 	if len(step.Args) == 0 {
-		return "", true
-	}
-	// If the tool isn't installed, SKIP the step (inconclusive → treated as ok)
-	// rather than reporting a failure: a missing linter/test runner must not
-	// trigger a bogus self-repair cycle. This keeps multi-language verify safe in
-	// a partial toolchain. Mirrors collectLSPDiags skipping an absent gopls.
-	if _, err := exec.LookPath(step.Args[0]); err != nil {
 		return "", true
 	}
 	cmd := exec.CommandContext(ctx, step.Args[0], step.Args[1:]...)
@@ -95,6 +108,25 @@ func (execRunner) Run(ctx context.Context, step Step) (string, bool) {
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
 	out, err := cmd.CombinedOutput()
 	return string(out), err == nil
+}
+
+// runPlan runs steps in order, skipping any whose tool is unavailable (per an
+// optional availabilityChecker). It returns the number of steps that actually
+// executed, the first failing step (nil if none), and that step's output.
+func runPlan(ctx context.Context, run Runner, steps []Step) (ran int, failed *Step, out string) {
+	ac, _ := run.(availabilityChecker)
+	for i := range steps {
+		if ac != nil && !ac.available(steps[i]) {
+			continue // tool not installed — inconclusive, not a pass and not a fail
+		}
+		o, ok := run.Run(ctx, steps[i])
+		ran++
+		if !ok {
+			s := steps[i]
+			return ran, &s, o
+		}
+	}
+	return ran, nil, ""
 }
 
 // Verifier runs a verification plan against a project root.
@@ -119,23 +151,24 @@ func New(root string, cfg Config) *Verifier {
 // that tools like gopls surface before the builds break (P3 wire-in).
 func (v *Verifier) Verify(ctx context.Context, changed []string) Result {
 	rel := v.sameModulePaths(relativizePaths(v.root, changed))
-	for _, step := range Detect(v.root, rel, v.cfg) {
-		out, ok := v.run.Run(ctx, step)
-		if !ok {
-			s := step
-			return Result{
-				OK:          false,
-				Failed:      &s,
-				Diagnostics: Parse(s, out),
-				Output:      truncate(out),
-			}
+	ran, failed, out := runPlan(ctx, v.run, Detect(v.root, rel, v.cfg))
+	if failed != nil {
+		return Result{
+			OK:          false,
+			Ran:         ran,
+			Failed:      failed,
+			Diagnostics: Parse(*failed, out),
+			Output:      truncate(out),
 		}
 	}
 
+	// No step failed. Ran==0 means nothing actually executed (e.g. the project's
+	// toolchain isn't installed) — OK, but NOT "verified": the caller must not
+	// claim a ✓ over code no check ever ran against.
 	// Build/vet/test all passed — collect LSP diagnostics for changed .go files.
 	// These are informational — the model can see issues gopls would flag even
 	// though the code compiled. Pass empty changed list → skip (too expensive).
-	res := Result{OK: true}
+	res := Result{OK: true, Ran: ran}
 	if len(rel) > 0 {
 		v.collectLSPDiags(ctx, rel)
 		res.LSPDiags = v.lspDiags

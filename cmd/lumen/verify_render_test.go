@@ -26,3 +26,18 @@ func TestVerifyResultLineFailureShowsDetail(t *testing.T) {
 		t.Errorf("failing verify detail dropped, got %q", out)
 	}
 }
+
+// A "skipped" verify (no toolchain ran) must NOT render as a green "✓ verified" —
+// it shows the skip message dim, so the user is never told unverified code passed.
+func TestVerifyResultLineSkipIsNotAGreenCheck(t *testing.T) {
+	out := verifyResultLine(event.LevelInfo, "↷ verify skipped — no build/test toolchain ran")
+	if strings.Contains(out, "✓ verified") {
+		t.Errorf("a skipped verify must not claim '✓ verified', got %q", out)
+	}
+	if !strings.Contains(out, "skipped") {
+		t.Errorf("skip message should be shown, got %q", out)
+	}
+	if !strings.Contains(out, D) { // dim, not green
+		t.Errorf("skip should render dim, got %q", out)
+	}
+}
