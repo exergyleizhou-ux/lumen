@@ -1,0 +1,1 @@
+Fix Double in package calc so that Double(n) returns n*2. Do not modify the tests.
