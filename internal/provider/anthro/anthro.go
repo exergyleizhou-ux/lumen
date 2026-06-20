@@ -46,12 +46,6 @@ func New(cfg provider.Config) (provider.Provider, error) {
 func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	// This backend does not send tool schemas or parse tool_use, so a request
-	// carrying tools (every agent turn) cannot work. Fail loudly instead of
-	// silently returning a plain-chat reply that never edits a file.
-	if len(req.Tools) > 0 {
-		return nil, &provider.UnsupportedToolsError{Provider: p.name, Backend: "Anthropic"}
-	}
 	ch := make(chan provider.Chunk, 64)
 	go func() {
 		defer close(ch)
@@ -96,11 +90,20 @@ func (p *Provider) stream(ctx context.Context, req provider.Request, ch chan<- p
 }
 
 type anthroRequest struct {
-	Model     string        `json:"model"`
-	MaxTokens int           `json:"max_tokens"`
-	Messages  []anthroMsg   `json:"messages"`
-	System    string        `json:"system,omitempty"`
-	Stream    bool          `json:"stream"`
+	Model     string       `json:"model"`
+	MaxTokens int          `json:"max_tokens"`
+	Messages  []anthroMsg  `json:"messages"`
+	System    string       `json:"system,omitempty"`
+	Stream    bool         `json:"stream"`
+	Tools     []anthroTool `json:"tools,omitempty"`
+}
+
+// anthroTool is a tool definition in Anthropic's native shape. The model only
+// emits tool_use blocks for tools listed here.
+type anthroTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema"`
 }
 
 type anthroMsg struct {
@@ -172,12 +175,22 @@ func (p *Provider) buildRequest(req provider.Request) anthroRequest {
 		maxTokens = req.MaxTokens
 	}
 
+	var tools []anthroTool
+	for _, ts := range req.Tools {
+		schema := ts.Parameters
+		if len(schema) == 0 {
+			schema = json.RawMessage(`{"type":"object"}`)
+		}
+		tools = append(tools, anthroTool{Name: ts.Name, Description: ts.Description, InputSchema: schema})
+	}
+
 	return anthroRequest{
 		Model:     p.model,
 		MaxTokens: maxTokens,
 		Messages:  msgs,
 		System:    system,
 		Stream:    true,
+		Tools:     tools,
 	}
 }
 
@@ -189,6 +202,12 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 	var textBuf strings.Builder
 	var reasoningBuf strings.Builder
 	var hasContent bool
+	// curTool accumulates the in-progress tool_use block. Anthropic streams blocks
+	// sequentially (start → input_json_delta… → stop), so a single slot suffices.
+	var curTool *struct {
+		id, name string
+		args     strings.Builder
+	}
 
 	for sc.Scan() {
 		select {
@@ -209,9 +228,15 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 				Type    string `json:"type"`
 				Message string `json:"message"`
 			} `json:"error"`
-			Delta struct {
+			ContentBlock struct {
 				Type string `json:"type"`
-				Text string `json:"text"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
+			} `json:"content_block"`
+			Delta struct {
+				Type        string `json:"type"`
+				Text        string `json:"text"`
+				PartialJSON string `json:"partial_json"`
 			} `json:"delta"`
 			Message struct {
 				Content []struct {
@@ -238,6 +263,17 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 			// In-band error event: surface it instead of a silent empty turn.
 			ch <- provider.Chunk{Type: provider.ChunkError, Err: fmt.Errorf("provider error: %s", event.Error.Message)}
 			return
+		case "content_block_start":
+			// A tool_use block opens with its id+name; its input arrives as
+			// input_json_delta fragments and closes at content_block_stop.
+			if event.ContentBlock.Type == "tool_use" {
+				curTool = &struct {
+					id, name string
+					args     strings.Builder
+				}{id: event.ContentBlock.ID, name: event.ContentBlock.Name}
+				ch <- provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: curTool.id, Name: curTool.name}}
+			}
+
 		case "content_block_delta":
 			switch event.Delta.Type {
 			case "text_delta":
@@ -253,6 +289,20 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 					Type: provider.ChunkReasoning,
 					Text: event.Delta.Text,
 				}
+			case "input_json_delta":
+				if curTool != nil {
+					curTool.args.WriteString(event.Delta.PartialJSON)
+				}
+			}
+
+		case "content_block_stop":
+			if curTool != nil {
+				args := curTool.args.String()
+				if args == "" {
+					args = "{}"
+				}
+				ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{ID: curTool.id, Name: curTool.name, Arguments: args}}
+				curTool = nil
 			}
 
 		case "message_stop":
