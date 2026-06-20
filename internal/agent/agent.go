@@ -759,10 +759,16 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 
 	if res.OK {
 		a.repairCycle = 0
+		// Ran==0 means no check actually executed (e.g. the project's toolchain
+		// isn't installed). Don't claim "✓ verified" over code nothing ran against.
+		text := "✓"
+		if res.Ran == 0 {
+			text = "↷ verify skipped — no build/test toolchain ran"
+		}
 		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelInfo,
-			Text:      "✓",
+			Text:      text,
 			Timestamp: time.Now(),
 		})
 		return ""

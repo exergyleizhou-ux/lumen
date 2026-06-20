@@ -94,7 +94,12 @@ func fg(code, s string) string { return code + s + R }
 // yellow, the attention-but-not-fatal color (a failure starts a repair cycle).
 func verifyResultLine(level event.Level, text string) string {
 	if level == event.LevelInfo {
-		return "  " + G + "✓ verified" + R + "\n"
+		if text == "" || text == "✓" {
+			return "  " + G + "✓ verified" + R + "\n"
+		}
+		// A non-✓ info result (e.g. "verify skipped — no toolchain") is neutral,
+		// not a pass — render it dim so it never reads as a green ✓ verified.
+		return "  " + D + text + R + "\n"
 	}
 	return "  " + Y + text + R + "\n"
 }
@@ -703,8 +708,9 @@ func tuiSink(model *tui.Model) event.Sink {
 			if e.Level == event.LevelWarn || e.Level == event.LevelErr {
 				vs = "fail"
 			}
-			// A timeout is inconclusive, not a failure — show it neutrally.
-			if strings.HasPrefix(e.Text, "verify timed out") {
+			// A timeout or a no-toolchain skip is inconclusive, not a pass — show
+			// it neutrally rather than a ✓.
+			if strings.HasPrefix(e.Text, "verify timed out") || strings.HasPrefix(e.Text, "↷") {
 				vs = "skip"
 			}
 			model.Send(tui.VerifyMsg{State: vs, Detail: e.Text})

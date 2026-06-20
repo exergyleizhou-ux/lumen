@@ -5,15 +5,18 @@ import (
 	"testing"
 )
 
-// A verify step whose tool isn't installed (e.g. ruff/tsc absent) must be SKIPPED
-// (treated as ok), never reported as a failure — otherwise activating verify in a
-// project with a partial toolchain would trigger bogus self-repair cycles.
-func TestExecRunner_MissingToolIsSkipped(t *testing.T) {
+// A verify step whose tool isn't installed (e.g. ruff/tsc absent) must report
+// available()==false so the plan SKIPS it — never a failure (which would trigger
+// bogus self-repair) and never a pass (which would be a false "✓ verified").
+func TestExecRunner_MissingToolIsUnavailable(t *testing.T) {
 	r := execRunner{}
-	step := Step{Name: "lint", Dir: t.TempDir(), Args: []string{"lumen-no-such-tool-xyz123", "check", "."}}
-	out, ok := r.Run(context.Background(), step)
-	if !ok {
-		t.Errorf("missing tool should be skipped (ok=true), got ok=false (out=%q)", out)
+	missing := Step{Name: "lint", Dir: t.TempDir(), Args: []string{"lumen-no-such-tool-xyz123", "check", "."}}
+	if r.available(missing) {
+		t.Error("a missing tool must report available()=false")
+	}
+	present := Step{Name: "test", Dir: t.TempDir(), Args: []string{"sh", "-c", "true"}}
+	if !r.available(present) {
+		t.Error("an installed tool (sh) must report available()=true")
 	}
 }
 
