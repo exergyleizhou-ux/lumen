@@ -27,9 +27,9 @@ func TestScore(t *testing.T) {
 
 func TestSummarize(t *testing.T) {
 	s := Summarize([]Result{
-		{Task: "a", Passed: true, Turns: 3, CostUSD: 0.01},
-		{Task: "b", Passed: false, Turns: 9, CostUSD: 0.02},
-		{Task: "c", Passed: true, Turns: 5, CostUSD: 0.03},
+		{Task: "a", Passed: true, Turns: 3, CostUSD: 0.01, Seconds: 2},
+		{Task: "b", Passed: false, Turns: 9, CostUSD: 0.02, Seconds: 8},
+		{Task: "c", Passed: true, Turns: 5, CostUSD: 0.03, Seconds: 5},
 	})
 	if s.Total != 3 || s.Passed != 2 {
 		t.Errorf("counts wrong: %+v", s)
@@ -39,6 +39,9 @@ func TestSummarize(t *testing.T) {
 	}
 	if s.MedianTurns != 5 {
 		t.Errorf("median turns = %d, want 5", s.MedianTurns)
+	}
+	if s.MedianSeconds != 5 {
+		t.Errorf("median seconds = %v, want 5", s.MedianSeconds)
 	}
 	if s.TotalCostUSD < 0.059 || s.TotalCostUSD > 0.061 {
 		t.Errorf("total cost = %v, want ~0.06", s.TotalCostUSD)

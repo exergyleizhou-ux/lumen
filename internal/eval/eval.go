@@ -27,12 +27,12 @@ type Task struct {
 
 // Result is one task's outcome.
 type Result struct {
-	Task    string
-	Passed  bool
-	Turns   int
-	CostUSD float64
-	Seconds float64
-	Err     string // why it failed to run/score (not the same as a failed check)
+	Task    string  `json:"task"`
+	Passed  bool    `json:"passed"`
+	Turns   int     `json:"turns"`
+	CostUSD float64 `json:"cost_usd"`
+	Seconds float64 `json:"seconds"`
+	Err     string  `json:"err,omitempty"` // why it failed to run/score (not the same as a failed check)
 }
 
 // defaultCheck scores a task by building and testing the module.
@@ -91,29 +91,41 @@ func Score(ctx context.Context, workspace string, check []string) (bool, string)
 
 // Summary aggregates a run.
 type Summary struct {
-	Total        int
-	Passed       int
-	PassRate     float64 // 0..1
-	MedianTurns  int
-	TotalCostUSD float64
+	Total         int     `json:"total"`
+	Passed        int     `json:"passed"`
+	PassRate      float64 `json:"pass_rate"` // 0..1
+	MedianTurns   int     `json:"median_turns"`
+	MedianSeconds float64 `json:"median_seconds"` // wall-clock per task — the real metric for local models
+	TotalCostUSD  float64 `json:"total_cost_usd"`
 }
 
 // Summarize computes the headline metrics over results.
 func Summarize(rs []Result) Summary {
 	s := Summary{Total: len(rs)}
 	turns := make([]int, 0, len(rs))
+	secs := make([]float64, 0, len(rs))
 	for _, r := range rs {
 		if r.Passed {
 			s.Passed++
 		}
 		s.TotalCostUSD += r.CostUSD
 		turns = append(turns, r.Turns)
+		secs = append(secs, r.Seconds)
 	}
 	if s.Total > 0 {
 		s.PassRate = float64(s.Passed) / float64(s.Total)
 	}
 	s.MedianTurns = median(turns)
+	s.MedianSeconds = medianF(secs)
 	return s
+}
+
+func medianF(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	sort.Float64s(xs)
+	return xs[len(xs)/2]
 }
 
 func median(xs []int) int {
