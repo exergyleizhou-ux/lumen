@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		}
 		job := jm.Start("bash", label, func(bgCtx context.Context) (string, error) {
 			cmd := exec.CommandContext(bgCtx, "sh", "-c", p.Command)
+			cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
 			out, err := cmd.CombinedOutput()
 			return string(out), err
 		})
@@ -82,6 +84,7 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-c", p.Command)
+	cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
 	out, err := cmd.CombinedOutput()
 
 	if ctx.Err() != nil {
