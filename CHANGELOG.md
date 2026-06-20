@@ -28,7 +28,7 @@ a single-concern PR with a failing test first (TDD) and verified on a real
 - `LICENSE` (MIT), `VERSION`, `.goreleaser.yaml`, and a tag-driven Release
   workflow; `lumen version` reports the injected version/commit/date.
 
-## v1.0.0 (2026-06-17) — SpaceX Production Grade
+## v1.0.0 (2026-06-17)
 
 ### Core
 
