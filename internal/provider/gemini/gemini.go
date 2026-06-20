@@ -43,12 +43,6 @@ func New(cfg provider.Config) (provider.Provider, error) {
 func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
-	// This backend has no typed functionCall part and serializes tool calls as
-	// plain text, so it cannot drive the agent loop. Fail loudly when a request
-	// carries tools instead of silently degrading to a chat-only reply.
-	if len(req.Tools) > 0 {
-		return nil, &provider.UnsupportedToolsError{Provider: p.name, Backend: "Gemini"}
-	}
 	ch := make(chan provider.Chunk, 64)
 	go func() {
 		defer close(ch)
@@ -106,7 +100,22 @@ type geminiContent struct {
 }
 
 type geminiPart struct {
-	Text string `json:"text,omitempty"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *geminiFunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *geminiFunctionResponse `json:"functionResponse,omitempty"`
+}
+
+// geminiFunctionCall is the model's tool invocation; geminiFunctionResponse is
+// the tool's result fed back. Gemini has no per-call ID, so the function name is
+// used as the correlation key (provider.ToolCall.ID == Name on this backend).
+type geminiFunctionCall struct {
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+type geminiFunctionResponse struct {
+	Name     string          `json:"name"`
+	Response json.RawMessage `json:"response"`
 }
 
 type geminiGenConfig struct {
@@ -135,35 +144,44 @@ func (p *Provider) buildRequest(req provider.Request) geminiRequest {
 			continue
 		}
 
-		role := "user"
-		switch m.Role {
-		case provider.RoleAssistant:
-			role = "model"
-		case provider.RoleTool:
-			// Gemini uses "function" role for tool results
-			role = "function"
-		default:
-			role = "user"
+		// Tool result → a structured functionResponse part (Gemini correlates by
+		// function name; ToolCallID == the name on this backend). The response
+		// must be a JSON object, so wrap the textual result.
+		if m.Role == provider.RoleTool {
+			if m.ToolCallID != "" {
+				resp, _ := json.Marshal(map[string]string{"result": m.Content})
+				contents = append(contents, geminiContent{
+					Role:  "function",
+					Parts: []geminiPart{{FunctionResponse: &geminiFunctionResponse{Name: m.ToolCallID, Response: resp}}},
+				})
+			}
+			continue
 		}
 
-		text := m.Content
-		if text == "" && len(m.ToolCalls) > 0 {
-			// Tool calls from assistant: merge into one part
-			var calls []string
+		// Assistant turn with tool calls → structured functionCall parts (plus the
+		// optional leading text), not a stringified name(args) blob.
+		if m.Role == provider.RoleAssistant && len(m.ToolCalls) > 0 {
+			var parts []geminiPart
+			if m.Content != "" {
+				parts = append(parts, geminiPart{Text: m.Content})
+			}
 			for _, tc := range m.ToolCalls {
-				calls = append(calls, fmt.Sprintf("%s(%s)", tc.Name, tc.Arguments))
+				args := json.RawMessage(tc.Arguments)
+				if len(args) == 0 {
+					args = json.RawMessage("{}")
+				}
+				parts = append(parts, geminiPart{FunctionCall: &geminiFunctionCall{Name: tc.Name, Args: args}})
 			}
-			text = strings.Join(calls, "; ")
+			contents = append(contents, geminiContent{Role: "model", Parts: parts})
+			continue
 		}
 
-		if text != "" || len(m.ToolCalls) > 0 || m.ToolCallID != "" {
-			content := geminiContent{Role: role}
-			if m.Role == provider.RoleTool {
-				content.Parts = []geminiPart{{Text: fmt.Sprintf("[tool_result id=%s]: %s", m.ToolCallID, m.Content)}}
-			} else {
-				content.Parts = []geminiPart{{Text: text}}
-			}
-			contents = append(contents, content)
+		role := "user"
+		if m.Role == provider.RoleAssistant {
+			role = "model"
+		}
+		if m.Content != "" {
+			contents = append(contents, geminiContent{Role: role, Parts: []geminiPart{{Text: m.Content}}})
 		}
 	}
 
@@ -233,7 +251,11 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 				Content struct {
 					Role  string `json:"role"`
 					Parts []struct {
-						Text string `json:"text"`
+						Text         string `json:"text"`
+						FunctionCall *struct {
+							Name string          `json:"name"`
+							Args json.RawMessage `json:"args"`
+						} `json:"functionCall"`
 					} `json:"parts"`
 				} `json:"content"`
 				FinishReason string `json:"finishReason"`
@@ -262,6 +284,18 @@ func (p *Provider) parseSSE(ctx context.Context, r io.Reader, ch chan<- provider
 		for _, cand := range event.Candidates {
 			hasText := false
 			for _, part := range cand.Content.Parts {
+				if part.FunctionCall != nil {
+					// Gemini has no per-call ID; use the function name as the
+					// correlation key (matched back in functionResponse).
+					args := string(part.FunctionCall.Args)
+					if args == "" {
+						args = "{}"
+					}
+					ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &provider.ToolCall{
+						ID: part.FunctionCall.Name, Name: part.FunctionCall.Name, Arguments: args,
+					}}
+					continue
+				}
 				if part.Text != "" {
 					hasText = true
 					textBuf.WriteString(part.Text)

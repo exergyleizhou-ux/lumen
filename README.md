@@ -20,13 +20,13 @@ it's a control-first terminal agent: four permission modes, a heuristic dangerou
 guard (a denylist, not a sandbox), file-system safety boundaries, and a single Go binary you
 can point at any OpenAI-compatible model — cloud or local (LM Studio / Ollama / vLLM).
 
-**Honest status:** the coding agent runs on **OpenAI-compatible** backends — DeepSeek, LM Studio,
-Ollama, vLLM, OpenAI, Grok, Qwen, Moonshot, Zhipu (all `kind = "openai"`) — and on **native
-Anthropic** (tool-calling implemented; wire-format verified against mock servers, not yet
-live-burned-in). The **native Gemini** backend does **not** implement tool-calling yet, so the
-agent refuses to run on it (loudly, not silently) — a roadmap item. Primarily exercised on
-DeepSeek; a first local coding-quality baseline exists (`docs/eval-baseline.md`: gemma-4-12b 5/6),
-but it is small (6 tasks) — treat the points below as *mechanics*, not measured superiority. Solo
+**Honest status:** the coding agent does tool-calling on all three backend families —
+**OpenAI-compatible** (DeepSeek, LM Studio, Ollama, vLLM, OpenAI, Grok, Qwen, Moonshot, Zhipu),
+**native Anthropic**, and **native Gemini**. The OpenAI path is exercised daily; the native
+Anthropic and Gemini paths are **wire-format verified against mock servers but not yet
+live-burned-in** (no cloud keys in the dev env). Primarily exercised on DeepSeek; a first local
+coding-quality baseline exists (`docs/eval-baseline.md`: gemma-4-12b 5/6), but it is small (6
+tasks) — treat the points below as *mechanics*, not measured superiority. Solo
 project, no third-party users yet.
 
 ---
@@ -105,10 +105,10 @@ All checks passed.
   and encoded payloads *before* execution. Works even in bypass mode.
 - 🔓 **4 Permission Modes** — `bypass` (full auto) / `plan` (read-only) / `default` (prompt for
   dangerous) / `accept-edits` (auto-approve writes, ask for bash). Inspired by Claude Code.
-- 🤖 **Multi-Model (OpenAI-compatible)** — DeepSeek (96-99% cache hit), OpenAI, Grok, Ollama,
-  Qwen, Moonshot, Zhipu, Mimo, plus any local OpenAI-compatible server (LM Studio / vLLM). 26
-  presets. **Native Anthropic** now does tool-calling (mock-verified). **Native Gemini** doesn't
-  yet (the agent refuses it loudly); reach Gemini via an OpenAI-compatible gateway meanwhile.
+- 🤖 **Multi-Model** — three backend families with tool-calling: **OpenAI-compatible** (DeepSeek
+  96-99% cache hit, OpenAI, Grok, Ollama, Qwen, Moonshot, Zhipu, Mimo, + any local LM Studio /
+  vLLM server), **native Anthropic**, and **native Gemini** (the latter two mock-verified, not yet
+  live-burned-in). 29 presets.
 - 📋 **Plan Mode** — Read-only exploration → structured plan → review → execute. Cache-stable
   sessions prevent token waste on plan revision.
 - ✅ **Verify-after-edit** — After editing code, Lumen auto-runs the project's build/lint/test
