@@ -84,6 +84,7 @@ func Probe(ctx context.Context, cfg Config) Result {
 		BaseURL: cfg.BaseURL,
 		Model:   res.Model,
 		APIKey:  cfg.APIKey,
+		Timeout: cfg.Timeout, // short probe budget, not the 5m default
 	})
 	if err != nil {
 		res.Err = fmt.Errorf("create provider: %w", err)

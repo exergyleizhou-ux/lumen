@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -146,6 +147,10 @@ type Config struct {
 	BaseURL string
 	Model   string
 	APIKey  string
+	// Timeout bounds a single HTTP completion request. Zero = the provider's
+	// built-in default. Set from [agent] turn_timeout so a slow local model's
+	// turn isn't cut off below its configured per-turn budget.
+	Timeout time.Duration
 }
 
 // AuthError reports that a provider rejected the API key (HTTP 401/403).

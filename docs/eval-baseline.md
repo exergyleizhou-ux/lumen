@@ -118,7 +118,12 @@ the sequential 5/6 reflects one environmental timeout, not a reasoning gap.
 
 Implication: a slow local model on a memory-constrained machine may need a **longer
 turn timeout** than the 5-min default, OR the prefill cost lowered (smaller prompt /
-faster machine). Worth a follow-up if local is the daily driver.
+faster machine).
+
+> **Fixed:** the per-turn timeout is now configurable via `[agent] turn_timeout`
+> (e.g. `turn_timeout = "20m"`), threaded through both the turn context and the
+> OpenAI client deadline. A slow local model's first-turn prefill no longer dies at
+> the old hardcoded 5 minutes.
 
 ## What this unlocks
 
