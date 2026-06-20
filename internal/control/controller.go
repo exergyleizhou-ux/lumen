@@ -62,6 +62,11 @@ type Controller struct {
 	sinkRef     atomic.Pointer[event.Sink] // via sink()/store; safe vs a mid-turn redirect
 	asker       agent.Asker
 	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
+	// approver, when set (interactive chat/tui), is consulted by the permission
+	// gate for tools that require confirmation. When nil (headless run/eval) the
+	// gate auto-approves — there is no human to prompt, and the guard still blocks
+	// dangerous commands. Set via SetApprover.
+	approver func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
 
 	// Agent (created by Configure)
 	ag       *agent.Agent
@@ -195,11 +200,10 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	// 5. Resolve permission mode
 	c.permMode = permission.ParseMode(cfg.Permissions.Mode)
 
-	// 6. Build permission gate (auto-approve in terminal mode — guard.CheckBash
-	// still blocks known-dangerous patterns regardless)
-	autoApprove := func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
-		return true, nil
-	}
+	// 6. Build permission gate. The callback consults the interactive approver
+	// when one is set (chat/tui), and auto-approves headless (run/eval) — the
+	// guard layer blocks dangerous commands regardless of mode.
+	autoApprove := c.approveCallback()
 	gate := permission.NewGate(c.permMode, autoApprove)
 	c.autoApprove = autoApprove
 
@@ -518,6 +522,26 @@ func (c *Controller) SetAsker(asker agent.Asker) {
 	c.asker = asker
 	if c.ag != nil {
 		c.ag.SetAsker(asker)
+	}
+}
+
+// SetApprover installs the interactive permission approver (chat/tui). The gate
+// consults it for tools that require confirmation in the active mode. Leave it
+// unset for headless runs, which auto-approve (the guard still blocks dangerous
+// commands). Safe to call before or after Configure — the gate reads it lazily.
+func (c *Controller) SetApprover(fn func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)) {
+	c.approver = fn
+}
+
+// approveCallback builds the gate's approval callback: delegate to the
+// interactive approver when one is set, else auto-approve (headless). It reads
+// c.approver at call time so SetApprover works regardless of ordering.
+func (c *Controller) approveCallback() func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+		if c.approver != nil {
+			return c.approver(ctx, toolName, args)
+		}
+		return true, nil
 	}
 }
 

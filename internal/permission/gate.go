@@ -6,12 +6,14 @@
 //	─────────────  ───────────  ────────────  ──────────  ──────────────────────
 //	bypass         ✅ auto       ✅ auto       ✅ auto     Full autonomy, trusted
 //	plan           ✅ auto       ❌ blocked     ❌ blocked  Exploration, code review
-//	default        ✅ auto       ✅ auto       ⚠️ auto*    Daily coding (guard on)
-//	accept-edits   ✅ auto       ✅ auto       ⚠️ ask**    Safe editing, manual bash
+//	default        ✅ auto       ⚠️ ask*      ⚠️ ask*     Daily coding (guard on)
+//	accept-edits   ✅ auto       ✅ auto       ⚠️ ask*     Safe editing, manual bash
 //
-//	*  default mode auto-approves bash now (asker is set in terminal mode).
-//	   The 5-layer guard still blocks dangerous commands in ALL modes.
-//	** accept-edits prompts user before running bash commands.
+//	*  "ask" consults the interactive approver when one is wired (chat/tui set it
+//	   via Controller.SetApprover). Headless runs (lumen run / eval) have no
+//	   approver, so they auto-approve — the 5-layer guard still blocks dangerous
+//	   commands in ALL modes regardless. (Before: the approver was hardcoded to
+//	   always-yes, so these prompts never actually fired.)
 //
 // The Guard layer (internal/guard) runs BEFORE the mode check — it blocks
 // dangerous bash (exfiltration, sensitive reads, recon, destructive ops,
