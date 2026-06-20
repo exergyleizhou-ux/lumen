@@ -22,6 +22,7 @@ import (
 	"lumen/internal/event"
 	"lumen/internal/jobs"
 	"lumen/internal/memory"
+	"lumen/internal/modelpool"
 	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/skill"
@@ -46,14 +47,14 @@ const (
 // Create with New, call Configure, then Run/Chat/Plan.
 type Controller struct {
 	// Configuration (set by Configure)
-	cfg        *config.File
-	provCfg    *config.ProviderConfig
-	prov       provider.Provider
+	cfg     *config.File
+	provCfg *config.ProviderConfig
+	prov    provider.Provider
 	// pricing is the active provider's configured rates (nil → use default).
-	pricing    *provider.Pricing
-	fallbacks  []provider.Provider // for failover
-	reg        *tool.Registry
-	skillStore *skill.Store
+	pricing     *provider.Pricing
+	fallbacks   []provider.Provider // for failover
+	reg         *tool.Registry
+	skillStore  *skill.Store
 	permMode    permission.Mode
 	sinkRef     atomic.Pointer[event.Sink] // via sink()/store; safe vs a mid-turn redirect
 	asker       agent.Asker
@@ -66,7 +67,7 @@ type Controller struct {
 	cp       *checkpoint.Store
 	jm       *jobs.Manager
 	tl       *timeline.Recorder // session timeline for replay + change inbox
-	memStore *memory.Store     // persistent user memories
+	memStore *memory.Store      // persistent user memories
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -146,6 +147,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	c.prov = prov
 
 	// 2b. Build fallback providers from remaining configs
+	backends := []modelpool.Backend{{Name: provCfg.Name, Provider: prov, IsLocal: isLoopbackURL(provCfg.BaseURL)}}
 	for i := range cfg.Providers {
 		if cfg.Providers[i].Name == provCfg.Name {
 			continue
@@ -158,7 +160,18 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 		})
 		if err == nil {
 			c.fallbacks = append(c.fallbacks, fb)
+			backends = append(backends, modelpool.Backend{Name: cfg.Providers[i].Name, Provider: fb, IsLocal: isLoopbackURL(cfg.Providers[i].BaseURL)})
 		}
+	}
+
+	// 2c. With more than one backend, route through a latency-aware, local-first
+	// RoutingProvider. Failover then happens at the stream layer WITHOUT replaying
+	// produced output — unlike the controller-level retry below, which re-runs the
+	// whole prompt. We hand the router to the agent and clear c.fallbacks so the
+	// replay path stays a last resort (it won't trigger while the router succeeds).
+	if len(backends) > 1 {
+		c.prov = modelpool.NewRoutingProvider(backends)
+		c.fallbacks = nil
 	}
 
 	// 3. Build tool registry — honoring [tools] profile (default "full"; "core"
@@ -272,7 +285,10 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	agOpts.Asker = asker
 	agOpts.MemoryPrompt = memPrompt
 	agOpts.Pricing = c.pricing
-	c.ag = agent.New(prov, reg, c.sess, agOpts)
+	// Use c.prov so the main loop runs through the RoutingProvider (latency-aware
+	// local-first routing + no-replay failover) when multiple backends exist; it
+	// is the same as prov when only one is configured.
+	c.ag = agent.New(c.prov, reg, c.sess, agOpts)
 
 	// 12. Wire infrastructure
 	c.cp = checkpoint.New()

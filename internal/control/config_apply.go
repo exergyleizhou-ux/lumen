@@ -1,11 +1,26 @@
 package control
 
 import (
+	"strings"
+
 	"lumen/internal/agent"
 	"lumen/internal/config"
 	"lumen/internal/provider"
 	"lumen/internal/skill"
 )
+
+// isLoopbackURL reports whether a provider base_url points at an on-machine
+// (loopback) endpoint — i.e. a local model. Used to give local backends routing
+// priority (cheap + fast) over cloud ones.
+func isLoopbackURL(baseURL string) bool {
+	host := baseURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	return strings.HasPrefix(host, "localhost") ||
+		strings.HasPrefix(host, "127.0.0.1") ||
+		strings.HasPrefix(host, "[::1]")
+}
 
 // pricingFromConfig maps an optional [providers.pricing] block to a
 // provider.Pricing, or nil when unset (the caller then falls back to the
