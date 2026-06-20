@@ -8,6 +8,7 @@
 package eval
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"os/exec"
@@ -134,6 +135,33 @@ func median(xs []int) int {
 	}
 	sort.Ints(xs)
 	return xs[len(xs)/2]
+}
+
+// ProtectedTestsUnchanged reports whether every *_test.go file present in the
+// original task workspace still exists byte-for-byte identical in the post-run
+// workspace. A coding task says "don't modify the tests"; this enforces it so a
+// pass earned by editing or deleting a test assertion is caught and the task is
+// failed instead of silently scored green. The returned slice names the offending
+// files (relative paths), so the report can show why the run was rejected.
+func ProtectedTestsUnchanged(origWorkspace, runWorkspace string) (bool, []string) {
+	var changed []string
+	_ = filepath.WalkDir(origWorkspace, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(origWorkspace, path)
+		if err != nil {
+			return nil
+		}
+		origBytes, _ := os.ReadFile(path)
+		runBytes, rerr := os.ReadFile(filepath.Join(runWorkspace, rel))
+		if rerr != nil || !bytes.Equal(origBytes, runBytes) {
+			changed = append(changed, rel)
+		}
+		return nil
+	})
+	sort.Strings(changed)
+	return len(changed) == 0, changed
 }
 
 // CopyDir recursively copies src into dst (used to give each task run a fresh,

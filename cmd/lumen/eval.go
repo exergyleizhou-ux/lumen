@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"lumen/internal/control"
@@ -132,6 +133,15 @@ func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, s
 	_ = os.Chdir(orig)
 
 	passed, out := eval.Score(context.Background(), ws, task.Check)
+	// Anti-cheat: a green check earned by editing/deleting a *_test.go is not a
+	// pass — the task said don't modify the tests. Compare against the committed
+	// fixture and reject if the protected tests changed.
+	if passed {
+		if ok, changed := eval.ProtectedTestsUnchanged(task.Workspace, ws); !ok {
+			passed = false
+			out = "rejected: modified protected test file(s): " + strings.Join(changed, ", ")
+		}
+	}
 	r := eval.Result{Task: task.Name, Passed: passed, Turns: ctr.steps, CostUSD: cost, Seconds: time.Since(start).Seconds()}
 	switch {
 	case cerr != nil:
