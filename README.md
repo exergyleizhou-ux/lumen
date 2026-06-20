@@ -13,18 +13,16 @@
 
 ## Why Lumen
 
-Most coding agents trust the LLM unconditionally. **Lumen doesn't.** It puts you in control with
-four permission modes, a 5-layer bash command guard, and file-system safety boundaries — while
-still letting you switch between DeepSeek, Grok, OpenAI, and Ollama in a single session.
+Lumen's wedge is **the agent that fixes its own mistakes**: after it edits code it
+automatically runs your build/vet/tests, reads the failures, and self-repairs (up to 3
+cycles) before handing back — so you review working changes, not broken ones. Around that
+it's a control-first terminal agent: four permission modes, a heuristic dangerous-command
+guard (a denylist, not a sandbox), file-system safety boundaries, and a single Go binary you
+can point at any OpenAI-compatible model — cloud or local (LM Studio / Ollama / vLLM).
 
-| | Reasonix | Claude Code | **Lumen** |
-|---|---|---|---|
-| Security guard | Basic | None | **5-layer bash + file safety** |
-| Permission modes | Plan only | Plan + Auto | **4 modes: bypass / plan / default / accept-edits** |
-| Multi-model | DeepSeek-focused | Anthropic only | **9 providers, 26 models** |
-| Session replay | No | No | **Timeline + /replay + change inbox** |
-| Sub-agents | Limited | Yes | **Whitelist + isolated sessions** |
-| Single binary | ❌ (Node.js) | ❌ (Node.js) | **✅ 9.9 MB, no runtime** |
+**Honest status:** primarily exercised on DeepSeek; alternate cloud providers are wired but
+not yet burned-in; solo project, no third-party users yet. There is not yet a coding-quality
+benchmark, so the points below describe *mechanics*, not measured superiority over other tools.
 
 ---
 
@@ -132,7 +130,7 @@ All checks passed.
   Keyboard navigation, thinking-block folding, spinner animation.
 - 🔁 **Retry Logic** — Exponential backoff on 429/503/5xx, up to 3 retries per call.
 - 📡 **MCP Ready** — `mcp__` namespace support, JSON-RPC stdio client.
-- 📦 **Single Binary** — 9.9 MB, zero runtime dependencies. `curl | sh` install.
+- 📦 **Single Binary** — ~13 MB, zero runtime dependencies. `install.sh` fetches a release binary (or builds from source if none is published yet).
 
 ---
 
@@ -253,7 +251,8 @@ lumen/
 
 ## Real-World Runs
 
-Verified with real DeepSeek API calls (not mocked):
+Real DeepSeek API calls (not mocked). **These are cost/efficiency numbers — turns, tokens,
+cache-hit — not a coding-quality benchmark.** A pass-rate benchmark is still TODO (see Roadmap).
 
 | Task | Turns | Tokens | Cache Hit |
 |------|-------|--------|-----------|
@@ -288,4 +287,4 @@ builds and uploads the archives + checksums. `lumen version` reports the build.
 
 ---
 
-*Built with Go · ~38k lines · 54 packages · 120 tools · 26 models · 9 providers · zero runtime deps*
+*Built with Go · ~35k non-test LOC · 65 packages · 132 test files · ~117 builtin tools · 26 model presets · zero runtime deps. Run `make facts` for live counts.*
