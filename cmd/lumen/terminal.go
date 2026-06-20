@@ -14,6 +14,7 @@ import (
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/perf"
 	"lumen/internal/hermes"
 	"lumen/internal/lineedit"
 	"lumen/internal/permission"
@@ -197,6 +198,11 @@ func termSink() event.Sink {
 
 		case event.VerifyResult:
 			w(verifyResultLine(e.Level, e.Text))
+
+		case event.PerfKind:
+			if e.Perf != nil {
+				w("\n  " + c(D, perf.Render(*e.Perf)) + "\n")
+			}
 
 		case event.TurnDone:
 			thinking = false; textStarted = false; st.step.Store(0)
