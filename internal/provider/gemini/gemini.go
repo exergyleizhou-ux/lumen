@@ -43,6 +43,12 @@ func New(cfg provider.Config) (provider.Provider, error) {
 func (p *Provider) Name() string { return p.name }
 
 func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan provider.Chunk, error) {
+	// This backend has no typed functionCall part and serializes tool calls as
+	// plain text, so it cannot drive the agent loop. Fail loudly when a request
+	// carries tools instead of silently degrading to a chat-only reply.
+	if len(req.Tools) > 0 {
+		return nil, &provider.UnsupportedToolsError{Provider: p.name, Backend: "Gemini"}
+	}
 	ch := make(chan provider.Chunk, 64)
 	go func() {
 		defer close(ch)
