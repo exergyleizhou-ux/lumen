@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -23,7 +24,12 @@ func runEval(args []string) {
 	tasksDir := fs.String("tasks", "evals/tasks", "directory of eval tasks")
 	list := fs.Bool("list", false, "list tasks and exit (no model needed)")
 	keep := fs.Bool("keep", false, "keep each task's workspace for inspection")
+	repeat := fs.Int("repeat", 1, "run each task N times (local models are non-deterministic)")
+	asJSON := fs.Bool("json", false, "emit machine-readable JSON instead of the pretty report")
 	_ = fs.Parse(args)
+	if *repeat < 1 {
+		*repeat = 1
+	}
 
 	tasks, err := eval.LoadTasks(*tasksDir)
 	if err != nil {
@@ -56,63 +62,84 @@ func runEval(args []string) {
 
 	var results []eval.Result
 	for i, task := range tasks {
-		fmt.Printf("\n[%d/%d] %s\n", i+1, len(tasks), task.Name)
-		ws, err := os.MkdirTemp("", "lumen-eval-")
-		if err != nil {
-			results = append(results, eval.Result{Task: task.Name, Err: err.Error()})
-			continue
-		}
-		if !*keep {
-			defer os.RemoveAll(ws)
-		}
-		if err := eval.CopyDir(task.Workspace, ws); err != nil {
-			results = append(results, eval.Result{Task: task.Name, Err: "copy: " + err.Error()})
-			continue
-		}
-
-		ctr := &evalCounters{}
-		start := time.Now()
-		_ = os.Chdir(ws)
-		ctrl := control.New()
-		cerr := ctrl.Configure(evalSink(ctr), nil, cfgPath)
-		var rerr error
-		if cerr == nil {
-			rerr = ctrl.Run(context.Background(), task.Prompt)
-		}
-		cost := ctr.cost(ctrlPricing(ctrl))
-		_ = os.Chdir(orig)
-
-		passed, out := eval.Score(context.Background(), ws, task.Check)
-		r := eval.Result{Task: task.Name, Passed: passed, Turns: ctr.steps, CostUSD: cost, Seconds: time.Since(start).Seconds()}
-		switch {
-		case cerr != nil:
-			r.Err = "configure: " + cerr.Error()
-		case rerr != nil:
-			r.Err = "run: " + firstLine(rerr.Error(), 80)
-		}
-		results = append(results, r)
-
-		mark := col(Rd, "✗")
-		if passed {
-			mark = col(G, "✓")
-		}
-		fmt.Printf("  %s %s  (%d steps · $%.4f · %.1fs)\n", mark, task.Name, r.Turns, r.CostUSD, r.Seconds)
-		if !passed && out != "" {
-			fmt.Printf("    %s\n", col(D, firstLine(out, 100)))
-		}
-		if r.Err != "" {
-			fmt.Printf("    %s\n", col(Y, r.Err))
+		for rep := 0; rep < *repeat; rep++ {
+			if !*asJSON {
+				label := task.Name
+				if *repeat > 1 {
+					label = fmt.Sprintf("%s (run %d/%d)", task.Name, rep+1, *repeat)
+				}
+				fmt.Printf("\n[%d/%d] %s\n", i+1, len(tasks), label)
+			}
+			r, out := runOneTask(task, cfgPath, orig, *keep)
+			results = append(results, r)
+			if !*asJSON {
+				mark := col(Rd, "✗")
+				if r.Passed {
+					mark = col(G, "✓")
+				}
+				fmt.Printf("  %s %s  (%d steps · $%.4f · %.1fs)\n", mark, task.Name, r.Turns, r.CostUSD, r.Seconds)
+				if !r.Passed && out != "" {
+					fmt.Printf("    %s\n", col(D, firstLine(out, 100)))
+				}
+				if r.Err != "" {
+					fmt.Printf("    %s\n", col(Y, r.Err))
+				}
+			}
 		}
 	}
 
 	s := eval.Summarize(results)
-	fmt.Printf("\n── eval summary ──────────────────────────\n")
-	fmt.Printf("  pass-rate    %s%d/%d (%.0f%%)%s\n", passColor(s), s.Passed, s.Total, s.PassRate*100, R)
-	fmt.Printf("  median steps %d\n", s.MedianTurns)
-	fmt.Printf("  total cost   $%.4f\n", s.TotalCostUSD)
+	if *asJSON {
+		_ = json.NewEncoder(os.Stdout).Encode(struct {
+			Results []eval.Result `json:"results"`
+			Summary eval.Summary  `json:"summary"`
+		}{results, s})
+	} else {
+		fmt.Printf("\n── eval summary ──────────────────────────\n")
+		fmt.Printf("  pass-rate     %s%d/%d (%.0f%%)%s\n", passColor(s), s.Passed, s.Total, s.PassRate*100, R)
+		fmt.Printf("  median steps  %d\n", s.MedianTurns)
+		fmt.Printf("  median time   %.1fs\n", s.MedianSeconds)
+		fmt.Printf("  total cost    $%.4f\n", s.TotalCostUSD)
+	}
 	if s.Passed < s.Total {
 		os.Exit(1) // non-zero so CI / scripts can gate on a regression
 	}
+}
+
+// runOneTask copies a task to a fresh workspace, runs the prompt through the
+// agent there, and scores it. Returns the result and the check's failure output.
+func runOneTask(task eval.Task, cfgPath, orig string, keep bool) (eval.Result, string) {
+	ws, err := os.MkdirTemp("", "lumen-eval-")
+	if err != nil {
+		return eval.Result{Task: task.Name, Err: err.Error()}, ""
+	}
+	if !keep {
+		defer os.RemoveAll(ws)
+	}
+	if err := eval.CopyDir(task.Workspace, ws); err != nil {
+		return eval.Result{Task: task.Name, Err: "copy: " + err.Error()}, ""
+	}
+	ctr := &evalCounters{}
+	start := time.Now()
+	_ = os.Chdir(ws)
+	ctrl := control.New()
+	cerr := ctrl.Configure(evalSink(ctr), nil, cfgPath)
+	var rerr error
+	if cerr == nil {
+		rerr = ctrl.Run(context.Background(), task.Prompt)
+	}
+	cost := ctr.cost(ctrlPricing(ctrl))
+	_ = os.Chdir(orig)
+
+	passed, out := eval.Score(context.Background(), ws, task.Check)
+	r := eval.Result{Task: task.Name, Passed: passed, Turns: ctr.steps, CostUSD: cost, Seconds: time.Since(start).Seconds()}
+	switch {
+	case cerr != nil:
+		r.Err = "configure: " + cerr.Error()
+	case rerr != nil:
+		r.Err = "run: " + firstLine(rerr.Error(), 80)
+	}
+	return r, out
 }
 
 func passColor(s eval.Summary) string {
