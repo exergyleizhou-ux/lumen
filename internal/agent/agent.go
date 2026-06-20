@@ -515,7 +515,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			//     This is a provider failure: return an error (surfaced by the
 			//     controller via the event sink) instead of a silent success.
 			if chunkCount == 0 {
-				a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "empty_stream", Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
 				return fmt.Errorf("the model returned an empty stream (0 chunks) — the provider may be unreachable; try /model to switch provider")
 			}
@@ -526,7 +526,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			}
 			// 5c. Still empty after the nudge? It's a failure, not a success.
 			if strings.TrimSpace(text) == "" && a.emptyFinalCount > 0 {
-				a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "empty_final", Timestamp: time.Now()})
 				a.session.DropTo(sessionLen)
 				return fmt.Errorf("the model returned an empty response after a retry; try /model to switch provider")
 			}
@@ -543,7 +543,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				Content:          text,
 				ReasoningContent: reasoning,
 			})
-			a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+			a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "finished", Timestamp: time.Now()})
 			return nil
 		}
 
@@ -626,7 +626,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		Text:      fmt.Sprintf("max steps (%d) reached — stopping", a.maxSteps),
 		Timestamp: time.Now(),
 	})
-	a.Sink().Emit(event.Event{Kind: event.TurnDone, Timestamp: time.Now()})
+	a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "max_steps", Timestamp: time.Now()})
 	return nil
 }
 

@@ -39,10 +39,10 @@ const (
 
 // Perf carries per-turn performance metrics for the perf HUD.
 type Perf struct {
-	TTFTMs           int64   `json:"ttft_ms"`            // time to first token (stream start → first chunk)
-	TurnMs           int64   `json:"turn_ms"`            // stream start → stream done (wall clock)
-	TokensPerSec     float64 `json:"tokens_per_sec"`     // decode throughput (completion tokens / generation window)
-	CompletionTokens int     `json:"completion_tokens"`  // real usage when reported, else 0
+	TTFTMs           int64   `json:"ttft_ms"`           // time to first token (stream start → first chunk)
+	TurnMs           int64   `json:"turn_ms"`           // stream start → stream done (wall clock)
+	TokensPerSec     float64 `json:"tokens_per_sec"`    // decode throughput (completion tokens / generation window)
+	CompletionTokens int     `json:"completion_tokens"` // real usage when reported, else 0
 }
 
 // Level is the severity of a Notice event.
@@ -115,7 +115,12 @@ type Event struct {
 	Perf      *Perf         `json:"perf,omitempty"`
 	Questions []AskQuestion `json:"questions,omitempty"`
 	DiffText  string        `json:"diff,omitempty"`
-	Timestamp time.Time     `json:"timestamp"`
+	// StopReason is set on a TurnDone event to record WHY the turn ended:
+	// "finished" | "max_steps" | "empty_stream" | "empty_final". (A turn-timeout
+	// cancels the context before a clean TurnDone, so it is detected from Run's
+	// returned error instead.) Consumed by the eval harness to classify failures.
+	StopReason string    `json:"stop_reason,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // Sink is a receiver of agent events. The agent no longer formats output itself;

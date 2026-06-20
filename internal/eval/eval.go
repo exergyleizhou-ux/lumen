@@ -34,6 +34,48 @@ type Result struct {
 	CostUSD float64 `json:"cost_usd"`
 	Seconds float64 `json:"seconds"`
 	Err     string  `json:"err,omitempty"` // why it failed to run/score (not the same as a failed check)
+
+	// Research instrumentation (failure-mode study). Zero values are fine for the
+	// plain `lumen eval` path that doesn't populate them.
+	FailureMode       FailureMode `json:"failure_mode,omitempty"`
+	FirstPromptTokens int         `json:"first_prompt_tokens,omitempty"`
+	ToolResultCount   int         `json:"tool_result_count"`
+	FilesChanged      int         `json:"files_changed"`
+	StopReason        string      `json:"stop_reason,omitempty"`
+	Rho               float64     `json:"rho,omitempty"`
+
+	// Self-describing cell coordinates (reproducibility — which model/config
+	// produced this row). ServerContextWindow is the operator-asserted LM Studio
+	// `-c` value (the harness can't read it from an OpenAI endpoint).
+	Model               string `json:"model,omitempty"`
+	ToolProfile         string `json:"tool_profile,omitempty"`
+	ServerContextWindow int    `json:"server_context_window,omitempty"`
+	Rep                 int    `json:"rep,omitempty"`
+}
+
+// ChangedNonTestFiles returns the non-test source files that differ between the
+// original and post-run workspace — i.e. the files the agent actually edited.
+// Used to separate F4 (wrong-edit: changed files but test still red) from F2
+// (no-edit). Mirrors ProtectedTestsUnchanged but for non-_test.go files.
+func ChangedNonTestFiles(origWorkspace, runWorkspace string) []string {
+	var changed []string
+	_ = filepath.WalkDir(runWorkspace, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, e := filepath.Rel(runWorkspace, path)
+		if e != nil {
+			return nil
+		}
+		runBytes, _ := os.ReadFile(path)
+		origBytes, oerr := os.ReadFile(filepath.Join(origWorkspace, rel))
+		if oerr != nil || !bytes.Equal(origBytes, runBytes) { // new file or modified
+			changed = append(changed, rel)
+		}
+		return nil
+	})
+	sort.Strings(changed)
+	return changed
 }
 
 // defaultCheck scores a task by building and testing the module.
