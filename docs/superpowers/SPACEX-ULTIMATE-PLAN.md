@@ -1,5 +1,10 @@
 # Lumen + 绿洲 Oasis 终极规划 (SpaceX 版)
 
+> ⚠️ **SUPERSEDED / 励志性历史文档 (2026-06-20)。** 「SpaceX 版/标准」是 framing 修辞,不是对
+> Lumen 当前成熟度的事实声明。当前**真实**状态与落地路径以 `docs/交接-v7-四视角评审落地.md` +
+> `docs/eval-baseline.md` + 最新状态评估为准(诚实记分卡:核心引擎真·CC-class,但多 provider /
+> 发布 / 安全默认开等仍在路上)。保留本文仅作历史动机参考,勿当作已达成的状态。
+>
 > 2026-06-19 · 以第一性原理审视 Lumen 与 Oasis 的双体闭环
 
 ---

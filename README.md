@@ -32,7 +32,7 @@ project, no third-party users yet.
 
 ## Screenshots
 
-**Banner + Model List** — 26 presets across 9 providers, color-coded by provider:
+**Banner + Model List** — 29 presets across 9 providers, color-coded by provider:
 
 ```
   🪄  LUMEN  ·  deepseek/deepseek-chat  ·  🛡 default
@@ -183,7 +183,7 @@ TOML
 ./bin/lumen tui                                # multi-panel Bubble Tea TUI
 ```
 
-*For other providers (OpenAI, Anthropic, Grok, Ollama…), add more `[[providers]]` entries. See `internal/config/model_presets.go` for the full 26-model preset list. Prerequisites: Go 1.23+, optional `gopls` for LSP diagnostics.*
+*For other providers (OpenAI, Anthropic, Grok, Ollama…), add more `[[providers]]` entries. See `internal/config/model_presets.go` for the full 29-model preset list. Prerequisites: Go 1.23+, optional `gopls` for LSP diagnostics.*
 
 ---
 
