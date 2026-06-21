@@ -45,6 +45,7 @@ cd myalgo
 lumen oasis validate .     # 校验 manifest(占位 registry / 空 source_ref 会告警)
 lumen oasis build .        # docker build + 写 provenance lockfile(钉死源码哈希)
 lumen oasis check .        # ★ 在【与市场完全相同】的 --network=none 沙箱里跑一遍,验契约
+                           #   并做隐私 lint:用带哨兵值的样本数据跑,若输出回显原始行 → 报泄露
 lumen oasis verify .       # 重新核验工作区与 lockfile 一致(源码没漂移)
 
 # 上市(对着你的 Oasis 后端):

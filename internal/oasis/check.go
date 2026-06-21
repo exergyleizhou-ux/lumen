@@ -5,10 +5,55 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
+
+// sentinelDataset is the synthetic dataset the contract self-check seeds. The
+// numeric columns (v, w, x) exercise the algorithm; the non-numeric _sentinel
+// column carries a unique recognizable token per row. An aggregates-only C2D
+// algorithm never emits those tokens, so echoing them back reveals a raw-row leak.
+func sentinelDataset() ([]byte, []string) {
+	var b strings.Builder
+	b.WriteString("v,w,x,_sentinel\n")
+	var sentinels []string
+	for i := 0; i < 30; i++ {
+		s := fmt.Sprintf("ZqLeakTok%04d", i)
+		sentinels = append(sentinels, s)
+		fmt.Fprintf(&b, "%d,%d,%d,%s\n", i+1, (i*7)%50+1, (i*3)%40+2, s)
+	}
+	return []byte(b.String()), sentinels
+}
+
+// leakCount returns how many per-row sentinel tokens appear verbatim in the
+// output (a zip of model.json + metrics.json).
+func leakCount(outputBin []byte, sentinels []string) int {
+	zr, err := zip.NewReader(bytes.NewReader(outputBin), int64(len(outputBin)))
+	if err != nil {
+		return 0
+	}
+	var text strings.Builder
+	for _, f := range zr.File {
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		bs, _ := io.ReadAll(rc)
+		rc.Close()
+		text.Write(bs)
+	}
+	s := text.String()
+	n := 0
+	for _, sen := range sentinels {
+		if strings.Contains(s, sen) {
+			n++
+		}
+	}
+	return n
+}
 
 // ── C2D runtime contract self-check ────────────────────────
 //
@@ -113,8 +158,11 @@ func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, s
 	defer os.RemoveAll(outDir)
 
 	// Seed a sample dataset (/data) and the params the runner mounts (/params.json).
+	// With no author-supplied data, seed the sentinel dataset so we can also run the
+	// privacy leak lint below.
+	var sentinels []string
 	if len(sampleData) == 0 {
-		sampleData = []byte("col_a,col_b\n1,2\n3,4\n")
+		sampleData, sentinels = sentinelDataset()
 	}
 	if err := os.WriteFile(filepath.Join(dataDir, "dataset.csv"), sampleData, 0o644); err != nil {
 		return CheckResult{Violations: []string{fmt.Sprintf("could not seed dataset: %v", err)}}
@@ -147,5 +195,14 @@ func CheckContract(ctx context.Context, run SandboxRunner, image, kind string, s
 	}
 
 	violations := CheckOutput(out, kind)
+	// Privacy lint: on the synthetic dataset, an output that echoes a majority of
+	// the per-row sentinel tokens is dumping raw rows, not emitting aggregates.
+	if len(sentinels) > 0 {
+		if n := leakCount(out, sentinels); n*2 > len(sentinels) {
+			violations = append(violations, fmt.Sprintf(
+				"possible PRIVACY LEAK: the output echoes %d/%d seeded per-row values — a C2D algorithm must emit only aggregates, never raw rows",
+				n, len(sentinels)))
+		}
+	}
 	return CheckResult{OK: len(violations) == 0, Violations: violations, Logs: logs}
 }
