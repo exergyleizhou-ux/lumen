@@ -286,6 +286,27 @@ cache-hit — not a coding-quality benchmark** (that's `lumen eval`, above).
 | Git tools + session resume | 2 | 14,000 | 97% |
 | Heart drawing (python + JS + HTML) | 13 | 17,000 | 99% |
 
+## C2D Author Toolchain (`lumen oasis`)
+
+Beyond general coding, Lumen ships the official **author toolchain for the Oasis
+compute-to-data (C2D) marketplace** — write a privacy-preserving algorithm, gate
+it locally against the *exact* marketplace sandbox, and ship it. Buyers run it on
+data they can't see and get an aggregates-only result plus a re-verifiable cert.
+
+```bash
+lumen oasis templates                    # stats · correlation · linreg (working examples)
+lumen oasis init myalgo --template stats # scaffold a complete, runnable algorithm
+lumen oasis check .                       # run it in the real --network=none sandbox
+lumen oasis verify .                      # source ⇄ provenance lockfile match
+lumen oasis publish .                     # build → check → deploy + register
+```
+
+Verified end-to-end on a live marketplace: a generated algorithm produced a real
+result certificate whose output re-hash and image digest match the author's
+lockfile exactly. See **[the quickstart](docs/教程-用-lumen-oasis-写C2D算法.md)** and the
+[integration proof](docs/记录-C2D作者闭环-真实环境整合证明.md). No general terminal agent
+(Aider/Cursor/Claude Code) has this — it's Lumen's vertical edge.
+
 ## Roadmap
 
 - [ ] **v0.3.0** — VSCode extension, websocket serve, config wizard
