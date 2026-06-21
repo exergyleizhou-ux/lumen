@@ -1,0 +1,334 @@
+package oasis
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
+// Template is a ready-to-run C2D algorithm starting point — a COMPLETE, working
+// pure-stdlib train.py (not a TODO skeleton), plus its params schema and output
+// kind. `lumen oasis init <name> --template <key>` picks one. Every template is
+// aggregates-only: no raw row ever leaves the data boundary.
+type Template struct {
+	Key          string
+	Description  string
+	OutputKind   string
+	ParamsSchema string
+	TrainPy      string
+}
+
+// Templates returns the built-in algorithm templates, default first.
+func Templates() []Template { return []Template{statsTemplate, correlationTemplate, linregTemplate} }
+
+// DefaultTemplate is what a bare `lumen oasis init <name>` scaffolds.
+func DefaultTemplate() Template { return statsTemplate }
+
+// TemplateByName resolves a template by key.
+func TemplateByName(key string) (Template, bool) {
+	for _, t := range Templates() {
+		if t.Key == key {
+			return t, true
+		}
+	}
+	return Template{}, false
+}
+
+// ScaffoldTemplate writes a complete algorithm dir from a template: oasis.toml
+// (with the template's output_kind + params_schema), the Dockerfile, and the
+// template's working train.py.
+func ScaffoldTemplate(dir string, m Manifest, t Template) error {
+	if t.OutputKind != "" {
+		m.OutputKind = t.OutputKind
+	}
+	if t.ParamsSchema != "" {
+		m.ParamsSchema = t.ParamsSchema
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("mkdir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "oasis.toml"), []byte(formatTOML(m)), 0o644); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, m.Dockerfile), []byte(dockerfileTemplate), 0o644); err != nil {
+		return fmt.Errorf("write dockerfile: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "train.py"), []byte(t.TrainPy), 0o644); err != nil {
+		return fmt.Errorf("write train.py: %w", err)
+	}
+	gi := filepath.Join(dir, ".gitignore")
+	if err := os.WriteFile(gi, []byte("__pycache__/\n*.pyc\n/oasis-lock.json\n"), 0o644); err != nil {
+		return fmt.Errorf("write gitignore: %w", err)
+	}
+	return nil
+}
+
+const dockerfileTemplate = `FROM python:3.11-slim
+COPY train.py /app/train.py
+WORKDIR /app
+USER 65534:65534
+ENTRYPOINT ["python", "/app/train.py"]
+`
+
+// pyHeader is the shared C2D boilerplate every template starts from: contract
+// paths, structured aggregates-only logging, dataset loading, numeric-column
+// helpers, and the zip(model.json, metrics.json) -> /out/output.bin writer.
+const pyHeader = `#!/usr/bin/env python3
+"""C2D algorithm (pure Python stdlib). AGGREGATES ONLY — no raw row leaves the
+data boundary. Container contract: read /data (read-only) + optional /params.json,
+write /out/output.bin = zip(model.json, metrics.json). Paths overridable via
+VO_DATA_DIR / VO_OUT_DIR / VO_PARAMS for local testing.
+"""
+import csv
+import io
+import json
+import os
+import sys
+import zipfile
+
+DATA_DIR = os.environ.get("VO_DATA_DIR", "/data")
+OUT_DIR = os.environ.get("VO_OUT_DIR", "/out")
+PARAMS_FILE = os.environ.get("VO_PARAMS", "/params.json")
+
+
+def log(stage, **kw):
+    print(json.dumps({"stage": stage, **kw}), flush=True)
+
+
+def die(reason, code=2):
+    log("error", reason=reason)
+    sys.exit(code)
+
+
+def load_params():
+    if os.path.exists(PARAMS_FILE):
+        try:
+            with open(PARAMS_FILE) as f:
+                return json.load(f) or {}
+        except (OSError, ValueError):
+            return {}
+    return {}
+
+
+def find_input():
+    if not os.path.isdir(DATA_DIR):
+        die("no_data_dir")
+    names = sorted(os.listdir(DATA_DIR))
+    for n in names:
+        if n.lower().endswith((".csv", ".tsv")):
+            return os.path.join(DATA_DIR, n)
+    if names:
+        return os.path.join(DATA_DIR, names[0])
+    die("no_input_file")
+
+
+def read_rows(path):
+    sep = "\t" if path.lower().endswith(".tsv") else ","
+    with open(path, newline="") as f:
+        return list(csv.DictReader(f, delimiter=sep))
+
+
+def _isnum(v):
+    try:
+        float(v)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def numeric_columns(rows, candidates=None):
+    cols = candidates or (list(rows[0].keys()) if rows else [])
+    out = []
+    for c in cols:
+        ne = [r.get(c, "") for r in rows if r.get(c, "") not in (None, "")]
+        if ne and all(_isnum(v) for v in ne):
+            out.append(c)
+    return out
+
+
+def col_values(rows, c):
+    xs = []
+    for r in rows:
+        v = r.get(c, "")
+        if v in (None, ""):
+            continue
+        try:
+            xs.append(float(v))
+        except (TypeError, ValueError):
+            pass
+    return xs
+
+
+def write_output(model, metrics):
+    os.makedirs(OUT_DIR, exist_ok=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("model.json", json.dumps(model))
+        z.writestr("metrics.json", json.dumps(metrics))
+    with open(os.path.join(OUT_DIR, "output.bin"), "wb") as f:
+        f.write(buf.getvalue())
+`
+
+var statsTemplate = Template{
+	Key:          "stats",
+	Description:  "Per-column descriptive statistics (n, mean, min, max, std) — the default.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    stats = {}
+    for c in numeric_columns(rows, params.get("columns")):
+        xs = col_values(rows, c)
+        if not xs:
+            continue
+        n = len(xs)
+        mean = sum(xs) / n
+        var = sum((x - mean) ** 2 for x in xs) / n
+        stats[c] = {"n": n, "mean": mean, "min": min(xs), "max": max(xs), "std": var ** 0.5}
+    log("computed", numeric_columns=len(stats))
+    write_output(
+        {"format": "vo-colstats-1", "n_rows": len(rows), "columns": stats},
+        {"status": "ok", "rows": len(rows), "numeric_columns": len(stats)},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var correlationTemplate = Template{
+	Key:          "correlation",
+	Description:  "Pairwise Pearson correlation matrix between numeric columns.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def _aligned(rows, a, b):
+    xa, xb = [], []
+    for r in rows:
+        va, vb = r.get(a, ""), r.get(b, "")
+        if va in (None, "") or vb in (None, ""):
+            continue
+        try:
+            fa, fb = float(va), float(vb)
+        except (TypeError, ValueError):
+            continue
+        xa.append(fa)
+        xb.append(fb)
+    return xa, xb
+
+
+def _pearson(xa, xb):
+    n = len(xa)
+    if n < 2:
+        return None
+    ma, mb = sum(xa) / n, sum(xb) / n
+    cov = sum((xa[i] - ma) * (xb[i] - mb) for i in range(n))
+    va = sum((x - ma) ** 2 for x in xa)
+    vb = sum((x - mb) ** 2 for x in xb)
+    if va == 0 or vb == 0:
+        return None
+    return cov / ((va * vb) ** 0.5)
+
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    cols = numeric_columns(rows, params.get("columns"))
+    corr = {}
+    for i, a in enumerate(cols):
+        for b in cols[i:]:
+            xa, xb = _aligned(rows, a, b)
+            r = _pearson(xa, xb)
+            corr.setdefault(a, {})[b] = r
+            corr.setdefault(b, {})[a] = r
+    log("computed", columns=len(cols))
+    write_output(
+        {"format": "vo-correlation-1", "columns": cols, "correlation": corr},
+        {"status": "ok", "rows": len(rows), "numeric_columns": len(cols)},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var linregTemplate = Template{
+	Key:          "linreg",
+	Description:  "Multivariate linear regression (gradient descent) — train a model on data you can't see; outputs coefficients + R^2.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"target":{"type":"string"},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    cols = numeric_columns(rows, params.get("columns"))
+    target = params.get("target") or (cols[-1] if cols else None)
+    feats = [c for c in cols if c != target]
+    if not target or not feats:
+        die("need >=2 numeric columns (features + a target)")
+
+    X, y = [], []
+    for r in rows:
+        try:
+            row = [float(r[c]) for c in feats]
+            t = float(r[target])
+        except (KeyError, TypeError, ValueError):
+            continue
+        X.append(row)
+        y.append(t)
+    n = len(y)
+    if n < 2:
+        die("not_enough_rows")
+
+    cols_t = list(zip(*X))
+    means = [sum(col) / n for col in cols_t]
+    stds = [((sum((v - means[j]) ** 2 for v in col) / n) ** 0.5) or 1.0 for j, col in enumerate(cols_t)]
+    Xs = [[(row[j] - means[j]) / stds[j] for j in range(len(feats))] for row in X]
+    ymean = sum(y) / n
+
+    w = [0.0] * len(feats)
+    b = ymean
+    lr = 0.1
+    for _ in range(3000):
+        gw = [0.0] * len(feats)
+        gb = 0.0
+        for i in range(n):
+            pred = b + sum(w[j] * Xs[i][j] for j in range(len(feats)))
+            err = pred - y[i]
+            gb += err
+            for j in range(len(feats)):
+                gw[j] += err * Xs[i][j]
+        b -= lr * gb / n
+        for j in range(len(feats)):
+            w[j] -= lr * gw[j] / n
+
+    sse = sum((b + sum(w[j] * Xs[i][j] for j in range(len(feats))) - y[i]) ** 2 for i in range(n))
+    sst = sum((y[i] - ymean) ** 2 for i in range(n))
+    r2 = 1 - sse / sst if sst else 0.0
+
+    coef = {feats[j]: w[j] / stds[j] for j in range(len(feats))}
+    intercept = b - sum(w[j] * means[j] / stds[j] for j in range(len(feats)))
+    log("trained", features=len(feats), r2=round(r2, 4))
+    write_output(
+        {"format": "vo-linreg-1", "target": target, "intercept": intercept, "coefficients": coef},
+        {"status": "ok", "rows": n, "r2": r2},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
