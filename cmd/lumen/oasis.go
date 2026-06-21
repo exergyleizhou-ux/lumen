@@ -376,6 +376,13 @@ func deployAlgo(dir string) {
 		} else {
 			fmt.Printf("   Pinned digest into %s\n", oasis.LockFile)
 		}
+		// Also pin it into the manifest the author commits, so oasis.toml carries
+		// the exact deployed image (line-level edit; comments/order preserved).
+		if err := oasis.UpdateManifestDigest(dir, digest); err != nil {
+			fmt.Printf("   ⚠️  could not pin digest into %s: %v\n", oasis.ManifestFile, err)
+		} else {
+			fmt.Printf("   Pinned digest into %s\n", oasis.ManifestFile)
+		}
 	}
 
 	// ── Conveyor belt: auto-register to marketplace ──
