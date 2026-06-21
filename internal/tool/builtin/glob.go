@@ -71,7 +71,12 @@ func (t *GlobTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 				}
 				return nil
 			}
-			rel, _ := filepath.Rel(".", path)
+			rel, rerr := filepath.Rel(".", path)
+			if rerr != nil {
+				// An absolute root can't be made relative to "." — keep the
+				// absolute path rather than silently dropping the match.
+				rel = path
+			}
 			if match, _ := filepath.Match(suffix, filepath.Base(rel)); match || suffix == "" {
 				files = append(files, rel)
 			}
