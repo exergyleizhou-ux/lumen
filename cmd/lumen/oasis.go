@@ -37,17 +37,43 @@ func runOasis(args []string) {
 		}
 		checkAlgo(dir)
 
+	case "templates":
+		fmt.Println("Available algorithm templates (lumen oasis init <name> --template <key>):")
+		for _, t := range oasis.Templates() {
+			def := ""
+			if t.Key == oasis.DefaultTemplate().Key {
+				def = "  (default)"
+			}
+			fmt.Printf("  %-12s %s%s\n", t.Key, t.Description, def)
+		}
+
 	case "init":
-		if len(rest) < 1 {
-			fmt.Fprintf(os.Stderr, "Usage: lumen oasis init <name>\n")
+		// Manual parse so --template works in ANY position (Go's flag stops at the
+		// first positional, which would silently ignore `init <name> --template x`).
+		tmplKey, pos := "", []string{}
+		for i := 0; i < len(rest); i++ {
+			switch {
+			case rest[i] == "--template" || rest[i] == "-template":
+				if i+1 < len(rest) {
+					tmplKey = rest[i+1]
+					i++
+				}
+			case strings.HasPrefix(rest[i], "--template="):
+				tmplKey = strings.TrimPrefix(rest[i], "--template=")
+			default:
+				pos = append(pos, rest[i])
+			}
+		}
+		if len(pos) < 1 {
+			fmt.Fprintf(os.Stderr, "Usage: lumen oasis init <name> [dir] [--template <key>]\n")
 			os.Exit(1)
 		}
-		name := rest[0]
+		name := pos[0]
 		dir := name
-		if len(rest) > 1 {
-			dir = rest[1]
+		if len(pos) > 1 {
+			dir = pos[1]
 		}
-		initAlgo(name, dir)
+		initAlgo(name, dir, tmplKey)
 
 	case "validate":
 		dir := "."
@@ -121,14 +147,25 @@ func short12(s string) string {
 	return s
 }
 
-func initAlgo(name, dir string) {
+func initAlgo(name, dir, tmplKey string) {
 	m := oasis.DefaultManifest(name)
-	if err := oasis.Scaffold(dir, m); err != nil {
+	tmpl := oasis.DefaultTemplate()
+	if tmplKey != "" {
+		t, ok := oasis.TemplateByName(tmplKey)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "oasis init: unknown template %q — run 'lumen oasis templates'\n", tmplKey)
+			os.Exit(1)
+		}
+		tmpl = t
+	}
+	if err := oasis.ScaffoldTemplate(dir, m, tmpl); err != nil {
 		fmt.Fprintf(os.Stderr, "oasis init: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✅ algorithm %q scaffolded at %s\n", name, dir)
-	fmt.Printf("   Next: cd %s && lumen oasis build\n", dir)
+	fmt.Printf("✅ algorithm %q scaffolded at %s (template: %s)\n", name, dir, tmpl.Key)
+	fmt.Printf("   %s\n", tmpl.Description)
+	fmt.Printf("   It is a COMPLETE working example — run it as-is, or edit train.py.\n")
+	fmt.Printf("   Next: cd %s && lumen oasis build, then 'lumen oasis check'\n", dir)
 }
 
 func validateAlgo(dir string) {
