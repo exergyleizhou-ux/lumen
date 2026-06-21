@@ -81,6 +81,23 @@ MARKETPLACE_URL=http://localhost:<port> MARKETPLACE_TOKEN=<token> MARKETPLACE_TR
 # 核验:GET /api/v1/admin/compute/algorithms?status=approved → 你的算法 + digest 一致
 ```
 
-## 7. 相关 PR
+## 7. 全算法目录均出可验证证书(2026-06-21)
 
-#93 完整 provenance lockfile + digest 回写 · #94 `lumen oasis verify` · #95 validate 告警 · #96 源码哈希空值 bug(活体逮到)。均在 `origin/main`。
+不止注册 —— **8 个 `lumen oasis` 模板算法全部在真 Oasis(:8090)上被真实买家 job 调用、在 `--network=none` 沙箱里跑通、产出可验证结果证书**(数据集 Iris;每个证书的 `output_sha256` 都与下载结果的本地 re-hash 一字不差):
+
+| 算法 | 证书 | re-hash |
+|---|---|---|
+| colstats | `VO-3D77D6E1E44C` | ✅ |
+| quantiles | `VO-30BBB222395B` | ✅ |
+| histogram | `VO-FB4D54F64B16` | ✅ |
+| correlation | `VO-0799CBA8BC9E` | ✅ |
+| groupby(k-匿名) | `VO-15CFD5FD1AF7` | ✅ |
+| linreg | `VO-17823547727F` | ✅ |
+| logreg | `VO-2BABAFC65098` | ✅ |
+| dp-stats(ε-DP) | `VO-140D0A45C497` | ✅ |
+
+流程(每个算法):seller 开 offer(Iris,L1,allowed_algorithm_ids)→ buyer purchase 拿 entitlement → buyer 提 job → `--network=none` 沙箱执行 → ops 放行 → buyer 取 cert + output → 本地 SHA-256 re-hash 比对。**输出都是聚合(420–600B),无原始行。**
+
+## 8. 相关 PR
+
+#93 完整 provenance lockfile + digest 回写 · #94 `lumen oasis verify` · #95 validate 告警 · #96 源码哈希空值 bug(活体逮到) · #99–#107 产品化(8 模板含 dp-stats/groupby 两隐私原语、隐私 leak lint、作者教程)。均在 `origin/main`。
