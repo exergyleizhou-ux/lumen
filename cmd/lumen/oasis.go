@@ -31,11 +31,8 @@ func runOasis(args []string) {
 
 	switch sub {
 	case "check":
-		dir := "."
-		if len(rest) > 0 {
-			dir = rest[0]
-		}
-		checkAlgo(dir)
+		dir, dataPath := parseCheckArgs(rest)
+		checkAlgo(dir, dataPath)
 
 	case "templates":
 		fmt.Println("Available algorithm templates (lumen oasis init <name> --template <key>):")
@@ -199,10 +196,38 @@ func validateAlgo(dir string) {
 	fmt.Printf("   Next: lumen oasis build, then 'lumen oasis check' to verify the container contract\n")
 }
 
+// parseCheckArgs parses `oasis check [dir] [--data <file>]`. Like `init`, the
+// flag is honored in ANY position (Go's flag pkg stops at the first positional,
+// which would silently ignore `check <dir> --data x`).
+func parseCheckArgs(rest []string) (dir, dataPath string) {
+	dir = "."
+	var pos []string
+	for i := 0; i < len(rest); i++ {
+		switch {
+		case rest[i] == "--data" || rest[i] == "-data":
+			if i+1 < len(rest) {
+				dataPath = rest[i+1]
+				i++
+			}
+		case strings.HasPrefix(rest[i], "--data="):
+			dataPath = strings.TrimPrefix(rest[i], "--data=")
+		default:
+			pos = append(pos, rest[i])
+		}
+	}
+	if len(pos) > 0 {
+		dir = pos[0]
+	}
+	return dir, dataPath
+}
+
 // checkAlgo runs the C2D runtime contract self-check: it executes the algorithm
 // image under the exact marketplace isolation and verifies it produces a valid
 // /out/output.bin — so the author catches contract violations before pushing.
-func checkAlgo(dir string) {
+// When dataPath is set, the author's own sample data seeds /data instead of the
+// synthetic dataset (closer to real input); the synthetic privacy lints, which
+// depend on seeded sentinels, are skipped in that mode.
+func checkAlgo(dir, dataPath string) {
 	m, err := loadManifest(dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "oasis check: %v\n", err)
@@ -213,13 +238,30 @@ func checkAlgo(dir string) {
 		os.Exit(1)
 	}
 
+	var sampleData []byte
+	if dataPath != "" {
+		b, rerr := os.ReadFile(dataPath)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr, "oasis check: --data %s: %v\n", dataPath, rerr)
+			os.Exit(1)
+		}
+		if len(b) == 0 {
+			fmt.Fprintf(os.Stderr, "oasis check: --data %s is empty\n", dataPath)
+			os.Exit(1)
+		}
+		sampleData = b
+	}
+
 	tag := oasis.ImageTag(m.Image, m.Version)
 	fmt.Printf("🔬 C2D contract self-check on %s\n", tag)
 	fmt.Printf("   docker run --network none --read-only -v /data:ro -v /params.json:ro -v /out\n")
+	if sampleData != nil {
+		fmt.Printf("   Seeding /data with your sample: %s (%d bytes) — synthetic privacy lints skipped\n", dataPath, len(sampleData))
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	res := oasis.RunContractCheck(ctx, tag, m.OutputKind, nil)
+	res := oasis.RunContractCheck(ctx, tag, m.OutputKind, sampleData)
 
 	if res.OK {
 		fmt.Printf("✅ contract OK — runs isolated and produced a valid %s /out/output.bin\n", m.OutputKind)
@@ -296,7 +338,7 @@ func publishAlgo(dir string) {
 	oasisPipeline = true
 	fmt.Println("📦 oasis publish: build → check → deploy")
 	buildAlgo(dir)
-	checkAlgo(dir)
+	checkAlgo(dir, "")
 	deployAlgo(dir)
 	fmt.Println("🎉 published — built, contract-verified, pushed, and registered")
 }
