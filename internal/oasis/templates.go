@@ -20,7 +20,7 @@ type Template struct {
 
 // Templates returns the built-in algorithm templates, default first.
 func Templates() []Template {
-	return []Template{statsTemplate, histogramTemplate, quantilesTemplate, correlationTemplate, linregTemplate, logregTemplate, dpStatsTemplate}
+	return []Template{statsTemplate, histogramTemplate, quantilesTemplate, correlationTemplate, groupbyTemplate, linregTemplate, logregTemplate, dpStatsTemplate}
 }
 
 // DefaultTemplate is what a bare `lumen oasis init <name>` scaffolds.
@@ -424,6 +424,64 @@ def main():
     write_output(
         {"format": "vo-dpstats-1", "epsilon": eps, "dp_row_count": dp_count, "columns": out},
         {"status": "ok", "epsilon": eps, "numeric_columns": len(out), "mechanism": "laplace"},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var groupbyTemplate = Template{
+	Key:          "groupby",
+	Description:  "Group-by aggregation with k-anonymity — count + per-column means per group, suppressing groups smaller than min_group_size (default 5).",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"by":{"type":"string"},"min_group_size":{"type":"integer"},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    if not rows:
+        write_output({"format": "vo-groupby-1", "groups": {}}, {"status": "ok", "rows": 0, "groups": 0})
+        return
+    k = int(params.get("min_group_size", 5)) or 5
+
+    by = params.get("by")
+    numeric = set(numeric_columns(rows))
+    allcols = list(rows[0].keys())
+    if not by:
+        cats = [c for c in allcols if c not in numeric]
+        if cats:
+            by = cats[0]  # prefer a categorical column
+        else:
+            by = min(allcols, key=lambda c: len({r.get(c, "") for r in rows}))
+    value_cols = [c for c in numeric_columns(rows, params.get("columns")) if c != by]
+
+    buckets = {}
+    for r in rows:
+        buckets.setdefault(r.get(by, ""), []).append(r)
+
+    out = {}
+    suppressed = 0
+    suppressed_rows = 0
+    for key, grp in buckets.items():
+        if len(grp) < k:  # k-anonymity: never emit a group that could re-identify
+            suppressed += 1
+            suppressed_rows += len(grp)
+            continue
+        agg = {"count": len(grp)}
+        for c in value_cols:
+            xs = col_values(grp, c)
+            if xs:
+                agg[c + "_mean"] = sum(xs) / len(xs)
+        out[key] = agg
+    log("computed", groups=len(out), suppressed=suppressed, k=k)
+    write_output(
+        {"format": "vo-groupby-1", "group_by": by, "min_group_size": k, "groups": out},
+        {"status": "ok", "rows": len(rows), "groups": len(out), "suppressed_groups": suppressed, "suppressed_rows": suppressed_rows},
     )
     log("done")
 
