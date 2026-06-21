@@ -156,6 +156,9 @@ func validateAlgo(dir string) {
 	fmt.Printf("✅ manifest validated: %s v%d (runtime=%s, output=%s)\n",
 		m.Name, m.Version, m.Runtime, m.OutputKind)
 	fmt.Printf("   Image: %s\n", m.Image)
+	for _, warn := range oasis.ManifestWarnings(m) {
+		fmt.Printf("   ⚠️  %s\n", warn)
+	}
 	fmt.Printf("   Next: lumen oasis build, then 'lumen oasis check' to verify the container contract\n")
 }
 
