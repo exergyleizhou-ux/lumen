@@ -239,6 +239,12 @@ func ComputeSrcHash(dir string) (string, error) {
 		}
 		name := info.Name()
 		if info.IsDir() {
+			// Never skip the walk root itself: when build runs as `oasis build .`
+			// the root's Name() is "." (a dot prefix), and skipping it would
+			// SkipDir the whole tree → hash nothing → the empty-input digest.
+			if path == dir {
+				return nil
+			}
 			if name == ".git" || name == "vendor" || name == "__pycache__" || strings.HasPrefix(name, ".") {
 				return filepath.SkipDir
 			}
