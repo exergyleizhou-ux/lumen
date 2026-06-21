@@ -71,3 +71,21 @@ func normalizeWS(s string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// editPair is one old→new replacement for multi_edit.
+type editPair struct{ Old, New string }
+
+// applySequentialEdits applies each edit in order, requiring each old_string to
+// match exactly once at the moment it applies. It is all-or-nothing: any failure
+// returns an error and no content (the caller persists only on success, so the
+// file is left untouched on a mid-sequence failure — atomic multi-edit).
+func applySequentialEdits(content string, edits []editPair) (string, error) {
+	for i, e := range edits {
+		next, err := applyReplace(content, e.Old, e.New)
+		if err != nil {
+			return "", fmt.Errorf("edit %d: %w", i, err)
+		}
+		content = next
+	}
+	return content, nil
+}

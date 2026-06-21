@@ -81,20 +81,19 @@ func (t *MultiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 	// Apply every edit to an in-memory copy; only persist if ALL succeed, so a
 	// mid-sequence failure leaves the file untouched (atomic).
-	applied := 0
-	for i, edit := range p.Edits {
-		next, err := applyReplace(content, edit.OldString, edit.NewString)
-		if err != nil {
-			return "", fmt.Errorf("edit %d (%s): %w", i, p.Path, err)
-		}
-		content = next
-		applied++
+	edits := make([]editPair, len(p.Edits))
+	for i, e := range p.Edits {
+		edits[i] = editPair{Old: e.OldString, New: e.NewString}
+	}
+	content, err = applySequentialEdits(content, edits)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", p.Path, err)
 	}
 
 	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(content)); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
-	return fmt.Sprintf("Applied %d edits to %s", applied, p.Path), nil
+	return fmt.Sprintf("Applied %d edits to %s", len(p.Edits), p.Path), nil
 }
 
 // ── Previewer implementation ──────────────────────────────
