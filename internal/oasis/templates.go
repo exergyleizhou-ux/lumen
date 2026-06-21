@@ -19,7 +19,9 @@ type Template struct {
 }
 
 // Templates returns the built-in algorithm templates, default first.
-func Templates() []Template { return []Template{statsTemplate, correlationTemplate, linregTemplate} }
+func Templates() []Template {
+	return []Template{statsTemplate, histogramTemplate, correlationTemplate, linregTemplate, dpStatsTemplate}
+}
 
 // DefaultTemplate is what a bare `lumen oasis init <name>` scaffolds.
 func DefaultTemplate() Template { return statsTemplate }
@@ -324,6 +326,104 @@ def main():
     write_output(
         {"format": "vo-linreg-1", "target": target, "intercept": intercept, "coefficients": coef},
         {"status": "ok", "rows": n, "r2": r2},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var histogramTemplate = Template{
+	Key:          "histogram",
+	Description:  "Per-column binned histograms (distribution shape) — aggregate counts per bin.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"bins":{"type":"integer"},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    bins = int(params.get("bins", 10)) or 10
+    hist = {}
+    for c in numeric_columns(rows, params.get("columns")):
+        xs = col_values(rows, c)
+        if not xs:
+            continue
+        lo, hi = min(xs), max(xs)
+        width = (hi - lo) / bins if hi > lo else 1.0
+        counts = [0] * bins
+        for x in xs:
+            k = int((x - lo) / width) if width else 0
+            k = max(0, min(k, bins - 1))
+            counts[k] += 1
+        hist[c] = {"bins": bins, "edges": [lo + i * width for i in range(bins + 1)], "counts": counts, "n": len(xs)}
+    log("computed", numeric_columns=len(hist))
+    write_output(
+        {"format": "vo-histogram-1", "columns": hist},
+        {"status": "ok", "rows": len(rows), "numeric_columns": len(hist)},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var dpStatsTemplate = Template{
+	Key:          "dp-stats",
+	Description:  "Differentially-private counts + means (Laplace mechanism, epsilon budget). Declare per-column bounds in params for a real guarantee.",
+	OutputKind:   "metrics",
+	ParamsSchema: `{"type":"object","properties":{"epsilon":{"type":"number"},"bounds":{"type":"object"},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+import math
+import random
+
+
+def _laplace(scale):
+    # Inverse-CDF sample of Laplace(0, scale).
+    u = random.random() - 0.5
+    sign = 1.0 if u >= 0 else -1.0
+    return -scale * sign * math.log(1.0 - 2.0 * abs(u))
+
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    eps = float(params.get("epsilon", 1.0)) or 1.0
+    bounds = params.get("bounds", {}) or {}
+    cols = numeric_columns(rows, params.get("columns"))
+
+    # Split the privacy budget across the count query + each column mean.
+    share = eps / (len(cols) + 1)
+    dp_count = len(rows) + _laplace(1.0 / share)  # row count, sensitivity 1
+
+    out = {}
+    for c in cols:
+        raw = col_values(rows, c)
+        if not raw:
+            continue
+        b = bounds.get(c)
+        if b:
+            lo, hi = float(b[0]), float(b[1])
+        else:
+            # Fallback: data-derived range. NOTE: min/max are themselves sensitive;
+            # declare bounds in params for a real DP guarantee.
+            lo, hi = min(raw), max(raw)
+        clamped = [min(max(v, lo), hi) for v in raw]
+        n = len(clamped)
+        true_mean = sum(clamped) / n
+        sensitivity = (hi - lo) / n if n else 0.0
+        out[c] = {"dp_mean": true_mean + _laplace(sensitivity / share), "clip_lo": lo, "clip_hi": hi}
+
+    log("computed", epsilon=eps, numeric_columns=len(out))
+    write_output(
+        {"format": "vo-dpstats-1", "epsilon": eps, "dp_row_count": dp_count, "columns": out},
+        {"status": "ok", "epsilon": eps, "numeric_columns": len(out), "mechanism": "laplace"},
     )
     log("done")
 
