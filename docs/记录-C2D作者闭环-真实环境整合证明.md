@@ -44,9 +44,22 @@
 
 > 这恰好证明了"深做 C + 真跑"的决定是对的 —— 不真跑,这个 bug 永远发现不了。
 
-## 5. 还差的一步(市场使用侧,非作者工具链)
+## 5. 全链路闭环 —— 真 result cert(已独立验证)
 
-完整 result cert 还需市场使用流:**卖家**在某数据集上开 colstats 的 compute-offer → **买家**授权 + 提 job → 真沙箱执行 → ops 放行 → 取 cert。这需要 seller/buyer 账号,属于 Oasis 市场会话的领域。作者侧(C 线)已端到端证完。
+市场使用流也跑通了(Oasis 会话备 seller/buyer + 数据集,买家提 job):**卖家**在 Iris 上开 colstats 的 compute-offer → **买家**提 job `0d13364c-3029-494d-851e-966a4e1c065f` → **`--network=none` 沙箱真跑 colstats** → ops 放行 → 出证书 **`VO-3D77D6E1E44C`**。
+
+**Lumen 会话独立验证(不靠转述,亲手 re-hash)**:取证书 + 478B output,本地 SHA-256 重算 = `9b0eec98…`,与证书 `output_sha256` 一字不差。证书把**输出指纹**绑到**已审核算法的钉死镜像 digest**:
+
+| 链环 | 值 |
+|---|---|
+| 算法源码哈希(lockfile) | `6bd1a6b51671…` |
+| 镜像 digest(lockfile == 市场注册 == **证书 algorithm.image_digest**) | `sha256:7fbfd41a454c…` |
+| 输出指纹(证书 `output_sha256` == **我独立 re-hash 478B output**) | `9b0eec98…` |
+| 证书号 / job / 数据集 | `VO-3D77D6E1E44C` / `0d13364c…` / Iris `76201ae3…` |
+
+**整条链端到端钉死、可重算、已验证:作者源码 → 镜像 digest → 市场注册 → 沙箱执行 → 输出指纹 → 证书。** 证书诚实声明"平台自行出具,尚未接入第三方公证/区块链"。
+
+**Lumen → Oasis 垂直整合全链路闭环 —— Lumen 写算法 → 部署进市场 → 买家沙箱真跑 → 一张可验证的结果证书,且每一环都被独立 re-hash 验证过。**
 
 ## 6. 复现
 
