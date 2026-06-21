@@ -23,7 +23,7 @@ var oasisPipeline bool
 // runOasis dispatches `lumen oasis <subcommand>`.
 func runOasis(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|publish>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|verify|publish>\n")
 		os.Exit(1)
 	}
 	sub := args[0]
@@ -77,11 +77,48 @@ func runOasis(args []string) {
 		}
 		publishAlgo(dir)
 
+	case "verify":
+		dir := "."
+		if len(rest) > 0 {
+			dir = rest[0]
+		}
+		verifyAlgo(dir)
+
 	default:
 		fmt.Fprintf(os.Stderr, "unknown oasis subcommand: %s\n", sub)
-		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|publish>\n")
+		fmt.Fprintf(os.Stderr, "Usage: lumen oasis <init|validate|check|build|deploy|verify|publish>\n")
 		os.Exit(1)
 	}
+}
+
+// verifyAlgo re-checks that the working tree is the exact source recorded in the
+// provenance lockfile — i.e. that the locked/deployed image digest still
+// corresponds to the code in front of you. Source-only (no docker/registry).
+func verifyAlgo(dir string) {
+	res, err := oasis.VerifySource(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "oasis verify: %v — run 'lumen oasis build' first\n", err)
+		os.Exit(1)
+	}
+	if res.Digest != "" {
+		fmt.Printf("   Locked image digest: %s\n", res.Digest)
+	}
+	if res.SourceMatch {
+		fmt.Printf("✅ source matches the provenance lock (sha256:%s) — this tree built the locked artifact\n", short12(res.CurrentHash))
+		return
+	}
+	fmt.Println("❌ source DRIFTED from the provenance lock:")
+	fmt.Printf("   locked : %s\n", res.LockedHash)
+	fmt.Printf("   current: %s\n", res.CurrentHash)
+	fmt.Println("   the locked/deployed image no longer matches this code — rebuild + redeploy")
+	os.Exit(1)
+}
+
+func short12(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }
 
 func initAlgo(name, dir string) {
