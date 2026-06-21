@@ -192,22 +192,21 @@ func buildAlgo(dir string) {
 		os.Exit(1)
 	}
 
-	// Write lockfile
+	// Write the provenance lockfile (complete manifest + source hash; the image
+	// digest is pinned in by `deploy` once the registry resolves it).
 	lock := oasis.Lock{
 		Manifest: m,
 		BuiltAt:  time.Now().UTC().Format(time.RFC3339),
 		Image:    m.Image,
 		SrcHash:  srcHash,
 	}
-	lockPath := filepath.Join(dir, "oasis-lock.json")
-	lockData, _ := encodeJSON(lock)
-	if err := os.WriteFile(lockPath, lockData, 0644); err != nil {
+	if err := oasis.WriteLock(dir, lock); err != nil {
 		fmt.Fprintf(os.Stderr, "oasis build: write lockfile: %v\n", err)
 		os.Exit(1)
 	}
 
 	fmt.Printf("✅ built %s (source sha256: %s)\n", tag, srcHash[:12])
-	fmt.Printf("   Lockfile: %s\n", lockPath)
+	fmt.Printf("   Lockfile: %s\n", filepath.Join(dir, oasis.LockFile))
 	if !oasisPipeline {
 		fmt.Printf("   Next: lumen oasis check  (verify the C2D contract before deploy)\n")
 	}
@@ -251,6 +250,13 @@ func deployAlgo(dir string) {
 	fmt.Printf("✅ deployed %s\n", tag)
 	if digest != "" && digest != "<no value>" {
 		fmt.Printf("   Digest: %s\n", digest)
+		// Pin the resolved digest back into the lockfile so the author ends with
+		// a complete, re-verifiable provenance record (source hash + exact image).
+		if err := oasis.UpdateLockDigest(dir, digest); err != nil {
+			fmt.Printf("   ⚠️  could not pin digest into %s: %v\n", oasis.LockFile, err)
+		} else {
+			fmt.Printf("   Pinned digest into %s\n", oasis.LockFile)
+		}
 	}
 
 	// ── Conveyor belt: auto-register to marketplace ──
@@ -395,15 +401,4 @@ func loadManifest(dir string) (oasis.Manifest, error) {
 		return oasis.Manifest{}, fmt.Errorf("read %s: %w — run 'lumen oasis init <name>' first", path, err)
 	}
 	return oasis.ParseManifest(string(data))
-}
-
-func encodeJSON(v interface{}) ([]byte, error) {
-	// Simple indented JSON for lockfiles
-	buf := new(strings.Builder)
-	fmt.Fprintf(buf, "{\n")
-	fmt.Fprintf(buf, `  "manifest": {"name":%q,"runtime":%q}`, v.(oasis.Lock).Manifest.Name, v.(oasis.Lock).Manifest.Runtime)
-	// Fallback to proper encoding
-	_ = buf
-	return []byte(fmt.Sprintf(`{"built_at":"%s","image":"%s","source_sha256":"%s"}`,
-		v.(oasis.Lock).BuiltAt, v.(oasis.Lock).Image, v.(oasis.Lock).SrcHash)), nil
 }
