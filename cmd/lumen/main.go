@@ -89,7 +89,7 @@ Usage:
   lumen run "prompt"      One-shot task
   lumen run --plan "..."  Plan mode (read-only)
   lumen run --mode M "..."
-  lumen oasis <sub>      C2D algorithm author toolchain (init/validate/build/deploy/publish)
+  lumen oasis <sub>      C2D algorithm author toolchain (init/validate/check/build/deploy/verify/publish)
   lumen doctor
   lumen probe-local        Check which local models can drive the agent (tool_call capability)
   lumen config
