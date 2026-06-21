@@ -20,7 +20,7 @@ type Template struct {
 
 // Templates returns the built-in algorithm templates, default first.
 func Templates() []Template {
-	return []Template{statsTemplate, histogramTemplate, correlationTemplate, linregTemplate, dpStatsTemplate}
+	return []Template{statsTemplate, histogramTemplate, quantilesTemplate, correlationTemplate, linregTemplate, logregTemplate, dpStatsTemplate}
 }
 
 // DefaultTemplate is what a bare `lumen oasis init <name>` scaffolds.
@@ -424,6 +424,129 @@ def main():
     write_output(
         {"format": "vo-dpstats-1", "epsilon": eps, "dp_row_count": dp_count, "columns": out},
         {"status": "ok", "epsilon": eps, "numeric_columns": len(out), "mechanism": "laplace"},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var quantilesTemplate = Template{
+	Key:          "quantiles",
+	Description:  "Per-column quantiles (p25/median/p75/p95) — robust statistics, outlier-resistant.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"quantiles":{"type":"array","items":{"type":"number"}},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    qs = params.get("quantiles") or [0.25, 0.5, 0.75, 0.95]
+    out = {}
+    for c in numeric_columns(rows, params.get("columns")):
+        xs = sorted(col_values(rows, c))
+        if not xs:
+            continue
+        res = {}
+        for q in qs:
+            if len(xs) == 1:
+                res[str(q)] = xs[0]
+                continue
+            pos = q * (len(xs) - 1)
+            lo = int(pos)
+            hi = min(lo + 1, len(xs) - 1)
+            res[str(q)] = xs[lo] + (pos - lo) * (xs[hi] - xs[lo])
+        out[c] = {"n": len(xs), "quantiles": res}
+    log("computed", numeric_columns=len(out))
+    write_output(
+        {"format": "vo-quantiles-1", "columns": out},
+        {"status": "ok", "rows": len(rows), "numeric_columns": len(out)},
+    )
+    log("done")
+
+
+if __name__ == "__main__":
+    main()
+`,
+}
+
+var logregTemplate = Template{
+	Key:          "logreg",
+	Description:  "Logistic regression (binary classification, gradient descent). Target binarized at its median; outputs coefficients + accuracy.",
+	OutputKind:   "model",
+	ParamsSchema: `{"type":"object","properties":{"target":{"type":"string"},"columns":{"type":"array","items":{"type":"string"}}}}`,
+	TrainPy: pyHeader + `
+import math
+
+
+def _sigmoid(z):
+    if z < -60:
+        return 0.0
+    if z > 60:
+        return 1.0
+    return 1.0 / (1.0 + math.exp(-z))
+
+
+def main():
+    params = load_params()
+    rows = read_rows(find_input())
+    log("loaded", rows=len(rows))
+    cols = numeric_columns(rows, params.get("columns"))
+    target = params.get("target") or (cols[-1] if cols else None)
+    feats = [c for c in cols if c != target]
+    if not target or not feats:
+        die("need >=2 numeric columns (features + a target)")
+
+    X, yraw = [], []
+    for r in rows:
+        try:
+            X.append([float(r[c]) for c in feats])
+            yraw.append(float(r[target]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    n = len(yraw)
+    if n < 2:
+        die("not_enough_rows")
+
+    thr = sorted(yraw)[n // 2]  # binarize target at its median → works on any numeric column
+    y = [1.0 if v > thr else 0.0 for v in yraw]
+
+    cols_t = list(zip(*X))
+    means = [sum(col) / n for col in cols_t]
+    stds = [((sum((v - means[j]) ** 2 for v in col) / n) ** 0.5) or 1.0 for j, col in enumerate(cols_t)]
+    Xs = [[(X[i][j] - means[j]) / stds[j] for j in range(len(feats))] for i in range(n)]
+
+    w = [0.0] * len(feats)
+    b = 0.0
+    lr = 0.1
+    for _ in range(3000):
+        gw = [0.0] * len(feats)
+        gb = 0.0
+        for i in range(n):
+            p = _sigmoid(b + sum(w[j] * Xs[i][j] for j in range(len(feats))))
+            err = p - y[i]
+            gb += err
+            for j in range(len(feats)):
+                gw[j] += err * Xs[i][j]
+        b -= lr * gb / n
+        for j in range(len(feats)):
+            w[j] -= lr * gw[j] / n
+
+    correct = 0
+    for i in range(n):
+        pred = 1.0 if _sigmoid(b + sum(w[j] * Xs[i][j] for j in range(len(feats)))) >= 0.5 else 0.0
+        if pred == y[i]:
+            correct += 1
+    acc = correct / n
+    coef = {feats[j]: w[j] / stds[j] for j in range(len(feats))}
+    intercept = b - sum(w[j] * means[j] / stds[j] for j in range(len(feats)))
+    log("trained", features=len(feats), accuracy=round(acc, 4))
+    write_output(
+        {"format": "vo-logreg-1", "target": target, "threshold": thr, "intercept": intercept, "coefficients": coef},
+        {"status": "ok", "rows": n, "accuracy": acc},
     )
     log("done")
 
