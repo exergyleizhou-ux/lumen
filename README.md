@@ -294,7 +294,7 @@ it locally against the *exact* marketplace sandbox, and ship it. Buyers run it o
 data they can't see and get an aggregates-only result plus a re-verifiable cert.
 
 ```bash
-lumen oasis templates                    # stats · histogram · quantiles · correlation · linreg · logreg · dp-stats (ε-DP)
+lumen oasis templates                    # stats · histogram · quantiles · correlation · groupby (k-anon) · linreg · logreg · dp-stats (ε-DP)
 lumen oasis init myalgo --template stats # scaffold a complete, runnable algorithm
 lumen oasis check .                       # run it in the real --network=none sandbox
 lumen oasis verify .                      # source ⇄ provenance lockfile match
