@@ -4,6 +4,26 @@ A runbook for the plan: pool several everyday machines into one inference
 cluster with [exo](https://github.com/exo-explore/exo), run lumen against it for
 free/private agent work, and use that agent to drive `lumen quant`.
 
+## TL;DR — one command, two modes
+
+```bash
+go build -o lumen ./cmd/lumen && export PATH="$PWD:$PATH"
+
+# Dry-run the WHOLE loop now, with no GPU (an exo simulator stands in):
+MODE=sim ./scripts/local-quant-up.sh
+
+# When the cluster is up, the SAME script against the real endpoint:
+MODE=exo EXO_HOST=<head-node-ip> ./scripts/local-quant-up.sh
+```
+
+The script probes the endpoint, lets lumen run the quant pipeline against it, and
+prints the verified VQ certificate. `MODE=sim` uses
+[`scripts/exo_sim.py`](../scripts/exo_sim.py) — an OpenAI-compatible server on
+exo's port that drives lumen through `init → backtest → verify` end-to-end. It
+exercises lumen's full local-model agent loop (tool dispatch → result →
+completion), so the only thing left to validate on real hardware is *the model's
+own quality* — which `lumen probe-local` reports the moment exo is up.
+
 ## Read this first — what the cluster is and isn't for
 
 - **Quant backtesting does not use the GPU.** The `lumen quant` engine (T+1,
