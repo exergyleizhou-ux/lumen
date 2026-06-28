@@ -39,6 +39,16 @@ func runQuant(args []string) {
 	case "verify":
 		dir, mode := parseQuantRunArgs(args[1:])
 		quantVerify(dir, mode)
+	case "keygen":
+		dir, _ := parseQuantRunArgs(args[1:])
+		quantKeygen(quantKeyPath(args[1:]))
+		_ = dir
+	case "attest":
+		dir, mode := parseQuantRunArgs(args[1:])
+		quantAttest(dir, mode, quantKeyPath(args[1:]))
+	case "verify-attestation":
+		dir, _ := parseQuantRunArgs(args[1:])
+		quantVerifyAttestation(dir)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown quant subcommand: %s\n", args[0])
 		quantUsage()
@@ -47,12 +57,33 @@ func runQuant(args []string) {
 }
 
 func quantUsage() {
-	fmt.Fprintln(os.Stderr, "Usage: lumen quant <init|backtest|verify>")
+	fmt.Fprintln(os.Stderr, "Usage: lumen quant <init|data|backtest|verify|keygen|attest|verify-attestation>")
 	fmt.Fprintln(os.Stderr, "  init <name> [dir]      scaffold a strategy package")
 	fmt.Fprintln(os.Stderr, "  data [dir]             fetch the manifest's universe -> data.csv (akshare)")
 	fmt.Fprintln(os.Stderr, "  backtest [dir]         run the pinned backtest -> quant-cert.json")
 	fmt.Fprintln(os.Stderr, "  verify [dir]           re-run and confirm the cert reproduces")
-	fmt.Fprintln(os.Stderr, "\nFlags: --sandbox <docker|local> (default docker)")
+	fmt.Fprintln(os.Stderr, "  keygen                 create/show the verifier's Ed25519 identity")
+	fmt.Fprintln(os.Stderr, "  attest [dir]           verifier role: re-run, then sign the cert (B1)")
+	fmt.Fprintln(os.Stderr, "  verify-attestation [dir]  check a signed attestation offline")
+	fmt.Fprintln(os.Stderr, "\nFlags: --sandbox <docker|local> (default docker), --key <path>")
+}
+
+// quantKeyPath extracts --key <path> (or --key=path), defaulting to the user
+// config dir.
+func quantKeyPath(rest []string) string {
+	for i := 0; i < len(rest); i++ {
+		if rest[i] == "--key" && i+1 < len(rest) {
+			return rest[i+1]
+		}
+		if strings.HasPrefix(rest[i], "--key=") {
+			return strings.TrimPrefix(rest[i], "--key=")
+		}
+	}
+	d, err := os.UserConfigDir()
+	if err != nil {
+		return "quant-verifier.json"
+	}
+	return filepath.Join(d, "lumen", "quant-verifier.json")
 }
 
 // parseQuantRunArgs parses `[dir] [--sandbox docker|local]` in any position.
@@ -67,6 +98,8 @@ func parseQuantRunArgs(rest []string) (dir string, mode quant.SandboxMode) {
 			i++
 		case strings.HasPrefix(a, "--sandbox="):
 			mode = quant.SandboxMode(strings.TrimPrefix(a, "--sandbox="))
+		case a == "--key" && i+1 < len(rest):
+			i++ // value belongs to --key; don't treat it as dir
 		case !strings.HasPrefix(a, "--"):
 			dir = a
 		}
@@ -131,6 +164,59 @@ func quantVerify(dir string, mode quant.SandboxMode) {
 		return
 	}
 	fmt.Fprintln(os.Stderr, "❌ verification FAILED — the cert does not match this strategy/data")
+	os.Exit(1)
+}
+
+func quantKeygen(keyPath string) {
+	kp, err := quant.LoadOrCreateVerifierKey(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quant keygen: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("🔑 verifier identity %s\n", kp.KeyID())
+	fmt.Printf("   key file: %s\n", keyPath)
+	fmt.Printf("   share this key id with buyers so they can trust your attestations.\n")
+}
+
+func quantAttest(dir string, mode quant.SandboxMode, keyPath string) {
+	kp, err := quant.LoadOrCreateVerifierKey(keyPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quant attest: %v\n", err)
+		os.Exit(1)
+	}
+	att, err := quant.Attest(dir, kp, quant.BacktestOptions{Mode: mode})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quant attest: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("📜 attested %s — re-ran and signed by verifier %s\n", att.CertID, att.VerifierKeyID)
+	printMetrics(att.Metrics)
+	fmt.Printf("   wrote %s · anyone can check it: lumen quant verify-attestation %s\n", quant.AttestFile, dir)
+}
+
+func quantVerifyAttestation(dir string) {
+	res, err := quant.CheckAttestation(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quant verify-attestation: %v\n", err)
+		os.Exit(1)
+	}
+	mark := func(ok bool) string {
+		if ok {
+			return "✓"
+		}
+		return "✗"
+	}
+	fmt.Printf("🔏 checking attestation for %s\n", res.CertID)
+	fmt.Printf("   %s verifier signature valid\n", mark(res.SignatureValid))
+	if res.CertPresent {
+		fmt.Printf("   %s attestation matches the local certificate\n", mark(res.MatchesCert))
+		fmt.Printf("   %s source unchanged since attestation\n", mark(res.SourceMatch))
+	}
+	if res.OK() {
+		fmt.Printf("✅ ATTESTATION VALID — verifier vouches this backtest was independently reproduced\n")
+		return
+	}
+	fmt.Fprintln(os.Stderr, "❌ ATTESTATION INVALID — do not trust these numbers")
 	os.Exit(1)
 }
 
