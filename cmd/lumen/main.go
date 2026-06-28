@@ -67,6 +67,8 @@ func main() {
 		fmt.Println(versionString())
 	case "oasis":
 		runOasis(os.Args[2:])
+	case "quant":
+		runQuant(os.Args[2:])
 	case "serve":
 		runServe(os.Args[2:])
 	case "watch":
