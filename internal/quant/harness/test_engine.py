@@ -81,6 +81,22 @@ def test_benchmark_and_excess_return_reported():
     m = Engine(bars, _cfg()).run(_Flat()).metrics
     assert m["benchmark_return"] == pytest.approx(0.15)
     assert m["excess_return"] == pytest.approx(m["total_return"] - 0.15)
+    # a flat strategy that trails a rising benchmark has a negative information ratio
+    assert "information_ratio" in m
+    assert m["information_ratio"] < 0
+
+
+def test_turnover_zero_when_flat_and_positive_when_trading():
+    class _Flat:
+        def on_bar(self, ctx):
+            return {}
+
+    flat = Engine(_bars_A(), _cfg()).run(_Flat()).metrics
+    assert flat["turnover"] == 0.0
+
+    held = Engine(_bars_A(), _cfg()).run(_AllInA()).metrics
+    # buy-and-hold: 100000 traded notional / mean equity 113750 ~= 0.879
+    assert held["turnover"] == pytest.approx(0.879, abs=1e-2)
 
 
 def test_buy_and_hold_equity_curve_is_exact():

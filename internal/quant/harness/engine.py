@@ -133,25 +133,37 @@ class Engine:
             pending = {s: w * equity for s, w in weights.items()}
 
         m = metrics.compute(equity_curve)
-        bench = self._benchmark_return(days)
-        m["benchmark_return"] = bench
-        m["excess_return"] = m["total_return"] - bench
+        bench_curve = self._benchmark_curve(days)
+        bench_return = (bench_curve[-1] / bench_curve[0] - 1.0) if len(bench_curve) >= 2 and bench_curve[0] > 0 else 0.0
+        m["benchmark_return"] = bench_return
+        m["excess_return"] = m["total_return"] - bench_return
+        m["information_ratio"] = metrics.information_ratio(equity_curve, bench_curve)
+        m["turnover"] = self._turnover(trades, equity_curve)
 
         return BacktestResult(dates=dates, equity=equity_curve, trades=trades, metrics=m)
 
-    def _benchmark_return(self, days: List[dt.date]) -> float:
-        """Equal-weight buy-and-hold of the whole universe — the bar a strategy
-        must clear to claim it added value. Mean of each symbol's full-window
-        return; survivorship-correct because each symbol uses its own first/last
-        traded bar."""
-        if not days:
-            return 0.0
-        rets = []
+    def _benchmark_curve(self, days: List[dt.date]) -> List[float]:
+        """Daily equal-weight index of the universe — the bar a strategy must
+        clear to claim it added value. Each symbol is normalized to its own first
+        traded close, so it's survivorship-correct (names enter at their IPO)."""
+        first_close: Dict[str, float] = {}
         for s in self._bars.symbols():
-            w = self._bars.window(s, days[-1], 10 ** 9)
-            if len(w) >= 2 and w[0].close > 0:
-                rets.append(w[-1].close / w[0].close - 1.0)
-        return sum(rets) / len(rets) if rets else 0.0
+            w = self._bars.window(s, days[-1], 10 ** 9) if days else []
+            if w and w[0].close > 0:
+                first_close[s] = w[0].close
+        curve: List[float] = []
+        for d in days:
+            ratios = [self._bars.bar_on(s, d).close / fc
+                      for s, fc in first_close.items() if self._bars.bar_on(s, d)]
+            curve.append(sum(ratios) / len(ratios) if ratios else (curve[-1] if curve else 1.0))
+        return curve
+
+    def _turnover(self, trades: List[Trade], equity_curve: List[float]) -> float:
+        """Total traded notional divided by mean equity — how hard the book churned
+        (and a proxy for how sensitive the result is to trading-cost assumptions)."""
+        traded = sum(t.price * t.qty for t in trades)
+        mean_eq = sum(equity_curve) / len(equity_curve) if equity_curve else 0.0
+        return round(traded / mean_eq, 6) if mean_eq > 0 else 0.0
 
     def _vol_cap(self, bar) -> Optional[int]:
         """Max shares fillable on this bar given the participation cap; None when
@@ -190,7 +202,7 @@ class Engine:
                 continue
             b = self._bars.bar_on(s, d)
             price = round(b.open * (1.0 - cfg.slippage), 4)
-            if not rules.can_sell_at(b, price, cfg.limit_pct):
+            if not rules.can_sell_at(b, price, rules.board_limit_pct(s, cfg.limit_pct)):
                 continue
             sell_qty = min(-delta, cur)  # sellable == everything held (T+1)
             cap = self._vol_cap(b)
@@ -215,7 +227,7 @@ class Engine:
                 continue
             b = self._bars.bar_on(s, d)
             price = round(b.open * (1.0 + cfg.slippage), 4)
-            if not rules.can_buy_at(b, price, cfg.limit_pct):
+            if not rules.can_buy_at(b, price, rules.board_limit_pct(s, cfg.limit_pct)):
                 continue
             buy_qty = delta
             cap = self._vol_cap(b)

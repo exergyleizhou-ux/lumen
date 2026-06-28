@@ -73,3 +73,13 @@ def test_commission_has_minimum():
 def test_stamp_duty_is_sell_side_only():
     assert rules.stamp_duty(100000.0, rate=0.0005, side="sell") == 50.0
     assert rules.stamp_duty(100000.0, rate=0.0005, side="buy") == 0.0
+
+
+def test_board_limit_pct_by_symbol():
+    assert rules.board_limit_pct("600519.SH") == 0.10  # main board
+    assert rules.board_limit_pct("000858.SZ") == 0.10  # SZ main board
+    assert rules.board_limit_pct("300750.SZ") == 0.20  # ChiNext
+    assert rules.board_limit_pct("688981.SH") == 0.20  # STAR
+    assert rules.board_limit_pct("830799.BJ") == 0.30  # Beijing
+    # unknown / test symbols fall back to the supplied default
+    assert rules.board_limit_pct("A", default=0.10) == 0.10

@@ -41,6 +41,22 @@ def _max_drawdown(equity: List[float]) -> float:
     return worst
 
 
+def information_ratio(equity: List[float], benchmark: List[float]) -> float:
+    """Annualized mean active return over its tracking error — the risk-adjusted
+    measure of skill *versus the benchmark*. Returns 0.0 on degenerate input
+    (too short, mismatched lengths, or zero active-return variance)."""
+    if len(equity) < 2 or len(equity) != len(benchmark):
+        return 0.0
+    se = _daily_returns(equity)
+    be = _daily_returns(benchmark)
+    excess = [s - b for s, b in zip(se, be)]
+    std = _sample_std(excess)
+    if std <= 0:
+        return 0.0
+    mean = sum(excess) / len(excess)
+    return mean / std * math.sqrt(TRADING_DAYS)
+
+
 def compute(equity: List[float]) -> Dict[str, float]:
     """Return total_return, cagr, sharpe, sortino, max_drawdown for the curve."""
     if len(equity) < 2:

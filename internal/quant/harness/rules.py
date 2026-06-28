@@ -27,6 +27,22 @@ def round_lot(shares: float) -> int:
     return int(shares // LOT) * LOT
 
 
+def board_limit_pct(symbol: str, default: float = 0.10) -> float:
+    """Daily price-limit band inferred from the symbol's board.
+
+    STAR (688) and ChiNext (300) are ±20%, the Beijing exchange (4../8..) is
+    ±30%, everything else (and non-numeric/test symbols) uses ``default`` (the
+    ±10% main board). Caveat: ChiNext only moved to ±20% on 2020-08-24 — a
+    pre-2020 ChiNext backtest should override this with a fixed ``limit_pct``.
+    """
+    code = symbol.split(".", 1)[0]
+    if code[:3] in ("688", "300"):
+        return 0.20
+    if code[:1] in ("4", "8"):
+        return 0.30
+    return default
+
+
 def limit_prices(prev_close: float, pct: float) -> tuple[float, float]:
     """(upper_limit, lower_limit) for the session, rounded to 2 decimals."""
     up = round(prev_close * (1.0 + pct), 2)

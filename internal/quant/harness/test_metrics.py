@@ -41,3 +41,19 @@ def test_single_point_curve_is_safe():
     assert m["total_return"] == 0.0
     assert m["sharpe"] == 0.0
     assert m["max_drawdown"] == 0.0
+
+
+def test_information_ratio_matches_hand_computation():
+    # strategy daily returns: +0.10, 0.00 ; benchmark: +0.02, -0.02
+    # excess: +0.08, +0.02 -> mean 0.05, sample_std sqrt(0.0018)=0.0424264
+    # IR = 0.05/0.0424264 * sqrt(252) = 18.7088
+    equity = [100.0, 110.0, 110.0]
+    benchmark = [100.0, 102.0, 99.96]
+    assert metrics.information_ratio(equity, benchmark) == pytest.approx(18.7088, abs=1e-3)
+
+
+def test_information_ratio_safe_on_degenerate_input():
+    assert metrics.information_ratio([100.0], [100.0]) == 0.0
+    assert metrics.information_ratio([100.0, 110.0], [100.0]) == 0.0  # length mismatch
+    # identical curves -> zero excess variance -> 0, not a div-by-zero
+    assert metrics.information_ratio([100.0, 110.0, 121.0], [100.0, 110.0, 121.0]) == 0.0
