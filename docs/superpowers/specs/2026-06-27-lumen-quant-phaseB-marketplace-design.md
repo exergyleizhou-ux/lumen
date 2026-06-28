@@ -1,7 +1,12 @@
 # Design: `lumen quant` phase B — verified-strategy registry & marketplace
 
 **Date:** 2026-06-27
-**Status:** Design — depends on phase A (built: branch `quant-spec`, PR #115)
+**Status:** B1 **trust core implemented** (2026-06-28) — `lumen quant keygen / attest /
+verify-attestation`: a verifier independently re-runs a strategy, confirms the
+cert reproduces *and* the source hasn't drifted, then Ed25519-signs it; anyone
+checks the signature offline. Remaining for B1: source *sealing* (encrypt-at-rest
+so the public never sees the strategy) + the hosted registry HTTP service & public
+pages. B2 unchanged (gated). Depends on phase A (merged to `main`).
 **Sibling:** reuses `lumen oasis`'s notary (ED25519), seal (source-at-rest), and
 marketplace-registration HTTP pattern.
 

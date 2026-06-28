@@ -63,7 +63,7 @@ func ComputeSrcHash(dir string) (string, error) {
 
 func isGeneratedArtifact(name string) bool {
 	switch name {
-	case LockFile, CertFile, "results.json":
+	case LockFile, CertFile, AttestFile, DataLockFile, "results.json":
 		return true
 	}
 	return strings.HasSuffix(name, ".pyc")
