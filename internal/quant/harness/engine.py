@@ -35,6 +35,7 @@ class BacktestConfig:
     stamp_duty_rate: float = 0.0005  # sell side only
     slippage: float = 0.0            # fraction added to buys / subtracted from sells
     limit_pct: float = 0.10          # daily price-limit band
+    max_participation: float = 0.10  # max fill as a fraction of the bar's volume (0 = uncapped)
 
 
 @dataclass(frozen=True)
@@ -131,12 +132,34 @@ class Engine:
             weights = strategy.on_bar(ctx) or {}
             pending = {s: w * equity for s, w in weights.items()}
 
-        return BacktestResult(
-            dates=dates,
-            equity=equity_curve,
-            trades=trades,
-            metrics=metrics.compute(equity_curve),
-        )
+        m = metrics.compute(equity_curve)
+        bench = self._benchmark_return(days)
+        m["benchmark_return"] = bench
+        m["excess_return"] = m["total_return"] - bench
+
+        return BacktestResult(dates=dates, equity=equity_curve, trades=trades, metrics=m)
+
+    def _benchmark_return(self, days: List[dt.date]) -> float:
+        """Equal-weight buy-and-hold of the whole universe — the bar a strategy
+        must clear to claim it added value. Mean of each symbol's full-window
+        return; survivorship-correct because each symbol uses its own first/last
+        traded bar."""
+        if not days:
+            return 0.0
+        rets = []
+        for s in self._bars.symbols():
+            w = self._bars.window(s, days[-1], 10 ** 9)
+            if len(w) >= 2 and w[0].close > 0:
+                rets.append(w[-1].close / w[0].close - 1.0)
+        return sum(rets) / len(rets) if rets else 0.0
+
+    def _vol_cap(self, bar) -> Optional[int]:
+        """Max shares fillable on this bar given the participation cap; None when
+        uncapped (max_participation <= 0)."""
+        p = self._cfg.max_participation
+        if p <= 0:
+            return None
+        return int(p * bar.volume)
 
     def _execute(self, target: Dict[str, float], d: dt.date, cash: float,
                  qty: Dict[str, int]):
@@ -170,6 +193,9 @@ class Engine:
             if not rules.can_sell_at(b, price, cfg.limit_pct):
                 continue
             sell_qty = min(-delta, cur)  # sellable == everything held (T+1)
+            cap = self._vol_cap(b)
+            if cap is not None:
+                sell_qty = min(sell_qty, cap)  # can't dump more than the market traded
             if sell_qty <= 0:
                 continue
             notional = price * sell_qty
@@ -192,6 +218,9 @@ class Engine:
             if not rules.can_buy_at(b, price, cfg.limit_pct):
                 continue
             buy_qty = delta
+            cap = self._vol_cap(b)
+            if cap is not None:
+                buy_qty = min(buy_qty, rules.round_lot(cap))  # can't absorb > the day's volume
             # Shrink to what cash (notional + commission) allows, in whole lots.
             while buy_qty > 0:
                 notional = price * buy_qty

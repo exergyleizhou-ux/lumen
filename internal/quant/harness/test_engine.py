@@ -6,6 +6,8 @@ is marked at each day's close. The buy-and-hold scenario below is hand-computed.
 """
 import datetime as dt
 
+import pytest
+
 from data import Bar, Bars
 from engine import Engine, BacktestConfig
 
@@ -38,6 +40,47 @@ def _cfg(**kw):
                 stamp_duty_rate=0.0, slippage=0.0, limit_pct=0.10)
     base.update(kw)
     return BacktestConfig(**base)
+
+
+def test_fill_capped_by_volume_participation():
+    # A is wildly liquid-constrained: only 5000 shares trade per day. With a
+    # 10% participation cap, a fill can be at most 500 shares no matter how much
+    # cash wants in — the realism that stops a backtest "buying" the whole float.
+    rows = [
+        (2, 10.0, 10.0, 10.0, 10.0, 10.0),
+        (3, 10.0, 10.2, 9.8, 10.1, 10.0),
+        (4, 10.1, 10.3, 9.9, 10.2, 10.1),
+    ]
+    bars = Bars({"A": [Bar(date=_d(n), open=o, high=h, low=l, close=c, volume=5000, prev_close=p)
+                       for (n, o, h, l, c, p) in rows]})
+    cfg = _cfg(initial_cash=10_000_000.0, max_participation=0.10)
+    result = Engine(bars, cfg).run(_AllInA())
+    first_buy = [t for t in result.trades if t.side == "buy"][0]
+    assert first_buy.qty == 500  # 10% of 5000, lot-rounded — not the ~1M cash wants
+
+
+def test_benchmark_and_excess_return_reported():
+    # Equal-weight buy&hold benchmark of the two names: A +20%, B +10% -> +15%.
+    # A flat (all-cash) strategy returns 0, so excess = 0 - 0.15 = -0.15.
+    def series(sym, closes):
+        prev = None
+        out = []
+        for i, c in enumerate(closes):
+            out.append(Bar(date=_d(2 + i), open=c, high=c, low=c, close=c, volume=1e6,
+                           prev_close=prev if prev is not None else c))
+            prev = c
+        return out
+
+    bars = Bars({"A": series("A", [100.0, 110.0, 120.0]),
+                 "B": series("B", [100.0, 105.0, 110.0])})
+
+    class _Flat:
+        def on_bar(self, ctx):
+            return {}
+
+    m = Engine(bars, _cfg()).run(_Flat()).metrics
+    assert m["benchmark_return"] == pytest.approx(0.15)
+    assert m["excess_return"] == pytest.approx(m["total_return"] - 0.15)
 
 
 def test_buy_and_hold_equity_curve_is_exact():
