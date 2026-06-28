@@ -20,7 +20,8 @@ def test_normalize_maps_chinese_columns_to_canonical_rows():
     assert [r["date"] for r in rows] == ["2024-01-02", "2024-01-03"]  # sorted
     assert rows[0] == {
         "date": "2024-01-02", "symbol": "600519.SH",
-        "open": 9.5, "high": 10.2, "low": 9.4, "close": 10.0, "volume": 1000.0,
+        # volume converted 手 -> shares (1000 手 * 100 = 100000 shares)
+        "open": 9.5, "high": 10.2, "low": 9.4, "close": 10.0, "volume": 100000.0,
     }
 
 

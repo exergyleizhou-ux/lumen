@@ -61,12 +61,17 @@ def _csi300_constituents() -> List[str]:  # pragma: no cover - network
 
 
 def normalize_rows(symbol: str, df) -> List[Dict]:
-    """Map an akshare daily-history frame to canonical rows, sorted by date."""
+    """Map an akshare daily-history frame to canonical rows, sorted by date.
+
+    akshare reports 成交量 in 手 (1 手 = 100 shares); convert to shares so the
+    engine's volume/participation cap is in the same unit as order sizes.
+    """
     rows: List[Dict] = []
     for _, r in df.iterrows():
         row = {"date": str(r["日期"]), "symbol": symbol}
         for zh, en in _COLMAP.items():
             row[en] = float(r[zh])
+        row["volume"] *= 100.0  # 手 -> shares
         rows.append(row)
     rows.sort(key=lambda x: x["date"])
     return rows
