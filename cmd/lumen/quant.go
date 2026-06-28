@@ -30,6 +30,9 @@ func runQuant(args []string) {
 			dir = rest[1]
 		}
 		quantInit(name, dir)
+	case "data":
+		dir, _ := parseQuantRunArgs(args[1:])
+		quantData(dir)
 	case "backtest":
 		dir, mode := parseQuantRunArgs(args[1:])
 		quantBacktest(dir, mode)
@@ -46,6 +49,7 @@ func runQuant(args []string) {
 func quantUsage() {
 	fmt.Fprintln(os.Stderr, "Usage: lumen quant <init|backtest|verify>")
 	fmt.Fprintln(os.Stderr, "  init <name> [dir]      scaffold a strategy package")
+	fmt.Fprintln(os.Stderr, "  data [dir]             fetch the manifest's universe -> data.csv (akshare)")
 	fmt.Fprintln(os.Stderr, "  backtest [dir]         run the pinned backtest -> quant-cert.json")
 	fmt.Fprintln(os.Stderr, "  verify [dir]           re-run and confirm the cert reproduces")
 	fmt.Fprintln(os.Stderr, "\nFlags: --sandbox <docker|local> (default docker)")
@@ -81,6 +85,17 @@ func quantInit(name, dir string) {
 	}
 	fmt.Printf("✅ scaffolded strategy %q in %s\n", name, dir)
 	fmt.Printf("   Edit strategy.py, then: cd %s && lumen quant backtest .\n", dir)
+}
+
+func quantData(dir string) {
+	lock, err := quant.RunDataFetch(dir, "")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "quant data: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("📥 fetched %s [%s..%s] from %s\n", lock.Universe, lock.Start, lock.End, lock.Source)
+	fmt.Printf("   data.csv pinned · sha256 %s\n", short12(lock.FileSHA256))
+	fmt.Printf("   Next: lumen quant backtest %s\n", dir)
 }
 
 func quantBacktest(dir string, mode quant.SandboxMode) {

@@ -8,6 +8,13 @@ import "embed"
 //go:embed harness/engine.py harness/data.py harness/rules.py harness/metrics.py harness/dataset.py harness/run.py
 var harnessFS embed.FS
 
+// fetchScript is the host-side data fetcher. It is embedded separately from the
+// engine because it uses akshare/pandas and must NOT be staged into the
+// network-isolated sandbox image (which carries only the pure-stdlib engine).
+//
+//go:embed harness/fetch.py
+var fetchScript []byte
+
 // HarnessFiles maps base filename -> file contents for the embedded engine.
 var HarnessFiles = loadHarness()
 
