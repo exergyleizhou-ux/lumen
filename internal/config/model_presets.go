@@ -70,6 +70,10 @@ func ModelPresets() []ModelPreset {
 		{Name: "lmstudio", Provider: "lmstudio", Kind: "openai", BaseURL: "http://localhost:1234/v1", Model: "local-model"},
 		{Name: "ollama", Provider: "ollama", Kind: "openai", BaseURL: "http://localhost:11434/v1", Model: "qwen2.5-coder"},
 		{Name: "vllm", Provider: "vllm", Kind: "openai", BaseURL: "http://localhost:8000/v1", Model: "local-model"},
+		// exo (exo-explore/exo) shards one model across a cluster of everyday
+		// devices and exposes a ChatGPT-compatible API on :52415 — letting lumen
+		// run on a pooled-VRAM home cluster (e.g. several consumer GPUs).
+		{Name: "exo", Provider: "exo", Kind: "openai", BaseURL: "http://localhost:52415/v1", Model: "local-model"},
 	}
 }
 

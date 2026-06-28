@@ -12,6 +12,7 @@ func TestLocalPresetsExist(t *testing.T) {
 		"lmstudio": {baseURL: "http://localhost:1234/v1"},
 		"ollama":   {baseURL: "http://localhost:11434/v1"},
 		"vllm":     {baseURL: "http://localhost:8000/v1"},
+		"exo":      {baseURL: "http://localhost:52415/v1"},
 	}
 
 	for name, exp := range want {
