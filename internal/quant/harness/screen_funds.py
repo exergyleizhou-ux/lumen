@@ -1,0 +1,90 @@
+"""Screen public funds for PERSISTENT stock-selection skill.
+
+For each fund: replay its disclosed A-share top holdings through the honest
+engine, split 2024 into in-sample (H1) and out-of-sample (H2), and measure excess
+return vs CSI300 in BOTH halves. A fund whose excess persists into H2 has a skill
+signal that didn't just come from one lucky regime.
+
+Honest caveats: top-holdings-only (renormalized, HK dropped), quarterly snapshots.
+So this measures 'did their disclosed A-share top picks beat CSI300 in both
+halves', a narrow but real read — not the full fund.
+"""
+import sys, os, csv, tempfile, datetime as dt, warnings
+warnings.filterwarnings("ignore")
+sys.path.insert(0, os.path.expanduser("~/lumen/internal/quant/harness"))
+
+import fetch, dataset, fund
+from engine import Engine, BacktestConfig
+from replay import ReplayStrategy
+
+IS_END = dt.date(2024, 6, 30)
+OOS_START = dt.date(2024, 7, 1)
+START, END = "2024-01-01", "2024-12-31"
+
+# A mix of well-known ACTIVE A-share funds (some carry HK -> bigger coverage gap).
+FUNDS = {
+    "110022": "易方达消费行业(萧楠)",
+    "163406": "兴全合润(谢治宇)",
+    "260108": "景顺长城新兴成长(刘彦春)",
+    "000083": "汇添富消费行业",
+    "005827": "易方达蓝筹(张坤,含港股)",
+    "001714": "工银文体产业",
+}
+
+
+def bars_for(symbols):
+    rows = []
+    for s in symbols:
+        try:
+            rows.extend(fetch.fetch_symbol(s, START, END))
+        except Exception:
+            pass
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    with os.fdopen(fd, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=["date", "symbol", "open", "high", "low", "close", "volume"])
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r[k] for k in w.fieldnames})
+    b = dataset.load_csv(path); os.remove(path)
+    return b
+
+
+def csi300_window_returns():
+    import akshare as ak
+    df = ak.index_zh_a_hist(symbol="000300", period="daily", start_date="20240101", end_date="20241231")
+    ser = [(dt.date.fromisoformat(str(r["日期"])[:10]), float(r["收盘"])) for _, r in df.iterrows()]
+    ser.sort()
+    is_pts = [v for d, v in ser if d <= IS_END]
+    oos_pts = [v for d, v in ser if d >= OOS_START]
+    return (is_pts[-1] / is_pts[0] - 1.0, oos_pts[-1] / oos_pts[0] - 1.0)
+
+
+cfg = BacktestConfig(initial_cash=10_000_000.0, commission_rate=0.0003, commission_min=5.0,
+                     stamp_duty_rate=0.0005, slippage=0.001, limit_pct=0.10, max_participation=0.10)
+
+csi_is, csi_oos = csi300_window_returns()
+print(f"CSI300  IS(H1) {csi_is:+.2%}   OOS(H2) {csi_oos:+.2%}\n")
+print(f"{'fund':<28}{'IS excess':>11}{'OOS excess':>12}{'persisted':>11}")
+print("-" * 62)
+
+rows = []
+for code, name in FUNDS.items():
+    try:
+        timeline = fund.fetch_fund_holdings(code, ["2023", "2024"])
+        syms = sorted({s for _, w in timeline for s in w})
+        if not syms:
+            continue
+        b = bars_for(syms)
+        is_ret = Engine(b, cfg).run(ReplayStrategy(timeline), end=IS_END).metrics["total_return"]
+        oos_ret = Engine(b, cfg).run(ReplayStrategy(timeline), start=OOS_START).metrics["total_return"]
+        is_x, oos_x = is_ret - csi_is, oos_ret - csi_oos
+        persisted = is_x > 0 and oos_x > 0
+        rows.append((name, is_x, oos_x, persisted))
+        print(f"{name:<28}{is_x:>+10.2%}{oos_x:>+11.2%}{('YES' if persisted else 'no'):>11}")
+    except Exception as e:
+        print(f"{name:<28}  (error: {str(e)[:30]})")
+
+print("\nPersistent (skill in BOTH halves):")
+for name, isx, oosx, p in sorted(rows, key=lambda r: r[2], reverse=True):
+    if p:
+        print(f"  ✓ {name}  OOS excess {oosx:+.2%}")
