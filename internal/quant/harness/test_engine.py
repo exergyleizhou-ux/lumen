@@ -99,6 +99,14 @@ def test_turnover_zero_when_flat_and_positive_when_trading():
     assert held["turnover"] == pytest.approx(0.879, abs=1e-2)
 
 
+def test_run_restricts_trading_to_window():
+    # start=d3 -> the equity curve covers only d3..d5 (out-of-sample window).
+    result = Engine(_bars_A(), _cfg()).run(_AllInA(), start=_d(3))
+    assert result.dates == [_d(3), _d(4), _d(5)]
+    result2 = Engine(_bars_A(), _cfg()).run(_AllInA(), end=_d(3))
+    assert result2.dates == [_d(2), _d(3)]
+
+
 def test_buy_and_hold_equity_curve_is_exact():
     result = Engine(_bars_A(), _cfg()).run(_AllInA())
     assert result.dates == [_d(2), _d(3), _d(4), _d(5)]

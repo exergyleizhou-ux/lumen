@@ -95,10 +95,18 @@ class Engine:
         self._bars = bars
         self._cfg = config
 
-    def run(self, strategy) -> BacktestResult:
+    def run(self, strategy, start: Optional[dt.date] = None, end: Optional[dt.date] = None) -> BacktestResult:
+        """Run the backtest. ``start``/``end`` restrict TRADING to that window
+        (for out-of-sample evaluation); the strategy's Context still sees the full
+        history, so signals can look back across the window boundary — exactly the
+        right semantics for an OOS test (trade only OOS, but use prior data for
+        the signal)."""
         cfg = self._cfg
         bars = self._bars
-        days = bars.trading_days()
+        days = [d for d in bars.trading_days()
+                if (start is None or d >= start) and (end is None or d <= end)]
+        if not days:
+            return BacktestResult(dates=[], equity=[], trades=[], metrics=metrics.compute([]))
 
         cash = cfg.initial_cash
         qty: Dict[str, int] = {}
