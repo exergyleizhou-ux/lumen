@@ -32,6 +32,36 @@ FUNDS = {
 }
 
 
+def _sina_symbol(sym):
+    code = sym.split(".", 1)[0]
+    if sym.endswith(".HK"):
+        return "hk", code
+    if sym.endswith(".SZ"):
+        return "a", "sz" + code
+    if sym.endswith(".BJ"):
+        return "a", "bj" + code
+    return "a", "sh" + code
+
+
+def _sina_fetch(sym):
+    """Fetch daily bars from sina (stock_zh_a_daily / stock_hk_daily). sina is
+    reachable when the eastmoney push2 endpoints are blocked by a proxy."""
+    import akshare as ak
+    kind, scode = _sina_symbol(sym)
+    if kind == "hk":
+        df = ak.stock_hk_daily(symbol=scode, adjust="qfq")
+    else:
+        df = ak.stock_zh_a_daily(symbol=scode, start_date=START.replace("-", ""),
+                                 end_date=END.replace("-", ""), adjust="qfq")
+    rows = []
+    for _, r in df.iterrows():
+        d = str(r["date"])[:10]
+        if START <= d <= END:
+            rows.append({"date": d, "symbol": sym, "open": float(r["open"]), "high": float(r["high"]),
+                         "low": float(r["low"]), "close": float(r["close"]), "volume": float(r["volume"])})
+    return rows
+
+
 def bars_for(symbols):
     """Fetch bars for every symbol, retrying transient network drops. Returns
     (bars, priced_count) so the caller can refuse to report a fund whose data
@@ -42,7 +72,7 @@ def bars_for(symbols):
     for s in symbols:
         for _ in range(3):
             try:
-                got = fetch.fetch_symbol(s, START, END)
+                got = _sina_fetch(s)
                 if got:
                     rows.extend(got); priced += 1
                 break
@@ -72,7 +102,7 @@ def csi300_window_returns():
 
 
 cfg = BacktestConfig(initial_cash=10_000_000.0, commission_rate=0.0003, commission_min=5.0,
-                     stamp_duty_rate=0.0005, slippage=0.001, limit_pct=0.10, max_participation=0.10)
+                     stamp_duty_rate=0.0005, slippage=0.001, limit_pct=0.10, max_participation=0.0)
 
 csi_is, csi_oos = csi300_window_returns()
 print(f"CSI300  IS(H1) {csi_is:+.2%}   OOS(H2) {csi_oos:+.2%}\n")
