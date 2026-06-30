@@ -22,10 +22,13 @@ _COLMAP = {"开盘": "open", "收盘": "close", "最高": "high", "最低": "low
 
 
 def with_suffix(code: str) -> str:
-    """Infer the exchange suffix for a bare 6-digit A-shares code."""
+    """Infer the exchange suffix for a bare code. 5-digit = Hong Kong (港股通);
+    6-digit = A-shares by board."""
     if "." in code:
         return code
     c = code.strip()
+    if len(c) == 5:  # Hong Kong (held by mainland funds via 港股通)
+        return c + ".HK"
     if c[:1] == "6":  # main board (incl. 688 STAR) lists on Shanghai
         return c + ".SH"
     if c[:1] in ("0", "3"):  # SZ main board + ChiNext(300)
@@ -35,8 +38,14 @@ def with_suffix(code: str) -> str:
     return c + ".SH"
 
 
+def is_hk(symbol: str) -> bool:
+    """True for a Hong Kong listing (suffix .HK, or a bare 5-digit code)."""
+    s = symbol.strip().upper()
+    return s.endswith(".HK") or ("." not in s and len(s) == 5)
+
+
 def bare_code(symbol: str) -> str:
-    """The 6-digit code akshare expects (suffix stripped)."""
+    """The numeric code akshare expects (suffix stripped)."""
     return symbol.split(".", 1)[0]
 
 
@@ -63,15 +72,17 @@ def _csi300_constituents() -> List[str]:  # pragma: no cover - network
 def normalize_rows(symbol: str, df) -> List[Dict]:
     """Map an akshare daily-history frame to canonical rows, sorted by date.
 
-    akshare reports 成交量 in 手 (1 手 = 100 shares); convert to shares so the
-    engine's volume/participation cap is in the same unit as order sizes.
+    A-shares 成交量 is in 手 (1 手 = 100 shares) → convert to shares so the engine's
+    volume/participation cap is in the same unit as order sizes. HK 成交量 is
+    already in shares, so it is left as-is.
     """
+    factor = 1.0 if is_hk(symbol) else 100.0
     rows: List[Dict] = []
     for _, r in df.iterrows():
         row = {"date": str(r["日期"]), "symbol": symbol}
         for zh, en in _COLMAP.items():
             row[en] = float(r[zh])
-        row["volume"] *= 100.0  # 手 -> shares
+        row["volume"] *= factor
         rows.append(row)
     rows.sort(key=lambda x: x["date"])
     return rows
@@ -79,11 +90,12 @@ def normalize_rows(symbol: str, df) -> List[Dict]:
 
 def fetch_symbol(symbol: str, start: str, end: str) -> List[Dict]:  # pragma: no cover - network
     import akshare as ak
-    df = ak.stock_zh_a_hist(
-        symbol=bare_code(symbol), period="daily",
-        start_date=start.replace("-", ""), end_date=end.replace("-", ""),
-        adjust="qfq",  # forward-adjusted so the series is corporate-action consistent
-    )
+    code = bare_code(symbol)
+    sd, ed = start.replace("-", ""), end.replace("-", "")
+    if is_hk(symbol):
+        df = ak.stock_hk_hist(symbol=code, period="daily", start_date=sd, end_date=ed, adjust="qfq")
+    else:
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=sd, end_date=ed, adjust="qfq")
     return normalize_rows(symbol, df)
 
 

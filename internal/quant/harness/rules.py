@@ -35,6 +35,8 @@ def board_limit_pct(symbol: str, default: float = 0.10) -> float:
     ±10% main board). Caveat: ChiNext only moved to ±20% on 2020-08-24 — a
     pre-2020 ChiNext backtest should override this with a fixed ``limit_pct``.
     """
+    if symbol.upper().endswith(".HK"):
+        return 0.99  # Hong Kong has no daily price-limit band
     code = symbol.split(".", 1)[0]
     if code[:3] in ("688", "300"):
         return 0.20
