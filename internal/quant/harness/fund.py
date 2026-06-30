@@ -24,14 +24,16 @@ from fetch import with_suffix
 _QUARTER_END = {"1": (3, 31), "2": (6, 30), "3": (9, 30), "4": (12, 31)}
 
 
-def _is_a_share(code: str) -> bool:
+def _is_tradable_stock(code: str) -> bool:
     code = str(code).strip()
-    return len(code) == 6 and code[0] in ("0", "3", "6", "4", "8")
+    if len(code) == 6 and code[0] in ("0", "3", "6", "4", "8"):
+        return True       # A-share
+    return len(code) == 5 and code.isdigit()  # Hong Kong (港股通)
 
 
 def fetch_fund_holdings(code: str, years: List[str]) -> List[Tuple[dt.date, Dict[str, float]]]:
-    """Return [(quarter_end_date, {symbol: weight})] for a fund, A-shares only,
-    weights renormalized to sum to 1.0 within each quarter."""
+    """Return [(quarter_end_date, {symbol: weight})] for a fund, A-shares + HK
+    (港股通), weights renormalized to sum to 1.0 within each quarter."""
     import akshare as ak
 
     by_quarter: Dict[dt.date, Dict[str, float]] = {}
@@ -42,7 +44,7 @@ def fetch_fund_holdings(code: str, years: List[str]) -> List[Tuple[dt.date, Dict
             continue
         for _, r in df.iterrows():
             code_raw = str(r["股票代码"]).strip()
-            if not _is_a_share(code_raw):
+            if not _is_tradable_stock(code_raw):
                 continue
             q = str(r["季度"])
             qi = next((k for k in _QUARTER_END if f"{k}季度" in q), None)
