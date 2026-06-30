@@ -33,12 +33,21 @@ FUNDS = {
 
 
 def bars_for(symbols):
+    """Fetch bars for every symbol, retrying transient network drops. Returns
+    (bars, priced_count) so the caller can refuse to report a fund whose data
+    only partially loaded (otherwise a network-starved replay looks 'flat' and
+    fabricates an excess vs the benchmark)."""
     rows = []
+    priced = 0
     for s in symbols:
-        try:
-            rows.extend(fetch.fetch_symbol(s, START, END))
-        except Exception:
-            pass
+        for _ in range(3):
+            try:
+                got = fetch.fetch_symbol(s, START, END)
+                if got:
+                    rows.extend(got); priced += 1
+                break
+            except Exception:
+                continue
     fd, path = tempfile.mkstemp(suffix=".csv")
     with os.fdopen(fd, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["date", "symbol", "open", "high", "low", "close", "volume"])
@@ -46,13 +55,16 @@ def bars_for(symbols):
         for r in rows:
             w.writerow({k: r[k] for k in w.fieldnames})
     b = dataset.load_csv(path); os.remove(path)
-    return b
+    return b, priced
 
 
 def csi300_window_returns():
     import akshare as ak
-    df = ak.index_zh_a_hist(symbol="000300", period="daily", start_date="20240101", end_date="20241231")
-    ser = [(dt.date.fromisoformat(str(r["日期"])[:10]), float(r["收盘"])) for _, r in df.iterrows()]
+    # sina index endpoint (stock_zh_index_daily) — avoids the eastmoney push2
+    # index-code-map host that some networks/proxies block.
+    df = ak.stock_zh_index_daily(symbol="sh000300")
+    ser = [(dt.date.fromisoformat(str(r["date"])[:10]), float(r["close"])) for _, r in df.iterrows()]
+    ser = [(d, v) for d, v in ser if dt.date(2024, 1, 1) <= d <= dt.date(2024, 12, 31)]
     ser.sort()
     is_pts = [v for d, v in ser if d <= IS_END]
     oos_pts = [v for d, v in ser if d >= OOS_START]
@@ -73,8 +85,12 @@ for code, name in FUNDS.items():
         timeline = fund.fetch_fund_holdings(code, ["2023", "2024"])
         syms = sorted({s for _, w in timeline for s in w})
         if not syms:
+            print(f"{name:<28}  (no disclosed holdings)")
             continue
-        b = bars_for(syms)
+        b, priced = bars_for(syms)
+        if priced < len(syms) * 0.8:
+            print(f"{name:<28}  DATA FAIL ({priced}/{len(syms)} priced — network, not a result)")
+            continue
         is_ret = Engine(b, cfg).run(ReplayStrategy(timeline), end=IS_END).metrics["total_return"]
         oos_ret = Engine(b, cfg).run(ReplayStrategy(timeline), start=OOS_START).metrics["total_return"]
         is_x, oos_x = is_ret - csi_is, oos_ret - csi_oos
