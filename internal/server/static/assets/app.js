@@ -23,7 +23,7 @@ function loadStorage() {
   currentModel = localStorage.getItem("lumen_model") || "deepseek-chat";
   permissionMode = localStorage.getItem("lumen_mode") || "agent";
   updateModelBadge();
-  syncModePills();
+  syncModeSelect();
   if ($("providerSelect")) {
     $("providerSelect").value = currentProvider;
     $("modelInput").value = currentModel;
@@ -43,10 +43,25 @@ function updateModelBadge() {
   }
 }
 
-function syncModePills() {
-  document.querySelectorAll(".mode-pill").forEach((b) => {
-    b.classList.toggle("active", b.dataset.mode === permissionMode);
-  });
+function syncModeSelect() {
+  const sel = $("modeSelect");
+  if (sel) sel.value = permissionMode;
+}
+
+let pendingApprovalId = null;
+
+async function respondApproval(allow) {
+  if (!pendingApprovalId) return;
+  const id = pendingApprovalId;
+  pendingApprovalId = null;
+  $("approvalModal")?.close();
+  try {
+    await fetch(API_BASE + "/v1/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, allow }),
+    });
+  } catch (_) {}
 }
 
 async function setServerMode(mode) {
@@ -176,9 +191,11 @@ async function runSlashCommand(cmd) {
       updateFooter();
     }
     if (d.data?.mode) {
-      permissionMode = d.data.mode === "plan" ? "plan" : "agent";
+      const m = d.data.mode;
+      permissionMode =
+        m === "plan" ? "plan" : m === "default" ? "default" : m === "accept-edits" ? "accept-edits" : "agent";
       localStorage.setItem("lumen_mode", permissionMode);
-      syncModePills();
+      syncModeSelect();
       updateModelBadge();
     }
     if (d.data?.model) {
@@ -315,6 +332,11 @@ async function send() {
                 el.querySelector(".msg-body").appendChild(err);
               }
               break;
+            case "approval_request":
+              pendingApprovalId = ev.id;
+              $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
+              $("approvalModal")?.showModal();
+              break;
             case "turn_done":
               turn++;
               break;
@@ -382,14 +404,35 @@ function newChat() {
   setStatus("就绪", false);
 }
 
-async function loadSessionContent(name) {
+async function resumeSession(name) {
+  try {
+    const r = await fetch(API_BASE + "/v1/sessions/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      appendMsg("system", d.error || "无法恢复会话");
+      return;
+    }
+    await loadSessionContent(name, true);
+    appendMsg("system", `已恢复会话，可继续对话（${d.messages || 0} 条上下文）`);
+  } catch (_) {
+    appendMsg("system", "恢复会话失败");
+  }
+}
+
+async function loadSessionContent(name, skipBanner) {
   try {
     const r = await fetch(API_BASE + "/v1/sessions/content?name=" + encodeURIComponent(name));
     if (!r.ok) return;
     const d = await r.json();
     $("chat").querySelectorAll(".msg").forEach((n) => n.remove());
     hideWelcome();
-    appendMsg("system", `已加载会话 ${d.name}（${(d.messages || []).length} 条消息）`);
+    if (!skipBanner) {
+      appendMsg("system", `已加载会话 ${d.name}（${(d.messages || []).length} 条消息）`);
+    }
     for (const m of d.messages || []) {
       appendMsg(m.role === "user" ? "user" : "assistant", m.content || "");
     }
@@ -418,7 +461,7 @@ async function loadSessions() {
       btn.textContent = label.length > 28 ? label.slice(0, 25) + "…" : label;
       btn.title = s.mtime;
       btn.addEventListener("click", () => {
-        loadSessionContent(s.name);
+        resumeSession(s.name);
         setSidebarOpen(false);
       });
       list.appendChild(btn);
@@ -473,7 +516,7 @@ async function syncFromServer() {
     if (d.ui_mode) {
       permissionMode = d.ui_mode;
       localStorage.setItem("lumen_mode", permissionMode);
-      syncModePills();
+      syncModeSelect();
       updateModelBadge();
     }
   } catch (_) {}
@@ -523,15 +566,16 @@ function bindEvents() {
     }
   });
 
-  document.querySelectorAll(".mode-pill").forEach((b) => {
-    b.addEventListener("click", async () => {
-      permissionMode = b.dataset.mode;
-      localStorage.setItem("lumen_mode", permissionMode);
-      syncModePills();
-      updateModelBadge();
-      await setServerMode(permissionMode);
-    });
+  $("modeSelect")?.addEventListener("change", async (e) => {
+    permissionMode = e.target.value;
+    localStorage.setItem("lumen_mode", permissionMode);
+    syncModeSelect();
+    updateModelBadge();
+    await setServerMode(permissionMode);
   });
+
+  $("approvalAllow")?.addEventListener("click", () => respondApproval(true));
+  $("approvalDeny")?.addEventListener("click", () => respondApproval(false));
 
   document.querySelectorAll(".prompt-chip").forEach((chip) => {
     chip.addEventListener("click", () => {

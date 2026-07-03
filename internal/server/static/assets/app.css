@@ -281,6 +281,36 @@ body {
   color: white;
 }
 
+.mode-select-wrap { display: inline-flex; }
+.mode-select {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--body);
+  background: white;
+  color: var(--ink);
+  min-height: 36px;
+  max-width: 130px;
+}
+
+.approval-card .approval-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.btn-secondary {
+  border: 1px solid var(--rule);
+  background: white;
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
 .btn-icon {
   display: inline-flex;
   align-items: center;

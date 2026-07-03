@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"lumen/internal/config"
@@ -47,6 +48,9 @@ type Server struct {
 	// two concurrent POST /v1/chat requests race those fields and interleave
 	// messages into one session.
 	turnMu sync.Mutex
+
+	approvals   sync.Map
+	approvalSeq atomic.Uint64
 }
 
 // New creates a new Server.
@@ -105,6 +109,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz")
 	w.Write(data)
 }
 
@@ -180,6 +185,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	s.cfg.Ctrl.Configure(sink, nil, "")
 
+	s.cfg.Ctrl.SetApprover(s.webApprover(func(kind string, payload map[string]any) {
+		sink.emitPayload(kind, payload)
+	}))
+
 	if req.Mode != "" {
 		s.cfg.Ctrl.SetPermissionMode(parseUIMode(req.Mode))
 	}
@@ -221,6 +230,16 @@ func (s sseSink) Emit(e event.Event) {
 
 func (s sseSink) emit(kind, text string) {
 	data, _ := json.Marshal(map[string]any{"kind": kind, "text": text})
+	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	s.flusher.Flush()
+}
+
+func (s sseSink) emitPayload(kind string, payload map[string]any) {
+	if payload == nil {
+		payload = map[string]any{}
+	}
+	payload["kind"] = kind
+	data, _ := json.Marshal(payload)
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	s.flusher.Flush()
 }

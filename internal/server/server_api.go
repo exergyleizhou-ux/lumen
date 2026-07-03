@@ -25,6 +25,8 @@ func (s *Server) routesAPI() {
 	s.mux.HandleFunc("/v1/timeline", s.handleTimeline)
 	s.mux.HandleFunc("/v1/rewind", s.handleRewind)
 	s.mux.HandleFunc("/v1/sessions/content", s.handleSessionContent)
+	s.mux.HandleFunc("/v1/sessions/resume", s.handleSessionResume)
+	s.routesApproval()
 }
 
 func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
@@ -200,6 +202,30 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"rewound": rewound})
 }
 
+func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+		jsonErr(w, "name required", http.StatusBadRequest)
+		return
+	}
+	s.turnMu.Lock()
+	defer s.turnMu.Unlock()
+	if err := s.cfg.Ctrl.LoadSession(strings.TrimSpace(req.Name)); err != nil {
+		jsonErr(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	jsonOK(w, map[string]any{
+		"resumed": req.Name,
+		"messages": s.cfg.Ctrl.Session().Len(),
+	})
+}
+
 func (s *Server) handleSessionContent(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -267,10 +293,16 @@ func parseUIMode(s string) permission.Mode {
 }
 
 func uiModeFromPermission(m permission.Mode) string {
-	if m == permission.ModePlan {
+	switch m {
+	case permission.ModePlan:
 		return "plan"
+	case permission.ModeDefault:
+		return "default"
+	case permission.ModeAcceptEdits:
+		return "accept-edits"
+	default:
+		return "agent"
 	}
-	return "agent"
 }
 
 func helpText() string {

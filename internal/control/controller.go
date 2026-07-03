@@ -545,6 +545,31 @@ func (c *Controller) approveCallback() func(ctx context.Context, toolName string
 	}
 }
 
+// LoadSession switches the active conversation to a persisted JSONL history file.
+// The name must be a bare filename (e.g. "2026-07-03-194241.jsonl").
+func (c *Controller) LoadSession(name string) error {
+	if strings.Contains(name, "/") || strings.Contains(name, "..") {
+		return fmt.Errorf("invalid session name")
+	}
+	if !strings.HasSuffix(name, ".jsonl") {
+		name += ".jsonl"
+	}
+	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	path := filepath.Join(histDir, name)
+	if _, err := os.Stat(path); err != nil {
+		return fmt.Errorf("session not found: %s", name)
+	}
+	c.sessPath = path
+	c.sess = agent.NewSession(path)
+	if c.ag != nil {
+		c.ag.SetSession(c.sess)
+	}
+	if err := os.WriteFile(filepath.Join(histDir, ".last_session"), []byte(name), 0600); err != nil {
+		c.warn("could not save resume marker: " + err.Error())
+	}
+	return nil
+}
+
 // Rewind restores all files to their pre-turn state.
 func (c *Controller) Rewind() ([]string, error) {
 	if c.cp == nil {
