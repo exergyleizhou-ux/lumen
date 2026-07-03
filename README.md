@@ -148,7 +148,7 @@ All checks passed.
 
 ```bash
 # macOS arm64 example — swap the asset for your OS/arch
-curl -L https://github.com/exergyleizhou-ux/lumen/releases/latest/download/lumen_1.0.0_darwin_arm64.tar.gz | tar xz
+curl -L https://github.com/exergyleizhou-ux/lumen/releases/latest/download/lumen_1.1.0_darwin_arm64.tar.gz | tar xz
 ./lumen version
 ```
 
