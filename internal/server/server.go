@@ -1,4 +1,4 @@
-// Package server provides an HTTP+SSE server for Lumen.
+// Package server provides an HTTP+SSE server for Lumen (goal:d6aa846b round9).
 // It wraps the control.Controller and exposes:
 //
 //	GET  /            — web UI (embedded HTML/JS)
@@ -48,6 +48,8 @@ type Server struct {
 	// two concurrent POST /v1/chat requests race those fields and interleave
 	// messages into one session.
 	turnMu sync.Mutex
+	planMu sync.Mutex
+	plan   planState
 
 	approvals   sync.Map
 	approvalSeq atomic.Uint64
@@ -80,6 +82,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/status", s.handleStatus)
 	s.mux.HandleFunc("/v1/sessions", s.handleSessions)
 	s.mux.HandleFunc("/v1/memories", s.handleMemories)
+	s.mux.HandleFunc("/v1/workflow", s.handleWorkflow)
 }
 
 // ── Web UI (embedded static — Claude Code–grade panel) ───────
@@ -170,8 +173,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	s.turnMu.Lock()
 	defer s.turnMu.Unlock()
 
-	if os.Getenv("LUMEN_DEMO") == "1" {
-		// Demo mode for Oasis integration: echo the prompt so it's immediately usable without a real provider key.
+	if os.Getenv("LUMEN_DEMO") == "1" && req.APIKey == "" { // goal:d6aa846b round9
+		// Demo echo only when no runtime API key — browser-local keys still hit the real provider.
 		sink.emit("turn_started", "")
 		sink.emit("text", "[Demo mode] You said: "+req.Prompt)
 		if len(req.Images) > 0 {
@@ -183,7 +186,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Ctrl.Configure(sink, nil, "")
+	if err := s.cfg.Ctrl.Configure(sink, nil, ""); err != nil {
+		sink.emit("turn_started", "")
+		sink.emit("error", err.Error())
+		sink.emit("turn_done", "")
+		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+		flusher.Flush()
+		return
+	}
 
 	s.cfg.Ctrl.SetApprover(s.webApprover(func(kind string, payload map[string]any) {
 		sink.emitPayload(kind, payload)

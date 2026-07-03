@@ -1,4 +1,4 @@
-/* Lumen Code UI — Claude Code–grade polish, Oasis design tokens */
+/* Lumen Code UI — goal:d6aa846b round9 */
 @font-face {
   font-family: "Instrument Serif";
   font-style: normal;
@@ -763,6 +763,89 @@ body {
 
 .btn-primary:hover { background: var(--forest-700); }
 .btn-primary.wide { width: 100%; }
+
+.plan-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 20px 8px;
+  padding: 10px 14px;
+  background: var(--forest-50);
+  border: 1px solid var(--forest-100);
+  border-radius: 12px;
+}
+.plan-bar-text {
+  margin: 0;
+  font-size: 13px;
+  color: var(--forest-700);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-bar-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.btn-plan-exec, .btn-plan-reject {
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-plan-exec { background: var(--forest); color: white; }
+.btn-plan-reject { background: white; color: var(--muted); border: 1px solid var(--rule); }
+
+.mem-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+.mem-pill:hover { background: var(--sidebar-hover); }
+
+.mem-list, .skill-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.mem-list li, .skill-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+}
+.mem-list li:last-child, .skill-list li:last-child { border-bottom: none; }
+.mem-del, .skill-invoke {
+  border: none;
+  background: transparent;
+  color: var(--forest);
+  font-size: 12px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.skill-invoke { font-weight: 600; }
+.mem-form textarea {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+}
 
 .sidebar-toggle { display: none; }
 .sidebar-backdrop { display: none; }

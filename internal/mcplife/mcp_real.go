@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -124,7 +125,15 @@ type Client struct {
 // and connects to its stdin/stdout. The caller must call Initialize before
 // using other methods.
 func NewMCPClient(serverCommand string, serverArgs []string) (*Client, error) {
+	return NewMCPClientEnv(serverCommand, serverArgs, nil)
+}
+
+// NewMCPClientEnv is like NewMCPClient but appends extraEnv entries (KEY=value).
+func NewMCPClientEnv(serverCommand string, serverArgs []string, extraEnv []string) (*Client, error) {
 	cmd := exec.Command(serverCommand, serverArgs...)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

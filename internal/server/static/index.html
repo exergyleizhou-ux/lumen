@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lumen · 绿洲编程智能体</title>
-  <link rel="stylesheet" href="assets/app.css?v=6" />
+  <title>Lumen · 绿洲编程智能体</title><!-- goal:d6aa846b round9 -->
+  <link rel="stylesheet" href="assets/app.css?v=7" />
 </head>
 <body>
   <div class="app" id="app">
@@ -24,10 +24,10 @@
         <p class="session-empty" id="sessionEmpty">暂无历史会话</p>
       </nav>
       <div class="sidebar-ft">
-        <div class="mem-pill" id="memPill" hidden>
+        <button class="mem-pill" id="memPill" type="button" hidden title="管理记忆">
           <span class="mem-dot" aria-hidden="true"></span>
           <span id="memCount">0</span> 条记忆
-        </div>
+        </button>
         <button class="sidebar-link" id="doctorBtn" type="button">自检</button>
         <button class="sidebar-link" id="skillsBtn" type="button">Skills</button>
         <a class="sidebar-link" href="https://github.com/exergyleizhou-ux/lumen" target="_blank" rel="noopener">源码</a>
@@ -46,6 +46,7 @@
         <div class="topbar-right">
           <label class="mode-select-wrap" aria-label="权限模式">
             <select id="modeSelect" class="mode-select">
+              <option value="bypass">Bypass</option>
               <option value="agent">Agent</option>
               <option value="plan">Plan</option>
               <option value="default">Default</option>
@@ -74,6 +75,14 @@
         </div>
       </div>
 
+      <div class="plan-bar" id="planBar" hidden>
+        <p class="plan-bar-text" id="planBarText">计划待审</p>
+        <div class="plan-bar-actions">
+          <button class="btn-plan-reject" id="planRejectBtn" type="button">拒绝</button>
+          <button class="btn-plan-exec" id="planExecBtn" type="button">执行计划</button>
+        </div>
+      </div>
+
       <div class="composer">
         <div class="composer-box">
           <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片" aria-label="消息输入"></textarea>
@@ -85,7 +94,7 @@
             </button>
           </div>
         </div>
-        <p class="composer-foot">/help · /status · /cost · /undo · /skills · 密钥仅存浏览器本地</p>
+        <p class="composer-foot">/workflow · /execute · /ultra · /goal · /help · 密钥仅存浏览器本地</p>
       </div>
 
       <footer class="statusbar" aria-live="polite">
@@ -118,11 +127,50 @@
         <input id="keyInput" type="password" placeholder="sk-…" autocomplete="off" />
       </label>
       <label class="field">
-        <span class="field-label">模型 ID</span>
+        <span class="field-label">模型预设</span>
+        <select id="presetSelect">
+          <option value="">加载中…</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">模型 ID（可覆盖）</span>
         <input id="modelInput" type="text" value="deepseek-chat" placeholder="deepseek-chat" />
       </label>
       <button class="btn-primary wide" id="connectBtn" type="button">连接并开始</button>
     </form>
+  </dialog>
+
+  <dialog class="modal" id="memoriesModal">
+    <div class="modal-card memories-card">
+      <div class="modal-hd">
+        <h2>记忆</h2>
+        <button class="modal-x" type="button" id="memoriesClose" aria-label="关闭">✕</button>
+      </div>
+      <p class="modal-lede">跨会话持久化的偏好与项目约束。</p>
+      <ul class="mem-list" id="memList"></ul>
+      <div class="mem-form">
+        <label class="field">
+          <span class="field-label">名称</span>
+          <input id="memName" type="text" placeholder="my-preference" />
+        </label>
+        <label class="field">
+          <span class="field-label">内容</span>
+          <textarea id="memBody" rows="3" placeholder="要记住的内容…"></textarea>
+        </label>
+        <button class="btn-primary wide" id="memSaveBtn" type="button">保存记忆</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog class="modal" id="skillsModal">
+    <div class="modal-card">
+      <div class="modal-hd">
+        <h2>Skills</h2>
+        <button class="modal-x" type="button" id="skillsClose" aria-label="关闭">✕</button>
+      </div>
+      <p class="modal-lede">点击 skill 即可调用。</p>
+      <ul class="skill-list" id="skillList"></ul>
+    </div>
   </dialog>
 
   <dialog class="modal" id="approvalModal">
@@ -138,6 +186,6 @@
     </div>
   </dialog>
 
-  <script src="assets/app.js?v=6" defer></script>
+  <script src="assets/app.js?v=8" defer></script>
 </body>
 </html>

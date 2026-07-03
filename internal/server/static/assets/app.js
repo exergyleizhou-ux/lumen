@@ -1,3 +1,4 @@
+// Lumen web UI — goal:d6aa846b round9
 const API_BASE =
   typeof location !== "undefined" && location.pathname.startsWith("/lumen")
     ? "/lumen"
@@ -15,13 +16,15 @@ let pendingImages = [];
 let currentKey = "";
 let currentProvider = "deepseek";
 let currentModel = "deepseek-chat";
-let permissionMode = "agent";
+let permissionMode = "bypass";
+let planReady = false;
+let planPrompt = "";
 
 function loadStorage() {
   currentKey = localStorage.getItem("lumen_api_key") || "";
   currentProvider = localStorage.getItem("lumen_provider") || "deepseek";
   currentModel = localStorage.getItem("lumen_model") || "deepseek-chat";
-  permissionMode = localStorage.getItem("lumen_mode") || "agent";
+  permissionMode = localStorage.getItem("lumen_mode") || "bypass";
   updateModelBadge();
   syncModeSelect();
   if ($("providerSelect")) {
@@ -171,14 +174,162 @@ function addToolCard(parent, name, state) {
   return hd;
 }
 
+function normalizeMode(m) {
+  if (m === "plan" || m === "default" || m === "accept-edits") return m;
+  if (m === "bypass" || m === "agent") return m === "agent" ? "agent" : "bypass";
+  return "bypass";
+}
+
+function showPlanBar(prompt) {
+  planReady = true;
+  planPrompt = prompt || "";
+  const bar = $("planBar");
+  const text = $("planBarText");
+  if (bar) bar.hidden = false;
+  if (text) text.textContent = planPrompt ? `待审：${planPrompt}` : "计划待审";
+}
+
+function hidePlanBar() {
+  planReady = false;
+  planPrompt = "";
+  const bar = $("planBar");
+  if (bar) bar.hidden = true;
+}
+
+async function streamWorkflow(action, prompt) {
+  running = true;
+  $("sendBtn").disabled = true;
+  $("stopBtn").hidden = false;
+  setStatus("工作流…", true);
+
+  const label = action === "workflow" ? `/workflow ${prompt}` :
+    action === "ultra" ? `/ultra ${prompt}` :
+    action === "goal" ? `/goal ${prompt}` : "/execute";
+  appendMsg("user", label);
+  const { el, bubble } = appendMsg("assistant", "");
+  let assistantText = "";
+
+  try {
+    const resp = await fetch(API_BASE + "/v1/workflow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action,
+        prompt,
+        api_key: currentKey,
+        provider: currentProvider,
+      }),
+      signal: abortCtrl?.signal,
+    });
+
+    if (!resp.ok) {
+      const d = await resp.json().catch(() => ({}));
+      throw new Error(d.error || `HTTP ${resp.status}`);
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const lines = buf.split("\n");
+      buf = lines.pop();
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const ev = JSON.parse(line.slice(6));
+          if (ev.kind === "text" || ev.kind === "phase") {
+            assistantText += (ev.text || "") + (ev.kind === "phase" ? "\n" : "");
+            bubble.innerHTML = renderMarkdown(assistantText) + '<span class="cursor-blink"></span>';
+            scrollChat();
+          } else if (ev.kind === "plan_ready") {
+            showPlanBar(ev.text || prompt);
+          } else if (ev.kind === "workflow_done") {
+            hidePlanBar();
+          } else if (ev.kind === "error") {
+            const err = document.createElement("div");
+            err.className = "msg-error";
+            err.textContent = ev.text || "工作流错误";
+            el.querySelector(".msg-body").appendChild(err);
+          }
+        } catch (_) {}
+      }
+    }
+
+    if (assistantText) {
+      bubble.innerHTML = renderMarkdown(assistantText);
+    } else if (!bubble.querySelector(".tool-card")) {
+      bubble.innerHTML = "<p>（工作流完成）</p>";
+    }
+  } catch (e) {
+    if (e.name !== "AbortError") {
+      bubble.innerHTML = renderMarkdown(`工作流失败：${e.message}`);
+    }
+  }
+
+  running = false;
+  abortCtrl = null;
+  $("sendBtn").disabled = false;
+  $("stopBtn").hidden = true;
+  setStatus("就绪", false);
+  turn++;
+  updateFooter();
+  scrollChat();
+}
+
 async function runSlashCommand(cmd) {
+  const lower = cmd.toLowerCase().trim();
+  if (lower.startsWith("/workflow ")) {
+    abortCtrl = new AbortController();
+    await streamWorkflow("workflow", cmd.slice("/workflow ".length).trim());
+    return;
+  }
+  if (lower.startsWith("/ultra ")) {
+    abortCtrl = new AbortController();
+    await streamWorkflow("ultra", cmd.slice("/ultra ".length).trim());
+    return;
+  }
+  if (lower.startsWith("/goal ")) {
+    abortCtrl = new AbortController();
+    await streamWorkflow("goal", cmd.slice("/goal ".length).trim());
+    return;
+  }
+  if (lower === "/execute") {
+    abortCtrl = new AbortController();
+    await streamWorkflow("execute", planPrompt);
+    return;
+  }
+  if (lower === "/reject") {
+    appendMsg("user", cmd);
+    try {
+      const r = await fetch(API_BASE + "/v1/workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reject" }),
+      });
+      const d = await r.json();
+      appendMsg("system", d.text || "已拒绝");
+      hidePlanBar();
+    } catch (_) {
+      appendMsg("system", "拒绝失败");
+    }
+    return;
+  }
+
   appendMsg("user", cmd);
   const { bubble } = appendMsg("system", "…");
   try {
     const r = await fetch(API_BASE + "/v1/command", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ command: cmd }),
+      body: JSON.stringify({
+        command: cmd,
+        api_key: currentKey,
+        provider: currentProvider,
+      }),
     });
     const d = await r.json();
     if (!r.ok) {
@@ -186,14 +337,18 @@ async function runSlashCommand(cmd) {
       return;
     }
     bubble.innerHTML = renderMarkdown(d.text || "完成");
+    if (d.data?.plan_ready) {
+      showPlanBar(d.data.prompt || "");
+    }
+    if (d.data?.executed || d.data?.rejected) {
+      hidePlanBar();
+    }
     if (d.data?.cost_usd != null) {
       cost = d.data.cost_usd;
       updateFooter();
     }
     if (d.data?.mode) {
-      const m = d.data.mode;
-      permissionMode =
-        m === "plan" ? "plan" : m === "default" ? "default" : m === "accept-edits" ? "accept-edits" : "agent";
+      permissionMode = normalizeMode(d.data.mode);
       localStorage.setItem("lumen_mode", permissionMode);
       syncModeSelect();
       updateModelBadge();
@@ -473,12 +628,69 @@ async function loadMemories() {
   try {
     const r = await fetch(API_BASE + "/v1/memories");
     const d = await r.json();
-    const n = (d.memories || []).length;
-    if (n > 0) {
-      $("memPill").hidden = false;
-      $("memCount").textContent = String(n);
-    }
-  } catch (_) {}
+    const mems = d.memories || [];
+    const n = mems.length;
+    $("memPill").hidden = n === 0;
+    $("memCount").textContent = String(n);
+    return mems;
+  } catch (_) {
+    return [];
+  }
+}
+
+function openMemoriesModal() {
+  renderMemoriesList();
+  $("memoriesModal")?.showModal();
+}
+
+async function renderMemoriesList() {
+  const list = $("memList");
+  if (!list) return;
+  list.innerHTML = "";
+  const mems = await loadMemories();
+  if (!mems.length) {
+    const li = document.createElement("li");
+    li.textContent = "暂无记忆";
+    list.appendChild(li);
+    return;
+  }
+  for (const m of mems) {
+    const li = document.createElement("li");
+    const info = document.createElement("div");
+    info.innerHTML = `<strong>${escapeHtml(m.title || m.name)}</strong><br><span style="color:var(--muted)">${escapeHtml((m.description || m.body || "").slice(0, 80))}</span>`;
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "mem-del";
+    del.textContent = "删除";
+    del.addEventListener("click", async () => {
+      await fetch(API_BASE + "/v1/memories", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "delete", name: m.name }),
+      });
+      renderMemoriesList();
+    });
+    li.appendChild(info);
+    li.appendChild(del);
+    list.appendChild(li);
+  }
+}
+
+async function saveMemory() {
+  const name = $("memName")?.value.trim();
+  const body = $("memBody")?.value.trim();
+  if (!name || !body) return;
+  await fetch(API_BASE + "/v1/memories", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      action: "save",
+      entry: { name, title: name, body, description: body.slice(0, 120), kind: "user" },
+    }),
+  });
+  $("memName").value = "";
+  $("memBody").value = "";
+  await renderMemoriesList();
 }
 
 async function runDoctor() {
@@ -493,32 +705,80 @@ async function runDoctor() {
   }
 }
 
-async function showSkills() {
+async function fetchSkills() {
+  const r = await fetch(API_BASE + "/v1/skills");
+  const d = await r.json();
+  return d.skills || [];
+}
+
+async function invokeSkill(name) {
+  $("skillsModal")?.close();
+  if (!currentKey) {
+    openSetup();
+    return;
+  }
+  $("input").value = `run the ${name} skill`;
+  await send();
+}
+
+async function openSkillsModal() {
+  const list = $("skillList");
+  if (!list) return;
+  list.innerHTML = "<li>加载中…</li>";
+  $("skillsModal")?.showModal();
   try {
-    const r = await fetch(API_BASE + "/v1/skills");
-    const d = await r.json();
-    const skills = d.skills || [];
+    const skills = await fetchSkills();
+    list.innerHTML = "";
     if (!skills.length) {
-      appendMsg("system", "未加载 skills");
+      list.innerHTML = "<li>未加载 skills（检查 serve 工作目录）</li>";
       return;
     }
-    const text = skills.map((s) => `• ${s.name} — ${s.description || ""}`).join("\n");
-    appendMsg("system", text);
+    for (const sk of skills) {
+      const li = document.createElement("li");
+      const info = document.createElement("div");
+      info.innerHTML = `<strong>${escapeHtml(sk.name)}</strong><br><span style="color:var(--muted)">${escapeHtml(sk.description || "")}</span>`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "skill-invoke";
+      btn.textContent = "调用";
+      btn.addEventListener("click", () => invokeSkill(sk.name));
+      li.appendChild(info);
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
   } catch (_) {
-    appendMsg("system", "skills 请求失败");
+    list.innerHTML = "<li>skills 请求失败</li>";
   }
 }
 
-async function syncFromServer() {
+async function loadPresets() {
   try {
     const r = await fetch(API_BASE + "/v1/models");
     const d = await r.json();
     if (d.ui_mode) {
-      permissionMode = d.ui_mode;
+      permissionMode = normalizeMode(d.ui_mode);
       localStorage.setItem("lumen_mode", permissionMode);
       syncModeSelect();
       updateModelBadge();
     }
+    const sel = $("presetSelect");
+    if (!sel) return;
+    sel.innerHTML = "";
+    const presets = d.presets || [];
+    if (!presets.length) {
+      sel.innerHTML = '<option value="">（无预设）</option>';
+      return;
+    }
+    for (const p of presets) {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.textContent = `${p.name} (${p.model})`;
+      opt.dataset.provider = p.provider || "";
+      opt.dataset.model = p.model || "";
+      sel.appendChild(opt);
+    }
+    const match = presets.find((p) => p.model === currentModel || p.name === currentModel);
+    if (match) sel.value = match.name;
   } catch (_) {}
 }
 
@@ -553,8 +813,34 @@ function bindEvents() {
     setSidebarOpen(false);
   });
   $("skillsBtn")?.addEventListener("click", () => {
-    showSkills();
+    openSkillsModal();
     setSidebarOpen(false);
+  });
+  $("memPill")?.addEventListener("click", openMemoriesModal);
+  $("memoriesClose")?.addEventListener("click", () => $("memoriesModal").close());
+  $("memSaveBtn")?.addEventListener("click", saveMemory);
+  $("skillsClose")?.addEventListener("click", () => $("skillsModal").close());
+  $("planExecBtn")?.addEventListener("click", async () => {
+    abortCtrl = new AbortController();
+    await streamWorkflow("execute", planPrompt);
+  });
+  $("planRejectBtn")?.addEventListener("click", async () => {
+    await runSlashCommand("/reject");
+  });
+  $("presetSelect")?.addEventListener("change", (e) => {
+    const opt = e.target.selectedOptions[0];
+    if (!opt) return;
+    if (opt.dataset.provider) {
+      currentProvider = opt.dataset.provider;
+      localStorage.setItem("lumen_provider", currentProvider);
+      $("providerSelect").value = currentProvider;
+    }
+    if (opt.dataset.model) {
+      currentModel = opt.dataset.model;
+      localStorage.setItem("lumen_model", currentModel);
+      $("modelInput").value = currentModel;
+    }
+    updateModelBadge();
   });
 
   const input = $("input");
@@ -611,7 +897,7 @@ async function init() {
   loadStorage();
   bindEvents();
   updateFooter();
-  await syncFromServer();
+  await loadPresets();
   await setServerMode(permissionMode);
   loadSessions();
   loadMemories();

@@ -1,3 +1,4 @@
+// REST + slash command handlers (goal:d6aa846b round9 — command passes api_key).
 package server
 
 import (
@@ -62,13 +63,15 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Command string `json:"command"`
+		Command  string `json:"command"`
+		APIKey   string `json:"api_key,omitempty"`
+		Provider string `json:"provider,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Command) == "" {
 		jsonErr(w, "command required", http.StatusBadRequest)
 		return
 	}
-	text, data, err := s.execCommand(strings.TrimSpace(req.Command))
+	text, data, err := s.execCommand(strings.TrimSpace(req.Command), req.APIKey, req.Provider)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusBadRequest)
 		return
@@ -76,7 +79,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"text": text, "data": data})
 }
 
-func (s *Server) execCommand(cmd string) (string, any, error) {
+func (s *Server) execCommand(cmd, apiKey, provider string) (string, any, error) {
 	ctrl := s.cfg.Ctrl
 	lower := strings.ToLower(cmd)
 
@@ -130,6 +133,11 @@ func (s *Server) execCommand(cmd string) (string, any, error) {
 		return timeline.FormatChanges(changes), map[string]any{"changes": changes}, nil
 	case lower == "/skills":
 		return s.formatSkills(), s.skillsData(), nil
+	case lower == "/execute", lower == "/reject",
+		strings.HasPrefix(lower, "/workflow "),
+		strings.HasPrefix(lower, "/ultra "),
+		strings.HasPrefix(lower, "/goal "):
+		return s.execWorkflowCommand(cmd, apiKey, provider)
 	default:
 		if strings.HasPrefix(cmd, "/") && !strings.Contains(cmd, " ") {
 			name := strings.TrimPrefix(cmd, "/")
@@ -285,7 +293,7 @@ func (s *Server) timelinePath() string {
 
 func parseUIMode(s string) permission.Mode {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "agent":
+	case "agent", "bypass":
 		return permission.ModeBypass
 	default:
 		return permission.ParseMode(s)
@@ -300,8 +308,10 @@ func uiModeFromPermission(m permission.Mode) string {
 		return "default"
 	case permission.ModeAcceptEdits:
 		return "accept-edits"
+	case permission.ModeBypass:
+		return "bypass"
 	default:
-		return "agent"
+		return "bypass"
 	}
 }
 
@@ -321,6 +331,11 @@ Commands:
   /changes   changed files inbox
   /skills    list available skills
   /doctor    health check (API)
+  /workflow  plan → review → execute
+  /execute   run approved plan
+  /reject    discard pending plan
+  /ultra     plan → auto-execute
+  /goal      autonomous goal execution
 `)
 }
 
