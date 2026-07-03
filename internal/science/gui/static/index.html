@@ -3,28 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lumen Science</title>
-  <link rel="stylesheet" href="/assets/fonts.css" />
-  <link rel="stylesheet" href="/assets/app.css" />
+  <title>Lumen Science · 绿洲 Oasis</title>
+  <link rel="stylesheet" href="assets/fonts.css" />
+  <link rel="stylesheet" href="assets/app.css" />
 </head>
 <body>
   <div class="shell" id="shell">
     <header class="top" data-drag>
       <a class="brand" href="#" onclick="return false">
-        <span class="brand-title">Lumen Science</span>
-        <span class="brand-zh">科研运行时</span>
+        <span class="brand-title">Lumen</span>
+        <span class="brand-oasis">绿洲官方入口</span>
       </a>
       <div class="top-actions">
         <span class="ver" id="verLabel"></span>
+        <a class="btn-oasis" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">返回绿洲</a>
         <button class="btn-ghost" id="quitBtn" type="button">退出</button>
       </div>
     </header>
 
     <main class="panel-main">
       <div class="page-hd reveal">
-        <p class="kicker">science runtime · lumen</p>
+        <p class="kicker">绿洲官方 · Lumen Science</p>
         <h1 class="display-sm">Claude Science<br />第三方模型桥接</h1>
-        <p class="lede">代理、沙箱与科研资源包在同一面板管理。配置存本地，一键启动。</p>
+        <p class="lede">绿洲官方 Lumen Science 入口 · 第三方模型桥接<br>代理、沙箱、科研资源包一键管理。配置仅存本地，可作为 C2D Agent 发布到绿洲市场。</p>
       </div>
 
       <div class="telemetry reveal" id="telemetry" aria-live="polite">
@@ -42,42 +43,46 @@
 
       <p class="alert info official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
 
-      <section class="card tp-only reveal">
-        <p class="card-kicker">route</p>
-        <label class="field">
-          <span class="field-label">模型线路</span>
-          <select id="provider"></select>
-        </label>
-      </section>
+      <div class="settings-grid">
+        <div class="controls-grid">
+          <section class="card tp-only reveal">
+            <p class="card-kicker">route</p>
+            <label class="field">
+              <span class="field-label">模型线路</span>
+              <select id="provider"></select>
+            </label>
+          </section>
 
-      <section class="card tp-only reveal">
-        <p class="card-kicker">auth</p>
-        <label class="field">
-          <span class="field-label" id="keyLabel">API Key</span>
-          <div class="row">
-            <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
-            <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
-            <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
-          </div>
-        </label>
-      </section>
-
-      <details class="card adv tp-only reveal">
-        <summary>高级设置</summary>
-        <div class="grid2">
-          <label class="field"><span class="field-label">代理端口</span><input id="proxyPort" inputmode="numeric" /></label>
-          <label class="field"><span class="field-label">沙箱端口</span><input id="sandboxPort" inputmode="numeric" /></label>
+          <section class="card tp-only reveal">
+            <p class="card-kicker">auth</p>
+            <label class="field">
+              <span class="field-label" id="keyLabel">API Key</span>
+              <div class="row">
+                <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
+                <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
+                <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
+              </div>
+            </label>
+          </section>
         </div>
-        <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
-      </details>
 
-      <section class="card reveal">
-        <button class="btn primary hero" id="heroBtn" type="button">
-          <span class="hero-label">一键开始</span>
-          <span aria-hidden="true">→</span>
-        </button>
-        <button class="btn secondary wide" id="stopBtn" type="button">全部停止</button>
-      </section>
+        <details class="card adv tp-only reveal">
+          <summary>高级设置</summary>
+          <div class="grid2">
+            <label class="field"><span class="field-label">代理端口</span><input id="proxyPort" inputmode="numeric" /></label>
+            <label class="field"><span class="field-label">沙箱端口</span><input id="sandboxPort" inputmode="numeric" /></label>
+          </div>
+          <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
+        </details>
+
+        <section class="card reveal">
+          <button class="btn primary hero" id="heroBtn" type="button">
+            <span class="hero-label">一键开始</span>
+            <span aria-hidden="true">→</span>
+          </button>
+          <button class="btn secondary wide" id="stopBtn" type="button">全部停止</button>
+        </section>
+      </div>
 
       <section class="card runtime-card tp-only reveal">
         <div class="runtime-hd">
@@ -135,6 +140,19 @@
 
         <p class="msg" id="msg">就绪，随时可以启动</p>
       </section>
+
+      <!-- Oasis Integration (added for demo.oasisdata2026.xyz) -->
+      <section class="card oasis-card reveal">
+        <p class="card-kicker forest">Oasis 集成</p>
+        <h3 style="margin:0 0 8px;font-size:15px;">将 Science 桥接发布为可信 C2D Agent</h3>
+        <p style="margin:0 0 12px;font-size:13px;color:#5f5f68;">把代理+沙箱+第三方模型能力打包成经审核的算法镜像，直接上架绿洲市场。买家可在沙箱内用 Claude 体验 + DeepSeek 等模型对私有数据做“可用不可见”分析，只产出带 VO 存证的结果。</p>
+        <div class="row">
+          <button class="btn primary" id="oasisPublishBtn" type="button">发布到绿洲市场</button>
+          <button class="btn secondary" id="oasisResearchBtn" type="button">查看科研资源包</button>
+          <a class="btn ghost" href="https://demo.oasisdata2026.xyz/c2d" target="_blank" rel="noopener">浏览 C2D 货架 →</a>
+        </div>
+        <p style="margin:8px 0 0;font-size:12px;color:#5f5f68;">示例证书风格：<code>VO-XXXXXXXXXXXX</code> · 绑定镜像 digest + 数据集指纹</p>
+      </section>
     </main>
 
     <footer class="site-foot">
@@ -167,6 +185,6 @@
       <pre id="modalBody"></pre>
     </dialog>
   </div>
-  <script src="/assets/app.js" defer></script>
+  <script src="assets/app.js" defer></script>
 </body>
 </html>

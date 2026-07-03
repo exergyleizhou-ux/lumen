@@ -1,5 +1,8 @@
 const $ = (id) => document.getElementById(id);
-const API = "";
+// When proxied under /lumen-science on the Oasis site, prefix API + SSE paths.
+const API = (typeof location !== "undefined" && location.pathname.startsWith("/lumen-science"))
+  ? "/lumen-science"
+  : "";
 const FETCH_TIMEOUT_MS = 30000;
 let mode = "proxy";
 let busy = false;
@@ -53,7 +56,7 @@ function setFlow(rowId, badgeId, state) {
 
 function setBusy(on) {
   busy = on;
-  ["heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn"].forEach((id) => {
+  ["heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn", "oasisPublishBtn", "oasisResearchBtn"].forEach((id) => {
     const el = $(id);
     if (el) el.disabled = on;
   });
@@ -371,7 +374,7 @@ function showModal(title, body) {
 
 function connectSSE() {
   if (evtSrc) evtSrc.close();
-  evtSrc = new EventSource("/api/events");
+  evtSrc = new EventSource(API + "/api/events");
   evtSrc.onopen = () => { sseBackoff = 2000; setConn(true); };
   evtSrc.onmessage = (ev) => {
     try { applyStatus(JSON.parse(ev.data)); } catch (_) {}
@@ -436,6 +439,45 @@ $("researchBtn")?.addEventListener("click", showResearch);
 $("updateBtn")?.addEventListener("click", () => { if (window._releaseURL) window.open(window._releaseURL, "_blank"); });
 $("reportBtn")?.addEventListener("click", () => { if (window._issuesURL) window.open(window._issuesURL, "_blank"); });
 $("modalClose")?.addEventListener("click", () => $("modal").close());
+
+// Oasis integration (added to embed into https://demo.oasisdata2026.xyz)
+const oasisPub = $("oasisPublishBtn");
+if (oasisPub) {
+  oasisPub.addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      const cfg = await api("/api/science/config").catch(() => ({}));
+      setMsg("准备发布到绿洲：建议执行 `lumen oasis publish` 或在终端运行 science 相关研究包。正在打开绿洲 C2D 页面...", "info");
+      window.open("https://demo.oasisdata2026.xyz/c2d", "_blank");
+      // Optional: if you add a real /api/oasis/publish later it will be used here
+    } catch (e) {
+      setMsg("请在终端运行: lumen oasis publish --name lumen-science-bridge", "info");
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
+const oasisRes = $("oasisResearchBtn");
+if (oasisRes) {
+  oasisRes.addEventListener("click", () => {
+    window.open("https://demo.oasisdata2026.xyz", "_blank");
+    // science research list is also available via lumen science research list
+  });
+}
+
+// Embed mode for Oasis site (add ?embed=1 or ?oasis=1 to URL)
+const p = new URLSearchParams(location.search);
+if (p.get("embed") || p.get("oasis") || p.get("theme") === "oasis") {
+  document.body.classList.add("embed-oasis");
+  // 保留绿洲返回按钮，即使在 embed 模式也显示官方入口感
+  const top = document.querySelector(".top");
+  if (top) top.style.display = "flex";  // 强制显示 header
+  const foot = document.querySelector(".site-foot");
+  if (foot) foot.style.display = "none";
+  const oasisCard = document.querySelector(".oasis-card");
+  if (oasisCard) oasisCard.style.display = "none"; // 已嵌入时隐藏重复推广
+}
 document.querySelectorAll("#modalTabs .tab").forEach((btn) => {
   btn.addEventListener("click", async () => {
     modalLogWhich = btn.dataset.log;
