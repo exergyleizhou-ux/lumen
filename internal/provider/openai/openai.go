@@ -87,9 +87,10 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 			defer close(ch)
 			if p.testBypassStep == 0 {
 				p.testBypassStep = 1
-				// one tool call to perform the edit
+				// one tool call to perform the edit - use relative path inside the temp module workspace
+				// so that agent anyInWorkspace and FindProjectRoot + verifyAfterEdits fire.
 				fixContent := "package main\n\nfunc main() { println(\"fixed by test turn\") }\n"
-				args, _ := json.Marshal(map[string]string{"path": "/tmp/lumen-e2e-scratch/bug.go", "content": fixContent})
+				args, _ := json.Marshal(map[string]string{"path": "bug.go", "content": fixContent})
 				tc := provider.ToolCall{ID: "e2e1", Name: "write_file", Arguments: string(args)}
 				ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &tc}
 				ch <- provider.Chunk{Type: provider.ChunkDone}
