@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lumen · 绿洲编程智能体</title>
+  <link rel="stylesheet" href="assets/app.css" />
+</head>
+<body>
+  <div class="app" id="app">
+    <aside class="sidebar" aria-label="会话">
+      <div class="sidebar-hd">
+        <a class="brand" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">
+          <span class="brand-mark">Lumen</span>
+          <span class="brand-sub">绿洲</span>
+        </a>
+      </div>
+      <button class="btn-new" id="newChatBtn" type="button">
+        <span class="btn-new-icon" aria-hidden="true">+</span>
+        新对话
+      </button>
+      <nav class="session-list" id="sessionList" aria-label="历史会话">
+        <p class="session-empty" id="sessionEmpty">暂无历史会话</p>
+      </nav>
+      <div class="sidebar-ft">
+        <div class="mem-pill" id="memPill" hidden>
+          <span class="mem-dot" aria-hidden="true"></span>
+          <span id="memCount">0</span> 条记忆
+        </div>
+        <a class="sidebar-link" href="https://github.com/exergyleizhou-ux/lumen" target="_blank" rel="noopener">源码</a>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="topbar-title">编程智能体</h1>
+          <span class="model-badge" id="modelBadge">未连接</span>
+        </div>
+        <div class="topbar-right">
+          <div class="mode-pills" role="group" aria-label="运行模式">
+            <button class="mode-pill active" data-mode="agent" type="button">Agent</button>
+            <button class="mode-pill" data-mode="plan" type="button">Plan</button>
+          </div>
+          <button class="btn-icon" id="settingsBtn" type="button" title="模型设置" aria-label="模型设置">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="chat-scroll" id="chatScroll">
+        <div class="chat-inner" id="chat">
+          <section class="welcome" id="welcome">
+            <p class="welcome-kicker">Lumen · 对标 Claude Code</p>
+            <h2 class="welcome-title">在你的终端级权限下<br />安全地写代码、改仓库</h2>
+            <p class="welcome-lede">Plan 模式先审后改 · 5 层命令防护 · 工具调用全程可见。描述任务，Lumen 会读文件、跑命令、自我验证。</p>
+            <div class="prompt-grid" id="promptGrid">
+              <button class="prompt-chip" type="button" data-prompt="为 Oasis C2D 脚手架一个高斯朴素贝叶斯 train.py，纯 stdlib，读 /data 首个 csv，写 /out/output.bin">C2D 算法脚手架</button>
+              <button class="prompt-chip" type="button" data-prompt="审查当前目录的安全问题：密钥泄露、危险 shell、依赖漏洞">安全审查</button>
+              <button class="prompt-chip" type="button" data-prompt="为这个 Go 项目补一组 table-driven 测试，覆盖边界条件">补测试</button>
+              <button class="prompt-chip" type="button" data-prompt="解释 lumen oasis publish 的完整流程，并列出我需要准备的文件">Oasis 发布指南</button>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="composer-box">
+          <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片" aria-label="消息输入"></textarea>
+          <div class="composer-actions">
+            <span class="composer-hint" id="attachHint" hidden>已附加图片</span>
+            <button class="btn-stop" id="stopBtn" type="button" hidden>停止</button>
+            <button class="btn-send" id="sendBtn" type="button" aria-label="发送">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+            </button>
+          </div>
+        </div>
+        <p class="composer-foot">密钥仅存浏览器本地 · 不会上传到服务器</p>
+      </div>
+
+      <footer class="statusbar" aria-live="polite">
+        <span id="statTokens">— tokens</span>
+        <span id="statCost">—</span>
+        <span id="statTurn">turn —</span>
+        <span id="statStatus" class="stat-ok">就绪</span>
+      </footer>
+    </main>
+  </div>
+
+  <dialog class="modal" id="setupModal">
+    <form method="dialog" class="modal-card" id="setupForm">
+      <div class="modal-hd">
+        <h2>连接模型</h2>
+        <button class="modal-x" type="button" id="setupClose" aria-label="关闭">✕</button>
+      </div>
+      <p class="modal-lede">选择提供商并输入 API Key，即可开始与编程智能体对话。</p>
+      <label class="field">
+        <span class="field-label">模型提供商</span>
+        <select id="providerSelect">
+          <option value="deepseek">DeepSeek（推荐）</option>
+          <option value="qwen">通义千问</option>
+          <option value="moonshot">Moonshot</option>
+          <option value="zhipu">智谱 GLM</option>
+        </select>
+      </label>
+      <label class="field">
+        <span class="field-label">API Key</span>
+        <input id="keyInput" type="password" placeholder="sk-…" autocomplete="off" />
+      </label>
+      <label class="field">
+        <span class="field-label">模型 ID</span>
+        <input id="modelInput" type="text" value="deepseek-chat" placeholder="deepseek-chat" />
+      </label>
+      <button class="btn-primary wide" id="connectBtn" type="button">连接并开始</button>
+    </form>
+  </dialog>
+
+  <script src="assets/app.js" defer></script>
+</body>
+</html>
