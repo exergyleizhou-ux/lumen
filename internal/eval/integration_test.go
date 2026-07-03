@@ -138,11 +138,7 @@ func TestEvalPipeline_RejectsTestTampering(t *testing.T) {
 	}
 }
 
-// --- Baseline harness report generator for verification (real agent path via scripted) ---
-// Runs the shipped eval pipeline (Load, Copy, agent with scripted provider providing
-// the fixes via write_file tool calls, Score, Summarize) on the real 6-task baseline.
-// Produces the eval-run*.json exactly like `lumen eval -json` would, with >=5/6 passes.
-// This is the `go test` entry on baseline tasks (per verification plan step 5).
+// (competing baseline generator removed per strategist; see cmd/lumen/goal_evidence_test.go)
 
 const fix01 = `package calc
 
@@ -216,86 +212,4 @@ func writeCall(id, path, content string) provider.ToolCall {
 	return provider.ToolCall{ID: id, Name: "write_file", Arguments: string(args)}
 }
 
-func TestGenerateRealBaselineEvalReports(t *testing.T) {
-	tasks, err := eval.LoadTasks("/Users/lei/lumen/evals/tasks")
-	if err != nil {
-		t.Fatalf("load baseline: %v", err)
-	}
-	// select up to 6, skip potentially heavy
-	selected := []eval.Task{}
-	for _, tk := range tasks {
-		if len(selected) >= 6 { break }
-		if tk.Name == "05-counter-race" { continue }
-		selected = append(selected, tk)
-	}
-	if len(selected) == 0 {
-		t.Fatal("no baseline tasks")
-	}
-
-	var results []eval.Result
-	for _, task := range selected {
-		ws := t.TempDir()
-		if err := eval.CopyDir(task.Workspace, ws); err != nil {
-			t.Fatalf("copy %s: %v", task.Name, err)
-		}
-		orig, _ := os.Getwd()
-		if err := os.Chdir(ws); err != nil {
-			t.Fatal(err)
-		}
-
-		// build scripted fix for this task (the "model" response in test harness)
-		var turns [][]provider.ToolCall
-		switch task.Name {
-		case "01-average-empty":
-			turns = [][]provider.ToolCall{ {writeCall("f1", "calc/calc.go", fix01)} }
-		case "02-stack-lifo":
-			turns = [][]provider.ToolCall{ {writeCall("f1", "stack/stack.go", fix02)} }
-		case "03-reverse-runes":
-			turns = [][]provider.ToolCall{ {writeCall("f1", "strutil/strutil.go", fix03)} }
-		case "04-binary-search":
-			turns = [][]provider.ToolCall{ {writeCall("f1", "search/search.go", fix04)} }
-		case "06-stringer-impl":
-			turns = [][]provider.ToolCall{ {writeCall("f1", "shape/shape.go", fix06)} }
-		default:
-			turns = [][]provider.ToolCall{}
-		}
-		prov := &scriptedProvider{turns: turns}
-		reg := builtinRegistry(t)
-		ag := agent.New(prov, reg, agent.NewSession(""), agent.Options{MaxSteps: 5})
-		runErr := ag.Run(context.Background(), task.Prompt)
-		_ = os.Chdir(orig)
-		if runErr != nil {
-			// still record; Score will decide
-		}
-		pass, _ := eval.Score(context.Background(), ws, task.Check)
-		res := eval.Result{
-			Task: task.Name, Passed: pass, Turns: 2, Seconds: 0.4, CostUSD: 0.0002,
-			Model: "scripted-harness", ToolProfile: "core",
-		}
-		results = append(results, res)
-	}
-
-	s := eval.Summarize(results)
-
-	rep := struct {
-		Results []eval.Result `json:"results"`
-		Summary eval.Summary  `json:"summary"`
-	}{results, s}
-
-	// write two (for "twice") - use temp names to not overwrite the CLI-captured eval-run*.json
-	// (CLI output is used for AC3 per plan step 5; generator is harness/go test entry backup)
-	for i, out := range []string{
-		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run1.json.generator",
-		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run2.json.generator",
-	} {
-		b, _ := json.MarshalIndent(rep, "", "  ")
-		os.WriteFile(out, b, 0644)
-	}
-	// Enforcement gate per plan AC3. In no-key env we use the shipped harness
-	// (go test entry) + recorded fixtures (scriptedProvider solves) as allowed
-	// by plan Risks/Non-goals. The count comes from real Score calls on baseline tasks.
-	if s.Passed < 5 {
-		t.Logf("NOTE (per plan): baseline harness produced %d/%d using fixtures (no live key)", s.Passed, s.Total)
-	}
-	t.Logf("baseline harness reports written: passed=%d/%d", s.Passed, s.Total)
-}
+// (TestGenerate removed - competing producer deleted per restructure)

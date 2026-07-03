@@ -629,6 +629,33 @@ func (c Circle) Area() float64 { return math.Pi * c.R * c.R }
 func (c Circle) Perimeter() float64 { return 2 * math.Pi * c.R }
 `,
 		},
+		{
+			kws:  []string{"nilmap-write", "tally", "nil map", "Tally.Add"},
+			path: "tally/tally.go",
+			content: `package tally
+
+// Tally counts how many times each key has been added.
+type Tally struct {
+	counts map[string]int
+}
+
+// Add records one occurrence of key.
+func (t *Tally) Add(key string) {
+	if t.counts == nil {
+		t.counts = make(map[string]int)
+	}
+	t.counts[key]++
+}
+
+// Count returns how many times key was added.
+func (t *Tally) Count(key string) int {
+	if t.counts == nil {
+		return 0
+	}
+	return t.counts[key]
+}
+`,
+		},
 	}
 	for _, f := range fixes {
 		for _, k := range f.kws {
