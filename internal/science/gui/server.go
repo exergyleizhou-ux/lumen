@@ -41,8 +41,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf("127.0.0.1:%d", DefaultPort)
 	}
-	api := NewAPI(cfg.SciDir, cfg.LumenCfg, cfg.Version)
-	s := &Server{cfg: cfg, api: api, mux: http.NewServeMux(), startedAt: time.Now()}
+	startedAt := time.Now()
+	api := NewAPI(cfg.SciDir, cfg.LumenCfg, cfg.Version, startedAt)
+	s := &Server{cfg: cfg, api: api, mux: http.NewServeMux(), startedAt: startedAt}
 	s.routes()
 	return s, nil
 }
@@ -50,6 +51,10 @@ func New(cfg Config) (*Server, error) {
 func (s *Server) routes() {
 	static, _ := fs.Sub(staticFS, "static")
 	fileServer := http.FileServer(http.FS(static))
+	assetHandler := http.StripPrefix("/assets/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
+		fileServer.ServeHTTP(w, r)
+	}))
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
 			fileServer.ServeHTTP(w, r)
@@ -61,9 +66,10 @@ func (s *Server) routes() {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 	})
-	s.mux.Handle("/assets/", http.StripPrefix("/assets/", fileServer))
+	s.mux.Handle("/assets/", assetHandler)
 	s.api.Register(s.mux)
 }
 
@@ -80,10 +86,11 @@ func (s *Server) ListenAndServe() error {
 			_ = openPanel(s.URL())
 		}()
 	}
-	handler := securityHeaders(s.cors(s.wrapMiddleware(s.mux)))
+	handler := securityHeaders(s.cors(rateLimitMutations(s.wrapMiddleware(s.mux))))
 	s.srv = &http.Server{
 		Addr:              s.cfg.Addr,
 		Handler:           handler,
+		MaxHeaderBytes:    1 << 16,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      120 * time.Second,

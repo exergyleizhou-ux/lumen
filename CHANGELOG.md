@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.1 — Science GUI hardening + xAI geek UI
+
+- **GUI redesign** — pure black terminal aesthetic (`LUMEN://SCIENCE`), monospace,
+  `[OK]`/`[WARN]` badges, telemetry strip, grid/scanline backdrop.
+- **Backend hardening** — mutate rate limit, `uptime_ms` + `panel` on `/api/health`,
+  immutable asset cache headers, `MaxHeaderBytes`.
+- **Stress tests** — concurrent health/config/doctor/SSE + rate-limit verification.
+
 ## v1.1.0 — Claude Science bridge
 
 > Feature release. Adds `lumen science` — a native Go integration for [Claude

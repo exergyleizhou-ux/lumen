@@ -25,16 +25,20 @@ const actionTimeout = 120 * time.Second
 
 // API wraps runtime.Manager with serialized mutating operations.
 type API struct {
-	sciDir   string
-	lumenCfg *config.File
-	version  string
-	mu       sync.Mutex
-	lastURL  string
+	sciDir    string
+	lumenCfg  *config.File
+	version   string
+	startedAt time.Time
+	mu        sync.Mutex
+	lastURL   string
 }
 
 // NewAPI builds the GUI backend.
-func NewAPI(sciDir string, lumenCfg *config.File, version string) *API {
-	return &API{sciDir: sciDir, lumenCfg: lumenCfg, version: version}
+func NewAPI(sciDir string, lumenCfg *config.File, version string, startedAt time.Time) *API {
+	if startedAt.IsZero() {
+		startedAt = time.Now()
+	}
+	return &API{sciDir: sciDir, lumenCfg: lumenCfg, version: version, startedAt: startedAt}
 }
 
 // Register mounts JSON + SSE routes.
@@ -109,13 +113,17 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		st = mgr.Status()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":    "ok",
-		"version":   a.version,
-		"healthy":   healthy,
-		"proxy":     st["proxy_healthy"],
-		"sandbox":   st["sandbox_running"],
-		"provider":  st["provider"],
-		"mode":      st["mode"],
+		"status":     "ok",
+		"panel":      "lumen://science",
+		"version":    a.version,
+		"healthy":    healthy,
+		"uptime_ms":  time.Since(a.startedAt).Milliseconds(),
+		"proxy":      st["proxy_healthy"],
+		"sandbox":    st["sandbox_running"],
+		"provider":   st["provider"],
+		"mode":       st["mode"],
+		"proxy_port": st["proxy_port"],
+		"sandbox_port": st["sandbox_port"],
 	})
 }
 
@@ -370,6 +378,7 @@ func lightsFromStatus(st map[string]any) map[string]any {
 	return map[string]any{
 		"proxy": light(proxyOK), "sandbox": light(sbxOK), "upstream": light(upOK),
 		"provider": st["provider"], "mode": st["mode"],
+		"proxy_port": st["proxy_port"], "sandbox_port": st["sandbox_port"],
 		"url": st["url"],
 		"cache_session_hit_pct": st["cache_session_hit_pct"],
 		"cache_last_hit_pct":    st["cache_last_hit_pct"],
