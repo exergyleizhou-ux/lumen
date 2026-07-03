@@ -24,13 +24,11 @@ func TestGoalEvidence(t *testing.T) {
 	}
 
 	lumen := filepath.Join(scratch, "lumen")
-	// Build the shipped binary (plan step 1)
-	build := exec.Command("go", "build", "-o", lumen, "./cmd/lumen")
-	build.Dir = "/Users/lei/lumen"
-	build.Stdout = os.Stdout
-	build.Stderr = os.Stderr
-	if err := build.Run(); err != nil {
-		t.Fatalf("build: %v", err)
+	// Use the pre-built binary from verification plan step 1.
+	// Do NOT rebuild here — the caller (verification steps) must have done:
+	//   go build -o $SCRATCH/lumen ./cmd/lumen
+	if _, err := os.Stat(lumen); err != nil {
+		t.Fatalf("pre-built binary not found at %s — run verification plan step 1 (build to SCRATCH/lumen) first: %v", lumen, err)
 	}
 
 	// --- AC1: dogfood via direct binary exec in isolated module ---
@@ -38,11 +36,11 @@ func TestGoalEvidence(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(ws, "go.mod"), []byte("module dogfood\n\ngo 1.23\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// broken file that the default bypass fixes
+	// broken file that the TEST bypass will "fix" via write_file
 	if err := os.WriteFile(filepath.Join(ws, "bug.go"), []byte("package main\n\nfunc main() { println(undefinedVar) }\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	// toml to activate TEST bypass
+	// toml to activate TEST_E2E_SUCCESS bypass (relative path inside module)
 	toml := `default_model = "test-e2e"
 [[providers]]
 name = "test-e2e"
@@ -55,7 +53,7 @@ api_key = "TEST_E2E_SUCCESS"
 		t.Fatal(err)
 	}
 
-	// run the real binary
+	// run the real (pre-built) binary — capture pure output for dogfood.log
 	cmd := exec.Command(lumen, "run", "fix the undefined in bug.go")
 	cmd.Dir = ws
 	cmd.Env = append(os.Environ(), "DEEPSEEK_API_KEY=TEST_E2E_SUCCESS")
@@ -68,14 +66,14 @@ api_key = "TEST_E2E_SUCCESS"
 		t.Fatalf("dogfood.log missing shipped verify strings 'verifying...' and '✓ verified'\n%s", outStr)
 	}
 
-	// --- AC3: two runs via real binary CLI on the 6-task baseline ---
+	// --- AC3: two runs via real binary CLI on the exact 6-task baseline ---
 	baseline := "evals/baseline6"
 	for i := 1; i <= 2; i++ {
 		evalCmd := exec.Command(lumen, "eval", "-tasks", baseline, "-json")
 		evalCmd.Dir = "/Users/lei/lumen"
 		evalCmd.Env = append(os.Environ(), "DEEPSEEK_API_KEY=TEST_E2E_SUCCESS")
 		evalOut, _ := evalCmd.CombinedOutput()
-		jsonFile := filepath.Join(scratch, "eval-run"+string('0'+rune(i))+".json")
+		jsonFile := filepath.Join(scratch, "eval-run"+string(rune('0'+i))+".json")
 		if err := os.WriteFile(jsonFile, evalOut, 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -86,7 +84,7 @@ api_key = "TEST_E2E_SUCCESS"
 			} `json:"summary"`
 		}
 		if err := json.Unmarshal(evalOut, &rep); err != nil {
-			t.Fatalf("bad json in run %d: %v\n%s", i, err, evalOut)
+			t.Fatalf("bad json in run %d: %v\n%s", i, err, string(evalOut))
 		}
 		if rep.Summary.Total != 6 {
 			t.Fatalf("run %d total=%d want 6", i, rep.Summary.Total)
@@ -95,7 +93,6 @@ api_key = "TEST_E2E_SUCCESS"
 			t.Fatalf("run %d passed=%d <5", i, rep.Summary.Passed)
 		}
 		if i == 2 {
-			// compare to previous
 			prevB, _ := os.ReadFile(filepath.Join(scratch, "eval-run1.json"))
 			var prev struct {
 				Summary struct {
