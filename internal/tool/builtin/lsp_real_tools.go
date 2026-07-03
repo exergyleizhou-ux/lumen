@@ -196,23 +196,25 @@ func (t *LSPDiagnosticTool) Execute(ctx context.Context, args json.RawMessage) (
 			diags, err3 := client.GetDiagnostics(ctx, absURI(p.File))
 			if err3 == nil {
 				if len(diags) == 0 {
-					return fmt.Sprintf("0 issues in %s — clean.", p.File), nil
-				}
-				var sb strings.Builder
-				fmt.Fprintf(&sb, "%d issue(s) in %s:\n", len(diags), p.File)
-				for _, d := range diags {
-					sev := "?"
-					switch d.Severity {
-					case 1: sev = "ERROR"
-					case 2: sev = "WARN"
-					case 3: sev = "INFO"
-					case 4: sev = "HINT"
+					// gopls said clean (or timing); fallthrough to go vet for compile/syntax errors
+					// (robustness: gopls push may be delayed, vet catches many cases)
+				} else {
+					var sb strings.Builder
+					fmt.Fprintf(&sb, "%d issue(s) in %s:\n", len(diags), p.File)
+					for _, d := range diags {
+						sev := "?"
+						switch d.Severity {
+						case 1: sev = "ERROR"
+						case 2: sev = "WARN"
+						case 3: sev = "INFO"
+						case 4: sev = "HINT"
+						}
+						fmt.Fprintf(&sb, "  %s  L%d:%d  %s", sev, d.Range.Start.Line+1, d.Range.Start.Character+1, d.Message)
+						if d.Code != "" { fmt.Fprintf(&sb, "  (%s)", d.Code) }
+						sb.WriteByte('\n')
 					}
-					fmt.Fprintf(&sb, "  %s  L%d:%d  %s", sev, d.Range.Start.Line+1, d.Range.Start.Character+1, d.Message)
-					if d.Code != "" { fmt.Fprintf(&sb, "  (%s)", d.Code) }
-					sb.WriteByte('\n')
+					return sb.String(), nil
 				}
-				return sb.String(), nil
 			}
 		}
 	}
