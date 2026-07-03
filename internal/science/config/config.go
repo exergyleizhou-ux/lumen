@@ -19,11 +19,27 @@ const (
 	DefaultProxyPort   = 18991
 	DefaultSandboxPort = 8990
 	DefaultMode        = "proxy"
+	DefaultScienceMode = "hybrid" // hybrid | native | bridge
 )
 
 // ProviderCfg holds one provider API key (0600 file, never log).
 type ProviderCfg struct {
 	Key string `json:"key,omitempty"`
+}
+
+// NativeMCPCfg controls the Lumen-owned MCP fleet.
+type NativeMCPCfg struct {
+	Fleet     []string `json:"fleet,omitempty"`
+	AutoStart bool     `json:"auto_start,omitempty"`
+}
+
+// OasisCfg holds 绿洲 marketplace connection (auth combo 1+3).
+// Anonymous: search_datasets, get_dataset_detail.
+// User OAuth token: preview_schema, certificates, C2D jobs.
+type OasisCfg struct {
+	BaseURL       string `json:"base_url,omitempty"`
+	APIToken      string `json:"api_token,omitempty"`       // user OAuth access token (0600)
+	ServiceKeyEnv string `json:"service_key_env,omitempty"` // optional service key env var
 }
 
 // File is the persisted science bridge configuration.
@@ -33,8 +49,11 @@ type File struct {
 	SandboxPort int                    `json:"sandbox_port"`
 	Secret      string                 `json:"secret,omitempty"`
 	Mode        string                 `json:"mode"` // "proxy" | "official"
+	ScienceMode string                 `json:"science_mode,omitempty"` // hybrid | native | bridge
 	CacheBoost  *bool                  `json:"cache_boost,omitempty"` // DeepSeek prefix-cache: inject system/tools cache_control
 	Providers   map[string]ProviderCfg `json:"providers,omitempty"`
+	NativeMCP   NativeMCPCfg           `json:"native_mcp,omitempty"`
+	Oasis       OasisCfg               `json:"oasis,omitempty"`
 }
 
 // Default returns factory defaults.
@@ -97,6 +116,9 @@ func Load(dir string) (File, error) {
 	}
 	if f.Mode == "" {
 		f.Mode = DefaultMode
+	}
+	if f.ScienceMode == "" {
+		f.ScienceMode = DefaultScienceMode
 	}
 	if f.Providers == nil {
 		f.Providers = map[string]ProviderCfg{}
@@ -166,6 +188,11 @@ func Validate(f File) error {
 	}
 	if f.Mode != "" && f.Mode != "proxy" && f.Mode != "official" {
 		return fmt.Errorf("mode must be proxy or official")
+	}
+	switch f.ScienceMode {
+	case "", "hybrid", "native", "bridge":
+	default:
+		return fmt.Errorf("science_mode must be hybrid, native, or bridge")
 	}
 	return nil
 }
@@ -240,6 +267,19 @@ func (f File) KeyFor(provider string) string {
 		return p.Key
 	}
 	return ""
+}
+
+// OasisBaseURL returns the marketplace base URL with a demo default.
+func (f File) OasisBaseURL() string {
+	if strings.TrimSpace(f.Oasis.BaseURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(f.Oasis.BaseURL), "/")
+	}
+	return "https://demo.oasisdata2026.xyz"
+}
+
+// OasisToken returns the stored user OAuth access token (may be empty).
+func (f File) OasisToken() string {
+	return f.Oasis.APIToken
 }
 
 // MaskKey returns last-4 masked key for display.

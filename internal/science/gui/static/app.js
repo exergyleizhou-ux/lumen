@@ -1,3 +1,4 @@
+// Science GUI — (5-ship native MCP fleet + token ops)
 const $ = (id) => document.getElementById(id);
 // When proxied under /lumen-science on the Oasis site, prefix API + SSE paths.
 const API = (typeof location !== "undefined" && location.pathname.startsWith("/lumen-science"))
@@ -54,9 +55,12 @@ function setFlow(rowId, badgeId, state) {
   if (row) row.className = "flow-row " + cls;
 }
 
+const OASIS_MSG_AUTH = "lumen-science:oasis-auth";
+const OASIS_MSG_REQUEST = "lumen-science:request-oauth";
+
 function setBusy(on) {
   busy = on;
-  ["heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn", "oasisPublishBtn", "oasisResearchBtn"].forEach((id) => {
+  ["heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn", "oasisPublishBtn", "oasisResearchBtn", "oasisLoginBtn", "oasisNativeVerifyBtn", "oasisBriefBtn", "oasisProbeBtn", "oasisC2DAlgoBtn"].forEach((id) => {
     const el = $(id);
     if (el) el.disabled = on;
   });
@@ -391,7 +395,188 @@ function tickUptime() {
   if ($("telUptime")) $("telUptime").textContent = fmtUptime(Date.now() - panelStartedAt);
 }
 
+function applyOasisAuth(st) {
+  const badge = $("oasisAuthBadge");
+  const masked = $("oasisTokenMasked");
+  const loginBtn = $("oasisLoginBtn");
+  const discBtn = $("oasisDisconnectBtn");
+  if (!badge) return;
+  if (st?.token_set) {
+    badge.className = "badge ok";
+    badge.textContent = "已连接";
+    if (masked) masked.textContent = st.token_masked || "token ••••";
+    if (loginBtn) loginBtn.hidden = true;
+    if (discBtn) discBtn.hidden = false;
+  } else {
+    badge.className = "badge warn";
+    badge.textContent = "未连接";
+    if (masked) masked.textContent = "匿名可搜数据集 · 预览需登录";
+    if (loginBtn) loginBtn.hidden = false;
+    if (discBtn) discBtn.hidden = true;
+  }
+}
+
+async function loadOasisAuth() {
+  try {
+    const st = await api("/api/oasis");
+    applyOasisAuth(st);
+    return st;
+  } catch (_) {
+    return null;
+  }
+}
+
+function renderNativeFleet(fleet) {
+  const el = $("nativeFleetList");
+  if (!el) return;
+  if (!fleet?.length) {
+    el.textContent = "舰队未连接";
+    return;
+  }
+  el.innerHTML = fleet.map((m) => {
+    const ok = m.connected ? "✓" : "✗";
+    const tools = (m.tools || []).length;
+    return `<li>${ok} <strong>${m.label || m.id}</strong> · ${tools} tools</li>`;
+  }).join("");
+}
+
+async function loadNativeFleet() {
+  try {
+    const st = await api("/api/native/status");
+    renderNativeFleet(st.fleet);
+    return st;
+  } catch (_) {
+    renderNativeFleet([]);
+    return null;
+  }
+}
+
+async function saveOasisToken(accessToken) {
+  if (!accessToken) return;
+  const res = await api("/api/oasis/token", {
+    method: "POST",
+    body: JSON.stringify({ access_token: accessToken }),
+  });
+  applyOasisAuth({ token_set: true, token_masked: res.token_masked });
+  setMsg("绿洲登录态已同步 — 可预览数据集样本", "info");
+}
+
+async function clearOasisToken() {
+  await api("/api/oasis/token", { method: "DELETE" });
+  applyOasisAuth({ token_set: false });
+  setMsg("已断开绿洲登录", "info");
+}
+
+function requestOasisLogin() {
+  if (window.parent !== window) {
+    window.parent.postMessage({ type: OASIS_MSG_REQUEST }, location.origin);
+    setMsg("已向绿洲请求登录态…", "info");
+    return;
+  }
+  window.open("https://demo.oasisdata2026.xyz/login?next=/workspace/lumen-science", "_blank");
+}
+
+function wireOasisAuthBridge() {
+  window.addEventListener("message", async (e) => {
+    if (e.origin !== location.origin) return;
+    if (e.data?.type === OASIS_MSG_AUTH) {
+      if (e.data.access_token) {
+        try {
+          await saveOasisToken(e.data.access_token);
+        } catch (err) {
+          setMsg(String(err.message || err), "err");
+        }
+      } else {
+        applyOasisAuth({ token_set: false });
+      }
+    }
+  });
+  $("oasisLoginBtn")?.addEventListener("click", requestOasisLogin);
+  $("oasisDisconnectBtn")?.addEventListener("click", () =>
+    clearOasisToken().catch((e) => setMsg(e.message, "err"))
+  );
+  $("oasisBriefBtn")?.addEventListener("click", async () => {
+    const topic = ($("oasisBriefTopic")?.value || "").trim();
+    if (!topic) {
+      setMsg("请输入课题关键词", "err");
+      return;
+    }
+    setBusy(true);
+    setMsg("正在生成 Research Brief…", "info");
+    try {
+      const res = await api("/api/native/brief", {
+        method: "POST",
+        body: JSON.stringify({ topic, max_articles: 5, max_datasets: 5 }),
+      });
+      showModal("Research Brief · " + topic, res.markdown || JSON.stringify(res, null, 2));
+      setMsg(`简报已生成 · ${(res.claims || []).length} 条溯源`, "info");
+    } catch (e) {
+      setMsg(String(e.message || e), "err");
+    } finally {
+      setBusy(false);
+    }
+  });
+  $("oasisNativeVerifyBtn")?.addEventListener("click", async () => {
+    setBusy(true);
+    try {
+      const res = await api("/api/native/verify", { method: "POST", body: "{}" });
+      const lines = (res.results || []).map((r) =>
+        (r.pass ? "✓ " : "✗ ") + r.fleet_id + "." + r.tool + (r.error ? " — " + r.error : "")
+      );
+      showModal("Native MCP", (res.ok ? "✓ PASS\n" : "✗ FAIL\n") + lines.join("\n"));
+      await loadNativeFleet();
+    } catch (e) {
+      setMsg(String(e.message || e), "err");
+    } finally {
+      setBusy(false);
+    }
+  });
+  $("oasisProbeBtn")?.addEventListener("click", async () => {
+    const ds = ($("oasisDatasetId")?.value || "").trim();
+    if (!ds) {
+      setMsg("请输入数据集 ID", "err");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await api("/api/oasis/probe", {
+        method: "POST",
+        body: JSON.stringify({ dataset_id: ds }),
+      });
+      if (res.need_login) {
+        setMsg(res.error || "需要登录绿洲", "err");
+        return;
+      }
+      showModal("数据集预览 · " + ds, JSON.stringify(res.preview || res, null, 2));
+    } catch (e) {
+      setMsg(String(e.message || e), "err");
+    } finally {
+      setBusy(false);
+    }
+  });
+  $("oasisC2DAlgoBtn")?.addEventListener("click", async () => {
+    const ds = ($("oasisDatasetId")?.value || "").trim();
+    setBusy(true);
+    try {
+      const res = await api("/api/native/c2d/algorithms", {
+        method: "POST",
+        body: JSON.stringify({ dataset_id: ds }),
+      });
+      if (res.need_login) {
+        setMsg(res.error || "需要登录绿洲", "err");
+        return;
+      }
+      showModal("C2D 算法" + (ds ? " · " + ds : ""), JSON.stringify(res.data || res, null, 2));
+    } catch (e) {
+      setMsg(String(e.message || e), "err");
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
 async function init() {
+  wireOasisAuthBridge();
   try {
     const [v, health] = await Promise.all([api("/api/version"), api("/api/health")]);
     if ($("verLabel")) $("verLabel").textContent = "v" + (v.version || "dev");
@@ -407,6 +592,11 @@ async function init() {
     if (health.proxy || health.sandbox) $("brandDot")?.classList.add("live");
   } catch (_) {}
   await loadConfig();
+  await loadOasisAuth();
+  await loadNativeFleet();
+  if (document.body.classList.contains("embed-oasis") && window.parent !== window) {
+    window.parent.postMessage({ type: OASIS_MSG_REQUEST }, location.origin);
+  }
   connectSSE();
   tickUptime();
   setInterval(tickUptime, 1000);
@@ -441,15 +631,14 @@ $("reportBtn")?.addEventListener("click", () => { if (window._issuesURL) window.
 $("modalClose")?.addEventListener("click", () => $("modal").close());
 
 // Oasis integration (added to embed into https://demo.oasisdata2026.xyz)
-const oasisPub = $("oasisPublishBtn");
-if (oasisPub) {
-  oasisPub.addEventListener("click", async () => {
+function wireOasisPublish(btn) {
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
     setBusy(true);
     try {
-      const cfg = await api("/api/science/config").catch(() => ({}));
-      setMsg("准备发布到绿洲：建议执行 `lumen oasis publish` 或在终端运行 science 相关研究包。正在打开绿洲 C2D 页面...", "info");
+      await api("/api/science/config").catch(() => ({}));
+      setMsg("准备发布到绿洲：打开 C2D 货架。终端可运行 lumen oasis publish --name lumen-science-bridge", "info");
       window.open("https://demo.oasisdata2026.xyz/c2d", "_blank");
-      // Optional: if you add a real /api/oasis/publish later it will be used here
     } catch (e) {
       setMsg("请在终端运行: lumen oasis publish --name lumen-science-bridge", "info");
     } finally {
@@ -457,14 +646,17 @@ if (oasisPub) {
     }
   });
 }
+wireOasisPublish($("oasisPublishBtn"));
+wireOasisPublish($("oasisPublishFootBtn"));
 
-const oasisRes = $("oasisResearchBtn");
-if (oasisRes) {
-  oasisRes.addEventListener("click", () => {
-    window.open("https://demo.oasisdata2026.xyz", "_blank");
-    // science research list is also available via lumen science research list
+function wireOasisResearch(btn) {
+  if (!btn) return;
+  btn.addEventListener("click", () => {
+    window.open("https://demo.oasisdata2026.xyz/c2d", "_blank");
   });
 }
+wireOasisResearch($("oasisResearchBtn"));
+wireOasisResearch($("oasisResearchFootBtn"));
 
 // Embed mode for Oasis site (add ?embed=1 or ?oasis=1 to URL)
 const p = new URLSearchParams(location.search);
@@ -477,6 +669,7 @@ if (p.get("embed") || p.get("oasis") || p.get("theme") === "oasis") {
   }
   const oasisCard = document.querySelector(".oasis-card");
   if (oasisCard) oasisCard.style.display = "none";
+  // Publish/research remain reachable via footer buttons in embed mode.
 }
 document.querySelectorAll("#modalTabs .tab").forEach((btn) => {
   btn.addEventListener("click", async () => {

@@ -1,5 +1,6 @@
 package main
 
+
 import (
 	"context"
 	"encoding/json"
@@ -16,6 +17,8 @@ import (
 	"lumen/internal/science/gui"
 	"lumen/internal/science/guard"
 	"lumen/internal/science/migrate"
+	"lumen/internal/science/native"
+	"lumen/internal/science/native/brief"
 	"lumen/internal/science/paths"
 	"lumen/internal/science/proxy"
 	"lumen/internal/science/runtime"
@@ -55,6 +58,10 @@ func runScience(args []string) {
 		runScienceGUI(args[1:])
 	case "migrate":
 		runScienceMigrate(args[1:])
+	case "native":
+		runScienceNative(args[1:])
+	case "brief":
+		runScienceBrief(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown science subcommand: %s\n", args[0])
 		printScienceUsage()
@@ -77,6 +84,8 @@ Usage:
   lumen science official                            打开官方 Claude Science
   lumen science proxy [flags]                       仅启动代理
   lumen science research list|verify|reseed        全部科研 MCP/数据库/技能清单与体检
+  lumen science native list|status|verify --live   自有 MCP 舰队（国产科研工作台 Phase 1）
+  lumen science brief <topic>                      生成 Research Brief（PubMed + ChEMBL + GEO + 绿洲）
   lumen science gui [--port N] [--no-browser]    Grok Build 风格控制面板（默认 :18990）
   lumen science migrate [--force]                从 CSswitch 导入配置与 API key
   lumen science config show|set-provider|set-key|set-port|set-cache-boost
@@ -213,6 +222,67 @@ func statusDot(v any) string {
 		return "● 正常"
 	}
 	return "○ 未运行"
+}
+
+func runScienceNative(args []string) {
+	sub := "list"
+	if len(args) > 0 {
+		sub = args[0]
+	}
+	switch sub {
+	case "list":
+		data, _ := json.MarshalIndent(native.DefaultFleet(), "", "  ")
+		fmt.Println(string(data))
+	case "status":
+		mgr := native.NewManager()
+		defer mgr.Close()
+		if _, err := mgr.ConnectAll(); err != nil {
+			fmt.Fprintf(os.Stderr, "science native status: %v\n", err)
+			os.Exit(1)
+		}
+		data, _ := json.MarshalIndent(mgr.Status(), "", "  ")
+		fmt.Println(string(data))
+	case "verify":
+		live := false
+		for _, a := range args[1:] {
+			if a == "--live" {
+				live = true
+			}
+		}
+		if !live {
+			fmt.Fprintln(os.Stderr, "usage: lumen science native verify --live")
+			os.Exit(1)
+		}
+		results, err := native.VerifyLiveFromDir(context.Background(), scienceDir(), nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "science native verify: %v\n", err)
+			os.Exit(1)
+		}
+		ok, report := native.VerifyLiveReport(results)
+		fmt.Print(report)
+		if !ok {
+			os.Exit(1)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "usage: lumen science native list|status|verify --live")
+		os.Exit(1)
+	}
+}
+
+func runScienceBrief(args []string) {
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		fmt.Fprintln(os.Stderr, "usage: lumen science brief <topic>")
+		os.Exit(1)
+	}
+	topic := strings.TrimSpace(strings.Join(args, " "))
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Second)
+	defer cancel()
+	res, err := brief.Generate(ctx, scienceDir(), brief.Request{Topic: topic})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "science brief: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println(res.Markdown)
 }
 
 func runScienceResearch(args []string) {

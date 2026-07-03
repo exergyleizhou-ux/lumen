@@ -60,6 +60,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/open-browser", a.handleOpenBrowser)
 	mux.HandleFunc("/api/open-logs-dir", a.handleOpenLogsDir)
 	mux.HandleFunc("/api/quit-proxy", a.handleQuitProxy)
+	a.RegisterNative(mux)
 }
 
 func (a *API) StopProxyOnly() {

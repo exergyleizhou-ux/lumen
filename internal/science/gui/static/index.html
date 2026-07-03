@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lumen Science · 绿洲 Oasis</title>
+  <title>Lumen Science · 绿洲 Oasis</title><!-- -->
   <link rel="stylesheet" href="assets/fonts.css" />
-  <link rel="stylesheet" href="assets/app.css?v=5" />
+  <link rel="stylesheet" href="assets/app.css?v=10" />
 </head>
 <body>
   <div class="shell" id="shell">
@@ -141,6 +141,36 @@
         <p class="msg" id="msg">就绪，随时可以启动</p>
       </section>
 
+      <!-- Oasis marketplace auth (PR-5: postMessage token bridge) -->
+      <section class="card oasis-auth-card reveal" id="oasisAuthCard">
+        <p class="card-kicker forest">绿洲数据 · 自有 MCP</p>
+        <h3 style="margin:0 0 8px;font-size:15px;">科研工作台数据集接入</h3>
+        <p style="margin:0 0 12px;font-size:13px;color:#5f5f68;">自有 MCP 舰队：PubMed · ChEMBL · GEO · 绿洲 · C2D。匿名可搜文献/化合物/表达数据/已验证数据集；预览样本与 C2D 算法需登录绿洲。</p>
+        <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="badge" id="oasisAuthBadge">未连接</span>
+          <span class="mono" id="oasisTokenMasked" style="font-size:12px;color:#5f5f68;">—</span>
+        </div>
+        <ul id="nativeFleetList" class="fleet-list" style="margin:12px 0 0;padding:0;list-style:none;font-size:12px;color:#5f5f68;">加载舰队状态…</ul>
+        <div class="row" style="margin-top:12px;">
+          <button class="btn primary compact" id="oasisLoginBtn" type="button">连接绿洲账号</button>
+          <button class="btn secondary compact" id="oasisDisconnectBtn" type="button" hidden>断开</button>
+          <button class="btn ghost compact" id="oasisNativeVerifyBtn" type="button">验证 MCP</button>
+          <button class="btn secondary compact" id="oasisBriefBtn" type="button">生成简报</button>
+        </div>
+        <label class="field" style="margin-top:12px;">
+          <span class="field-label">课题关键词</span>
+          <input id="oasisBriefTopic" type="text" placeholder="例：EGFR 抑制剂临床前证据" />
+        </label>
+        <label class="field" style="margin-top:8px;">
+          <span class="field-label">数据集 ID（登录后预览 / C2D 算法）</span>
+          <input id="oasisDatasetId" type="text" placeholder="例：ds_xxx" />
+        </label>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn ghost compact" id="oasisProbeBtn" type="button">预览样本</button>
+          <button class="btn ghost compact" id="oasisC2DAlgoBtn" type="button">C2D 算法列表</button>
+        </div>
+      </section>
+
       <!-- Oasis Integration (added for demo.oasisdata2026.xyz) -->
       <section class="card oasis-card reveal">
         <p class="card-kicker forest">Oasis 集成</p>
@@ -169,6 +199,8 @@
         <button class="foot-link" id="researchBtn" type="button">科研资源</button>
         <button class="foot-link" id="updateBtn" type="button">更新</button>
         <button class="foot-link" id="reportBtn" type="button">反馈</button>
+        <button class="foot-link" id="oasisPublishFootBtn" type="button">发布绿洲</button>
+        <button class="foot-link" id="oasisResearchFootBtn" type="button">C2D 货架</button>
       </nav>
       <p class="foot-rule">science bridge · lumen · 全程本地</p>
     </footer>
@@ -185,6 +217,6 @@
       <pre id="modalBody"></pre>
     </dialog>
   </div>
-  <script src="assets/app.js?v=5" defer></script>
+  <script src="assets/app.js?v=10" defer></script>
 </body>
 </html>
