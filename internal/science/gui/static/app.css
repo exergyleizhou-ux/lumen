@@ -879,10 +879,21 @@ body.embed-oasis .panel-main {
   max-width: none;
 }
 
+body.embed-oasis .shell {
+  padding-bottom: 72px;
+}
+
 body.embed-oasis .site-foot {
-  margin-top: 12px;
-  padding: 12px 0 20px;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  margin-top: 0;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--rule);
+  background: rgba(250, 250, 247, 0.96);
+  backdrop-filter: blur(8px);
 }
 
 body.embed-oasis .foot-brand,

@@ -11,3 +11,4 @@ openai.test
 # OS
 .DS_Store
 Thumbs.db
+.gstack/
