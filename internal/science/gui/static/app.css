@@ -224,33 +224,44 @@ html, body {
   }
 }
 
-/* Fill the large interface better - two column layout for settings + status */
+/* Embed: single-column flow — no side-by-side gap */
 body.embed-oasis .panel-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: stretch;
+}
+
+body.embed-oasis .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1.5fr;
-  gap: 24px; /* match Oasis gap-6 */
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  align-items: stretch;
 }
 
 body.embed-oasis .controls-grid {
-  grid-column: 1;
-  grid-row: 1;
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
 body.embed-oasis .card.adv {
-  grid-column: 1;
-  grid-row: 2;
+  grid-column: 1 / -1;
 }
 
-body.embed-oasis .card:not(.runtime-card):not(.adv) {
-  grid-column: 1;
-  grid-row: 3;
+body.embed-oasis .settings-grid > .card.reveal:not(.adv) {
+  grid-column: 1 / -1;
 }
 
 body.embed-oasis .card.runtime-card {
-  grid-column: 2;
-  grid-row: 1 / span 3;
-  min-height: 520px;
+  width: 100%;
+  min-height: 0;
+  margin-top: 4px;
+}
+
+body.embed-oasis .oasis-card {
+  margin-top: 4px;
 }
 
 /* Embed: full-viewport Science panel inside Oasis chrome */
@@ -300,17 +311,10 @@ body.embed-oasis .page-hd .display-sm {
   transform: translateY(0);
 }
 
-@media (max-width: 900px) {
-  body.embed-oasis .panel-main {
+@media (max-width: 640px) {
+  body.embed-oasis .settings-grid,
+  body.embed-oasis .controls-grid {
     grid-template-columns: 1fr;
-    grid-template-rows: auto;
-  }
-  body.embed-oasis .controls-grid,
-  body.embed-oasis .card.adv,
-  body.embed-oasis .card:not(.runtime-card),
-  body.embed-oasis .card.runtime-card {
-    grid-column: 1;
-    grid-row: auto;
   }
 }
 

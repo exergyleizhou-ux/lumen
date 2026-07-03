@@ -23,9 +23,11 @@ import (
 	"sync"
 	"time"
 
+	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/memory"
+	"lumen/internal/permission"
 )
 
 // Config holds the server configuration.
@@ -67,6 +69,7 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) routes() {
 	s.mountStatic()
+	s.routesAPI()
 	s.mux.HandleFunc("/", s.handleIndex)
 	s.mux.HandleFunc("/v1/chat", s.handleChat)
 	s.mux.HandleFunc("/v1/models", s.handleModels)
@@ -119,6 +122,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		APIKey   string   `json:"api_key,omitempty"`
 		Provider string   `json:"provider,omitempty"`
 		Model    string   `json:"model,omitempty"`
+		Mode     string   `json:"mode,omitempty"` // agent · plan · bypass · default · accept-edits
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 		http.Error(w, `{"error":"prompt required"}`, http.StatusBadRequest)
@@ -176,11 +180,21 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	s.cfg.Ctrl.Configure(sink, nil, "")
 
+	if req.Mode != "" {
+		s.cfg.Ctrl.SetPermissionMode(parseUIMode(req.Mode))
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
 	sink.emit("turn_started", "")
-	s.cfg.Ctrl.Run(ctx, req.Prompt)
+	if s.cfg.Ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
+		if err := s.cfg.Ctrl.Plan(ctx, req.Prompt); err != nil {
+			sink.emit("error", err.Error())
+		}
+	} else if err := s.cfg.Ctrl.Run(ctx, req.Prompt); err != nil {
+		sink.emit("error", err.Error())
+	}
 	sink.emit("turn_done", "")
 
 	// Send terminal event
@@ -214,12 +228,13 @@ func (s sseSink) emit(kind, text string) {
 // ── REST ────────────────────────────────────────────────────
 
 func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	// List model presets from the controller
 	ctrl := s.cfg.Ctrl
 	jsonOK(w, map[string]any{
-		"provider":  ctrl.ProviderName(),
-		"model":     ctrl.ModelName(),
-		"mode":      string(ctrl.PermissionMode()),
+		"provider": ctrl.ProviderName(),
+		"model":    ctrl.ModelName(),
+		"mode":     string(ctrl.PermissionMode()),
+		"ui_mode":  uiModeFromPermission(ctrl.PermissionMode()),
+		"presets":  config.ModelPresets(),
 	})
 }
 
@@ -227,6 +242,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	jsonOK(w, map[string]any{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
+		"agent":  s.statusData(),
 	})
 }
 

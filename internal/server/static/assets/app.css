@@ -197,6 +197,11 @@ body {
   font-size: 11px;
   color: var(--muted);
   text-decoration: none;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .sidebar-link:hover { color: var(--forest); }
@@ -373,6 +378,18 @@ body {
 @keyframes msg-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }
+}
+
+.msg.system .msg-avatar {
+  background: var(--gold-50);
+  color: var(--gold-700);
+  font-size: 11px;
+}
+
+.msg.system .bubble {
+  background: var(--gold-50);
+  border: 1px solid var(--gold-100);
+  font-size: 13px;
 }
 
 .msg.user { flex-direction: row-reverse; }

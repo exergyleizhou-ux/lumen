@@ -24,7 +24,7 @@ function loadStorage() {
   permissionMode = localStorage.getItem("lumen_mode") || "agent";
   updateModelBadge();
   syncModePills();
-  if (document.getElementById("providerSelect")) {
+  if ($("providerSelect")) {
     $("providerSelect").value = currentProvider;
     $("modelInput").value = currentModel;
     if (currentKey) $("keyInput").value = currentKey;
@@ -35,7 +35,7 @@ function updateModelBadge() {
   const el = $("modelBadge");
   if (!el) return;
   if (currentKey) {
-    el.textContent = `${currentProvider}/${currentModel}`;
+    el.textContent = `${currentProvider}/${currentModel} · ${permissionMode}`;
     el.classList.add("live");
   } else {
     el.textContent = "未连接 · 点击设置";
@@ -47,6 +47,16 @@ function syncModePills() {
   document.querySelectorAll(".mode-pill").forEach((b) => {
     b.classList.toggle("active", b.dataset.mode === permissionMode);
   });
+}
+
+async function setServerMode(mode) {
+  try {
+    await fetch(API_BASE + "/v1/mode", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+  } catch (_) {}
 }
 
 function openSetup() {
@@ -109,14 +119,14 @@ function appendMsg(role, text) {
 
   const avatar = document.createElement("div");
   avatar.className = "msg-avatar";
-  avatar.textContent = role === "user" ? "你" : "L";
+  avatar.textContent = role === "user" ? "你" : role === "system" ? "⌘" : "L";
   div.appendChild(avatar);
 
   const body = document.createElement("div");
   body.className = "msg-body";
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  if (role === "assistant") {
+  if (role === "assistant" || role === "system") {
     bubble.innerHTML = text ? renderMarkdown(text) : '<span class="cursor-blink"></span>';
   } else {
     bubble.textContent = text;
@@ -146,10 +156,53 @@ function addToolCard(parent, name, state) {
   return hd;
 }
 
+async function runSlashCommand(cmd) {
+  appendMsg("user", cmd);
+  const { bubble } = appendMsg("system", "…");
+  try {
+    const r = await fetch(API_BASE + "/v1/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ command: cmd }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      bubble.innerHTML = renderMarkdown(d.error || "命令失败");
+      return;
+    }
+    bubble.innerHTML = renderMarkdown(d.text || "完成");
+    if (d.data?.cost_usd != null) {
+      cost = d.data.cost_usd;
+      updateFooter();
+    }
+    if (d.data?.mode) {
+      permissionMode = d.data.mode === "plan" ? "plan" : "agent";
+      localStorage.setItem("lumen_mode", permissionMode);
+      syncModePills();
+      updateModelBadge();
+    }
+    if (d.data?.model) {
+      currentModel = d.data.model;
+      localStorage.setItem("lumen_model", currentModel);
+      updateModelBadge();
+    }
+  } catch (_) {
+    bubble.innerHTML = renderMarkdown("命令请求失败");
+  }
+  scrollChat();
+}
+
 async function send() {
   const input = $("input");
   const prompt = input.value.trim();
   if ((!prompt && !pendingImages.length) || running) return;
+
+  if (prompt.startsWith("/")) {
+    input.value = "";
+    autoResize(input);
+    await runSlashCommand(prompt);
+    return;
+  }
 
   if (!currentKey) {
     openSetup();
@@ -182,7 +235,13 @@ async function send() {
   }
 
   try {
-    const body = { prompt, provider: currentProvider, model: currentModel, api_key: currentKey };
+    const body = {
+      prompt,
+      provider: currentProvider,
+      model: currentModel,
+      api_key: currentKey,
+      mode: permissionMode,
+    };
     if (imgs.length) body.images = imgs;
 
     const resp = await fetch(API_BASE + "/v1/chat", {
@@ -239,8 +298,12 @@ async function send() {
               break;
             case "usage":
               if (ev.usage) {
-                tokensIn += ev.usage.prompt_tokens || 0;
+                tokensIn += ev.usage.prompt_tokens || ev.usage.cache_miss_tokens || 0;
                 tokensOut += ev.usage.completion_tokens || 0;
+                const hit = ev.usage.cache_hit_tokens || 0;
+                const miss = ev.usage.cache_miss_tokens || ev.usage.prompt_tokens || 0;
+                const out = ev.usage.completion_tokens || 0;
+                cost += (miss * 0.14 + hit * 0.014 + out * 0.28) / 1e6;
               }
               break;
             case "notice":
@@ -285,6 +348,7 @@ async function send() {
   $("stopBtn").hidden = true;
   setStatus("就绪", false);
   updateFooter();
+  loadSessions();
   input.focus();
   scrollChat();
 }
@@ -318,6 +382,21 @@ function newChat() {
   setStatus("就绪", false);
 }
 
+async function loadSessionContent(name) {
+  try {
+    const r = await fetch(API_BASE + "/v1/sessions/content?name=" + encodeURIComponent(name));
+    if (!r.ok) return;
+    const d = await r.json();
+    $("chat").querySelectorAll(".msg").forEach((n) => n.remove());
+    hideWelcome();
+    appendMsg("system", `已加载会话 ${d.name}（${(d.messages || []).length} 条消息）`);
+    for (const m of d.messages || []) {
+      appendMsg(m.role === "user" ? "user" : "assistant", m.content || "");
+    }
+    scrollChat();
+  } catch (_) {}
+}
+
 async function loadSessions() {
   try {
     const r = await fetch(API_BASE + "/v1/sessions");
@@ -335,8 +414,10 @@ async function loadSessions() {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "session-item";
-      btn.textContent = s.name.replace(".jsonl", "");
+      const label = s.name.replace(".jsonl", "");
+      btn.textContent = label.length > 28 ? label.slice(0, 25) + "…" : label;
       btn.title = s.mtime;
+      btn.addEventListener("click", () => loadSessionContent(s.name));
       list.appendChild(btn);
     });
   } catch (_) {}
@@ -354,6 +435,47 @@ async function loadMemories() {
   } catch (_) {}
 }
 
+async function runDoctor() {
+  appendMsg("system", "运行 lumen doctor…");
+  try {
+    const r = await fetch(API_BASE + "/v1/doctor");
+    const d = await r.json();
+    const lines = (d.results || []).map((x) => `${x.status === "ok" ? "✓" : x.status === "warn" ? "⚠" : "✗"} ${x.name}: ${x.detail || ""}`);
+    appendMsg("system", lines.join("\n") || "自检完成");
+  } catch (_) {
+    appendMsg("system", "自检请求失败");
+  }
+}
+
+async function showSkills() {
+  try {
+    const r = await fetch(API_BASE + "/v1/skills");
+    const d = await r.json();
+    const skills = d.skills || [];
+    if (!skills.length) {
+      appendMsg("system", "未加载 skills");
+      return;
+    }
+    const text = skills.map((s) => `• ${s.name} — ${s.description || ""}`).join("\n");
+    appendMsg("system", text);
+  } catch (_) {
+    appendMsg("system", "skills 请求失败");
+  }
+}
+
+async function syncFromServer() {
+  try {
+    const r = await fetch(API_BASE + "/v1/models");
+    const d = await r.json();
+    if (d.ui_mode) {
+      permissionMode = d.ui_mode;
+      localStorage.setItem("lumen_mode", permissionMode);
+      syncModePills();
+      updateModelBadge();
+    }
+  } catch (_) {}
+}
+
 function bindEvents() {
   $("sendBtn")?.addEventListener("click", send);
   $("stopBtn")?.addEventListener("click", stopGeneration);
@@ -361,6 +483,8 @@ function bindEvents() {
   $("connectBtn")?.addEventListener("click", connectModel);
   $("setupClose")?.addEventListener("click", () => $("setupModal").close());
   $("newChatBtn")?.addEventListener("click", newChat);
+  $("doctorBtn")?.addEventListener("click", runDoctor);
+  $("skillsBtn")?.addEventListener("click", showSkills);
 
   const input = $("input");
   input?.addEventListener("input", () => autoResize(input));
@@ -372,10 +496,12 @@ function bindEvents() {
   });
 
   document.querySelectorAll(".mode-pill").forEach((b) => {
-    b.addEventListener("click", () => {
+    b.addEventListener("click", async () => {
       permissionMode = b.dataset.mode;
       localStorage.setItem("lumen_mode", permissionMode);
       syncModePills();
+      updateModelBadge();
+      await setServerMode(permissionMode);
     });
   });
 
@@ -413,6 +539,8 @@ async function init() {
   loadStorage();
   bindEvents();
   updateFooter();
+  await syncFromServer();
+  await setServerMode(permissionMode);
   loadSessions();
   loadMemories();
 
