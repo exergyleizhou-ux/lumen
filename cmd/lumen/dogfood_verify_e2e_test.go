@@ -4,34 +4,29 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
+
+// SCRATCH is the private goal scratch dir (per plan).
+const scratchLumen = "/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/lumen"
 
 // TestCLIVerifyAfterEditE2E is the canonical checked-in test for AC1.
 // It creates an isolated Go module workspace (with go.mod so FindProjectRoot
 // + SetVerifier + anyInWorkspace all fire), seeds a broken bug.go, writes a
 // lumen.toml that activates the TEST_E2E_SUCCESS bypass (relative path only),
-// chdirs into the module, execs the real built lumen binary "run" command,
-// and asserts the shipped verify-after-edit observables are present:
+// chdirs into the module, execs the PRE-BUILT {SCRATCH}/lumen binary from
+// verification plan step 1 (not a test-internal build), and asserts the
+// shipped verify-after-edit observables are present:
 //   - "verifying..." (from VerifyStarted in terminal sink)
 //   - "✓ verified" (from success VerifyResult)
 // It fails explicitly if only bare tool ✓ (from write_file result) appears
 // without the verify lines. This drives the real CLI entry + controller +
-// agent + editverify + terminal paths.
+// agent + editverify + terminal paths using the exact binary from the plan.
 func TestCLIVerifyAfterEditE2E(t *testing.T) {
-	// Build a fresh binary for this test from the module root (robust even if test cwd is package dir).
-	// Compute module root from this test file location.
-	_, thisFile, _, _ := runtime.Caller(0)
-	moduleRoot := filepath.Join(filepath.Dir(thisFile), "..", "..")
-	bin := filepath.Join(t.TempDir(), "lumen-testbin")
-	buildCmd := exec.Command("go", "build", "-o", bin, filepath.Join(moduleRoot, "cmd", "lumen"))
-	buildCmd.Dir = moduleRoot // ensure build runs from module root
-	buildCmd.Stdout = os.Stdout
-	buildCmd.Stderr = os.Stderr
-	if err := buildCmd.Run(); err != nil {
-		t.Fatalf("go build lumen: %v", err)
+	bin := scratchLumen
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatalf("pre-built {SCRATCH}/lumen not found at %s (run verification plan step 1 first): %v", bin, err)
 	}
 
 	// Isolated workspace = temp dir turned into a Go module.
