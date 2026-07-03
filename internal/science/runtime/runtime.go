@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -266,7 +267,58 @@ func (m *Manager) saveState(url string) error {
 		return err
 	}
 	path := paths.StateFile(m.SciDir)
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+
+	// Extreme CSSwitch-style hardening for state (contains secret):
+	// lstat refuse symlink, parent 0700, O_EXCL tmp + Sync + rename + 0600 reset.
+	if err := assertNotSymlink(path); err != nil {
+		return err
+	}
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	_ = os.Chmod(dir, 0o700)
+
+	seq := time.Now().UnixNano()
+	tmp := filepath.Join(dir, fmt.Sprintf(".state.json.tmp-%d-%d", os.Getpid(), seq))
+	writeRes := func() error {
+		fh, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := fh.Write(append(data, '\n')); err != nil {
+			fh.Close()
+			return err
+		}
+		if err := fh.Sync(); err != nil {
+			fh.Close()
+			return err
+		}
+		return fh.Close()
+	}()
+	if writeRes != nil {
+		_ = os.Remove(tmp)
+		return writeRes
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Chmod(path, 0o600)
+}
+
+func assertNotSymlink(path string) error {
+	fi, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("refuse symlink: %s", path)
+	}
+	return nil
 }
 
 // StopSandboxOnly stops only the sandbox daemon (CSswitch quit semantics).

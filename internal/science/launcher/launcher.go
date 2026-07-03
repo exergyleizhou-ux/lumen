@@ -118,6 +118,9 @@ func Stop(sandboxHome, dataDir, bin string) error {
 }
 
 // Running reports whether our sandbox Science is running.
+// Enhanced with login intact check (CSswitch v0.2.1 self-heal pattern):
+// if status says running but login not intact (broken state after update/crash), report false
+// so callers (GUI/health) will trigger repair via Start/Ensure.
 func Running(sandboxHome, dataDir, bin string, port int) bool {
 	if _, err := os.Stat(bin); err != nil {
 		return HTTPHealth(port, 400)
@@ -129,8 +132,32 @@ func Running(sandboxHome, dataDir, bin string, port int) bool {
 		return HTTPHealth(port, 400)
 	}
 	s := string(out)
-	running := strings.Contains(s, `"running":true`) || strings.Contains(s, `"running": true`)
-	return running && HTTPHealth(port, 400)
+	// CSswitch v0.2.1 style strict parse (avoid fragile contains): prefer json, fallback to status line nth(1) style tokens.
+	running := false
+	var st struct {
+		Running bool `json:"running"`
+	}
+	if json.Unmarshal([]byte(s), &st) == nil {
+		running = st.Running
+	} else {
+		// fallback token parse like proc http status nth(1)
+		for _, line := range strings.Split(s, "\n") {
+			if strings.Contains(line, "running") {
+				if strings.Contains(line, "true") {
+					running = true
+					break
+				}
+			}
+		}
+	}
+	if !running {
+		return false
+	}
+	// Self-heal gate: daemon "alive" but virtual login broken → treat not running (force repair on next ensure/start)
+	if !oauth.IsLoginIntact(dataDir) {
+		return false
+	}
+	return HTTPHealth(port, 400)
 }
 
 // URL returns the sandbox UI URL.
@@ -140,9 +167,13 @@ func URL(sandboxHome, dataDir, bin string, port int) string {
 		cmd.Env = append(os.Environ(), "HOME="+sandboxHome)
 		out, err := cmd.Output()
 		if err == nil {
-			s := strings.TrimSpace(string(out))
-			if strings.HasPrefix(s, "http") {
-				return s
+			// first_http_url: take only the first valid http(s) line (robust to multi-line output + notes)
+			// mirrors CSswitch v0.2.1 fix for sandbox_url parsing (first line real URL + explanation).
+			for _, line := range strings.Split(string(out), "\n") {
+				s := strings.TrimSpace(line)
+				if strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://") {
+					return s
+				}
 			}
 		}
 	}
@@ -172,6 +203,7 @@ func TCPReachable(host string, port int, timeoutMs int) bool {
 }
 
 // HTTPHealth GETs /health on loopback.
+// Strict status line parse (nth(1) == "200") like CSswitch proc.rs to avoid false positives on reason phrases.
 func HTTPHealth(port int, timeoutMs int) bool {
 	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Duration(timeoutMs)*time.Millisecond)
 	if err != nil {
@@ -185,7 +217,15 @@ func HTTPHealth(port int, timeoutMs int) bool {
 	}
 	buf := make([]byte, 4096)
 	n, _ := conn.Read(buf)
-	return strings.Contains(string(buf[:n]), " 200 ")
+	head := string(buf[:n])
+	if idx := strings.Index(head, "\r\n"); idx > 0 {
+		statusLine := head[:idx]
+		parts := strings.Fields(statusLine)
+		if len(parts) >= 2 && parts[1] == "200" {
+			return true
+		}
+	}
+	return false
 }
 
 // HTTPPostStatus posts to local proxy with optional secret prefix.

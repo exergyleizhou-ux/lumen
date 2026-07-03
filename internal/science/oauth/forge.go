@@ -260,6 +260,18 @@ func readIntactLogin(resolved, email string) (ForgeResult, bool) {
 	}, true
 }
 
+// IsLoginIntact reports whether the sandbox auth dir has intact virtual login
+// (no symlinks on critical files + parseable). Mirrors CSswitch v0.2.1 login_intact
+// for health shortcut self-heal: if "daemon alive" but login broken → force repair.
+func IsLoginIntact(authDir string) bool {
+	resolved, err := resolveGuarded(authDir, virtualEmail, authDir, authDir)
+	if err != nil {
+		return false
+	}
+	_, ok := readIntactLogin(resolved, virtualEmail)
+	return ok
+}
+
 func parseOAuthKey(resolved string) (string, bool) {
 	data, err := os.ReadFile(filepath.Join(resolved, "encryption.key"))
 	if err != nil {

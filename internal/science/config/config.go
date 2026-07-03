@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"lumen/internal/science/guard"
 	"lumen/internal/science/proxy"
@@ -61,6 +62,7 @@ func configPath(dir string) string {
 }
 
 var writeMu sync.Mutex
+var tmpSeq atomic.Uint64
 
 // Load reads config.json; missing file yields defaults.
 func Load(dir string) (File, error) {
@@ -78,6 +80,7 @@ func Load(dir string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
+	// CSswitch-style: after read, always reset to 0600 even if was wider.
 	_ = os.Chmod(path, 0o600)
 	var f File
 	if err := json.Unmarshal(data, &f); err != nil {
@@ -116,12 +119,30 @@ func Save(dir string, f File) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d", os.Getpid()))
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
+	// CSswitch-style extreme atomic: pid + seq (like thread id) + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
+	seq := tmpSeq.Add(1)
+	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d-%d", os.Getpid(), seq))
+	writeRes := func() error {
+		fh, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := fh.Write(append(data, '\n')); err != nil {
+			fh.Close()
+			return err
+		}
+		if err := fh.Sync(); err != nil {
+			fh.Close()
+			return err
+		}
+		return fh.Close()
+	}()
+	if writeRes != nil {
+		_ = os.Remove(tmp)
+		return writeRes
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Chmod(path, 0o600)
@@ -176,12 +197,30 @@ func saveUnlocked(dir string, f File) error {
 	if err != nil {
 		return err
 	}
-	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d", os.Getpid()))
-	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
-		return err
+	// CSswitch-style extreme atomic: pid + seq (like thread id) + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
+	seq := tmpSeq.Add(1)
+	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d-%d", os.Getpid(), seq))
+	writeRes := func() error {
+		fh, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		if _, err := fh.Write(append(data, '\n')); err != nil {
+			fh.Close()
+			return err
+		}
+		if err := fh.Sync(); err != nil {
+			fh.Close()
+			return err
+		}
+		return fh.Close()
+	}()
+	if writeRes != nil {
+		_ = os.Remove(tmp)
+		return writeRes
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Chmod(path, 0o600)
@@ -221,6 +260,14 @@ func ensureDir(dir string) error {
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	// CSswitch: after create, verify is dir (not file) + explicit 0700 reset.
+	md, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !md.IsDir() {
+		return fmt.Errorf("config dir is not a directory: %s", dir)
 	}
 	return os.Chmod(dir, 0o700)
 }
