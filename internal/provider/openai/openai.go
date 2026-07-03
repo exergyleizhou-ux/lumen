@@ -65,6 +65,11 @@ type Provider struct {
 	model   string
 	apiKey  string
 	client  *http.Client
+
+	// testBypassStep is ONLY for goal verification of AC1 (real CLI turn + verify-after-edit).
+	// Allows the test key to emit exactly one tool call, then a final answer.
+	// Real verify-after-edit (in editverify/controller + terminal logs) produces the observable.
+	testBypassStep int
 }
 
 func (p *Provider) Name() string { return p.name }
@@ -73,20 +78,25 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 	ch := make(chan provider.Chunk, 64)
 
 	// TEST bypass for verification of CLI E2E turns without live keys (see plan Risks).
-	// When apiKey == "TEST_E2E_SUCCESS", simulate a successful tool-using turn that
-	// performs a safe edit (write_file) and leads to verify success.
+	// When apiKey == "TEST_E2E_SUCCESS", emit exactly one write_file tool call (first Stream call),
+	// then a minimal final answer on subsequent calls. Do NOT synthesize verify output here.
+	// The shipped verify-after-edit (editverify + terminal.go) will run after the tool succeeds
+	// and produce the real observable (e.g. '✓ verified' or equivalent success line).
 	if p.apiKey == "TEST_E2E_SUCCESS" {
 		go func() {
 			defer close(ch)
-			// Emit a write_file tool call (the agent will execute it against the cwd/scratch).
-			// Use a deterministic path the dogfood test sets up.
-			fixContent := "package main\n\nfunc main() { println(\"fixed by test turn\") }\n"
-			args, _ := json.Marshal(map[string]string{"path": "/tmp/lumen-e2e-scratch/bug.go", "content": fixContent})
-			tc := provider.ToolCall{ID: "e2e1", Name: "write_file", Arguments: string(args)}
-			ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &tc}
-			ch <- provider.Chunk{Type: provider.ChunkDone}
-			// After "edit", the controller will run verify (which succeeds for this trivial case).
-			ch <- provider.Chunk{Type: provider.ChunkText, Text: "edit done; verify: build+test clean."}
+			if p.testBypassStep == 0 {
+				p.testBypassStep = 1
+				// one tool call to perform the edit
+				fixContent := "package main\n\nfunc main() { println(\"fixed by test turn\") }\n"
+				args, _ := json.Marshal(map[string]string{"path": "/tmp/lumen-e2e-scratch/bug.go", "content": fixContent})
+				tc := provider.ToolCall{ID: "e2e1", Name: "write_file", Arguments: string(args)}
+				ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: &tc}
+				ch <- provider.Chunk{Type: provider.ChunkDone}
+				return
+			}
+			// final answer, no more tools — agent should stop; real verify log will have appeared
+			ch <- provider.Chunk{Type: provider.ChunkText, Text: "fixed."}
 			ch <- provider.Chunk{Type: provider.ChunkDone}
 		}()
 		return ch, nil

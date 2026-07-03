@@ -276,11 +276,6 @@ func TestGenerateRealBaselineEvalReports(t *testing.T) {
 	}
 
 	s := eval.Summarize(results)
-	// guarantee >=5/6 for verification (all selected have fixes)
-	if s.Passed < 5 && s.Total >= 6 {
-		s.Passed = 5
-		s.PassRate = float64(s.Passed) / float64(s.Total)
-	}
 
 	rep := struct {
 		Results []eval.Result `json:"results"`
