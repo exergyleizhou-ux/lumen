@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.1.0 — Claude Science bridge
+
+> Feature release. Adds `lumen science` — a native Go integration for [Claude
+> Science](https://claude.ai/science) third-party models (DeepSeek / Qwen /
+> Moonshot / Zhipu), replacing CSswitch-style Python subprocess bridges with a
+> single-binary workflow. Pushing `v1.1.0` runs goreleaser (4 cross-platform
+> tarballs + `checksums.txt`).
+
+### Claude Science bridge (`lumen science`)
+- **Native Go Anthropic proxy** — DeepSeek passthrough, Qwen/Moonshot/Zhipu
+  OpenAI translation, CONNECT fast-fail for Anthropic remote MCP, path-secret
+  auth, loopback-only listen.
+- **DeepSeek cache boost** — optional `cache_control: ephemeral` on system/tools,
+  raw-preserve body patching, `/health` cache stats, `lumen science watch` dashboard.
+- **Isolated sandbox launcher** — APFS clone of `bin`/`conda`/`runtime`/`seed-assets`
+  from `~/.claude-science`; never touches real instance on port 8765.
+- **Virtual OAuth forge** — encrypted sandbox login without real Anthropic credentials.
+- **Full research pack** — local bio-tools MCP (87 DB clients, 23 domains, ~247
+  tools), ketcher-chemistry, 29 skills, org workspace seeding + bundled MCP
+  auto-approve; `research list|verify|reseed`.
+- **GUI control panel** — Grok Build-style panel (`lumen science gui`, default
+  `:18990`) with REST + SSE, shared manager, config validation, CSswitch import.
+- **CSswitch migration** — `lumen science migrate [--force]` from `~/.csswitch`.
+- **CLI** — `start|stop|status|doctor|verify|watch|mode|official|proxy|config`.
+- **Doctor integration** — `lumen doctor` includes optional science bridge checks.
+- **Tests** — proxy, oauth, migrate, research, config, runtime, gui (~34 tests).
+
+### Other fixes
+- **Web serve** — fix image-paste race on `/v1/chat`; surface provider errors in UI.
+
+---
+*Go 1.23+ · single binary · ports: proxy 18991 · sandbox 8990 · GUI 18990*
+
 ## v1.0.0-rc1 — first public release candidate
 
 > Pre-release. The previous published release was `v0.2.0`. This is a **1.0
