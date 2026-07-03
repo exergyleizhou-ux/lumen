@@ -81,6 +81,11 @@ mode = "bypass"
 	os.Chdir(dir)
 	defer os.Chdir(origWd)
 
+	// Isolate from host env keys so missing-key warnings are deterministic.
+	for _, k := range []string{"OPENAI_API_KEY", "DEEPSEEK_API_KEY"} {
+		t.Setenv(k, "")
+	}
+
 	summary := configSummary()
 	if !strings.Contains(summary, "config:") {
 		t.Errorf("expected config path in summary, got: %s", summary)

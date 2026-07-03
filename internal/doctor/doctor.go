@@ -62,6 +62,9 @@ func Run(cfg *config.File) *Report {
 	// Check default_model resolves to a configured provider
 	r.checkDefaultModel(cfg)
 
+	// Claude Science bridge (optional)
+	r.checkScience(cfg)
+
 	return r
 }
 
@@ -310,6 +313,35 @@ func (r *Report) checkVerify() {
 			Detail: "config contains inline api_key — move to env var and rotate the key"})
 	}
 }
+
+func (r *Report) checkScience(cfg *config.File) {
+	sciDir, err := scienceConfigDir()
+	if err != nil {
+		r.add(Result{Name: "science", Status: "warn", Detail: "science bridge unavailable: " + err.Error()})
+		return
+	}
+	results, _, fails := scienceDoctor(sciDir, cfg)
+	if fails > 0 {
+		r.add(Result{Name: "science", Status: "fail", Detail: fmt.Sprintf("%d science check(s) failed — run: lumen science doctor", fails)})
+		r.AllOk = false
+		return
+	}
+	warns := 0
+	for _, line := range results {
+		if line.Level == "warn" {
+			warns++
+		}
+	}
+	if warns > 0 {
+		r.add(Result{Name: "science", Status: "warn", Detail: fmt.Sprintf("science bridge ready with %d warning(s) — lumen science doctor", warns)})
+		return
+	}
+	r.add(Result{Name: "science", Status: "ok", Detail: "Claude Science bridge configured — lumen science start"})
+}
+
+// scienceDoctor hooks are defined in doctor_science.go for testability.
+var scienceConfigDir = defaultScienceDir
+var scienceDoctor = runScienceDoctor
 
 func (r *Report) add(res Result) {
 	r.Results = append(r.Results, res)

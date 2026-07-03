@@ -307,6 +307,43 @@ lockfile exactly. See **[the quickstart](docs/教程-用-lumen-oasis-写C2D算�
 [integration proof](docs/记录-C2D作者闭环-真实环境整合证明.md). No general terminal agent
 (Aider/Cursor/Claude Code) has this — it's Lumen's vertical edge.
 
+## Claude Science Bridge (`lumen science`)
+
+Lumen ships a **native Go** bridge for [Claude Science](https://claude.ai/science) — no Python
+subprocess, no CSswitch dependency. Point Science at DeepSeek / Qwen / Moonshot / Zhipu while
+keeping the full research stack (87 DB clients, 23 domain MCP servers, 30 skills) local.
+
+```bash
+lumen science start                    # proxy + sandbox + browser (one click)
+lumen science gui                      # Grok Build-style control panel (:18990)
+lumen science status                   # proxy / sandbox / cache hit rate
+lumen science watch                    # live DeepSeek prefix-cache dashboard
+lumen science doctor                   # read-only diagnostics
+lumen science migrate [--force]        # import ~/.csswitch/config.json
+lumen science research verify          # audit bundled MCP + skills + DB clients
+lumen science config set-key deepseek sk-...
+```
+
+**Cache boost** — optional `cache_control: ephemeral` on system/tools blocks pushes DeepSeek
+prefix-cache hit rates toward the high 90s on long Science sessions (`lumen science config
+set-cache-boost on`).
+
+**Research pack** — on first `start`, Lumen clones `bin`, `conda`, `runtime`, and `seed-assets`
+from your real `~/.claude-science` install into an isolated APFS sandbox. Local `bio-tools` MCP
+replaces Anthropic-hosted remote MCP servers (blocked at the proxy). Org workspaces and bundled
+MCP auto-approve are seeded automatically.
+
+**Ports** — proxy `18991`, sandbox `8990`, GUI `18990`. Real Science on `8765` is never touched.
+
+**Stress-resistant design** — native Go proxy (no Python), shared GUI manager for coherent
+start/stop, port-kill fallback when stopping orphaned listeners, config validation (reserved
+ports, distinct proxy/sandbox), panic recovery + request size limits on the panel, SSE reconnect
+with exponential backoff, and DeepSeek cache-boost for 90%+ prefix-cache hit rates on long
+sessions.
+
+Config: `~/.lumen/science/config.json` (mode `0600`). Keys also inherit from `lumen.toml`
+providers when present.
+
 ## Roadmap
 
 - [ ] **v0.3.0** — VSCode extension, websocket serve, config wizard

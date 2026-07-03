@@ -73,6 +73,8 @@ func main() {
 		runServe(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
+	case "science":
+		runScience(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -99,6 +101,7 @@ Usage:
   lumen eval [--tasks DIR] [--list]   Coding-quality benchmark (pass-rate)
   lumen setup
   lumen version
+  lumen science start|gui|migrate|status|doctor    Claude Science third-party bridge
 
 Modes: bypass | plan | default | accept-edits
 `)

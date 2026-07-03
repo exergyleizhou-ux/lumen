@@ -380,15 +380,19 @@ async function send() {
   appendMsg('user', prompt);
   const el = appendMsg('assistant', '');
 
-  if (pendingImages.length) {
-    div.innerHTML = '<img src="'+pendingImages[0]+'" style="max-width:200px;border-radius:8px;margin:4px 0">';
-    el.appendChild(div);
-  }
+  // Snapshot + clear images BEFORE the request so a paste mid-turn can't mutate this turn's payload.
+  const imgs = pendingImages;
   pendingImages = [];
+  document.getElementById('input').placeholder = 'Type a message… (Shift+Enter for newline, Ctrl+V image to paste)';
+  if (imgs.length) {
+    const imgDiv = document.createElement('div');
+    imgDiv.innerHTML = '<img src="'+imgs[0]+'" style="max-width:200px;border-radius:8px;margin:4px 0">';
+    el.appendChild(imgDiv);
+  }
 
   try {
     const body = {prompt};
-    if (pendingImages.length) body.images = pendingImages;
+    if (imgs.length) body.images = imgs;
     const resp = await fetch('/v1/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -457,6 +461,17 @@ function handleEvent(ev, el) {
         tokensOut += ev.usage.completion_tokens || 0;
       }
       break;
+    case 'notice':
+    case 'error':
+      // Surface errors/notices (e.g. provider HTTP 402, rate limits) instead of
+      // leaving the assistant bubble silently stuck on "⏵ ".
+      if (ev.text) {
+        const n = document.createElement('div');
+        n.className = 'tool err';
+        n.textContent = '⚠ ' + ev.text;
+        el.appendChild(n);
+      }
+      break;
     case 'turn_done':
       turn++;
       break;
@@ -499,6 +514,16 @@ fetch('/v1/memories').then(r=>r.json()).then(d=>{
   }
 });
 document.getElementById('input').focus();
+
+// Wire the send triggers. Without these the Send button and Enter key do nothing
+// (send() would be defined but never called).
+document.getElementById('send').addEventListener('click', send);
+document.getElementById('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+});
 
 // Image paste handler
 document.addEventListener('paste', e => {
