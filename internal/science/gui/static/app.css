@@ -154,4 +154,3 @@ dialog::backdrop { background: rgba(0,0,0,.55); }
 .tab.active { color: var(--ink); border-color: var(--accent); }
 #modalBody { margin: 0; padding: 12px 14px; font-size: 10px; overflow: auto; max-height: 50vh; white-space: pre-wrap; }
 #modalClose { border: none; background: none; color: var(--sub); cursor: pointer; }
-.migrate p { margin: 0 0 8px; font-size: 11.5px; color: var(--sub); }

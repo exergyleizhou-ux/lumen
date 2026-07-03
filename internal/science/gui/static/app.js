@@ -17,10 +17,7 @@ const KEY_LABELS = {
 
 function setBusy(on) {
   busy = on;
-  [
-    "heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn",
-    "migrateBtn", "migrateForceBtn",
-  ].forEach((id) => {
+  ["heroBtn", "stopBtn", "saveKeyBtn", "verifyKeyBtn"].forEach((id) => {
     const el = $(id);
     if (el) el.disabled = on;
   });
@@ -105,17 +102,6 @@ async function loadConfig() {
   keys = cfg.keys || {};
   applyMode(cfg.mode === "official" ? "official" : "proxy");
   reflectProvider();
-  if (cfg.csswitch?.exists) {
-    $("migrateCard").hidden = false;
-    if (cfg.csswitch.ports_busy) {
-      $("migrateHint").textContent =
-        "CSswitch 端口仍占用 — 先停止 CSswitch，或点「强制导入」仅合并配置。";
-      $("migrateForceBtn").hidden = false;
-    } else {
-      $("migrateHint").textContent = "检测到 CSswitch 配置，可一键导入 key 与端口。";
-      $("migrateForceBtn").hidden = true;
-    }
-  }
 }
 
 function reflectProvider() {
@@ -336,22 +322,6 @@ function connectSSE() {
   };
 }
 
-async function doMigrate(force) {
-  setBusy(true);
-  try {
-    const r = await api("/api/migrate", {
-      method: "POST",
-      body: JSON.stringify({ force }),
-    });
-    setMsg(`已导入：${(r.keys_imported || []).join(", ") || "配置"}`, "ok");
-    await loadConfig();
-  } catch (e) {
-    setMsg(String(e.message || e), "err");
-  } finally {
-    setBusy(false);
-  }
-}
-
 async function init() {
   try {
     const v = await api("/api/version");
@@ -389,8 +359,6 @@ $("logsBtn").addEventListener("click", showLogs);
 $("researchBtn").addEventListener("click", showResearch);
 $("updateBtn").addEventListener("click", () => { if (window._releaseURL) window.open(window._releaseURL, "_blank"); });
 $("reportBtn").addEventListener("click", () => { if (window._issuesURL) window.open(window._issuesURL, "_blank"); });
-$("migrateBtn").addEventListener("click", () => doMigrate(false));
-$("migrateForceBtn").addEventListener("click", () => doMigrate(true));
 $("modalClose").addEventListener("click", () => $("modal").close());
 document.querySelectorAll("#modalTabs .tab").forEach((btn) => {
   btn.addEventListener("click", async () => {

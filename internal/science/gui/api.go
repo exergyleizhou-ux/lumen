@@ -15,7 +15,6 @@ import (
 	"lumen/internal/config"
 	sciconfig "lumen/internal/science/config"
 	"lumen/internal/science/launcher"
-	"lumen/internal/science/migrate"
 	"lumen/internal/science/paths"
 	"lumen/internal/science/proxy"
 	"lumen/internal/science/research"
@@ -53,7 +52,6 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/doctor", a.handleDoctor)
 	mux.HandleFunc("/api/logs", a.handleLogs)
 	mux.HandleFunc("/api/research", a.handleResearch)
-	mux.HandleFunc("/api/migrate", a.handleMigrate)
 	mux.HandleFunc("/api/version", a.handleVersion)
 	mux.HandleFunc("/api/open-browser", a.handleOpenBrowser)
 	mux.HandleFunc("/api/open-logs-dir", a.handleOpenLogsDir)
@@ -135,15 +133,11 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 				keys[name] = sciconfig.MaskKey(p.Key)
 			}
 		}
-		cssPath, cssExists, cssBusy := migrate.Detect()
 		writeJSON(w, http.StatusOK, map[string]any{
 			"provider": cfg.Provider, "proxy_port": cfg.ProxyPort,
 			"sandbox_port": cfg.SandboxPort, "mode": cfg.Mode,
 			"cache_boost": cfg.CacheBoostEnabled(), "keys": keys,
 			"providers": providerList(),
-			"csswitch": map[string]any{
-				"exists": cssExists, "path": cssPath, "ports_busy": cssBusy,
-			},
 		})
 	case http.MethodPut:
 		var body struct {
@@ -437,23 +431,6 @@ func (a *API) handleResearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, research.Catalog(dataDir))
-}
-
-func (a *API) handleMigrate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var body struct {
-		Force bool `json:"force"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	rep, err := migrate.Import(a.sciDir, body.Force)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, rep)
 }
 
 func (a *API) handleVersion(w http.ResponseWriter, r *http.Request) {

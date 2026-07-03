@@ -8,7 +8,6 @@ import (
 	"lumen/internal/config"
 	sciconfig "lumen/internal/science/config"
 	"lumen/internal/science/guard"
-	"lumen/internal/science/migrate"
 	"lumen/internal/science/research"
 	"lumen/internal/science/launcher"
 	"lumen/internal/science/paths"
@@ -42,14 +41,6 @@ func RunDoctor(sciDir string, lumenCfg *config.File) ([]DoctorResult, int, int) 
 	add("pass", fmt.Sprintf("science config loaded (provider=%s proxy=%d sandbox=%d)", cfg.Provider, cfg.ProxyPort, cfg.SandboxPort))
 	if cfg.CacheBoostEnabled() {
 		add("pass", "cache boost enabled (system/tools ephemeral for DeepSeek prefix cache)")
-	}
-
-	if cssPath, exists, busy := migrate.Detect(); exists {
-		if busy {
-			add("warn", "CSswitch config detected and ports busy — stop CSswitch, then: lumen science migrate")
-		} else {
-			add("pass", fmt.Sprintf("CSswitch config at %s (not running) — run: lumen science migrate", cssPath))
-		}
 	}
 
 	if _, ok := proxy.LookupProvider(cfg.Provider); !ok {
