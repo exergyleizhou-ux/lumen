@@ -4,18 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
-  <div class="ambient" aria-hidden="true"></div>
-
   <div class="shell" id="shell">
     <header class="top" data-drag>
       <div class="brand">
-        <span class="orb" id="brandDot"></span>
+        <span class="orb" id="brandDot" aria-hidden="true"></span>
         <div class="brand-text">
           <span class="title">Lumen Science</span>
-          <span class="subtitle">research runtime</span>
+          <span class="kicker">science runtime · lumen</span>
         </div>
         <span class="ver" id="verLabel"></span>
       </div>
@@ -38,46 +39,41 @@
 
     <p class="hint official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
 
-    <section class="card tp-only fade-in">
-      <div class="card-hd">
-        <span class="card-title">模型线路</span>
-        <span class="card-tag">route</span>
-      </div>
+    <section class="card tp-only reveal">
+      <p class="section-kicker">route</p>
+      <label class="field-label">模型线路</label>
       <select id="provider"></select>
     </section>
 
-    <section class="card tp-only fade-in">
-      <div class="card-hd">
-        <span class="card-title" id="keyLabel">API Key</span>
-        <span class="card-tag">auth</span>
-      </div>
+    <section class="card tp-only reveal">
+      <p class="section-kicker">auth</p>
+      <label class="field-label" id="keyLabel">API Key</label>
       <div class="row">
         <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
         <button class="btn" id="saveKeyBtn" type="button">保存</button>
-        <button class="btn accent" id="verifyKeyBtn" type="button">验证</button>
+        <button class="btn outline" id="verifyKeyBtn" type="button">验证</button>
       </div>
     </section>
 
-    <details class="card adv tp-only fade-in">
+    <details class="card adv tp-only reveal">
       <summary>高级设置</summary>
       <div class="grid2">
-        <div><label>代理端口</label><input id="proxyPort" inputmode="numeric" /></div>
-        <div><label>沙箱端口</label><input id="sandboxPort" inputmode="numeric" /></div>
+        <div><label class="field-label">代理端口</label><input id="proxyPort" inputmode="numeric" /></div>
+        <div><label class="field-label">沙箱端口</label><input id="sandboxPort" inputmode="numeric" /></div>
       </div>
       <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
     </details>
 
-    <section class="card control fade-in">
+    <section class="card control reveal">
       <button class="hero" id="heroBtn" type="button">
         <span class="hero-label">一键开始</span>
-        <span class="hero-glow" aria-hidden="true"></span>
       </button>
       <button class="btn wide subtle" id="stopBtn" type="button">全部停止</button>
     </section>
 
-    <section class="card status-card tp-only fade-in">
+    <section class="card status-card tp-only reveal">
       <div class="status-hd">
-        <span class="card-title">运行状态</span>
+        <p class="section-kicker">runtime</p>
         <span class="conn" id="connDot" title="实时连接">实时</span>
       </div>
       <div class="lights">
@@ -86,7 +82,7 @@
           <span class="light-name">代理</span>
           <span class="light-state" id="stateProxy">待机</span>
         </div>
-        <div class="light" id="stSandbox">
+        <div class="light sandbox-cell" id="stSandbox">
           <span class="dot amber" id="dotSandbox"></span>
           <span class="light-name">沙箱</span>
           <span class="light-state" id="stateSandbox">待机</span>
@@ -98,14 +94,14 @@
         </div>
       </div>
       <a class="url-bar" id="urlBar" href="#" target="_blank" rel="noopener" hidden>
-        <span class="url-icon">↗</span>
         <span class="url-text"></span>
+        <span class="url-arrow" aria-hidden="true">→</span>
       </a>
       <div class="cache-wrap" id="cacheBar" hidden>
         <div class="cache">
           <div class="cache-fill" id="cacheFill"></div>
         </div>
-        <span class="cache-txt" id="cacheTxt">缓存 0%</span>
+        <span class="cache-txt mono" id="cacheTxt">缓存 0%</span>
       </div>
       <div class="msg" id="msg">就绪，随时可以启动</div>
     </section>
