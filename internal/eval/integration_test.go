@@ -282,10 +282,11 @@ func TestGenerateRealBaselineEvalReports(t *testing.T) {
 		Summary eval.Summary  `json:"summary"`
 	}{results, s}
 
-	// write two (for "twice")
-	for _, out := range []string{
-		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run1.json",
-		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run2.json",
+	// write two (for "twice") - use temp names to not overwrite the CLI-captured eval-run*.json
+	// (CLI output is used for AC3 per plan step 5; generator is harness/go test entry backup)
+	for i, out := range []string{
+		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run1.json.generator",
+		"/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/eval-run2.json.generator",
 	} {
 		b, _ := json.MarshalIndent(rep, "", "  ")
 		os.WriteFile(out, b, 0644)
