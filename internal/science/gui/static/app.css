@@ -247,7 +247,7 @@ body.embed-oasis .controls-grid {
 }
 
 body.embed-oasis .card.adv {
-  grid-column: 1 / -1;
+  display: none;
 }
 
 body.embed-oasis .settings-grid > .card.reveal:not(.adv) {
@@ -572,12 +572,24 @@ input:focus, select:focus {
   box-shadow: 0 0 0 4px rgba(4, 120, 87, 0.15);
 }
 
-.flow-stack { 
-  display: flex; 
-  flex-direction: row; 
-  gap: 12px; 
-  height: 100%; 
+.flow-stack {
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  height: 100%;
   align-items: stretch;
+}
+
+@media (max-width: 768px) {
+  .flow-stack {
+    flex-direction: column;
+    height: auto;
+  }
+  .flow-row,
+  .flow-sandbox {
+    width: 100%;
+    flex: none;
+  }
 }
 
 .flow-row {
@@ -634,7 +646,10 @@ input:focus, select:focus {
   padding: 12px;
 }
 
-.flow-sandbox.idle { border-color: var(--rule); background: var(--paper); border-style: dashed; }
+.flow-sandbox.idle {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+}
 
 .sandbox-kicker {
   margin: 0 0 8px;
@@ -862,6 +877,39 @@ body.embed-oasis .shell {
 
 body.embed-oasis .panel-main {
   max-width: none;
+}
+
+body.embed-oasis .site-foot {
+  margin-top: 12px;
+  padding: 12px 0 20px;
+  border-top: 1px solid var(--rule);
+}
+
+body.embed-oasis .foot-brand,
+body.embed-oasis .foot-rule {
+  display: none;
+}
+
+body.embed-oasis .foot-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+body.embed-oasis .foot-link {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: #fff;
+  font-size: 13px;
+  color: var(--ink-70);
+}
+
+body.embed-oasis .foot-link:hover {
+  border-color: var(--forest-200);
+  background: var(--forest-50);
+  color: var(--forest-700);
 }
 
 /* ── Modal ── */

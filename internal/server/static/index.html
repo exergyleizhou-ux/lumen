@@ -4,11 +4,12 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen · 绿洲编程智能体</title>
-  <link rel="stylesheet" href="assets/app.css?v=3" />
+  <link rel="stylesheet" href="assets/app.css?v=4" />
 </head>
 <body>
   <div class="app" id="app">
-    <aside class="sidebar" aria-label="会话">
+    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="会话">
       <div class="sidebar-hd">
         <a class="brand" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">
           <span class="brand-mark">Lumen</span>
@@ -36,6 +37,9 @@
     <main class="workspace">
       <header class="topbar">
         <div class="topbar-left">
+          <button class="btn-icon sidebar-toggle" id="sidebarToggle" type="button" aria-label="打开菜单" aria-expanded="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+          </button>
           <h1 class="topbar-title">编程智能体</h1>
           <span class="model-badge" id="modelBadge">未连接</span>
         </div>
@@ -117,6 +121,6 @@
     </form>
   </dialog>
 
-  <script src="assets/app.js?v=3" defer></script>
+  <script src="assets/app.js?v=4" defer></script>
 </body>
 </html>

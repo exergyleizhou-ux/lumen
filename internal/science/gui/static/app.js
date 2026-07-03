@@ -470,13 +470,13 @@ if (oasisRes) {
 const p = new URLSearchParams(location.search);
 if (p.get("embed") || p.get("oasis") || p.get("theme") === "oasis") {
   document.body.classList.add("embed-oasis");
-  // 保留绿洲返回按钮，即使在 embed 模式也显示官方入口感
-  const top = document.querySelector(".top");
-  if (top) top.style.display = "flex";  // 强制显示 header
-  const foot = document.querySelector(".site-foot");
-  if (foot) foot.style.display = "none";
+  const oasisLink = document.querySelector(".btn-oasis");
+  if (oasisLink) {
+    oasisLink.href = "https://demo.oasisdata2026.xyz/";
+    oasisLink.removeAttribute("target");
+  }
   const oasisCard = document.querySelector(".oasis-card");
-  if (oasisCard) oasisCard.style.display = "none"; // 已嵌入时隐藏重复推广
+  if (oasisCard) oasisCard.style.display = "none";
 }
 document.querySelectorAll("#modalTabs .tab").forEach((btn) => {
   btn.addEventListener("click", async () => {

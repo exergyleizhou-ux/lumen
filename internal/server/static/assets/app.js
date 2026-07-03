@@ -417,7 +417,10 @@ async function loadSessions() {
       const label = s.name.replace(".jsonl", "");
       btn.textContent = label.length > 28 ? label.slice(0, 25) + "…" : label;
       btn.title = s.mtime;
-      btn.addEventListener("click", () => loadSessionContent(s.name));
+      btn.addEventListener("click", () => {
+        loadSessionContent(s.name);
+        setSidebarOpen(false);
+      });
       list.appendChild(btn);
     });
   } catch (_) {}
@@ -476,15 +479,40 @@ async function syncFromServer() {
   } catch (_) {}
 }
 
+function setSidebarOpen(open) {
+  const sidebar = $("sidebar");
+  const backdrop = $("sidebarBackdrop");
+  const toggle = $("sidebarToggle");
+  if (!sidebar) return;
+  sidebar.classList.toggle("open", open);
+  if (backdrop) backdrop.hidden = !open;
+  if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
 function bindEvents() {
+  $("sidebarToggle")?.addEventListener("click", () => {
+    const open = !$("sidebar")?.classList.contains("open");
+    setSidebarOpen(open);
+  });
+  $("sidebarBackdrop")?.addEventListener("click", () => setSidebarOpen(false));
+
   $("sendBtn")?.addEventListener("click", send);
   $("stopBtn")?.addEventListener("click", stopGeneration);
   $("settingsBtn")?.addEventListener("click", openSetup);
   $("connectBtn")?.addEventListener("click", connectModel);
   $("setupClose")?.addEventListener("click", () => $("setupModal").close());
-  $("newChatBtn")?.addEventListener("click", newChat);
-  $("doctorBtn")?.addEventListener("click", runDoctor);
-  $("skillsBtn")?.addEventListener("click", showSkills);
+  $("newChatBtn")?.addEventListener("click", () => {
+    newChat();
+    setSidebarOpen(false);
+  });
+  $("doctorBtn")?.addEventListener("click", () => {
+    runDoctor();
+    setSidebarOpen(false);
+  });
+  $("skillsBtn")?.addEventListener("click", () => {
+    showSkills();
+    setSidebarOpen(false);
+  });
 
   const input = $("input");
   input?.addEventListener("input", () => autoResize(input));
