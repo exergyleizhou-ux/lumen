@@ -10,17 +10,24 @@ let modalLogWhich = "proxy";
 let panelStartedAt = Date.now();
 
 const KEY_LABELS = {
-  deepseek: "DEEPSEEK_API_KEY",
-  qwen: "DASHSCOPE_API_KEY",
-  moonshot: "MOONSHOT_API_KEY",
-  zhipu: "ZHIPU_API_KEY",
+  deepseek: "DeepSeek API Key",
+  qwen: "DashScope API Key",
+  moonshot: "Moonshot API Key",
+  zhipu: "智谱 API Key",
 };
 
-function badge(state) {
-  if (state === "green") return { text: "[OK]", cls: "ok" };
-  if (state === "red") return { text: "[ERR]", cls: "err" };
-  return { text: "[WARN]", cls: "warn" };
-}
+const PROVIDER_LABELS = {
+  deepseek: "DeepSeek",
+  qwen: "通义千问",
+  moonshot: "Moonshot",
+  zhipu: "智谱",
+};
+
+const STATE_LABELS = {
+  green: "正常",
+  amber: "待机",
+  red: "异常",
+};
 
 function fmtUptime(ms) {
   const s = Math.max(0, Math.floor(ms / 1000));
@@ -30,12 +37,14 @@ function fmtUptime(ms) {
   return `${h}:${m}:${sec}`;
 }
 
-function setBadge(id, state) {
-  const el = $(id);
-  if (!el) return;
-  const b = badge(state);
-  el.textContent = b.text;
-  el.className = "badge " + b.cls;
+function setLight(dotId, rowId, stateId, state) {
+  const dot = $(dotId);
+  const row = $(rowId);
+  const label = $(stateId);
+  if (!dot || !row || !label) return;
+  dot.className = "dot " + ({ green: "green", amber: "amber", red: "red" }[state] || "amber");
+  row.className = "light " + ({ green: "ok", amber: "warn", red: "err" }[state] || "warn");
+  label.textContent = STATE_LABELS[state] || STATE_LABELS.amber;
 }
 
 function setBusy(on) {
@@ -44,31 +53,32 @@ function setBusy(on) {
     const el = $(id);
     if (el) el.disabled = on;
   });
+  const hero = $("heroBtn");
+  if (hero) hero.classList.toggle("loading", on);
 }
 
 function setMsg(text, kind) {
   const el = $("msg");
-  const prefix = kind === "ok" ? "[OK] " : kind === "err" ? "[ERR] " : "[LOG] ";
-  el.textContent = prefix + text;
+  el.textContent = text;
   el.className = "msg" + (kind ? " " + kind : "");
 }
 
 function setConn(live) {
   const el = $("connDot");
-  el.textContent = live ? "[SSE:OK]" : "[SSE:DOWN]";
+  el.textContent = live ? "实时" : "重连中";
   el.className = "conn" + (live ? " live" : " dead");
-  el.title = live ? "event stream connected" : "reconnecting…";
+  el.title = live ? "实时连接正常" : "连接断开，自动重连中…";
 }
 
 function updateTelemetry(extra = {}) {
-  const provider = extra.provider || $("provider")?.value || "—";
+  const p = extra.provider || $("provider")?.value || "—";
   const proxyPort = extra.proxy_port ?? ($("proxyPort")?.value || "—");
   const sandboxPort = extra.sandbox_port ?? ($("sandboxPort")?.value || "—");
   const m = extra.mode || mode;
-  $("telProvider").textContent = String(provider).toUpperCase();
+  $("telProvider").textContent = PROVIDER_LABELS[p] || String(p);
   $("telProxy").textContent = ":" + proxyPort;
   $("telSandbox").textContent = ":" + sandboxPort;
-  $("telMode").textContent = m === "official" ? "OFFICIAL" : "PROXY";
+  $("telMode").textContent = m === "official" ? "官方" : "第三方";
 }
 
 async function api(path, opts = {}) {
@@ -84,7 +94,7 @@ async function api(path, opts = {}) {
     if (!res.ok) throw new Error(data.error || res.statusText);
     return data;
   } catch (e) {
-    if (e.name === "AbortError") throw new Error("request timeout");
+    if (e.name === "AbortError") throw new Error("请求超时，请稍后重试");
     throw e;
   } finally {
     clearTimeout(timer);
@@ -92,9 +102,11 @@ async function api(path, opts = {}) {
 }
 
 function applyStatus(st) {
-  setBadge("bdProxy", st.proxy);
-  setBadge("bdSandbox", st.sandbox);
-  setBadge("bdUpstream", st.upstream);
+  setLight("dotProxy", "stProxy", "stateProxy", st.proxy);
+  setLight("dotSandbox", "stSandbox", "stateSandbox", st.sandbox);
+  setLight("dotUpstream", "stUpstream", "stateUpstream", st.upstream);
+  const orb = $("brandDot");
+  if (orb) orb.classList.toggle("live", st.proxy === "green" || st.sandbox === "green");
   updateTelemetry({
     provider: st.provider,
     mode: st.mode,
@@ -106,14 +118,15 @@ function applyStatus(st) {
     $("cacheBar").hidden = false;
     $("cacheFill").style.width = Math.min(100, pct) + "%";
     $("cacheTxt").textContent =
-      `CACHE ${pct}% | LAST ${st.cache_last_hit_pct || 0}% | ${st.cache_hit_tokens || 0} TOK`;
+      `缓存 ${pct}% · 上次 ${st.cache_last_hit_pct || 0}% · ${st.cache_hit_tokens || 0} tok`;
   }
   const url = st.url || "";
   const bar = $("urlBar");
   if (url) {
     bar.hidden = false;
     bar.href = url;
-    bar.textContent = "> " + url;
+    const textEl = bar.querySelector(".url-text");
+    if (textEl) textEl.textContent = url;
   } else {
     bar.hidden = true;
   }
@@ -125,7 +138,10 @@ function applyMode(m) {
   document.querySelectorAll(".seg").forEach((b) => {
     b.classList.toggle("active", b.dataset.mode === m);
   });
-  $("heroBtn").textContent = m === "official" ? "OPEN_OFFICIAL" : "INIT_SEQUENCE";
+  const heroLabel = $("heroBtn")?.querySelector(".hero-label");
+  if (heroLabel) {
+    heroLabel.textContent = m === "official" ? "打开官方 Claude Science" : "一键开始";
+  }
   updateTelemetry({ mode: m });
 }
 
@@ -151,20 +167,20 @@ async function loadConfig() {
 
 function reflectProvider() {
   const p = $("provider").value;
-  $("keyLabel").textContent = KEY_LABELS[p] || "API_KEY";
+  $("keyLabel").textContent = KEY_LABELS[p] || "API Key";
   const masked = keys[p] || "";
   $("keyInput").value = "";
-  $("keyInput").placeholder = masked ? `stored: ${masked}` : "paste key — local only";
+  $("keyInput").placeholder = masked ? `已存：${masked}` : "粘贴 key（仅存本地）";
 }
 
 async function persistSettings() {
   const proxyPort = parseInt($("proxyPort").value, 10) || 18991;
   const sandboxPort = parseInt($("sandboxPort").value, 10) || 8990;
   if (proxyPort === sandboxPort) {
-    throw new Error("proxy and sandbox ports must differ");
+    throw new Error("代理与沙箱端口不能相同");
   }
   if (proxyPort === 8765 || sandboxPort === 8765) {
-    throw new Error("port 8765 reserved for real Science instance");
+    throw new Error("端口 8765 保留给真实 Science 实例");
   }
   await api("/api/config", {
     method: "PUT",
@@ -184,7 +200,7 @@ async function switchMode(m) {
   try {
     await api("/api/mode", { method: "PUT", body: JSON.stringify({ mode: m }) });
     applyMode(m);
-    setMsg(m === "official" ? "switched to OFFICIAL mode" : "switched to PROXY mode", "ok");
+    setMsg(m === "official" ? "已切换到官方模式" : "已切换到第三方模式", "ok");
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -196,7 +212,7 @@ async function verifyKey() {
   setBusy(true);
   try {
     const v = await api("/api/verify", { method: "POST", body: "{}" });
-    setMsg(v.ok ? v.hint : v.hint, v.ok ? "ok" : "err");
+    setMsg(v.ok ? `✓ ${v.hint}` : `✗ ${v.hint}`, v.ok ? "ok" : "err");
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -207,7 +223,7 @@ async function verifyKey() {
 async function saveKey() {
   const key = $("keyInput").value.trim();
   if (!key) {
-    setMsg("API key required", "err");
+    setMsg("请输入 API key", "err");
     return;
   }
   setBusy(true);
@@ -228,7 +244,7 @@ async function saveKey() {
 
 async function oneClick() {
   setBusy(true);
-  setMsg("starting proxy + sandbox…");
+  setMsg("正在启动代理与沙箱…");
   try {
     if ($("keyInput").value.trim()) {
       await persistSettings();
@@ -243,7 +259,7 @@ async function oneClick() {
       await persistSettings();
     }
     const r = await api("/api/start", { method: "POST", body: "{}" });
-    setMsg((r.msg || "runtime online") + (r.url ? `\n> ${r.url}` : ""), "ok");
+    setMsg((r.msg || "已启动") + (r.url ? `\n${r.url}` : ""), "ok");
     if (r.url) applyStatus({ proxy: "green", sandbox: "green", upstream: "green", url: r.url });
   } catch (e) {
     setMsg(String(e.message || e), "err");
@@ -257,7 +273,7 @@ async function heroClick() {
     setBusy(true);
     try {
       await api("/api/official", { method: "POST", body: "{}" });
-      setMsg("official Claude Science opened", "ok");
+      setMsg("已打开官方 Claude Science", "ok");
     } catch (e) {
       setMsg(String(e.message || e), "err");
     } finally {
@@ -272,8 +288,9 @@ async function stopAll() {
   setBusy(true);
   try {
     await api("/api/stop", { method: "POST", body: "{}" });
-    setMsg("proxy + sandbox halted", "ok");
+    setMsg("已停止沙箱与代理", "ok");
     applyStatus({ proxy: "amber", sandbox: "amber", upstream: "amber", url: "" });
+    $("brandDot")?.classList.remove("live");
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -288,10 +305,10 @@ async function runDoctor() {
     const lines = (r.results || []).map((x) => {
       const lvl = x.level || x.Level || "";
       const msg = x.message || x.Message || "";
-      const tag = lvl === "pass" ? "[OK]" : lvl === "fail" ? "[ERR]" : "[WARN]";
-      return `${tag} ${msg}`;
+      const icon = lvl === "pass" ? "✓" : lvl === "fail" ? "✗" : "⚠";
+      return `${icon} ${msg}`;
     });
-    showModal("DIAGNOSTIC", lines.join("\n") + `\n\nwarnings=${r.warnings} failures=${r.failures}`);
+    showModal("自检", lines.join("\n") + `\n\n警告 ${r.warnings} · 失败 ${r.failures}`);
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -301,7 +318,7 @@ async function runDoctor() {
 
 async function fetchLogs(which) {
   const r = await api(`/api/logs?which=${which}`);
-  return r.text || r.error || "(empty)";
+  return r.text || r.error || "(空)";
 }
 
 async function showLogs() {
@@ -313,7 +330,7 @@ async function showLogs() {
       b.classList.toggle("active", b.dataset.log === "proxy");
     });
     const text = await fetchLogs("proxy");
-    showModal("LOGS", text);
+    showModal("运行日志", text);
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -326,15 +343,15 @@ async function showResearch() {
   try {
     const v = await api("/api/research?verify=1");
     const summary = [
-      v.healthy ? "[OK] research pack ready" : "[ERR] assets incomplete",
-      `runtime=${v.runtime_version || "—"}`,
-      `db_clients=${v.bio_lib_packages || 0}`,
-      `domains=${v.domains || 0} tools=${v.domain_tools || 0}`,
-      `skills=${v.skills || 0}`,
-      v.org_pack_seeded ? `org_pack workspaces=${v.workspaces}` : "org_pack=not_seeded",
+      v.healthy ? "✓ 资源包就绪" : "✗ 资源不完整",
+      `runtime ${v.runtime_version || "—"}`,
+      `db clients ${v.bio_lib_packages || 0}`,
+      `domains ${v.domains || 0} · tools ${v.domain_tools || 0}`,
+      `skills ${v.skills || 0}`,
+      v.org_pack_seeded ? `org pack (${v.workspaces} workspaces)` : "org pack 未播种",
     ].join("\n");
     const detail = await api("/api/research");
-    showModal("RESEARCH_PACK", summary + "\n\n" + JSON.stringify(detail, null, 2).slice(0, 6000));
+    showModal("科研资源", summary + "\n\n" + JSON.stringify(detail, null, 2).slice(0, 6000));
   } catch (e) {
     setMsg(String(e.message || e), "err");
   } finally {
@@ -387,6 +404,9 @@ async function init() {
       proxy_port: health.proxy_port,
       sandbox_port: health.sandbox_port,
     });
+    if (health.proxy || health.sandbox) {
+      $("brandDot")?.classList.add("live");
+    }
   } catch (_) {}
   await loadConfig();
   connectSSE();
@@ -427,7 +447,7 @@ document.querySelectorAll("#modalTabs .tab").forEach((btn) => {
     document.querySelectorAll("#modalTabs .tab").forEach((b) => {
       b.classList.toggle("active", b.dataset.log === modalLogWhich);
     });
-    $("modalBody").textContent = "loading…";
+    $("modalBody").textContent = "加载中…";
     try {
       $("modalBody").textContent = await fetchLogs(modalLogWhich);
     } catch (e) {
