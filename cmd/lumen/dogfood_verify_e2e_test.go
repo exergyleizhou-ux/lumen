@@ -66,6 +66,8 @@ api_key = "TEST_E2E_SUCCESS"
 	cmd.Dir = ws
 	out, err := cmd.CombinedOutput()
 	output := string(out)
+	// Write pure binary transcript to dogfood.log (no test prefixes) for the plan step.
+	_ = os.WriteFile("/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-f5cd3c4da106/implementer/dogfood.log", out, 0644)
 	t.Logf("lumen run output (dir=%s):\n%s", ws, output)
 	if err != nil {
 		// Non-zero is ok if it still performed the turn + verify; we care about observables.
