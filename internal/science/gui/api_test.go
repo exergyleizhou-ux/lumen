@@ -32,7 +32,7 @@ func TestStaticIndexAndAssets(t *testing.T) {
 	ts := httptest.NewServer(srv.mux)
 	defer ts.Close()
 
-	for _, path := range []string{"/", "/assets/app.css", "/assets/app.js"} {
+	for _, path := range []string{"/", "/assets/app.css", "/assets/app.js", "/assets/fonts.css", "/assets/fonts/geist.woff2"} {
 		resp, err := http.Get(ts.URL + path)
 		if err != nil {
 			t.Fatal(err)

@@ -4,115 +4,155 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/assets/fonts.css" />
   <link rel="stylesheet" href="/assets/app.css" />
 </head>
 <body>
   <div class="shell" id="shell">
     <header class="top" data-drag>
-      <div class="brand">
-        <span class="orb" id="brandDot" aria-hidden="true"></span>
-        <div class="brand-text">
-          <span class="title">Lumen Science</span>
-          <span class="kicker">science runtime · lumen</span>
-        </div>
+      <a class="brand" href="#" onclick="return false">
+        <span class="brand-title">Lumen Science</span>
+        <span class="brand-zh">科研运行时</span>
+      </a>
+      <div class="top-actions">
         <span class="ver" id="verLabel"></span>
+        <button class="btn-ghost" id="quitBtn" type="button">退出</button>
       </div>
-      <button class="ghost" id="quitBtn" type="button">退出</button>
     </header>
 
-    <div class="telemetry" id="telemetry" aria-live="polite">
-      <span class="chip"><span class="chip-k">线路</span><b id="telProvider">—</b></span>
-      <span class="chip mono"><span class="chip-k">代理</span><b id="telProxy">:—</b></span>
-      <span class="chip mono"><span class="chip-k">沙箱</span><b id="telSandbox">:—</b></span>
-      <span class="chip"><span class="chip-k">模式</span><b id="telMode">—</b></span>
-      <span class="chip mono"><span class="chip-k">运行</span><b id="telUptime">00:00:00</b></span>
-    </div>
-
-    <section class="modes" role="tablist">
-      <span class="modes-glider" id="modeGlider" aria-hidden="true"></span>
-      <button class="seg active" data-mode="proxy" type="button" role="tab">第三方模型</button>
-      <button class="seg" data-mode="official" type="button" role="tab">官方 Claude</button>
-    </section>
-
-    <p class="hint official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
-
-    <section class="card tp-only reveal">
-      <p class="section-kicker">route</p>
-      <label class="field-label">模型线路</label>
-      <select id="provider"></select>
-    </section>
-
-    <section class="card tp-only reveal">
-      <p class="section-kicker">auth</p>
-      <label class="field-label" id="keyLabel">API Key</label>
-      <div class="row">
-        <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
-        <button class="btn" id="saveKeyBtn" type="button">保存</button>
-        <button class="btn outline" id="verifyKeyBtn" type="button">验证</button>
+    <main class="panel-main">
+      <div class="page-hd reveal">
+        <p class="kicker">science runtime · lumen</p>
+        <h1 class="display-sm">Claude Science<br />第三方模型桥接</h1>
+        <p class="lede">代理、沙箱与科研资源包在同一面板管理。配置存本地，一键启动。</p>
       </div>
-    </section>
 
-    <details class="card adv tp-only reveal">
-      <summary>高级设置</summary>
-      <div class="grid2">
-        <div><label class="field-label">代理端口</label><input id="proxyPort" inputmode="numeric" /></div>
-        <div><label class="field-label">沙箱端口</label><input id="sandboxPort" inputmode="numeric" /></div>
+      <div class="telemetry reveal" id="telemetry" aria-live="polite">
+        <span class="stat"><span class="stat-k">线路</span><b id="telProvider">—</b></span>
+        <span class="stat mono"><span class="stat-k">代理</span><b id="telProxy">:—</b></span>
+        <span class="stat mono"><span class="stat-k">沙箱</span><b id="telSandbox">:—</b></span>
+        <span class="stat"><span class="stat-k">模式</span><b id="telMode">—</b></span>
+        <span class="stat mono"><span class="stat-k">运行</span><b id="telUptime">00:00:00</b></span>
       </div>
-      <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
-    </details>
 
-    <section class="card control reveal">
-      <button class="hero" id="heroBtn" type="button">
-        <span class="hero-label">一键开始</span>
-      </button>
-      <button class="btn wide subtle" id="stopBtn" type="button">全部停止</button>
-    </section>
+      <nav class="tabs" role="tablist" aria-label="运行模式">
+        <button class="tab active" data-mode="proxy" type="button" role="tab">第三方模型</button>
+        <button class="tab" data-mode="official" type="button" role="tab">官方 Claude</button>
+      </nav>
 
-    <section class="card status-card tp-only reveal">
-      <div class="status-hd">
-        <p class="section-kicker">runtime</p>
-        <span class="conn" id="connDot" title="实时连接">实时</span>
-      </div>
-      <div class="lights">
-        <div class="light" id="stProxy">
-          <span class="dot amber" id="dotProxy"></span>
-          <span class="light-name">代理</span>
-          <span class="light-state" id="stateProxy">待机</span>
+      <p class="alert info official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
+
+      <section class="card tp-only reveal">
+        <p class="card-kicker">route</p>
+        <label class="field">
+          <span class="field-label">模型线路</span>
+          <select id="provider"></select>
+        </label>
+      </section>
+
+      <section class="card tp-only reveal">
+        <p class="card-kicker">auth</p>
+        <label class="field">
+          <span class="field-label" id="keyLabel">API Key</span>
+          <div class="row">
+            <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
+            <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
+            <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
+          </div>
+        </label>
+      </section>
+
+      <details class="card adv tp-only reveal">
+        <summary>高级设置</summary>
+        <div class="grid2">
+          <label class="field"><span class="field-label">代理端口</span><input id="proxyPort" inputmode="numeric" /></label>
+          <label class="field"><span class="field-label">沙箱端口</span><input id="sandboxPort" inputmode="numeric" /></label>
         </div>
-        <div class="light sandbox-cell" id="stSandbox">
-          <span class="dot amber" id="dotSandbox"></span>
-          <span class="light-name">沙箱</span>
-          <span class="light-state" id="stateSandbox">待机</span>
-        </div>
-        <div class="light" id="stUpstream">
-          <span class="dot amber" id="dotUpstream"></span>
-          <span class="light-name">上游</span>
-          <span class="light-state" id="stateUpstream">待机</span>
-        </div>
-      </div>
-      <a class="url-bar" id="urlBar" href="#" target="_blank" rel="noopener" hidden>
-        <span class="url-text"></span>
-        <span class="url-arrow" aria-hidden="true">→</span>
-      </a>
-      <div class="cache-wrap" id="cacheBar" hidden>
-        <div class="cache">
-          <div class="cache-fill" id="cacheFill"></div>
-        </div>
-        <span class="cache-txt mono" id="cacheTxt">缓存 0%</span>
-      </div>
-      <div class="msg" id="msg">就绪，随时可以启动</div>
-    </section>
+        <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
+      </details>
 
-    <footer class="foot">
-      <button class="link" id="openBrowserBtn" type="button">打开 Science</button>
-      <button class="link" id="doctorBtn" type="button">自检</button>
-      <button class="link" id="logsBtn" type="button">日志</button>
-      <button class="link" id="researchBtn" type="button">科研资源</button>
-      <button class="link" id="updateBtn" type="button">更新</button>
-      <button class="link" id="reportBtn" type="button">反馈</button>
+      <section class="card reveal">
+        <button class="btn primary hero" id="heroBtn" type="button">
+          <span class="hero-label">一键开始</span>
+          <span aria-hidden="true">→</span>
+        </button>
+        <button class="btn secondary wide" id="stopBtn" type="button">全部停止</button>
+      </section>
+
+      <section class="card runtime-card tp-only reveal">
+        <div class="runtime-hd">
+          <div>
+            <p class="card-kicker forest">runtime · 运行状态</p>
+            <span class="live-pill" id="connDot" title="实时连接">实时</span>
+          </div>
+          <span class="orb" id="brandDot" aria-hidden="true"></span>
+        </div>
+
+        <div class="flow-stack">
+          <div class="flow-row" id="stProxy">
+            <div class="flow-icon">⇄</div>
+            <div class="flow-body">
+              <p class="flow-mono" id="flowProxy">PROXY · :18991</p>
+              <p class="flow-sub">Anthropic 协议代理</p>
+            </div>
+            <span class="badge" id="badgeProxy">待机</span>
+          </div>
+
+          <div class="flow-sandbox" id="stSandbox">
+            <p class="sandbox-kicker">沙箱 · 数据不出域</p>
+            <div class="flow-row inner" id="stSandboxInner">
+              <div class="flow-icon">⬡</div>
+              <div class="flow-body">
+                <p class="flow-mono" id="flowSandbox">SANDBOX · :8990</p>
+                <p class="flow-sub">隔离 Claude Science 实例</p>
+              </div>
+              <span class="badge" id="badgeSandbox">待机</span>
+            </div>
+          </div>
+
+          <div class="flow-row" id="stUpstream">
+            <div class="flow-icon">◎</div>
+            <div class="flow-body">
+              <p class="flow-mono">UPSTREAM · API</p>
+              <p class="flow-sub">模型线路可达性</p>
+            </div>
+            <span class="badge" id="badgeUpstream">待机</span>
+          </div>
+        </div>
+
+        <a class="flow-cert" id="urlBar" href="#" target="_blank" rel="noopener" hidden>
+          <div>
+            <p class="cert-id url-text">—</p>
+            <p class="cert-sub">打开沙箱 Science 会话</p>
+          </div>
+          <span class="cert-arrow" aria-hidden="true">→</span>
+        </a>
+
+        <div class="cache-wrap" id="cacheBar" hidden>
+          <div class="cache"><div class="cache-fill" id="cacheFill"></div></div>
+          <p class="cache-txt" id="cacheTxt">缓存 0%</p>
+        </div>
+
+        <p class="msg" id="msg">就绪，随时可以启动</p>
+      </section>
+    </main>
+
+    <footer class="site-foot">
+      <div class="foot-brand">
+        <p class="foot-title">Lumen Science</p>
+        <p class="foot-zh">科研运行时</p>
+        <p class="foot-slogan">Research runtime, locally verified.</p>
+        <p class="foot-slogan-zh">科研沙箱本地运行，配置仅存本机。</p>
+      </div>
+      <nav class="foot-nav">
+        <button class="foot-link" id="openBrowserBtn" type="button">打开 Science</button>
+        <button class="foot-link" id="doctorBtn" type="button">自检</button>
+        <button class="foot-link" id="logsBtn" type="button">日志</button>
+        <button class="foot-link" id="researchBtn" type="button">科研资源</button>
+        <button class="foot-link" id="updateBtn" type="button">更新</button>
+        <button class="foot-link" id="reportBtn" type="button">反馈</button>
+      </nav>
+      <p class="foot-rule">science bridge · lumen · 全程本地</p>
     </footer>
 
     <dialog id="modal">
