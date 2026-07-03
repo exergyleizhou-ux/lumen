@@ -1,6 +1,25 @@
 # Changelog
 
-## v1.1.1 — Science GUI hardening + xAI geek UI
+## v1.1.2 — Science panel Oasis design + hardening
+
+> Patch release. Science bridge unchanged at API level; focuses on control
+> panel UX (Verdant Oasis design system) and GUI backend resilience.
+
+### Science GUI
+- **Oasis-aligned UI** — paper/ink palette, Instrument Serif + Geist fonts
+  (embedded), HeroPlate-style runtime flow, pill tabs, editorial footer.
+- **CSswitch removed from GUI** — panel no longer references CSswitch;
+  `lumen science migrate` CLI retained.
+
+### Backend
+- Mutate rate limiting, richer `/api/health`, static asset cache headers.
+- Concurrent stress tests for health/config/doctor/SSE endpoints.
+
+### Upgrade
+- Replace binary; restart `lumen science gui`. Hard-refresh browser (Cmd+Shift+R).
+- Ports unchanged: GUI 18990 · proxy 18991 · sandbox 8990.
+
+## v1.1.1 — Science GUI hardening + xAI geek UI (intermediate)
 
 - **GUI redesign** — pure black terminal aesthetic (`LUMEN://SCIENCE`), monospace,
   `[OK]`/`[WARN]` badges, telemetry strip, grid/scanline backdrop.
