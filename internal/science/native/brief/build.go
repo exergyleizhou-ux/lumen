@@ -1,7 +1,6 @@
 // Package brief synthesizes provenance-linked research briefs from native MCP tools.
 package brief
 
-
 import (
 	"fmt"
 	"strings"
@@ -51,13 +50,13 @@ type GEORow struct {
 
 // Input is structured evidence gathered before markdown synthesis.
 type Input struct {
-	Topic     string
-	Gathered  time.Time
-	Articles  []ArticleRow
-	Compounds []CompoundRow
+	Topic       string
+	Gathered    time.Time
+	Articles    []ArticleRow
+	Compounds   []CompoundRow
 	GEODatasets []GEORow
-	Datasets  []DatasetRow
-	BaseURL   string
+	Datasets    []DatasetRow
+	BaseURL     string
 }
 
 // Result is the full research brief output.
@@ -179,17 +178,17 @@ func Build(in Input) Result {
 		Markdown: b.String(),
 		Claims:   claims,
 		Provenance: map[string]any{
-			"topic":           in.Topic,
-			"article_count":   len(in.Articles),
-			"compound_count":  len(in.Compounds),
-			"geo_count":       len(in.GEODatasets),
-			"dataset_count":   len(in.Datasets),
-			"geo_source":      "lumen-mcp-geo",
-			"pubmed_source":   "lumen-mcp-pubmed",
-			"chembl_source":   "lumen-mcp-chembl",
-			"oasis_source":    "lumen-mcp-oasis",
-			"oasis_base_url":  in.BaseURL,
-			"gathered_at":     in.Gathered,
+			"topic":          in.Topic,
+			"article_count":  len(in.Articles),
+			"compound_count": len(in.Compounds),
+			"geo_count":      len(in.GEODatasets),
+			"dataset_count":  len(in.Datasets),
+			"geo_source":     "lumen-mcp-geo",
+			"pubmed_source":  "lumen-mcp-pubmed",
+			"chembl_source":  "lumen-mcp-chembl",
+			"oasis_source":   "lumen-mcp-oasis",
+			"oasis_base_url": in.BaseURL,
+			"gathered_at":    in.Gathered,
 		},
 		GeneratedAt: in.Gathered,
 	}

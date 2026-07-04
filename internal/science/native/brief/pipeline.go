@@ -1,6 +1,5 @@
 package brief
 
-
 import (
 	"context"
 	"encoding/json"
@@ -14,10 +13,10 @@ import (
 
 // Request parameters for brief generation.
 type Request struct {
-	Topic         string `json:"topic"`
-	DatasetQuery  string `json:"dataset_query,omitempty"`
-	MaxArticles   int    `json:"max_articles,omitempty"`
-	MaxDatasets   int    `json:"max_datasets,omitempty"`
+	Topic        string `json:"topic"`
+	DatasetQuery string `json:"dataset_query,omitempty"`
+	MaxArticles  int    `json:"max_articles,omitempty"`
+	MaxDatasets  int    `json:"max_datasets,omitempty"`
 }
 
 const pipelineTimeout = 60 * time.Second
@@ -74,13 +73,13 @@ func Generate(ctx context.Context, sciDir string, req Request) (Result, error) {
 	}
 
 	return Build(Input{
-		Topic:     topic,
-		Gathered:  time.Now().UTC(),
-		Articles:  articles,
+		Topic:       topic,
+		Gathered:    time.Now().UTC(),
+		Articles:    articles,
 		Compounds:   compounds,
 		GEODatasets: geoRows,
 		Datasets:    datasets,
-		BaseURL:   cfg.OasisBaseURL(),
+		BaseURL:     cfg.OasisBaseURL(),
 	}), nil
 }
 
@@ -142,11 +141,11 @@ func fetchDatasets(ctx context.Context, mgr *native.Manager, query string, max i
 	var payload struct {
 		Results struct {
 			Datasets []struct {
-				ID                string `json:"id"`
-				Title             string `json:"title"`
-				Domain            string `json:"domain,omitempty"`
-				AuthenticityBand  string `json:"authenticity_band,omitempty"`
-				QualityVerified   *bool  `json:"quality_verified,omitempty"`
+				ID               string `json:"id"`
+				Title            string `json:"title"`
+				Domain           string `json:"domain,omitempty"`
+				AuthenticityBand string `json:"authenticity_band,omitempty"`
+				QualityVerified  *bool  `json:"quality_verified,omitempty"`
 			} `json:"datasets"`
 		} `json:"results"`
 	}

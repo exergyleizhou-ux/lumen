@@ -1,7 +1,6 @@
 // Package mcp implements a minimal MCP 2024-11-05 stdio server for Lumen Science.
 package mcp
 
-
 import (
 	"bufio"
 	"encoding/json"

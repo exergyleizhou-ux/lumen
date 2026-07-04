@@ -8,15 +8,15 @@ import (
 	"lumen/internal/config"
 	sciconfig "lumen/internal/science/config"
 	"lumen/internal/science/guard"
-	"lumen/internal/science/research"
 	"lumen/internal/science/launcher"
 	"lumen/internal/science/paths"
 	"lumen/internal/science/proxy"
+	"lumen/internal/science/research"
 )
 
 // DoctorResult is one check line.
 type DoctorResult struct {
-	Level   string `json:"level"`   // pass, warn, fail
+	Level   string `json:"level"` // pass, warn, fail
 	Message string `json:"message"`
 }
 

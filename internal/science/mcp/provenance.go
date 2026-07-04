@@ -1,6 +1,5 @@
 package mcp
 
-
 import "time"
 
 // Provenance attaches retrieval metadata to tool results.

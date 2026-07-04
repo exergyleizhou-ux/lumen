@@ -122,13 +122,13 @@ func Import(sciDir string, force bool) (Report, error) {
 
 // Report summarizes a migration run.
 type Report struct {
-	Imported       bool     `json:"imported"`
-	Source         string   `json:"source"`
-	Provider       string   `json:"provider,omitempty"`
-	ProxyPort      int      `json:"proxy_port,omitempty"`
-	SandboxPort    int      `json:"sandbox_port,omitempty"`
-	Mode           string   `json:"mode,omitempty"`
-	SecretImported bool     `json:"secret_imported"`
+	Imported           bool     `json:"imported"`
+	Source             string   `json:"source"`
+	Provider           string   `json:"provider,omitempty"`
+	ProxyPort          int      `json:"proxy_port,omitempty"`
+	SandboxPort        int      `json:"sandbox_port,omitempty"`
+	Mode               string   `json:"mode,omitempty"`
+	SecretImported     bool     `json:"secret_imported"`
 	KeysImported       []string `json:"keys_imported,omitempty"`
 	V2ProfilesImported bool     `json:"v2_profiles_imported,omitempty"`
 }

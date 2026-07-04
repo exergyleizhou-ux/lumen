@@ -65,8 +65,8 @@ func (s *Server) replayAsSSE(w http.ResponseWriter, aresp map[string]any) {
 				"type":  "content_block_delta",
 				"index": idx,
 				"delta": map[string]any{
-					"type":          "input_json_delta",
-					"partial_json":  string(inputJSON),
+					"type":         "input_json_delta",
+					"partial_json": string(inputJSON),
 				},
 			})
 		default:

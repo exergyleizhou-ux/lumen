@@ -1,7 +1,6 @@
 // Package geo implements NCBI GEO DataSets clients for Lumen Science MCP.
 package geo
 
-
 import (
 	"encoding/json"
 	"fmt"

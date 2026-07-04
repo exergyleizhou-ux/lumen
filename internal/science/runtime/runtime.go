@@ -23,15 +23,15 @@ import (
 
 // Manager orchestrates proxy + sandbox lifecycle.
 type Manager struct {
-	SciDir       string
-	LumenCfg     *config.File
-	cfg          sciconfig.File
-	proxySrv     *proxy.Server
-	cancel       context.CancelFunc
-	proxyKeyFP   uint64
-	proxyProvider string
+	SciDir          string
+	LumenCfg        *config.File
+	cfg             sciconfig.File
+	proxySrv        *proxy.Server
+	cancel          context.CancelFunc
+	proxyKeyFP      uint64
+	proxyProvider   string
 	lastProxyAction ProxyAction
-	mu           sync.Mutex
+	mu              sync.Mutex
 }
 
 // State persisted across CLI invocations.
@@ -375,17 +375,17 @@ func (m *Manager) Status() map[string]any {
 		upstreamOK = launcher.TCPReachable(host, 443, 3000)
 	}
 	return map[string]any{
-		"provider":            m.cfg.Provider,
-		"mode":                m.cfg.Mode,
-		"proxy_port":          m.cfg.ProxyPort,
-		"sandbox_port":        m.cfg.SandboxPort,
-		"proxy_healthy":       proxyOK,
-		"sandbox_running":     sandboxOK,
-		"upstream_reachable":  upstreamOK,
-		"url":                 url,
+		"provider":              m.cfg.Provider,
+		"mode":                  m.cfg.Mode,
+		"proxy_port":            m.cfg.ProxyPort,
+		"sandbox_port":          m.cfg.SandboxPort,
+		"proxy_healthy":         proxyOK,
+		"sandbox_running":       sandboxOK,
+		"upstream_reachable":    upstreamOK,
+		"url":                   url,
 		"cache_session_hit_pct": cache["session_hit_rate_pct"],
 		"cache_last_hit_pct":    cache["last_hit_rate_pct"],
-		"cache_hit_tokens":    cache["cache_hit_tokens"],
+		"cache_hit_tokens":      cache["cache_hit_tokens"],
 	}
 }
 

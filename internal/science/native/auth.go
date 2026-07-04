@@ -1,7 +1,6 @@
 // Package native hosts Lumen-owned Science MCP fleet and Oasis auth policy.
 package native
 
-
 // AuthLevel describes required credentials for an Oasis marketplace tool.
 type AuthLevel int
 

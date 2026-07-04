@@ -15,14 +15,18 @@ const CurrentSchemaVersion = 2
 
 // Profile is a named provider configuration (cc-switch style).
 type Profile struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	TemplateID string `json:"template_id"`
-	BaseURL    string `json:"base_url,omitempty"`
-	APIKey     string `json:"api_key,omitempty"`
-	Model      string `json:"model,omitempty"`
-	CreatedAt  int64  `json:"created_at,omitempty"`
-	Notes      string `json:"notes,omitempty"`
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	TemplateID   string `json:"template_id"`
+	BaseURL      string `json:"base_url,omitempty"`
+	APIKey       string `json:"api_key,omitempty"`
+	Model        string `json:"model,omitempty"`
+	CreatedAt    int64  `json:"created_at,omitempty"`
+	Notes        string `json:"notes,omitempty"`
+	Icon         string `json:"icon,omitempty"`
+	IconColor    string `json:"icon_color,omitempty"`
+	Verified     bool   `json:"verified,omitempty"`
+	VerifiedHint string `json:"verified_hint,omitempty"`
 }
 
 // NewProfileID returns a random 32-hex id.

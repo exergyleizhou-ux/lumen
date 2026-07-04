@@ -35,9 +35,9 @@ func (s *CacheStats) Snapshot() map[string]int64 {
 		pct = h * 100 / total
 	}
 	return map[string]int64{
-		"requests":        s.Requests.Load(),
-		"cache_hit_tokens": h,
-		"cache_miss_tokens": m,
+		"requests":             s.Requests.Load(),
+		"cache_hit_tokens":     h,
+		"cache_miss_tokens":    m,
 		"cache_created_tokens": s.Created.Load(),
 		"session_hit_rate_pct": pct,
 		"last_hit_rate_pct":    s.LastHitPct.Load(),

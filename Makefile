@@ -4,7 +4,19 @@
 export GOTOOLCHAIN := local
 export GOFLAGS := -mod=mod
 
-.PHONY: check build vet test race lint clean facts eval
+.PHONY: check build vet test race lint clean facts eval science-check science-fmt science-vet science-test-quick
+
+science-fmt:
+	@test -z "$$(gofmt -l internal/science)" || (gofmt -l internal/science && exit 1)
+
+science-vet:
+	go vet ./internal/science/...
+
+science-test-quick:
+	bash scripts/test-science-quick.sh
+
+science-check: science-fmt science-vet science-test-quick
+	@echo "✓ science-check passed"
 
 ## check: the merge gate — compile, vet, and run all tests. Fail = red.
 ## (The eval harness's loader/scorer/aggregator are covered here in internal/eval;

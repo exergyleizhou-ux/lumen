@@ -51,10 +51,10 @@ func (m *Manager) SwitchProfile(profileID string) (SwitchProfileResult, error) {
 		return SwitchProfileResult{}, fmt.Errorf("上游探测失败: %w", err)
 	}
 	if code == 401 || code == 403 {
-		return SwitchProfileResult{}, fmt.Errorf("API key 无效或被拒 (HTTP %d): %s", code, hint)
+		return SwitchProfileResult{}, fmt.Errorf("切换未生效：API key 无效或被拒 (HTTP %d)，仍使用原配置", code)
 	}
 	if code < 200 || code >= 500 {
-		return SwitchProfileResult{}, fmt.Errorf("上游返回 HTTP %d: %s", code, hint)
+		return SwitchProfileResult{}, fmt.Errorf("切换未生效：上游 HTTP %d (%s)，仍使用原配置", code, hint)
 	}
 
 	// Commit: persist active pointer + legacy provider field for compatibility
@@ -81,22 +81,14 @@ func (m *Manager) SwitchProfile(profileID string) (SwitchProfileResult, error) {
 
 	return SwitchProfileResult{
 		ProfileID: profileID, ProfileName: p.Name,
-		Action: "activated",
+		Action:  "activated",
 		Message: fmt.Sprintf("已切换到 %s（上游 HTTP %d）", p.Name, code),
 	}, nil
 }
 
-// ProbeProfileKey validates a profile's key against upstream without switching.
-func ProbeProfileKey(sciDir, profileID string) (bool, string, error) {
-	cfg, err := sciconfig.Load(sciDir)
-	if err != nil {
-		return false, "", err
-	}
-	p := cfg.ProfileByID(profileID)
-	if p == nil {
-		return false, "", fmt.Errorf("profile not found")
-	}
-	resolved, err := resolveProfile(*p)
+// ProbeProfile validates a profile's credentials against upstream (no config write).
+func ProbeProfile(p sciconfig.Profile) (bool, string, error) {
+	resolved, err := resolveProfile(p)
 	if err != nil {
 		return false, "", err
 	}
@@ -114,4 +106,17 @@ func ProbeProfileKey(sciDir, profileID string) (bool, string, error) {
 	default:
 		return false, fmt.Sprintf("upstream HTTP %d: %s", code, hint), nil
 	}
+}
+
+// ProbeProfileKey validates a profile's key against upstream without switching.
+func ProbeProfileKey(sciDir, profileID string) (bool, string, error) {
+	cfg, err := sciconfig.Load(sciDir)
+	if err != nil {
+		return false, "", err
+	}
+	p := cfg.ProfileByID(profileID)
+	if p == nil {
+		return false, "", fmt.Errorf("profile not found")
+	}
+	return ProbeProfile(*p)
 }

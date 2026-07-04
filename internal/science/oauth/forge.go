@@ -136,20 +136,20 @@ func writeLogin(resolved, email string, preferOrg, preferAccount *string) (Forge
 	}
 	access := "sk-ant-virtual-" + hexEncode(randBytesMust(24))
 	blob := map[string]any{
-		"access_token":              access,
-		"refresh_token":             "",
-		"api_key":                   nil,
-		"token_expires_at":          "2099-01-01T00:00:00.000Z",
-		"provider":                  "claude_ai",
-		"scopes":                    "user:inference user:file_upload user:profile user:mcp_servers user:plugins",
-		"email":                     email,
-		"account_uuid":              accountUUID,
-		"subscription_type":         "max",
-		"rate_limit_tier":           nil,
-		"seat_tier":                 nil,
-		"org_uuid":                  orgUUID,
-		"billing_type":              nil,
-		"has_extra_usage_enabled":   false,
+		"access_token":            access,
+		"refresh_token":           "",
+		"api_key":                 nil,
+		"token_expires_at":        "2099-01-01T00:00:00.000Z",
+		"provider":                "claude_ai",
+		"scopes":                  "user:inference user:file_upload user:profile user:mcp_servers user:plugins",
+		"email":                   email,
+		"account_uuid":            accountUUID,
+		"subscription_type":       "max",
+		"rate_limit_tier":         nil,
+		"seat_tier":               nil,
+		"org_uuid":                orgUUID,
+		"billing_type":            nil,
+		"has_extra_usage_enabled": false,
 	}
 	plaintext, err := json.Marshal(blob)
 	if err != nil {

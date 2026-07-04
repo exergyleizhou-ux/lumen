@@ -1,6 +1,5 @@
 package c2d
 
-
 import (
 	"net/http"
 	"net/http/httptest"

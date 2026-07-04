@@ -124,6 +124,24 @@ func TestAPIConfigGetPut(t *testing.T) {
 	if cfgFile.ProxyPort != 19001 || cfgFile.SandboxPort != 19002 {
 		t.Fatalf("persisted ports: %+v", cfgFile)
 	}
+
+	req4, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/config", strings.NewReader(`{"tooluse_shim":"detect"}`))
+	req4.Header.Set("Content-Type", "application/json")
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp4.Body.Close()
+	if resp4.StatusCode != http.StatusOK {
+		t.Fatalf("tooluse_shim update %d", resp4.StatusCode)
+	}
+	cfgFile, err = sciconfig.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfgFile.ToolUseShim != "detect" {
+		t.Fatalf("tooluse_shim: %q", cfgFile.ToolUseShim)
+	}
 }
 
 func TestAPIDoctorJSONTags(t *testing.T) {

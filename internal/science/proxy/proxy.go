@@ -24,7 +24,7 @@ type Config struct {
 	UpstreamURL string // optional override
 	LogPath     string
 	Logger      func(string)
-	CacheBoost  bool // inject cache_control on system/tools for DeepSeek prefix cache
+	CacheBoost  bool            // inject cache_control on system/tools for DeepSeek prefix cache
 	ToolUseShim ToolUseShimMode // off (default) | detect | rewrite — DSML leak recovery
 }
 

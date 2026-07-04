@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.2.0-science-beta.1 — CSswitch parity + science-beta
+
+> Prerelease. Implements CSswitch v0.3.0-beta.2 bridge gaps while preserving
+> Lumen-only strengths (5-ship MCP fleet, Research Brief, Oasis OAuth).
+> Manual RM steps (RM-04/06/13) still required — see `docs/science/REAL_MACHINE_TEST.md`.
+
+### Bridge parity
+- **Multi-profile transactional switch** — upstream `/v1/messages` probe before commit; rollback on failure.
+- **Relay provider** — dual auth, `/v1/models` discovery, GUI model picker.
+- **DSML tool-use shim** — `off` / `detect` / `rewrite` (default `off`); e2e tests.
+- **Config path isolation** — symlink/canonicalize guards reject writes under real Science home.
+- **Truthful-save** — reject 401/403 keys on profile create/update; unverified otherwise.
+- **gitleaks + science-check** — Makefile target, workflow, findings docs.
+
+### Deliverables
+- `scripts/test-science-all.sh` — unified offline gate (≥120 tests).
+- `scripts/science/real_machine_guard.sh`, `rm-preflight.sh`, RM 18-item matrix doc.
+- `desktop/lumen-science/` — Tauri Acceptance app (`com.lumen.science.acceptance`).
+
+### Unchanged Lumen strengths
+- 5-ship native MCP fleet, Research Brief 4-source, Oasis embed, Go single-stack proxy.
+
 ## v1.1.2 — Science panel Oasis design + hardening
 
 > Patch release. Science bridge unchanged at API level; focuses on control

@@ -1,6 +1,5 @@
 package native
 
-
 import sciconfig "lumen/internal/science/config"
 
 // OasisEnv returns OASIS_* environment variables for MCP subprocesses.
@@ -30,4 +29,3 @@ func OasisEnvFromDir(sciDir string) ([]string, error) {
 	}
 	return OasisEnv(cfg), nil
 }
-

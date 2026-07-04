@@ -1,6 +1,5 @@
 package chembl
 
-
 import (
 	"context"
 	"encoding/json"

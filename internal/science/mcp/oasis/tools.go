@@ -1,6 +1,5 @@
 package oasis
 
-
 import (
 	"context"
 	"encoding/json"

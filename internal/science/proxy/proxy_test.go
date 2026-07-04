@@ -34,8 +34,8 @@ func TestResolveModel(t *testing.T) {
 func TestNormalizeAnthropicThinking(t *testing.T) {
 	spec := BuiltInProviders["deepseek"]
 	req := map[string]any{
-		"model": "claude-opus-4-8",
-		"thinking": map[string]any{"type": "auto"},
+		"model":       "claude-opus-4-8",
+		"thinking":    map[string]any{"type": "auto"},
 		"tool_choice": map[string]any{"type": "any"},
 	}
 	out := NormalizeAnthropicBody(spec, req)
@@ -61,7 +61,7 @@ func TestAnthropicToOpenAI_ToolUse(t *testing.T) {
 		"model": "claude-opus-4-8",
 		"messages": []any{
 			map[string]any{
-				"role": "user",
+				"role":    "user",
 				"content": "hi",
 			},
 		},
@@ -384,4 +384,3 @@ func TestBuildConfigFromLumen(t *testing.T) {
 		t.Fatalf("key=%q", out.APIKey)
 	}
 }
-

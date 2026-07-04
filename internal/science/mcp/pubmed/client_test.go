@@ -1,6 +1,5 @@
 package pubmed
 
-
 import (
 	"net/http"
 	"net/http/httptest"

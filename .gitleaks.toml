@@ -1,0 +1,21 @@
+title = "Lumen gitleaks config (science bridge)"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test fixtures and docs"
+paths = [
+  '''_test\.go$''',
+  '''\.env\.example$''',
+  '''docs/''',
+  '''test/''',
+  '''\.gitleaks\.toml$''',
+  '''findings/''',
+]
+
+[[rules]]
+id = "lumen-science-key-pattern"
+description = "Potential API key in science config"
+regex = '''(?i)(sk-[a-z0-9]{20,}|api[_-]?key\s*[:=]\s*['\"][^'\"]{8,})'''
+tags = ["key", "science"]

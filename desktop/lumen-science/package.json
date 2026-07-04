@@ -1,0 +1,13 @@
+{
+  "name": "lumen-science-desktop",
+  "private": true,
+  "version": "1.2.0-science-beta.1",
+  "type": "module",
+  "scripts": {
+    "tauri": "tauri",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

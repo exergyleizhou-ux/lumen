@@ -115,16 +115,16 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		st = mgr.Status()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":     "ok",
-		"panel":      "lumen://science",
-		"version":    a.version,
-		"healthy":    healthy,
-		"uptime_ms":  time.Since(a.startedAt).Milliseconds(),
-		"proxy":      st["proxy_healthy"],
-		"sandbox":    st["sandbox_running"],
-		"provider":   st["provider"],
-		"mode":       st["mode"],
-		"proxy_port": st["proxy_port"],
+		"status":       "ok",
+		"panel":        "lumen://science",
+		"version":      a.version,
+		"healthy":      healthy,
+		"uptime_ms":    time.Since(a.startedAt).Milliseconds(),
+		"proxy":        st["proxy_healthy"],
+		"sandbox":      st["sandbox_running"],
+		"provider":     st["provider"],
+		"mode":         st["mode"],
+		"proxy_port":   st["proxy_port"],
 		"sandbox_port": st["sandbox_port"],
 	})
 }
@@ -152,7 +152,7 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"sandbox_port": cfg.SandboxPort, "mode": cfg.Mode,
 			"cache_boost": cfg.CacheBoostEnabled(), "keys": keys,
 			"providers": providerList(),
-			"profiles": profiles, "active_profile_id": cfg.ActiveProfileID,
+			"profiles":  profiles, "active_profile_id": cfg.ActiveProfileID,
 			"tooluse_shim": cfg.ToolUseShim, "schema_version": cfg.SchemaVersion,
 		})
 	case http.MethodPut:
@@ -391,7 +391,7 @@ func lightsFromStatus(st map[string]any) map[string]any {
 		"proxy": light(proxyOK), "sandbox": light(sbxOK), "upstream": light(upOK),
 		"provider": st["provider"], "mode": st["mode"],
 		"proxy_port": st["proxy_port"], "sandbox_port": st["sandbox_port"],
-		"url": st["url"],
+		"url":                   st["url"],
 		"cache_session_hit_pct": st["cache_session_hit_pct"],
 		"cache_last_hit_pct":    st["cache_last_hit_pct"],
 		"cache_hit_tokens":      st["cache_hit_tokens"],
@@ -529,4 +529,3 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func writeErr(w http.ResponseWriter, code int, err error) {
 	writeJSON(w, code, map[string]any{"error": err.Error()})
 }
-

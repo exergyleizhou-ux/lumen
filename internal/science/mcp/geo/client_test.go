@@ -1,6 +1,5 @@
 package geo
 
-
 import (
 	"net/http"
 	"net/http/httptest"

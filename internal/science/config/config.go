@@ -51,9 +51,9 @@ type File struct {
 	ProxyPort       int                    `json:"proxy_port"`
 	SandboxPort     int                    `json:"sandbox_port"`
 	Secret          string                 `json:"secret,omitempty"`
-	Mode            string                 `json:"mode"` // "proxy" | "official"
+	Mode            string                 `json:"mode"`                   // "proxy" | "official"
 	ScienceMode     string                 `json:"science_mode,omitempty"` // hybrid | native | bridge
-	CacheBoost      *bool                  `json:"cache_boost,omitempty"` // DeepSeek prefix-cache: inject system/tools cache_control
+	CacheBoost      *bool                  `json:"cache_boost,omitempty"`  // DeepSeek prefix-cache: inject system/tools cache_control
 	ToolUseShim     string                 `json:"tooluse_shim,omitempty"` // off | detect | rewrite
 	Providers       map[string]ProviderCfg `json:"providers,omitempty"`
 	NativeMCP       NativeMCPCfg           `json:"native_mcp,omitempty"`
@@ -327,6 +327,9 @@ func MaskKey(key string) string {
 }
 
 func ensureDir(dir string) error {
+	if err := AssertConfigDirIsolated(dir); err != nil {
+		return err
+	}
 	if err := assertNotSymlink(dir); err != nil {
 		return err
 	}

@@ -36,7 +36,7 @@ func (a *API) handleTemplates(w http.ResponseWriter, r *http.Request) {
 			"api_format": t.APIFormat, "adapter": t.Adapter,
 			"base_url": t.BaseURL, "base_url_editable": t.BaseURLEditable,
 			"requires_model_override": t.RequiresModelOverride,
-			"builtin_models": t.BuiltinModels, "website_url": t.WebsiteURL,
+			"builtin_models":          t.BuiltinModels, "website_url": t.WebsiteURL,
 			"icon": t.Icon, "icon_color": t.IconColor,
 		})
 	}
@@ -92,9 +92,21 @@ func (a *API) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			ID: sciconfig.NewProfileID(), Name: name, TemplateID: tid,
 			BaseURL: strings.TrimSpace(body.BaseURL), APIKey: strings.TrimSpace(body.APIKey),
 			Model: strings.TrimSpace(body.Model), CreatedAt: time.Now().UnixMilli(),
+			Icon: tpl.Icon, IconColor: tpl.IconColor,
 		}
 		if p.BaseURL == "" {
 			p.BaseURL = tpl.BaseURL
+		}
+		if ok, hint, err := sciruntime.ProbeProfile(p); err == nil {
+			p.Verified = ok
+			p.VerifiedHint = hint
+			if !ok && (strings.Contains(hint, "401") || strings.Contains(hint, "403")) {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("API key 无效或被拒：%s", hint))
+				return
+			}
+			if !ok {
+				p.VerifiedHint = "未校验，激活时再验"
+			}
 		}
 		cfg, err := sciconfig.Update(a.sciDir, func(c *sciconfig.File) {
 			c.Profiles = append(c.Profiles, p)
@@ -117,34 +129,68 @@ func (a *API) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			APIKey  string `json:"api_key"`
 			BaseURL string `json:"base_url"`
 			Model   string `json:"model"`
+			Notes   string `json:"notes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		_, err := sciconfig.Update(a.sciDir, func(c *sciconfig.File) {
-			p := c.ProfileByID(body.ID)
-			if p == nil {
+		cfg, err := sciconfig.Load(a.sciDir)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		p := cfg.ProfileByID(body.ID)
+		if p == nil {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("profile not found"))
+			return
+		}
+		candidate := *p
+		if s := strings.TrimSpace(body.Name); s != "" {
+			candidate.Name = s
+		}
+		if s := strings.TrimSpace(body.APIKey); s != "" {
+			candidate.APIKey = s
+		}
+		if body.BaseURL != "" {
+			candidate.BaseURL = strings.TrimSpace(body.BaseURL)
+		}
+		if body.Model != "" {
+			candidate.Model = strings.TrimSpace(body.Model)
+		}
+		if body.Notes != "" {
+			candidate.Notes = strings.TrimSpace(body.Notes)
+		}
+		if strings.TrimSpace(body.APIKey) != "" {
+			ok, hint, err := sciruntime.ProbeProfile(candidate)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if s := strings.TrimSpace(body.Name); s != "" {
-				p.Name = s
+			if !ok {
+				if strings.Contains(hint, "401") || strings.Contains(hint, "403") {
+					writeErr(w, http.StatusBadRequest, fmt.Errorf("API key 无效或被拒：%s", hint))
+					return
+				}
+				candidate.Verified = false
+				candidate.VerifiedHint = "未校验，激活时再验"
+			} else {
+				candidate.Verified = true
+				candidate.VerifiedHint = hint
 			}
-			if s := strings.TrimSpace(body.APIKey); s != "" {
-				p.APIKey = s
+		}
+		_, err = sciconfig.Update(a.sciDir, func(c *sciconfig.File) {
+			dst := c.ProfileByID(body.ID)
+			if dst == nil {
+				return
 			}
-			if body.BaseURL != "" {
-				p.BaseURL = strings.TrimSpace(body.BaseURL)
-			}
-			if body.Model != "" {
-				p.Model = strings.TrimSpace(body.Model)
-			}
+			*dst = candidate
 		})
 		if err != nil {
 			writeErr(w, http.StatusBadRequest, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "verified": candidate.Verified, "hint": candidate.VerifiedHint})
 	case http.MethodDelete:
 		id := r.URL.Query().Get("id")
 		if id == "" {
@@ -181,7 +227,9 @@ func profileJSON(p sciconfig.Profile, active bool) map[string]any {
 		"id": p.ID, "name": p.Name, "template_id": p.TemplateID,
 		"base_url": p.BaseURL, "model": p.Model,
 		"key_masked": sciconfig.MaskKey(p.APIKey), "active": active,
-		"created_at": p.CreatedAt,
+		"created_at": p.CreatedAt, "notes": p.Notes,
+		"icon": p.Icon, "icon_color": p.IconColor,
+		"verified": p.Verified, "verified_hint": p.VerifiedHint,
 	}
 }
 

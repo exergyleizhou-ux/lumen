@@ -1,6 +1,5 @@
 package chembl
 
-
 import (
 	"net/http"
 	"net/http/httptest"

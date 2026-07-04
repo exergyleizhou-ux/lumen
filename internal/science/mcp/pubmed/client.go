@@ -1,7 +1,6 @@
 // Package pubmed implements NCBI E-utilities clients for Lumen Science MCP.
 package pubmed
 
-
 import (
 	"encoding/json"
 	"encoding/xml"

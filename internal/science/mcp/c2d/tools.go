@@ -1,6 +1,5 @@
 package c2d
 
-
 import (
 	"context"
 	"encoding/json"

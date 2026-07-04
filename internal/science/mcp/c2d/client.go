@@ -1,7 +1,6 @@
 // Package c2d implements Oasis C2D compute MCP tools (user token required).
 package c2d
 
-
 import (
 	"bytes"
 	"encoding/json"
@@ -29,8 +28,8 @@ func NewClient(baseURL, token string) *Client {
 		baseURL = "https://demo.oasisdata2026.xyz"
 	}
 	return &Client{
-		BaseURL: baseURL,
-		Token:   strings.TrimSpace(token),
+		BaseURL:    baseURL,
+		Token:      strings.TrimSpace(token),
 		HTTPClient: &http.Client{Timeout: 45 * time.Second},
 	}
 }
@@ -65,10 +64,10 @@ func (c *Client) SubmitJob(datasetID, algorithmID, entitlementID string, params 
 		return nil, err
 	}
 	body := map[string]any{
-		"dataset_id":    datasetID,
-		"algorithm_id":  algorithmID,
+		"dataset_id":     datasetID,
+		"algorithm_id":   algorithmID,
 		"entitlement_id": entitlementID,
-		"params":        params,
+		"params":         params,
 	}
 	return c.postJSON("/api/v1/compute/jobs", body)
 }

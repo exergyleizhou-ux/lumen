@@ -209,6 +209,7 @@ async function loadConfig() {
   renderProfiles();
   applyMode(cfg.mode === "official" ? "official" : "proxy");
   reflectProvider();
+  updateRelayModelUI();
   updateTelemetry({
     provider: cfg.provider,
     proxy_port: cfg.proxy_port,
@@ -250,9 +251,10 @@ async function probeProfile() {
 async function addProfile() {
   const key = $("keyInput")?.value?.trim();
   if (!key) { setMsg("请先填写 API key", "err"); return; }
-  const tpl = templates.find((t) => t.adapter === $("provider")?.value) || templates[0];
+  const tpl = currentTemplate() || templates[0];
   const name = prompt("配置名称", tpl?.name || "我的配置");
   if (!name) return;
+  const model = $("relayModelSelect")?.value || tpl?.builtin_models?.[0] || "";
   setBusy(true);
   try {
     await api("/api/profiles", {
@@ -262,6 +264,7 @@ async function addProfile() {
         template_id: tpl?.id || "deepseek",
         api_key: key,
         base_url: tpl?.base_url || "",
+        model,
       }),
     });
     await loadConfig();
@@ -301,6 +304,7 @@ function reflectProvider() {
   const masked = keys[p] || "";
   $("keyInput").value = "";
   $("keyInput").placeholder = masked ? `已存：${masked}` : "粘贴 key（仅存本地）";
+  updateRelayModelUI();
 }
 
 async function persistSettings() {
@@ -308,16 +312,61 @@ async function persistSettings() {
   const sandboxPort = parseInt($("sandboxPort").value, 10) || 8990;
   if (proxyPort === sandboxPort) throw new Error("代理与沙箱端口不能相同");
   if (proxyPort === 8765 || sandboxPort === 8765) throw new Error("端口 8765 保留给真实 Science 实例");
-  await api("/api/config", {
-    method: "PUT",
-    body: JSON.stringify({
-      provider: $("provider").value,
-      proxy_port: proxyPort,
-      sandbox_port: sandboxPort,
-      cache_boost: $("cacheBoost").checked,
-    }),
-  });
+  const body = {
+    provider: $("provider").value,
+    proxy_port: proxyPort,
+    sandbox_port: sandboxPort,
+    cache_boost: $("cacheBoost").checked,
+  };
+  if ($("tooluseShim")) body.tooluse_shim = $("tooluseShim").value || "off";
+  await api("/api/config", { method: "PUT", body: JSON.stringify(body) });
   updateTelemetry({ proxy_port: proxyPort, sandbox_port: sandboxPort });
+}
+
+function currentTemplate() {
+  const p = $("provider")?.value;
+  return templates.find((t) => t.adapter === p) || templates.find((t) => t.id === p) || null;
+}
+
+function isRelayTemplate(tpl) {
+  return tpl && (tpl.adapter === "relay" || tpl.requires_model_override);
+}
+
+function updateRelayModelUI() {
+  const tpl = currentTemplate();
+  const row = $("relayModelRow");
+  if (!row) return;
+  const show = isRelayTemplate(tpl);
+  row.hidden = !show;
+  const sel = $("relayModelSelect");
+  if (sel && tpl?.builtin_models?.length && !sel.options.length) {
+    sel.innerHTML = tpl.builtin_models.map((m) => `<option value="${m}">${m}</option>`).join("");
+  }
+}
+
+async function fetchRelayModels() {
+  const key = $("keyInput")?.value?.trim();
+  if (!key) { setMsg("请先填写 API key", "err"); return; }
+  const tpl = currentTemplate();
+  const base = tpl?.base_url || "";
+  if (!base) { setMsg("当前线路无 base URL", "err"); return; }
+  setBusy(true);
+  try {
+    const r = await api("/api/relay/models", {
+      method: "POST",
+      body: JSON.stringify({ base_url: base, api_key: key }),
+    });
+    const sel = $("relayModelSelect");
+    if (!sel) return;
+    const models = r.models || [];
+    if (!models.length) { setMsg("未返回模型列表", "err"); return; }
+    sel.innerHTML = models.map((m) => `<option value="${m.id}">${m.display_name || m.id}</option>`).join("");
+    setMsg(`已加载 ${models.length} 个模型`, "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function switchMode(m) {
@@ -723,6 +772,8 @@ $("provider")?.addEventListener("change", () => {
 $("proxyPort")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
 $("sandboxPort")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
 $("cacheBoost")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
+$("tooluseShim")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
+$("fetchRelayModelsBtn")?.addEventListener("click", fetchRelayModels);
 $("saveKeyBtn")?.addEventListener("click", saveKey);
 $("verifyKeyBtn")?.addEventListener("click", verifyKey);
 $("heroBtn")?.addEventListener("click", heroClick);

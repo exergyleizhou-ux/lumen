@@ -10,10 +10,10 @@ import (
 
 // ResolvedSpec bundles upstream spec + API key from active profile or legacy config.
 type ResolvedSpec struct {
-	Spec       proxy.ProviderSpec
-	APIKey     string
-	Adapter    string
-	ProfileID  string
+	Spec        proxy.ProviderSpec
+	APIKey      string
+	Adapter     string
+	ProfileID   string
 	ProfileName string
 }
 

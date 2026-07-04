@@ -1,6 +1,5 @@
 package pubmed
 
-
 import (
 	"context"
 	"encoding/json"

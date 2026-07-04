@@ -94,7 +94,7 @@ func Catalog(dataDir string) map[string]any {
 		"workspaces":      WorkspaceDirs,
 		"seed_examples":   SeedExamples,
 		"skills":          KnownSkills,
-		"note": "本地 runtime 包含全部科研 MCP/技能/示例；Anthropic 托管远程 MCP 由 bio-tools 本地替代。",
+		"note":            "本地 runtime 包含全部科研 MCP/技能/示例；Anthropic 托管远程 MCP 由 bio-tools 本地替代。",
 	}
 	if dataDir != "" {
 		if rep, err := Scan(dataDir); err == nil {

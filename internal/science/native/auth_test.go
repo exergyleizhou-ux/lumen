@@ -1,6 +1,5 @@
 package native
 
-
 import "testing"
 
 func TestRequiredAuthCombo(t *testing.T) {

@@ -1,6 +1,5 @@
 package geo
 
-
 import (
 	"context"
 	"encoding/json"

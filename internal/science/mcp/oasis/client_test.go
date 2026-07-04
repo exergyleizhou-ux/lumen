@@ -1,6 +1,5 @@
 package oasis
 
-
 import (
 	"net/http"
 	"net/http/httptest"

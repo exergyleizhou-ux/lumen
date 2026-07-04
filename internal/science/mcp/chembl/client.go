@@ -1,7 +1,6 @@
 // Package chembl implements ChEMBL REST clients for Lumen Science MCP.
 package chembl
 
-
 import (
 	"encoding/json"
 	"fmt"
@@ -28,17 +27,17 @@ type Client struct {
 // NewClient returns a ChEMBL HTTP client.
 func NewClient() *Client {
 	return &Client{
-		BaseURL: baseURL,
+		BaseURL:    baseURL,
 		HTTPClient: &http.Client{Timeout: 30 * time.Second},
 	}
 }
 
 // CompoundHit is a compact molecule row.
 type CompoundHit struct {
-	ChemblID   string  `json:"chembl_id"`
-	PrefName   string  `json:"pref_name,omitempty"`
-	MaxPhase   float64 `json:"max_phase,omitempty"`
-	MoleculeType string `json:"molecule_type,omitempty"`
+	ChemblID     string  `json:"chembl_id"`
+	PrefName     string  `json:"pref_name,omitempty"`
+	MaxPhase     float64 `json:"max_phase,omitempty"`
+	MoleculeType string  `json:"molecule_type,omitempty"`
 }
 
 // SearchCompounds finds molecules by name/synonym.

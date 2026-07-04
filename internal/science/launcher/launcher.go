@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"lumen/internal/science/research"
 	"lumen/internal/science/guard"
 	"lumen/internal/science/oauth"
+	"lumen/internal/science/research"
 )
 
 // Config for sandbox launch.
