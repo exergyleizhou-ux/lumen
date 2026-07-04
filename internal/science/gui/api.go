@@ -61,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/open-logs-dir", a.handleOpenLogsDir)
 	mux.HandleFunc("/api/quit-proxy", a.handleQuitProxy)
 	a.RegisterNative(mux)
+	a.RegisterProfiles(mux)
 }
 
 func (a *API) StopProxyOnly() {
@@ -142,11 +143,17 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 				keys[name] = sciconfig.MaskKey(p.Key)
 			}
 		}
+		profiles := make([]map[string]any, 0, len(cfg.Profiles))
+		for _, p := range cfg.Profiles {
+			profiles = append(profiles, profileJSON(p, p.ID == cfg.ActiveProfileID))
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"provider": cfg.Provider, "proxy_port": cfg.ProxyPort,
 			"sandbox_port": cfg.SandboxPort, "mode": cfg.Mode,
 			"cache_boost": cfg.CacheBoostEnabled(), "keys": keys,
 			"providers": providerList(),
+			"profiles": profiles, "active_profile_id": cfg.ActiveProfileID,
+			"tooluse_shim": cfg.ToolUseShim, "schema_version": cfg.SchemaVersion,
 		})
 	case http.MethodPut:
 		var body struct {
@@ -154,6 +161,7 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 			ProxyPort   int    `json:"proxy_port"`
 			SandboxPort int    `json:"sandbox_port"`
 			CacheBoost  *bool  `json:"cache_boost"`
+			ToolUseShim string `json:"tooluse_shim"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, err)
@@ -174,6 +182,9 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 				}
 				if body.CacheBoost != nil {
 					c.CacheBoost = body.CacheBoost
+				}
+				if s := strings.TrimSpace(body.ToolUseShim); s != "" {
+					c.ToolUseShim = s
 				}
 			})
 			if err == nil {

@@ -8,6 +8,9 @@ const FETCH_TIMEOUT_MS = 30000;
 let mode = "proxy";
 let busy = false;
 let keys = {};
+let profiles = [];
+let activeProfileId = "";
+let templates = [];
 let evtSrc = null;
 let sseBackoff = 2000;
 let modalLogWhich = "proxy";
@@ -164,7 +167,33 @@ function applyMode(m) {
   updateTelemetry({ mode: m });
 }
 
+async function loadTemplates() {
+  try {
+    const r = await api("/api/templates");
+    templates = r.templates || [];
+  } catch (_) {
+    templates = [];
+  }
+}
+
+function renderProfiles() {
+  const sel = $("profileSelect");
+  if (!sel) return;
+  if (!profiles.length) {
+    sel.innerHTML = `<option value="">（无配置 — 用下方线路+key）</option>`;
+    return;
+  }
+  sel.innerHTML = profiles
+    .map((p) => {
+      const star = p.active ? "★ " : "";
+      return `<option value="${p.id}">${star}${p.name} · ${p.template_id}</option>`;
+    })
+    .join("");
+  sel.value = activeProfileId || profiles[0]?.id || "";
+}
+
 async function loadConfig() {
+  await loadTemplates();
   const cfg = await api("/api/config");
   $("provider").innerHTML = (cfg.providers || [])
     .map((p) => `<option value="${p.id}">${p.label}</option>`)
@@ -173,7 +202,11 @@ async function loadConfig() {
   $("proxyPort").value = cfg.proxy_port ?? 18991;
   $("sandboxPort").value = cfg.sandbox_port ?? 8990;
   $("cacheBoost").checked = cfg.cache_boost !== false;
+  if ($("tooluseShim")) $("tooluseShim").value = cfg.tooluse_shim || "off";
   keys = cfg.keys || {};
+  profiles = cfg.profiles || [];
+  activeProfileId = cfg.active_profile_id || "";
+  renderProfiles();
   applyMode(cfg.mode === "official" ? "official" : "proxy");
   reflectProvider();
   updateTelemetry({
@@ -182,6 +215,84 @@ async function loadConfig() {
     sandbox_port: cfg.sandbox_port,
     mode: cfg.mode,
   });
+}
+
+async function switchProfile() {
+  const id = $("profileSelect")?.value;
+  if (!id) { setMsg("请先新建或选择配置", "err"); return; }
+  setBusy(true);
+  try {
+    const r = await api("/api/profiles/switch", { method: "POST", body: JSON.stringify({ id }) });
+    activeProfileId = id;
+    await loadConfig();
+    setMsg(r.message || "已切换配置", "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function probeProfile() {
+  const id = $("profileSelect")?.value;
+  if (!id) { setMsg("请选择配置", "err"); return; }
+  setBusy(true);
+  try {
+    const r = await api("/api/profiles/probe", { method: "POST", body: JSON.stringify({ id }) });
+    setMsg(r.ok ? `✓ ${r.hint}` : `✗ ${r.hint}`, r.ok ? "ok" : "err");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function addProfile() {
+  const key = $("keyInput")?.value?.trim();
+  if (!key) { setMsg("请先填写 API key", "err"); return; }
+  const tpl = templates.find((t) => t.adapter === $("provider")?.value) || templates[0];
+  const name = prompt("配置名称", tpl?.name || "我的配置");
+  if (!name) return;
+  setBusy(true);
+  try {
+    await api("/api/profiles", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        template_id: tpl?.id || "deepseek",
+        api_key: key,
+        base_url: tpl?.base_url || "",
+      }),
+    });
+    await loadConfig();
+    setMsg(`已创建配置「${name}」`, "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function checkUpdate() {
+  setBusy(true);
+  try {
+    const r = await api("/api/check-update");
+    if (!r.ok) {
+      setMsg(r.error || "检查更新失败", "err");
+      return;
+    }
+    if (r.update_available) {
+      setMsg(`有新版本 ${r.latest}（当前 ${r.current}）`, "ok");
+      if (r.url) window.open(r.url, "_blank");
+    } else {
+      setMsg(`已是最新（${r.current}）`, "ok");
+    }
+  } catch (e) {
+    if (window._releaseURL) window.open(window._releaseURL, "_blank");
+    else setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function reflectProvider() {
@@ -626,7 +737,10 @@ $("openBrowserBtn")?.addEventListener("click", () =>
 $("doctorBtn")?.addEventListener("click", runDoctor);
 $("logsBtn")?.addEventListener("click", showLogs);
 $("researchBtn")?.addEventListener("click", showResearch);
-$("updateBtn")?.addEventListener("click", () => { if (window._releaseURL) window.open(window._releaseURL, "_blank"); });
+$("switchProfileBtn")?.addEventListener("click", switchProfile);
+$("probeProfileBtn")?.addEventListener("click", probeProfile);
+$("addProfileBtn")?.addEventListener("click", addProfile);
+$("updateBtn")?.addEventListener("click", checkUpdate);
 $("reportBtn")?.addEventListener("click", () => { if (window._issuesURL) window.open(window._issuesURL, "_blank"); });
 $("modalClose")?.addEventListener("click", () => $("modal").close());
 

@@ -25,9 +25,15 @@ func (m *Manager) OneClick(openBrowser bool) (url, action, msg string, err error
 	}
 	switch action {
 	case "reopened":
-		msg = "沙箱已在运行，已重新打开浏览器"
-	default:
+		if m.lastProxyAction == ProxyRestarted {
+			msg = "沙箱已在运行；代理已用新配置重启，Science 沿用不变"
+		} else {
+			msg = "沙箱已在运行，已重新打开"
+		}
+	case "started":
 		msg = "Science 沙箱已启动"
+	default:
+		msg = "Science 已就绪"
 	}
 	if openBrowser {
 		if err := launcher.OpenBrowser(url); err != nil {

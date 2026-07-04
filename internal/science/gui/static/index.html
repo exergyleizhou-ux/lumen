@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science · 绿洲 Oasis</title><!-- -->
   <link rel="stylesheet" href="assets/fonts.css" />
-  <link rel="stylesheet" href="assets/app.css?v=10" />
+  <link rel="stylesheet" href="assets/app.css?v=11" />
 </head>
 <body>
   <div class="shell" id="shell">
@@ -45,10 +45,24 @@
 
       <div class="settings-grid">
         <div class="controls-grid">
+          <section class="card tp-only reveal" id="profilesCard">
+            <p class="card-kicker">profiles · 多配置</p>
+            <label class="field">
+              <span class="field-label">当前配置</span>
+              <select id="profileSelect"></select>
+            </label>
+            <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;">
+              <button class="btn secondary compact" id="switchProfileBtn" type="button">切换</button>
+              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测 key</button>
+              <button class="btn ghost compact" id="addProfileBtn" type="button">新建</button>
+            </div>
+            <p class="field-hint" id="profileHint" style="font-size:12px;color:#5f5f68;margin:8px 0 0;">cc-switch 式命名配置，切换前上游探活</p>
+          </section>
+
           <section class="card tp-only reveal">
             <p class="card-kicker">route</p>
             <label class="field">
-              <span class="field-label">模型线路</span>
+              <span class="field-label">模型线路（兼容）</span>
               <select id="provider"></select>
             </label>
           </section>
@@ -73,6 +87,14 @@
             <label class="field"><span class="field-label">沙箱端口</span><input id="sandboxPort" inputmode="numeric" /></label>
           </div>
           <label class="chk"><input type="checkbox" id="cacheBoost" checked /> DeepSeek 缓存增强</label>
+          <label class="field" style="margin-top:10px;">
+            <span class="field-label">DSML 工具兜底</span>
+            <select id="tooluseShim">
+              <option value="off">off（默认，零回归）</option>
+              <option value="detect">detect（遥测）</option>
+              <option value="rewrite">rewrite（修复泄漏）</option>
+            </select>
+          </label>
         </details>
 
         <section class="card reveal">
@@ -217,6 +239,6 @@
       <pre id="modalBody"></pre>
     </dialog>
   </div>
-  <script src="assets/app.js?v=10" defer></script>
+  <script src="assets/app.js?v=11" defer></script>
 </body>
 </html>

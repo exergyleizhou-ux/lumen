@@ -44,16 +44,20 @@ type OasisCfg struct {
 
 // File is the persisted science bridge configuration.
 type File struct {
-	Provider    string                 `json:"provider"`
-	ProxyPort   int                    `json:"proxy_port"`
-	SandboxPort int                    `json:"sandbox_port"`
-	Secret      string                 `json:"secret,omitempty"`
-	Mode        string                 `json:"mode"` // "proxy" | "official"
-	ScienceMode string                 `json:"science_mode,omitempty"` // hybrid | native | bridge
-	CacheBoost  *bool                  `json:"cache_boost,omitempty"` // DeepSeek prefix-cache: inject system/tools cache_control
-	Providers   map[string]ProviderCfg `json:"providers,omitempty"`
-	NativeMCP   NativeMCPCfg           `json:"native_mcp,omitempty"`
-	Oasis       OasisCfg               `json:"oasis,omitempty"`
+	SchemaVersion   int                    `json:"schema_version,omitempty"`
+	Profiles        []Profile              `json:"profiles,omitempty"`
+	ActiveProfileID string                 `json:"active_profile_id,omitempty"`
+	Provider        string                 `json:"provider"`
+	ProxyPort       int                    `json:"proxy_port"`
+	SandboxPort     int                    `json:"sandbox_port"`
+	Secret          string                 `json:"secret,omitempty"`
+	Mode            string                 `json:"mode"` // "proxy" | "official"
+	ScienceMode     string                 `json:"science_mode,omitempty"` // hybrid | native | bridge
+	CacheBoost      *bool                  `json:"cache_boost,omitempty"` // DeepSeek prefix-cache: inject system/tools cache_control
+	ToolUseShim     string                 `json:"tooluse_shim,omitempty"` // off | detect | rewrite
+	Providers       map[string]ProviderCfg `json:"providers,omitempty"`
+	NativeMCP       NativeMCPCfg           `json:"native_mcp,omitempty"`
+	Oasis           OasisCfg               `json:"oasis,omitempty"`
 }
 
 // Default returns factory defaults.
@@ -85,6 +89,17 @@ var tmpSeq atomic.Uint64
 
 // Load reads config.json; missing file yields defaults.
 func Load(dir string) (File, error) {
+	f, err := loadRaw(dir)
+	if err != nil {
+		return File{}, err
+	}
+	if err := EnsureMigrated(dir, &f); err != nil {
+		return File{}, err
+	}
+	return f, nil
+}
+
+func loadRaw(dir string) (File, error) {
 	if err := assertNotSymlink(dir); err != nil {
 		return File{}, err
 	}
@@ -99,7 +114,6 @@ func Load(dir string) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
-	// CSswitch-style: after read, always reset to 0600 even if was wider.
 	_ = os.Chmod(path, 0o600)
 	var f File
 	if err := json.Unmarshal(data, &f); err != nil {
@@ -122,6 +136,9 @@ func Load(dir string) (File, error) {
 	}
 	if f.Providers == nil {
 		f.Providers = map[string]ProviderCfg{}
+	}
+	if f.SchemaVersion == 0 {
+		f.SchemaVersion = 1
 	}
 	return f, nil
 }
@@ -194,6 +211,14 @@ func Validate(f File) error {
 	default:
 		return fmt.Errorf("science_mode must be hybrid, native, or bridge")
 	}
+	switch strings.ToLower(strings.TrimSpace(f.ToolUseShim)) {
+	case "", "off", "detect", "rewrite":
+	default:
+		return fmt.Errorf("tooluse_shim must be off, detect, or rewrite")
+	}
+	if f.SchemaVersion > CurrentSchemaVersion {
+		return fmt.Errorf("config schema v%d is newer than this binary supports (v%d)", f.SchemaVersion, CurrentSchemaVersion)
+	}
 	return nil
 }
 
@@ -201,9 +226,16 @@ func Validate(f File) error {
 func Update(dir string, fn func(*File)) (File, error) {
 	writeMu.Lock()
 	defer writeMu.Unlock()
-	f, err := Load(dir)
+	f, err := loadRaw(dir)
 	if err != nil {
 		return File{}, err
+	}
+	if f.SchemaVersion < CurrentSchemaVersion {
+		migrated := applyMigration(f)
+		if err := persistMigration(dir, migrated); err != nil {
+			return File{}, err
+		}
+		f = migrated
 	}
 	fn(&f)
 	if err := Validate(f); err != nil {

@@ -1,6 +1,6 @@
 # CSswitch Learnings & Ports to Lumen (extreme optimization)
 
-Date: 2026-07-03
+Date: 2026-07-04 (updated — v0.3.0-beta.2 ports)
 Source: https://github.com/SuperJJ007/CSswitch.git (cloned /tmp/csswitch)
 Focus: recent bug fixes (v0.2.1 login defects, v0.2.0 idempotency, #3 401/403 hang) + all superior details in security, proxy, process, docs, tests.
 
@@ -81,6 +81,20 @@ No remaining same bugs. Lumen (Go science bridge + proxy) had absorbed core befo
 - Cleaned stray root 'lumen' build artifact; fresh prebuilt goal 6/6 + doctor verifications.
 - Verified no matching login/401 bugs remained; many details already superior or matched in Go rewrite.
 - All per superpowers: systematic (root cause via git/reads), TDD (test added first-ish, run observed), verification (build/test before/after).
+
+## v0.3.0-beta.2 Ports (2026-07-04 session)
+
+| CSswitch feature | Lumen port | Location |
+|------------------|------------|----------|
+| DSML shim off/detect/rewrite | Go native, default off | `internal/science/proxy/dsml*.go`, env `LUMEN_TOOLUSE_SHIM` |
+| Multi-profile cc-switch style | schema v2 + transactional switch | `internal/science/config/profiles.go`, `runtime/profile_switch.go` |
+| Relay provider + /v1/models | `FetchRelayModels`, dual auth | `internal/science/proxy/relay.go` |
+| Native key upstream probe before commit | `ProbeUpstreamKey` | `proxy/relay.go`, profile switch |
+| Check updates (GitHub Releases) | `/api/check-update` | `gui/api_profiles.go` |
+| Switch UX four-state messages | proxy restart vs reopen | `runtime/reload.go` |
+| CSswitch v2 config import | `ImportCSSwitchV2` | `config/profiles.go`, `migrate/csswitch.go` |
+
+Lumen retains superiority: Go single-stack proxy (no Python), 5-ship native MCP fleet, Research Brief, Oasis OAuth embed, cache boost, VPS deploy verify.
 
 ## Recommendations for Further Extreme
 - Port CSswitch test_proxy_connect.py style asserts to lumen proxy_test.

@@ -27,15 +27,18 @@ type ProviderSpec struct {
 	ModelCaps    map[string]int
 	DefaultCap   int
 	DefaultModel string
+	DsmlCapable  bool // DeepSeek may leak DSML tool calls as plain text
+	DualAuth     bool // relay: send x-api-key + Authorization Bearer
 }
 
 // BuiltInProviders maps CLI/config provider names to proxy presets.
 var BuiltInProviders = map[string]ProviderSpec{
 	"deepseek": {
-		Name:   "deepseek",
-		Mode:   ModeAnthropic,
-		URL:    "https://api.deepseek.com/anthropic/v1/messages",
-		KeyEnv: "DEEPSEEK_API_KEY",
+		Name:        "deepseek",
+		Mode:        ModeAnthropic,
+		URL:         "https://api.deepseek.com/anthropic/v1/messages",
+		KeyEnv:      "DEEPSEEK_API_KEY",
+		DsmlCapable: true,
 		Models: []ModelEntry{
 			{ID: "claude-opus-4-8", DisplayName: "DeepSeek V4 Pro"},
 			{ID: "claude-haiku-4-5", DisplayName: "DeepSeek V4 Flash"},

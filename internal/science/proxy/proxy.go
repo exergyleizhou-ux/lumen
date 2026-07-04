@@ -25,6 +25,7 @@ type Config struct {
 	LogPath     string
 	Logger      func(string)
 	CacheBoost  bool // inject cache_control on system/tools for DeepSeek prefix cache
+	ToolUseShim ToolUseShimMode // off (default) | detect | rewrite — DSML leak recovery
 }
 
 // Server is an Anthropic-compatible HTTP proxy for Claude Science.
@@ -252,11 +253,15 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, ctx context.Context, raw
 	s.log(fmt.Sprintf("POST /v1/messages %s->%s stream=%v tools=%d (raw-preserve, %s)",
 		src, target, stream, len(tools), s.spec.Name))
 
-	headers := map[string]string{
-		"x-api-key":         s.cfg.APIKey,
-		"content-type":      "application/json",
-		"anthropic-version": "2023-06-01",
+	headers := upstreamHeaders(s.spec, s.cfg.APIKey)
+	headers["content-type"] = "application/json"
+
+	shimMode := s.cfg.ToolUseShim
+	if shimMode == "" {
+		shimMode = ResolveToolUseShim(s.spec, "")
 	}
+	knownTools := ToolsSchemaFromRequest(areq)
+	shimOn := len(knownTools) > 0 && (shimMode == ShimDetect || shimMode == ShimRewrite)
 
 	if stream {
 		resp, first, err := s.upstream.OpenStream(ctx, s.spec.URL, payload, headers)
@@ -269,18 +274,30 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, ctx context.Context, raw
 		w.Header().Set("Cache-Control", "no-cache")
 		w.WriteHeader(http.StatusOK)
 		flusher, _ := w.(http.Flusher)
-		if len(first) > 0 {
-			s.CacheStats.ScanSSEChunk(first)
-			if _, err := w.Write(first); err == nil && flusher != nil {
-				flusher.Flush()
-			}
+		var rw *DsmlStreamRewriter
+		var det *DsmlDetector
+		if shimOn && shimMode == ShimRewrite {
+			rw = NewDsmlStreamRewriter(knownTools, s.cfg.AuthSecret)
 		}
-		buf := make([]byte, 4096)
-		for {
-			n, readErr := resp.Body.Read(buf)
-			if n > 0 {
-				s.CacheStats.ScanSSEChunk(buf[:n])
-				if _, werr := w.Write(buf[:n]); werr != nil {
+		if shimOn && shimMode == ShimDetect {
+			det = NewDsmlDetector()
+		}
+		writeChunk := func(chunk []byte) {
+			if len(chunk) == 0 {
+				return
+			}
+			s.CacheStats.ScanSSEChunk(chunk)
+			var out []byte
+			if rw != nil {
+				out = rw.Feed(chunk)
+			} else if det != nil {
+				det.Feed(chunk)
+				out = chunk
+			} else {
+				out = chunk
+			}
+			if len(out) > 0 {
+				if _, werr := w.Write(out); werr != nil {
 					s.log(fmt.Sprintf("  !! stream write error: %v", werr))
 					return
 				}
@@ -288,15 +305,36 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, ctx context.Context, raw
 					flusher.Flush()
 				}
 			}
+		}
+		if len(first) > 0 {
+			writeChunk(first)
+		}
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				writeChunk(buf[:n])
+			}
 			if readErr != nil {
 				if readErr != io.EOF {
 					s.log(fmt.Sprintf("  !! stream interrupted: %v", readErr))
 					s.writeSSEErrorAndTerminate(w, readErr.Error())
+				} else if rw != nil {
+					if tail := rw.Finalize(); len(tail) > 0 {
+						s.CacheStats.ScanSSEChunk(tail)
+						_, _ = w.Write(tail)
+						if flusher != nil {
+							flusher.Flush()
+						}
+					}
 				}
 				break
 			}
 		}
-		s.log(fmt.Sprintf("  <- %s stream OK cache_hit=%d%%", s.spec.Name, s.CacheStats.Snapshot()["last_hit_rate_pct"]))
+		if shimOn && shimMode == ShimDetect && det != nil && det.found {
+			s.log("  <- DSML detect: leak marker seen in stream")
+		}
+		s.log(fmt.Sprintf("  <- %s stream OK cache_hit=%d%% shim=%s", s.spec.Name, s.CacheStats.Snapshot()["last_hit_rate_pct"], shimMode))
 		return
 	}
 
@@ -304,6 +342,19 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, ctx context.Context, raw
 	if err != nil {
 		s.writeUpstreamError(w, err, false)
 		return
+	}
+	if shimOn && shimMode == ShimRewrite {
+		rewritten := RewriteNonstreamBody(data, knownTools, s.cfg.AuthSecret)
+		if len(rewritten) != len(data) || string(rewritten) != string(data) {
+			s.log("  <- DSML rewrite: recovered tool_use from text leak")
+			data = rewritten
+		}
+	} else if shimOn && shimMode == ShimDetect {
+		det := NewDsmlDetector()
+		det.Feed(data)
+		if det.found {
+			s.log("  <- DSML detect: leak marker seen in non-stream body")
+		}
 	}
 	var respObj map[string]any
 	if json.Unmarshal(data, &respObj) == nil {
@@ -317,7 +368,7 @@ func (s *Server) handleAnthropic(w http.ResponseWriter, ctx context.Context, raw
 	w.Header().Set("Content-Type", ct)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
-	s.log(fmt.Sprintf("  <- %s non-stream OK cache_hit=%d%%", s.spec.Name, s.CacheStats.Snapshot()["last_hit_rate_pct"]))
+	s.log(fmt.Sprintf("  <- %s non-stream OK cache_hit=%d%% shim=%s", s.spec.Name, s.CacheStats.Snapshot()["last_hit_rate_pct"], shimMode))
 }
 
 func (s *Server) handleOpenAI(w http.ResponseWriter, ctx context.Context, areq map[string]any) {

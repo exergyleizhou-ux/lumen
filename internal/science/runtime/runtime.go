@@ -72,8 +72,11 @@ func (m *Manager) EnsureSecret() (string, error) {
 	return secret, nil
 }
 
-// ResolveAPIKey from science config, lumen.toml, or env.
+// ResolveAPIKey from active profile, science config, lumen.toml, or env.
 func (m *Manager) ResolveAPIKey() (string, error) {
+	if resolved, err := ResolveActiveSpec(m.cfg); err == nil && resolved.APIKey != "" {
+		return resolved.APIKey, nil
+	}
 	if k := m.cfg.KeyFor(m.cfg.Provider); k != "" {
 		return k, nil
 	}
@@ -103,8 +106,15 @@ func (m *Manager) StartProxy() (ProxyAction, error) {
 	if err != nil {
 		return "", err
 	}
+	resolved, err := ResolveActiveSpec(m.cfg)
+	if err != nil {
+		return "", err
+	}
 	keyFP := KeyFingerprint(apiKey)
-	provider := m.cfg.Provider
+	provider := resolved.Adapter
+	if resolved.ProfileID != "" {
+		provider = resolved.ProfileID
+	}
 
 	m.mu.Lock()
 	if m.proxySrv != nil &&
@@ -123,24 +133,23 @@ func (m *Manager) StartProxy() (ProxyAction, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	spec, ok := proxy.LookupProvider(provider)
-	if !ok {
-		return "", fmt.Errorf("unknown provider %q", provider)
-	}
+	spec := resolved.Spec
 	if err := guard.AssertPortSafe(m.cfg.ProxyPort); err != nil {
 		return "", err
 	}
 	if err := guard.AssertPortsDistinct(m.cfg.ProxyPort, m.cfg.SandboxPort); err != nil {
 		return "", err
 	}
+	shim := proxy.ToolUseShimMode(strings.ToLower(strings.TrimSpace(m.cfg.ToolUseShim)))
 	addr := fmt.Sprintf("127.0.0.1:%d", m.cfg.ProxyPort)
 	srv, err := proxy.New(proxy.Config{
-		Provider:   spec,
-		APIKey:     apiKey,
-		Addr:       addr,
-		AuthSecret: secret,
-		LogPath:    paths.ProxyLog(m.SciDir),
-		CacheBoost: m.cfg.CacheBoostEnabled(),
+		Provider:    spec,
+		APIKey:      apiKey,
+		Addr:        addr,
+		AuthSecret:  secret,
+		LogPath:     paths.ProxyLog(m.SciDir),
+		CacheBoost:  m.cfg.CacheBoostEnabled(),
+		ToolUseShim: shim,
 	})
 	if err != nil {
 		return "", err

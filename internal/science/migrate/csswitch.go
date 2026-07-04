@@ -111,6 +111,11 @@ func Import(sciDir string, force bool) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
+	if imported, err := sciconfig.ImportCSSwitchV2(sciDir); err != nil {
+		return rep, err
+	} else if imported {
+		rep.V2ProfilesImported = true
+	}
 	rep.Imported = true
 	return rep, nil
 }
@@ -124,7 +129,8 @@ type Report struct {
 	SandboxPort    int      `json:"sandbox_port,omitempty"`
 	Mode           string   `json:"mode,omitempty"`
 	SecretImported bool     `json:"secret_imported"`
-	KeysImported   []string `json:"keys_imported,omitempty"`
+	KeysImported       []string `json:"keys_imported,omitempty"`
+	V2ProfilesImported bool     `json:"v2_profiles_imported,omitempty"`
 }
 
 func readCSSwitch(path string) (CSSwitchConfig, error) {
