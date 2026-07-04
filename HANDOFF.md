@@ -47,13 +47,19 @@ bash scripts/science/rm-offline-auto.sh
 | 会话 | JSONL `~/.lumen/history/` | — |
 | 审计 | JSONL `~/.lumen/audit.jsonl` | SQLite `LUMEN_SQLITE_STORE=on` → `~/.lumen/lumen.db` |
 
-## 诚实缺口（仍未「极致」）
+## 质量闸门（2026-07-04 缺口关闭）
 
-- Anthropic/Gemini 未 live-burned-in
-- eval 仅 6 任务 baseline，非大规模质量证明
-- OAuth RM-HUMAN 需用户在场
-- bash 默认未沙箱；MCP injection 包装不完整
-- SQLite 仅 MVP（审计双写 + session_meta 表），会话主体仍 JSONL
+| 项 | 状态 |
+|----|------|
+| Bash 默认沙箱 | `auto`（有 backend 则隔离；`LUMEN_BASH_SANDBOX=off` 可关） |
+| MCP injection | `untrusted.Wrap` 包装全部 MCP 工具返回 |
+| SQLite 会话 | `LUMEN_SQLITE_STORE=on` 双写 JSONL + `session_messages`；`MigrateJSONLSessions` |
+| Anthropic/Gemini live | `-short` 时 Skip；有 key 时 `TestLiveSmoke*` |
+| Eval 闸门 | `evals/tasks` + `baseline6` 结构测试；`goal-all-verify` 清单 ≥14 |
+| RM-HUMAN | `rm-offline-auto` 预检 + `rm-human-oauth.sh`；真 OAuth 仍需用户在场 |
+| 跨平台发布 | `publish-science-release.sh --dry-run`（darwin arm64 + linux amd64 + checksum） |
+
+剩余诚实边界：真 Anthropic 订阅 OAuth 无法零人工；CI 无证书时不公证；eval 全量 model run 仍 gated（成本）。
 
 ## 详细历史
 

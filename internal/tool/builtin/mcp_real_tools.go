@@ -11,7 +11,16 @@ import (
 
 	"lumen/internal/mcplife"
 	"lumen/internal/tool"
+	"lumen/internal/untrusted"
 )
+
+// wrapMCPAgentOutput wraps third-party MCP payloads before they enter agent context.
+func wrapMCPAgentOutput(source, content string) string {
+	if content == "" {
+		return content
+	}
+	return untrusted.Wrap("mcp:"+source, content)
+}
 
 // ── Shared MCP clients ─────────────────────────────────────────────
 
@@ -91,8 +100,9 @@ func (t *MCPConnectTool) Execute(ctx context.Context, args json.RawMessage) (str
 	resources, _ := client.ListResources()
 	prompts, _ := client.ListPrompts()
 
-	return fmt.Sprintf("Connected to MCP server %q.\nTools: %d, Resources: %d, Prompts: %d\nUse mcp_list_tools to see available tools.",
-		key, len(tools), len(resources), len(prompts)), nil
+	body := fmt.Sprintf("Connected to MCP server %q.\nTools: %d, Resources: %d, Prompts: %d\nUse mcp_list_tools to see available tools.",
+		key, len(tools), len(resources), len(prompts))
+	return wrapMCPAgentOutput(key, body), nil
 }
 
 type MCPListToolsTool struct{}
@@ -131,7 +141,11 @@ func (t *MCPListToolsTool) Execute(ctx context.Context, args json.RawMessage) (s
 	for _, t := range tools {
 		fmt.Fprintf(&sb, "  • %s — %s\n", t.Name, truncDesc(t.Description, 80))
 	}
-	return sb.String(), nil
+	src := p.Server
+	if src == "" {
+		src = "all-servers"
+	}
+	return wrapMCPAgentOutput(src, sb.String()), nil
 }
 
 type MCPCallToolTool struct{}
@@ -157,8 +171,8 @@ func (t *MCPCallToolTool) Execute(ctx context.Context, args json.RawMessage) (st
 	for _, c := range result.Content {
 		if c.Type == "text" { sb.WriteString(c.Text) } else { fmt.Fprintf(&sb, "[%s: %s]\n", c.Type, c.Text) }
 	}
-	if sb.Len() == 0 { return "(no output)", nil }
-	return sb.String(), nil
+	if sb.Len() == 0 { return wrapMCPAgentOutput(p.Server+":"+p.Tool, "(no output)"), nil }
+	return wrapMCPAgentOutput(p.Server+":"+p.Tool, sb.String()), nil
 }
 
 type MCPListResourcesTool struct{}
@@ -178,7 +192,11 @@ func (t *MCPListResourcesTool) Execute(ctx context.Context, args json.RawMessage
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d resources:\n", len(resources))
 	for _, r := range resources { fmt.Fprintf(&sb, "  • %s — %s [%s]\n", r.Name, descOr(r.Description, r.URI), r.MIMEType) }
-	return sb.String(), nil
+	src := p.Server
+	if src == "" {
+		src = "default-server"
+	}
+	return wrapMCPAgentOutput(src, sb.String()), nil
 }
 
 type MCPListPromptsTool struct{}
@@ -197,10 +215,14 @@ func (t *MCPListPromptsTool) Execute(ctx context.Context, args json.RawMessage) 
 	if err != nil { return "", err }
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d prompts:\n", len(prompts))
-	for _, p := range prompts {
-		fmt.Fprintf(&sb, "  • %s — %s\n", p.Name, descOr(p.Description, "no description"))
+	for _, pr := range prompts {
+		fmt.Fprintf(&sb, "  • %s — %s\n", pr.Name, descOr(pr.Description, "no description"))
 	}
-	return sb.String(), nil
+	src := p.Server
+	if src == "" {
+		src = "default-server"
+	}
+	return wrapMCPAgentOutput(src, sb.String()), nil
 }
 
 func getMCPClient(key string) *mcplife.Client {

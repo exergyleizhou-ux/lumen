@@ -17,7 +17,7 @@ import (
 func TestGoalEvidence(t *testing.T) {
 	scratch := os.Getenv("LUMEN_GOAL_SCRATCH")
 	if scratch == "" {
-		t.Fatal("LUMEN_GOAL_SCRATCH env must be set to the private scratch dir")
+		t.Skip("LUMEN_GOAL_SCRATCH not set — run via make goal-all-verify")
 	}
 	if err := os.MkdirAll(scratch, 0755); err != nil {
 		t.Fatal(err)

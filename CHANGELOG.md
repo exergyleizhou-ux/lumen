@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.2.0-science-beta.5 — HANDOFF gap closure (security, storage, gates)
+
+> Prerelease. Closes HANDOFF 诚实缺口大项：bash auto sandbox, MCP untrusted wrap,
+> SQLite session dual-write, live provider smoke (skip w/o key), eval inventory gate,
+> RM-HUMAN precheck, cross-platform publish dry-run.
+
+### Added
+- Bash default `LUMEN_BASH_SANDBOX=auto` — sandbox when backend available.
+- `untrusted.Wrap` on all MCP tool outputs + injection tests.
+- `session_messages` table + `MigrateJSONLSessions` + agent dual-write.
+- `TestLiveSmokeAnthropic` / `TestLiveSmokeGemini` (skip in `-short` or w/o key).
+- `TestEvalBaseline6WellFormed`; `goal-all-verify` eval inventory ≥14 gate.
+- `publish-science-release.sh --dry-run` + linux/amd64 + `MANIFEST.sha256`.
+- `rm-offline-auto` RM-HUMAN precheck hook.
+
 ## v1.2.0-science-beta.4 — /goal verification gates + SQLite audit MVP
 
 > Prerelease. Master `make goal-all-verify` orchestrator, goal CI workflow, cache

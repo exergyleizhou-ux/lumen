@@ -21,13 +21,13 @@
 | Virtual OAuth | Go forge + launcher intact 自检修复 |
 | Branding | Verdant Oasis / editorial GUI |
 
-## 诚实缺口
+## 剩余边界
 
-| 缺口 | 状态 |
-|------|------|
-| RM-04/06/13 OAuth 真机矩阵 | 需用户在场 — 已文档化 |
+| 项 | 状态 |
+|----|------|
+| RM-04/06/13 真 OAuth | HUMAN-deferred；`rm-human-oauth.sh` + offline 预检 |
 | 日常维护 plist | 未移植（可选） |
-| SQLite 全量 | 审计 MVP（`LUMEN_SQLITE_STORE=on` 双写 JSONL）；会话主体仍 JSONL |
+| Eval 全量 model run | 结构闸门已覆盖；live model run 按 API key 可选 |
 
 ## 本地验证
 

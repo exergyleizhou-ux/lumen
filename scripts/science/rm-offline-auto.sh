@@ -10,6 +10,20 @@ echo "▸ RM-offline-auto"
 # RM-01 guard
 bash scripts/science/real_machine_guard.sh
 
+# RM-HUMAN preflight: script present + safety checks (does not perform real OAuth)
+echo "▸ RM-HUMAN precheck"
+if [[ ! -x "$ROOT/scripts/science/rm-human-oauth.sh" ]]; then
+  echo "FAIL: rm-human-oauth.sh missing" >&2
+  exit 1
+fi
+REAL_SCIENCE="${SCIENCE_REAL_HOME:-$HOME}/.claude-science"
+if [[ -L "$REAL_SCIENCE" ]]; then
+  echo "FAIL: real .claude-science is symlink" >&2
+  exit 1
+fi
+echo "  RM-04/06/13: HUMAN-deferred (run scripts/science/rm-human-oauth.sh when present)"
+echo "  precheck: rm-human-oauth.sh OK, real science dir not symlink"
+
 # RM-02 science-all
 bash scripts/test-science-all.sh
 

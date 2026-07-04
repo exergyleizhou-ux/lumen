@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"lumen/internal/lumenstore"
 	"lumen/internal/provider"
 )
 
@@ -172,7 +173,17 @@ func (s *Session) rewriteFileLocked() error {
 			return err
 		}
 	}
-	return os.WriteFile(s.Path, buf.Bytes(), 0o644)
+	if err := os.WriteFile(s.Path, buf.Bytes(), 0o644); err != nil {
+		return err
+	}
+	if db := lumenstore.Default(); db != nil {
+		sid := lumenstore.SessionIDFromPath(s.Path)
+		for i, m := range s.Messages {
+			b, _ := json.Marshal(m)
+			_ = db.AppendSessionMessage(sid, i, string(m.Role), b)
+		}
+	}
+	return nil
 }
 
 // ── JSONL persistence ─────────────────────────────────────
@@ -186,10 +197,36 @@ func (s *Session) appendToFile(m provider.Message) error {
 		return err
 	}
 	defer f.Close()
-	return json.NewEncoder(f).Encode(m)
+	if err := json.NewEncoder(f).Encode(m); err != nil {
+		return err
+	}
+	if db := lumenstore.Default(); db != nil {
+		b, _ := json.Marshal(m)
+		seq := s.Len() - 1
+		if seq < 0 {
+			seq = 0
+		}
+		_ = db.AppendSessionMessage(lumenstore.SessionIDFromPath(s.Path), seq, string(m.Role), b)
+		_ = db.UpsertSessionMeta(lumenstore.SessionIDFromPath(s.Path), "")
+	}
+	return nil
 }
 
 func (s *Session) load() {
+	if db := lumenstore.Default(); db != nil {
+		sid := lumenstore.SessionIDFromPath(s.Path)
+		if rows, err := db.LoadSessionMessages(sid); err == nil && len(rows) > 0 {
+			for _, row := range rows {
+				var m provider.Message
+				if json.Unmarshal(row, &m) == nil {
+					s.Messages = append(s.Messages, m)
+				}
+			}
+			if len(s.Messages) > 0 {
+				return
+			}
+		}
+	}
 	data, err := os.ReadFile(s.Path)
 	if err != nil {
 		return

@@ -17,8 +17,8 @@ import (
 
 // bashCmd builds the *exec.Cmd that runs a shell command, routing it through an
 // OS-level sandbox (mac seatbelt / Linux bwrap) when the user opts in via
-// LUMEN_BASH_SANDBOX. Default (env unset) is the historical direct `sh -c`
-// path, so behavior is unchanged unless explicitly enabled. The API-key scrub
+// LUMEN_BASH_SANDBOX. Default (env unset) is `auto` — sandbox when a backend
+// exists; set `off` for direct `sh -c` execution. The API-key scrub
 // is applied either way. See internal/sandbox/runner.go and docs/sandbox.md.
 func bashCmd(ctx context.Context, command string) (*exec.Cmd, error) {
 	runner, required := sandbox.ForBash()

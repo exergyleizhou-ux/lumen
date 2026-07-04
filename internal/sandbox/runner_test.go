@@ -11,7 +11,8 @@ import (
 
 func TestBashMode(t *testing.T) {
 	cases := map[string]Mode{
-		"":         ModeOff,
+		"":         ModeAuto,
+		"auto":     ModeAuto,
 		"0":        ModeOff,
 		"false":    ModeOff,
 		"off":      ModeOff,
@@ -20,7 +21,6 @@ func TestBashMode(t *testing.T) {
 		"on":       ModeRequired,
 		"yes":      ModeRequired,
 		"required": ModeRequired,
-		"auto":     ModeAuto,
 		"AUTO":     ModeAuto,
 		"  on  ":   ModeRequired,
 	}
@@ -34,9 +34,14 @@ func TestBashMode(t *testing.T) {
 
 func TestForBash(t *testing.T) {
 	// off → nil, not required
-	t.Setenv(EnvBashSandbox, "")
+	t.Setenv(EnvBashSandbox, "off")
 	if r, required := ForBash(); r != nil || required {
 		t.Errorf("off mode: got (%v, %v), want (nil, false)", r, required)
+	}
+	// default (unset) → auto semantics
+	t.Setenv(EnvBashSandbox, "")
+	if _, required := ForBash(); required {
+		t.Error("default auto mode should not be required")
 	}
 	// required → required=true regardless of availability
 	t.Setenv(EnvBashSandbox, "1")

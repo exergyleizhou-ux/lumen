@@ -69,6 +69,15 @@ func (s *Store) migrate() error {
 			title TEXT,
 			updated_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS session_messages (
+			session_id TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			role TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			PRIMARY KEY (session_id, seq)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_session_messages_sid ON session_messages(session_id)`,
 		`CREATE TABLE IF NOT EXISTS science_profiles (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,

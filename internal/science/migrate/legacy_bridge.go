@@ -17,11 +17,11 @@ const legacyBridgeDirName = ".csswitch"
 
 // legacyBridgeConfig mirrors the legacy bridge config.json (read-only import source).
 type legacyBridgeConfig struct {
-	Provider    string                       `json:"provider"`
-	ProxyPort   int                          `json:"proxy_port"`
-	SandboxPort int                          `json:"sandbox_port"`
-	Secret      string                       `json:"secret,omitempty"`
-	Mode        string                       `json:"mode"`
+	Provider    string                        `json:"provider"`
+	ProxyPort   int                           `json:"proxy_port"`
+	SandboxPort int                           `json:"sandbox_port"`
+	Secret      string                        `json:"secret,omitempty"`
+	Mode        string                        `json:"mode"`
 	Providers   map[string]legacyProviderSlot `json:"providers"`
 }
 

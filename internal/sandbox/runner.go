@@ -6,8 +6,8 @@ package sandbox
 // (mac seatbelt / Linux bubblewrap) so a denylist miss (docs/threat-model.md §6)
 // is contained rather than catastrophic.
 //
-// Default OFF: nothing here runs unless the user opts in via LUMEN_BASH_SANDBOX,
-// so existing behavior is unchanged. See docs/sandbox.md.
+// Default AUTO: use OS sandbox when a backend exists; set LUMEN_BASH_SANDBOX=off to
+// run directly. See docs/sandbox.md.
 
 import (
 	"context"
@@ -62,9 +62,9 @@ func SelectRunner() Runner {
 
 const (
 	// EnvBashSandbox controls whether the bash tool runs under a sandbox.
-	//   unset / 0 / false / off → off (current behavior, no isolation)
+	//   unset / auto → AUTO (use sandbox when available, else direct)
+	//   0 / false / off / no / disabled → off (direct execution)
 	//   1 / true / on / yes / required → REQUIRED (fail closed if no backend)
-	//   auto → use a sandbox if one is available, else run directly
 	EnvBashSandbox = "LUMEN_BASH_SANDBOX"
 	// EnvBashNetwork allows network access inside the bash sandbox. When the
 	// sandbox is on, network is DENIED by default; set this to 1/true to allow.
@@ -83,12 +83,14 @@ const (
 // BashMode reports the configured bash-sandbox mode.
 func BashMode() Mode {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvBashSandbox))) {
+	case "0", "false", "off", "no", "disabled":
+		return ModeOff
 	case "1", "true", "on", "yes", "required":
 		return ModeRequired
-	case "auto":
+	case "", "auto":
 		return ModeAuto
 	default:
-		return ModeOff
+		return ModeAuto
 	}
 }
 
