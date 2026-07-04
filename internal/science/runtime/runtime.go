@@ -221,16 +221,18 @@ func (m *Manager) StartSandbox() (string, string, error) {
 
 	sandboxWasRunning := launcher.Running(sbxHome, dataDir, bin, port)
 
-	if action, err := m.StartProxy(); err != nil {
+	var action ProxyAction
+	if action, err = m.StartProxy(); err != nil {
 		return "", "", err
-	} else if sandboxWasRunning {
+	} else if sandboxWasRunning && action != ProxyRestarted {
 		url := launcher.URL(sbxHome, dataDir, bin, port)
 		_ = m.saveState(url)
-		msg := "reopened"
-		if action == ProxyRestarted {
-			msg = "reopened (proxy restarted for new key/provider)"
-		}
-		return url, msg, nil
+		return url, "reopened", nil
+	}
+	if sandboxWasRunning && action == ProxyRestarted {
+		// Proxy restarted with new secret — kill old sandbox, start fresh
+		_ = launcher.Stop(sbxHome, dataDir, bin)
+		time.Sleep(1 * time.Second)
 	}
 	proxyURL, err := m.ProxyURL()
 	if err != nil {

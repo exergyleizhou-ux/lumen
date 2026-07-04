@@ -77,6 +77,7 @@ func Start(cfg Config) error {
 		"--data-dir", cfg.DataDir,
 		"--port", fmt.Sprintf("%d", cfg.Port),
 		"--no-browser", "--no-auto-update", "--detached",
+		"--dangerously-no-sandbox",
 	)
 	cmd.Env = append(os.Environ(),
 		"HOME="+cfg.SandboxHome,
