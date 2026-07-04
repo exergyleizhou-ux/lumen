@@ -217,45 +217,14 @@ func (s *Session) load() {
 		return
 	}
 
-	switch jsonlState {
-	case jsonlUnreadable:
-		// Do not treat I/O errors as an intentional empty transcript.
-		if len(rows) > 0 {
-			s.messagesFromSQLiteRows(rows)
-		}
-		return
-	case jsonlPresentEmpty:
-		s.Messages = nil
+	outcome := reconcileLoad(jsonlState, jsonlMsgs, rows)
+	s.Messages = outcome.Messages
+	if outcome.ClearSQLite {
 		_ = replaceSQLiteMessages(db, sid, nil)
-		return
-	case jsonlAbsent:
-		if len(rows) > 0 {
-			s.messagesFromSQLiteRows(rows)
-		}
-		return
-	}
-
-	if len(jsonlMsgs) > 0 {
-		if len(rows) > 0 && len(jsonlMsgs) != len(rows) {
-			s.Messages = jsonlMsgs
-			_ = replaceSQLiteMessages(db, sid, jsonlMsgs)
-			return
-		}
-		if len(rows) > 0 {
-			s.messagesFromSQLiteRows(rows)
-			return
-		}
-		s.Messages = jsonlMsgs
+	} else if outcome.ReplaceSQLite {
+		_ = replaceSQLiteMessages(db, sid, outcome.Messages)
+	} else if outcome.MigrateJSONL {
 		_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
-	}
-}
-
-func (s *Session) messagesFromSQLiteRows(rows [][]byte) {
-	for _, row := range rows {
-		var m provider.Message
-		if json.Unmarshal(row, &m) == nil {
-			s.Messages = append(s.Messages, m)
-		}
 	}
 }
 
@@ -269,15 +238,6 @@ func replaceSQLiteMessages(db *lumenstore.Store, sid string, msgs []provider.Mes
 	}
 	return db.ReplaceSessionMessages(sid, payloads, roles)
 }
-
-type jsonlFileState int
-
-const (
-	jsonlAbsent jsonlFileState = iota
-	jsonlPresentEmpty
-	jsonlPresentWithMessages
-	jsonlUnreadable
-)
 
 func (s *Session) loadFromJSONLWithMeta() ([]provider.Message, jsonlFileState) {
 	data, err := os.ReadFile(s.Path)
