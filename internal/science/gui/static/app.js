@@ -487,6 +487,11 @@ async function fetchRelayModels() {
 
 async function switchMode(m) {
   if (m === mode) return;
+  // Lab mode: just switch the view, no API call needed
+  if (m === "lab") {
+    applyMode(m);
+    return;
+  }
   setBusy(true);
   try {
     await api("/api/mode", { method: "PUT", body: JSON.stringify({ mode: m }) });

@@ -1,0 +1,53 @@
+# Research Brief: aspirin mechanism
+
+*Generated 2026-07-04T04:32:42Z · Oasis Science native workbench*
+
+## 文献证据 (PubMed)
+
+1. **Multi target effects of Allium macrostemon against myocardial infarction: an integrated network pharmacology, molecular docking, and experimental study.** — J Thromb Thrombolysis 2026
+   - 溯源: PMID:42397505 · https://doi.org/10.1007/s11239-026-03332-1
+2. **Aspirin prevents postoperative peritoneal adhesions by inhibiting the TGF‑β1/Smad signaling pathway in rats.** — Mol Med Rep 2026
+   - 溯源: PMID:42396660 · https://doi.org/10.3892/mmr.2026.13949
+3. **[Effect of schaftoside in inhibiting aspirin-induced gastric mucosal injury by targeting PYGB].** — Zhongguo Zhong Yao Za Zhi 2026
+   - 溯源: PMID:42392815 · https://doi.org/10.19540/j.cnki.cjcmm.20260107.801
+4. **Partial downregulation of platelet glycoprotein VI by low affinity antibodies confers sustained and safe antithrombotic protection.** — Signal Transduct Target Ther 2026
+   - 溯源: PMID:42386702 · https://doi.org/10.1038/s41392-026-02864-5
+5. **Management of pericarditis: recent advances.** — Pol Arch Intern Med 2026
+   - 溯源: PMID:42376745 · https://doi.org/10.20452/pamw.17327
+
+## 化合物 (ChEMBL)
+
+1. **ASPIRIN** (CHEMBL25) · phase 4
+   - 溯源: CHEMBL25 · https://www.ebi.ac.uk/chembl/compound_report_card/CHEMBL25/
+2. **ASPIRIN TRELAMINE** (CHEMBL5314595) · phase 2
+   - 溯源: CHEMBL5314595 · https://www.ebi.ac.uk/chembl/compound_report_card/CHEMBL5314595/
+3. **** (CHEMBL5282669)
+   - 溯源: CHEMBL5282669 · https://www.ebi.ac.uk/chembl/compound_report_card/CHEMBL5282669/
+
+## 表达数据 (GEO)
+
+1. **α-Asarone promotes tendon-bone healing through regulating Dmp1 transcription via targeting transcription factor PPARG** (GSE278394) · Mus musculus · 12 samples
+   - 溯源: GSE278394 · https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE278394
+2. **In depth mechanistic analysis including high-throughput RNA sequencing in the prediction of functional and structural cardiotoxicants using hiPSC cardiomyocytes** (GSE244740) · Homo sapiens · 3072 samples
+   - 溯源: GSE244740 · https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE244740
+3. **Activation and acetylation of tumor-intrinsic PD-L1 via HBXIP accelerates breast cancer growth** (GSE158696) · Homo sapiens · 4 samples
+   - 溯源: GSE158696 · https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE158696
+
+## 已验证数据集 (绿洲)
+
+1. **大肠杆菌蛋白定位数据集（UCI Ecoli）** ✓已验证
+   - 溯源: dataset:9008998f-291f-4f77-b27b-82718a9cc5ac · https://demo.oasisdata2026.xyz/datasets/9008998f-291f-4f77-b27b-82718a9cc5ac
+2. **森林火灾气象数据集（UCI Forest Fires）** ✓已验证
+   - 溯源: dataset:035cefe2-a7c9-4707-8bad-7309f4207b56 · https://demo.oasisdata2026.xyz/datasets/035cefe2-a7c9-4707-8bad-7309f4207b56
+3. **小麦籽粒几何特征数据集（UCI Seeds）** ✓已验证
+   - 溯源: dataset:baab1590-add8-4983-8a47-1ec7c7c18cb5 · https://demo.oasisdata2026.xyz/datasets/baab1590-add8-4983-8a47-1ec7c7c18cb5
+4. **鲍鱼年龄与形态数据集（UCI Abalone）** ✓已验证
+   - 溯源: dataset:0b6760f7-8b6e-4856-8559-04eadb1f0be6 · https://demo.oasisdata2026.xyz/datasets/0b6760f7-8b6e-4856-8559-04eadb1f0be6
+5. **威斯康星乳腺癌诊断数据集（UCI WDBC）** ✓已验证
+   - 溯源: dataset:ba5ca9e6-3836-4d3e-9692-7ed00009d710 · https://demo.oasisdata2026.xyz/datasets/ba5ca9e6-3836-4d3e-9692-7ed00009d710
+
+## 下一步
+
+- 登录绿洲后可 `preview_schema` 查看样本列
+- 合并文献 + 数据集运行 C2D 因果/完整性分析（需 user token）
+- 导出本简报作为课题备忘录或上架前说明
