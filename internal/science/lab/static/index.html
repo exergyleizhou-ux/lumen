@@ -1,78 +1,77 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="assets/app.css?v=3" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Lumen Science · 实验室</title>
+<link rel="stylesheet" href="assets/app.css?v=4">
 </head>
 <body>
-  <div class="shell" id="shell">
-    <header class="top">
-      <span class="brand-title">Lumen</span>
-      <span class="brand-sub">Science 实验室</span>
-      <span class="top-spacer"></span>
-      <span class="top-status" id="packBadge"></span>
-      <span class="top-status" id="fleetBadge"></span>
-      <a class="btn-ghost" href="http://127.0.0.1:18990/">Bridge</a>
-    </header>
-    <div class="layout">
-      <aside class="sidebar">
-        <button class="btn primary" id="newProjectBtn" type="button">+ 新建课题</button>
-        <nav id="projectList" class="project-list"></nav>
-        <div class="sidebar-ft">
-          <p class="hint" id="modeHint">hybrid</p>
+
+<header class="topbar">
+  <b>Lumen</b>
+  <span class="dim">Science 实验室</span>
+  <span class="grow"></span>
+  <span class="pill" id="packBadge">—</span>
+  <span class="pill" id="fleetBadge">—</span>
+  <a class="pill link" href="http://127.0.0.1:18990/">Bridge</a>
+</header>
+
+<div class="main">
+  <nav class="sidenav">
+    <button class="btn fill" id="newProjectBtn">＋ 新建课题</button>
+    <div id="projectList"></div>
+    <span class="dim sm" id="modeHint">—</span>
+  </nav>
+
+  <section class="center">
+    <div class="scroll" id="chatScroll">
+      <div class="hero" id="welcome">
+        <h2>Lumen Science 实验室</h2>
+        <p>CS Research Pack · 23 域 · 247 工具 · 29 Skills · 第三方模型直连</p>
+        <div class="row">
+          <button class="chip" data-prompt="用 pubmed 域检索 aspirin 药理机制文献">文献检索</button>
+          <button class="chip" data-prompt="生成 aspirin 四源 Research Brief">生成简报</button>
+          <button class="chip" data-brief="EGFR 抑制剂">一键 Brief</button>
         </div>
-      </aside>
-      <main class="chat-panel">
-        <div class="chat-scroll" id="chatScroll">
-          <section class="welcome" id="welcome">
-            <h1>Lumen Science 实验室</h1>
-            <p>挂接 CS Research Pack（23 域 · 247 工具 · 29 Skills）+ 第三方模型直连</p>
-            <div class="chips">
-              <button type="button" class="chip" data-prompt="用 pubmed 域检索 aspirin 药理机制文献">🔍 文献检索</button>
-              <button type="button" class="chip" data-prompt="生成 aspirin 四源 Research Brief">📋 生成简报</button>
-              <button type="button" class="chip" data-brief="EGFR 抑制剂">⚡ 一键 Brief</button>
-            </div>
-          </section>
-        </div>
-        <form class="composer" id="composer">
-          <textarea id="promptInput" rows="2" placeholder="描述科研任务…（⌘K 打开命令面板）"></textarea>
-          <button class="btn primary" type="submit">发送</button>
-        </form>
-      </main>
-      <aside class="inspector">
-        <div class="tabs">
-          <button class="inspector-tab active" data-pane="status">状态</button>
-          <button class="inspector-tab" data-pane="files">文件</button>
-          <button class="inspector-tab" data-pane="ketcher">化学</button>
-          <button class="inspector-tab" data-pane="molecule">分子</button>
-        </div>
-        <div id="statusPane">
-          <div id="inspectorBody"></div>
-        </div>
-        <div id="filesPane" style="display:none">
-          <div id="fileTree" class="file-tree">选择课题查看文件</div>
-          <div id="filePreview" class="file-preview"></div>
-        </div>
-        <div id="ketcherPane" style="display:none">
-          <p class="pane-hint">Ketcher 分子结构编辑器</p>
-          <iframe id="ketcherFrame" src="about:blank" title="Ketcher" loading="lazy"></iframe>
-        </div>
-        <div id="moleculePane" style="display:none">
-          <p class="pane-hint">3Dmol.js 蛋白/分子 3D 预览</p>
-          <div id="molViewer"></div>
-        </div>
-      </aside>
+      </div>
     </div>
-  </div>
-  <!-- ⌘K -->
-  <div id="cmdPalette" class="palette-overlay" style="display:none">
-    <div class="palette-box">
-      <input id="paletteInput" type="text" placeholder="搜索命令…" autofocus />
-      <div id="paletteResults" class="palette-results"></div>
+    <form class="composer" id="composer">
+      <input id="promptInput" placeholder="描述科研任务…（⌘K 命令面板）" autocomplete="off">
+      <button class="btn" type="submit">发送</button>
+    </form>
+  </section>
+
+  <aside class="inspector">
+    <nav class="tabs">
+      <button class="tab sel" data-pane="status">状态</button>
+      <button class="tab" data-pane="files">文件</button>
+      <button class="tab" data-pane="ketcher">化学</button>
+      <button class="tab" data-pane="molecule">分子</button>
+    </nav>
+    <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
+    <div class="pane" id="filesPane" hidden>
+      <div id="fileTree"></div>
+      <div id="filePreview"></div>
     </div>
+    <div class="pane" id="ketcherPane" hidden>
+      <p class="dim sm">Ketcher 分子结构编辑器</p>
+      <iframe id="ketcherFrame" src="about:blank" title="Ketcher"></iframe>
+    </div>
+    <div class="pane" id="moleculePane" hidden>
+      <p class="dim sm">3Dmol.js 蛋白/分子 3D 预览</p>
+      <div id="molViewer"></div>
+    </div>
+  </aside>
+</div>
+
+<div id="cmdPalette" class="overlay" hidden>
+  <div class="overlay-box">
+    <input id="paletteInput" placeholder="搜索命令…" autofocus>
+    <div id="paletteResults"></div>
   </div>
-  <script src="assets/app.js?v=3" defer></script>
+</div>
+
+<script src="assets/app.js?v=4" defer></script>
 </body>
 </html>

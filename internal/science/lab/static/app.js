@@ -31,15 +31,15 @@ async function refreshHealth() {
   $("modeHint").textContent = h.science_mode || "hybrid";
   // Structured status display
   $("inspectorBody").innerHTML = [
-    `<div class="stat-row"><span class="stat-label">状态</span><span class="stat-val ok">● 在线</span></div>`,
-    `<div class="stat-row"><span class="stat-label">版本</span><span class="stat-val">${escHtml(h.version||'dev')}</span></div>`,
-    `<div class="stat-row"><span class="stat-label">模式</span><span class="stat-val">${escHtml(h.science_mode||'hybrid')}</span></div>`,
-    `<div class="stat-div"></div>`,
-    `<div class="stat-row"><span class="stat-label">Research</span><span class="stat-val ${pack.healthy?'ok':''}">${pack.healthy?'✓':'✗'} ${pack.domain_tools||0} tools</span></div>`,
-    `<div class="stat-row"><span class="stat-label">CS fleet</span><span class="stat-val">${f.cs_connected||0}/${f.cs_domains||0}</span></div>`,
-    `<div class="stat-row"><span class="stat-label">原生 fleet</span><span class="stat-val">${f.lumen_native||0}</span></div>`,
-    `<div class="stat-div"></div>`,
-    `<div class="stat-row"><span class="stat-label">模型</span><span class="stat-val">${escHtml(h.provider?.masked||'—')}</span></div>`,
+    `<div class="sr"><span class="sr k">状态</span><span class="sr v ok">● 在线</span></div>`,
+    `<div class="sr"><span class="sr k">版本</span><span class="sr v">${escHtml(h.version||'dev')}</span></div>`,
+    `<div class="sr"><span class="sr k">模式</span><span class="sr v">${escHtml(h.science_mode||'hybrid')}</span></div>`,
+    `<div class="sr-div"></div>`,
+    `<div class="sr"><span class="sr k">Research</span><span class="sr v ${pack.healthy?'ok':''}">${pack.healthy?'✓':'✗'} ${pack.domain_tools||0} tools</span></div>`,
+    `<div class="sr"><span class="sr k">CS fleet</span><span class="sr v">${f.cs_connected||0}/${f.cs_domains||0}</span></div>`,
+    `<div class="sr"><span class="sr k">原生 fleet</span><span class="sr v">${f.lumen_native||0}</span></div>`,
+    `<div class="sr-div"></div>`,
+    `<div class="sr"><span class="sr k">模型</span><span class="sr v">${escHtml(h.provider?.masked||'—')}</span></div>`,
   ].join('');
   return h;
 }
@@ -51,7 +51,7 @@ async function loadProjects() {
   list.forEach((p) => {
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.className = "project-item" + (activeProject?.slug === p.slug ? " active" : "");
+    btn.className = "" + (activeProject?.slug === p.slug ? " active" : "");
     btn.textContent = p.title;
     btn.onclick = () => { activeProject = p; loadProjects(); refreshFiles(); };
     nav.appendChild(btn);
@@ -107,14 +107,14 @@ async function refreshFiles() {
     const files = data.files || [];
     el.innerHTML = files.map(f => {
       const icon = f.isDir ? "📁" : fileIcon(f.name);
-      return `<div class="file-row ${f.isDir ? "dir" : ""}" data-path="${f.name}" onclick="${f.isDir ? "" : `previewFile('${f.name}')`}">
-        <span class="file-icon">${icon}</span>
-        <span class="file-name">${f.name}</span>
-        ${!f.isDir ? `<span class="file-size">${fmtSize(f.size)}</span>` : ""}
+      return `<div class="ft-row ${f.isDir ? "dir" : ""}" data-path="${f.name}" onclick="${f.isDir ? "" : `previewFile('${f.name}')`}">
+        <span style="flex-shrink:0;font-size:.9rem">${icon}</span>
+        <span class="ft-name">${f.name}</span>
+        ${!f.isDir ? `<span class="ft-size">${fmtSize(f.size)}</span>` : ""}
       </div>`;
     }).join("");
   } catch (e) {
-    el.innerHTML = `<div class="file-error">${e.message}</div>`;
+    el.innerHTML = `<div class="ft-err">${e.message}</div>`;
   }
 }
 
@@ -124,26 +124,26 @@ async function previewFile(path) {
   try {
     const data = await api(`/api/lab/files/content?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
     const prov = await loadProvenance(path);
-    preview.innerHTML = `<div class="preview-header">📄 ${data.path} (${fmtSize(data.size)})</div>
-      <pre class="preview-body">${escHtml(data.content)}</pre>
-      <div class="provenance-block">${prov}</div>`;
+    preview.innerHTML = `<div class="fp-hd">📄 ${data.path} (${fmtSize(data.size)})</div>
+      <pre class="fp-body">${escHtml(data.content)}</pre>
+      <div class="pv">${prov}</div>`;
   } catch (e) {
-    preview.innerHTML = `<div class="file-error">${e.message}</div>`;
+    preview.innerHTML = `<div class="ft-err">${e.message}</div>`;
   }
 }
 
 async function loadProvenance(path) {
   try {
     const data = await api(`/api/lab/provenance?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
-    if (!data.count) return '<div class="prov-empty">无溯源记录</div>';
+    if (!data.count) return '<div class="pv-empty">无溯源记录</div>';
     return data.records.map(r => {
       const mcp = (r.mcp_calls || []).map(m => `${m.tool}("${m.query || ''}")`).join(', ');
-      return `<div class="prov-row">
-        <span class="prov-ts">${(r.ts || '').slice(0,19).replace('T',' ')}</span>
-        <span class="prov-kind">${r.kind || 'artifact'}</span>
-        <span class="prov-model">${r.model || '—'}</span>
-        ${mcp ? `<span class="prov-mcp">🔗 ${mcp}</span>` : ''}
-        ${r.content_hash ? `<span class="prov-hash">#${r.content_hash.slice(7,15)}</span>` : ''}
+      return `<div class="pv-row">
+        <span class="pv ts">${(r.ts || '').slice(0,19).replace('T',' ')}</span>
+        <span class="pv tag">${r.kind || 'artifact'}</span>
+        <span class="pv model">${r.model || '—'}</span>
+        ${mcp ? `<span class="pv mcp">🔗 ${mcp}</span>` : ''}
+        ${r.content_hash ? `<span class="pv hash">#${r.content_hash.slice(7,15)}</span>` : ''}
       </div>`;
     }).join('');
   } catch {
@@ -200,9 +200,9 @@ document.querySelectorAll(".chip").forEach((btn) => {
 
 // Tab toggle: inspector tabs
 let ketcherLoaded = false, molLoaded = false;
-document.querySelectorAll(".inspector-tab").forEach((t) => {
+document.querySelectorAll(".tab").forEach((t) => {
   t.addEventListener("click", () => {
-    document.querySelectorAll(".inspector-tab").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
     t.classList.add("active");
     const pane = t.dataset.pane;
     $("statusPane").style.display = pane === "status" ? "block" : "none";
@@ -269,10 +269,10 @@ function renderPaletteItems(filter) {
   if (!res) return;
   const q = (filter || "").toLowerCase();
   const items = paletteCmds.filter(c => c.label.toLowerCase().includes(q));
-  res.innerHTML = items.map((c, i) => `<div class="palette-item" data-idx="${i}">
+  res.innerHTML = items.map((c, i) => `<div class="item" data-idx="${i}">
     <span>${c.label}</span><span class="hotkey">${c.hotkey || ""}</span>
   </div>`).join("");
-  res.querySelectorAll(".palette-item").forEach(el => {
+  res.querySelectorAll(".item").forEach(el => {
     el.addEventListener("click", () => {
       const cmd = paletteCmds[parseInt(el.dataset.idx)];
       if (cmd) { closePalette(); cmd.action(); }
@@ -283,7 +283,7 @@ $("paletteInput")?.addEventListener("input", (e) => renderPaletteItems(e.target.
 $("paletteInput")?.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closePalette();
   if (e.key === "Enter") {
-    const sel = document.querySelector(".palette-item");
+    const sel = document.querySelector(".item");
     if (sel) sel.click();
   }
 });
