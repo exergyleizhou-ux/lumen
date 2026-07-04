@@ -101,13 +101,19 @@ func (s *Server) ListenAndServe() error {
 		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	ln, err := net.Listen("tcp", s.cfg.Addr)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		ln, err := net.Listen("tcp", s.cfg.Addr)
+		if err != nil {
+			lastErr = err
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		fmt.Printf("Lumen Science 控制面板: %s\n", s.URL())
+		fmt.Println("Ctrl+C 退出面板（沙箱保持运行，代理继续由 science 管理）")
+		return s.srv.Serve(ln)
 	}
-	fmt.Printf("Lumen Science 控制面板: %s\n", s.URL())
-	fmt.Println("Ctrl+C 退出面板（沙箱保持运行，代理继续由 science 管理）")
-	return s.srv.Serve(ln)
+	return fmt.Errorf("science gui: cannot bind %s after 10 attempts: %w", s.cfg.Addr, lastErr)
 }
 
 // Shutdown stops the HTTP server and panel proxy.

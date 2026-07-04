@@ -507,6 +507,7 @@ func SwitchToOfficial(sciDir string, lumenCfg *config.File) error {
 		return err
 	}
 	_ = mgr.StopAll()
+	time.Sleep(500 * time.Millisecond) // let ports release before launching official
 	_, _ = sciconfig.Update(sciDir, func(c *sciconfig.File) {
 		c.Mode = "official"
 		c.Secret = ""

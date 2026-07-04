@@ -109,13 +109,20 @@ func (s *Server) ListenAndServe() error {
 		WriteTimeout:      300 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	ln, err := net.Listen("tcp", s.cfg.Addr)
-	if err != nil {
-		return err
+	// Port-bind retry: survive orphan processes from previous sessions
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		ln, err := net.Listen("tcp", s.cfg.Addr)
+		if err != nil {
+			lastErr = err
+			time.Sleep(300 * time.Millisecond)
+			continue
+		}
+		fmt.Printf("Lumen Science 实验室: %s\n", s.URL())
+		fmt.Println("Ctrl+C 退出实验室")
+		return s.srv.Serve(ln)
 	}
-	fmt.Printf("Lumen Science 实验室: %s\n", s.URL())
-	fmt.Println("Ctrl+C 退出实验室")
-	return s.srv.Serve(ln)
+	return fmt.Errorf("science lab: cannot bind %s after 10 attempts: %w", s.cfg.Addr, lastErr)
 }
 
 // Shutdown stops the server and fleet.

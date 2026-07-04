@@ -336,16 +336,24 @@ func OpenBrowser(url string) error {
 
 // OpenOfficial launches the real Claude Science app without proxy env.
 func OpenOfficial() error {
+	// Strip ALL Anthropic/proxy env vars that could confuse official Science
+	cleanEnv := filterEnv(os.Environ(), []string{
+		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+		"CSSWITCH_PROVIDER", "CSSWITCH_RELAY_BASE_URL", "CSSWITCH_RELAY_KEY",
+		"DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY", "MOONSHOT_API_KEY",
+		"ZHIPU_API_KEY", "MINIMAX_API_KEY",
+		"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY",
+	})
 	app := "/Applications/Claude Science.app"
 	var cmd *exec.Cmd
 	if _, err := os.Stat(app); err == nil {
 		cmd = exec.Command("open", app)
+	} else if _, err := os.Stat("/Applications/Claude.app"); err == nil {
+		cmd = exec.Command("open", "/Applications/Claude.app")
 	} else {
 		cmd = exec.Command("open", "-a", "Claude Science")
 	}
-	cmd.Env = filterEnv(os.Environ(), []string{
-		"ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-	})
+	cmd.Env = cleanEnv
 	return cmd.Run()
 }
 
