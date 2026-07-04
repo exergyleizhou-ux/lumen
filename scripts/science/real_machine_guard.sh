@@ -4,6 +4,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 GUARD_HOME="${GUARD_HOME:-$(mktemp -d /tmp/lumen-rm-guard-XXXXXX)}"
+SCIENCE_REAL_HOME="${SCIENCE_REAL_HOME:-$(eval echo ~${SUDO_USER:-$USER})}"
+export SCIENCE_REAL_HOME
 export HOME="$GUARD_HOME"
 export LUMEN_SCIENCE_DIR="$GUARD_HOME/.lumen/science"
 export SCIENCE_BIN="${SCIENCE_BIN:-/Applications/Claude Science.app/Contents/Resources/bin/claude-science}"

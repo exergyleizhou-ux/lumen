@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -14,10 +15,16 @@ const (
 )
 
 // RealScienceDir returns the user's real Claude Science data directory.
+// When HOME is overridden (guard runs), set SCIENCE_REAL_HOME to the actual user home
+// so asset clone reads ~/.claude-science without writing there.
 func RealScienceDir() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	home := strings.TrimSpace(os.Getenv("SCIENCE_REAL_HOME"))
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
 	}
 	return filepath.Join(home, ".claude-science"), nil
 }

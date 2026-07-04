@@ -21,7 +21,32 @@
 | RM-03 | Gitleaks zero findings | `gitleaks detect --source . --config .gitleaks.toml --redact` |
 | RM-18 | RM preflight bundle | `bash scripts/science/rm-preflight.sh` |
 
-## Manual (user-present)
+## Automated (real machine, guard HOME)
+
+Run all automatable RM steps in an isolated guard HOME (never writes `~/.claude-science`):
+
+```bash
+bash scripts/science/rm-manual-auto.sh
+```
+
+Orchestrator: `bin/lumen-science-rm` (built from `cmd/lumen-science-rm`).  
+Reads real assets via `SCIENCE_REAL_HOME` (read-only).  
+If `DEEPSEEK_API_KEY` is invalid, RM-05 uses a local mock upstream (proxy path still verified).  
+Set `SCIENCE_RM_SKIP_OPEN=1` to skip opening the real Claude Science app during RM-12.
+
+| ID | Covered by `rm-manual-auto.sh` |
+|----|--------------------------------|
+| RM-04, RM-05, RM-06, RM-07, RM-08, RM-09, RM-10, RM-11, RM-12, RM-13, RM-14, RM-15, RM-16, RM-17 | Yes |
+
+Logs: `.science-rm-scratch/` (gitignored).
+
+## Manual (user-present only)
+
+| ID | Scenario | Why manual |
+|----|----------|------------|
+| — | Real Claude subscription OAuth in browser | Requires human login to Anthropic; virtual OAuth is automated in RM-04 |
+
+## Pass criteria reference
 
 | ID | Scenario | Pass criteria |
 |----|----------|---------------|

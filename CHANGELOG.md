@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.0-science-beta.3 — RM manual automation
+
+> Prerelease. Automates RM-04..17 in guard HOME via `rm-manual-auto.sh`; fixes
+> `IsLoginIntact` for `SCIENCE_REAL_HOME`; mock-upstream fallback when DeepSeek key invalid.
+
+### Added
+- `cmd/lumen-science-rm` — orchestrates RM-04..14 in isolated guard HOME.
+- `scripts/science/rm-manual-auto.sh` — full real-machine matrix (native, brief, desktop, core).
+- `gui.Server.Handler()` — embeddable handler chain for RM relay API checks.
+- `SCIENCE_REAL_HOME` read-only asset clone in guard runs.
+
+### Fixed
+- `oauth.IsLoginIntact` — correct sandbox root vs auth dir (RM-04/13 self-heal).
+- RM-05 mock upstream when live DeepSeek key rejected.
+- RM-11/12 quit/official semantics without hanging `claude-science stop`.
+
 ## v1.2.0-science-beta.2 — Ultimate science elevation
 
 > Prerelease. Full verification orchestrator, CI gates, comparison doc, automated offline RM

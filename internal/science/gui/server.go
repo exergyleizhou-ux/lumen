@@ -78,6 +78,11 @@ func (s *Server) URL() string {
 	return "http://" + s.cfg.Addr
 }
 
+// Handler returns the middleware-wrapped mux (for RM automation / embed tests).
+func (s *Server) Handler() http.Handler {
+	return securityHeaders(s.cors(rateLimitMutations(s.wrapMiddleware(s.mux))))
+}
+
 // ListenAndServe blocks until shutdown.
 func (s *Server) ListenAndServe() error {
 	if s.cfg.OpenPanel {

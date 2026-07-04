@@ -264,12 +264,29 @@ func readIntactLogin(resolved, email string) (ForgeResult, bool) {
 // (no symlinks on critical files + parseable). Mirrors CSswitch v0.2.1 login_intact
 // for health shortcut self-heal: if "daemon alive" but login broken → force repair.
 func IsLoginIntact(authDir string) bool {
-	resolved, err := resolveGuarded(authDir, virtualEmail, authDir, authDir)
+	sandboxRoot := filepath.Dir(authDir)
+	realDir, err := guardRealScienceDir()
+	if err != nil {
+		return false
+	}
+	resolved, err := resolveGuarded(authDir, virtualEmail, sandboxRoot, realDir)
 	if err != nil {
 		return false
 	}
 	_, ok := readIntactLogin(resolved, virtualEmail)
 	return ok
+}
+
+func guardRealScienceDir() (string, error) {
+	home := strings.TrimSpace(os.Getenv("SCIENCE_REAL_HOME"))
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(home, ".claude-science"), nil
 }
 
 func parseOAuthKey(resolved string) (string, bool) {

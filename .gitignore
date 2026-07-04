@@ -12,3 +12,4 @@ openai.test
 .DS_Store
 Thumbs.db
 .gstack/
+.science-rm-scratch/

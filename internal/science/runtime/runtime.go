@@ -247,7 +247,7 @@ func (m *Manager) StartSandbox() (string, string, error) {
 	}); err != nil {
 		return "", "", err
 	}
-	if !launcher.WaitHealthy(port, 8*time.Second) {
+	if !launcher.WaitHealthy(port, 45*time.Second) {
 		_ = launcher.Stop(sbxHome, dataDir, bin)
 		secret, _ := m.EnsureSecret()
 		tail := RedactSecret(launcher.TailLog(paths.SandboxLog(m.SciDir), 800), secret)

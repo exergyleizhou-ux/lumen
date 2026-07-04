@@ -36,6 +36,22 @@ func TestEnsureVirtualLoginCreates(t *testing.T) {
 	}
 }
 
+func TestIsLoginIntactAfterEnsure(t *testing.T) {
+	dir := t.TempDir()
+	sbx := filepath.Join(dir, "sandbox")
+	auth := filepath.Join(sbx, ".claude-science")
+	real := filepath.Join(dir, "real-cred")
+	if err := os.MkdirAll(real, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := EnsureVirtualLogin(auth, sbx, real); err != nil {
+		t.Fatal(err)
+	}
+	if !IsLoginIntact(auth) {
+		t.Fatal("expected intact login after ensure")
+	}
+}
+
 func TestResolveGuardedRejectsRealDir(t *testing.T) {
 	dir := t.TempDir()
 	real := filepath.Join(dir, "real")
