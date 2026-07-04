@@ -144,6 +144,30 @@ func TestAPIConfigGetPut(t *testing.T) {
 	}
 }
 
+func TestHandleQuitProxy(t *testing.T) {
+	srv, _ := testServer(t)
+	ts := httptest.NewServer(srv.cors(srv.wrapMiddleware(srv.mux)))
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/quit-proxy", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("quit-proxy status %d", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body["ok"] != true {
+		t.Fatalf("body %v", body)
+	}
+}
+
 func TestAPIDoctorJSONTags(t *testing.T) {
 	srv, _ := testServer(t)
 	ts := httptest.NewServer(srv.cors(srv.wrapMiddleware(srv.mux)))

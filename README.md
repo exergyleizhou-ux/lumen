@@ -310,19 +310,31 @@ lockfile exactly. See **[the quickstart](docs/教程-用-lumen-oasis-写C2D算�
 ## Claude Science Bridge (`lumen science`)
 
 Lumen ships a **native Go** bridge for [Claude Science](https://claude.ai/science) — no Python
-subprocess, no CSswitch dependency. Point Science at DeepSeek / Qwen / Moonshot / Zhipu while
-keeping the full research stack (87 DB clients, 23 domain MCP servers, 30 skills) local.
+subprocess, no CSswitch dependency. **CSswitch v0.3.0-beta.2 parity** (multi-profile switch,
+relay model picker, DSML shim, config guards) plus Lumen-only **5-ship MCP fleet**, **Research
+Brief**, and **Oasis** embed. See [`docs/science/COMPARISON.md`](docs/science/COMPARISON.md).
 
 ```bash
 lumen science start                    # proxy + sandbox + browser (one click)
-lumen science gui                      # Grok Build-style control panel (:18990)
+lumen science gui                      # control panel (:18990) — profiles, relay, DSML
 lumen science status                   # proxy / sandbox / cache hit rate
 lumen science watch                    # live DeepSeek prefix-cache dashboard
 lumen science doctor                   # read-only diagnostics
 lumen science migrate [--force]        # import ~/.csswitch/config.json
+lumen science native verify --live     # 5-ship MCP fleet (PubMed/ChEMBL/GEO/Oasis/C2D)
+lumen science brief "aspirin"          # 4-source Research Brief
 lumen science research verify          # audit bundled MCP + skills + DB clients
 lumen science config set-key deepseek sk-...
+make science-full-verify               # all offline gates (tests, RM, native, desktop)
 ```
+
+**Desktop (macOS)** — `desktop/lumen-science/` Tauri Acceptance app (`com.lumen.science.acceptance`);
+embeds loopback GUI; quit stops proxy, keeps sandbox.
+
+**Profiles** — named configs with upstream probe before switch; bad keys rejected (401/403);
+relay templates support `/api/relay/models` model discovery in GUI.
+
+**DSML shim** — `off` (default) / `detect` / `rewrite` for tool-use leak mitigation; persisted in config.
 
 **Cache boost** — optional `cache_control: ephemeral` on system/tools blocks pushes DeepSeek
 prefix-cache hit rates toward the high 90s on long Science sessions (`lumen science config

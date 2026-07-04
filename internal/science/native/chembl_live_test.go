@@ -10,6 +10,9 @@ import (
 )
 
 func TestChemblLiveOutput(t *testing.T) {
+	if testing.Short() {
+		t.Skip("live ChEMBL network test skipped in -short")
+	}
 	root, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)

@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.0-science-beta.2 — Ultimate science elevation
+
+> Prerelease. Full verification orchestrator, CI gates, comparison doc, automated offline RM
+> runner, GUI profile verification badges, release asset pipeline (CLI + MCP + desktop).
+
+### Added
+- `scripts/science/full-verify.sh` — one-command all gates (quick, all, RM, desktop, native).
+- `scripts/science/rm-offline-auto.sh` — automated offline RM-01/02/03/10/15/16/17/18.
+- `scripts/science/publish-science-release.sh` — attach CLI + 5 MCP + desktop zip to GitHub release.
+- `.github/workflows/science-ci.yml` — science quick + all on every science-path push.
+- `docs/science/COMPARISON.md` — dimension-by-dimension Lumen vs CSswitch table.
+- `make science-test-all`, `make science-full-verify` targets.
+- GUI profile verified badge + hint line; quit-proxy API test.
+
+### Graduated
+- RM-desktop → Acceptance `.app` documented in `desktop/lumen-science/README.md`.
+
 ## v1.2.0-science-beta.1 — CSswitch parity + science-beta
 
 > Prerelease. Implements CSswitch v0.3.0-beta.2 bridge gaps while preserving

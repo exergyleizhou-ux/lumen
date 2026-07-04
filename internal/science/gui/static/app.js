@@ -186,10 +186,28 @@ function renderProfiles() {
   sel.innerHTML = profiles
     .map((p) => {
       const star = p.active ? "★ " : "";
-      return `<option value="${p.id}">${star}${p.name} · ${p.template_id}</option>`;
+      const badge = p.verified ? "✓" : p.verified_hint ? "?" : "";
+      return `<option value="${p.id}">${star}${badge}${p.name} · ${p.template_id}</option>`;
     })
     .join("");
   sel.value = activeProfileId || profiles[0]?.id || "";
+  updateProfileHint();
+}
+
+function updateProfileHint() {
+  const hint = $("profileHint");
+  const sel = $("profileSelect");
+  if (!hint || !sel) return;
+  const p = profiles.find((x) => x.id === sel.value);
+  if (!p) {
+    hint.textContent = "cc-switch 式命名配置，切换前上游探活";
+    return;
+  }
+  const parts = [p.name];
+  if (p.verified) parts.push("key 已验证");
+  else if (p.verified_hint) parts.push(p.verified_hint);
+  if (p.model) parts.push(`model: ${p.model}`);
+  hint.textContent = parts.join(" · ");
 }
 
 async function loadConfig() {
@@ -791,6 +809,7 @@ $("researchBtn")?.addEventListener("click", showResearch);
 $("switchProfileBtn")?.addEventListener("click", switchProfile);
 $("probeProfileBtn")?.addEventListener("click", probeProfile);
 $("addProfileBtn")?.addEventListener("click", addProfile);
+$("profileSelect")?.addEventListener("change", updateProfileHint);
 $("updateBtn")?.addEventListener("click", checkUpdate);
 $("reportBtn")?.addEventListener("click", () => { if (window._issuesURL) window.open(window._issuesURL, "_blank"); });
 $("modalClose")?.addEventListener("click", () => $("modal").close());
