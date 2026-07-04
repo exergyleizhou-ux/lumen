@@ -42,9 +42,12 @@ Logs: `.science-rm-scratch/` (gitignored).
 
 ## Manual (user-present only)
 
-| ID | Scenario | Why manual |
-|----|----------|------------|
-| — | Real Claude subscription OAuth in browser | Requires human login to Anthropic; virtual OAuth is automated in RM-04 |
+| ID | Scenario | Command |
+|----|----------|---------|
+| RM-HUMAN | Real Claude subscription OAuth in browser | `bash scripts/science/rm-human-oauth.sh` |
+
+Opens sandbox URL in your browser; you complete Anthropic login, then press Enter in the terminal.
+Uses real `HOME` by default (login persists under `~/.lumen/science/sandbox` only).
 
 ## Pass criteria reference
 
