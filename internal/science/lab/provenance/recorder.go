@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // Recorder tracks MCP calls and appends provenance records for workspace writes.
@@ -13,7 +14,6 @@ type Recorder struct {
 	projectDir string
 	sessionID  string
 	model      string
-	pending    []MCPCall
 }
 
 // NewRecorder opens provenance logging for a lab project.
@@ -29,20 +29,28 @@ func NewRecorder(projectDir, sessionID, model string) (*Recorder, error) {
 	}, nil
 }
 
-// RecordMCP queues one MCP tool invocation for the next artifact write.
+// RecordMCP appends an immediate mcp_call provenance entry (not queued).
 func (r *Recorder) RecordMCP(domain, tool, query string) {
-	if r == nil {
+	if r == nil || r.writer == nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.pending = append(r.pending, MCPCall{
-		Tool:  domain + "/" + tool,
-		Query: query,
-	})
+	provPath := filepath.Join(r.projectDir, "provenance.jsonl")
+	rec := Record{
+		TS:         time.Now().UTC(),
+		ArtifactID: domain + "/" + tool,
+		Kind:       "mcp_call",
+		Version:    NextVersion(provPath),
+		SessionID:  r.sessionID,
+		Model:      r.model,
+		MCPCalls: []MCPCall{{
+			Tool:  domain + "/" + tool,
+			Query: query,
+		}},
+	}
+	_ = r.writer.Append(rec)
 }
 
-// RecordArtifact appends provenance for a file under the project and clears pending MCP calls.
+// RecordArtifact appends provenance for a file under the project.
 func (r *Recorder) RecordArtifact(absPath string) error {
 	if r == nil || r.writer == nil {
 		return nil
@@ -56,8 +64,6 @@ func (r *Recorder) RecordArtifact(absPath string) error {
 		return err
 	}
 	r.mu.Lock()
-	rec.MCPCalls = append([]MCPCall(nil), r.pending...)
-	r.pending = nil
-	r.mu.Unlock()
+	defer r.mu.Unlock()
 	return r.writer.Append(rec)
 }

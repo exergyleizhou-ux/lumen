@@ -134,25 +134,32 @@ func ResolvePath(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		return filepath.EvalSymlinks(path)
 	}
-	wd, err := os.Getwd()
+	base, err := relativeBase()
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(filepath.Join(wd, path))
+	return filepath.EvalSymlinks(filepath.Join(base, path))
 }
 
 // ResolvePathAllowMissing is like ResolvePath but tolerates the file not
 // existing yet (for write operations). It resolves symlinks of the longest
 // EXISTING ancestor and re-appends the missing tail, so a symlinked parent
 // directory cannot smuggle a write past a workspace-boundary check.
+func relativeBase() (string, error) {
+	if root := WorkspaceRoot(); root != "" {
+		return root, nil
+	}
+	return os.Getwd()
+}
+
 func ResolvePathAllowMissing(path string) (string, error) {
 	abs := path
 	if !filepath.IsAbs(abs) {
-		wd, err := os.Getwd()
+		base, err := relativeBase()
 		if err != nil {
 			return "", err
 		}
-		abs = filepath.Join(wd, abs)
+		abs = filepath.Join(base, abs)
 	}
 	abs = filepath.Clean(abs)
 

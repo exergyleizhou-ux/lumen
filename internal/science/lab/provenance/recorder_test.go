@@ -7,6 +7,25 @@ import (
 	"testing"
 )
 
+func TestRecorderMCPImmediate(t *testing.T) {
+	dir := t.TempDir()
+	rec, err := NewRecorder(dir, "sess_test", "deepseek")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RecordMCP("pubmed", "search_articles", `{"query":"aspirin"}`)
+	data, err := os.ReadFile(filepath.Join(dir, "provenance.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"kind":"mcp_call"`) {
+		t.Fatalf("missing mcp_call: %s", data)
+	}
+	if !strings.Contains(string(data), "pubmed/search_articles") {
+		t.Fatalf("missing tool: %s", data)
+	}
+}
+
 func TestRecorderAppend(t *testing.T) {
 	dir := t.TempDir()
 	ws := filepath.Join(dir, "workspace")
@@ -18,16 +37,12 @@ func TestRecorderAppend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec.RecordMCP("pubmed", "search_articles", `{"query":"aspirin"}`)
 	if err := rec.RecordArtifact(path); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "provenance.jsonl"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "pubmed/search_articles") {
-		t.Fatalf("missing mcp call: %s", data)
 	}
 	if !strings.Contains(string(data), "workspace/reports/brief.md") {
 		t.Fatalf("missing path: %s", data)

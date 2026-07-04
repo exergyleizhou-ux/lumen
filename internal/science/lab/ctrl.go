@@ -89,6 +89,7 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	_ = os.Setenv("LUMEN_TOOLS_PROFILE", defaultToolProfile)
 
 	c.ctrl.SetExtraMemoryPrompt(scienceSystemPrompt)
+	sink = wrapProvenanceSink(sink, c.provenance, g)
 	if err := c.ctrl.Configure(sink, nil, lumenCfgPath); err != nil {
 		return err
 	}
@@ -103,9 +104,6 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 		ProjectRoot: ws,
 		Projects:    c.projects,
 		Guard:       g,
-		OnWrite: func(path string) {
-			_ = c.provenance.RecordArtifact(path)
-		},
 	}
 	extra = append(extra, briefTool)
 	c.ctrl.AddExtraTools(extra)
@@ -126,21 +124,14 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	return nil
 }
 
-// Run executes one chat turn inside the project workspace (cwd restored after).
+// Run executes one chat turn. File tools resolve paths via LUMEN_WORKSPACE_ROOT
+// (no process-wide chdir — builtins stay isolated to the project workspace).
 func (c *Controller) Run(ctx context.Context, prompt, mode string) error {
 	c.mu.Lock()
 	ctrl := c.ctrl
-	ws := c.workspace
 	c.mu.Unlock()
 	if ctrl == nil {
 		return fmt.Errorf("lab controller not configured")
-	}
-	orig, _ := os.Getwd()
-	if ws != "" {
-		if err := os.Chdir(ws); err != nil {
-			return fmt.Errorf("chdir workspace: %w", err)
-		}
-		defer func() { _ = os.Chdir(orig) }()
 	}
 	switch mode {
 	case "plan", "":
