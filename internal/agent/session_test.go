@@ -272,9 +272,11 @@ func TestSessionSQLiteMutationMatrix(t *testing.T) {
 		}
 	}
 	assertCount(10, "after add×10")
+	t.Logf("sqlite-session-evidence: after_add sqlite_count=10")
 
 	s.Compact(2, 2, "summary")
 	assertCount(5, "after compact")
+	t.Logf("sqlite-session-evidence: after_compact sqlite_count=5")
 
 	reloaded := NewSession(path)
 	if reloaded.Len() != 5 {
@@ -287,10 +289,12 @@ func TestSessionSQLiteMutationMatrix(t *testing.T) {
 			t.Fatalf("reload compacted msg[%d]=%q want %q", i, got[i].Content, wc)
 		}
 	}
+	t.Logf("sqlite-session-evidence: after_compact reload_len=5 content_first=%q content_last=%q", got[0].Content, got[4].Content)
 
 	s = reloaded
 	s.DropLast()
 	assertCount(4, "after drop last")
+	t.Logf("sqlite-session-evidence: after_drop sqlite_count=4")
 
 	reloaded2 := NewSession(path)
 	if reloaded2.Len() != 4 {
@@ -299,6 +303,40 @@ func TestSessionSQLiteMutationMatrix(t *testing.T) {
 	if reloaded2.Snapshot()[3].Content != "m8" {
 		t.Fatalf("last msg after drop: %+v", reloaded2.Snapshot())
 	}
+}
+
+func TestSessionLoadEmptyJSONLClearsStaleSQLite(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "stale.jsonl")
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	p1 := `{"role":"user","content":"stale"}`
+	if err := db.AppendSessionMessage(sid, 0, "user", []byte(p1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewSession(path)
+	if s.Len() != 0 {
+		t.Fatalf("empty jsonl must not load stale sqlite: len=%d", s.Len())
+	}
+	cnt, _ := db.CountSessionMessages(sid)
+	if cnt != 0 {
+		t.Fatalf("stale sqlite must be cleared: count=%d", cnt)
+	}
+	t.Logf("sqlite-session-evidence: empty_jsonl cleared stale sqlite count=0")
 }
 
 func TestSessionConcurrentAddPreservesSQLiteSeq(t *testing.T) {

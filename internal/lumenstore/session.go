@@ -47,7 +47,8 @@ func (s *Store) LoadSessionMessages(sessionID string) ([][]byte, error) {
 	return out, rows.Err()
 }
 
-// ReplaceSessionMessages overwrites all messages for a session (used after persistLocked mutations and load reconciliation).
+// ReplaceSessionMessages deletes then re-inserts all rows for a session.
+// Called from Session.persistLocked (Compact/DropLast) and load reconciliation.
 func (s *Store) ReplaceSessionMessages(sessionID string, payloads [][]byte, roles []string) error {
 	if s == nil || s.db == nil || sessionID == "" {
 		return nil
@@ -55,6 +56,7 @@ func (s *Store) ReplaceSessionMessages(sessionID string, payloads [][]byte, role
 	if len(payloads) != len(roles) {
 		return fmt.Errorf("replace session %s: payloads/roles length mismatch", sessionID)
 	}
+	// Empty payloads clears the session (e.g. truncated JSONL).
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tx, err := s.db.Begin()

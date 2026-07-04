@@ -85,44 +85,18 @@ func (s *Session) SystemPrompt(basePrompt, memory string) string {
 	return sb.String()
 }
 
-// DropLast removes the most recently appended message from both the
-// in-memory slice and the JSONL file. Used to undo a user message when
-// the turn failed before an assistant reply could be added.
+// DropLast removes the most recently appended message from memory, JSONL,
+// and SQLite via persistLocked (same rewrite path as Compact).
 func (s *Session) DropLast() {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if len(s.Messages) == 0 {
-		s.mu.Unlock()
 		return
 	}
 	s.Messages = s.Messages[:len(s.Messages)-1]
-	s.mu.Unlock()
-
-	if s.Path == "" {
-		return
+	if err := s.persistLocked(); err != nil && s.persistErr == nil {
+		s.persistErr = err
 	}
-	// Truncate JSONL: remove the last line
-	data, err := os.ReadFile(s.Path)
-	if err != nil || len(data) == 0 {
-		return
-	}
-	// Find last complete line boundary (skip trailing newline if any)
-	end := len(data)
-	if data[end-1] == '\n' {
-		end--
-	}
-	lastNL := -1
-	for i := end - 1; i >= 0; i-- {
-		if data[i] == '\n' {
-			lastNL = i
-			break
-		}
-	}
-	if lastNL >= 0 {
-		os.WriteFile(s.Path, data[:lastNL+1], 0o644)
-	} else {
-		os.WriteFile(s.Path, nil, 0o644) // only one line — clear
-	}
-	s.syncSQLiteFromMemory()
 }
 
 // DropTo truncates the session back to n messages (both memory and file).
@@ -179,17 +153,6 @@ func (s *Session) persistLocked() error {
 	return s.syncSQLiteLocked()
 }
 
-// rewriteFileLocked is an alias for persistLocked (compact/drop callers).
-func (s *Session) rewriteFileLocked() error {
-	return s.persistLocked()
-}
-
-func (s *Session) syncSQLiteFromMemory() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_ = s.syncSQLiteLocked()
-}
-
 func (s *Session) syncSQLiteLocked() error {
 	if s.Path == "" {
 		return nil
@@ -236,32 +199,57 @@ func (s *Session) load() {
 	if s.Path == "" {
 		return
 	}
-	jsonlMsgs := s.loadFromJSONL()
+	jsonlMsgs, jsonlFileExists := s.loadFromJSONLWithMeta()
 	db := lumenstore.Default()
-	if db != nil {
-		sid := lumenstore.SessionIDFromPath(s.Path)
-		rows, err := db.LoadSessionMessages(sid)
-		if err == nil && len(rows) > 0 {
-			// After compact/drop the JSONL rewrite is authoritative; stale sqlite
-			// rows (pre-mutation count) must not win over a shorter JSONL file.
-			if len(jsonlMsgs) > 0 && len(jsonlMsgs) != len(rows) {
-				s.Messages = jsonlMsgs
-				_ = replaceSQLiteMessages(db, sid, jsonlMsgs)
-				return
-			}
-			for _, row := range rows {
-				var m provider.Message
-				if json.Unmarshal(row, &m) == nil {
-					s.Messages = append(s.Messages, m)
-				}
-			}
+	sid := lumenstore.SessionIDFromPath(s.Path)
+
+	if db == nil {
+		s.Messages = jsonlMsgs
+		return
+	}
+
+	rows, err := db.LoadSessionMessages(sid)
+	if err != nil {
+		s.Messages = jsonlMsgs
+		if len(jsonlMsgs) > 0 {
+			_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+		}
+		return
+	}
+
+	// Truncated/empty JSONL on disk → empty session; do not resurrect stale sqlite.
+	if jsonlFileExists && len(jsonlMsgs) == 0 {
+		s.Messages = nil
+		_ = replaceSQLiteMessages(db, sid, nil)
+		return
+	}
+
+	// SQLite-only resume when JSONL was intentionally removed after migration.
+	if !jsonlFileExists && len(rows) > 0 {
+		s.messagesFromSQLiteRows(rows)
+		return
+	}
+
+	if len(jsonlMsgs) > 0 {
+		if len(rows) > 0 && len(jsonlMsgs) != len(rows) {
+			s.Messages = jsonlMsgs
+			_ = replaceSQLiteMessages(db, sid, jsonlMsgs)
 			return
 		}
-	}
-	if len(jsonlMsgs) > 0 {
+		if len(rows) > 0 {
+			s.messagesFromSQLiteRows(rows)
+			return
+		}
 		s.Messages = jsonlMsgs
-		if db != nil {
-			_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+		_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+	}
+}
+
+func (s *Session) messagesFromSQLiteRows(rows [][]byte) {
+	for _, row := range rows {
+		var m provider.Message
+		if json.Unmarshal(row, &m) == nil {
+			s.Messages = append(s.Messages, m)
 		}
 	}
 }
@@ -277,10 +265,13 @@ func replaceSQLiteMessages(db *lumenstore.Store, sid string, msgs []provider.Mes
 	return db.ReplaceSessionMessages(sid, payloads, roles)
 }
 
-func (s *Session) loadFromJSONL() []provider.Message {
+func (s *Session) loadFromJSONLWithMeta() ([]provider.Message, bool) {
 	data, err := os.ReadFile(s.Path)
 	if err != nil {
-		return nil
+		if os.IsNotExist(err) {
+			return nil, false
+		}
+		return nil, true
 	}
 	var out []provider.Message
 	for _, line := range strings.Split(string(data), "\n") {
@@ -294,5 +285,5 @@ func (s *Session) loadFromJSONL() []provider.Message {
 		}
 		out = append(out, m)
 	}
-	return out
+	return out, true
 }
