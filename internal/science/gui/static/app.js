@@ -157,12 +157,33 @@ function applyMode(m) {
   mode = m;
   const shell = $("shell");
   if (shell) shell.classList.toggle("mode-official", m === "official");
+
+  // Lab mode: show iframe, hide bridge
+  const bridgeEl = $("bridgeContent");
+  const labEl = $("labContainer");
+  const isLab = m === "lab";
+
+  if (bridgeEl) bridgeEl.style.display = isLab ? "none" : "";
+  if (labEl) {
+    labEl.style.display = isLab ? "block" : "none";
+    if (isLab) {
+      const frame = $("labFrame");
+      if (frame && frame.src === "about:blank") {
+        frame.src = "http://127.0.0.1:18992/?embed=1";
+      }
+    }
+  }
+
+  // Official hint
+  const alertEl = document.querySelector(".alert.info.official-only");
+  if (alertEl) alertEl.style.display = (m === "official" || m === "lab") ? "none" : "";
+
   document.querySelectorAll(".tabs .tab").forEach((b) => {
     b.classList.toggle("active", b.dataset.mode === m);
   });
   const heroLabel = $("heroBtn")?.querySelector(".hero-label");
   if (heroLabel) {
-    heroLabel.textContent = m === "official" ? "打开官方 Claude Science" : "一键开始";
+    heroLabel.textContent = m === "official" ? "打开官方 Claude Science" : m === "lab" ? "打开实验室" : "一键开始";
   }
   updateTelemetry({ mode: m });
 }
@@ -946,18 +967,26 @@ wireOasisResearch($("oasisResearchFootBtn"));
 async function probeLabHealth() {
   const dot = $("labDot");
   const link = $("labLink");
+  const tab = $("labTab");
   try {
     const r = await fetch("http://127.0.0.1:18992/api/lab/health", { signal: AbortSignal.timeout(800) });
     if (!r.ok) throw new Error("lab down");
     const h = await r.json();
+    const healthy = h.research_pack?.healthy;
     if (dot) {
-      dot.textContent = h.research_pack?.healthy ? "✓" : "○";
-      dot.title = h.research_pack?.healthy ? "Lab + research pack ready" : "Lab up, pack incomplete";
+      dot.textContent = healthy ? "✓" : "○";
+      dot.title = healthy ? "Lab + research pack ready" : "Lab up, pack incomplete";
+    }
+    if (tab && healthy) {
+      const f = h.fleet || {};
+      tab.textContent = "实验室 (" + (f.connected_total || 0) + ")";
+      tab.title = (f.cs_connected || 0) + " CS + " + (f.lumen_native || 0) + " 原生 · " + (h.research_pack?.domain_tools || 0) + " tools";
     }
     const mode = h.science_mode || "hybrid";
     if (link && mode === "bridge") link.style.opacity = "0.55";
   } catch (_) {
     if (dot) { dot.textContent = "—"; dot.title = "实验室未启动 (lumen science lab)"; }
+    if (tab) { tab.textContent = "实验室"; tab.title = "实验室未启动"; }
   }
 }
 

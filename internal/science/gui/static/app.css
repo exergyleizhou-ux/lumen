@@ -997,3 +997,18 @@ dialog::backdrop { background: rgba(24, 24, 27, 0.25); }
   .reveal, .live-pill.dead { animation: none !important; }
   .card { transition: none; }
 }
+/* Lab iframe embedding */
+#labContainer {
+  position: fixed;
+  top: 48px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  background: #fbf9f6;
+}
+#labFrame {
+  width: 100%;
+  height: 100%;
+  border: none;
+}

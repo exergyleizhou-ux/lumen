@@ -40,11 +40,18 @@
       <nav class="tabs" role="tablist" aria-label="运行模式">
         <button class="tab active" data-mode="proxy" type="button" role="tab">第三方模型</button>
         <button class="tab" data-mode="official" type="button" role="tab">官方 Claude</button>
+        <button class="tab" data-mode="lab" type="button" role="tab" id="labTab">实验室</button>
       </nav>
 
       <p class="alert info official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
 
-      <div class="settings-grid">
+      <!-- Lab iframe container -->
+      <div id="labContainer" style="display:none; position:absolute; top:48px; left:0; right:0; bottom:0; z-index:10;">
+        <iframe id="labFrame" src="about:blank" style="width:100%;height:100%;border:none;"
+          title="Lumen Science 实验室" allow="clipboard-read; clipboard-write"></iframe>
+      </div>
+
+      <div class="settings-grid" id="bridgeContent">
         <div class="controls-grid">
           <section class="card tp-only reveal" id="profilesCard">
             <p class="card-kicker">profiles · 多配置</p>
