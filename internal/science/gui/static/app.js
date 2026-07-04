@@ -860,7 +860,7 @@ async function init() {
   wireOasisAuthBridge();
   try {
     const [v, health] = await Promise.all([api("/api/version"), api("/api/health")]);
-    if ($("verLabel")) $("verLabel").textContent = "v" + (v.version || "dev");
+    if (null) null.textContent = "v" + (v.version || "dev");
     window._releaseURL = v.release;
     window._issuesURL = v.issues;
     if (typeof health.uptime_ms === "number") panelStartedAt = Date.now() - health.uptime_ms;
