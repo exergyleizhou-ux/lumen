@@ -20,6 +20,13 @@ func stressHandler(t *testing.T) *httptest.Server {
 	return httptest.NewServer(securityHeaders(srv.cors(rateLimitMutations(srv.wrapMiddleware(srv.mux)))))
 }
 
+func skipStress(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("skipping stress test in -short mode (use full test for load checks)")
+	}
+}
+
 func hammerGET(t *testing.T, url string, workers, each int) (ok, fail int64) {
 	t.Helper()
 	var wg sync.WaitGroup
@@ -48,6 +55,7 @@ func hammerGET(t *testing.T, url string, workers, each int) (ok, fail int64) {
 }
 
 func TestStressHealthConcurrent(t *testing.T) {
+	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
 	ok, fail := hammerGET(t, ts.URL+"/api/health", 32, 50)
@@ -60,6 +68,7 @@ func TestStressHealthConcurrent(t *testing.T) {
 }
 
 func TestStressConfigAndDoctorConcurrent(t *testing.T) {
+	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
 	paths := []string{"/api/config", "/api/doctor", "/api/status", "/api/version"}
@@ -92,6 +101,7 @@ func TestStressConfigAndDoctorConcurrent(t *testing.T) {
 }
 
 func TestStressSSEClients(t *testing.T) {
+	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
 	const clients = 12
@@ -141,6 +151,7 @@ func TestStressSSEClients(t *testing.T) {
 }
 
 func TestStressMutateRateLimit(t *testing.T) {
+	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
 	var limited int64

@@ -9,6 +9,7 @@ import (
 )
 
 func TestStressOasisReadOnly(t *testing.T) {
+	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
 	const workers = 24
