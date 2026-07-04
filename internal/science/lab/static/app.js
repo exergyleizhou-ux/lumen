@@ -25,11 +25,22 @@ function appendMsg(cls, text) {
 async function refreshHealth() {
   const h = await api("/api/lab/health");
   const pack = h.research_pack || {};
-  $("packBadge").textContent = pack.healthy ? `Pack ✓ ${pack.domain_tools || 0} tools` : "Pack ✗ 需 science start";
   const f = h.fleet || {};
-  $("fleetBadge").textContent = `Fleet ${f.cs_connected || 0}/${f.cs_domains || 0}`;
-  $("modeHint").textContent = `science_mode: ${h.science_mode || "hybrid"}`;
-  $("inspectorBody").textContent = JSON.stringify(h, null, 2);
+  $("packBadge").textContent = pack.healthy ? `${pack.domain_tools || 0} tools · ${pack.skills || 0} skills` : "未安装 Research Pack";
+  $("fleetBadge").textContent = `⚡ ${f.connected_total || 0}/${f.cs_domains || 0} fleet`;
+  $("modeHint").textContent = h.science_mode || "hybrid";
+  // Structured status display
+  $("inspectorBody").innerHTML = [
+    `<div class="stat-row"><span class="stat-label">状态</span><span class="stat-val ok">● 在线</span></div>`,
+    `<div class="stat-row"><span class="stat-label">版本</span><span class="stat-val">${escHtml(h.version||'dev')}</span></div>`,
+    `<div class="stat-row"><span class="stat-label">模式</span><span class="stat-val">${escHtml(h.science_mode||'hybrid')}</span></div>`,
+    `<div class="stat-div"></div>`,
+    `<div class="stat-row"><span class="stat-label">Research</span><span class="stat-val ${pack.healthy?'ok':''}">${pack.healthy?'✓':'✗'} ${pack.domain_tools||0} tools</span></div>`,
+    `<div class="stat-row"><span class="stat-label">CS fleet</span><span class="stat-val">${f.cs_connected||0}/${f.cs_domains||0}</span></div>`,
+    `<div class="stat-row"><span class="stat-label">原生 fleet</span><span class="stat-val">${f.lumen_native||0}</span></div>`,
+    `<div class="stat-div"></div>`,
+    `<div class="stat-row"><span class="stat-label">模型</span><span class="stat-val">${escHtml(h.provider?.masked||'—')}</span></div>`,
+  ].join('');
   return h;
 }
 

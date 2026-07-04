@@ -4,41 +4,40 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="assets/app.css?v=2" />
+  <link rel="stylesheet" href="assets/app.css?v=3" />
 </head>
 <body>
   <div class="shell" id="shell">
     <header class="top">
-      <a class="brand" href="#"><span class="brand-title">Lumen</span><span class="brand-sub">Science 实验室</span></a>
-      <div class="top-actions">
-        <span class="badge" id="packBadge">Pack —</span>
-        <span class="badge" id="fleetBadge">Fleet —</span>
-        <a class="btn-link" href="http://127.0.0.1:18990/" id="bridgeLink">Bridge</a>
-        <a class="btn-link" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">绿洲</a>
-      </div>
+      <span class="brand-title">Lumen</span>
+      <span class="brand-sub">Science 实验室</span>
+      <span class="top-spacer"></span>
+      <span class="top-status" id="packBadge"></span>
+      <span class="top-status" id="fleetBadge"></span>
+      <a class="btn-ghost" href="http://127.0.0.1:18990/">Bridge</a>
     </header>
     <div class="layout">
       <aside class="sidebar">
         <button class="btn primary" id="newProjectBtn" type="button">+ 新建课题</button>
         <nav id="projectList" class="project-list"></nav>
         <div class="sidebar-ft">
-          <p class="hint" id="modeHint">science_mode: —</p>
+          <p class="hint" id="modeHint">hybrid</p>
         </div>
       </aside>
       <main class="chat-panel">
         <div class="chat-scroll" id="chatScroll">
           <section class="welcome" id="welcome">
-            <h1>国产 Claude Science 实验室</h1>
-            <p>挂接本地 Research Pack（bio-tools ~247 工具）+ 第三方模型直连。选择或新建课题开始。</p>
+            <h1>Lumen Science 实验室</h1>
+            <p>挂接 CS Research Pack（23 域 · 247 工具 · 29 Skills）+ 第三方模型直连</p>
             <div class="chips">
-              <button type="button" class="chip" data-prompt="用 pubmed 域检索 aspirin 药理机制文献">文献检索</button>
-              <button type="button" class="chip" data-prompt="生成 aspirin 四源 Research Brief">生成简报</button>
-              <button type="button" class="chip" data-brief="EGFR 抑制剂">一键 Brief</button>
+              <button type="button" class="chip" data-prompt="用 pubmed 域检索 aspirin 药理机制文献">🔍 文献检索</button>
+              <button type="button" class="chip" data-prompt="生成 aspirin 四源 Research Brief">📋 生成简报</button>
+              <button type="button" class="chip" data-brief="EGFR 抑制剂">⚡ 一键 Brief</button>
             </div>
           </section>
         </div>
         <form class="composer" id="composer">
-          <textarea id="promptInput" rows="2" placeholder="描述科研任务…"></textarea>
+          <textarea id="promptInput" rows="2" placeholder="描述科研任务…（⌘K 打开命令面板）"></textarea>
           <button class="btn primary" type="submit">发送</button>
         </form>
       </main>
@@ -50,32 +49,30 @@
           <button class="inspector-tab" data-pane="molecule">分子</button>
         </div>
         <div id="statusPane">
-          <pre id="inspectorBody" class="mono">加载中…</pre>
+          <div id="inspectorBody"></div>
         </div>
         <div id="filesPane" style="display:none">
           <div id="fileTree" class="file-tree">选择课题查看文件</div>
           <div id="filePreview" class="file-preview"></div>
         </div>
         <div id="ketcherPane" style="display:none">
-          <p class="hint" style="padding: 6px; font-size: 0.75rem;">Ketcher 分子编辑器。</p>
-          <iframe id="ketcherFrame" src="about:blank"
-            style="width: 100%; height: 420px; border: 1px solid var(--forest-border); border-radius: var(--radius);"
-            title="Ketcher 化学编辑器" loading="lazy"></iframe>
+          <p class="pane-hint">Ketcher 分子结构编辑器</p>
+          <iframe id="ketcherFrame" src="about:blank" title="Ketcher" loading="lazy"></iframe>
         </div>
         <div id="moleculePane" style="display:none">
-          <p class="hint" style="padding: 6px; font-size: 0.75rem;">3Dmol.js 结构预览。将 PDB/SDF 文件拖入或通过对话生成。</p>
-          <div id="molViewer" style="width: 100%; height: 420px; position: relative; border: 1px solid var(--forest-border); border-radius: var(--radius);"></div>
+          <p class="pane-hint">3Dmol.js 蛋白/分子 3D 预览</p>
+          <div id="molViewer"></div>
         </div>
       </aside>
     </div>
   </div>
-  <!-- Command palette overlay -->
+  <!-- ⌘K -->
   <div id="cmdPalette" class="palette-overlay" style="display:none">
     <div class="palette-box">
-      <input id="paletteInput" type="text" placeholder="输入命令… (新建课题 / 生成 Brief / 文献检索)" autofocus />
+      <input id="paletteInput" type="text" placeholder="搜索命令…" autofocus />
       <div id="paletteResults" class="palette-results"></div>
     </div>
   </div>
-  <script src="assets/app.js?v=2" defer></script>
+  <script src="assets/app.js?v=3" defer></script>
 </body>
 </html>
