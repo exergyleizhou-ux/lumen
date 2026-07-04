@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="200" y1="140" x2="840" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#083d33"/>
+      <stop offset="0.5" stop-color="#065f46"/>
+      <stop offset="1" stop-color="#047857"/>
+    </linearGradient>
+    <radialGradient id="vignette" cx="512" cy="460" r="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="0.75" stop-color="#000000" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.28"/>
+    </radialGradient>
+    <radialGradient id="halo" cx="512" cy="512" r="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fafaf7" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#fafaf7" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gold" cx="506" cy="506" r="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff8e8"/>
+      <stop offset="0.35" stop-color="#dcc07a"/>
+      <stop offset="0.75" stop-color="#a67c2e"/>
+      <stop offset="1" stop-color="#6b4f1a"/>
+    </radialGradient>
+    <linearGradient id="beam" x1="512" y1="512" x2="512" y2="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fafaf7" stop-opacity="0"/>
+      <stop offset="0.35" stop-color="#fafaf7" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#fafaf7" stop-opacity="0.22"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <rect width="1024" height="1024" fill="url(#vignette)"/>
+
+  <!-- Light column — Lumen -->
+  <path d="M492 512 L492 292 C492 276 502 264 512 264 C522 264 532 276 532 292 L532 512 Z" fill="url(#beam)"/>
+
+  <!-- Optical rings -->
+  <circle cx="512" cy="512" r="292" stroke="#fafaf7" stroke-opacity="0.14" stroke-width="1.75"/>
+  <circle cx="512" cy="512" r="220" stroke="#fafaf7" stroke-opacity="0.26" stroke-width="2"/>
+  <circle cx="512" cy="512" r="148" stroke="#fafaf7" stroke-opacity="0.42" stroke-width="2.25"/>
+  <circle cx="512" cy="512" r="76"  stroke="#fafaf7" stroke-opacity="0.62" stroke-width="2"/>
+
+  <!-- Viewfinder brackets -->
+  <g stroke="#fafaf7" stroke-opacity="0.78" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M372 372 H404 V404"/>
+    <path d="M652 372 H620 V404"/>
+    <path d="M372 652 H404 V620"/>
+    <path d="M652 652 H620 V620"/>
+  </g>
+
+  <!-- Focal halo + lumen -->
+  <circle cx="512" cy="512" r="96" fill="url(#halo)"/>
+  <circle cx="512" cy="512" r="30" fill="url(#gold)"/>
+  <circle cx="507" cy="507" r="8.5" fill="#fffef9" fill-opacity="0.62"/>
+
+  <!-- Baseline — precision axis -->
+  <line x1="348" y1="512" x2="676" y2="512" stroke="#fafaf7" stroke-opacity="0.16" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
