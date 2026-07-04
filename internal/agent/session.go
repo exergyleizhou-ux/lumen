@@ -199,7 +199,7 @@ func (s *Session) load() {
 	if s.Path == "" {
 		return
 	}
-	jsonlMsgs, jsonlFileExists := s.loadFromJSONLWithMeta()
+	jsonlMsgs, jsonlState := s.loadFromJSONLWithMeta()
 	db := lumenstore.Default()
 	sid := lumenstore.SessionIDFromPath(s.Path)
 
@@ -217,16 +217,21 @@ func (s *Session) load() {
 		return
 	}
 
-	// Truncated/empty JSONL on disk → empty session; do not resurrect stale sqlite.
-	if jsonlFileExists && len(jsonlMsgs) == 0 {
+	switch jsonlState {
+	case jsonlUnreadable:
+		// Do not treat I/O errors as an intentional empty transcript.
+		if len(rows) > 0 {
+			s.messagesFromSQLiteRows(rows)
+		}
+		return
+	case jsonlPresentEmpty:
 		s.Messages = nil
 		_ = replaceSQLiteMessages(db, sid, nil)
 		return
-	}
-
-	// SQLite-only resume when JSONL was intentionally removed after migration.
-	if !jsonlFileExists && len(rows) > 0 {
-		s.messagesFromSQLiteRows(rows)
+	case jsonlAbsent:
+		if len(rows) > 0 {
+			s.messagesFromSQLiteRows(rows)
+		}
 		return
 	}
 
@@ -265,13 +270,25 @@ func replaceSQLiteMessages(db *lumenstore.Store, sid string, msgs []provider.Mes
 	return db.ReplaceSessionMessages(sid, payloads, roles)
 }
 
-func (s *Session) loadFromJSONLWithMeta() ([]provider.Message, bool) {
+type jsonlFileState int
+
+const (
+	jsonlAbsent jsonlFileState = iota
+	jsonlPresentEmpty
+	jsonlPresentWithMessages
+	jsonlUnreadable
+)
+
+func (s *Session) loadFromJSONLWithMeta() ([]provider.Message, jsonlFileState) {
 	data, err := os.ReadFile(s.Path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, false
+			return nil, jsonlAbsent
 		}
-		return nil, true
+		return nil, jsonlUnreadable
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return nil, jsonlPresentEmpty
 	}
 	var out []provider.Message
 	for _, line := range strings.Split(string(data), "\n") {
@@ -285,5 +302,8 @@ func (s *Session) loadFromJSONLWithMeta() ([]provider.Message, bool) {
 		}
 		out = append(out, m)
 	}
-	return out, true
+	if len(out) == 0 {
+		return nil, jsonlPresentEmpty
+	}
+	return out, jsonlPresentWithMessages
 }

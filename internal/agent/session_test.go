@@ -86,43 +86,63 @@ func TestSessionSnapshot(t *testing.T) {
 	}
 }
 
-func TestSessionCompact(t *testing.T) {
-	s := NewSession("")
+func TestSessionCompactSQLiteDualWrite(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
 
-	// Add 10 messages
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "compact.jsonl")
+	s := NewSession(path)
 	for i := 0; i < 10; i++ {
-		s.Add(provider.Message{
-			Role:    provider.RoleUser,
-			Content: "message " + string(rune('0'+i)),
-		})
+		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("m%d", i)})
 	}
-	if s.Len() != 10 {
-		t.Fatalf("expected 10 messages, got %d", s.Len())
+	s.Compact(2, 2, "mid summary")
+	if s.Len() != 5 {
+		t.Fatalf("after compact memory len=%d want 5", s.Len())
 	}
 
-	// Compact: keep first 2, last 2, summarize middle
-	s.Compact(2, 2, "summary of middle 6 messages")
-	if s.Len() != 5 { // 2 + 1 summary + 2 = 5
-		// Actually the Compact function might produce different counts.
-		// Let's check the behavior.
-		messages := s.Snapshot()
-		t.Logf("after compact: %d messages", len(messages))
-		for i, m := range messages {
-			t.Logf("  [%d] %s: %s", i, m.Role, m.Content[:min(30, len(m.Content))])
-		}
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	cnt, err := db.CountSessionMessages(sid)
+	if err != nil || cnt != 5 {
+		t.Fatalf("compact sqlite count=%d err=%v", cnt, err)
+	}
+	t.Logf("sqlite-session-evidence: compact_sqlite_count=%d", cnt)
 }
 
-func TestSessionCompactTooSmall(t *testing.T) {
-	s := NewSession("")
+func TestSessionCompactTooSmallSQLiteNoOp(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "small.jsonl")
+	s := NewSession(path)
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "1"})
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "2"})
 	s.Add(provider.Message{Role: provider.RoleUser, Content: "3"})
-
 	s.Compact(2, 2, "summary")
-	// 3 messages <= 2+2=4, so compact should do nothing
 	if s.Len() != 3 {
-		t.Errorf("compact should not change session smaller than keepFirst+keepLast, got %d", s.Len())
+		t.Fatalf("compact should no-op when too small: len=%d", s.Len())
+	}
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	cnt, _ := db.CountSessionMessages(lumenstore.SessionIDFromPath(path))
+	if cnt != 3 {
+		t.Fatalf("sqlite count after no-op compact=%d want 3", cnt)
 	}
 }
 
@@ -303,6 +323,44 @@ func TestSessionSQLiteMutationMatrix(t *testing.T) {
 	if reloaded2.Snapshot()[3].Content != "m8" {
 		t.Fatalf("last msg after drop: %+v", reloaded2.Snapshot())
 	}
+}
+
+func TestSessionLoadUnreadableJSONLPreservesSQLite(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "unreadable.jsonl")
+	line := `{"role":"user","content":"keep-me"}`
+	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	if err := db.AppendSessionMessage(sid, 0, "user", []byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	s := NewSession(path)
+	if s.Len() != 1 || s.Snapshot()[0].Content != "keep-me" {
+		t.Fatalf("unreadable jsonl must fall back to sqlite: %+v", s.Snapshot())
+	}
+	cnt, _ := db.CountSessionMessages(sid)
+	if cnt != 1 {
+		t.Fatalf("sqlite must not be cleared on read error: count=%d", cnt)
+	}
+	t.Logf("sqlite-session-evidence: unreadable_jsonl preserved sqlite count=%d", cnt)
 }
 
 func TestSessionLoadEmptyJSONLClearsStaleSQLite(t *testing.T) {
