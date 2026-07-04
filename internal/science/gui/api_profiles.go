@@ -90,11 +90,16 @@ func (a *API) handleProfiles(w http.ResponseWriter, r *http.Request) {
 		}
 		p := sciconfig.Profile{
 			ID: sciconfig.NewProfileID(), Name: name, TemplateID: tid,
-			BaseURL: strings.TrimSpace(body.BaseURL), APIKey: strings.TrimSpace(body.APIKey),
-			Model: strings.TrimSpace(body.Model), CreatedAt: time.Now().UnixMilli(),
+			APIKey: strings.TrimSpace(body.APIKey),
+			Model:  strings.TrimSpace(body.Model), CreatedAt: time.Now().UnixMilli(),
 			Icon: tpl.Icon, IconColor: tpl.IconColor,
 		}
-		if p.BaseURL == "" {
+		if tpl.BaseURLEditable {
+			p.BaseURL = strings.TrimSpace(body.BaseURL)
+			if p.BaseURL == "" {
+				p.BaseURL = tpl.BaseURL
+			}
+		} else {
 			p.BaseURL = tpl.BaseURL
 		}
 		if ok, hint, err := sciruntime.ProbeProfile(p); err == nil {
@@ -153,7 +158,10 @@ func (a *API) handleProfiles(w http.ResponseWriter, r *http.Request) {
 			candidate.APIKey = s
 		}
 		if body.BaseURL != "" {
-			candidate.BaseURL = strings.TrimSpace(body.BaseURL)
+			tpl, _ := sciconfig.TemplateByID(candidate.TemplateID)
+			if tpl.BaseURLEditable {
+				candidate.BaseURL = strings.TrimSpace(body.BaseURL)
+			}
 		}
 		if body.Model != "" {
 			candidate.Model = strings.TrimSpace(body.Model)

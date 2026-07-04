@@ -46,10 +46,7 @@ func resolveProfile(p sciconfig.Profile) (ResolvedSpec, error) {
 	if key == "" {
 		return ResolvedSpec{}, fmt.Errorf("profile %q has no API key", p.Name)
 	}
-	baseURL := strings.TrimSpace(p.BaseURL)
-	if baseURL == "" {
-		baseURL = tpl.BaseURL
-	}
+	baseURL := sciconfig.ResolveProfileBaseURL(p)
 	adapter := tpl.Adapter
 	switch adapter {
 	case "relay":
@@ -67,7 +64,7 @@ func resolveProfile(p sciconfig.Profile) (ResolvedSpec, error) {
 		if !ok {
 			return ResolvedSpec{}, fmt.Errorf("unknown adapter %q", adapter)
 		}
-		if baseURL != "" && baseURL != tpl.BaseURL {
+		if tpl.BaseURLEditable && baseURL != "" && baseURL != tpl.BaseURL {
 			spec.URL = strings.TrimRight(baseURL, "/") + "/v1/messages"
 			if spec.Mode == proxy.ModeOpenAI {
 				spec.URL = strings.TrimRight(baseURL, "/") + "/chat/completions"

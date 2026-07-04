@@ -1,6 +1,6 @@
 # CSswitch Learnings & Ports to Lumen (extreme optimization)
 
-Date: 2026-07-04 (updated — v0.3.0-beta.2 ports)
+Date: 2026-07-04 (updated — v0.3.1 ports)
 Source: https://github.com/SuperJJ007/CSswitch.git (cloned /tmp/csswitch)
 Focus: recent bug fixes (v0.2.1 login defects, v0.2.0 idempotency, #3 401/403 hang) + all superior details in security, proxy, process, docs, tests.
 
@@ -81,6 +81,14 @@ No remaining same bugs. Lumen (Go science bridge + proxy) had absorbed core befo
 - Cleaned stray root 'lumen' build artifact; fresh prebuilt goal 6/6 + doctor verifications.
 - Verified no matching login/401 bugs remained; many details already superior or matched in Go rewrite.
 - All per superpowers: systematic (root cause via git/reads), TDD (test added first-ish, run observed), verification (build/test before/after).
+
+## v0.3.1 Ports (2026-07-04 session)
+
+| CSswitch feature | Lumen port | Location |
+|------------------|------------|----------|
+| Relay preset `base_url` editable (MiMo token-plan 401 fix) | `BaseURLEditable` on glm/xiaomi/siliconflow/openrouter + GUI `baseUrlInput` | `config/templates.go`, `gui/static/app.js`, `ResolveProfileBaseURL` |
+
+Native adapters (DeepSeek/Qwen) keep read-only base URL — custom values ignored at resolve time.
 
 ## v0.3.0-beta.2 Ports (2026-07-04 session)
 

@@ -56,6 +56,10 @@
               <button class="btn ghost compact" id="probeProfileBtn" type="button">探测 key</button>
               <button class="btn ghost compact" id="addProfileBtn" type="button">新建</button>
             </div>
+            <label class="field" style="margin-top:10px;">
+              <span class="field-label">新建来源</span>
+              <select id="templateSelect"></select>
+            </label>
             <p class="field-hint" id="profileHint" style="font-size:12px;color:#5f5f68;margin:8px 0 0;">cc-switch 式命名配置，切换前上游探活</p>
           </section>
 
@@ -76,6 +80,11 @@
                 <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
                 <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
               </div>
+            </label>
+            <label class="field" id="baseUrlRow" hidden style="margin-top:10px;">
+              <span class="field-label">地址 base_url</span>
+              <input id="baseUrlInput" type="url" placeholder="https://…" spellcheck="false" />
+              <p class="field-hint" id="baseUrlHint" style="font-size:12px;color:#5f5f68;margin:6px 0 0;"></p>
             </label>
             <label class="field" id="relayModelRow" hidden style="margin-top:10px;">
               <span class="field-label">中转模型</span>

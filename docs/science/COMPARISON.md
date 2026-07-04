@@ -1,6 +1,6 @@
 # Lumen Science vs CSswitch — Dimension Comparison
 
-> Lumen `v1.2.0-science-beta` vs CSswitch `v0.3.0-beta.2` (2026-07-04).
+> Lumen `v1.2.0-science-beta` vs CSswitch `v0.3.1` (2026-07-04).
 > Lumen preserves **5-ship native MCP**, **Research Brief 4-source**, and **Oasis OAuth** — CSswitch does not ship these.
 
 | Dimension | CSswitch | Lumen Science | Verdict |

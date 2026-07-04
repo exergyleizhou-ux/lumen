@@ -24,19 +24,20 @@ var templates = []Template{
 		Icon: "deepseek", IconColor: "#1E88E5",
 		BuiltinModels: []string{"claude-opus-4-8", "claude-haiku-4-5"}},
 	{ID: "glm", Name: "智谱 GLM", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
-		BaseURL: "https://open.bigmodel.cn/api/anthropic", WebsiteURL: "https://open.bigmodel.cn",
+		BaseURL: "https://open.bigmodel.cn/api/anthropic", BaseURLEditable: true,
+		WebsiteURL: "https://open.bigmodel.cn",
 		Icon: "glm", IconColor: "#2E6BE6",
 		BuiltinModels: []string{"glm-4.6", "glm-5", "glm-4.5-air"}},
 	{ID: "xiaomi", Name: "小米 MiMo", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
-		BaseURL: "https://api.xiaomimimo.com/anthropic", RequiresModelOverride: true,
+		BaseURL: "https://api.xiaomimimo.com/anthropic", BaseURLEditable: true, RequiresModelOverride: true,
 		WebsiteURL: "https://xiaomimimo.com", Icon: "xiaomi", IconColor: "#FF6900",
 		BuiltinModels: []string{"mimo-v2.5-pro"}},
 	{ID: "siliconflow", Name: "硅基流动", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
-		BaseURL: "https://api.siliconflow.cn", RequiresModelOverride: true,
+		BaseURL: "https://api.siliconflow.cn", BaseURLEditable: true, RequiresModelOverride: true,
 		WebsiteURL: "https://siliconflow.cn", Icon: "siliconflow", IconColor: "#7C3AED",
 		BuiltinModels: []string{"deepseek-ai/DeepSeek-V3", "zai-org/GLM-5.2"}},
 	{ID: "openrouter", Name: "OpenRouter", Category: "custom", APIFormat: "anthropic", Adapter: "relay",
-		BaseURL: "https://openrouter.ai/api", WebsiteURL: "https://openrouter.ai",
+		BaseURL: "https://openrouter.ai/api", BaseURLEditable: true, WebsiteURL: "https://openrouter.ai",
 		Icon: "openrouter", IconColor: "#6467F2",
 		BuiltinModels: []string{"anthropic/claude-sonnet-5", "anthropic/claude-opus-4.8-fast"}},
 	{ID: "qwen", Name: "通义千问", Category: "cn_official", APIFormat: "openai_chat", Adapter: "qwen",
@@ -60,6 +61,23 @@ func ListTemplates() []Template {
 	out := make([]Template, len(templates))
 	copy(out, templates)
 	return out
+}
+
+// ResolveProfileBaseURL returns the effective upstream base URL for a profile.
+// Non-editable native presets ignore stored overrides (CSswitch v0.3.1 semantics).
+func ResolveProfileBaseURL(p Profile) string {
+	tpl, ok := TemplateByID(p.TemplateID)
+	if !ok {
+		tpl, _ = TemplateByID("custom")
+	}
+	stored := strings.TrimSpace(p.BaseURL)
+	if stored == "" {
+		return tpl.BaseURL
+	}
+	if tpl.BaseURLEditable || tpl.ID == "custom" {
+		return stored
+	}
+	return tpl.BaseURL
 }
 
 // TemplateByID looks up a template by id.

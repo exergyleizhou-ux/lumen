@@ -174,6 +174,75 @@ async function loadTemplates() {
   } catch (_) {
     templates = [];
   }
+  renderTemplateSelect();
+}
+
+function renderTemplateSelect() {
+  const sel = $("templateSelect");
+  if (!sel) return;
+  if (!templates.length) {
+    sel.innerHTML = `<option value="deepseek">DeepSeek</option>`;
+    return;
+  }
+  sel.innerHTML = templates
+    .map((t) => `<option value="${t.id}">${t.name}</option>`)
+    .join("");
+}
+
+function selectedProfile() {
+  const id = $("profileSelect")?.value;
+  if (!id) return null;
+  return profiles.find((p) => p.id === id) || null;
+}
+
+function templateForContext() {
+  const p = selectedProfile();
+  if (p) return templates.find((t) => t.id === p.template_id) || null;
+  const tid = $("templateSelect")?.value;
+  if (tid) return templates.find((t) => t.id === tid) || null;
+  return currentTemplate();
+}
+
+function effectiveBaseURL(tpl) {
+  if (!tpl) return "";
+  const input = $("baseUrlInput");
+  if (tpl.base_url_editable && input) {
+    const v = input.value.trim();
+    if (v) return v;
+  }
+  const p = selectedProfile();
+  if (p?.base_url) return p.base_url;
+  return tpl.base_url || "";
+}
+
+function updateBaseURLUI() {
+  const row = $("baseUrlRow");
+  const input = $("baseUrlInput");
+  const hint = $("baseUrlHint");
+  if (!row || !input) return;
+  const tpl = templateForContext();
+  if (!tpl || tpl.adapter !== "relay") {
+    row.hidden = true;
+    return;
+  }
+  row.hidden = false;
+  const p = selectedProfile();
+  const preset = tpl.base_url || "";
+  const current = p?.base_url || preset;
+  if (tpl.base_url_editable) {
+    input.readOnly = false;
+    input.value = current;
+    input.placeholder = preset || "https://…";
+    if (hint) {
+      hint.textContent = preset
+        ? "官方地址已预填，可改到 token 套餐 / 区域镜像 / 自建反代"
+        : "自定义端点：填写地址与 key";
+    }
+  } else {
+    input.readOnly = true;
+    input.value = preset;
+    if (hint) hint.textContent = "原生线路地址固定，不可编辑";
+  }
 }
 
 function renderProfiles() {
@@ -207,7 +276,10 @@ function updateProfileHint() {
   if (p.verified) parts.push("key 已验证");
   else if (p.verified_hint) parts.push(p.verified_hint);
   if (p.model) parts.push(`model: ${p.model}`);
+  if (p.base_url) parts.push(p.base_url);
   hint.textContent = parts.join(" · ");
+  updateBaseURLUI();
+  updateRelayModelUI();
 }
 
 async function loadConfig() {
@@ -227,6 +299,7 @@ async function loadConfig() {
   renderProfiles();
   applyMode(cfg.mode === "official" ? "official" : "proxy");
   reflectProvider();
+  updateBaseURLUI();
   updateRelayModelUI();
   updateTelemetry({
     provider: cfg.provider,
@@ -269,7 +342,7 @@ async function probeProfile() {
 async function addProfile() {
   const key = $("keyInput")?.value?.trim();
   if (!key) { setMsg("请先填写 API key", "err"); return; }
-  const tpl = currentTemplate() || templates[0];
+  const tpl = templateForContext() || templates[0];
   const name = prompt("配置名称", tpl?.name || "我的配置");
   if (!name) return;
   const model = $("relayModelSelect")?.value || tpl?.builtin_models?.[0] || "";
@@ -281,7 +354,7 @@ async function addProfile() {
         name,
         template_id: tpl?.id || "deepseek",
         api_key: key,
-        base_url: tpl?.base_url || "",
+        base_url: effectiveBaseURL(tpl),
         model,
       }),
     });
@@ -351,23 +424,27 @@ function isRelayTemplate(tpl) {
 }
 
 function updateRelayModelUI() {
-  const tpl = currentTemplate();
+  const tpl = templateForContext();
   const row = $("relayModelRow");
   if (!row) return;
   const show = isRelayTemplate(tpl);
   row.hidden = !show;
   const sel = $("relayModelSelect");
-  if (sel && tpl?.builtin_models?.length && !sel.options.length) {
+  if (sel && tpl?.builtin_models?.length) {
+    const cur = sel.value;
     sel.innerHTML = tpl.builtin_models.map((m) => `<option value="${m}">${m}</option>`).join("");
+    if (cur && [...sel.options].some((o) => o.value === cur)) sel.value = cur;
+    const p = selectedProfile();
+    if (p?.model && [...sel.options].some((o) => o.value === p.model)) sel.value = p.model;
   }
 }
 
 async function fetchRelayModels() {
   const key = $("keyInput")?.value?.trim();
   if (!key) { setMsg("请先填写 API key", "err"); return; }
-  const tpl = currentTemplate();
-  const base = tpl?.base_url || "";
-  if (!base) { setMsg("当前线路无 base URL", "err"); return; }
+  const tpl = templateForContext();
+  const base = effectiveBaseURL(tpl);
+  if (!base) { setMsg("请先填写 base_url", "err"); return; }
   setBusy(true);
   try {
     const r = await api("/api/relay/models", {
@@ -785,7 +862,30 @@ document.querySelectorAll(".tabs .tab").forEach((b) => {
 });
 $("provider")?.addEventListener("change", () => {
   reflectProvider();
+  updateBaseURLUI();
+  updateRelayModelUI();
   persistSettings().catch((e) => setMsg(e.message, "err"));
+});
+$("templateSelect")?.addEventListener("change", () => {
+  updateBaseURLUI();
+  updateRelayModelUI();
+});
+$("baseUrlInput")?.addEventListener("change", async () => {
+  const p = selectedProfile();
+  const tpl = templateForContext();
+  if (!p || !tpl?.base_url_editable) return;
+  const base = $("baseUrlInput")?.value?.trim();
+  if (!base) return;
+  try {
+    await api("/api/profiles", {
+      method: "PUT",
+      body: JSON.stringify({ id: p.id, base_url: base }),
+    });
+    await loadConfig();
+    setMsg("已保存 base_url", "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  }
 });
 $("proxyPort")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
 $("sandboxPort")?.addEventListener("change", () => persistSettings().catch((e) => setMsg(e.message, "err")));
