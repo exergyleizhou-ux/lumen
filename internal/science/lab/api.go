@@ -13,7 +13,9 @@ import (
 
 	"lumen/internal/event"
 	"lumen/internal/science/lab/project"
+	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
+	"lumen/internal/science/lab/workspace"
 	"lumen/internal/science/native/brief"
 	"lumen/internal/science/paths"
 	"lumen/internal/science/research"
@@ -22,26 +24,32 @@ import (
 
 // API hosts lab REST + SSE handlers.
 type API struct {
-	sciDir    string
-	version   string
-	projects  *project.Store
-	fleet     *labruntime.FleetManager
-	local     LocalConfig
-	turnMu    sync.Mutex
-	labCtrl   *Controller
-	startedAt time.Time
+	sciDir     string
+	version    string
+	listenPort int
+	projects   *project.Store
+	fleet      *labruntime.FleetManager
+	local      LocalConfig
+	turnMu     sync.Mutex
+	labCtrl    *Controller
+	startedAt  time.Time
 }
 
 // NewAPI builds the lab API.
-func NewAPI(sciDir, version string, fleet *labruntime.FleetManager) *API {
+func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort int) *API {
+	if listenPort == 0 {
+		listenPort = DefaultPort
+	}
+	store := project.NewStore(sciDir)
 	return &API{
-		sciDir:    sciDir,
-		version:   version,
-		projects:  project.NewStore(sciDir),
-		fleet:     fleet,
-		local:     loadLocalConfig(sciDir),
-		labCtrl:   NewController(sciDir, fleet, project.NewStore(sciDir)),
-		startedAt: time.Now(),
+		sciDir:     sciDir,
+		version:    version,
+		listenPort: listenPort,
+		projects:   store,
+		fleet:      fleet,
+		local:      loadLocalConfig(sciDir),
+		labCtrl:    NewController(sciDir, fleet, store),
+		startedAt:  time.Now(),
 	}
 }
 
@@ -53,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/skills", a.handleSkills)
 	mux.HandleFunc("/api/lab/chat", a.handleChat)
 	mux.HandleFunc("/api/lab/brief", a.handleBrief)
+	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +81,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
-		"port":         DefaultPort,
+		"port":         a.listenPort,
 		"panel":        "lumen://science-lab",
 		"version":      a.version,
 		"science_mode": sciCfg.ScienceMode,
@@ -216,15 +225,73 @@ func (a *API) handleBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
 	res, err := brief.Generate(r.Context(), a.sciDir, brief.Request{Topic: body.Topic})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	outPath := filepath.Join(ws, "reports", "brief.md")
+	outPath, err := g.Resolve(filepath.Join("reports", "brief.md"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
 	_ = os.MkdirAll(filepath.Dir(outPath), 0o700)
 	_ = os.WriteFile(outPath, []byte(res.Markdown), 0o600)
+	if projDir, err := a.projects.ProjectDir(slug); err == nil {
+		rec, _ := provenance.NewRecorder(projDir, "", os.Getenv("LUMEN_SCIENCE_MODEL"))
+		_ = rec.RecordArtifact(outPath)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"path": "reports/brief.md", "markdown": res.Markdown})
+}
+
+func (a *API) handleArtifacts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	var artifacts []map[string]any
+	for _, sub := range []string{"reports", "figures", "data", "notebooks"} {
+		dir, err := g.Resolve(sub)
+		if err != nil {
+			continue
+		}
+		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			rel, err := filepath.Rel(ws, path)
+			if err != nil {
+				return nil
+			}
+			artifacts = append(artifacts, map[string]any{
+				"path":  rel,
+				"size":  info.Size(),
+				"mtime": info.ModTime().UTC().Format(time.RFC3339),
+			})
+			return nil
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artifacts": artifacts, "count": len(artifacts)})
 }
 
 func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {

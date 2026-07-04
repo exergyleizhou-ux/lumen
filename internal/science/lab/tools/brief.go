@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"lumen/internal/science/lab/project"
+	"lumen/internal/science/lab/workspace"
 	"lumen/internal/science/native/brief"
 )
 
@@ -17,6 +18,7 @@ type BriefGenerateTool struct {
 	SciDir      string
 	ProjectRoot string
 	Projects    *project.Store
+	Guard       *workspace.Guard
 	OnWrite     func(path string)
 }
 
@@ -51,7 +53,11 @@ func (t *BriefGenerateTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
-	outPath := filepath.Join(t.ProjectRoot, "reports", "brief.md")
+	rel := filepath.Join("reports", "brief.md")
+	outPath, err := t.resolveOut(rel)
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o700); err != nil {
 		return "", err
 	}
@@ -61,5 +67,12 @@ func (t *BriefGenerateTool) Execute(ctx context.Context, args json.RawMessage) (
 	if t.OnWrite != nil {
 		t.OnWrite(outPath)
 	}
-	return fmt.Sprintf("Brief saved to %s (%d bytes)", outPath, len(res.Markdown)), nil
+	return fmt.Sprintf("Brief saved to %s (%d bytes)", rel, len(res.Markdown)), nil
+}
+
+func (t *BriefGenerateTool) resolveOut(rel string) (string, error) {
+	if t.Guard != nil {
+		return t.Guard.Resolve(rel)
+	}
+	return filepath.Join(t.ProjectRoot, rel), nil
 }

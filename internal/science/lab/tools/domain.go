@@ -10,9 +10,15 @@ import (
 	"lumen/internal/tool"
 )
 
+// MCPRecorder records domain MCP calls for provenance.
+type MCPRecorder interface {
+	RecordMCP(domain, tool, query string)
+}
+
 // DomainCallTool invokes a bio-tools domain MCP tool.
 type DomainCallTool struct {
-	Fleet *runtime.FleetManager
+	Fleet      *runtime.FleetManager
+	Provenance MCPRecorder
 }
 
 func (t *DomainCallTool) Name() string { return "science_domain_call" }
@@ -47,6 +53,10 @@ func (t *DomainCallTool) Execute(ctx context.Context, args json.RawMessage) (str
 	if p.Arguments == nil {
 		p.Arguments = map[string]any{}
 	}
+	if t.Provenance != nil {
+		q, _ := json.Marshal(p.Arguments)
+		t.Provenance.RecordMCP(domain, toolName, string(q))
+	}
 	return t.Fleet.CallDomain(ctx, domain, toolName, p.Arguments)
 }
 
@@ -80,9 +90,9 @@ func (t *ListDomainsTool) Execute(ctx context.Context, args json.RawMessage) (st
 }
 
 // RegisterFleet returns lab-specific agent tools.
-func RegisterFleet(fleet *runtime.FleetManager) []tool.Tool {
+func RegisterFleet(fleet *runtime.FleetManager, rec MCPRecorder) []tool.Tool {
 	return []tool.Tool{
-		&DomainCallTool{Fleet: fleet},
+		&DomainCallTool{Fleet: fleet, Provenance: rec},
 		&ListDomainsTool{Fleet: fleet},
 	}
 }

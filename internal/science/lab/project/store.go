@@ -16,13 +16,17 @@ var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 
 // Store manages lab projects on disk.
 type Store struct {
-	root string
+	sciDir string
+	root   string
 }
 
 // NewStore creates a project store at ~/.lumen/science/lab/projects.
 func NewStore(sciDir string) *Store {
-	return &Store{root: filepath.Join(sciDir, "lab", "projects")}
+	return &Store{sciDir: sciDir, root: filepath.Join(sciDir, "lab", "projects")}
 }
+
+// SciDir returns the science config root.
+func (s *Store) SciDir() string { return s.sciDir }
 
 // Root returns the projects root directory.
 func (s *Store) Root() string { return s.root }
@@ -157,7 +161,19 @@ func (s *Store) Create(title, template string) (Project, error) {
 	if err := s.save(p); err != nil {
 		return Project{}, err
 	}
+	ws := filepath.Join(dir, "workspace")
+	if err := ApplySeedTemplate(s.sciDir, template, ws); err != nil {
+		return Project{}, err
+	}
 	return p, nil
+}
+
+// ProjectDir returns the absolute project directory for a slug.
+func (s *Store) ProjectDir(slug string) (string, error) {
+	if !slugRe.MatchString(slug) {
+		return "", fmt.Errorf("invalid slug %q", slug)
+	}
+	return s.projectDir(slug), nil
 }
 
 func (s *Store) save(p Project) error {

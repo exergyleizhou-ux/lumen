@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"lumen/internal/config"
@@ -48,7 +49,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	_ = fleet.ConnectDomains("pubmed", "literature", "chembl")
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
-	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet)
+	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr))
 	s.routes()
 	return s, nil
 }
@@ -144,6 +145,18 @@ func (s *Server) cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func parseListenPort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return DefaultPort
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil || p <= 0 {
+		return DefaultPort
+	}
+	return p
 }
 
 func openPanel(url string) error {

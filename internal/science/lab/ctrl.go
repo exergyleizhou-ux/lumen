@@ -14,8 +14,10 @@ import (
 	"lumen/internal/event"
 	"lumen/internal/permission"
 	"lumen/internal/science/lab/project"
+	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/science/lab/tools"
+	"lumen/internal/science/lab/workspace"
 	"lumen/internal/skill"
 )
 
@@ -24,13 +26,16 @@ var scienceSystemPrompt string
 
 // Controller wraps the Lumen agent for lab chat turns.
 type Controller struct {
-	mu       sync.Mutex
-	sciDir   string
-	fleet    *labruntime.FleetManager
-	projects *project.Store
-	ctrl     *control.Controller
-	slug     string
-	sessID   string
+	mu         sync.Mutex
+	sciDir     string
+	fleet      *labruntime.FleetManager
+	projects   *project.Store
+	ctrl       *control.Controller
+	slug       string
+	sessID     string
+	workspace  string
+	guard      *workspace.Guard
+	provenance *provenance.Recorder
 }
 
 // NewController builds a lab agent controller.
@@ -55,7 +60,23 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	if err != nil {
 		return err
 	}
+	c.workspace = ws
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		return err
+	}
+	c.guard = g
 	_ = os.Setenv("LUMEN_WORKSPACE_ROOT", ws)
+
+	projDir, err := c.projects.ProjectDir(slug)
+	if err != nil {
+		return err
+	}
+	rec, err := provenance.NewRecorder(projDir, sessionID, os.Getenv("LUMEN_SCIENCE_MODEL"))
+	if err != nil {
+		return err
+	}
+	c.provenance = rec
 
 	sciCfg, err := scienceConfig(c.sciDir)
 	if err != nil {
@@ -71,20 +92,20 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	if err := c.ctrl.Configure(sink, nil, lumenCfgPath); err != nil {
 		return err
 	}
-	if err := os.Chdir(ws); err != nil {
-		return fmt.Errorf("chdir workspace: %w", err)
-	}
 	c.ctrl.SetPermissionMode(permission.ModePlan)
 	if approver != nil {
 		c.ctrl.SetApprover(approver)
 	}
 
-	extra := tools.RegisterFleet(c.fleet)
-	projDir := filepath.Join(c.projects.Root(), slug)
+	extra := tools.RegisterFleet(c.fleet, c.provenance)
 	briefTool := &tools.BriefGenerateTool{
 		SciDir:      c.sciDir,
 		ProjectRoot: ws,
 		Projects:    c.projects,
+		Guard:       g,
+		OnWrite: func(path string) {
+			_ = c.provenance.RecordArtifact(path)
+		},
 	}
 	extra = append(extra, briefTool)
 	c.ctrl.AddExtraTools(extra)
@@ -105,13 +126,21 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	return nil
 }
 
-// Run executes one chat turn.
+// Run executes one chat turn inside the project workspace (cwd restored after).
 func (c *Controller) Run(ctx context.Context, prompt, mode string) error {
 	c.mu.Lock()
 	ctrl := c.ctrl
+	ws := c.workspace
 	c.mu.Unlock()
 	if ctrl == nil {
 		return fmt.Errorf("lab controller not configured")
+	}
+	orig, _ := os.Getwd()
+	if ws != "" {
+		if err := os.Chdir(ws); err != nil {
+			return fmt.Errorf("chdir workspace: %w", err)
+		}
+		defer func() { _ = os.Chdir(orig) }()
 	}
 	switch mode {
 	case "plan", "":

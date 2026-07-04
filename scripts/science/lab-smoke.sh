@@ -24,6 +24,7 @@ PROJ=$(curl -sf -X POST "http://127.0.0.1:${PORT}/api/lab/projects" \
   -H 'Content-Type: application/json' -d '{"title":"smoke-lab"}')
 echo "$PROJ" | grep -q '"slug"'
 curl -sf "http://127.0.0.1:${PORT}/api/lab/skills" | grep -q '"skills"'
+curl -sf "http://127.0.0.1:${PORT}/api/lab/artifacts?project_id=$(echo "$PROJ" | python3 -c "import sys,json; print(json.load(sys.stdin)['slug'])")" | grep -q '"artifacts"'
 
 if [[ -n "$SCRATCH" ]]; then
   mkdir -p "$SCRATCH"
