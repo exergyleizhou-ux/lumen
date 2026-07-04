@@ -47,6 +47,36 @@ func (s *Store) LoadSessionMessages(sessionID string) ([][]byte, error) {
 	return out, rows.Err()
 }
 
+// ReplaceSessionMessages overwrites all messages for a session (used after drop/compact).
+func (s *Store) ReplaceSessionMessages(sessionID string, payloads [][]byte, roles []string) error {
+	if s == nil || s.db == nil || sessionID == "" {
+		return nil
+	}
+	if len(payloads) != len(roles) {
+		return fmt.Errorf("replace session %s: payloads/roles length mismatch", sessionID)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM session_messages WHERE session_id=?`, sessionID); err != nil {
+		return err
+	}
+	for i, payload := range payloads {
+		if _, err := tx.Exec(
+			`INSERT INTO session_messages (session_id, seq, role, payload, created_at)
+			 VALUES (?, ?, ?, ?, datetime('now'))`,
+			sessionID, i, roles[i], string(payload),
+		); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 // CountSessionMessages returns message count for a session.
 func (s *Store) CountSessionMessages(sessionID string) (int64, error) {
 	if s == nil || s.db == nil {

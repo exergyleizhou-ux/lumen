@@ -36,8 +36,8 @@ else
 fi
 
 run_gate bash-sandbox go test -count=1 -v ./internal/tool/builtin/ -run 'BashSandbox'
-run_gate mcp-injection go test -count=1 -v ./internal/tool/builtin/ -run 'MCP|WrapMCP'
-run_gate sqlite-session env LUMEN_SQLITE_STORE=on go test -count=1 -v ./internal/lumenstore/... ./internal/audit/...
+run_gate mcp-injection go test -count=1 -v ./internal/tool/builtin/ -run 'MCP|Untrusted|mcp|WrapMCP'
+run_gate sqlite-session env LUMEN_SQLITE_STORE=on go test -count=1 -v ./internal/lumenstore/... ./internal/audit/... ./internal/agent/... -run 'Session|SQLite|Migrate|SessionMessages'
 run_gate provider-live go test -count=1 -short ./internal/provider/anthro/... ./internal/provider/gemini/... -run 'Live|Smoke'
 run_gate eval-struct go test -count=1 ./internal/eval/... -run 'WellFormed|Integration'
 

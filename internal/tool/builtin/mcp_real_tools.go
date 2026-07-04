@@ -136,7 +136,9 @@ func (t *MCPListToolsTool) Execute(ctx context.Context, args json.RawMessage) (s
 		return wrapMCPAgentOutput("all-servers", sb.String()), nil
 	}
 	tools, err := client.ListTools()
-	if err != nil { return "", fmt.Errorf("list tools: %w", err) }
+	if err != nil {
+		return wrapMCPAgentOutput(p.Server, fmt.Sprintf("list tools error: %v", err)), nil
+	}
 	if len(tools) == 0 {
 		return wrapMCPAgentOutput(p.Server, "No tools exposed by this server."), nil
 	}
@@ -165,10 +167,14 @@ func (t *MCPCallToolTool) Execute(ctx context.Context, args json.RawMessage) (st
 	var p struct{ Server, Tool string; Args map[string]any }
 	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 	client := mcpClientByKey(p.Server)
-	if client == nil { return "", fmt.Errorf("server %q not connected. Use mcp_connect first.", p.Server) }
+	if client == nil {
+		return wrapMCPAgentOutput("status", fmt.Sprintf("server %q not connected. Use mcp_connect first.", p.Server)), nil
+	}
 
 	result, err := client.CallTool(p.Tool, p.Args)
-	if err != nil { return "", fmt.Errorf("call tool: %w", err) }
+	if err != nil {
+		return wrapMCPAgentOutput(p.Server+":"+p.Tool, fmt.Sprintf("call tool error: %v", err)), nil
+	}
 
 	var sb strings.Builder
 	if result.IsError { sb.WriteString("(error) ") }
@@ -194,7 +200,9 @@ func (t *MCPListResourcesTool) Execute(ctx context.Context, args json.RawMessage
 		return wrapMCPAgentOutput("status", "No MCP servers connected."), nil
 	}
 	resources, err := client.ListResources()
-	if err != nil { return "", err }
+	if err != nil {
+		return wrapMCPAgentOutput(srcOr(p.Server, "default-server"), fmt.Sprintf("list resources error: %v", err)), nil
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d resources:\n", len(resources))
 	for _, r := range resources { fmt.Fprintf(&sb, "  • %s — %s [%s]\n", r.Name, descOr(r.Description, r.URI), r.MIMEType) }
@@ -220,7 +228,9 @@ func (t *MCPListPromptsTool) Execute(ctx context.Context, args json.RawMessage) 
 		return wrapMCPAgentOutput("status", "No MCP servers connected."), nil
 	}
 	prompts, err := client.ListPrompts()
-	if err != nil { return "", err }
+	if err != nil {
+		return wrapMCPAgentOutput(srcOr(p.Server, "default-server"), fmt.Sprintf("list prompts error: %v", err)), nil
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d prompts:\n", len(prompts))
 	for _, pr := range prompts {
@@ -246,5 +256,12 @@ func truncDesc(s string, n int) string {
 
 func descOr(desc, fallback string) string {
 	if desc != "" { return desc }
+	return fallback
+}
+
+func srcOr(v, fallback string) string {
+	if v != "" {
+		return v
+	}
 	return fallback
 }

@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"lumen/internal/lumenstore"
@@ -197,6 +199,82 @@ func TestSessionAutoMigrateJSONLToSQLite(t *testing.T) {
 	reloaded := NewSession(path)
 	if reloaded.Len() != 2 {
 		t.Fatalf("sqlite-only reload: got %d messages", reloaded.Len())
+	}
+}
+
+func TestSessionDropLastSyncsSQLite(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "drop.jsonl")
+	s := NewSession(path)
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "a"})
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "b"})
+	s.DropLast()
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	cnt, err := db.CountSessionMessages(sid)
+	if err != nil || cnt != 1 {
+		t.Fatalf("after drop sqlite count=%d err=%v", cnt, err)
+	}
+	rows, err := db.LoadSessionMessages(sid)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("load rows=%d err=%v", len(rows), err)
+	}
+	var m provider.Message
+	if json.Unmarshal(rows[0], &m) != nil || m.Content != "a" {
+		t.Fatalf("sqlite payload after drop: %q", rows[0])
+	}
+
+	reloaded := NewSession(path)
+	if reloaded.Len() != 1 || reloaded.Snapshot()[0].Content != "a" {
+		t.Fatalf("reload after drop: %+v", reloaded.Snapshot())
+	}
+}
+
+func TestSessionConcurrentAddPreservesSQLiteSeq(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "conc.jsonl")
+	s := NewSession(path)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func(n int) {
+			defer wg.Done()
+			s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("m%d", n)})
+		}(i)
+	}
+	wg.Wait()
+
+	if s.Len() != 20 {
+		t.Fatalf("memory len=%d want 20", s.Len())
+	}
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	cnt, _ := db.CountSessionMessages(sid)
+	if cnt != 20 {
+		t.Fatalf("sqlite count=%d want 20", cnt)
 	}
 }
 

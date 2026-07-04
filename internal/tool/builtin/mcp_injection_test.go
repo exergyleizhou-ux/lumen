@@ -125,3 +125,36 @@ func TestMCPListPromptsNoServersExecuteWrapsStatus(t *testing.T) {
 	}
 	assertWrapped(t, out)
 }
+
+func TestMCPCallToolNotConnectedExecuteWrapsStatus(t *testing.T) {
+	resetMCPClients(t)
+	tool := &MCPCallToolTool{}
+	args, _ := json.Marshal(map[string]any{"server": "missing", "tool": "x"})
+	out, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("disconnected server must return wrapped body, not Go error: %v", err)
+	}
+	assertWrapped(t, out)
+	if !strings.Contains(out, "not connected") {
+		t.Fatalf("expected status message: %q", out)
+	}
+}
+
+func TestMCPListToolsAllServersExecuteWrapsOutput(t *testing.T) {
+	resetMCPClients(t)
+	c := mcplife.NewTestMockClient(t)
+	if err := c.Initialize("test", "1.0"); err != nil {
+		t.Fatal(err)
+	}
+	setMCPClient("mock-server", c)
+
+	tool := &MCPListToolsTool{}
+	out, err := tool.Execute(context.Background(), json.RawMessage(`{"server":""}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertWrapped(t, out)
+	if !strings.Contains(out, "mock_echo") {
+		t.Fatalf("expected all-servers listing: %q", out)
+	}
+}

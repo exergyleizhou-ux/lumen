@@ -122,6 +122,7 @@ func (s *Session) DropLast() {
 	} else {
 		os.WriteFile(s.Path, nil, 0o644) // only one line — clear
 	}
+	s.syncSQLiteFromMemory()
 }
 
 // DropTo truncates the session back to n messages (both memory and file).
@@ -177,14 +178,32 @@ func (s *Session) rewriteFileLocked() error {
 	if err := os.WriteFile(s.Path, buf.Bytes(), 0o644); err != nil {
 		return err
 	}
-	if db := lumenstore.Default(); db != nil {
-		sid := lumenstore.SessionIDFromPath(s.Path)
-		for i, m := range s.Messages {
-			b, _ := json.Marshal(m)
-			_ = db.AppendSessionMessage(sid, i, string(m.Role), b)
-		}
+	return s.syncSQLiteLocked()
+}
+
+func (s *Session) syncSQLiteFromMemory() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_ = s.syncSQLiteLocked()
+}
+
+func (s *Session) syncSQLiteLocked() error {
+	if s.Path == "" {
+		return nil
 	}
-	return nil
+	db := lumenstore.Default()
+	if db == nil {
+		return nil
+	}
+	sid := lumenstore.SessionIDFromPath(s.Path)
+	payloads := make([][]byte, len(s.Messages))
+	roles := make([]string, len(s.Messages))
+	for i, m := range s.Messages {
+		b, _ := json.Marshal(m)
+		payloads[i] = b
+		roles[i] = string(m.Role)
+	}
+	return db.ReplaceSessionMessages(sid, payloads, roles)
 }
 
 // ── JSONL persistence ─────────────────────────────────────
