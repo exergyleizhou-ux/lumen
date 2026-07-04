@@ -82,9 +82,10 @@ var BuiltInProviders = map[string]ProviderSpec{
 		Models: []ModelEntry{
 			{ID: "glm-4", DisplayName: "GLM-4"},
 			{ID: "glm-4-flash", DisplayName: "GLM-4 Flash"},
+			{ID: "glm-4.5", DisplayName: "GLM-4.5"},
 		},
 		ModelMap: map[string]string{
-			"claude-opus-4-8":   "glm-4-plus",
+			"claude-opus-4-8":   "glm-4.5",
 			"claude-sonnet-5":   "glm-4",
 			"claude-sonnet-4-6": "glm-4",
 			"claude-haiku-4-5":  "glm-4-flash",
@@ -115,6 +116,24 @@ var BuiltInProviders = map[string]ProviderSpec{
 		},
 		DefaultCap:   8192,
 		DefaultModel: "qwen-plus",
+	},
+	"minimax": {
+		Name:   "minimax",
+		Mode:   ModeAnthropic,
+		URL:    "https://api.minimax.chat/anthropic/v1/messages",
+		KeyEnv: "MINIMAX_API_KEY",
+		Models: []ModelEntry{
+			{ID: "claude-opus-4-8", DisplayName: "MiniMax M3"},
+			{ID: "claude-haiku-4-5", DisplayName: "MiniMax M1"},
+		},
+		ModelMap: map[string]string{
+			"claude-opus-4-8":   "MiniMax-M3",
+			"claude-sonnet-5":   "MiniMax-M3",
+			"claude-sonnet-4-6": "MiniMax-M3",
+			"claude-haiku-4-5":  "MiniMax-M1",
+		},
+		DefaultCap:   8192,
+		DefaultModel: "MiniMax-M3",
 	},
 }
 

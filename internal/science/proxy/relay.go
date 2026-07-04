@@ -69,6 +69,7 @@ func FetchRelayModels(ctx context.Context, baseURL, apiKey string) ([]ModelEntry
 		req.Header.Set("x-api-key", apiKey)
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("anthropic-version", "2023-06-01")
+		req.Header.Set("User-Agent", "Lumen/1.3 (+https://github.com/exergyleizhou-ux/lumen)")
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err

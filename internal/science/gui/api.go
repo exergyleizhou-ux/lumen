@@ -507,9 +507,9 @@ func (a *API) handleQuitProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func providerList() []map[string]string {
-	names := []string{"deepseek", "qwen", "moonshot", "zhipu"}
+	names := []string{"deepseek", "qwen", "moonshot", "zhipu", "minimax"}
 	labels := map[string]string{
-		"deepseek": "DeepSeek", "qwen": "通义千问", "moonshot": "Moonshot Kimi", "zhipu": "智谱 GLM",
+		"deepseek": "DeepSeek", "qwen": "通义千问", "moonshot": "Moonshot Kimi", "zhipu": "智谱 GLM", "minimax": "MiniMax",
 	}
 	var out []map[string]string
 	for _, n := range names {
