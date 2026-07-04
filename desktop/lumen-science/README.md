@@ -26,7 +26,7 @@ Bundle ID: `com.lumen.science.acceptance`
 ## Runtime
 
 - Spawns `lumen science gui --no-browser` (set `LUMEN_BIN` if not on PATH)
-- Quit stops proxy only (`POST /api/quit-proxy`) — sandbox keeps running (CSswitch semantics)
+- Quit stops proxy only (`POST /api/quit-proxy`) — sandbox keeps running
 - No Python proxy subprocess
 
 ## Verify

@@ -13,7 +13,7 @@ import (
 
 const CurrentSchemaVersion = 2
 
-// Profile is a named provider configuration (cc-switch style).
+// Profile is a named provider configuration with upstream probe on switch.
 type Profile struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -154,7 +154,7 @@ func migrateV1ToV2(legacy File) File {
 	return out
 }
 
-// SaveWithBackup atomically saves with a rolling .bak (CSswitch style).
+// SaveWithBackup atomically saves with a rolling .bak before overwrite.
 func SaveWithBackup(dir string, f File) error {
 	path := configPath(dir)
 	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
@@ -175,8 +175,8 @@ func LoadProfilesFile(dir string) (File, error) {
 	return f, nil
 }
 
-// ImportCSSwitchV2 merges CSswitch v2 multi-profile config if present.
-func ImportCSSwitchV2(sciDir string) (bool, error) {
+// ImportLegacyProfilesV2 merges legacy v2 multi-profile config from the legacy bridge dir when present.
+func ImportLegacyProfilesV2(sciDir string) (bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return false, err

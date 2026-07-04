@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unified science offline gate (CSswitch run_all.sh equivalent).
+# Unified science offline gate (all packages + DSML e2e + science-check).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

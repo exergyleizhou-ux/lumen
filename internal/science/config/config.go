@@ -158,7 +158,7 @@ func Save(dir string, f File) error {
 	if err != nil {
 		return err
 	}
-	// CSswitch-style extreme atomic: pid + seq (like thread id) + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
+	// Extreme atomic write: pid + seq + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
 	seq := tmpSeq.Add(1)
 	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d-%d", os.Getpid(), seq))
 	writeRes := func() error {
@@ -259,7 +259,7 @@ func saveUnlocked(dir string, f File) error {
 	if err != nil {
 		return err
 	}
-	// CSswitch-style extreme atomic: pid + seq (like thread id) + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
+	// Extreme atomic write: pid + seq + O_EXCL create_new + 0600 at open + Sync + rename + reset perm.
 	seq := tmpSeq.Add(1)
 	tmp := filepath.Join(dir, fmt.Sprintf(".config.json.tmp-%d-%d", os.Getpid(), seq))
 	writeRes := func() error {
@@ -339,7 +339,7 @@ func ensureDir(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	// CSswitch: after create, verify is dir (not file) + explicit 0700 reset.
+	// After create, verify is dir (not file) + explicit 0700 reset.
 	md, err := os.Stat(dir)
 	if err != nil {
 		return err

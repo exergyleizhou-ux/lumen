@@ -13,7 +13,7 @@
 
 ### Fixed
 - `scripts/science/full-verify.sh` — exits non-zero on any gate failure.
-- `profile_switch` tests — use editable `custom` template for mock upstream (CSswitch v0.3.1).
+- `profile_switch` tests — use editable `custom` template for mock upstream.
 - `Validate` — allow legacy `provider: relay` for schema v2 profile configs.
 - `goal_evidence_test` — `LUMEN_REPO_ROOT` instead of hardcoded path.
 
@@ -43,16 +43,16 @@
 - `scripts/science/rm-offline-auto.sh` — automated offline RM-01/02/03/10/15/16/17/18.
 - `scripts/science/publish-science-release.sh` — attach CLI + 5 MCP + desktop zip to GitHub release.
 - `.github/workflows/science-ci.yml` — science quick + all on every science-path push.
-- `docs/science/COMPARISON.md` — dimension-by-dimension Lumen vs CSswitch table.
+- `docs/science/COMPARISON.md` — Lumen Science capability matrix.
 - `make science-test-all`, `make science-full-verify` targets.
 - GUI profile verified badge + hint line; quit-proxy API test.
 
 ### Graduated
 - RM-desktop → Acceptance `.app` documented in `desktop/lumen-science/README.md`.
 
-## v1.2.0-science-beta.1 — CSswitch parity + science-beta
+## v1.2.0-science-beta.1 — Science bridge parity + science-beta
 
-> Prerelease. Implements CSswitch v0.3.0-beta.2 bridge gaps while preserving
+> Prerelease. Closes remaining Claude Science bridge gaps while preserving
 > Lumen-only strengths (5-ship MCP fleet, Research Brief, Oasis OAuth).
 > Manual RM steps (RM-04/06/13) still required — see `docs/science/REAL_MACHINE_TEST.md`.
 
@@ -80,8 +80,8 @@
 ### Science GUI
 - **Oasis-aligned UI** — paper/ink palette, Instrument Serif + Geist fonts
   (embedded), HeroPlate-style runtime flow, pill tabs, editorial footer.
-- **CSswitch removed from GUI** — panel no longer references CSswitch;
-  `lumen science migrate` CLI retained.
+- **Third-party branding removed from GUI** — panel is Lumen-native;
+  `lumen science migrate` CLI retained for legacy config import.
 
 ### Backend
 - Mutate rate limiting, richer `/api/health`, static asset cache headers.
@@ -103,7 +103,7 @@
 
 > Feature release. Adds `lumen science` — a native Go integration for [Claude
 > Science](https://claude.ai/science) third-party models (DeepSeek / Qwen /
-> Moonshot / Zhipu), replacing CSswitch-style Python subprocess bridges with a
+> Moonshot / Zhipu), replacing Python subprocess bridges with a
 > single-binary workflow. Pushing `v1.1.0` runs goreleaser (4 cross-platform
 > tarballs + `checksums.txt`).
 
@@ -120,8 +120,8 @@
   tools), ketcher-chemistry, 29 skills, org workspace seeding + bundled MCP
   auto-approve; `research list|verify|reseed`.
 - **GUI control panel** — Grok Build-style panel (`lumen science gui`, default
-  `:18990`) with REST + SSE, shared manager, config validation, CSswitch import.
-- **CSswitch migration** — `lumen science migrate [--force]` from `~/.csswitch`.
+  `:18990`) with REST + SSE, shared manager, config validation, legacy config import.
+- **Legacy migration** — `lumen science migrate [--force]` imports prior bridge settings.
 - **CLI** — `start|stop|status|doctor|verify|watch|mode|official|proxy|config`.
 - **Doctor integration** — `lumen doctor` includes optional science bridge checks.
 - **Tests** — proxy, oauth, migrate, research, config, runtime, gui (~34 tests).

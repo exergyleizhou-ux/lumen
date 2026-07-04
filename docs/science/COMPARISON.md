@@ -1,37 +1,35 @@
-# Lumen Science vs CSswitch — Dimension Comparison
+# Lumen Science 能力矩阵
 
-> Lumen `v1.2.0-science-beta` vs CSswitch `v0.3.1` (2026-07-04).
-> Lumen preserves **5-ship native MCP**, **Research Brief 4-source**, and **Oasis OAuth** — CSswitch does not ship these.
+> Lumen `v1.2.0-science-beta`（2026-07-04）。原生 Go 单二进制桥接 Claude Science，附带 5-ship MCP、Research Brief、Oasis OAuth。
 
-| Dimension | CSswitch | Lumen Science | Verdict |
-|-----------|----------|---------------|---------|
-| Proxy runtime | Python subprocess | Native Go single binary | **Lumen** |
-| Multi-profile switch | Probe + transactional commit | Same + rollback on proxy restart fail | **Parity** |
-| Relay / model picker | `/v1/models` dual auth | Same + GUI picker | **Parity** |
-| DSML tool-use shim | off/detect/rewrite | Same + e2e tests | **Parity** |
-| CONNECT fast-fail 401 | Yes | Yes + e2e | **Parity** |
-| Config path isolation | Symlink guards | `AssertConfigDirIsolated` + tests | **Parity** |
-| Truthful key save | 401/403 reject | Same on profile POST/PUT | **Parity** |
-| Desktop app | Tauri + Python proxy | Tauri + Go `lumen science gui` | **Lumen** |
-| Node.js runtime | Removed (Rust oauth forge) | Never required | **Lumen** |
-| Native MCP fleet | None | 5 shipped (PubMed/ChEMBL/GEO/Oasis/C2D) | **Lumen** |
-| Research Brief | None | 4-source pipeline CLI + API | **Lumen** |
-| Oasis embed | None | OAuth + C2D publish routes | **Lumen** |
-| DeepSeek cache boost | Limited | First-class + watch dashboard | **Lumen** |
-| Offline test gate | run_all.sh | `test-science-all.sh` (≥120 tests) | **Lumen** |
-| RM matrix | Manual docs | 18-item doc + automated offline runner | **Lumen** |
-| Virtual OAuth idempotency | Rust forge + org stickiness | Go forge + launcher intact checks | **Parity** (different impl) |
-| Branding | Terracotta | Verdant Oasis / editorial GUI | Different (functional parity) |
+| 能力 | 说明 |
+|------|------|
+| Proxy runtime | 原生 Go 单二进制，无 Python 子进程 |
+| Multi-profile switch | 切换前上游探活，事务提交，代理重启失败自动回滚 |
+| Relay / model picker | `/v1/models` 双认证 + GUI 模型选择 |
+| DSML tool-use shim | `off` / `detect` / `rewrite` + e2e 测试 |
+| CONNECT fast-fail 401 | Anthropic 远程 MCP 快速失败 |
+| Config path isolation | 符号链接/路径守卫，禁止写入真实 Science 目录 |
+| Truthful key save | 401/403 拒绝保存；未校验标记 |
+| Desktop app | Tauri + Go `lumen science gui` |
+| Native MCP fleet | 5 艘（PubMed / ChEMBL / GEO / Oasis / C2D） |
+| Research Brief | 四源管线 CLI + API |
+| Oasis embed | OAuth + C2D 发布路由 |
+| DeepSeek cache boost | 一等公民 + watch 仪表盘 |
+| Offline test gate | `test-science-all.sh`（≥120 tests） |
+| RM matrix | 18 项文档 + 自动化离线 runner |
+| Virtual OAuth | Go forge + launcher intact 自检修复 |
+| Branding | Verdant Oasis / editorial GUI |
 
-## Honest gaps (Lumen)
+## 诚实缺口
 
-| Gap | Status |
-|-----|--------|
-| RM-04/06/13 OAuth manual matrix | User-present only — documented |
-| CSswitch daily maintenance plist | Not ported (optional) |
-| SQLite config | CSwitch deferred; Lumen **audit MVP** (`LUMEN_SQLITE_STORE=on`, dual-write JSONL) |
+| 缺口 | 状态 |
+|------|------|
+| RM-04/06/13 OAuth 真机矩阵 | 需用户在场 — 已文档化 |
+| 日常维护 plist | 未移植（可选） |
+| SQLite 全量 | 审计 MVP（`LUMEN_SQLITE_STORE=on` 双写 JSONL）；会话主体仍 JSONL |
 
-## Verify locally
+## 本地验证
 
 ```bash
 bash scripts/science/full-verify.sh

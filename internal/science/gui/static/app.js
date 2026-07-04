@@ -269,7 +269,7 @@ function updateProfileHint() {
   if (!hint || !sel) return;
   const p = profiles.find((x) => x.id === sel.value);
   if (!p) {
-    hint.textContent = "cc-switch 式命名配置，切换前上游探活";
+    hint.textContent = "命名配置档，切换前上游探活";
     return;
   }
   const parts = [p.name];

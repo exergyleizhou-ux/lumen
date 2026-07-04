@@ -35,7 +35,7 @@ bash scripts/science/rm-offline-auto.sh
 
 ## Science / 绿洲
 
-- Lumen Science：Go 原生代理，CSswitch **v0.3.1** parity（含 relay base_url 可编辑）
+- Lumen Science：Go 原生代理，多档 profile 事务切换（relay base_url 可编辑）
 - 桌面：`/Applications/Lumen Science.app`（内置 `lumen` CLI）
 - 5-ship MCP + Research Brief + Oasis C2D 8 模板
 

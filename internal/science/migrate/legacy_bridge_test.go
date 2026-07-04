@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-func TestImportFromCSSwitch(t *testing.T) {
+func TestImportFromLegacyBridge(t *testing.T) {
 	home := t.TempDir()
-	cssDir := filepath.Join(home, ".csswitch")
+	legacyDir := filepath.Join(home, ".csswitch")
 	sciDir := filepath.Join(home, ".lumen", "science")
-	if err := os.MkdirAll(cssDir, 0o700); err != nil {
+	if err := os.MkdirAll(legacyDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(sciDir, 0o700); err != nil {
@@ -24,7 +24,7 @@ func TestImportFromCSSwitch(t *testing.T) {
   "secret": "test-secret-abc",
   "providers": {"deepseek": {"key": "sk-test-deepseek"}}
 }`
-	if err := os.WriteFile(filepath.Join(cssDir, "config.json"), []byte(cfg), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(legacyDir, "config.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)

@@ -310,9 +310,9 @@ lockfile exactly. See **[the quickstart](docs/教程-用-lumen-oasis-写C2D算�
 ## Claude Science Bridge (`lumen science`)
 
 Lumen ships a **native Go** bridge for [Claude Science](https://claude.ai/science) — no Python
-subprocess, no CSswitch dependency. **CSswitch v0.3.0-beta.2 parity** (multi-profile switch,
-relay model picker, DSML shim, config guards) plus Lumen-only **5-ship MCP fleet**, **Research
-Brief**, and **Oasis** embed. See [`docs/science/COMPARISON.md`](docs/science/COMPARISON.md).
+subprocess. Multi-profile switch, relay model picker, DSML shim, and config guards, plus
+Lumen-only **5-ship MCP fleet**, **Research Brief**, and **Oasis** embed.
+See [`docs/science/COMPARISON.md`](docs/science/COMPARISON.md).
 
 ```bash
 lumen science start                    # proxy + sandbox + browser (one click)
@@ -320,7 +320,7 @@ lumen science gui                      # control panel (:18990) — profiles, re
 lumen science status                   # proxy / sandbox / cache hit rate
 lumen science watch                    # live DeepSeek prefix-cache dashboard
 lumen science doctor                   # read-only diagnostics
-lumen science migrate [--force]        # import ~/.csswitch/config.json
+lumen science migrate [--force]        # import legacy bridge config
 lumen science native verify --live     # 5-ship MCP fleet (PubMed/ChEMBL/GEO/Oasis/C2D)
 lumen science brief "aspirin"          # 4-source Research Brief
 lumen science research verify          # audit bundled MCP + skills + DB clients

@@ -125,7 +125,7 @@ func (m *Manager) StartProxy() (ProxyAction, error) {
 		m.lastProxyAction = ProxyReused
 		return ProxyReused, nil
 	}
-	// Stale listener (e.g. old CSswitch/python proxy) — clear before bind.
+	// Stale listener (e.g. old python proxy) — clear before bind.
 	m.mu.Unlock()
 	_ = KillListenerOnPort(m.cfg.ProxyPort)
 	m.StopProxy()
@@ -277,7 +277,7 @@ func (m *Manager) saveState(url string) error {
 	}
 	path := paths.StateFile(m.SciDir)
 
-	// Extreme CSSwitch-style hardening for state (contains secret):
+	// Extreme hardening for state file (contains secret):
 	// lstat refuse symlink, parent 0700, O_EXCL tmp + Sync + rename + 0600 reset.
 	if err := assertNotSymlink(path); err != nil {
 		return err
@@ -330,7 +330,7 @@ func assertNotSymlink(path string) error {
 	return nil
 }
 
-// StopSandboxOnly stops only the sandbox daemon (CSswitch quit semantics).
+// StopSandboxOnly stops only the sandbox daemon (quit keeps sandbox running).
 func (m *Manager) StopSandboxOnly() error {
 	bin := guard.ScienceBin()
 	sbxHome := paths.SandboxHome(m.SciDir)
@@ -445,7 +445,7 @@ func (m *Manager) VerifyKey() (bool, string, error) {
 }
 
 // RunForeground starts proxy+sandbox, opens browser, blocks until signal.
-// On exit: stops proxy, keeps sandbox running (CSswitch quit semantics).
+// On exit: stops proxy, keeps sandbox running.
 func (m *Manager) RunForeground(openBrowser bool) error {
 	url, action, err := m.StartSandbox()
 	if err != nil {
@@ -500,7 +500,7 @@ func SetMode(sciDir, mode string) error {
 	return err
 }
 
-// SwitchToOfficial stops bridge processes and opens real Science (CSswitch official mode).
+// SwitchToOfficial stops bridge processes and opens real Science (official mode).
 func SwitchToOfficial(sciDir string, lumenCfg *config.File) error {
 	mgr, err := New(sciDir, lumenCfg)
 	if err != nil {

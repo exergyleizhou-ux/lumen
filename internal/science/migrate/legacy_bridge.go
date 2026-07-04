@@ -1,4 +1,4 @@
-// Package migrate imports settings from CSswitch (~/.csswitch) into Lumen science config.
+// Package migrate imports legacy bridge settings into Lumen science config.
 package migrate
 
 import (
@@ -13,33 +13,33 @@ import (
 	"lumen/internal/science/proxy"
 )
 
-const csswitchDirName = ".csswitch"
+const legacyBridgeDirName = ".csswitch"
 
-// CSSwitchConfig mirrors ~/.csswitch/config.json (read-only import source).
-type CSSwitchConfig struct {
-	Provider    string                      `json:"provider"`
-	ProxyPort   int                         `json:"proxy_port"`
-	SandboxPort int                         `json:"sandbox_port"`
-	Secret      string                      `json:"secret,omitempty"`
-	Mode        string                      `json:"mode"`
-	Providers   map[string]csswitchProvider `json:"providers"`
+// legacyBridgeConfig mirrors the legacy bridge config.json (read-only import source).
+type legacyBridgeConfig struct {
+	Provider    string                       `json:"provider"`
+	ProxyPort   int                          `json:"proxy_port"`
+	SandboxPort int                          `json:"sandbox_port"`
+	Secret      string                       `json:"secret,omitempty"`
+	Mode        string                       `json:"mode"`
+	Providers   map[string]legacyProviderSlot `json:"providers"`
 }
 
-type csswitchProvider struct {
+type legacyProviderSlot struct {
 	Key string `json:"key,omitempty"`
 }
 
-// Detect reports whether CSswitch config exists and ports are in use.
+// Detect reports whether a legacy bridge config exists and ports are in use.
 func Detect() (configPath string, exists bool, portsBusy bool) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", false, false
 	}
-	path := filepath.Join(home, csswitchDirName, "config.json")
+	path := filepath.Join(home, legacyBridgeDirName, "config.json")
 	if _, err := os.Stat(path); err != nil {
 		return path, false, false
 	}
-	cfg, err := readCSSwitch(path)
+	cfg, err := readLegacyBridgeConfig(path)
 	if err != nil {
 		return path, true, false
 	}
@@ -47,19 +47,19 @@ func Detect() (configPath string, exists bool, portsBusy bool) {
 	return path, true, busy
 }
 
-// Import merges CSswitch settings into ~/.lumen/science/config.json.
+// Import merges legacy bridge settings into ~/.lumen/science/config.json.
 func Import(sciDir string, force bool) (Report, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return Report{}, err
 	}
-	srcPath := filepath.Join(home, csswitchDirName, "config.json")
-	src, err := readCSSwitch(srcPath)
+	srcPath := filepath.Join(home, legacyBridgeDirName, "config.json")
+	src, err := readLegacyBridgeConfig(srcPath)
 	if err != nil {
-		return Report{}, fmt.Errorf("read csswitch config: %w", err)
+		return Report{}, fmt.Errorf("read legacy config: %w", err)
 	}
 	if !force && (guard.PortInUse(src.ProxyPort) || guard.PortInUse(src.SandboxPort)) {
-		return Report{}, fmt.Errorf("csswitch ports still in use (%d/%d) — stop CSwitch first",
+		return Report{}, fmt.Errorf("legacy bridge ports still in use (%d/%d) — stop the other process first",
 			src.ProxyPort, src.SandboxPort)
 	}
 
@@ -111,7 +111,7 @@ func Import(sciDir string, force bool) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	if imported, err := sciconfig.ImportCSSwitchV2(sciDir); err != nil {
+	if imported, err := sciconfig.ImportLegacyProfilesV2(sciDir); err != nil {
 		return rep, err
 	} else if imported {
 		rep.V2ProfilesImported = true
@@ -133,24 +133,24 @@ type Report struct {
 	V2ProfilesImported bool     `json:"v2_profiles_imported,omitempty"`
 }
 
-func readCSSwitch(path string) (CSSwitchConfig, error) {
+func readLegacyBridgeConfig(path string) (legacyBridgeConfig, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
-		return CSSwitchConfig{}, err
+		return legacyBridgeConfig{}, err
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return CSSwitchConfig{}, fmt.Errorf("refuse symlink: %s", path)
+		return legacyBridgeConfig{}, fmt.Errorf("refuse symlink: %s", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return CSSwitchConfig{}, err
+		return legacyBridgeConfig{}, err
 	}
-	var c CSSwitchConfig
+	var c legacyBridgeConfig
 	if err := json.Unmarshal(data, &c); err != nil {
-		return CSSwitchConfig{}, err
+		return legacyBridgeConfig{}, err
 	}
 	if c.Providers == nil {
-		c.Providers = map[string]csswitchProvider{}
+		c.Providers = map[string]legacyProviderSlot{}
 	}
 	return c, nil
 }

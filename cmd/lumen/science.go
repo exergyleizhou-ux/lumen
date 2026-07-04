@@ -87,7 +87,7 @@ Usage:
   lumen science native list|status|verify --live   自有 MCP 舰队（国产科研工作台 Phase 1）
   lumen science brief <topic>                      生成 Research Brief（PubMed + ChEMBL + GEO + 绿洲）
   lumen science gui [--port N] [--no-browser]    Grok Build 风格控制面板（默认 :18990）
-  lumen science migrate [--force]                从 CSswitch 导入配置与 API key
+  lumen science migrate [--force]                从旧版桥接配置导入 API key 与线路
   lumen science config show|set-provider|set-key|set-port|set-cache-boost
 
 Proxy flags:
@@ -407,11 +407,11 @@ func runScienceMigrate(args []string) {
 	}
 	path, exists, busy := migrate.Detect()
 	if !exists {
-		fmt.Fprintln(os.Stderr, "未找到 CSswitch 配置 (~/.csswitch/config.json)")
+		fmt.Fprintln(os.Stderr, "未找到可导入的桥接配置")
 		os.Exit(1)
 	}
 	if busy && !force {
-		fmt.Fprintf(os.Stderr, "CSswitch 端口仍占用 — 请先停止 CSswitch，或使用 --force\n")
+		fmt.Fprintf(os.Stderr, "源配置端口仍被占用 — 请先停止旧进程，或使用 --force\n")
 		os.Exit(1)
 	}
 	dir := scienceDir()
@@ -420,7 +420,7 @@ func runScienceMigrate(args []string) {
 		fmt.Fprintf(os.Stderr, "science migrate: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("已从 CSswitch 导入配置\n")
+	fmt.Printf("已导入桥接配置\n")
 	fmt.Printf("  来源:   %s\n", path)
 	if rep.Provider != "" {
 		fmt.Printf("  线路:   %s\n", rep.Provider)

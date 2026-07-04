@@ -83,7 +83,7 @@ func TestSymlinkRejection(t *testing.T) {
 
 func TestEnsureDirAndPermResetOnLoad(t *testing.T) {
 	dir := t.TempDir()
-	// force a 0644 file then Load should reset to 0600 (like CSswitch)
+	// force a 0644 file then Load should reset to 0600
 	p := configPath(dir)
 	_ = os.MkdirAll(dir, 0o700)
 	if err := os.WriteFile(p, []byte(`{"provider":"deepseek"}`), 0o644); err != nil {

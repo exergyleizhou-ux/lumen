@@ -2,7 +2,7 @@ package config
 
 import "strings"
 
-// Template describes a provider preset (cc-switch / CSswitch style).
+// Template describes a built-in provider preset for profile creation.
 type Template struct {
 	ID                    string
 	Name                  string
@@ -64,7 +64,7 @@ func ListTemplates() []Template {
 }
 
 // ResolveProfileBaseURL returns the effective upstream base URL for a profile.
-// Non-editable native presets ignore stored overrides (CSswitch v0.3.1 semantics).
+// Non-editable native presets ignore stored base_url overrides.
 func ResolveProfileBaseURL(p Profile) string {
 	tpl, ok := TemplateByID(p.TemplateID)
 	if !ok {
