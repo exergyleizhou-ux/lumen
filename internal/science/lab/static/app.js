@@ -200,9 +200,9 @@ document.querySelectorAll(".chip").forEach((btn) => {
 
 // Tab toggle: inspector tabs
 let ketcherLoaded = false, molLoaded = false;
-document.querySelectorAll(".tab").forEach((t) => {
+document.querySelectorAll(".insp-tab").forEach((t) => {
   t.addEventListener("click", () => {
-    document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".insp-tab").forEach(b => b.classList.remove("active"));
     t.classList.add("active");
     const pane = t.dataset.pane;
     $("statusPane").style.display = pane === "status" ? "block" : "none";
