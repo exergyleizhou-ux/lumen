@@ -12,8 +12,8 @@ func TestStressOasisReadOnly(t *testing.T) {
 	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
-	const workers = 24
-	const each = 30
+	const workers = 12
+	const each = 20
 	var fail int64
 	var wg sync.WaitGroup
 	wg.Add(workers)

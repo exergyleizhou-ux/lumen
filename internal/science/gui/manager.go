@@ -19,7 +19,8 @@ func panelManager(sciDir string, lumenCfg *config.File) (*sciruntime.Manager, er
 	mgrMu.Lock()
 	defer mgrMu.Unlock()
 	if sharedMgr != nil && sharedSciDir == sciDir {
-		_ = sharedMgr.Reload()
+		// Hot path: avoid disk reload per request (health/SSE hammer).
+		// Mutating handlers call mgr.Reload() after config writes.
 		return sharedMgr, nil
 	}
 	mgr, err := sciruntime.New(sciDir, lumenCfg)

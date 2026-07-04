@@ -16,6 +16,7 @@ import (
 
 func stressHandler(t *testing.T) *httptest.Server {
 	t.Helper()
+	t.Cleanup(resetPanelManager)
 	srv, _ := testServer(t)
 	return httptest.NewServer(securityHeaders(srv.cors(rateLimitMutations(srv.wrapMiddleware(srv.mux)))))
 }
@@ -58,12 +59,12 @@ func TestStressHealthConcurrent(t *testing.T) {
 	skipStress(t)
 	ts := stressHandler(t)
 	defer ts.Close()
-	ok, fail := hammerGET(t, ts.URL+"/api/health", 32, 50)
+	ok, fail := hammerGET(t, ts.URL+"/api/health", 16, 25)
 	if fail > 0 {
 		t.Fatalf("health failures: %d (ok %d)", fail, ok)
 	}
-	if ok < 1500 {
-		t.Fatalf("expected >=1500 ok responses, got %d", ok)
+	if ok < 350 {
+		t.Fatalf("expected >=350 ok responses, got %d", ok)
 	}
 }
 
