@@ -4,7 +4,7 @@
 export GOTOOLCHAIN := local
 export GOFLAGS := -mod=mod
 
-.PHONY: check build vet test race lint clean facts eval science-check science-fmt science-vet science-test-quick science-test-all science-full-verify
+.PHONY: check build vet test race lint clean facts eval goal-all-verify science-check science-fmt science-vet science-test-quick science-test-all science-full-verify
 
 science-fmt:
 	@test -z "$$(gofmt -l internal/science)" || (gofmt -l internal/science && exit 1)
@@ -20,6 +20,9 @@ science-test-all:
 
 science-full-verify:
 	bash scripts/science/full-verify.sh
+
+goal-all-verify:
+	bash scripts/goal-all-verify.sh
 
 science-check: science-fmt science-vet science-test-quick
 	@echo "✓ science-check passed"

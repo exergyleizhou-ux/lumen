@@ -326,6 +326,7 @@ lumen science brief "aspirin"          # 4-source Research Brief
 lumen science research verify          # audit bundled MCP + skills + DB clients
 lumen science config set-key deepseek sk-...
 make science-full-verify               # all offline gates (tests, RM, native, desktop)
+make goal-all-verify                   # goal evidence + science full-verify + make check
 ```
 
 **Desktop (macOS)** — `desktop/lumen-science/` Tauri Acceptance app (`com.lumen.science.acceptance`);
@@ -380,4 +381,4 @@ builds and uploads the archives + checksums. `lumen version` reports the build.
 
 ---
 
-*Built with Go · ~37k non-test LOC · 69 packages · 162 test files · ~117 builtin tools · 29 model presets · zero runtime deps. Run `make facts` for live counts.*
+*Built with Go · ~53k non-test LOC · 95 packages · 252 test files · 117 builtin tools · 30 model presets. Run `make facts` for live counts. Optional SQLite audit store: `LUMEN_SQLITE_STORE=on`.*

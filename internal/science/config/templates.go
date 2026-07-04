@@ -26,7 +26,7 @@ var templates = []Template{
 	{ID: "glm", Name: "智谱 GLM", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
 		BaseURL: "https://open.bigmodel.cn/api/anthropic", BaseURLEditable: true,
 		WebsiteURL: "https://open.bigmodel.cn",
-		Icon: "glm", IconColor: "#2E6BE6",
+		Icon:       "glm", IconColor: "#2E6BE6",
 		BuiltinModels: []string{"glm-4.6", "glm-5", "glm-4.5-air"}},
 	{ID: "xiaomi", Name: "小米 MiMo", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
 		BaseURL: "https://api.xiaomimimo.com/anthropic", BaseURLEditable: true, RequiresModelOverride: true,

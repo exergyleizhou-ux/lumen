@@ -17,8 +17,16 @@ func TestRealScienceDirUsesScienceRealHome(t *testing.T) {
 		t.Fatalf("got %q want %q", got, want)
 	}
 	t.Setenv("SCIENCE_REAL_HOME", "")
-	if _, err := RealScienceDir(); err != nil {
+	got2, err := RealScienceDir()
+	if err != nil {
 		t.Fatal(err)
 	}
-	_ = os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want2 := filepath.Join(home, ".claude-science")
+	if got2 != want2 {
+		t.Fatalf("fallback got %q want %q", got2, want2)
+	}
 }

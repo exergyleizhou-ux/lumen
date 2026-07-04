@@ -147,8 +147,8 @@ func TestHandleProfileSwitchActivates(t *testing.T) {
 
 	srv, sciDir := testServer(t)
 	proxyPort := freeTestPort(t)
-	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "deepseek", APIKey: "sk-a", BaseURL: okSrv.URL}
-	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "deepseek", APIKey: "sk-b", BaseURL: okSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "custom", APIKey: "sk-a", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "custom", APIKey: "sk-b", BaseURL: okSrv.URL}
 	cfg := sciconfig.Default()
 	cfg.SchemaVersion = sciconfig.CurrentSchemaVersion
 	cfg.Profiles = []sciconfig.Profile{p1, p2}
@@ -201,8 +201,8 @@ func TestHandleProfileSwitchRejectsBadKey(t *testing.T) {
 
 	srv, sciDir := testServer(t)
 	proxyPort := freeTestPort(t)
-	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "deepseek", APIKey: "sk-a", BaseURL: okSrv.URL}
-	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "deepseek", APIKey: "sk-b", BaseURL: badSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "custom", APIKey: "sk-a", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "custom", APIKey: "sk-b", BaseURL: badSrv.URL}
 	cfg := sciconfig.Default()
 	cfg.SchemaVersion = sciconfig.CurrentSchemaVersion
 	cfg.Profiles = []sciconfig.Profile{p1, p2}

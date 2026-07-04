@@ -29,7 +29,7 @@
 |-----|--------|
 | RM-04/06/13 OAuth manual matrix | User-present only — documented |
 | CSswitch daily maintenance plist | Not ported (optional) |
-| SQLite config | Both deferred |
+| SQLite config | CSwitch deferred; Lumen **audit MVP** (`LUMEN_SQLITE_STORE=on`, dual-write JSONL) |
 
 ## Verify locally
 

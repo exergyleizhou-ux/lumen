@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"lumen/internal/lumenstore"
 )
 
 // maxArgLen bounds how much of a tool's args we persist, so a giant payload
@@ -121,6 +123,9 @@ func (s *Store) RecordToolCall(tc ToolCall) *Entry {
 		if b, err := json.Marshal(e); err == nil {
 			s.f.Write(append(b, '\n'))
 		}
+	}
+	if db := lumenstore.Default(); db != nil {
+		_ = db.InsertAudit(tc.Session, tc.Tool, tc.OK, details)
 	}
 	return e
 }

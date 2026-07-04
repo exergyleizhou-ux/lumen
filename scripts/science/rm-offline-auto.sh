@@ -29,9 +29,14 @@ go test ./internal/science/native/brief/... -count=1 -short -timeout 30s >/dev/n
 
 # RM-17 desktop artifact exists (macOS only)
 if [[ "$(uname -s)" == "Darwin" ]]; then
-  APP="$ROOT/desktop/lumen-science/src-tauri/target/release/bundle/macos/Lumen Science.app"
+  APP="${LUMEN_DESKTOP_APP:-$ROOT/desktop/lumen-science/src-tauri/target/release/bundle/macos/Lumen Science.app}"
   if [[ ! -d "$APP" ]]; then
-    echo "WARN: desktop .app not built — run: cd desktop/lumen-science && npm run tauri build" >&2
+    if [[ "${LUMEN_RELEASE_VERIFY:-}" == "1" ]]; then
+      echo "FAIL RM-17: desktop .app missing at $APP" >&2
+      echo "  build: cd desktop/lumen-science && npm run build" >&2
+      exit 1
+    fi
+    echo "WARN: desktop .app not built — run: cd desktop/lumen-science && npm run build" >&2
   else
     echo "▸ RM-17 artifact: $APP"
   fi

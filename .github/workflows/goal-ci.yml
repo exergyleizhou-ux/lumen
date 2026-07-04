@@ -1,0 +1,45 @@
+name: goal-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  goal-evidence:
+    name: goal evidence + eval baseline6
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Goal evidence test
+        run: |
+          export GOTOOLCHAIN=local
+          export LUMEN_REPO_ROOT="$GITHUB_WORKSPACE"
+          SCRATCH="$RUNNER_TEMP/goal-scratch"
+          mkdir -p "$SCRATCH"
+          CGO_ENABLED=0 go build -o "$SCRATCH/lumen" ./cmd/lumen
+          export LUMEN_GOAL_SCRATCH="$SCRATCH"
+          go test -count=1 -timeout 120s -run '^TestGoalEvidence$' ./cmd/lumen -v
+
+  science-rm-offline:
+    name: science RM offline auto
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache: true
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/latest/download/gitleaks_8.24.2_linux_x64.tar.gz | tar xz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/
+      - name: RM offline auto
+        run: |
+          export GOTOOLCHAIN=local
+          bash scripts/science/rm-offline-auto.sh

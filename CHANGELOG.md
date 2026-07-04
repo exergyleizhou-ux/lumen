@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.2.0-science-beta.4 — /goal verification gates + SQLite audit MVP
+
+> Prerelease. Master `make goal-all-verify` orchestrator, goal CI workflow, cache
+> benchmark gate, SQLite dual-write audit store, and honest audit doc refresh.
+
+### Added
+- `make goal-all-verify` — `TestGoalEvidence` + `science full-verify` + `make check`.
+- `.github/workflows/goal-ci.yml` — goal evidence + RM offline on push.
+- `internal/lumenstore` — optional SQLite store (`LUMEN_SQLITE_STORE=on` → `~/.lumen/lumen.db`).
+- `internal/science/proxy/cache_benchmark_test.go` — warm-cache hit-rate gate (≥85%).
+
+### Fixed
+- `scripts/science/full-verify.sh` — exits non-zero on any gate failure.
+- `profile_switch` tests — use editable `custom` template for mock upstream (CSswitch v0.3.1).
+- `Validate` — allow legacy `provider: relay` for schema v2 profile configs.
+- `goal_evidence_test` — `LUMEN_REPO_ROOT` instead of hardcoded path.
+
 ## v1.2.0-science-beta.3 — RM manual automation
 
 > Prerelease. Automates RM-04..17 in guard HOME via `rm-manual-auto.sh`; fixes

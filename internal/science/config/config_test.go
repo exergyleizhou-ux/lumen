@@ -15,6 +15,7 @@ func TestValidatePorts(t *testing.T) {
 		{"reserved real port", File{Provider: "deepseek", ProxyPort: 8765, SandboxPort: 8990, Mode: "proxy"}, true},
 		{"same ports", File{Provider: "deepseek", ProxyPort: 18991, SandboxPort: 18991, Mode: "proxy"}, true},
 		{"bad provider", File{Provider: "bogus", ProxyPort: 18991, SandboxPort: 8990, Mode: "proxy"}, true},
+		{"relay profile slot", File{SchemaVersion: CurrentSchemaVersion, Provider: "relay", ProxyPort: 18991, SandboxPort: 8990, Mode: "proxy"}, false},
 		{"bad mode", File{Provider: "deepseek", ProxyPort: 18991, SandboxPort: 8990, Mode: "hybrid"}, true},
 	}
 	for _, c := range cases {

@@ -69,8 +69,12 @@ api_key = "TEST_E2E_SUCCESS"
 	// --- AC3: two runs via real binary CLI on the exact 6-task baseline ---
 	baseline := "evals/baseline6"
 	for i := 1; i <= 2; i++ {
+		repoRoot := os.Getenv("LUMEN_REPO_ROOT")
+		if repoRoot == "" {
+			repoRoot, _ = os.Getwd()
+		}
 		evalCmd := exec.Command(lumen, "eval", "-tasks", baseline, "-json")
-		evalCmd.Dir = "/Users/lei/lumen"
+		evalCmd.Dir = repoRoot
 		evalCmd.Env = append(os.Environ(), "DEEPSEEK_API_KEY=TEST_E2E_SUCCESS")
 		evalOut, _ := evalCmd.CombinedOutput()
 		jsonFile := filepath.Join(scratch, "eval-run"+string(rune('0'+i))+".json")

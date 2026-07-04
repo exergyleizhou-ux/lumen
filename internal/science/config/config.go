@@ -190,8 +190,11 @@ func Save(dir string, f File) error {
 // Validate checks ports, provider, and mode before persisting.
 func Validate(f File) error {
 	if f.Provider != "" {
-		if _, ok := proxy.LookupProvider(f.Provider); !ok {
-			return fmt.Errorf("unsupported provider %q", f.Provider)
+		// Schema v2 profiles use adapter names (e.g. relay) in the legacy Provider slot.
+		if f.Provider != "relay" {
+			if _, ok := proxy.LookupProvider(f.Provider); !ok {
+				return fmt.Errorf("unsupported provider %q", f.Provider)
+			}
 		}
 	}
 	if err := guard.AssertPortSafe(f.ProxyPort); err != nil {

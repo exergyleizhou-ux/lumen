@@ -54,3 +54,7 @@ jobs:
         run: |
           COUNT=$(grep -r '^func Test' internal/science --include='*_test.go' | wc -l | tr -d ' ')
           test "$COUNT" -ge 120
+      - name: RM offline auto
+        run: |
+          export GOTOOLCHAIN=local
+          bash scripts/science/rm-offline-auto.sh

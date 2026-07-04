@@ -87,7 +87,7 @@ func run() error {
 	cfg.ToolUseShim = "rewrite"
 	if mockUpstream != nil {
 		cfg.Profiles = []sciconfig.Profile{{
-			ID: "rm-live", Name: "RM Live", TemplateID: "deepseek",
+			ID: "rm-live", Name: "RM Live", TemplateID: "custom",
 			APIKey: key, BaseURL: mockUpstream.URL,
 		}}
 		cfg.ActiveProfileID = "rm-live"
@@ -150,8 +150,8 @@ func run() error {
 	}))
 	defer goodSrv.Close()
 
-	pGood := sciconfig.Profile{ID: "pg", Name: "Good", TemplateID: "deepseek", APIKey: key, BaseURL: goodSrv.URL}
-	pBad := sciconfig.Profile{ID: "pb", Name: "Bad", TemplateID: "deepseek", APIKey: "sk-invalid-key-00000000", BaseURL: badSrv.URL}
+	pGood := sciconfig.Profile{ID: "pg", Name: "Good", TemplateID: "custom", APIKey: key, BaseURL: goodSrv.URL}
+	pBad := sciconfig.Profile{ID: "pb", Name: "Bad", TemplateID: "custom", APIKey: "sk-invalid-key-00000000", BaseURL: badSrv.URL}
 	_, err = sciconfig.Update(sciDir, func(c *sciconfig.File) {
 		c.Profiles = []sciconfig.Profile{pGood, pBad}
 		c.ActiveProfileID = "pg"

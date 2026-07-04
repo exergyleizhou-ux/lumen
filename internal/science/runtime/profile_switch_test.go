@@ -57,8 +57,8 @@ func TestSwitchProfileRejects401(t *testing.T) {
 
 	dir := t.TempDir()
 	proxyPort := freePort(t)
-	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "deepseek", APIKey: "sk-active", BaseURL: okSrv.URL}
-	p2 := sciconfig.Profile{ID: "p2", Name: "Bad", TemplateID: "deepseek", APIKey: "sk-bad", BaseURL: badSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "custom", APIKey: "sk-active", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "Bad", TemplateID: "custom", APIKey: "sk-bad", BaseURL: badSrv.URL}
 	writeSwitchFixture(t, dir, []sciconfig.Profile{p1, p2}, "p1", proxyPort, proxyPort+1)
 
 	mgr, err := New(dir, &config.File{})
@@ -86,8 +86,8 @@ func TestSwitchProfileActivatesOn200(t *testing.T) {
 
 	dir := t.TempDir()
 	proxyPort := freePort(t)
-	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "deepseek", APIKey: "sk-active", BaseURL: okSrv.URL}
-	p2 := sciconfig.Profile{ID: "p2", Name: "Next", TemplateID: "deepseek", APIKey: "sk-next", BaseURL: okSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "custom", APIKey: "sk-active", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "Next", TemplateID: "custom", APIKey: "sk-next", BaseURL: okSrv.URL}
 	writeSwitchFixture(t, dir, []sciconfig.Profile{p1, p2}, "p1", proxyPort, proxyPort+1)
 
 	mgr, err := New(dir, &config.File{})
@@ -107,7 +107,7 @@ func TestSwitchProfileActivatesOn200(t *testing.T) {
 	if cfg.ActiveProfileID != "p2" {
 		t.Fatalf("active=%q want p2", cfg.ActiveProfileID)
 	}
-	if cfg.Provider != "deepseek" {
+	if cfg.Provider != "relay" {
 		t.Fatalf("provider=%q", cfg.Provider)
 	}
 }
@@ -118,7 +118,7 @@ func TestSwitchProfileUnchangedWhenAlreadyActive(t *testing.T) {
 
 	dir := t.TempDir()
 	proxyPort := freePort(t)
-	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "deepseek", APIKey: "sk-active", BaseURL: okSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "custom", APIKey: "sk-active", BaseURL: okSrv.URL}
 	writeSwitchFixture(t, dir, []sciconfig.Profile{p1}, "p1", proxyPort, proxyPort+1)
 
 	mgr, err := New(dir, &config.File{})
@@ -140,8 +140,8 @@ func TestSwitchProfileRollsBackOnProxyStartFailure(t *testing.T) {
 	defer okSrv.Close()
 
 	dir := t.TempDir()
-	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "deepseek", APIKey: "sk-active", BaseURL: okSrv.URL}
-	p2 := sciconfig.Profile{ID: "p2", Name: "Next", TemplateID: "deepseek", APIKey: "sk-next", BaseURL: okSrv.URL}
+	p1 := sciconfig.Profile{ID: "p1", Name: "Active", TemplateID: "custom", APIKey: "sk-active", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "Next", TemplateID: "custom", APIKey: "sk-next", BaseURL: okSrv.URL}
 	// Port 8765 is reserved — probe passes but StartProxy must fail.
 	writeSwitchFixture(t, dir, []sciconfig.Profile{p1, p2}, "p1", 8765, 8990)
 
@@ -171,7 +171,7 @@ func TestProbeProfileKeyRejects401(t *testing.T) {
 	defer srv.Close()
 
 	p := sciconfig.Profile{
-		ID: "p1", Name: "bad", TemplateID: "deepseek", APIKey: "sk-bad", BaseURL: srv.URL,
+		ID: "p1", Name: "bad", TemplateID: "custom", APIKey: "sk-bad", BaseURL: srv.URL,
 	}
 	cfg := sciconfig.Default()
 	cfg.SchemaVersion = sciconfig.CurrentSchemaVersion
