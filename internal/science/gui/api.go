@@ -117,6 +117,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"panel":        "lumen://science",
+		"https_url":   fmt.Sprintf("https://127.0.0.1:%d", 18993),
 		"version":      a.version,
 		"healthy":      healthy,
 		"uptime_ms":    time.Since(a.startedAt).Milliseconds(),

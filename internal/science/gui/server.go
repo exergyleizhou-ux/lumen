@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"lumen/internal/config"
+	"lumen/internal/tlsutil"
 )
 
 const DefaultPort = 18990
@@ -111,6 +113,7 @@ func (s *Server) ListenAndServe() error {
 		}
 		fmt.Printf("Lumen Science 控制面板: %s\n", s.URL())
 		fmt.Println("Ctrl+C 退出面板（沙箱保持运行，代理继续由 science 管理）")
+		go s.serveHTTPS()
 		return s.srv.Serve(ln)
 	}
 	return fmt.Errorf("science gui: cannot bind %s after 10 attempts: %w", s.cfg.Addr, lastErr)
@@ -166,4 +169,27 @@ func openPanel(url string) error {
 // QuitProxy stops in-process proxy only (panel close semantics).
 func (s *Server) QuitProxy() {
 	s.api.StopProxyOnly()
+}
+
+// serveHTTPS starts a TLS listener on port+3 for localhost HTTPS access.
+// This avoids mixed-content blocking when embedded in HTTPS sites like Oasis.
+func (s *Server) serveHTTPS() {
+	host, portStr, _ := net.SplitHostPort(s.cfg.Addr)
+	if host == "" { host = "127.0.0.1" }
+	port, _ := strconv.Atoi(portStr); if port == 0 { port = DefaultPort }
+	httpsAddr := fmt.Sprintf("%s:%d", host, port+3)
+
+	tlsCfg, err := tlsutil.EnsureCert(s.cfg.SciDir)
+	if err != nil {
+		return // no HTTPS without cert
+	}
+	srv := &http.Server{
+		Addr:              httpsAddr,
+		Handler:           s.srv.Handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		TLSConfig:         tlsCfg,
+	}
+	fmt.Printf("Lumen Science HTTPS: https://%s\n", httpsAddr)
+	_ = srv.ListenAndServeTLS("", "")
 }
