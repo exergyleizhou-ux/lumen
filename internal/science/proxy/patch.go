@@ -39,7 +39,7 @@ func PatchAnthropicBodyRaw(raw []byte, spec ProviderSpec, cacheBoost bool) ([]by
 		fields["max_tokens"] = json.RawMessage(fmt.Sprintf("%d", clamped))
 	}
 
-	if th := patchThinking(fields["thinking"], fields["tool_choice"]); len(th) > 0 {
+	if th := patchThinking(spec.Name, fields["thinking"], fields["tool_choice"]); len(th) > 0 {
 		fields["thinking"] = th
 	} else {
 		delete(fields, "thinking")
@@ -48,7 +48,7 @@ func PatchAnthropicBodyRaw(raw []byte, spec ProviderSpec, cacheBoost bool) ([]by
 	return stableMarshal(fields, anthropicKeyOrder), nil
 }
 
-func patchThinking(thinkingRaw, toolChoiceRaw json.RawMessage) json.RawMessage {
+func patchThinking(providerName string, thinkingRaw, toolChoiceRaw json.RawMessage) json.RawMessage {
 	forcing := false
 	if len(toolChoiceRaw) > 0 {
 		var tc map[string]any
@@ -58,7 +58,14 @@ func patchThinking(thinkingRaw, toolChoiceRaw json.RawMessage) json.RawMessage {
 		}
 	}
 	if forcing {
-		return json.RawMessage(`{"type":"disabled"}`)
+		switch providerName {
+		case "minimax":
+			if len(thinkingRaw) == 0 {
+				return thinkingRaw
+			}
+		default:
+			return json.RawMessage(`{"type":"disabled"}`)
+		}
 	}
 	if len(thinkingRaw) == 0 {
 		return thinkingRaw

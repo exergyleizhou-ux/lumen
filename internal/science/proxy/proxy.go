@@ -211,6 +211,11 @@ func (s *Server) handleModels(w http.ResponseWriter) {
 }
 
 func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
+	// Defensive: reject malformed Content-Length (from CSSwitch)
+	if r.ContentLength < 0 {
+		s.sendJSON(w, http.StatusBadRequest, errorBody("invalid_request_error", "invalid Content-Length"))
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 32<<20)
 	raw, err := io.ReadAll(r.Body)
 	if err != nil {

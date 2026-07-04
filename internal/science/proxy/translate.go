@@ -294,8 +294,21 @@ func NormalizeAnthropicBody(spec ProviderSpec, req map[string]any) map[string]an
 		t, _ := tc["type"].(string)
 		forcing = t == "any" || t == "tool"
 	}
+	// Per-provider thinking normalization (from CSSwitch real-machine testing):
+	// - deepseek: forced tools = unconditionally disable thinking (flash model conflict)
+	// - minimax: accept adaptive as-is (MiniMax handles thinking+tool_use natively)
+	// - moonshot/kimi: forcing = enabled with budget_tokens (Kimi requires enabled)
+	// - zhipu/qwen: forcing = disabled (safe default)
 	if forcing {
-		body["thinking"] = map[string]any{"type": "disabled"}
+		switch spec.Name {
+		case "moonshot":
+			body["thinking"] = map[string]any{
+				"type":          "enabled",
+				"budget_tokens": 1024,
+			}
+		default:
+			body["thinking"] = map[string]any{"type": "disabled"}
+		}
 	} else if th, ok := body["thinking"].(map[string]any); ok {
 		if th["type"] == "auto" {
 			copy := make(map[string]any, len(th))
