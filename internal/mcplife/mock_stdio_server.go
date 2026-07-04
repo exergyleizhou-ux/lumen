@@ -61,7 +61,7 @@ func NewTestMockClient(t testing.TB) *Client {
 		t.Fatalf("start mock server: %v", err)
 	}
 
-	c := newClient(stdin, stdout, cmd)
+	c := newClient(stdin, stdout, cmd, TransportContentLength)
 	t.Cleanup(func() {
 		c.Close()
 		if stderr.Len() > 0 {

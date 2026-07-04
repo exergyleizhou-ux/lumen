@@ -97,15 +97,26 @@ type ServerCapabilities struct {
 
 // ── Client ─────────────────────────────────────────────────────────
 
+// StdioTransport selects the MCP stdio framing protocol.
+type StdioTransport int
+
+const (
+	// TransportContentLength uses Content-Length headers (Lumen native MCP servers).
+	TransportContentLength StdioTransport = iota
+	// TransportNDJSON uses one JSON-RPC object per line (Python mcp SDK / CS bio-tools).
+	TransportNDJSON
+)
+
 // Client is a real MCP client connected to a child process over stdio.
 // It implements the MCPClient interface used by Manager.
 type Client struct {
-	cmd     *exec.Cmd
-	mu      sync.Mutex
-	reqID   int64
-	pending map[int64]chan *jsonrpcResponse
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
+	cmd       *exec.Cmd
+	transport StdioTransport
+	mu        sync.Mutex
+	reqID     int64
+	pending   map[int64]chan *jsonrpcResponse
+	stdin     io.WriteCloser
+	stdout    *bufio.Reader
 
 	// readLoopDone is closed when the background read loop exits.
 	readLoopDone chan struct{}
@@ -128,8 +139,23 @@ func NewMCPClient(serverCommand string, serverArgs []string) (*Client, error) {
 	return NewMCPClientEnv(serverCommand, serverArgs, nil)
 }
 
+// NewMCPClientNDJSON is like NewMCPClient but uses newline-delimited JSON stdio
+// framing required by Python MCP SDK servers (Claude Science bio-tools).
+func NewMCPClientNDJSON(serverCommand string, serverArgs []string) (*Client, error) {
+	return NewMCPClientEnvNDJSON(serverCommand, serverArgs, nil)
+}
+
 // NewMCPClientEnv is like NewMCPClient but appends extraEnv entries (KEY=value).
 func NewMCPClientEnv(serverCommand string, serverArgs []string, extraEnv []string) (*Client, error) {
+	return newMCPClientEnv(serverCommand, serverArgs, extraEnv, TransportContentLength)
+}
+
+// NewMCPClientEnvNDJSON is NewMCPClientEnv with NDJSON transport.
+func NewMCPClientEnvNDJSON(serverCommand string, serverArgs []string, extraEnv []string) (*Client, error) {
+	return newMCPClientEnv(serverCommand, serverArgs, extraEnv, TransportNDJSON)
+}
+
+func newMCPClientEnv(serverCommand string, serverArgs []string, extraEnv []string, transport StdioTransport) (*Client, error) {
 	cmd := exec.Command(serverCommand, serverArgs...)
 	if len(extraEnv) > 0 {
 		cmd.Env = append(os.Environ(), extraEnv...)
@@ -152,15 +178,16 @@ func NewMCPClientEnv(serverCommand string, serverArgs []string, extraEnv []strin
 		return nil, fmt.Errorf("mcplife: start %s: %w", serverCommand, err)
 	}
 
-	c := newClient(stdin, stdout, cmd)
+	c := newClient(stdin, stdout, cmd, transport)
 	return c, nil
 }
 
 // newClient is the internal constructor used both by NewMCPClient and by
 // tests that supply their own io pipes.
-func newClient(stdin io.WriteCloser, stdout io.Reader, cmd *exec.Cmd) *Client {
+func newClient(stdin io.WriteCloser, stdout io.Reader, cmd *exec.Cmd, transport StdioTransport) *Client {
 	c := &Client{
 		cmd:          cmd,
+		transport:    transport,
 		stdin:        stdin,
 		stdout:       bufio.NewReader(stdout),
 		pending:      make(map[int64]chan *jsonrpcResponse),
@@ -459,21 +486,30 @@ func (c *Client) notify(method string, params any) error {
 	return c.writeMessage(n)
 }
 
-// writeMessage marshals v as JSON and writes it to stdin with an MCP
-// Content-Length header.
+// writeMessage marshals v as JSON and writes it to stdin using the client's transport.
 func (c *Client) writeMessage(v any) error {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return fmt.Errorf("write header: %w", err)
-	}
-	if _, err := c.stdin.Write(body); err != nil {
-		return fmt.Errorf("write body: %w", err)
+	switch c.transport {
+	case TransportNDJSON:
+		if _, err := c.stdin.Write(body); err != nil {
+			return fmt.Errorf("write body: %w", err)
+		}
+		if _, err := io.WriteString(c.stdin, "\n"); err != nil {
+			return fmt.Errorf("write newline: %w", err)
+		}
+	default:
+		header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
+		if _, err := io.WriteString(c.stdin, header); err != nil {
+			return fmt.Errorf("write header: %w", err)
+		}
+		if _, err := c.stdin.Write(body); err != nil {
+			return fmt.Errorf("write body: %w", err)
+		}
 	}
 	return nil
 }
@@ -498,7 +534,7 @@ func (c *Client) readLoop() {
 			return
 		}
 		// Notifications have no id; we ignore them.
-		if resp.ID == 0 && resp.JSONRPC == "" {
+		if isJSONRPCNotification(resp) {
 			continue
 		}
 		c.mu.Lock()
@@ -516,10 +552,15 @@ func (c *Client) readLoop() {
 	}
 }
 
-// readMessage reads one MCP-framed message from stdout. It expects a
-// Content-Length header followed by \r\n\r\n and then exactly N bytes of
-// JSON body.
+func isJSONRPCNotification(resp *jsonrpcResponse) bool {
+	return resp == nil || (resp.ID == 0 && resp.JSONRPC == "")
+}
+
+// readMessage reads one MCP-framed message from stdout.
 func (c *Client) readMessage() (*jsonrpcResponse, error) {
+	if c.transport == TransportNDJSON {
+		return c.readMessageNDJSON()
+	}
 	// Read Content-Length header line.
 	headerLine, err := c.stdout.ReadString('\n')
 	if err != nil {
@@ -553,4 +594,33 @@ func (c *Client) readMessage() (*jsonrpcResponse, error) {
 		return nil, fmt.Errorf("mcplife: parse response: %w", err)
 	}
 	return &resp, nil
+}
+
+func (c *Client) readMessageNDJSON() (*jsonrpcResponse, error) {
+	for {
+		line, err := c.stdout.ReadString('\n')
+		if err != nil {
+			return nil, err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var probe struct {
+			ID     *int64 `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal([]byte(line), &probe); err != nil {
+			return nil, fmt.Errorf("mcplife: parse ndjson: %w", err)
+		}
+		if probe.ID == nil {
+			continue // notification
+		}
+		var resp jsonrpcResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			return nil, fmt.Errorf("mcplife: parse ndjson response: %w", err)
+		}
+		resp.ID = *probe.ID
+		return &resp, nil
+	}
 }

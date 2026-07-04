@@ -56,6 +56,21 @@ fi
 
 run_gate native-verify bash scripts/goal-native-workbench-verify.sh
 
+LAB_EC=0
+bash scripts/science/lab-smoke.sh > "$SCRATCH/lab-smoke.log" 2>&1 || LAB_EC=$?
+if [[ "$LAB_EC" -eq 0 ]]; then
+  echo "✓ lab-smoke"
+  echo "lab-smoke:0" >> "$SCRATCH/verify-exit-codes.txt"
+  run_gate lab-parity bash scripts/science/lab-parity-verify.sh
+elif [[ "$LAB_EC" -eq 2 ]]; then
+  echo "lab-smoke:skipped" >> "$SCRATCH/verify-exit-codes.txt"
+  echo "⊘ lab-smoke skipped (research pack not cloned)"
+else
+  echo "lab-smoke:${LAB_EC}" >> "$SCRATCH/verify-exit-codes.txt"
+  echo "✗ lab-smoke failed (exit ${LAB_EC}) — see $SCRATCH/lab-smoke.log" >&2
+  FAIL=1
+fi
+
 { git tag -l '*science*' 2>/dev/null || true; echo '---'; gh release view --json tagName,url,assets 2>/dev/null || true; } > "$SCRATCH/release-info.txt" || true
 
 echo "---"

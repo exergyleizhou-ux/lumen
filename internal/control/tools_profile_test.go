@@ -47,3 +47,21 @@ func TestSelectToolsFullIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectToolsFullScienceProfile(t *testing.T) {
+	all := tool.Builtins()
+	sci := selectTools(all, "full_science")
+	if len(sci) >= len(all) {
+		t.Fatalf("full_science must be a strict subset, got %d of %d", len(sci), len(all))
+	}
+	for _, must := range []string{"read_file", "bash", "web_search", "mcp_call_tool"} {
+		if !has(sci, must) {
+			t.Errorf("full_science missing %q", must)
+		}
+	}
+	for _, mustNot := range []string{"blueprint_build", "lsp_diagnostics", "seal_data"} {
+		if has(sci, mustNot) {
+			t.Errorf("full_science must not include %q", mustNot)
+		}
+	}
+}

@@ -51,7 +51,7 @@ type Controller struct {
 	provCfg *config.ProviderConfig
 	prov    provider.Provider
 	// pricing is the active provider's configured rates (nil → use default).
-	pricing     *provider.Pricing
+	pricing *provider.Pricing
 	// turnTimeout bounds each provider HTTP request, matched to the per-turn
 	// deadline; resolved once at Configure and reused when switching presets.
 	turnTimeout time.Duration
@@ -69,13 +69,14 @@ type Controller struct {
 	approver func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
 
 	// Agent (created by Configure)
-	ag       *agent.Agent
-	sess     *agent.Session
-	sessPath string // JSONL path for persistence
-	cp       *checkpoint.Store
-	jm       *jobs.Manager
-	tl       *timeline.Recorder // session timeline for replay + change inbox
-	memStore *memory.Store      // persistent user memories
+	ag                *agent.Agent
+	sess              *agent.Session
+	sessPath          string // JSONL path for persistence
+	cp                *checkpoint.Store
+	jm                *jobs.Manager
+	tl                *timeline.Recorder // session timeline for replay + change inbox
+	memStore          *memory.Store      // persistent user memories
+	extraMemoryPrompt string             // appended to memory block (e.g. science lab system context)
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -187,8 +188,12 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 
 	// 3. Build tool registry — honoring [tools] profile (default "full"; "core"
 	// offers only the coding set so the model isn't handed ~116 tools per turn).
+	toolProfile := cfg.Tools.Profile
+	if v := strings.TrimSpace(os.Getenv("LUMEN_TOOLS_PROFILE")); v != "" {
+		toolProfile = v
+	}
 	reg := tool.NewRegistry()
-	for _, t := range selectTools(tool.Builtins(), cfg.Tools.Profile) {
+	for _, t := range selectTools(tool.Builtins(), toolProfile) {
 		reg.Add(t)
 	}
 
@@ -288,6 +293,13 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	var memPrompt string
 	if memStore != nil {
 		memPrompt = memStore.SystemPrompt()
+	}
+	if extra := strings.TrimSpace(c.extraMemoryPrompt); extra != "" {
+		if memPrompt != "" {
+			memPrompt = memPrompt + "\n\n" + extra
+		} else {
+			memPrompt = extra
+		}
 	}
 	agOpts := agentOptionsFromConfig(cfg)
 	agOpts.Sink = sink
@@ -517,6 +529,11 @@ func (c *Controller) SwitchModel(name string) (string, error) {
 	return preset.Name, nil
 }
 
+// SetExtraMemoryPrompt injects additional system context after persistent memories.
+func (c *Controller) SetExtraMemoryPrompt(prompt string) {
+	c.extraMemoryPrompt = prompt
+}
+
 // SetAsker installs an interactive asker (for TUI mode).
 func (c *Controller) SetAsker(asker agent.Asker) {
 	c.asker = asker
@@ -529,6 +546,19 @@ func (c *Controller) SetAsker(asker agent.Asker) {
 // consults it for tools that require confirmation in the active mode. Leave it
 // unset for headless runs, which auto-approve (the guard still blocks dangerous
 // commands). Safe to call before or after Configure — the gate reads it lazily.
+// AddExtraTools registers additional tools on the active agent (e.g. science lab fleet).
+func (c *Controller) AddExtraTools(tools []tool.Tool) {
+	if c == nil || c.reg == nil || c.ag == nil {
+		return
+	}
+	for _, t := range tools {
+		if t != nil {
+			c.reg.Add(t)
+		}
+	}
+	c.ag.InvalidateSchemaCache()
+}
+
 func (c *Controller) SetApprover(fn func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)) {
 	c.approver = fn
 }

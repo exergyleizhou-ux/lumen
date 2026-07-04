@@ -1,6 +1,5 @@
 package main
 
-
 import (
 	"context"
 	"encoding/json"
@@ -14,8 +13,8 @@ import (
 
 	"lumen/internal/config"
 	sciconfig "lumen/internal/science/config"
-	"lumen/internal/science/gui"
 	"lumen/internal/science/guard"
+	"lumen/internal/science/gui"
 	"lumen/internal/science/migrate"
 	"lumen/internal/science/native"
 	"lumen/internal/science/native/brief"
@@ -62,6 +61,8 @@ func runScience(args []string) {
 		runScienceNative(args[1:])
 	case "brief":
 		runScienceBrief(args[1:])
+	case "lab":
+		runScienceLab(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown science subcommand: %s\n", args[0])
 		printScienceUsage()
@@ -87,6 +88,8 @@ Usage:
   lumen science native list|status|verify --live   自有 MCP 舰队（国产科研工作台 Phase 1）
   lumen science brief <topic>                      生成 Research Brief（PubMed + ChEMBL + GEO + 绿洲）
   lumen science gui [--port N] [--no-browser]    Grok Build 风格控制面板（默认 :18990）
+  lumen science lab [--port N] [--no-browser]    国产 Science 实验室（默认 :18992）
+  lumen science mode hybrid|native|bridge|show   双页模式（lab/bridge/hybrid）
   lumen science migrate [--force]                从旧版桥接配置导入 API key 与线路
   lumen science config show|set-provider|set-key|set-port|set-cache-boost
 
@@ -505,11 +508,28 @@ func runScienceLogs(args []string) {
 
 func runScienceMode(args []string) {
 	if len(args) < 1 {
-		fmt.Fprintln(os.Stderr, "usage: lumen science mode official|proxy")
+		fmt.Fprintln(os.Stderr, "usage: lumen science mode official|proxy|hybrid|native|bridge|show")
 		os.Exit(1)
 	}
 	dir := scienceDir()
 	switch args[0] {
+	case "show":
+		cfg, err := sciconfig.Load(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "science mode: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("science_mode: %s\n", cfg.ScienceMode)
+		fmt.Printf("bridge mode:   %s\n", cfg.Mode)
+		return
+	case "hybrid", "native", "bridge":
+		mode := args[0]
+		if _, err := sciconfig.Update(dir, func(c *sciconfig.File) { c.ScienceMode = mode }); err != nil {
+			fmt.Fprintf(os.Stderr, "science mode: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("已设置 science_mode=%s\n", mode)
+		return
 	case "official":
 		if err := runtime.SwitchToOfficial(dir, lumenCfg()); err != nil {
 			fmt.Fprintf(os.Stderr, "science mode: %v\n", err)

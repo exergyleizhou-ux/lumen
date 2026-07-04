@@ -849,6 +849,7 @@ async function init() {
   await loadConfig();
   await loadOasisAuth();
   await loadNativeFleet();
+  await probeLabHealth();
   if (document.body.classList.contains("embed-oasis") && window.parent !== window) {
     window.parent.postMessage({ type: OASIS_MSG_REQUEST }, location.origin);
   }
@@ -941,6 +942,24 @@ function wireOasisResearch(btn) {
 }
 wireOasisResearch($("oasisResearchBtn"));
 wireOasisResearch($("oasisResearchFootBtn"));
+
+async function probeLabHealth() {
+  const dot = $("labDot");
+  const link = $("labLink");
+  try {
+    const r = await fetch("http://127.0.0.1:18992/api/lab/health", { signal: AbortSignal.timeout(800) });
+    if (!r.ok) throw new Error("lab down");
+    const h = await r.json();
+    if (dot) {
+      dot.textContent = h.research_pack?.healthy ? "✓" : "○";
+      dot.title = h.research_pack?.healthy ? "Lab + research pack ready" : "Lab up, pack incomplete";
+    }
+    const mode = h.science_mode || "hybrid";
+    if (link && mode === "bridge") link.style.opacity = "0.55";
+  } catch (_) {
+    if (dot) { dot.textContent = "—"; dot.title = "实验室未启动 (lumen science lab)"; }
+  }
+}
 
 // Embed mode for Oasis site (add ?embed=1 or ?oasis=1 to URL)
 const p = new URLSearchParams(location.search);

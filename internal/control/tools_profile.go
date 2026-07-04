@@ -37,18 +37,42 @@ var coreToolNames = map[string]bool{
 	"model_list": true, "model_preset": true,
 }
 
+// fullScienceToolNames is the science-lab profile: coding essentials plus MCP
+// without off-domain bloat (seal/topology/cron/etc.).
+var fullScienceToolNames = map[string]bool{
+	"read_file": true, "write_file": true, "edit_file": true, "multi_edit": true,
+	"ls": true, "glob": true, "grep": true,
+	"bash": true, "bash_output": true, "wait": true, "kill_shell": true,
+	"todo_write": true, "complete_step": true, "ask": true,
+	"web_search": true, "web_fetch": true,
+	"mcp_connect": true, "mcp_call_tool": true, "mcp_list_tools": true,
+	"mcp_list_resources": true, "mcp_list_prompts": true,
+	"remember": true, "forget": true, "memories": true,
+	"model_list": true, "model_preset": true,
+}
+
 // selectTools returns the built-ins to register for the given profile. "core"
-// keeps only the coding set; "full" (the default, and any unknown value) keeps
-// everything — so the change is opt-in and can't silently shrink a user's tools.
+// keeps only the coding set; "full_science" is the science lab subset;
+// "full" (the default, and any unknown value) keeps everything.
 func selectTools(all []tool.Tool, profile string) []tool.Tool {
-	if profile != "core" {
+	switch profile {
+	case "core":
+		out := make([]tool.Tool, 0, len(all))
+		for _, t := range all {
+			if coreToolNames[t.Name()] {
+				out = append(out, t)
+			}
+		}
+		return out
+	case "full_science":
+		out := make([]tool.Tool, 0, len(all))
+		for _, t := range all {
+			if fullScienceToolNames[t.Name()] {
+				out = append(out, t)
+			}
+		}
+		return out
+	default:
 		return all
 	}
-	out := make([]tool.Tool, 0, len(all))
-	for _, t := range all {
-		if coreToolNames[t.Name()] {
-			out = append(out, t)
-		}
-	}
-	return out
 }
