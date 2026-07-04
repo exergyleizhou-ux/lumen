@@ -4,7 +4,7 @@ macOS Tauri shell wrapping the native Go control panel on `http://127.0.0.1:1899
 
 ## Icon
 
-Brand icon (emerald science + lumen mark). Regenerate all platform sizes from source:
+Premium brand icon (midnight teal glass + champagne lens mark). Regenerate all platform sizes from source:
 
 ```bash
 npx tauri icon app-icon-source.png
