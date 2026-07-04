@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="assets/app.css?v=1" />
+  <link rel="stylesheet" href="assets/app.css?v=2" />
 </head>
 <body>
   <div class="shell" id="shell">
@@ -43,11 +43,39 @@
         </form>
       </main>
       <aside class="inspector">
-        <h2>状态</h2>
-        <pre id="inspectorBody" class="mono">加载中…</pre>
+        <div class="tabs">
+          <button class="inspector-tab active" data-pane="status">状态</button>
+          <button class="inspector-tab" data-pane="files">文件</button>
+          <button class="inspector-tab" data-pane="ketcher">化学</button>
+          <button class="inspector-tab" data-pane="molecule">分子</button>
+        </div>
+        <div id="statusPane">
+          <pre id="inspectorBody" class="mono">加载中…</pre>
+        </div>
+        <div id="filesPane" style="display:none">
+          <div id="fileTree" class="file-tree">选择课题查看文件</div>
+          <div id="filePreview" class="file-preview"></div>
+        </div>
+        <div id="ketcherPane" style="display:none">
+          <p class="hint" style="padding: 6px; font-size: 0.75rem;">Ketcher 分子编辑器。</p>
+          <iframe id="ketcherFrame" src="about:blank"
+            style="width: 100%; height: 420px; border: 1px solid var(--forest-border); border-radius: var(--radius);"
+            title="Ketcher 化学编辑器" loading="lazy"></iframe>
+        </div>
+        <div id="moleculePane" style="display:none">
+          <p class="hint" style="padding: 6px; font-size: 0.75rem;">3Dmol.js 结构预览。将 PDB/SDF 文件拖入或通过对话生成。</p>
+          <div id="molViewer" style="width: 100%; height: 420px; position: relative; border: 1px solid var(--forest-border); border-radius: var(--radius);"></div>
+        </div>
       </aside>
     </div>
   </div>
-  <script src="assets/app.js?v=1" defer></script>
+  <!-- Command palette overlay -->
+  <div id="cmdPalette" class="palette-overlay" style="display:none">
+    <div class="palette-box">
+      <input id="paletteInput" type="text" placeholder="输入命令… (新建课题 / 生成 Brief / 文献检索)" autofocus />
+      <div id="paletteResults" class="palette-results"></div>
+    </div>
+  </div>
+  <script src="assets/app.js?v=2" defer></script>
 </body>
 </html>

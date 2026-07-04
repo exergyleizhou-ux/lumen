@@ -46,7 +46,7 @@ func NewFleetManager(sciDir string) (*FleetManager, error) {
 		sciDir:     sciDir,
 		dataDir:    dataDir,
 		bioTools:   bioTools,
-		python:     resolvePython(dataDir),
+		python:     ResolvePython(dataDir),
 		domains:    map[string]*mcplife.Client{},
 		domainMeta: meta,
 		errors:     map[string]string{},
@@ -96,13 +96,13 @@ func boolNative(m *native.Manager) int {
 	return len(native.ShippedFleet())
 }
 
-// ConnectDomains eagerly connects the given domain slugs (empty = pubmed+literature+chembl).
+// ConnectDomains eagerly connects the given domain slugs (empty = all discovered).
 func (f *FleetManager) ConnectDomains(slugs ...string) error {
 	if f == nil || f.bioTools == "" {
 		return fmt.Errorf("research pack not available")
 	}
 	if len(slugs) == 0 {
-		slugs = []string{"pubmed", "literature", "chembl"}
+		return f.ConnectAllCS()
 	}
 	var firstErr error
 	for _, slug := range slugs {
@@ -112,6 +112,28 @@ func (f *FleetManager) ConnectDomains(slugs ...string) error {
 	}
 	_ = f.connectNative()
 	return firstErr
+}
+
+// ConnectAllCS connects every discovered bio-tools domain (non-blocking on failure).
+func (f *FleetManager) ConnectAllCS() error {
+	if f == nil || f.bioTools == "" {
+		return fmt.Errorf("research pack not available")
+	}
+	var firstErr error
+	for _, d := range f.domainMeta {
+		if err := f.connectDomain(d.Slug); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	_ = f.connectNative()
+	return firstErr
+}
+
+// ConnectAll connects all CS domains + 5-ship Lumen native fleet.
+func (f *FleetManager) ConnectAll() error {
+	err := f.ConnectAllCS()
+	_ = f.connectNative()
+	return err
 }
 
 func (f *FleetManager) connectNative() error {

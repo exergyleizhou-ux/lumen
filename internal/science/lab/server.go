@@ -47,7 +47,10 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = fleet.ConnectDomains("pubmed", "literature", "chembl")
+	// Start all domain connections (CS bio-tools + 5-ship native); failures are non-blocking.
+	_ = fleet.ConnectAll()
+	// Seed embedded elevation skills on first launch.
+	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr))
 	s.routes()

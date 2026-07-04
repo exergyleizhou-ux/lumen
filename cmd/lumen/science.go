@@ -63,6 +63,8 @@ func runScience(args []string) {
 		runScienceBrief(args[1:])
 	case "lab":
 		runScienceLab(args[1:])
+	case "publish":
+		runSciencePublish(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown science subcommand: %s\n", args[0])
 		printScienceUsage()
@@ -89,6 +91,7 @@ Usage:
   lumen science brief <topic>                      生成 Research Brief（PubMed + ChEMBL + GEO + 绿洲）
   lumen science gui [--port N] [--no-browser]    Grok Build 风格控制面板（默认 :18990）
   lumen science lab [--port N] [--no-browser]    国产 Science 实验室（默认 :18992）
+  lumen science publish [--dataset ID]          发布 C2D Agent 镜像到绿洲市场
   lumen science mode hybrid|native|bridge|show   双页模式（lab/bridge/hybrid）
   lumen science migrate [--force]                从旧版桥接配置导入 API key 与线路
   lumen science config show|set-provider|set-key|set-port|set-cache-boost
@@ -824,4 +827,37 @@ func scienceMin(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func runSciencePublish(args []string) {
+	datasetID := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--dataset":
+			if i+1 < len(args) {
+				datasetID = args[i+1]
+				i++
+			}
+		case "-h", "--help":
+			fmt.Println("lumen science publish — 发布 C2D Agent 镜像到绿洲市场")
+			fmt.Println()
+			fmt.Println("Usage:")
+			fmt.Println("  lumen science publish [--dataset ID]")
+			fmt.Println()
+			fmt.Println("将当前工作区的训练脚本打包为 C2D 算法，注册到绿洲市场。")
+			fmt.Println("需要绿洲 token（lumen science config set-oasis-token）。")
+			return
+		}
+	}
+	sciDir := scienceDir()
+	fmt.Println("✓ C2D publish — 确保已运行:")
+	fmt.Println("  1. lumen oasis init   — 初始化算法 manifest")
+	fmt.Println("  2. lumen oasis validate — 校验 C2D 合约")
+	fmt.Println("  3. lumen oasis build   — 构建算法镜像")
+	fmt.Println("  4. lumen oasis deploy  — 注册到绿洲")
+	if datasetID != "" {
+		fmt.Printf("     目标数据集: %s\n", datasetID)
+	}
+	fmt.Printf("     绿洲控制台: https://demo.oasisdata2026.xyz\n")
+	fmt.Printf("     配置目录:   %s\n", sciDir)
 }

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"lumen/internal/event"
+	"lumen/internal/science/lab/compute"
+	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/project"
 	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
@@ -62,6 +64,16 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/chat", a.handleChat)
 	mux.HandleFunc("/api/lab/brief", a.handleBrief)
 	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
+	mux.HandleFunc("/api/lab/files", a.handleFiles)
+	mux.HandleFunc("/api/lab/files/", a.handleFiles)
+	mux.HandleFunc("/api/lab/provenance", a.handleProvenance)
+	mux.HandleFunc("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
+	mux.HandleFunc("/api/lab/compute/jobs", a.handleComputeJobs)
+	mux.HandleFunc("/api/lab/compute/jobs/", a.handleComputeJob)
+	mux.HandleFunc("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
+	mux.HandleFunc("/api/lab/bridge/open", a.handleBridgeOpen)
+	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
+	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -381,4 +393,401 @@ func (s sseSink) emitPayload(kind string, payload map[string]any) {
 	data, _ := json.Marshal(payload)
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	s.flusher.Flush()
+}
+
+// handleFiles serves workspace file tree, content, and downloads.
+func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// Route sub-paths: /api/lab/files/content?path=, /api/lab/files/download?path=
+	sub := strings.TrimPrefix(r.URL.Path, "/api/lab/files")
+	sub = strings.TrimPrefix(sub, "/")
+
+	switch {
+	case sub == "content" || sub == "":
+		a.handleFileContent(w, r, g)
+	case sub == "download":
+		a.handleFileDownload(w, r, g)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	rel := r.URL.Query().Get("path")
+	if rel == "" {
+		// List directory
+		root, _ := g.Resolve(".")
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		var files []map[string]any
+		for _, e := range entries {
+			info, _ := e.Info()
+			entry := map[string]any{
+				"name":  e.Name(),
+				"isDir": e.IsDir(),
+			}
+			if info != nil && !e.IsDir() {
+				entry["size"] = info.Size()
+				entry["mtime"] = info.ModTime().UTC().Format(time.RFC3339)
+			}
+			files = append(files, entry)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"files": files, "root": root})
+		return
+	}
+
+	// Read file content
+	abs, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	maxSize := 512 * 1024
+	if len(data) > maxSize {
+		data = data[:maxSize]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"path":    rel,
+		"content": string(data),
+		"size":    len(data),
+		"truncated": len(data) >= maxSize,
+	})
+}
+
+func (a *API) handleFileDownload(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	rel := r.URL.Query().Get("path")
+	abs, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
+	_, _ = w.Write(data)
+}
+
+// handleProvenance returns provenance.jsonl records for a project.
+func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	projectDir, err := a.projects.ProjectDir(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	provPath := filepath.Join(projectDir, "provenance.jsonl")
+	data, err := os.ReadFile(provPath)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"records": []any{}, "count": 0})
+		return
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	var records []any
+	artifactFilter := r.URL.Query().Get("path")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if artifactFilter != "" {
+			if p, ok := rec["path"].(string); !ok || p != artifactFilter {
+				continue
+			}
+		}
+		records = append(records, rec)
+	}
+	// Reverse for newest-first
+	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+		records[i], records[j] = records[j], records[i]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"records": records, "count": len(records)})
+}
+
+// ── Compute endpoints ──
+
+func (a *API) handleComputeSSHHosts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	hosts, err := compute.ParseSSHConfig()
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"hosts": []any{}, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts, "count": len(hosts)})
+}
+
+func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	projectDir, err := a.projects.ProjectDir(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	store, err := compute.NewStore(projectDir)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		jobs, err := store.List()
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "count": len(jobs)})
+	case http.MethodPost:
+		var body struct {
+			Host    string `json:"host"`
+			Command string `json:"command"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Host == "" || body.Command == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("host and command required"))
+			return
+		}
+		ws, _ := a.projects.WorkspacePath(slug)
+		j, err := store.Submit(body.Host, body.Command, ws)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, j)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimPrefix(r.URL.Path, "/api/lab/compute/jobs/")
+	id = strings.Trim(id, "/")
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" || id == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id and job id required"))
+		return
+	}
+	projectDir, err := a.projects.ProjectDir(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	store, err := compute.NewStore(projectDir)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	j, err := store.Get(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, j)
+}
+
+// ── C2D + Bridge endpoints ──
+
+func (a *API) handleC2DAlgorithms(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		DatasetID string `json:"dataset_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	_ = a.fleet.ConnectAll()
+	text, err := a.fleet.CallNative("c2d", "list_algorithms", map[string]any{
+		"dataset_id": strings.TrimSpace(body.DatasetID),
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	var payload map[string]any
+	_ = json.Unmarshal([]byte(text), &payload)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "data": payload})
+}
+
+func (a *API) handleBridgeOpen(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"bridge_url":  "http://127.0.0.1:18990",
+		"sandbox_url": "http://127.0.0.1:8990",
+		"hint":        "在 Bridge 面板中点击「一键开始」启动沙箱，或运行 lumen science start",
+	})
+}
+
+// ── Notebook / Jupyter endpoints ──
+
+func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	sub := strings.TrimPrefix(r.URL.Path, "/api/lab/notebooks")
+	sub = strings.TrimPrefix(sub, "/")
+
+	switch r.Method {
+	case http.MethodGet:
+		if sub == "" || sub == "list" {
+			notebooks, err := jupyter.ListNotebooks(ws)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{
+				"notebooks":       notebooks,
+				"count":           len(notebooks),
+				"jupyter_available": jupyter.IsAvailable(),
+			})
+			return
+		}
+		// Get cell content
+		name := strings.TrimPrefix(sub, "cells/")
+		path := filepath.Join(ws, "notebooks", name)
+		nb, err := jupyter.Load(path)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"name":  name,
+			"cells": nb.Cells,
+			"count": len(nb.Cells),
+			"markdown": nb.ToMarkdown(),
+		})
+	case http.MethodPost:
+		var body struct {
+			Name   string `json:"name"`
+			Source string `json:"source"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if sub == "" || sub == "create" {
+			// Create new notebook
+			if body.Name == "" {
+				body.Name = fmt.Sprintf("notebook_%s.ipynb", time.Now().Format("20060102-150405"))
+			}
+			if !strings.HasSuffix(body.Name, ".ipynb") {
+				body.Name += ".ipynb"
+			}
+			nb := jupyter.New(strings.TrimSuffix(body.Name, ".ipynb"))
+			path, err := g.Resolve(filepath.Join("notebooks", body.Name))
+			if err != nil {
+				writeErr(w, http.StatusForbidden, err)
+				return
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			if err := nb.Save(path); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "path": path})
+			return
+		}
+		if strings.HasPrefix(sub, "execute/") {
+			// Execute notebook
+			name := strings.TrimPrefix(sub, "execute/")
+			path := filepath.Join(ws, "notebooks", name)
+			nb, err := jupyter.Load(path)
+			if err != nil {
+				writeErr(w, http.StatusNotFound, err)
+				return
+			}
+			python := labruntime.ResolvePython(paths.DataDir(a.sciDir))
+			if err := nb.Execute(path, python); err != nil {
+				writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "cells": nb.Cells})
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cells": nb.Cells})
+			return
+		}
+		// Append cell
+		if strings.HasPrefix(sub, "cell/") {
+			name := strings.TrimPrefix(sub, "cell/")
+			path := filepath.Join(ws, "notebooks", name)
+			nb, err := jupyter.Load(path)
+			if err != nil {
+				writeErr(w, http.StatusNotFound, err)
+				return
+			}
+			if body.Source != "" {
+				nb.AddCode(body.Source)
+			}
+			if err := nb.Save(path); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cells": len(nb.Cells)})
+			return
+		}
+		http.NotFound(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

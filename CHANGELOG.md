@@ -1,5 +1,44 @@
 # Changelog
 
+## v1.3.0-science-lab.1 — Page B Lab (CS parity + 拔高)
+
+> Feature release. Ships the full Page B autonomous laboratory on :18992 — 
+> three-panel UI, 23-domain bio-tools fleet, provenance tracking, Ketcher/3Dmol
+> molecule viewer, SSH compute, Jupyter notebooks, 8 elevation skills, ⌘K command
+> palette, and Desktop Lab app.
+
+### Page B · Lab (new)
+- **Three-panel UI** — project sidebar, SSE chat, file/status/chemistry/molecule inspector tabs
+- **Full fleet** — ConnectAll 23 CS bio-tools domains + 5-ship Lumen native on startup
+- **Provenance** — provenance.jsonl records every MCP call + file write; artifact inspector in UI
+- **File panel** — workspace file tree, content preview, download (text/JSON/Markdown)
+- **Ketcher embed** — EPAM Ketcher standalone iframe for chemical structure editing
+- **3Dmol viewer** — 3Dmol.js protein/molecule structure viewer (PDB/SDF)
+- **Chat SSE** — project-scoped agent with plan/bypass/default modes, SSE streaming
+- **Projects** — CRUD + sessions, seed templates (CRISPR, enzyme engineering, etc.)
+- **Skills** — 29 CS pack skills + 8 Lumen elevation skills (integrity, traceability, etc.)
+- **Brief** — 4-source pipeline (PubMed/ChEMBL/GEO/Oasis) integrated in lab
+- **Jupyter** — notebook CRUD + cell execute via nbconvert, markdown renderer
+- **SSH compute** — parse ~/.ssh/config, detached job submit + poll
+- **C2D** — list algorithms via native MCP fleet, publish CLI command
+- **Hybrid bridge** — bridge/open endpoint for A/B interop
+- **⌘K palette** — command palette with 5 quick actions
+
+### Page A · Bridge (strengthened)
+- **science_mode** — GET/PUT /api/science-mode (hybrid|native|bridge) with CLI + GUI
+- **Lab health probe** — GUI status panel probes :18992 health
+- **Full-verify gate** — lab-smoke.sh + lab-parity-verify.sh regression gates
+
+### Desktop
+- **Desktop Lab** — Tauri .app (com.lumen.science.lab, 1280×800, :18992)
+
+### Documentation
+- **CHANGELOG.md** — v1.3.0 entry
+- **README.md** — dual page description + lab commands
+- **docs/science/LAB.md** — API reference + directory layout
+- **docs/science/COMPARISON.md** — updated capability matrix
+
+
 ## v1.2.0-science-beta.5 — HANDOFF gap closure (security, storage, gates)
 
 > Prerelease. Closes HANDOFF 诚实缺口大项：bash auto sandbox, MCP untrusted wrap,

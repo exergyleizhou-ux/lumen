@@ -20,6 +20,7 @@ func (a *API) RegisterNative(mux *http.ServeMux) {
 	mux.HandleFunc("/api/oasis", a.handleOasis)
 	mux.HandleFunc("/api/oasis/token", a.handleOasisToken)
 	mux.HandleFunc("/api/oasis/probe", a.handleOasisProbe)
+	mux.HandleFunc("/api/science-mode", a.handleScienceMode)
 	mux.HandleFunc("/api/native/status", a.handleNativeStatus)
 	mux.HandleFunc("/api/native/verify", a.handleNativeVerify)
 	mux.HandleFunc("/api/native/brief", a.handleNativeBrief)
@@ -230,4 +231,47 @@ func (a *API) handleOasisProbe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "preview": row})
+}
+
+// handleScienceMode reads or sets science_mode in config.json.
+func (a *API) handleScienceMode(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cfg, err := sciconfig.Load(a.sciDir)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"science_mode": cfg.ScienceMode,
+			"valid_values": []string{"hybrid", "native", "bridge"},
+		})
+	case http.MethodPut:
+		var body struct {
+			Mode string `json:"mode"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		switch body.Mode {
+		case "hybrid", "native", "bridge":
+		default:
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("science_mode must be hybrid, native, or bridge (got %q)", body.Mode))
+			return
+		}
+		_, err := sciconfig.Update(a.sciDir, func(c *sciconfig.File) {
+			c.ScienceMode = body.Mode
+		})
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":           true,
+			"science_mode": body.Mode,
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }

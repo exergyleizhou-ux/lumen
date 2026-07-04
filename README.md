@@ -139,6 +139,17 @@ All checks passed.
 - 📡 **MCP Ready** — `mcp__` namespace support, JSON-RPC stdio client.
 - 📦 **Single Binary** — ~13 MB, zero runtime dependencies. `install.sh` fetches a release binary (or builds from source if none is published yet).
 
+### Lumen Science（双页科研智能体）
+
+- 🧪 **Page A · Bridge** — 国产模型稳定接入 Claude Science。一键代理+沙箱，DSML shim，profile 事务切换。GUI 控制面板 (:18990)。
+- 🔬 **Page B · Lab** — 不绑 CS 订阅的自主科研实验室。挂接 CS Research Pack（23 域 ~247 bio-tools），5-ship 原生 MCP，三栏 UI (:18992)。
+- 📋 **溯源 provenance.jsonl** — 每次 MCP 调用 + 文件写入自动记录，UI 中可查看完整来源链。
+- ⚗️ **Ketcher + 3Dmol** — 化学结构编辑 + 蛋白/分子 3D 预览。
+- 📓 **Jupyter** — Notebook 创建/编辑/执行，支持 nbconvert。
+- 🖥️ **SSH 远程计算** — ~/.ssh/config 解析 + detached job 提交。
+- 🏷️ **C2D 闭环** — 绿洲隐私计算市场：算法列表 + publish。
+- ⌨️ **⌘K 命令面板** — 快捷操作（新建课题/一键 Brief/文献检索）。
+
 ---
 
 ## Quick Start
@@ -182,6 +193,12 @@ TOML
 ./bin/lumen run --plan "add OAuth"            # plan mode
 ./bin/lumen chat                               # line-mode REPL
 ./bin/lumen tui                                # multi-panel Bubble Tea TUI
+
+# ── Science Lab (Page B) ──
+./bin/lumen science research verify           # 检查 CS Research Pack
+./bin/lumen science lab                        # 启动实验室 → http://127.0.0.1:18992
+./bin/lumen science mode hybrid               # A+B 并列模式
+./bin/lumen science publish                    # 发布 C2D Agent
 ```
 
 *For other providers (OpenAI, Anthropic, Grok, Ollama…), add more `[[providers]]` entries. See `internal/config/model_presets.go` for the full 29-model preset list. Prerequisites: Go 1.23+, optional `gopls` for LSP diagnostics.*

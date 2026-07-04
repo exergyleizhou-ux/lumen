@@ -7,10 +7,10 @@ import (
 	"strings"
 )
 
-// resolvePython returns the operon-mcp conda interpreter from the cloned research
+// ResolvePython returns the operon-mcp conda interpreter from the cloned research
 // pack. CS bio-tools MCP servers require the mcp package installed in that env;
 // system python3 will fail on import.
-func resolvePython(dataDir string) string {
+func ResolvePython(dataDir string) string {
 	if dataDir == "" {
 		return "python3"
 	}

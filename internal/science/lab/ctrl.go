@@ -87,6 +87,8 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	}
 
 	_ = os.Setenv("LUMEN_TOOLS_PROFILE", defaultToolProfile)
+	// Inject conda/python from the cloned research pack into bash PATH.
+	labruntime.InjectLabPath(c.sciDir)
 
 	c.ctrl.SetExtraMemoryPrompt(scienceSystemPrompt)
 	sink = wrapProvenanceSink(sink, c.provenance, g)

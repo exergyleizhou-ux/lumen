@@ -15,9 +15,9 @@ func TestResolvePythonOperonMCP(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dataDir, "conda", "envs", "operon-mcp")); err != nil {
 		t.Skip("no operon-mcp env in research pack")
 	}
-	py := resolvePython(dataDir)
+	py := ResolvePython(dataDir)
 	if !isExecutable(py) {
-		t.Fatalf("resolvePython returned non-executable %q", py)
+		t.Fatalf("ResolvePython returned non-executable %q", py)
 	}
 	if filepath.Base(py) == "python3" && py == "python3" {
 		t.Fatal("expected pack python, got bare python3")
@@ -25,7 +25,7 @@ func TestResolvePythonOperonMCP(t *testing.T) {
 }
 
 func TestResolvePythonMissingPack(t *testing.T) {
-	if got := resolvePython(""); got != "python3" {
+	if got := ResolvePython(""); got != "python3" {
 		t.Fatalf("got %q", got)
 	}
 }
