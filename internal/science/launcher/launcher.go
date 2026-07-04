@@ -118,12 +118,14 @@ func Stop(sandboxHome, dataDir, bin string) error {
 }
 
 // Running reports whether our sandbox Science is running.
-// Enhanced with login intact check (self-heal pattern):
-// if status says running but login not intact (broken state after update/crash), report false
-// so callers (GUI/health) will trigger repair via Start/Ensure.
+// Prefers HTTP health check (most reliable) over CLI status.
 func Running(sandboxHome, dataDir, bin string, port int) bool {
+	// HTTP health check is the gold standard — if it responds, sandbox is up
+	if HTTPHealth(port, 400) {
+		return true
+	}
 	if _, err := os.Stat(bin); err != nil {
-		return HTTPHealth(port, 400)
+		return false
 	}
 	cmd := exec.Command(bin, "status", "--data-dir", dataDir)
 	cmd.Env = append(os.Environ(), "HOME="+sandboxHome)
