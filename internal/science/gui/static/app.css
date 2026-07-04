@@ -1031,3 +1031,39 @@ body.embed-oasis #urlBar {
 body.embed-oasis #urlBar .cert-id { color: #fff; font-size: 13px; }
 body.embed-oasis #urlBar .cert-sub { color: rgba(255,255,255,.7); font-size: 11px; }
 body.embed-oasis #urlBar .cert-arrow { color: #fff; font-size: 18px; }
+
+/* Embed: always-show sandbox launcher button */
+body.embed-oasis #urlBar {
+  display: flex !important;
+  margin: 20px 0 0;
+  padding: 16px 20px;
+  background: var(--forest);
+  color: #fff;
+  border-radius: 12px;
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 16px;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  flex-direction: column;
+}
+body.embed-oasis #urlBar .cert-id {
+  color: #fff;
+  font-size: 12px;
+  font-family: monospace;
+  word-break: break-all;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.embed-oasis #urlBar .cert-sub {
+  color: rgba(255,255,255,.8);
+  font-size: 13px;
+}
+body.embed-oasis #urlBar .cert-arrow { display: none; }
+body.embed-oasis #urlBar::after {
+  content: "→ 在 Claude Science 中打开";
+  font-size: 16px;
+  color: #fff;
+}

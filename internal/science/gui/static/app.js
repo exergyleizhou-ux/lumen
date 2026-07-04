@@ -555,10 +555,9 @@ async function oneClick() {
     setMsg((r.msg || "已启动") + (r.url ? `\n${r.url}` : ""), "ok");
     if (r.url) {
       applyStatus({ proxy: "green", sandbox: "green", upstream: "green", url: r.url });
-      // In embed mode (Oasis), open sandbox in new tab
-      if (document.body.classList.contains("embed-oasis")) {
-        window.open(r.url, "_blank");
-      }
+      // Show prominent sandbox link (works without popup permission)
+      var bar = $("urlBar");
+      if (bar) { bar.href = r.url; bar.hidden = false; bar.querySelector(".cert-id").textContent = r.url; }
     }
   } catch (e) {
     setMsg(String(e.message || e), "err");
