@@ -3,6 +3,7 @@ package gui
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -134,6 +135,115 @@ func TestHandleProfilesPOST(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("expected 400 for invalid key, got %d", resp.StatusCode)
 	}
+}
+
+func TestHandleProfileSwitchActivates(t *testing.T) {
+	resetPanelManager()
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"content":[]}`))
+	}))
+	defer okSrv.Close()
+
+	srv, sciDir := testServer(t)
+	proxyPort := freeTestPort(t)
+	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "deepseek", APIKey: "sk-a", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "deepseek", APIKey: "sk-b", BaseURL: okSrv.URL}
+	cfg := sciconfig.Default()
+	cfg.SchemaVersion = sciconfig.CurrentSchemaVersion
+	cfg.Profiles = []sciconfig.Profile{p1, p2}
+	cfg.ActiveProfileID = "p1"
+	cfg.ProxyPort = proxyPort
+	cfg.SandboxPort = proxyPort + 1
+	if err := sciconfig.Save(sciDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.api.sciDir = sciDir
+	srv.api.RegisterProfiles(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body, _ := json.Marshal(map[string]string{"id": "p2"})
+	resp, err := http.Post(ts.URL+"/api/profiles/switch", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("switch status %d", resp.StatusCode)
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if result["action"] != "activated" {
+		t.Fatalf("result: %v", result)
+	}
+	loaded, _ := sciconfig.Load(sciDir)
+	if loaded.ActiveProfileID != "p2" {
+		t.Fatalf("active=%q", loaded.ActiveProfileID)
+	}
+	resetPanelManager()
+}
+
+func TestHandleProfileSwitchRejectsBadKey(t *testing.T) {
+	resetPanelManager()
+	okSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer okSrv.Close()
+	badSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer badSrv.Close()
+
+	srv, sciDir := testServer(t)
+	proxyPort := freeTestPort(t)
+	p1 := sciconfig.Profile{ID: "p1", Name: "A", TemplateID: "deepseek", APIKey: "sk-a", BaseURL: okSrv.URL}
+	p2 := sciconfig.Profile{ID: "p2", Name: "B", TemplateID: "deepseek", APIKey: "sk-b", BaseURL: badSrv.URL}
+	cfg := sciconfig.Default()
+	cfg.SchemaVersion = sciconfig.CurrentSchemaVersion
+	cfg.Profiles = []sciconfig.Profile{p1, p2}
+	cfg.ActiveProfileID = "p1"
+	cfg.ProxyPort = proxyPort
+	cfg.SandboxPort = proxyPort + 1
+	if err := sciconfig.Save(sciDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	srv.api.sciDir = sciDir
+	srv.api.RegisterProfiles(mux)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body, _ := json.Marshal(map[string]string{"id": "p2"})
+	resp, err := http.Post(ts.URL+"/api/profiles/switch", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", resp.StatusCode)
+	}
+	loaded, _ := sciconfig.Load(sciDir)
+	if loaded.ActiveProfileID != "p1" {
+		t.Fatalf("active=%q want p1", loaded.ActiveProfileID)
+	}
+	resetPanelManager()
+}
+
+func freeTestPort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+	return port
 }
 
 func TestHandleProfilesPOSTRejectsEmptyKey(t *testing.T) {
