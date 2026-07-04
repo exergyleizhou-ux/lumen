@@ -154,6 +154,10 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authOK(w http.ResponseWriter, r *http.Request) bool {
+	// Health check is always public
+	if r.URL.Path == "/health" || r.URL.Path == "/" {
+		return true
+	}
 	secret := s.cfg.AuthSecret
 	if secret == "" {
 		return true
