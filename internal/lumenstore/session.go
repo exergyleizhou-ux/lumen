@@ -57,6 +57,44 @@ func (s *Store) CountSessionMessages(sessionID string) (int64, error) {
 	return n, err
 }
 
+// MigrateJSONLSessionFile imports one JSONL session file into SQLite (idempotent per line).
+func MigrateJSONLSessionFile(db *Store, jsonlPath string) (int, error) {
+	if db == nil {
+		db = Default()
+	}
+	if db == nil || jsonlPath == "" {
+		return 0, nil
+	}
+	sid := SessionIDFromPath(jsonlPath)
+	data, err := os.ReadFile(jsonlPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	imported := 0
+	seq := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var probe struct {
+			Role string `json:"role"`
+		}
+		if json.Unmarshal([]byte(line), &probe) != nil {
+			continue
+		}
+		if err := db.AppendSessionMessage(sid, seq, probe.Role, []byte(line)); err != nil {
+			return imported, fmt.Errorf("%s seq %d: %w", sid, seq, err)
+		}
+		seq++
+		imported++
+	}
+	return imported, nil
+}
+
 // MigrateJSONLSessions imports ~/.lumen/history/*.jsonl into SQLite (idempotent per line).
 // When db is nil, uses Default() if LUMEN_SQLITE_STORE is enabled.
 func MigrateJSONLSessions(db *Store, histDir string) (int, error) {

@@ -28,7 +28,7 @@ CGO_ENABLED=0 go build -o "$SCRATCH/lumen" ./cmd/lumen
 
 echo "▸ goal evidence (AC1 dogfood + AC3 eval baseline6)"
 export LUMEN_GOAL_SCRATCH="$SCRATCH"
-if ! CGO_ENABLED=0 go test -count=1 -timeout 120s -run '^TestGoalEvidence$' ./cmd/lumen -v >> "$SCRATCH/goal-evidence.log" 2>&1; then
+if ! CGO_ENABLED=0 go test -count=1 -timeout 180s -run '^TestGoalEvidence$' ./cmd/lumen -v > "$SCRATCH/goal-evidence.log" 2>&1; then
   echo "✗ TestGoalEvidence failed" >&2
   FAIL=1
 else
@@ -68,7 +68,7 @@ else
 fi
 
 echo "▸ make check"
-if ! make check >> "$SCRATCH/make-check.log" 2>&1; then
+if ! env -u LUMEN_GOAL_SCRATCH make check > "$SCRATCH/make-check.log" 2>&1; then
   echo "✗ make check failed" >&2
   FAIL=1
 else

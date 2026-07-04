@@ -590,7 +590,7 @@ func Reverse(s string) string {
 `,
 		},
 		{
-			kws:  []string{"binary-search", "search"},
+			kws:  []string{"binary-search", "binary search", "testsearch"},
 			path: "search/search.go",
 			content: `package search
 

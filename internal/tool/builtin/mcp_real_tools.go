@@ -121,7 +121,9 @@ func (t *MCPListToolsTool) Execute(ctx context.Context, args json.RawMessage) (s
 	if client == nil {
 		// Return all servers' tools
 		clients := mcpClientsSnapshot()
-		if len(clients) == 0 { return "No MCP servers connected. Use mcp_connect first.", nil }
+		if len(clients) == 0 {
+			return wrapMCPAgentOutput("status", "No MCP servers connected. Use mcp_connect first."), nil
+		}
 		var sb strings.Builder
 		for key, c := range clients {
 			tools, err := c.ListTools()
@@ -131,11 +133,13 @@ func (t *MCPListToolsTool) Execute(ctx context.Context, args json.RawMessage) (s
 				fmt.Fprintf(&sb, "  • %s — %s\n", t.Name, truncDesc(t.Description, 60))
 			}
 		}
-		return sb.String(), nil
+		return wrapMCPAgentOutput("all-servers", sb.String()), nil
 	}
 	tools, err := client.ListTools()
 	if err != nil { return "", fmt.Errorf("list tools: %w", err) }
-	if len(tools) == 0 { return "No tools exposed by this server.", nil }
+	if len(tools) == 0 {
+		return wrapMCPAgentOutput(p.Server, "No tools exposed by this server."), nil
+	}
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%d tools:\n", len(tools))
 	for _, t := range tools {
@@ -186,7 +190,9 @@ func (t *MCPListResourcesTool) Execute(ctx context.Context, args json.RawMessage
 	var p struct{ Server string }
 	json.Unmarshal(args, &p)
 	client := getMCPClient(p.Server)
-	if client == nil { return "No MCP servers connected.", nil }
+	if client == nil {
+		return wrapMCPAgentOutput("status", "No MCP servers connected."), nil
+	}
 	resources, err := client.ListResources()
 	if err != nil { return "", err }
 	var sb strings.Builder
@@ -210,7 +216,9 @@ func (t *MCPListPromptsTool) Execute(ctx context.Context, args json.RawMessage) 
 	var p struct{ Server string }
 	json.Unmarshal(args, &p)
 	client := getMCPClient(p.Server)
-	if client == nil { return "No MCP servers connected.", nil }
+	if client == nil {
+		return wrapMCPAgentOutput("status", "No MCP servers connected."), nil
+	}
 	prompts, err := client.ListPrompts()
 	if err != nil { return "", err }
 	var sb strings.Builder

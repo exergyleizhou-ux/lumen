@@ -2,10 +2,12 @@ package agent
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"lumen/internal/lumenstore"
 	"lumen/internal/provider"
 )
 
@@ -119,6 +121,82 @@ func TestSessionCompactTooSmall(t *testing.T) {
 	// 3 messages <= 2+2=4, so compact should do nothing
 	if s.Len() != 3 {
 		t.Errorf("compact should not change session smaller than keepFirst+keepLast, got %d", s.Len())
+	}
+}
+
+func TestSessionSQLiteDualWriteAndReload(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "sess.jsonl")
+	s := NewSession(path)
+	s.Add(provider.Message{Role: provider.RoleUser, Content: "hello"})
+	s.Add(provider.Message{Role: provider.RoleAssistant, Content: "hi there"})
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	cnt, err := db.CountSessionMessages(sid)
+	if err != nil || cnt != 2 {
+		t.Fatalf("sqlite count=%d err=%v", cnt, err)
+	}
+
+	reloaded := NewSession(path)
+	if reloaded.Len() != 2 {
+		t.Fatalf("reloaded %d messages, want 2", reloaded.Len())
+	}
+	got := reloaded.Snapshot()
+	if got[0].Content != "hello" || got[1].Content != "hi there" {
+		t.Fatalf("sqlite reload mismatch: %+v", got)
+	}
+}
+
+func TestSessionAutoMigrateJSONLToSQLite(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "legacy.jsonl")
+	lines := `{"role":"user","content":"from-jsonl"}
+{"role":"assistant","content":"migrated"}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s := NewSession(path)
+	if s.Len() != 2 {
+		t.Fatalf("load from jsonl: got %d messages", s.Len())
+	}
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+	cnt, err := db.CountSessionMessages(sid)
+	if err != nil || cnt != 2 {
+		t.Fatalf("after auto-migrate count=%d err=%v", cnt, err)
+	}
+
+	// Second load should prefer SQLite (delete jsonl to prove source).
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	reloaded := NewSession(path)
+	if reloaded.Len() != 2 {
+		t.Fatalf("sqlite-only reload: got %d messages", reloaded.Len())
 	}
 }
 

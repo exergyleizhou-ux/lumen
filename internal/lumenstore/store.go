@@ -157,7 +157,21 @@ var (
 	defaultStore *Store
 	defaultOnce  sync.Once
 	defaultErr   error
+	defaultMu    sync.Mutex
 )
+
+// ResetDefaultForTest clears the process-wide store so tests can re-init Default()
+// after changing LUMEN_SQLITE_STORE.
+func ResetDefaultForTest() {
+	defaultMu.Lock()
+	defer defaultMu.Unlock()
+	if defaultStore != nil {
+		_ = defaultStore.Close()
+	}
+	defaultStore = nil
+	defaultErr = nil
+	defaultOnce = sync.Once{}
+}
 
 // Default opens the process-wide store when LUMEN_SQLITE_STORE is on or a path.
 // Unset = disabled (JSONL-only). Set off/0/false to force disable.

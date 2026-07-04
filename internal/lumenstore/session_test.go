@@ -47,4 +47,10 @@ func TestSessionMessagesRoundTripAndMigrate(t *testing.T) {
 	if cnt < 2 {
 		t.Fatalf("count=%d", cnt)
 	}
+
+	// Single-file migrate API
+	n2, err := MigrateJSONLSessionFile(db, filepath.Join(hist, sid+".jsonl"))
+	if err != nil || n2 < 2 {
+		t.Fatalf("MigrateJSONLSessionFile n=%d err=%v", n2, err)
+	}
 }

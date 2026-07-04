@@ -36,8 +36,9 @@ func NewSession(path string) *Session {
 func (s *Session) Add(m provider.Message) {
 	s.mu.Lock()
 	s.Messages = append(s.Messages, m)
+	seq := len(s.Messages) - 1
 	s.mu.Unlock()
-	if err := s.appendToFile(m); err != nil {
+	if err := s.appendToFile(m, seq); err != nil {
 		s.mu.Lock()
 		if s.persistErr == nil {
 			s.persistErr = err
@@ -188,7 +189,7 @@ func (s *Session) rewriteFileLocked() error {
 
 // ── JSONL persistence ─────────────────────────────────────
 
-func (s *Session) appendToFile(m provider.Message) error {
+func (s *Session) appendToFile(m provider.Message, seq int) error {
 	if s.Path == "" {
 		return nil
 	}
@@ -202,17 +203,17 @@ func (s *Session) appendToFile(m provider.Message) error {
 	}
 	if db := lumenstore.Default(); db != nil {
 		b, _ := json.Marshal(m)
-		seq := s.Len() - 1
-		if seq < 0 {
-			seq = 0
-		}
-		_ = db.AppendSessionMessage(lumenstore.SessionIDFromPath(s.Path), seq, string(m.Role), b)
-		_ = db.UpsertSessionMeta(lumenstore.SessionIDFromPath(s.Path), "")
+		sid := lumenstore.SessionIDFromPath(s.Path)
+		_ = db.AppendSessionMessage(sid, seq, string(m.Role), b)
+		_ = db.UpsertSessionMeta(sid, "")
 	}
 	return nil
 }
 
 func (s *Session) load() {
+	if s.Path == "" {
+		return
+	}
 	if db := lumenstore.Default(); db != nil {
 		sid := lumenstore.SessionIDFromPath(s.Path)
 		if rows, err := db.LoadSessionMessages(sid); err == nil && len(rows) > 0 {
@@ -222,17 +223,22 @@ func (s *Session) load() {
 					s.Messages = append(s.Messages, m)
 				}
 			}
-			if len(s.Messages) > 0 {
-				return
-			}
+			return
 		}
 	}
+	s.Messages = s.loadFromJSONL()
+	if db := lumenstore.Default(); db != nil && len(s.Messages) > 0 {
+		_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+	}
+}
+
+func (s *Session) loadFromJSONL() []provider.Message {
 	data, err := os.ReadFile(s.Path)
 	if err != nil {
-		return
+		return nil
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, line := range lines {
+	var out []provider.Message
+	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -241,6 +247,7 @@ func (s *Session) load() {
 		if err := json.Unmarshal([]byte(line), &m); err != nil {
 			continue
 		}
-		s.Messages = append(s.Messages, m)
+		out = append(out, m)
 	}
+	return out
 }
