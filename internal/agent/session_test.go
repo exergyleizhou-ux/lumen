@@ -241,6 +241,66 @@ func TestSessionDropLastSyncsSQLite(t *testing.T) {
 	}
 }
 
+// TestSessionSQLiteMutationMatrix is the authoritative AC3 proof: Add, Compact,
+// and DropLast all keep SQLite + JSONL aligned through reload.
+func TestSessionSQLiteMutationMatrix(t *testing.T) {
+	lumenstore.ResetDefaultForTest()
+	t.Cleanup(lumenstore.ResetDefaultForTest)
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "lumen.db")
+	t.Setenv(lumenstore.EnvSQLite, dbPath)
+
+	path := filepath.Join(dir, "matrix.jsonl")
+	s := NewSession(path)
+	for i := 0; i < 10; i++ {
+		s.Add(provider.Message{Role: provider.RoleUser, Content: fmt.Sprintf("m%d", i)})
+	}
+
+	db, err := lumenstore.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	sid := lumenstore.SessionIDFromPath(path)
+
+	assertCount := func(want int64, step string) {
+		t.Helper()
+		cnt, err := db.CountSessionMessages(sid)
+		if err != nil || cnt != want {
+			t.Fatalf("%s: sqlite count=%d want %d err=%v", step, cnt, want, err)
+		}
+	}
+	assertCount(10, "after add×10")
+
+	s.Compact(2, 2, "summary")
+	assertCount(5, "after compact")
+
+	reloaded := NewSession(path)
+	if reloaded.Len() != 5 {
+		t.Fatalf("reload after compact: len=%d want 5", reloaded.Len())
+	}
+	wantContent := []string{"m0", "m1", "[SESSION COMPACTED]\n\nsummary", "m8", "m9"}
+	got := reloaded.Snapshot()
+	for i, wc := range wantContent {
+		if got[i].Content != wc {
+			t.Fatalf("reload compacted msg[%d]=%q want %q", i, got[i].Content, wc)
+		}
+	}
+
+	s = reloaded
+	s.DropLast()
+	assertCount(4, "after drop last")
+
+	reloaded2 := NewSession(path)
+	if reloaded2.Len() != 4 {
+		t.Fatalf("reload after drop: len=%d want 4", reloaded2.Len())
+	}
+	if reloaded2.Snapshot()[3].Content != "m8" {
+		t.Fatalf("last msg after drop: %+v", reloaded2.Snapshot())
+	}
+}
+
 func TestSessionConcurrentAddPreservesSQLiteSeq(t *testing.T) {
 	lumenstore.ResetDefaultForTest()
 	t.Cleanup(lumenstore.ResetDefaultForTest)

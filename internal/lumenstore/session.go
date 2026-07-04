@@ -47,7 +47,7 @@ func (s *Store) LoadSessionMessages(sessionID string) ([][]byte, error) {
 	return out, rows.Err()
 }
 
-// ReplaceSessionMessages overwrites all messages for a session (used after drop/compact).
+// ReplaceSessionMessages overwrites all messages for a session (used after persistLocked mutations and load reconciliation).
 func (s *Store) ReplaceSessionMessages(sessionID string, payloads [][]byte, roles []string) error {
 	if s == nil || s.db == nil || sessionID == "" {
 		return nil

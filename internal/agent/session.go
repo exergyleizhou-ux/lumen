@@ -154,17 +154,15 @@ func (s *Session) Compact(keepFirst, keepLast int, summary string) {
 	compacted = append(compacted, s.Messages[len(s.Messages)-keepLast:]...)
 	s.Messages = compacted
 
-	// Keep the persisted JSONL in sync with the compacted memory — otherwise the
-	// file keeps the dropped middle (growing unbounded) and a resume replays a
-	// transcript that diverges from what the model actually saw.
-	if err := s.rewriteFileLocked(); err != nil && s.persistErr == nil {
+	// Keep JSONL + SQLite in sync with compacted memory (see persistLocked).
+	if err := s.persistLocked(); err != nil && s.persistErr == nil {
 		s.persistErr = err
 	}
 }
 
-// rewriteFileLocked overwrites the JSONL with the current in-memory messages.
-// The caller must hold s.mu. No-op when persistence is disabled.
-func (s *Session) rewriteFileLocked() error {
+// persistLocked overwrites JSONL from memory and replaces all SQLite rows.
+// The caller must hold s.mu. This is the sole rewrite entrypoint for mutations.
+func (s *Session) persistLocked() error {
 	if s.Path == "" {
 		return nil
 	}
@@ -179,6 +177,11 @@ func (s *Session) rewriteFileLocked() error {
 		return err
 	}
 	return s.syncSQLiteLocked()
+}
+
+// rewriteFileLocked is an alias for persistLocked (compact/drop callers).
+func (s *Session) rewriteFileLocked() error {
+	return s.persistLocked()
 }
 
 func (s *Session) syncSQLiteFromMemory() {
@@ -233,9 +236,19 @@ func (s *Session) load() {
 	if s.Path == "" {
 		return
 	}
-	if db := lumenstore.Default(); db != nil {
+	jsonlMsgs := s.loadFromJSONL()
+	db := lumenstore.Default()
+	if db != nil {
 		sid := lumenstore.SessionIDFromPath(s.Path)
-		if rows, err := db.LoadSessionMessages(sid); err == nil && len(rows) > 0 {
+		rows, err := db.LoadSessionMessages(sid)
+		if err == nil && len(rows) > 0 {
+			// After compact/drop the JSONL rewrite is authoritative; stale sqlite
+			// rows (pre-mutation count) must not win over a shorter JSONL file.
+			if len(jsonlMsgs) > 0 && len(jsonlMsgs) != len(rows) {
+				s.Messages = jsonlMsgs
+				_ = replaceSQLiteMessages(db, sid, jsonlMsgs)
+				return
+			}
 			for _, row := range rows {
 				var m provider.Message
 				if json.Unmarshal(row, &m) == nil {
@@ -245,10 +258,23 @@ func (s *Session) load() {
 			return
 		}
 	}
-	s.Messages = s.loadFromJSONL()
-	if db := lumenstore.Default(); db != nil && len(s.Messages) > 0 {
-		_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+	if len(jsonlMsgs) > 0 {
+		s.Messages = jsonlMsgs
+		if db != nil {
+			_, _ = lumenstore.MigrateJSONLSessionFile(db, s.Path)
+		}
 	}
+}
+
+func replaceSQLiteMessages(db *lumenstore.Store, sid string, msgs []provider.Message) error {
+	payloads := make([][]byte, len(msgs))
+	roles := make([]string, len(msgs))
+	for i, m := range msgs {
+		b, _ := json.Marshal(m)
+		payloads[i] = b
+		roles[i] = string(m.Role)
+	}
+	return db.ReplaceSessionMessages(sid, payloads, roles)
 }
 
 func (s *Session) loadFromJSONL() []provider.Message {
