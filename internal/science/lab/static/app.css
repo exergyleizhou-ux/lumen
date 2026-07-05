@@ -146,8 +146,8 @@ body::before{
 .ctr-tab-add:hover{background:var(--ocs-accent-light);color:var(--ocs-accent)}
 
 /* Chat area */
-.scroll{flex:1;overflow-y:auto;padding:20px 28px}
-.scroll:empty{display:flex;align-items:center;justify-content:center}
+
+
 .hero{text-align:center;padding:60px 16px 40px;max-width:520px;margin:0 auto}
 .hero h2{font-size:22px;font-weight:700;margin-bottom:8px;letter-spacing:-.02em}
 .hero p{font-size:13px;color:var(--ocs-muted);margin-bottom:18px}
@@ -389,9 +389,9 @@ body::before{
 
 
 /* Wider chat area */  
-.ctr .scroll{padding:20px 40px}
+
 /* Smoother scroll */
-.scroll{scroll-behavior:smooth}
+
 
 /* Ensure chat messages don't run together */
 
