@@ -1,514 +1,129 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" class="dark">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Lumen · 绿洲编程智能体</title><!-- goal:d6aa846b round9 -->
-  <link rel="stylesheet" href="assets/app.css?v=7" />
-
-
-<script src="https://cdn.tailwindcss.com"></script><style>.session-item{display:flex;align-items:center}.session-del{display:none;font-size:14px;color:#ef4444;cursor:pointer;padding:2px 6px;border-radius:4px}.session-item:hover .session-del{display:block}</style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Lumen · 编程智能体</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config={theme:{extend:{colors:{surface:'#0f172a',card:'#1e2937',hover:'#334155',ink:'#e2e8f0',muted:'#94a3b8',dim:'#64748b',accent:{DEFAULT:'#10b981',hover:'#059669',soft:'rgba(16,185,129,.1)'},rule:'#475569',success:'#22c55e',warn:'#f59e0b',danger:'#ef4444'}}}}</script>
+<style>
+*{box-sizing:border-box}body{margin:0;font:13px/1.55 system-ui,sans-serif;background:#0f172a;color:#e2e8f0;-webkit-font-smoothing:antialiased}
+.msg-fade{animation:in .25s ease}@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.skeleton{background:linear-gradient(90deg,#1e2937 25%,#334155 50%,#1e2937 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:12px}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
+</style>
 </head>
-<body>
-  <div class="app" id="app">
-    <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <div style="border-bottom:1px solid var(--rule);padding:8px 12px;cursor:pointer;font-size:11px;font-weight:650;color:var(--muted)" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">📁 项目文件 <span style="float:right">▾</span></div>
-      <div id="projectTree" style="max-height:240px;overflow:auto;padding:4px 8px;font-size:11px"><span style="color:var(--muted)">加载中…</span></div>
-      <aside class="sidebar" id="sidebar" aria-label="会话">
-      <div class="sidebar-hd">
-        <a class="brand" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">
-          <span class="brand-mark">Lumen</span>
-          <span class="brand-sub">绿洲</span>
-        </a>
-      </div>
-      <button class="btn-new" id="newChatBtn" type="button">
-        <span class="btn-new-icon" aria-hidden="true">+</span>
-        新对话
-      </button>
-      <div style="padding:4px 12px"><input id="sessionSearch" placeholder="搜索会话…" style="width:100%;height:28px;padding:0 8px;font-size:11px;border:1px solid var(--rule);border-radius:8px;background:var(--sidebar);color:var(--ink);outline:none" oninput="filterSessions(this.value)"></div>
-      <nav class="session-list" id="sessionList" aria-label="历史会话">
-        <p class="session-empty" id="sessionEmpty">暂无历史会话</p>
-      </nav>
-      <div class="sidebar-ft">
-        <button class="mem-pill" id="memPill" type="button" title="管理记忆">
-          <span class="mem-dot" aria-hidden="true"></span>
-          <span id="memCount">0</span> 条记忆
-        </button>
-        <button class="sidebar-link" id="doctorBtn" type="button">自检</button>
-        <button class="sidebar-link" id="skillsBtn" type="button">Skills</button>
-        <a class="sidebar-link" href="https://github.com/exergyleizhou-ux/lumen" target="_blank" rel="noopener">源码</a>
-      </div>
-    <div id="sbModel">🧠 —</div>
-      </div>
-      </aside>
+<body class="h-screen flex flex-col overflow-hidden">
+<div id="app" class="flex flex-1 overflow-hidden">
 
-    <main class="workspace">
-      <header class="topbar">
-        <div class="topbar-left">
-          <button class="btn-icon sidebar-toggle" id="sidebarToggle" type="button" aria-label="打开菜单" aria-expanded="false">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-          </button>
-          <div id="convTabs" class="conv-tabs"><button class="conv-tab active" data-cid="main">对话</button><button class="conv-tab-add" id="newConvBtn">＋</button></div>
-          <span class="model-badge" id="modelBadge">未连接</span>
-        </div>
-        <div class="topbar-right">
-          <label class="mode-select-wrap" aria-label="权限模式">
-            <select id="modeSelect" class="mode-select">
-              <option value="bypass">Bypass</option>
-              <option value="agent">Agent</option>
-              <option value="plan">Plan</option>
-              <option value="default">Default</option>
-              <option value="accept-edits">Accept edits</option>
-            </select>
-          </label>
-          <button class="btn-icon" id="dmToggle" type="button" title="暗色模式">🌙</button>
-          
-          <button class="btn-icon" id="settingsBtn" type="button" title="模型设置" aria-label="模型设置">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
-          </button>
-        </div>
-      </header>
+<!-- Left Sidebar 280px -->
+<aside class="w-[280px] bg-card border-r border-rule flex flex-col flex-shrink-0">
+  <div class="p-4 border-b border-rule">
+    <div class="text-lg font-bold text-accent tracking-tight">Lumen</div>
+    <div class="text-xs text-muted mt-0.5">编程智能体 · 对标 Claude Code</div>
+  </div>
+  <div class="p-3"><input id="sessionSearch" placeholder="搜索会话…" class="w-full h-8 px-3 text-xs bg-surface border border-rule rounded-xl text-ink placeholder:text-dim focus:outline-none focus:border-accent"></div>
+  <nav id="sessionList" class="flex-1 overflow-y-auto px-2 space-y-0.5"></nav>
+  <div class="p-3 border-t border-rule">
+    <button id="memPill" class="w-full text-left text-xs text-muted hover:text-ink py-1.5 px-2 rounded-lg hover:bg-hover transition-colors">🧠 记忆管理</button>
+  </div>
+</aside>
 
-      <div class="chat-scroll" id="chatScroll">
-        <div class="chat-inner" id="chat">
-          <section class="welcome" id="welcome">
-            <p class="welcome-kicker">Lumen · 对标 Claude Code</p>
-            <h2 class="welcome-title">在你的终端级权限下<br />安全地写代码、改仓库</h2>
-            <p class="welcome-lede">Plan 模式先审后改 · 5 层命令防护 · 工具调用全程可见。描述任务，Lumen 会读文件、跑命令、自我验证。</p>
-            <div class="prompt-grid" id="promptGrid">
-              <button class="prompt-chip" type="button" data-prompt="为 Oasis C2D 脚手架一个高斯朴素贝叶斯 train.py，纯 stdlib，读 /data 首个 csv，写 /out/output.bin">C2D 算法脚手架</button>
-              <button class="prompt-chip" type="button" data-prompt="审查当前目录的安全问题：密钥泄露、危险 shell、依赖漏洞">安全审查</button>
-              <button class="prompt-chip" type="button" data-prompt="为这个 Go 项目补一组 table-driven 测试，覆盖边界条件">补测试</button>
-              <button class="prompt-chip" type="button" data-prompt="解释 lumen oasis publish 的完整流程，并列出我需要准备的文件">Oasis 发布指南</button>
-            </div>
-          </section>
-        </div>
+<!-- Center Chat -->
+<main class="flex-1 flex flex-col min-w-0">
+  <header class="h-14 px-5 flex items-center justify-between bg-card border-b border-rule flex-shrink-0">
+    <div class="flex items-center gap-4">
+      <select id="providerSelect" class="h-8 px-3 text-xs bg-surface border border-rule rounded-xl text-ink"><option>deepseek-chat</option><option>deepseek-v4-pro</option><option>qwen-plus</option><option>moonshot-v1</option><option>glm-4</option><option>minimax-m3</option></select>
+      <div class="flex bg-surface rounded-xl p-0.5">
+        <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg transition-colors" data-mode="bypass">Bypass</button>
+        <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg bg-accent text-white transition-colors" data-mode="plan">Plan</button>
+        <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg transition-colors" data-mode="default">Default</button>
+      </div>
+    </div>
+    <div class="flex items-center gap-4 text-xs">
+      <span class="text-muted">Tokens <span class="font-mono text-accent" id="statTokens">—</span></span>
+      <span class="text-dim" id="statCost">—</span>
+      <button id="dmToggle" class="text-sm w-7 h-7 flex items-center justify-center rounded-lg hover:bg-hover">🌙</button>
+      <button id="settingsBtn" class="text-sm w-7 h-7 flex items-center justify-center rounded-lg hover:bg-hover">⚙</button>
+    </div>
+  </header>
 
-      <div class="plan-bar" id="planBar" hidden>
-        <div><p class="plan-bar-text" id="planBarText">计划待审</p><pre id="planDetail" style="display:none;font-size:11px;color:var(--muted);max-height:100px;overflow:auto;margin-top:4px;white-space:pre-wrap"></pre></div>
-        <div class="plan-bar-actions">
-          <button class="btn-plan-reject" id="planRejectBtn" type="button">拒绝</button>
-          <button class="btn-plan-exec" id="planExecBtn" type="button">执行计划</button>
+  <div id="chatScroll" class="flex-1 overflow-y-auto p-6 space-y-4">
+    <section id="welcome" class="py-8 px-2">
+      <div class="flex items-end justify-between mb-8">
+        <div>
+          <div class="text-3xl font-bold text-ink tracking-tight">欢迎回来</div>
+          <div class="text-sm text-muted mt-1">Lumen · 编程智能体 · 对标 Claude Code</div>
+        </div>
+        <div class="text-right">
+          <div class="text-xs text-dim uppercase tracking-wider">Fleet 状态</div>
+          <div class="text-2xl font-bold text-accent" id="welcomeFleet">—</div>
+          <div class="text-xs text-dim" id="welcomeModel">—</div>
         </div>
       </div>
-      <div class="composer" id="composer">
-        <div class="composer-box">
-          <button id="mentionBtn" type="button" style="position:absolute;left:8px;top:8px;font-size:14px;padding:2px 6px;border:1px solid var(--rule);border-radius:6px;background:var(--sidebar);cursor:pointer;color:var(--accent);z-index:1" title="@提及">@</button>
-          <div id="mentionMenu" style="display:none;position:absolute;left:40px;top:8px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:4px;z-index:10;box-shadow:0 4px 16px rgba(0,0,0,.1)"><div class="mention-item" onclick="fillInput('@file ')" style="padding:4px 10px;cursor:pointer;font-size:11px">📄 @file</div><div class="mention-item" onclick="fillInput('@skill ')" style="padding:4px 10px;cursor:pointer;font-size:11px">🧩 @skill</div><div class="mention-item" onclick="fillInput('@memory ')" style="padding:4px 10px;cursor:pointer;font-size:11px">🧠 @memory</div></div>
-          <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片" aria-label="消息输入"></textarea>
-          <div class="composer-actions">
-            <button class="btn-stop" id="stopBtn" type="button" hidden>停止</button>
-            <button class="btn-send" id="planSendBtn" type="button" style="background:var(--ocs-success,#5b8c7a);color:#fff;margin-right:4px;font-size:11px;padding:4px 10px;border-radius:8px;border:none;cursor:pointer">Plan</button>
-            <button class="btn-send" id="sendBtn" type="button" aria-label="发送">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
-            </button>
-          </div>
+      <div class="text-xs text-muted uppercase tracking-wider mb-3 font-semibold">快速开始</div>
+      <div class="grid grid-cols-2 gap-3 mb-8" id="suggestTasks"></div>
+      <div id="recentActivity" class="border-t border-rule pt-4">
+        <div class="flex justify-between items-center mb-2">
+          <div class="text-xs text-muted uppercase tracking-wider font-semibold">最近活动</div>
         </div>
-        
+        <div id="activityList" class="space-y-2"><div class="flex items-center justify-between bg-card rounded-2xl px-4 py-3 border border-rule"><div><div class="font-medium text-sm">创建新对话</div><div class="text-xs text-dim">刚刚</div></div><div class="text-accent text-sm font-semibold">✨</div></div></div>
       </div>
-
-      <footer class="statusbar" aria-live="polite">
-        <span id="statTokens">— tokens</span>
-        <span id="statCost">—</span>
-        <span id="statTurn">turn —</span><span id="statCompact" style="margin:0 4px;font-size:10px;color:var(--accent);display:none"></span>
-        <span id="statCache" style="margin:0 8px">—</span><span id="statStatus" class="stat-ok">就绪</span>
-      </footer>
-    </main>
-
-    <aside class="file-panel" id="filePanel" hidden>
-      <div class="file-panel-hd">
-        <div class="fp-tabs" style="display:flex;gap:4px">
-          <button class="fp-tab active" data-fptab="files" style="font-size:11px;font-weight:650;padding:4px 10px;border:none;border-radius:6px;background:var(--accent-soft);color:var(--accent);cursor:pointer">📁 文件</button>
-          <button class="fp-tab" data-fptab="plan" style="font-size:11px;font-weight:650;padding:4px 10px;border:none;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer">📋 计划</button>
-        </div>
-        <button class="btn-icon sm" id="filePanelClose" type="button">✕</button>
-      </div>
-      <div id="fpFilesPane" class="scrollbar-subtle" style="flex:1;overflow-y:auto">
-        <div style="display:flex;gap:4px;margin:6px 0">
-          <input type="file" id="fileUploadInput" multiple style="display:none" onchange="uploadFiles(this.files)">
-          <button class="btn-icon sm" id="uploadBtn" type="button" title="上传文件">📤</button>
-          <button class="btn-icon sm" id="deleteFileBtn" type="button" title="删除选中文件" style="color:#b42318">🗑 删除</button>
-        </div>
-        <div class="file-panel-tree" id="fileTree"></div>
-        <div class="file-panel-preview" id="filePreview"></div>
-      </div>
-      <div id="fpPlanPane" style="flex:1;overflow-y:auto;padding:8px;display:none">
-        <div id="planStats" style="font-size:11px;color:var(--muted);margin-bottom:8px;display:none"></div>
-        <div id="planSteps"></div>
-        <div id="planActions" style="display:none;margin-top:8px;display:flex;gap:6px">
-          <button id="planApproveAll" class="btn sm" style="flex:1;background:var(--ocs-success);color:#fff;border-color:var(--ocs-success)">✓ 批准全部安全步骤</button>
-          <button id="planRejectAll" class="btn sm" style="flex:1;color:#b42318">✗ 拒绝并重新规划</button>
-        </div>
-      </div>
-    </aside>
-    <div id="sbModel">🧠 —</div>
-      </div>
-      </aside>
+    </section>
+    <section id="welcomeOld" class="text-center py-16 hidden">
+      <div class="text-5xl mb-4 opacity-80">✦</div>
+      <p class="text-xs uppercase tracking-widest text-dim mb-2">Lumen · 对标 Claude Code</p>
+      <h2 class="text-3xl font-bold text-ink mb-2 tracking-tight">编程智能体</h2>
+      <p class="text-sm text-muted mb-8 max-w-md mx-auto">读文件、跑命令、写代码、自我验证。支持 75+ 模型提供商。</p>
+      <div id="suggestTasks" class="flex flex-wrap gap-3 justify-center"></div>
+    </section>
   </div>
 
-  <dialog class="modal" id="setupModal">
-    <form method="dialog" class="modal-card" id="setupForm">
-      <div class="modal-hd">
-        <h2>连接模型</h2>
-        <button class="modal-x" type="button" id="setupClose" aria-label="关闭">✕</button>
-      </div>
-      <p class="modal-lede">选择提供商并输入 API Key，即可开始与编程智能体对话。</p>
-      <label class="field">
-        <span class="field-label">模型提供商</span>
-        <select id="providerSelect">
-          <option value="deepseek">DeepSeek（推荐）</option>
-          <option value="qwen">通义千问</option>
-          <option value="moonshot">Moonshot</option>
-          <option value="zhipu">智谱 GLM</option>
-          <option value="minimax">MiniMax</option>
-        </select>
-      </label>
-      <label class="field">
-        <span class="field-label">API Key</span>
-        <input id="keyInput" type="password" placeholder="sk-…" autocomplete="off" />
-      </label>
-      <label class="field">
-        <span class="field-label">模型预设</span>
-        <select id="presetSelect">
-          <option value="">加载中…</option>
-        </select>
-      </label>
-      <label class="field">
-        <span class="field-label">模型 ID（可覆盖）</span>
-        <input id="modelInput" type="text" value="deepseek-chat" placeholder="deepseek-chat" />
-      </label>
-      <button class="btn-primary wide" id="connectBtn" type="button">连接并开始</button>
-    </form>
-  </dialog>
+  <div class="px-4 pb-2 flex gap-2 flex-wrap">
+    <span class="cmd-tag text-xs px-3 py-1 bg-accent/10 text-accent rounded-full cursor-pointer hover:bg-accent/20 transition-colors" onclick="fillInput('/workflow ')">/workflow</span>
+    <span class="cmd-tag text-xs px-3 py-1 bg-accent/10 text-accent rounded-full cursor-pointer hover:bg-accent/20 transition-colors" onclick="fillInput('/ultra ')">/ultra</span>
+    <span class="cmd-tag text-xs px-3 py-1 bg-accent/10 text-accent rounded-full cursor-pointer hover:bg-accent/20 transition-colors" onclick="fillInput('/undo ')">/undo</span>
+  </div>
 
-  <dialog class="modal" id="memoriesModal">
-    <div class="modal-card memories-card">
-      <div class="modal-hd">
-        <h2>记忆</h2>
-        <button class="modal-x" type="button" id="memoriesClose" aria-label="关闭">✕</button>
+  <div class="p-4 border-t border-rule flex-shrink-0">
+    <div class="flex items-center gap-2">
+      <button id="mentionBtn" class="w-8 h-8 flex items-center justify-center bg-surface border border-rule rounded-xl text-accent text-sm hover:border-accent transition-colors">@</button>
+      <div class="flex-1 relative">
+        <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行" class="w-full bg-surface border border-rule rounded-2xl px-4 py-2.5 text-sm placeholder:text-dim resize-none focus:outline-none focus:border-accent transition-colors"></textarea>
+        <span id="tokenEst" class="absolute right-3 top-2.5 text-xs text-dim">~0 tokens</span>
       </div>
-      <p class="modal-lede">跨会话持久化的偏好与项目约束。</p>
-      <ul class="mem-list" id="memList"></ul>
-      <div class="mem-form">
-        <label class="field">
-          <span class="field-label">名称</span>
-          <input id="memName" type="text" placeholder="my-preference" />
-        </label>
-        <label class="field">
-          <span class="field-label">内容</span>
-          <textarea id="memBody" rows="3" placeholder="要记住的内容…"></textarea>
-        </label>
-        <button class="btn-primary wide" id="memSaveBtn" type="button">保存记忆</button>
-      </div>
+      <button id="planSendBtn" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">Plan 发送</button>
+      <button id="sendBtn" class="px-5 py-2.5 bg-hover hover:bg-rule text-ink font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button>
     </div>
-  </dialog>
+    <div id="mentionMenu" class="hidden absolute bottom-20 left-56 bg-card border border-rule rounded-2xl p-1 shadow-2xl z-10"></div>
+  </div>
+</main>
 
-  <dialog class="modal" id="skillsModal">
-    <div class="modal-card">
-      <div class="modal-hd">
-        <h2>Skills</h2>
-        <button class="modal-x" type="button" id="skillsClose" aria-label="关闭">✕</button>
-      </div>
-      <p class="modal-lede">点击 skill 即可调用。</p>
-      <ul class="skill-list" id="skillList"></ul>
+<!-- Right Panel 360px -->
+<aside class="w-[360px] bg-card border-l border-rule flex flex-col flex-shrink-0">
+  <div class="flex border-b border-rule">
+    <button class="rp-tab flex-1 text-center py-3 text-xs font-semibold text-accent border-b-2 border-accent" data-rptab="files">📁 文件</button>
+    <button class="rp-tab flex-1 text-center py-3 text-xs font-semibold text-muted" data-rptab="plan">📋 计划</button>
+    <button class="rp-tab flex-1 text-center py-3 text-xs font-semibold text-muted" data-rptab="changes">📊 变更</button>
+  </div>
+  <div id="rpFiles" class="flex-1 overflow-y-auto p-3">
+    <div class="flex gap-2 mb-3"><button class="text-xs px-3 py-1.5 bg-accent text-white rounded-xl font-semibold" onclick="document.getElementById('fileUploadInput').click()">📤 上传</button><button class="text-xs px-3 py-1.5 bg-danger/20 text-danger rounded-xl font-semibold">🗑 删除</button><input type="file" id="fileUploadInput" multiple class="hidden"></div>
+    <div id="fileTree" class="space-y-0.5 text-xs"></div>
+    <div id="filePreview" class="mt-3 text-xs font-mono"></div>
+  </div>
+  <div id="rpPlan" class="flex-1 overflow-y-auto p-3 hidden">
+    <div id="planStats" class="text-xs text-muted mb-3 hidden"></div>
+    <div id="planSteps" class="space-y-2"></div>
+    <div id="planActions" class="flex gap-2 mt-3 hidden">
+      <button id="planApproveAll" class="flex-1 py-2 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-xs transition-all">✓ 批准全部</button>
+      <button id="planRejectAll" class="flex-1 py-2 bg-danger/20 hover:bg-danger/30 text-danger font-semibold rounded-2xl text-xs transition-all">✗ 拒绝</button>
     </div>
-  </dialog>
+  </div>
+  <div id="rpChanges" class="flex-1 overflow-y-auto p-3 hidden text-xs text-muted">暂无变更</div>
+</aside>
 
-  <dialog class="modal" id="approvalModal">
-    <div class="modal-card approval-card">
-      <div class="modal-hd">
-        <h2>确认工具调用</h2>
-      </div>
-      <p class="modal-lede" id="approvalSummary">—</p>
-      <div class="approval-actions">
-        <button class="btn-secondary wide" id="approvalDeny" type="button">拒绝</button>
-        <button class="btn-primary wide" id="approvalAllow" type="button">允许</button>
-      </div>
-    </div>
-  </dialog>
-
-  <script src="assets/app.js?v=8" defer>
-// Dark mode
-(function(){
-  var dm=localStorage.getItem("lumen-dm");
-  if(dm==="dark"||(!dm&&window.matchMedia("(prefers-color-scheme:dark)").matches)){
-    document.documentElement.style.filter="invert(0.92) hue-rotate(180deg)";
-    document.documentElement.style.background="#111";
-  }
-  var btn=document.getElementById("dmToggle");
-  if(btn)btn.onclick=function(){
-    var isDark=document.documentElement.style.filter;
-    if(isDark){document.documentElement.style.filter="";document.documentElement.style.background="";localStorage.setItem("lumen-dm","light");btn.textContent="🌙";}
-    else{document.documentElement.style.filter="invert(0.92) hue-rotate(180deg)";document.documentElement.style.background="#111";localStorage.setItem("lumen-dm","dark");btn.textContent="☀";}
-  };
-})();
-</script>
-
-
-
-<script>
-var dm=localStorage.getItem("lumen-dm");
-if(dm==="dark")document.documentElement.classList.add("dark-mode");
-var btn=document.getElementById("dmToggle");
-if(btn){btn.textContent=dm==="dark"?"☀":"🌙";btn.onclick=function(){
-document.documentElement.classList.toggle("dark-mode");
-var d=document.documentElement.classList.contains("dark-mode");
-localStorage.setItem("lumen-dm",d?"dark":"light");
-btn.textContent=d?"☀":"🌙";
-};}
-</script>
-<script>
-// Fleet status in sidebar
-(async function(){
-  try{var r=await fetch("/api/health");var d=await r.json();
-    var f=document.getElementById("sbFleet");if(f)f.textContent="⚡ "+((d.fleet||{}).connected_total||"?")+" fleet";
-    var m=document.getElementById("sbModel");if(m)m.textContent="🧠 "+(d.provider||"deepseek");
-  }catch(_){}
-})();
-
-// File upload
-document.getElementById("uploadBtn").onclick=function(){document.getElementById("fileUploadInput").click();};
-async function uploadFiles(files){
-  for(var i=0;i<files.length;i++){
-    var f=files[i];
-    try{
-      var fd=new FormData();fd.append("file",f);
-      var r=await fetch("/api/files/upload?path="+encodeURIComponent(f.name),{method:"POST",body:fd});
-      if(r.ok){/* refresh file tree */}else{console.error("upload failed:",f.name);}
-    }catch(e){console.error(e);}
-  }
-  // Refresh file tree
-  if(typeof loadFileTree==="function")loadFileTree();
-}
-
-// File delete
-var selectedFile=null;
-document.getElementById("deleteFileBtn").onclick=async function(){
-  if(!selectedFile){alert("请先在文件树中选择要删除的文件");return;}
-  if(!confirm("确认删除 "+selectedFile+"？"))return;
-  try{
-    await fetch("/api/files/delete?path="+encodeURIComponent(selectedFile),{method:"DELETE"});
-    if(typeof loadFileTree==="function")loadFileTree();
-  }catch(e){alert(e.message);}
-};
-
-// Track selected file from file tree clicks
-var _origPreview=previewFile||function(){};
-previewFile=function(path){selectedFile=path;_origPreview(path);};
-</script>
-<script>
-(async function(){try{var r=await fetch("/api/health");var d=await r.json();var f=document.getElementById("sbFleet");if(f)f.textContent="⚡ online";var m=document.getElementById("sbModel");if(m)m.textContent="🧠 "+(d.provider||"deepseek");}catch(_){}})();
-</script>
-<script>
-// File panel enhancements — add delete to each row
-var _origLoadFiles = loadFileTree;
-if(typeof loadFileTree !== "undefined"){
-  loadFileTree = async function(){
-    await _origLoadFiles();
-    // Add delete buttons to each file row
-    setTimeout(function(){
-      document.querySelectorAll("#fileTree .ft-item").forEach(function(row){
-        if(row.querySelector(".ft-del")) return;
-        var del = document.createElement("span");
-        del.className = "ft-del"; del.innerHTML = "✕"; 
-        del.style.cssText = "margin-left:auto;color:#b42318;cursor:pointer;font-size:14px;opacity:0;transition:opacity .15s;flex-shrink:0";
-        del.onclick = async function(e){
-          e.stopPropagation();
-          var name = row.querySelector(".ft-name").textContent;
-          if(!confirm("删除文件: "+name+"?")) return;
-          try{ await fetch("/api/files/delete?path="+encodeURIComponent(name),{method:"DELETE"}); loadFileTree(); }catch(e){alert(e.message);}
-        };
-        row.appendChild(del);
-        row.onmouseenter = function(){ del.style.opacity = "1"; };
-        row.onmouseleave = function(){ del.style.opacity = "0"; };
-      });
-    },200);
-  };
-}
-</script>
-<script>
-// Image paste support
-document.addEventListener("paste", async function(e){
-  var items = e.clipboardData?.items;
-  if(!items) return;
-  for(var i=0;i<items.length;i++){
-    if(items[i].type.indexOf("image")===0){
-      e.preventDefault();
-      var blob = items[i].getAsFile();
-      var fd = new FormData(); fd.append("file", blob, "pasted-image.png");
-      try{
-        var r = await fetch("/api/files/upload?path=pasted-"+Date.now()+".png",{method:"POST",body:fd});
-        if(r.ok){
-          var input = document.getElementById("input");
-          if(input) input.value += " [已粘贴图片] ";
-        }
-      }catch(_){}
-    }
-  }
-});
-</script>
-
-<script>
-// Multi-tab conversation support
-var conversations = {main: {id:"main",title:"对话",messages:[],sessionId:"main"}};
-var activeConv = "main";
-
-function switchConv(cid){
-  activeConv = cid;
-  document.querySelectorAll(".conv-tab").forEach(function(t){t.classList.toggle("active",t.dataset.cid===cid);});
-  // Restore messages for this conversation
-  var chat = document.getElementById("chat");
-  if(chat){
-    chat.innerHTML = "";
-    var msgs = conversations[cid]?.messages || [];
-    msgs.forEach(function(m){chat.appendChild(m.el);});
-    if(!msgs.length){
-      chat.innerHTML = '<section class="welcome" id="welcome"><p class="welcome-kicker">Lumen · 对标 Claude Code</p><h2 class="welcome-title">编程智能体</h2><p>描述任务，Lumen 会读文件、跑命令、自我验证。</p></section>';
-    }
-  }
-}
-
-function newConv(){
-  var cid = "conv_" + Date.now();
-  conversations[cid] = {id:cid,title:"新对话",messages:[],sessionId:cid};
-  renderConvTabs();
-  switchConv(cid);
-}
-
-function closeConv(cid, e){
-  e.stopPropagation();
-  if(Object.keys(conversations).length <= 1) return;
-  delete conversations[cid];
-  if(activeConv === cid) activeConv = Object.keys(conversations)[0];
-  renderConvTabs();
-  switchConv(activeConv);
-}
-
-function renderConvTabs(){
-  var el = document.getElementById("convTabs");
-  if(!el) return;
-  el.innerHTML = Object.values(conversations).map(function(c){
-    return '<button class="conv-tab'+(c.id===activeConv?" active":"")+'" data-cid="'+c.id+'" onclick="switchConv(''+c.id+'')">'+c.title+'<span class="close" onclick="closeConv(''+c.id+'',event)">×</span></button>';
-  }).join("") + '<button class="conv-tab-add" onclick="newConv()">＋</button>';
-}
-
-// Store messages per conversation
-var _origAppend = window.appendToChat || function(el){document.getElementById("chat")?.appendChild(el);};
-window.appendToChat = function(el, cid){
-  cid = cid || activeConv;
-  if(conversations[cid]){
-    conversations[cid].messages.push({el:el.cloneNode(true)});
-    if(conversations[cid].messages.length === 1) conversations[cid].title = (el.textContent||"").slice(0,30) || "对话";
-    renderConvTabs();
-  }
-  _origAppend(el);
-};
-
-// Override session ID in chat requests
-var _origFetch = window.fetch;
-window.fetch = function(url, opts){
-  if(typeof url === "string" && url.indexOf("/api/chat") >= 0 && opts?.body){
-    try{
-      var body = JSON.parse(opts.body);
-      body.session_id = activeConv;
-      opts.body = JSON.stringify(body);
-    }catch(_){}
-  }
-  return _origFetch(url, opts);
-};
-
-renderConvTabs();
-</script>
-
-<script>
-// Session auto-save per tab — Reasonix snapshot pattern
-function saveSessions(){
-  var data = {};
-  Object.keys(conversations).forEach(function(cid){
-    data[cid] = {id:cid, title:conversations[cid].title, msgCount:conversations[cid].messages.length};
-  });
-  try{localStorage.setItem("lumen-tabs",JSON.stringify(data));}catch(_){}
-}
-function restoreSessions(){
-  try{
-    var data = JSON.parse(localStorage.getItem("lumen-tabs")||"{}");
-    Object.keys(data).forEach(function(cid){
-      if(!conversations[cid]){conversations[cid]={id:cid,title:data[cid].title||"对话",messages:[],sessionId:cid};}
-    });
-    renderConvTabs();
-  }catch(_){}
-}
-setInterval(saveSessions,5000);
-setTimeout(restoreSessions,200);
-</script>
-<script>
-// Project file tree
-(async function loadProjectTree(){
-  var el = document.getElementById("projectTree"); if(!el) return;
-  try{
-    var r = await fetch("/api/files?path=.");
-    var d = await r.json();
-    var files = d.files || [];
-    el.innerHTML = files.map(function(f){
-      return "<div style=\'padding:2px 4px;cursor:pointer;border-radius:4px\' onmouseover=\'this.style.background="var(--sidebar-hover)"\' onmouseout=\'this.style.background=""\' onclick=\'fetch(\"/api/files/content?path="+encodeURIComponent(f.name)+"\").then(r=>r.json()).then(d=>{var inp=document.getElementById(\"input\");if(inp)inp.value+=\"\\n查看文件: "+f.name+"\\n\"+d.content.slice(0,500);})\'>"+(f.isDir?"📁":"📄")+" "+f.name+"</div>";
-    }).join("") || "<span style=\'color:var(--muted)\'>空目录</span>";
-  }catch(e){el.innerHTML = "<span style=\'color:var(--muted)\'>无法加载</span>";}
-})();
-
-// Workspace change tracking
-var _origStream = window.streamChat;
-if(typeof window.streamChat === "function"){
-  window.streamChat = async function(prompt, mode){
-    var bar = document.getElementById("changeBar");
-    var list = document.getElementById("changeList");
-    if(bar) bar.style.display = "none";
-    await _origStream(prompt, mode);
-    // After turn done, check for file changes
-    setTimeout(async function(){
-      try{
-        var r = await fetch("/api/files?path=.");
-        var d = await r.json();
-        // Simplified: show recent files
-        if(bar && d.files){
-          var recent = d.files.slice(0,5).map(function(f){return f.name;}).join(", ");
-          list.textContent = recent || "无文件变更";
-          bar.style.display = "block";
-          setTimeout(function(){bar.style.display="none";},8000);
-        }
-      }catch(_){}
-    },500);
-  };
-}
-</script>
-
-<script>
-// Welcome suggest tasks — show on empty chat
-var suggestTasks = [
-  {icon:"🔍",text:"分析这个项目的结构",prompt:"分析当前项目的代码结构和主要模块"},
-  {icon:"🐛",text:"帮我找一个 bug",prompt:"我遇到了一个 bug，帮我排查"},
-  {icon:"✨",text:"添加一个新功能",prompt:"我想给项目添加一个新功能"},
-  {icon:"📝",text:"写单元测试",prompt:"帮我为最近的改动写单元测试"},
-  {icon:"📚",text:"解释这段代码",prompt:"帮我解释一下这段代码的逻辑"},
-];
-(function(){
-  var el=document.getElementById("suggestTasks");if(!el)return;
-  el.innerHTML=suggestTasks.map(function(t){return '<button class="suggest-chip" onclick="var inp=document.getElementById(\'input\');if(inp){inp.value=this.dataset.prompt;document.getElementById(\'sendBtn\').click();}" data-prompt="'+t.prompt+'" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;font-weight:650;border:1px solid var(--rule);border-radius:12px;background:var(--sidebar);cursor:pointer;color:var(--ink);transition:all .15s">'+t.icon+' '+t.text+'</button>';}).join("");
-  // Show welcome when chat is empty
-  var welcome=document.getElementById("welcome");if(welcome)welcome.style.display="block";
-  // Hover effect
-  document.querySelectorAll(".suggest-chip").forEach(function(c){c.addEventListener("mouseenter",function(){this.style.borderColor="var(--accent)";this.style.background="var(--accent-light)";});c.addEventListener("mouseleave",function(){this.style.borderColor="var(--rule)";this.style.background="var(--sidebar)";});});
-})();
-// Hide welcome when messages appear
-var obs=new MutationObserver(function(){var msgs=document.querySelectorAll(".msg");if(msgs.length){var w=document.getElementById("welcome");if(w)w.style.display="none";}});
-obs.observe(document.getElementById("chat")||document.body,{childList:true,subtree:true});
-</script>
-<script>
-var allSessions=[];
-function filterSessions(q){
-  var rows=document.querySelectorAll("#sessionList .session-item");
-  q=(q||"").toLowerCase();
-  rows.forEach(function(r){r.style.display=q?(!r.textContent.toLowerCase().includes(q)?"none":""):"";});
-}
-</script>
+</div>
+<script src="assets/app.js?v=8"></script>
 </body>
 </html>

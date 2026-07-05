@@ -622,30 +622,17 @@ async function loadSessions() {
     }
     empty.hidden = true;
     sessions.slice(0, 12).forEach((s) => {
-      const row = document.createElement("div");
-      row.className = "session-item";
       const btn = document.createElement("button");
       btn.type = "button";
+      btn.className = "session-item";
       const label = s.name.replace(".jsonl", "");
       btn.textContent = label.length > 28 ? label.slice(0, 25) + "…" : label;
       btn.title = s.mtime;
-      btn.style.cssText = "flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
       btn.addEventListener("click", () => {
         resumeSession(s.name);
         setSidebarOpen(false);
       });
-      const del = document.createElement("span");
-      del.className = "session-del";
-      del.textContent = "✕";
-      del.title = "删除会话";
-      del.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (!confirm("删除会话: " + label + "?")) return;
-        fetch("/api/sessions/" + encodeURIComponent(s.name), { method: "DELETE" }).then(() => renderSessions());
-      });
-      row.appendChild(btn);
-      row.appendChild(del);
-      list.appendChild(row);
+      const row=document.createElement('div');row.className='session-item';const del=document.createElement('span');del.textContent='✕';del.title='删除会话';del.style.cssText='display:none;color:#ef4444;cursor:pointer;padding:2px 6px;border-radius:4px;font-size:14px';del.addEventListener('click',function(e){e.stopPropagation();if(confirm('删除会话?')){fetch('/api/sessions/'+encodeURIComponent(s.name),{method:'DELETE'}).then(function(){renderSessions()})}});row.appendChild(btn);row.appendChild(del);list.appendChild(row);row.addEventListener('mouseenter',function(){del.style.display='block'});row.addEventListener('mouseleave',function(){del.style.display='none'});
     });
   } catch (_) {}
 }
