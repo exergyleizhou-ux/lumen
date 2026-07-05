@@ -24,8 +24,8 @@
         <div style="display:flex;gap:4px;margin-top:4px">
           <select id="sshHost" style="flex:1;height:24px;font-size:10px;border:1px solid var(--ocs-line);border-radius:4px;background:var(--ocs-surface-soft)"><option value="">选主机…</option></select>
         </div>
-        <input id="sshCmd" placeholder="命令…" style="width:100%;margin-top:4px;height:24px;padding:0 6px;font-size:10px;border:1px solid var(--ocs-line);border-radius:4px;background:var(--ocs-surface-soft)">
-        <button class="btn sm fill" id="sshRun" style="margin-top:4px">执行</button>
+        
+        
       </details>
     </div>
       <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
@@ -170,13 +170,6 @@ function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("s
 async function loadSSH(){
   try{var d=await api("/api/lab/compute/ssh-hosts");var hosts=d.hosts||[];var el=$("sbSSH"),sel=$("sshHost");if(el)el.innerHTML=hosts.length?hosts.map(function(h){return'<div>'+h.alias+' ('+(h.hostname||"")+')</div>';}).join(""):'<span class="hint">无 SSH 配置</span>';if(sel)sel.innerHTML='<option value="">选主机…</option>'+hosts.map(function(h){return'<option value="'+h.alias+'">'+h.alias+'</option>';}).join("");}catch(e){var el=$("sbSSH");if(el)el.innerHTML='<span class="hint">不可用</span>';}
 }
-$("sshRun").addEventListener("click",async function(){
-  var host=$("sshHost").value,cmd=$("sshCmd").value.trim();
-  if(!host||!cmd||!activeProject)return;$("sshCmd").value="";
-  try{var j=await api("/api/lab/compute/jobs?project_id="+activeProject.slug,{method:"POST",body:JSON.stringify({host:host,command:cmd})});appendMsg("agent","🖥 SSH 任务: "+j.id);}catch(e){}
-});
-loadSSH();
-
 
 // SSH hosts loader
 async function loadSSH(){
