@@ -1036,7 +1036,7 @@ window.showPlanBar = function(prompt){
 // Hook into the existing SSE stream for plan_step events
 var _origHandleSSE = window._handleChatLine || window.handleSSE;
 if(!_origHandleSSE){
-  // The SSE handling is inline in streamChat - we need to patch it
+  // SSE handling is inline in streamWorkflow
   // We'll hook via a MutationObserver on the chat container
   var planObserver = new MutationObserver(function(mutations){
     // Check if plan bar appeared
@@ -1328,7 +1328,7 @@ function sseReconnect(delay) {
   _sseRetry++;
   setTimeout(function() {
     showToast("🔄 重连 "+_sseRetry+"/5");
-    if (window._lastPrompt) streamChat(window._lastPrompt);
+    if (window._lastPrompt && typeof streamWorkflow === 'function') streamWorkflow('workflow', window._lastPrompt);
   }, delay || _sseRetry*2000);
 }
 
