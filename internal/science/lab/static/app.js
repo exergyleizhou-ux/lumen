@@ -318,3 +318,75 @@ function wireChips() {
   try{await refreshHealth();await loadProjects();renderThreadTabs();}catch(e){$("inspectorBody").innerHTML='<div class="ft-err">'+e.message+'</div>';}
   setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1200);
 })();
+
+// ── Syntax highlighting (simple) ──
+function highlightCode(code, lang){
+  if (!code) return "";
+  var h = escHtml(code);
+  if (lang === "python" || lang === "py" || lang === "go" || lang === "js" || lang === "ts" || lang === "rust" || lang === "sh" || lang === "bash" || !lang){
+    h = h.replace(/\b(import|from|def|class|return|if|else|elif|for|while|try|except|finally|with|as|yield|raise|pass|break|continue|and|or|not|in|is|None|True|False|func|var|let|const|function|async|await|export|default|package|type|struct|interface|map|chan|go|defer|select|switch|case|range|fn|impl|use|mod|pub|mut|self|print|echo|exit|return)\b/g,'<span class="kw">$1</span>');
+    h = h.replace(/(["'`])(?:(?!\1).)*\1/g,'<span class="str">$&</span>');
+    h = h.replace(/(\d+\.?\d*)/g,'<span class="num">$1</span>');
+    h = h.replace(/(#|\/\/).*$/gm,'<span class="cm">$&</span>');
+    h = h.replace(/\b([a-zA-Z_]\w*)\s*\(/g,'<span class="fn">$1</span>(');
+  }
+  return h;
+}
+
+// Override the MD code block rendering
+var _origRenderMD = renderMD;
+renderMD = function(text){
+  if (!text) return "";
+  var html = _origRenderMD(text);
+  // Add syntax highlight to code blocks
+  html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, function(m, code){
+    var lang = "auto";
+    var codeText = code.replace(/^\n+/, "");
+    return '<pre><code>'+highlightCode(codeText, lang)+'</code></pre>';
+  });
+  return html;
+};
+
+// ── Diff renderer ──
+function renderDiff(diffText){
+  if (!diffText) return "";
+  var lines = diffText.split("\n");
+  var html = '<div class="diff-block"><div class="diff-hd">📄 文件变更</div><div class="diff-body">';
+  for (var i = 0; i < lines.length; i++){
+    var line = lines[i];
+    var cls = "";
+    if (line.startsWith("+")) cls = "add";
+    else if (line.startsWith("-")) cls = "del";
+    else if (line.startsWith("@@")) cls = "hdr";
+    html += '<div class="diff-line '+cls+'">'+escHtml(line)+'</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+// ── Git status ──
+async function checkGitStatus(){
+  try {
+    var r = await api("/api/lab/files?project_id="+activeProject.slug);
+    var files = r.files||[];
+    var dirty = files.length > 0;
+    var badge = document.querySelector(".git-badge");
+    if (badge){ badge.textContent = dirty ? "● "+files.length+" changed" : "✓ clean"; badge.className = "git-badge"+(dirty?" dirty":""); }
+  } catch(_){}
+}
+
+// Add diff rendering to chat tool output
+var _origHandleSSE_streamChat_vars = null;
+// Hook into streamChat to render diffs
+(function(){
+  var orig = streamChat;
+  // Watch for diff in tool output
+  setInterval(function(){
+    document.querySelectorAll(".chat-tool-output").forEach(function(el){
+      var text = el.textContent||"";
+      if (text.startsWith("diff ") || text.includes("@@ -") || text.includes("+++ ")){
+        el.innerHTML = renderDiff(text);
+      }
+    });
+  }, 500);
+})();

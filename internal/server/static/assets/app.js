@@ -916,3 +916,27 @@ async function init() {
 }
 
 init();
+// ── File panel ──
+var filePanelOpen=false;
+function toggleFilePanel(){
+  filePanelOpen=!filePanelOpen;
+  var p=document.getElementById("filePanel");
+  if(p)p.hidden=!filePanelOpen;
+  if(filePanelOpen)loadFileTree();
+}
+async function loadFileTree(){
+  var el=document.getElementById("fileTree");if(!el)return;
+  try{
+    var data=await lumenAPI("/api/files?path=.");
+    var files=data.files||[];
+    el.innerHTML=files.map(function(f){return '<div class="ft-item'+(f.isDir?' ft-dir':'')+'" style="cursor:pointer"><span>'+(f.isDir?'📁':'📄')+'</span><span class="ft-name">'+escHtml(f.name)+'</span></div>';}).join("");
+  }catch(e){el.innerHTML='<div class="ft-item"><span class="ft-name" style="color:var(--muted)">'+e.message+'</span></div>';}
+}
+function previewFile(path){
+  var el=document.getElementById("filePreview");if(!el)return;
+  fetch("/api/files/content?path="+encodeURIComponent(path)).then(function(r){return r.json();}).then(function(d){
+    el.textContent=d.content||"";
+  }).catch(function(e){el.textContent=e.message;});
+}
+document.getElementById("filesBtn")?.addEventListener("click",toggleFilePanel);
+document.getElementById("filePanelClose")?.addEventListener("click",function(){filePanelOpen=false;var p=document.getElementById("filePanel");if(p)p.hidden=true;});

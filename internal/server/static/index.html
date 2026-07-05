@@ -104,6 +104,12 @@
         <span id="statStatus" class="stat-ok">就绪</span>
       </footer>
     </main>
+
+    <aside class="file-panel" id="filePanel" hidden>
+      <div class="file-panel-hd"><span>📁 文件</span><button class="btn-icon sm" id="filePanelClose" type="button">✕</button></div>
+      <div class="file-panel-tree scrollbar-subtle" id="fileTree"></div>
+      <div class="file-panel-preview" id="filePreview"></div>
+    </aside>
   </div>
 
   <dialog class="modal" id="setupModal">
@@ -120,6 +126,7 @@
           <option value="qwen">通义千问</option>
           <option value="moonshot">Moonshot</option>
           <option value="zhipu">智谱 GLM</option>
+          <option value="minimax">MiniMax</option>
         </select>
       </label>
       <label class="field">
