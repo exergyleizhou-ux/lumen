@@ -383,3 +383,11 @@ body::before{
 
 .cursor{animation:blink .8s infinite;color:var(--ocs-accent);font-weight:400}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+
+/* Turn separation — clear visual breaks between exchanges */
+.chat-msg.agent-wrap{margin:16px 0;padding-bottom:12px;border-bottom:1px solid rgba(76,29,149,.06);clear:both}
+.chat-msg.agent-wrap:last-child{border-bottom:none}
+/* User bubble spacing */
+.chat-msg.user{margin-top:16px !important}
+/* First user message no top margin */
+.chat-msg.user:first-child{margin-top:8px !important}
