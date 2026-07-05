@@ -11,17 +11,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+	
 )
 
 // processUmask is the process file-creation mask, read once at startup (the
 // read/restore dance is single-threaded here, so no per-write race). New files
 // honor it — matching os.WriteFile semantics — instead of always landing 0644.
-var processUmask = func() os.FileMode {
-	old := syscall.Umask(0)
-	syscall.Umask(old)
-	return os.FileMode(old)
-}()
+var processUmask os.FileMode
 
 // newFileMode returns the mode a freshly created file should get: 0644 with the
 // umask applied (e.g. umask 077 → 0600).
