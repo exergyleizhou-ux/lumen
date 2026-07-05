@@ -323,9 +323,9 @@ body::before{
 .goal-item{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px}
 
 /* Chat messages */
-.chat-msg{padding:6px 0;font-size:13px;line-height:1.65;word-break:break-word;clear:both}
-.chat-msg.user{color:#fff;font-weight:650;background:linear-gradient(135deg,#4c1d95,#6d28d9);padding:10px 16px;border-radius:14px 14px 4px 14px;margin:10px 0 10px auto;max-width:75%;float:right;clear:both;box-shadow:0 2px 8px rgba(76,29,149,.15)}
-.chat-msg.agent{padding:10px 16px;margin:8px 0;white-space:pre-wrap;clear:both;font-size:14px;line-height:1.7;background:#fff;border-radius:12px;border:1px solid var(--ocs-line);box-shadow:0 1px 3px rgba(0,0,0,.04)}
+
+
+
 
 /* Thinking block */
 .msg-thinking{margin:4px 0;border:1px solid var(--ocs-line);border-radius:10px;overflow:hidden}
@@ -336,64 +336,102 @@ body::before{
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
 /* Agent wrap — contains thinking + response */
-.chat-msg.agent-wrap{margin:6px 0;clear:both}
+
 
 /* Markdown tables */
-.chat-msg.agent table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
-.chat-msg.agent th{background:var(--ocs-accent-soft);color:var(--ocs-accent);font-weight:650;padding:6px 10px;text-align:left;border:1px solid var(--ocs-line)}
-.chat-msg.agent td{padding:5px 10px;border:1px solid var(--ocs-line)}
-.chat-msg.agent tr:nth-child(even){background:var(--ocs-surface-soft)}
-.chat-msg.agent h1,.chat-msg.agent h2,.chat-msg.agent h3{font-size:15px;font-weight:700;margin:10px 0 4px}
-.chat-msg.agent ul,.chat-msg.agent ol{margin:4px 0;padding-left:20px}
-.chat-msg.agent li{margin:2px 0}
-.chat-msg.agent p{margin:4px 0}
-.chat-msg.agent strong{font-weight:700}
-.chat-msg.agent code{font-family:var(--mono);font-size:11px;background:var(--ocs-accent-light);padding:2px 5px;border-radius:4px}
-.chat-msg.agent pre{background:var(--ocs-surface-soft);padding:10px 14px;border-radius:10px;overflow-x:auto;font-size:11px;font-family:var(--mono);margin:6px 0}
+
+
+
+
+
+
+
+
+
+
+
 
 /* Think block — gray, collapsible */
-.think-block{margin:4px 0;border:1px solid rgba(76,29,149,.08);border-radius:8px;overflow:hidden}
-.think-block[open]{border-color:rgba(76,29,149,.15)}
-.think-summary{display:flex;align-items:center;gap:6px;padding:5px 10px;font-size:11px;color:#8c8478;cursor:pointer;background:rgba(76,29,149,.03);list-style:none;user-select:none}
-.think-summary::-webkit-details-marker{display:none}
-.think-dot{width:5px;height:5px;border-radius:50%;background:#c28b4b;flex-shrink:0}
-.think-block[open] .think-dot{background:#4c1d95;animation:pulse 1.5s infinite}
-.think-body{padding:6px 10px;font-size:11px;color:#8c8478;white-space:pre-wrap;max-height:200px;overflow:auto;border-top:1px solid rgba(76,29,149,.06)}
+
+
+
+
+
+
+
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-.think-summary:hover{background:#e8e2f4}
-.think-summary::-webkit-details-marker{display:none}
-.think-summary::before{content:"▸";font-size:10px;color:#4c1d95;transition:transform .15s;display:inline-block;width:12px}
-.think-block[open] .think-summary::before{transform:rotate(90deg)}
-.think-block:not([open]) .think-dot{background:#8c8478;animation:none}
-.think-body p{margin:2px 0}
-.chat-msg.agent h1,.chat-msg.agent h2,.chat-msg.agent h3{font-size:15px;font-weight:700;margin:10px 0 4px}
-.chat-msg.agent p{margin:4px 0}
-.chat-msg.agent strong{font-weight:700}
-.chat-msg.agent code{font-family:var(--mono);font-size:11px;background:var(--ocs-accent-light);padding:2px 5px;border-radius:4px}
-.chat-msg.agent li{margin:2px 0;margin-left:16px}
-.chat-msg.agent table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
-.chat-msg.agent th{background:rgba(76,29,149,.08);color:var(--ocs-accent);font-weight:650;padding:6px 10px;text-align:left;border:1px solid var(--ocs-line)}
-.chat-msg.agent td{padding:5px 10px;border:1px solid var(--ocs-line)}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 .cursor{animation:blink .8s infinite;color:var(--ocs-accent);font-weight:400}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 
 /* Turn separation — clear visual breaks between exchanges */
-.chat-msg.agent-wrap:last-child{border-bottom:none}
+
 /* User bubble spacing */
 /* First user message no top margin */
-.chat-msg.user:first-child{margin-top:8px !important}
+
 
 /* DeepSeek-inspired chat spacing */
-.chat-msg{padding:10px 0;margin:2px 0}
-.chat-msg.agent-wrap:last-child{margin-bottom:8px !important}
+
+
 /* Wider chat area */  
 .ctr .scroll{padding:20px 40px}
 /* Smoother scroll */
 .scroll{scroll-behavior:smooth}
 
 /* Ensure chat messages don't run together */
-#chatScroll{display:flex;flex-direction:column;gap:0}
-.chat-msg.user{align-self:flex-end}
-.chat-msg.agent-wrap{align-self:stretch}
+
+
+
+
+#chatScroll{display:flex;flex-direction:column;gap:20px;padding:28px 36px}
+/* User — purple gradient card, right side */
+.chat-msg.user{
+  align-self:flex-end;max-width:72%;padding:12px 18px;
+  font-size:14px;font-weight:600;line-height:1.55;
+  color:#fff;background:linear-gradient(135deg,#4c1d95,#6d28d9);
+  border-radius:16px 16px 4px 16px;box-shadow:0 3px 12px rgba(76,29,149,.18);
+  word-break:break-word;
+}
+/* Agent wrap — contains think + response */
+.chat-msg.agent-wrap{
+  align-self:stretch;display:flex;flex-direction:column;gap:6px;
+}
+/* Think block — dashed border, light purple */
+.think-block{
+  border:1.5px dashed rgba(76,29,149,.18);border-radius:10px;overflow:hidden;background:#faf8ff;
+}
+.think-summary{
+  display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;
+  color:#6d28d9;cursor:pointer;background:#f3effa;list-style:none;user-select:none;
+  font-weight:700;letter-spacing:.02em;
+}
+.think-summary::-webkit-details-marker{display:none}
+.think-summary::before{content:"▸";font-size:10px;color:#4c1d95;transition:transform .15s;width:12px;display:inline-block}
+.think-block[open] .think-summary::before{transform:rotate(90deg)}
+.think-dot{width:6px;height:6px;border-radius:50%;background:#4c1d95;flex-shrink:0;animation:pulse 1.5s infinite}
+.think-block:not([open]) .think-dot{background:#8c8478;animation:none}
+.think-body{padding:10px 16px;font-size:12px;color:#5b5568;white-space:pre-wrap;max-height:260px;overflow:auto;font-style:italic;line-height:1.7;border-top:1px solid rgba(76,29,149,.08)}
+/* Agent response — white card */
+.chat-msg.agent{
+  padding:14px 20px;font-size:14px;line-height:1.75;word-break:break-word;
+  background:#fff;border-radius:12px;border:1px solid #e8e3f0;
+  box-shadow:0 1px 4px rgba(0,0,0,.03);
+}
+.cursor{animation:blink .8s infinite;color:#4c1d95;font-weight:400}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
