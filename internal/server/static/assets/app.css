@@ -971,3 +971,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
   outline:2px solid var(--accent) !important;
   outline-offset:2px !important;
 }
+
+.msg.user{background:#064e3b!important;color:#d1fae5!important;border-radius:16px 16px 4px 16px!important;padding:10px 16px!important}
+.msg.assistant{color:#e2e8f0!important}
+.msg.thinking{color:#94a3b8!important;font-style:italic!important}
+.msg.tool-call{background:rgba(16,185,129,.1)!important;color:#10b981!important}
+#chat .msg-body{color:#e2e8f0!important;background:#1e2937!important;border-radius:14px!important;padding:14px 18px!important;margin:6px 0!important}
+.chat-scroll{background:#0f172a!important}
+.welcome{color:#e2e8f0!important}
+.welcome-title{color:#e2e8f0!important}
+.welcome-kicker{color:#94a3b8!important}
