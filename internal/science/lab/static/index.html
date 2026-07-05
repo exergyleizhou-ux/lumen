@@ -59,7 +59,30 @@
     <button onclick="newConv()" class="text-accent text-lg px-2 pb-1.5 hover:bg-hover rounded-t-lg transition-colors flex-shrink-0">＋</button>
   </div>
   <div id="chatScroll" class="flex-1 overflow-y-scroll p-6 space-y-2">
-    <section id="welcome" class="text-center py-20">
+    <section id="welcome" class="py-8">
+      <div class="text-center mb-8">
+        <div class="text-5xl mb-3 opacity-80">🔬</div>
+        <h2 class="text-3xl font-bold text-ink tracking-tight">Lumen Science 实验室</h2>
+        <p class="text-sm text-muted max-w-md mx-auto mt-2">CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p>
+      </div>
+      <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-3">快速操作</div>
+      <div class="grid grid-cols-3 gap-3 mb-8">
+        <div onclick="document.getElementById('briefBtn2').click()" class="card p-4 cursor-pointer hover:border-accent transition-all">
+          <div class="text-2xl mb-2">📝</div><div class="font-semibold text-sm">生成 Brief</div><div class="text-xs text-dim mt-1">四源研究简报</div>
+        </div>
+        <div onclick="document.getElementById('c2dBtn2').click()" class="card p-4 cursor-pointer hover:border-accent transition-all">
+          <div class="text-2xl mb-2">🧬</div><div class="font-semibold text-sm">C2D 算法</div><div class="text-xs text-dim mt-1">隐私计算脚手架</div>
+        </div>
+        <div onclick="streamChat('检索最新的 PubMed 文献')" class="card p-4 cursor-pointer hover:border-accent transition-all">
+          <div class="text-2xl mb-2">🔍</div><div class="font-semibold text-sm">文献检索</div><div class="text-xs text-dim mt-1">PubMed 数据库</div>
+        </div>
+      </div>
+      <div id="labActivity" class="border-t border-rule pt-4 hidden">
+        <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-2">最近实验记录</div>
+        <div id="labActivityList" class="space-y-2"></div>
+      </div>
+    </section>
+    <section id="welcomeOld" class="text-center py-20 hidden">
       <div class="text-5xl mb-4 opacity-80">🔬</div>
       <h2 class="text-3xl font-bold text-ink mb-2 tracking-tight">Lumen Science 实验室</h2>
       <p class="text-sm text-muted max-w-md mx-auto">CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p>
