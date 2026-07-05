@@ -220,7 +220,15 @@ html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;ba
   </div>
   <div id="changeBar" class="hidden px-5 py-1.5 text-xs text-muted border-t border-rule bg-card">📝 <span id="changeList"></span></div>
   <form id="composer" class="p-4 border-t border-rule flex-shrink-0"><div class="flex gap-2"><input id="promptInput" placeholder="描述科研任务…" class="flex-1 h-10 px-4 text-sm bg-white border border-rule rounded-2xl text-ink placeholder:text-dim focus:outline-none focus:border-accent transition-colors" autocomplete="off"><button type="submit" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button></div></form>
-</main>
+
+            <div class="border-t border-rule px-5 py-3 bg-paper" id="labComposer">
+              <div class="flex items-end gap-3 bg-white border border-rule rounded-2xl px-4 py-2.5">
+                <textarea id="promptInput" rows="1" placeholder="输入研究问题… Enter 发送" class="flex-1 border-none outline-none resize-none bg-transparent text-sm text-ink placeholder:text-dim py-1"></textarea>
+                <button onclick="streamChat(document.getElementById('promptInput').value)" class="shrink-0 bg-ink text-paper rounded-full px-4 py-1.5 text-sm font-semibold hover:bg-ink/85 transition">发送</button>
+              </div>
+            </div>
+
+          </main>
 
 <!-- Right Panel -->
 <aside class="w-[340px] bg-card border-l border-rule flex flex-col flex-shrink-0 overflow-y-auto">
