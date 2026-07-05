@@ -9,7 +9,7 @@
     <span class="tb-spacer"></span>
     <span class="tb-stat"><span class="tb-dot"></span><span id="packBadge">—</span></span>
     <span class="tb-stat" id="fleetBadge">—</span>
-    <a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
+    <button class="tb-btn" id="themeToggle" title="切换暗色">🌙</button><a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
   </header>
   <div class="main">
     <nav class="side" id="sidebarPanel"><div class="side-inner">
@@ -28,9 +28,17 @@
     </section>
     <div class="resize" id="resizeRight"></div>
     <aside class="insp" id="inspectorPanel">
-      <div class="insp-tabs"><button class="insp-tab active" data-pane="status">状态</button><button class="insp-tab" data-pane="files">文件</button></div>
+      <div class="insp-tabs"><button class="insp-tab active" data-pane="status">状态</button><button class="insp-tab" data-pane="files">文件</button><button class="insp-tab" data-pane="fleet">舰队</button><button class="insp-tab" data-pane="ketcher">化学</button><button class="insp-tab" data-pane="molecule">分子</button><button class="insp-tab" data-pane="settings">设置</button></div>
       <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
       <div class="pane" id="filesPane" hidden><div id="fileTree"></div><div id="filePreview"></div></div>
+      <div class="pane" id="fleetPane" hidden><div id="fleetList"></div></div>
+      <div class="pane" id="ketcherPane" hidden><p class="hint" style="padding:0 0 8px">Ketcher 分子编辑器</p><iframe id="ketcherFrame" src="about:blank" title="Ketcher"></iframe></div>
+      <div class="pane" id="moleculePane" hidden><p class="hint" style="padding:0 0 8px">3Dmol 预览</p><div id="molViewer"></div></div>
+      <div class="pane" id="settingsPane" hidden>
+        <div class="set-card"><h3>外观</h3><div class="set-row"><span class="k">暗色模式</span><button class="btn sm" id="darkToggle">切换</button></div></div>
+        <div class="set-card"><h3>Research Pack</h3><div id="researchInfo"></div></div>
+        <div class="set-card"><h3>快捷</h3><button class="btn fill" id="c2dBtn">C2D 算法</button></div>
+      </div>
     </aside>
   </div>
 </div>
@@ -120,6 +128,39 @@ document.querySelectorAll(".chip").forEach(function(b){b.addEventListener("click
 document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("active");});this.classList.add("active");var p=this.dataset.pane;$("statusPane").hidden=p!=="status";$("filesPane").hidden=p!=="files";if(p==="files")refreshFiles();});});
 // Resize
 (function(){function r(h,p,d){var sx,sw;h.addEventListener("mousedown",function(e){sx=e.clientX;sw=p.getBoundingClientRect().width;document.body.style.cursor="col-resize";function m(e){p.style.width=Math.max(160,Math.min(480,sw+(d?sw-(e.clientX-sx):(e.clientX-sx))))+"px";}function u(){document.body.style.cursor="";document.removeEventListener("mousemove",m);document.removeEventListener("mouseup",u);}document.addEventListener("mousemove",m);document.addEventListener("mouseup",u);});}var rl=$("resizeLeft"),rr=$("resizeRight"),sp=$("sidebarPanel"),ip=$("inspectorPanel");if(rl&&sp)r(rl,sp,false);if(rr&&ip)r(rr,ip,true);})();
+
+
+// Dark mode
+var dm=localStorage.getItem("lumen-lab-theme");
+if(dm==="dark"||(!dm&&window.matchMedia("(prefers-color-scheme:dark)").matches))document.documentElement.classList.add("dark");
+$("themeToggle").onclick=function(){document.documentElement.classList.toggle("dark");localStorage.setItem("lumen-lab-theme",document.documentElement.classList.contains("dark")?"dark":"light");this.textContent=document.documentElement.classList.contains("dark")?"☀":"🌙";};
+$("darkToggle").onclick=function(){document.documentElement.classList.toggle("dark");localStorage.setItem("lumen-lab-theme",document.documentElement.classList.contains("dark")?"dark":"light");};
+
+// Fleet browser
+async function refreshFleet(){
+  var el=$("fleetList");if(!el)return;
+  try{
+    var h=await api("/api/lab/health");
+    var f=h.fleet||{},p=h.research_pack||{};
+    el.innerHTML='<div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v g">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 fleet</span><span class="v g">'+(f.lumen_native||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div></div><div class="set-card"><h3>📡 原生 MCP</h3>'+["pubmed","chembl","geo","oasis","c2d"].map(function(x){return '<div class="flt-domain"><span class="flt-dot"></span><span class="flt-name">'+x+'</span></div>';}).join("")+'</div>';
+  }catch(e){}
+}
+$("c2dBtn").onclick=function(){window.open("https://demo.oasisdata2026.xyz/c2d","_blank");};
+
+// Ketcher lazy load
+var ketcherLoaded=false;
+document.querySelector('[data-pane="ketcher"]').onclick=function(){
+  if(!ketcherLoaded){ketcherLoaded=true;$("ketcherFrame").src="https://lifescience.opensource.epam.com/ketcher/standalone/index.html";}
+};
+
+// 3Dmol lazy load
+var molLoaded=false;
+document.querySelector('[data-pane="molecule"]').onclick=function(){
+  if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#fbf9f6"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#4c1d95"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}
+};
+
+// Tab handlers for fleet/settings/ketcher/molecule
+document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){var p=this.dataset.pane;["statusPane","filesPane","fleetPane","ketcherPane","moleculePane","settingsPane"].forEach(function(id){var el=document.getElementById(id);if(el)el.hidden=id!==p+"Pane";});if(p==="fleet")refreshFleet();if(p==="settings"){refreshFleet();var h=refreshHealth();}});});
 
 // Init
 (async function(){try{await refreshHealth();await loadProjects();setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},800);}catch(e){$("inspectorBody").textContent=e.message;}})();
