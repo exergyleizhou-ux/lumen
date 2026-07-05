@@ -304,5 +304,116 @@ var dm=localStorage.getItem("lumen-dm"),dt=$("dmToggle");if(dm==="dark")document
 // Init
 (async function(){await refreshHealth();await loadProjects();})();
 </script>
+
+<script>
+// ── Tool Approval Cards ──
+var pendingLabApproval = null;
+function showLabApproval(toolName, toolArgs) {
+  pendingLabApproval = {name:toolName,args:toolArgs};
+  var overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "labApprovalModal";
+  overlay.innerHTML = '<div class="modal" style="max-width:420px"><p class="text-sm" style="margin-bottom:12px;font-weight:600">工具审批</p><p class="font-mono text-xs" style="background:rgb(244 243 239);padding:10px;border-radius:8px;margin-bottom:16px">'+escHtml(toolName)+'</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onclick="rejectLabApproval()">拒绝</button><button class="btn btn-primary" onclick="approveLabTool()">批准</button></div></div>';
+  document.body.appendChild(overlay);
+}
+function approveLabTool() {
+  var m = document.getElementById("labApprovalModal");
+  if (m) m.remove();
+  pendingLabApproval = null;
+  if (window._labApproveCb) window._labApproveCb();
+}
+function rejectLabApproval() {
+  var m = document.getElementById("labApprovalModal");
+  if (m) m.remove();
+  pendingLabApproval = null;
+}
+
+// ── Provenance Timeline ──
+async function loadProvenance(projectSlug) {
+  var pane = document.getElementById("statusPane");
+  if (!pane || !projectSlug) return;
+  try {
+    var r = await fetch("/api/lab/provenance?project_id="+encodeURIComponent(projectSlug));
+    var d = await r.json();
+    var records = d.records || [];
+    var html = '<div class="side-label">变更历史 ('+records.length+')</div>';
+    records.slice(0,20).forEach(function(rec){
+      html += '<div style="padding:8px 0;border-bottom:1px solid rgb(231 229 224);font-size:12px"><div style="color:rgb(24 24 27/.6);margin-bottom:2px">'+escHtml(rec.action||"change")+'</div><div class="font-mono" style="font-size:11px">'+escHtml(rec.path||"")+'</div><div style="color:rgb(24 24 27/.4);font-size:10px">'+escHtml(rec.time||"")+'</div></div>';
+    });
+    pane.innerHTML = html;
+  } catch(e) { pane.innerHTML = '<div class="text-muted text-xs">无法加载记录</div>'; }
+}
+
+// ── SSH Remote Compute UI ──
+async function openSSHPanel() {
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  try {
+    var r = await fetch("/api/lab/compute/hosts");
+    var d = await r.json();
+    var hosts = d.hosts || [];
+    var opts = hosts.map(function(h){return '<option value="'+escHtml(h.host)+'">'+escHtml(h.hostname||h.host)+'</option>'}).join("");
+    insp.innerHTML = '<div class="side-label">SSH 远程计算</div><select id="sshHost" class="oasis-input" style="margin-bottom:8px">'+opts+'</select><textarea id="sshCmd" class="oasis-input" rows="2" placeholder="输入命令..." style="margin-bottom:8px"></textarea><button class="btn btn-primary btn-sm" onclick="runSSH()">执行</button><div id="sshOutput" class="font-mono text-xs" style="margin-top:12px;max-height:200px;overflow-y:auto"></div>';
+  } catch(e) { insp.innerHTML = '<div class="text-muted text-xs">SSH 不可用</div>'; }
+}
+async function runSSH() {
+  var host = document.getElementById("sshHost")?.value;
+  var cmd = document.getElementById("sshCmd")?.value;
+  var out = document.getElementById("sshOutput");
+  if (!host || !cmd) return;
+  out.textContent = "运行中...";
+  try {
+    var r = await fetch("/api/lab/compute/jobs?project_id="+(activeProject?.slug||"default"), {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({host:host,command:cmd})
+    });
+    var j = await r.json();
+    out.textContent = "任务 ID: "+j.id+"\n状态: "+j.status+"\n"+(j.output||"");
+  } catch(e) { out.textContent = "错误: "+e.message; }
+}
+
+// ── Jupyter Notebook Panel ──
+async function openJupyterPanel() {
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  try {
+    var r = await fetch("/api/lab/notebooks?project_id="+(activeProject?.slug||"default"));
+    var d = await r.json();
+    var nbs = d.notebooks || [];
+    var html = '<div class="side-label">Jupyter Notebooks ('+nbs.length+')</div>';
+    nbs.forEach(function(nb){
+      html += '<div style="padding:8px;border-bottom:1px solid rgb(231 229 224);cursor:pointer;font-size:12px" onclick="openNotebook(''+escHtml(nb.path)+'')">📓 '+escHtml(nb.name||nb.path)+'</div>';
+    });
+    html += '<button class="btn btn-sm btn-secondary" style="margin-top:8px" onclick="createNotebook()">+ 新建 Notebook</button>';
+    insp.innerHTML = html;
+  } catch(e) { insp.innerHTML = '<div class="text-muted text-xs">Jupyter 不可用</div>'; }
+}
+function openNotebook(path) {
+  if (activeProject) window.open("/api/lab/notebooks/view?project_id="+activeProject.slug+"&path="+encodeURIComponent(path),"_blank");
+}
+async function createNotebook() {
+  try {
+    await fetch("/api/lab/notebooks?project_id="+(activeProject?.slug||"default"), {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({name:"notebook_"+Date.now()+".ipynb"})
+    });
+    openJupyterPanel();
+  } catch(e) { alert("创建失败: "+e.message); }
+}
+
+// ── Inject handler into streamChat for approval_request events ──
+var _origLabSSE = window._labHandleSSE;
+window._labHandleSSE = function(line) {
+  try {
+    var ev = JSON.parse(line);
+    if (ev.kind === "approval_request") { showLabApproval(ev.tool_name||ev.name,""); window._labApproveCb = function(){ /* re-send */ }; return; }
+  } catch(_){}
+  if (_origLabSSE) _origLabSSE(line);
+};
+
+// ── Helper ──
+function escHtml(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+</script>
+
 </body>
 </html>

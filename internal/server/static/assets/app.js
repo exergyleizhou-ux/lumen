@@ -1140,3 +1140,120 @@ if(dt){dt.textContent=dm==="dark"?"☀":"🌙";dt.onclick=function(){document.do
 
 // Widen file panel toggle
 window.toggleFilePanel=function(){var fp=document.getElementById("rpFiles");if(fp)fp.closest("aside").classList.toggle("w-[360px]");};
+
+
+// ── Image Paste (Ctrl+V / Cmd+V) ──
+document.addEventListener("paste", function(e) {
+  if (!e.clipboardData || !e.clipboardData.items) return;
+  for (var item of e.clipboardData.items) {
+    if (item.type.indexOf("image") === 0) {
+      e.preventDefault();
+      var file = item.getAsFile();
+      var reader = new FileReader();
+      reader.onload = function(ev) {
+        var img = ev.target.result;
+        var hint = document.getElementById("attachHint");
+        if (hint) { hint.hidden = false; hint.textContent = "已附加图片"; }
+        window._pastedImage = img;
+      };
+      reader.readAsDataURL(file);
+      return;
+    }
+  }
+});
+
+// ── Tool Approval Cards ──
+var pendingApprovalId = null;
+var approveCallback = null;
+
+function showApprovalModal(msg) {
+  pendingApprovalId = msg;
+  var modal = document.createElement("div");
+  modal.className = "modal-overlay";
+  modal.id = "approvalModal";
+  modal.innerHTML = '<div class="modal"><p class="text-sm" style="margin-bottom:16px">工具需要审批</p><p class="font-mono text-xs" style="background:rgb(244 243 239);padding:10px;border-radius:8px;margin-bottom:16px">'+escapeHtml(msg)+'</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onclick="rejectApproval()">拒绝</button><button class="btn btn-primary" onclick="approveTool()">批准</button></div></div>';
+  document.body.appendChild(modal);
+}
+function approveTool() {
+  if (pendingApprovalId) {
+    try { fetch("/api/approve/" + pendingApprovalId, { method: "POST" }); } catch (_) {}
+  }
+  var m = document.getElementById("approvalModal");
+  if (m) m.remove();
+  pendingApprovalId = null;
+}
+function rejectApproval() {
+  var m = document.getElementById("approvalModal");
+  if (m) m.remove();
+  pendingApprovalId = null;
+}
+
+// ── Plan Step Cards (SSE: plan_start / plan_step / plan_done) ──
+var planSteps = [];
+var planActive = false;
+
+function onPlanStart() {
+  planSteps = [];
+  planActive = true;
+  var bar = document.getElementById("planBar");
+  if (bar) bar.style.display = "block";
+}
+function onPlanStep(step) {
+  if (!step) return;
+  planSteps.push(step);
+  renderPlanSteps();
+}
+function onPlanDone() {
+  planActive = false;
+  var bar = document.getElementById("planBar");
+  if (bar) { bar.style.display = "none"; bar.innerHTML = ""; }
+  planSteps = [];
+}
+function renderPlanSteps() {
+  var bar = document.getElementById("planBar");
+  if (!bar) return;
+  bar.style.display = "block";
+  bar.innerHTML = '<div style="padding:8px 16px;font-size:12px;font-weight:600;color:rgb(24 24 27/.6);border-bottom:1px solid rgb(231 229 224)">计划步骤 ('+planSteps.length+')</div>';
+  planSteps.forEach(function(s, i) {
+    var risk = s.risk ? " (" + s.risk + ")" : "";
+    var files = s.files ? s.files.map(function(f){return "<span style=\"background:rgb(244 243 239);padding:2px 6px;border-radius:4px;font-size:10px;margin:2px\">"+escapeHtml(f)+"</span>"}).join("") : "";
+    bar.innerHTML += '<div style="display:flex;align-items:center;gap:8px;padding:8px 16px;font-size:12px;border-bottom:1px solid rgb(231 229 224)"><span style="font-weight:600;color:#18181b;min-width:20px">'+(i+1)+'.</span><span style="flex:1">'+escapeHtml(s.title||s.name||"步骤 "+(i+1))+risk+'</span><span>'+files+'</span><button class="btn btn-sm btn-primary" onclick="approveStep('+i+')" style="margin-left:8px">批准</button><button class="btn btn-sm btn-ghost" onclick="skipStep('+i+')">跳过</button></div>';
+  });
+  bar.innerHTML += '<div style="padding:8px 16px;display:flex;gap:6px"><button class="btn btn-sm btn-primary" onclick="approveAllSteps()">批准全部</button><button class="btn btn-sm btn-ghost" onclick="rejectAllSteps()">全部拒绝</button></div>';
+}
+function approveStep(i) { planSteps.splice(i,1); renderPlanSteps(); if (planSteps.length===0) onPlanDone(); }
+function skipStep(i) { planSteps.splice(i,1); renderPlanSteps(); if (planSteps.length===0) onPlanDone(); }
+function approveAllSteps() { onPlanDone(); }
+function rejectAllSteps() { onPlanDone(); }
+
+// ── Simple Diff Viewer ──
+function showDiff(oldText, newText, path) {
+  var overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  var lines = [];
+  var oldLines = (oldText||"").split("\n");
+  var newLines = (newText||"").split("\n");
+  var maxLen = Math.max(oldLines.length, newLines.length);
+  for (var i=0;i<maxLen;i++) {
+    var o = oldLines[i]||"";
+    var n = newLines[i]||"";
+    if (o === n) { lines.push('<div style="color:rgb(24 24 27/.6);padding:1px 8px">  '+escapeHtml(o)+'</div>'); }
+    else { lines.push('<div style="background:rgba(220,38,38,.06);padding:1px 8px">- '+escapeHtml(o)+'</div>'); lines.push('<div style="background:rgba(4,120,87,.06);padding:1px 8px">+ '+escapeHtml(n)+'</div>'); }
+  }
+  overlay.innerHTML = '<div class="modal" style="max-width:700px;max-height:80vh"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span class="font-mono text-xs">'+escapeHtml(path||"diff")+'</span><button class="btn btn-sm btn-ghost" onclick="this.closest('.modal-overlay').remove()">关闭</button></div><div class="font-mono text-xs" style="overflow-y:auto;max-height:60vh">'+lines.join("\n")+'</div></div>';
+  document.body.appendChild(overlay);
+}
+
+// ── Inject plan events into SSE handler ──
+var _origHandleLine = window._handleLine;
+window._handleLine = function(line) {
+  try {
+    var ev = JSON.parse(line);
+    if (ev.kind === "plan_start") { onPlanStart(); return; }
+    if (ev.kind === "plan_step") { onPlanStep(ev.step || ev); return; }
+    if (ev.kind === "plan_done") { onPlanDone(); return; }
+    if (ev.kind === "approval_request") { showApprovalModal(ev.tool_name || ev.name || "未知工具"); return; }
+  } catch(_){}
+  if (_origHandleLine) _origHandleLine(line);
+};

@@ -123,3 +123,15 @@ html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;ba
   .sidebar{position:fixed;left:0;top:48px;bottom:0;z-index:40;transform:translateX(-100%);transition:transform .2s}
   .sidebar.open{transform:translateX(0)}
 }
+
+/* Plan bar */
+#planBar{display:none;background:#fafaf7;border-top:1px solid rgb(231 229 224);max-height:300px;overflow-y:auto}
+#planBar > div{padding:6px 16px;font-size:12px}
+
+/* Oasis input */
+.oasis-input{width:100%;border-radius:12px;border:1px solid rgb(231 229 224);background:#fff;padding:8px 12px;font-size:13px;color:#18181b;outline:none;transition:border-color .15s,box-shadow .15s}
+.oasis-input:focus{border-color:#18181b;box-shadow:0 0 0 3px rgba(24,24,27,.05)}
+
+/* Cursor blink */
+.cursor-blink::after{content:"▊";animation:blink 1s step-end infinite}
+@keyframes blink{50%{opacity:0}}
