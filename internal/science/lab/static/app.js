@@ -1,6 +1,8 @@
 const $ = (id) => document.getElementById(id);
 let activeProject = null;
 
+
+var threads=[{id:"main",title:"对话"}],activeThread="main";
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
