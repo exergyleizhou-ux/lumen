@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strconv"
 	"time"
 
 	"lumen/internal/config"
+	"lumen/internal/tlsutil"
 	labruntime "lumen/internal/science/lab/runtime"
 )
 
@@ -120,6 +122,7 @@ func (s *Server) ListenAndServe() error {
 		}
 		fmt.Printf("Lumen Science 实验室: %s\n", s.URL())
 		fmt.Println("Ctrl+C 退出实验室")
+		go s.serveHTTPS()
 		return s.srv.Serve(ln)
 	}
 	return fmt.Errorf("science lab: cannot bind %s after 10 attempts: %w", s.cfg.Addr, lastErr)
@@ -177,4 +180,23 @@ func openPanel(url string) error {
 		return exec.Command("open", url).Run()
 	}
 	return exec.Command("xdg-open", url).Run()
+}
+
+func (s *Server) serveHTTPS() {
+	host, portStr, _ := net.SplitHostPort(s.cfg.Addr)
+	if host == "" { host = "127.0.0.1" }
+	port, _ := strconv.Atoi(portStr); if port == 0 { port = DefaultPort }
+	httpsAddr := fmt.Sprintf("%s:%d", host, port+3)
+
+	tlsCfg, err := tlsutil.EnsureCert(s.cfg.SciDir)
+	if err != nil { return }
+	srv := &http.Server{
+		Addr:              httpsAddr,
+		Handler:           s.srv.Handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		TLSConfig:         tlsCfg,
+	}
+	fmt.Printf("Lumen Science Lab HTTPS: https://%s\n", httpsAddr)
+	_ = srv.ListenAndServeTLS("", "")
 }

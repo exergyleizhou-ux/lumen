@@ -169,7 +169,7 @@ function applyMode(m) {
     if (isLab) {
       const frame = $("labFrame");
       if (frame && frame.src === "about:blank") {
-        frame.src = "http://127.0.0.1:18992/?embed=1";
+        frame.src = (location.protocol === "https:" ? "https://127.0.0.1:18995" : "http://127.0.0.1:18992") + "/?embed=1";
       }
     }
   }
