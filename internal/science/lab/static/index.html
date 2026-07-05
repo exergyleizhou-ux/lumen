@@ -49,7 +49,7 @@ async function api(path,opts){
   var t=await r.text();try{return JSON.parse(t);}catch(_){return{raw:t}};
 }
 
-async function refreshHealth(){
+async async function refreshHealth(){
   var h=await api("/api/lab/health");
   $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
   var f=h.fleet||{};
@@ -69,7 +69,7 @@ async function refreshHealth(){
   return h;
 }
 
-async function loadProjects(){
+async async function loadProjects(){
   var list=await api("/api/lab/projects");
   var nav=$("projectList");nav.innerHTML="";if(!list.length)nav.innerHTML="<span class="hint">暂无课题，点击上方按钮创建</span>";
   list.forEach(function(p){
