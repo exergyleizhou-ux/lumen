@@ -73,7 +73,7 @@ async function refreshHealth(){
 async function loadProjects(){
   var list=await api("/api/lab/projects");
   var nav=$("projectList");nav.innerHTML="";
-  if(!list||!list.length){nav.innerHTML='<button class="btn fill" onclick="$('newProjectBtn').click()" style="font-size:11px;text-align:left">📋 暂无课题，点击创建</button>';return;}
+  if(!list||!list.length){nav.innerHTML='<a href="#" onclick="document.getElementById(\'newProjectBtn\').click();return false" class="btn fill" style="font-size:11px;text-align:left;text-decoration:none">📋 暂无课题，点击创建</a>';return;}
   list.forEach(function(p){
     var b=document.createElement("button");b.textContent=p.title;
     b.onclick=function(){activeProject=p;loadProjects();refreshFiles();};
