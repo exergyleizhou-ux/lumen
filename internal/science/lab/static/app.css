@@ -442,3 +442,8 @@ body::before{
 #chatScroll::-webkit-scrollbar-track{background:rgba(76,29,149,.08);border-radius:7px}
 #chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.22);border-radius:7px}
 #chatScroll::-webkit-scrollbar-thumb:hover{background:rgba(76,29,149,.4)}
+
+#chatScroll{overflow-y:scroll !important}
+#chatScroll::-webkit-scrollbar{width:12px;display:block !important}
+#chatScroll::-webkit-scrollbar-track{background:rgba(76,29,149,.06);border-radius:6px}
+#chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.2);border-radius:6px}

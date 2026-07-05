@@ -1,5 +1,9 @@
 <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><title>Lumen Science · 实验室</title>
 <link rel="stylesheet" href="assets/app.css?v=1">
+<style>
+html.dark{filter:invert(0.9) hue-rotate(180deg)}
+html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1) hue-rotate(180deg)}
+</style>
 </head><body>
 <div class="shell" id="shell">
   <header class="tb">
@@ -7,11 +11,12 @@
     <span class="tb-spacer"></span>
     <span class="tb-stat"><span class="tb-dot"></span><span id="packBadge">—</span></span>
     <span class="tb-stat" id="fleetBadge">—</span>
-    <a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
+    <button class="tb-btn" id="dmToggle" title="暗色模式" style="width:28px;height:28px;border:none;background:none;cursor:pointer;font-size:14px">🌙</button><a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
   </header>
   <div class="main">
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
+      <div style="display:flex;gap:4px;margin-bottom:6px"><button class="btn sm" id="briefBtn2" style="flex:1;font-size:10px">📋 Brief</button><button class="btn sm" id="c2dBtn2" style="flex:1;font-size:10px">🏷 C2D</button></div>
       <div id="projectList"></div>
       <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
         <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 连接状态 <span id="statusDot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#5b8c7a;margin-left:4px;box-shadow:0 0 0 3px rgba(91,140,122,.2)"></span></div>
@@ -136,7 +141,9 @@ document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("c
 // Init
 async function loadLogs(){
   var el=$("logBody");if(!el)return;
-  try{var r=await api("/api/lab/health");el.textContent=JSON.stringify(r,null,2);}catch(e){el.textContent=e.message;}
+  try{var r=await api("/api/lab/health");var f=r.fleet||{},p=r.research_pack||{};
+    el.innerHTML='<div class="set-card"><h3>📡 连接</h3><div class="set-row"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="set-row"><span class="k">版本</span><span class="v">'+(r.version||"dev")+'</span></div></div><div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 MCP</span><span class="v">'+(f.lumen_native||0)+'</span></div></div><div class="set-card"><h3>📦 Research</h3><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div></div>';
+  }catch(e){el.textContent=e.message;}
 }
 (async function(){await refreshHealth();await loadProjects();})();
 </script></body></html>
