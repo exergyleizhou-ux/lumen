@@ -308,3 +308,45 @@ body::before{
 /* Embed */
 .embed-oasis .tb{display:none}
 .embed-oasis .shell{padding:8px}
+
+/* Chat messages */
+.chat-msg{padding:6px 0;font-size:13px;line-height:1.65;word-break:break-word}
+.chat-msg.user{color:var(--ocs-user-fg);font-weight:650;background:var(--ocs-user-bg);padding:8px 14px;border-radius:12px;margin:4px 0 4px auto;max-width:80%;display:inline-block}
+.chat-msg.agent{padding:4px 0}
+.chat-msg.tool{font-size:11px;font-family:var(--mono);color:var(--ocs-muted);background:var(--ocs-surface-soft);padding:6px 10px;border-radius:8px;margin:3px 0;overflow-x:auto}
+
+/* Phase indicator */
+.chat-phase{font-size:11px;color:var(--ocs-muted);padding:3px 0;transition:opacity .3s;display:flex;align-items:center;gap:4px}
+.chat-phase.done{color:var(--ocs-success)}
+
+/* Thinking block */
+.chat-thinking{margin:6px 0;border:1px solid var(--ocs-line);border-radius:10px;overflow:hidden}
+.chat-thinking-hd{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;color:var(--ocs-muted);cursor:pointer;user-select:none;background:var(--ocs-surface-soft)}
+.chat-thinking-hd:hover{background:var(--ocs-accent-light)}
+.chat-thinking-dot{width:6px;height:6px;border-radius:50%;background:var(--ocs-accent);animation:pulse 1.5s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.chat-thinking-body{display:none;padding:8px 12px;font-size:11px;color:var(--ocs-muted);white-space:pre-wrap;max-height:300px;overflow-y:auto;background:var(--ocs-surface-soft)}
+.chat-thinking.open .chat-thinking-body{display:block}
+.chat-thinking.open .chat-thinking-hd{font-weight:650}
+
+/* Tool card */
+.chat-tool{margin:6px 0;border:1px solid var(--ocs-line);border-radius:10px;overflow:hidden}
+.chat-tool-hd{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;cursor:pointer;user-select:none;background:var(--ocs-surface-soft)}
+.chat-tool-hd:hover{background:var(--ocs-accent-light)}
+.chat-tool-icon{font-size:13px}
+.chat-tool-name{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-tool-status{font-size:10px;color:var(--ocs-muted);margin-left:auto}
+.chat-tool-body{display:none;padding:8px 12px;font-size:11px;background:var(--ocs-surface-soft)}
+.chat-tool-body pre{font-family:var(--mono);font-size:10px;color:var(--ocs-muted);white-space:pre-wrap;word-break:break-all;margin:0 0 6px}
+.chat-tool-output{font-family:var(--mono);font-size:10px;color:var(--ocs-ink);white-space:pre-wrap;max-height:200px;overflow-y:auto;padding:6px;background:rgba(255,255,255,.5);border-radius:6px}
+.chat-tool.open .chat-tool-body{display:block}
+.chat-tool.done .chat-tool-status{color:var(--ocs-success)}
+.chat-tool.done .chat-tool-hd{font-weight:400}
+
+/* Composer bar */
+.composer-bar{display:flex;align-items:center;gap:8px;padding:0 0 8px;flex-shrink:0}
+.composer-mode{height:28px;padding:0 8px;font-size:11px;font-family:inherit;font-weight:650;border:1px solid var(--ocs-line);border-radius:8px;background:var(--ocs-surface-soft);color:var(--ocs-muted);cursor:pointer}
+.composer-mode:focus{outline:none;border-color:var(--ocs-accent)}
+.composer-model{font-size:11px;color:var(--ocs-accent);font-weight:650;padding:3px 8px;background:var(--ocs-accent-soft);border-radius:6px}
+.composer-clear{height:28px;padding:0 10px;font-size:11px;font-family:inherit;border:1px solid var(--ocs-line);border-radius:8px;background:transparent;color:var(--ocs-muted);cursor:pointer;margin-left:auto}
+.composer-clear:hover{background:var(--ocs-accent-light);color:var(--ocs-accent)}

@@ -15,8 +15,8 @@ async function api(path, opts = {}) {
 
 function appendMsg(cls, text) {
   $("welcome")?.remove();
-  const el = document.createElement("div");
-  el.className = `msg ${cls}`;
+  var el = document.createElement("div");
+  el.className = "chat-msg " + cls;
   el.textContent = text;
   $("chatScroll").appendChild(el);
   el.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -67,34 +67,24 @@ async function ensureProject() {
   return p;
 }
 
-async function streamChat(prompt) {
-  const p = await ensureProject();
-  appendMsg("user", prompt);
-  const res = await fetch("/api/lab/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: p.slug, prompt, mode: "plan" }),
-  });
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buf = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const lines = buf.split("\n");
-    buf = lines.pop() || "";
-    for (const line of lines) {
-      if (!line.startsWith("data: ")) continue;
-      try {
-        const ev = JSON.parse(line.slice(6));
-        if (ev.kind === "text" && ev.text) appendMsg("agent", ev.text);
-        if (ev.kind === "tool" || ev.tool) appendMsg("tool", JSON.stringify(ev));
-        if (ev.kind === "error") appendMsg("agent", "错误: " + ev.text);
-      } catch (_) {}
-    }
-  }
-  refreshFiles();
+var currentMsgEl=null,currentToolEl=null,thinkingBlock=null;
+function thinkBlock(){var e=document.createElement("div");e.className="chat-thinking";e.innerHTML='<div class="chat-thinking-hd" onclick="this.parentElement.classList.toggle(\'open\')"><span class="chat-thinking-dot"></span>思考中…</div><div class="chat-thinking-body"></div>';return e;}
+function toolCard(name,args){var e=document.createElement("div");e.className="chat-tool open";var a=typeof args==="string"?args:JSON.stringify(args||{}).slice(0,200);e.innerHTML='<div class="chat-tool-hd" onclick="this.parentElement.classList.toggle(\'open\')"><span class="chat-tool-icon">🔧</span><span class="chat-tool-name">'+escHtml(name)+'</span><span class="chat-tool-status">执行中…</span></div><div class="chat-tool-body"><pre>'+escHtml(a)+'</pre><div class="chat-tool-output"></div></div>';return e;}
+function updTool(el,t,d){var s=el.querySelector(".chat-tool-status");if(s)s.textContent=d?"✓ 完成":t||"执行中…";if(d)el.classList.add("done");}
+function msgEl(cls){var e=document.createElement("div");e.className="chat-msg "+cls;return e;}
+
+async function streamChat(prompt,mode){
+  mode=mode||"plan";var p=await ensureProject();
+  var w=$("welcome");if(w)w.remove();
+  var ue=msgEl("user");ue.textContent=prompt;$("chatScroll").appendChild(ue);
+  var ae=msgEl("agent");$("chatScroll").appendChild(ae);
+  currentMsgEl=ae;currentToolEl=null;thinkingBlock=null;
+  try{
+    var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
+    var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop()||"";for(var i=0;i<lines.length;i++){var line=lines[i];if(!line.startsWith("data: "))continue;try{var ev=JSON.parse(line.slice(6));var k=ev.kind||"";if(k==="phase"){var ph=document.createElement("div");ph.className="chat-phase";ph.textContent=(ev.text||"")+" · 执行中";ae.appendChild(ph);setTimeout(function(){ph.style.opacity="0";setTimeout(function(){ph.remove();},300);},3000);}else if(k==="text"||k==="thinking"){if(!thinkingBlock){thinkingBlock=thinkBlock();ae.appendChild(thinkingBlock);thinkingBlock.classList.add("open");}var bd=thinkingBlock.querySelector(".chat-thinking-body");bd.textContent+=ev.text||"";bd.scrollTop=bd.scrollHeight;}else if(k==="tool"){if(thinkingBlock)thinkingBlock.classList.remove("open");if(currentToolEl)updTool(currentToolEl,"",true);currentToolEl=toolCard(ev.tool?.name||ev.name||"tool",ev.tool?.input||ev.input||{});ae.appendChild(currentToolEl);thinkingBlock=null;}else if(k==="tool_result"||k==="tool_output"){if(currentToolEl){var out=currentToolEl.querySelector(".chat-tool-output");out.textContent=(ev.text||"").slice(0,2000);updTool(currentToolEl,"",true);}}else if(k==="error"){appendMsg("agent","❌ "+(ev.text||"err"));}else if(k==="turn_done"){if(currentToolEl)updTool(currentToolEl,"",true);if(thinkingBlock)thinkingBlock.classList.remove("open");}else if(k==="usage"){}}catch(_){}}}
+  }catch(e){appendMsg("agent","错误: "+e.message);}
+  currentMsgEl=null;currentToolEl=null;thinkingBlock=null;refreshFiles();
 }
 
 // ── File panel ──
@@ -171,10 +161,11 @@ function escHtml(s) {
 
 $("composer")?.addEventListener("submit", (e) => {
   e.preventDefault();
-  const prompt = ($("promptInput").value || "").trim();
-  if (!prompt) return;
-  $("promptInput").value = "";
-  streamChat(prompt).catch((err) => appendMsg("agent", err.message));
+  var inp = $("promptInput"); if (!inp) return;
+  var prompt = inp.value.trim(); if (!prompt) return;
+  inp.value = "";
+  var mode = $("chatMode")?.value || "plan";
+  streamChat(prompt, mode).catch(function(err) { appendMsg("agent", "错误: " + err.message); });
 });
 
 $("newProjectBtn")?.addEventListener("click", async () => {
@@ -529,6 +520,14 @@ $("composerMenu")?.addEventListener("click",function(e){
   if(rr&&ip)makeResizable(rr,ip,true);
 })();
 
+// ── Composer toolbar ──
+(function addComposerBar(){
+  var form = $("composer"); if (!form) return;
+  var bar = document.createElement("div"); bar.className = "composer-bar";
+  bar.innerHTML = '<select id="chatMode" class="composer-mode"><option value="plan">Plan 只读</option><option value="bypass">Bypass 自动</option><option value="agent">Agent 审批</option></select><span class="composer-model" id="chatModel">deepseek-chat</span><button class="composer-clear" id="clearChatBtn" title="清空" type="button">清空</button>';
+  form.insertBefore(bar, form.firstChild);
+  $("clearChatBtn")?.addEventListener("click", function(){ $("chatScroll").innerHTML = '<div class="hero" id="welcome"><h2>Lumen Science 实验室</h2><p>CS Research Pack · 23 域 · 247 工具 · 28 fleet · 国产模型直连</p><div class="chips"><button class="chip" data-prompt=\"用 pubmed 域检索 aspirin 药理文献\">文献检索</button><button class="chip" data-prompt=\"生成 aspirin 四源 Research Brief\">生成简报</button><button class="chip" data-brief=\"EGFR 抑制剂\">一键 Brief</button></div></div>'; wireChips(); });
+})();
 // ── Init ──
 (async function(){
   try{await refreshHealth();await loadProjects();renderThreadTabs();}catch(e){$("inspectorBody").innerHTML='<div class="ft-err">'+e.message+'</div>';}
