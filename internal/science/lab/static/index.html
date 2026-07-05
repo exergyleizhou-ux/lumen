@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Lumen Science · 实验室</title>
-<link rel="stylesheet" href="assets/app.css?v=200">
+<link rel="stylesheet" href="assets/app.css?v=99">
 </head><body>
 <div class="splash" id="splash"><div class="spinner"></div>Lumen Science 实验室</div>
 <div class="shell" id="shell">
@@ -15,12 +15,8 @@
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div id="projectList"></div>
-      <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
-        <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 连接状态</div>
-        <div id="sbFleet" style="color:var(--ocs-muted)">—</div>
-        <div id="sbPack" style="color:var(--ocs-muted);margin-top:2px">—</div>
-      </div>
-      
+      <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6"><div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 状态</div><div id="sbFleet" style="color:var(--ocs-muted)">—</div><div id="sbPack" style="color:var(--ocs-muted);margin-top:2px">—</div></div>
+      <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
     <section class="ctr">
@@ -40,7 +36,6 @@
   </div>
 </div>
 <script>
-// === Minimal working Lab JS ===
 var $=function(id){return document.getElementById(id);};
 var activeProject=null,activeThread="main";
 
@@ -55,30 +50,22 @@ async function refreshHealth(){
   var f=h.fleet||{};
   $("fleetBadge").textContent=(f.connected_total||0)+"/"+(f.cs_domains||0)+" fleet";
   $("inspectorBody").innerHTML='<div class="sr"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="sr-div"></div><div class="sr"><span class="k">Research</span><span class="v">'+(h.research_pack||{}).domain_tools+' tools</span></div><div class="sr"><span class="k">Fleet</span><span class="v">'+f.connected_total+'/'+f.cs_domains+' CS + '+f.lumen_native+' 原生</span></div><div class="sr-div"></div><div class="sr"><span class="k">模型</span><span class="v">'+((h.provider||{}).masked||"—")+'</span></div>';
-  // Sidebar
-  var sf=$("sbFleet");if(sf)sf.innerHTML="⚡ "+f.connected_total+"/"+f.cs_domains+" CS domains · "+f.lumen_native+" 原生 MCP";
-  var sp=$("sbPack");if(sp)sp.innerHTML="📦 "+((h.research_pack||{}).domain_tools||0)+" tools · "+((h.research_pack||{}).skills||0)+" skills";
-  return h;
-}
-  var h=await api("/api/lab/health");
-  $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
-  var f=h.fleet||{};
-  $("fleetBadge").textContent="⚡ "+(f.connected_total||0)+"/"+(f.cs_domains||0);
-  
-  $("inspectorBody").innerHTML='<div class="sr"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="sr-div"></div><div class="sr"><span class="k">Research</span><span class="v">'+(h.research_pack||{}).domain_tools+' tools</span></div><div class="sr"><span class="k">Fleet</span><span class="v">'+f.connected_total+'/'+f.cs_domains+'</span></div><div class="sr-div"></div><div class="sr"><span class="k">模型</span><span class="v">'+((h.provider||{}).masked||"—")+'</span></div>';
+  var sf=$("sbFleet");if(sf)sf.innerHTML=(f.connected_total||0)+"/"+(f.cs_domains||0)+" CS · "+(f.lumen_native||0)+" 原生";
+  var sp=$("sbPack");if(sp)sp.innerHTML=((h.research_pack||{}).domain_tools||0)+" tools · "+((h.research_pack||{}).skills||0)+" skills";
   return h;
 }
 
-async async function loadProjects(){
+async function loadProjects(){
   var list=await api("/api/lab/projects");
-  var nav=$("projectList");nav.innerHTML="";if(!list.length)nav.innerHTML="<span class="hint">暂无课题，点击上方按钮创建</span>";
+  var nav=$("projectList");nav.innerHTML="";
+  if(!list.length){nav.innerHTML='<span class="hint">点击 + 新建课题</span>';return;}
   list.forEach(function(p){
     var b=document.createElement("button");b.textContent=p.title;
     b.onclick=function(){activeProject=p;loadProjects();refreshFiles();};
     if(activeProject&&activeProject.slug===p.slug)b.classList.add("active");
     nav.appendChild(b);
   });
-  if(!activeProject&&list.length){activeProject=list[0];refreshFiles();}
+  if(!activeProject){activeProject=list[0];refreshFiles();}
 }
 
 async function ensureProject(){
@@ -87,86 +74,56 @@ async function ensureProject(){
   await loadProjects();return activeProject;
 }
 
-// === CHAT — the working version ===
+// Chat — clean streamChat
 async function streamChat(prompt){
   var p=await ensureProject();
   var ue=document.createElement("div");ue.className="chat-msg user";ue.textContent=prompt;
   $("chatScroll").appendChild(ue);
   var w=$("welcome");if(w)w.style.display="none";
   var wrap=document.createElement("div");wrap.className="chat-msg agent-wrap";$("chatScroll").appendChild(wrap);
-  var think=null,tb=null,tl=null;
   var resp=document.createElement("div");resp.className="chat-msg agent";wrap.appendChild(resp);
-  var ta="",tha="",tc=0,streaming=false;
+  var think=null,tb=null,ta="",tc=0;
   try{
     var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:"plan",session_id:activeThread})});
     var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
-      if(ev.kind==="text"){
-        streaming=true;ta+=ev.text||"";resp.innerHTML=renderMD(ta)+(streaming?'<span class="cursor">▌</span>':'');
-      }
-      else if(ev.kind==="thinking"){
-        tha+=ev.text||"";if(!think){think=document.createElement("details");think.className="think-block";think.open=true;think.innerHTML='<summary class="think-summary"><span class="think-dot"></span>🧠 思考中…</summary><div class="think-body"></div>';wrap.insertBefore(think,resp);tb=think.querySelector(".think-body");}
-        tb.innerHTML=renderMD(tha);
-      }
-      else if(ev.kind==="tool_dispatch"){
-        tc++;var tn=(ev.tool&&ev.tool.name)?ev.tool.name:("tool_"+tc);
-        resp.innerHTML+='<div class="tool-tag">🔧 '+escHtml(tn)+'</div>';
-      }
-      else if(ev.kind==="tool_result"){
-        resp.innerHTML+='<div class="tool-done">✓</div>';
-      }
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("
+");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
+      if(ev.kind==="text"){ta+=ev.text||"";resp.innerHTML=renderMD(ta);}
+      else if(ev.kind==="thinking"){if(!think){think=document.createElement("details");think.className="think-block";think.open=true;think.innerHTML='<summary class="think-summary"><span class="think-dot"></span>🧠 思考中…</summary><div class="think-body"></div>';wrap.insertBefore(think,resp);tb=think.querySelector(".think-body");}tb.textContent+=ev.text||"";}
+      else if(ev.kind==="tool_dispatch"){tc++;var tn=(ev.tool&&ev.tool.name)?ev.tool.name:("tool_"+tc);resp.innerHTML+='<span class="tool-tag">🔧 '+escHtml(tn)+'</span>';}
+      else if(ev.kind==="tool_result"){resp.innerHTML+='<span class="tool-done">✓</span>';}
       else if(ev.kind==="error"){resp.innerHTML+='<span style="color:#b42318"> ❌ '+(ev.text||"err")+'</span>';}
-      else if(ev.kind==="turn_done"){streaming=false;resp.innerHTML=renderMD(ta);if(think&&!tha)think.remove();}
+      else if(ev.kind==="turn_done"&&think){think.open=false;}
     }}
   }catch(e){resp.textContent="错误: "+e.message;}
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
 }
 
-// Files
+function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/
+
+/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
+function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function fmtSize(b){if(!b||b<1024)return(b||0)+"B";if(b<1048576)return(b/1024).toFixed(1)+"KB";return(b/1048576).toFixed(1)+"MB";}
+
 async function refreshFiles(){
   var el=$("fileTree");if(!el||!activeProject)return;
-  try{
-    var data=await api("/api/lab/files?project_id="+activeProject.slug);
-    el.innerHTML=(data.files||[]).map(function(f){return '<div class="ft-row" onclick="previewFile(\''+f.name+'\')"><span>📄</span><span class="ft-name">'+f.name+'</span><span class="ft-size">'+(f.size?fmtSize(f.size):"")+'</span></div>';}).join("");
-  }catch(e){el.innerHTML='<div class="ft-err">'+e.message+'</div>';}
+  try{var d=await api("/api/lab/files?project_id="+activeProject.slug);el.innerHTML=(d.files||[]).map(function(f){return'<div class="ft-row"><span>📄</span><span class="ft-name">'+f.name+'</span><span class="ft-size">'+(f.size?fmtSize(f.size):"")+'</span></div>';}).join("");}catch(e){el.innerHTML='<div class="ft-err">'+e.message+'</div>';}
 }
 
 async function previewFile(path){
   var fp=$("filePreview");if(!fp||!activeProject)return;
-  try{
-    var data=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));
-    fp.innerHTML='<div class="fp-hd">📄 '+data.path+' ('+fmtSize(data.size)+')</div><pre class="fp-body">'+escHtml(data.content)+'</pre>';
-  }catch(e){fp.innerHTML='<div class="ft-err">'+e.message+'</div>';}
+  try{var d=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));fp.innerHTML='<div class="fp-hd">📄 '+d.path+'</div><pre class="fp-body">'+escHtml(d.content||"")+'</pre>';}catch(e){fp.innerHTML='<div class="ft-err">'+e.message+'</div>';}
 }
-
-function fmtSize(b){if(!b||b<1024)return (b||0)+"B";if(b<1048576)return (b/1024).toFixed(1)+"KB";return (b/1048576).toFixed(1)+"MB";}
-function renderMD(t){if(!t)return"";
-  t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-  // Tables: | a | b |\n|--|--|\n| 1 | 2 |
-  t=t.replace(/\|(.+)\|\n\|[-: |]+\|\n((?:\|.+\|\n?)+)/gm,function(m,h,r){
-    var hdr="<tr>"+h.split("|").map(function(c){return"<th>"+c.trim()+"</th>";}).join("")+"</tr>";
-    var rows=r.trim().split("\n").map(function(rw){return"<tr>"+rw.split("|").filter(function(c){return c.trim();}).map(function(c){return"<td>"+c.trim()+"</td>";}).join("")+"</tr>";}).join("");
-    return"<table>"+hdr+rows+"</table>";
-  });
-  // Headings, bold, code, lists
-  t=t.replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>");
-  t=t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>");
-  t=t.replace(/^- (.+)$/gm,"<li>$1</li>").replace(/(<li>.*<\/li>)/s,"<ul>$1</ul>");
-  t=t.replace(/^> (.+)$/gm,"<blockquote>$1</blockquote>");
-  t=t.replace(/\n\n/g,"</p><p>");
-  if(!t.match(/^<[a-z]/))t="<p>"+t+"</p>";
-  return t;}
-function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
 // Events
 $("composer").addEventListener("submit",function(e){e.preventDefault();var p=$("promptInput").value.trim();if(!p)return;$("promptInput").value="";streamChat(p);});
 $("newProjectBtn").addEventListener("click",async function(){var t=prompt("课题名称");if(!t)return;activeProject=await api("/api/lab/projects",{method:"POST",body:JSON.stringify({title:t})});await loadProjects();});
 document.querySelectorAll(".chip").forEach(function(b){b.addEventListener("click",function(){if(this.dataset.prompt)streamChat(this.dataset.prompt);});});
 // Tabs
-document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("active");});this.classList.add("active");var p=this.dataset.pane;["statusPane","filesPane","fleetPane","ketcherPane","moleculePane","settingsPane"].forEach(function(id){var el=$(id);if(el)el.hidden=id!==p+"Pane";});if(p==="files")refreshFiles();if(p==="fleet")refreshFleet();});});
+document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("active");});this.classList.add("active");var p=this.dataset.pane;$("statusPane").hidden=p!=="status";$("filesPane").hidden=p!=="files";if(p==="files")refreshFiles();});});
 // Resize
-(function(){function mk(h,p,isRight){h.onmousedown=function(e){e.preventDefault();var sx=e.clientX,sw=p.getBoundingClientRect().width;h.classList.add("active");document.body.style.cursor="col-resize";document.body.style.userSelect="none";function mv(e){var d=isRight?sx-e.clientX:e.clientX-sx;p.style.width=Math.max(160,Math.min(500,sw+d))+"px";}function up(){h.classList.remove("active");document.body.style.cursor="";document.body.style.userSelect="";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);}document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);};}var rl=$("resizeLeft"),rr=$("resizeRight"),sp=$("sidebarPanel"),ip=$("inspectorPanel");if(rl&&sp)mk(rl,sp,false);if(rr&&ip)mk(rr,ip,true);})();
-
+(function(){function mk(h,p,d){h.onmousedown=function(e){e.preventDefault();var sx=e.clientX,sw=p.getBoundingClientRect().width;h.classList.add("active");document.body.style.cursor="col-resize";document.body.style.userSelect="none";function mv(e){p.style.width=Math.max(160,Math.min(500,sw+(d?sx-e.clientX:e.clientX-sx)))+"px";}function up(){h.classList.remove("active");document.body.style.cursor="";document.body.style.userSelect="";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);}document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);};}var rl=$("resizeLeft"),rr=$("resizeRight"),sp=$("sidebarPanel"),ip=$("inspectorPanel");if(rl&&sp)mk(rl,sp,false);if(rr&&ip)mk(rr,ip,true);})();
 // Init
-(async function(){try{await refreshHealth();await loadProjects();setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},800);}catch(e){$("inspectorBody").textContent=e.message;}})();
+setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1000);
+(async function(){try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}})();
 </script></body></html>
