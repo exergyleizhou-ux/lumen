@@ -1,9 +1,33 @@
 /* Oasis Lumen — pixel-perfect replica of demo.oasisdata2026.xyz */
 :root {
-  --font: "Geist","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
-  --mono: "Geist Mono","JetBrains Mono","SF Mono",ui-monospace,monospace;
-  --display: "Instrument Serif","Georgia",serif;
+  --paper: #fafaf7;
+  --ink: #18181b;
+  --ink-80: rgba(24,24,27,0.8);
+  --ink-60: rgba(24,24,27,0.6);
+  --ink-40: rgba(24,24,27,0.4);
+  --accent: #b45309;
+  --accent-hover: #92400e;
+  --accent-soft: rgba(180,83,9,0.08);
+  --accent-border: rgba(180,83,9,0.2);
+  --green: #047857;
+  --green-soft: rgba(4,120,87,0.08);
+  --surface: #ffffff;
+  --sidebar: #f4f3ef;
+  --sidebar-hover: #ebeae4;
+  --rule: #e7e5e0;
+  --rule-strong: #d4d2cd;
+  --shadow-sm: 0 1px 2px rgba(24,24,27,0.04);
+  --shadow-md: 0 4px 20px rgba(24,24,27,0.06);
+  --shadow-lg: 0 10px 30px -16px rgba(24,24,27,0.16);
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --font: "Geist","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --mono: "Geist Mono","JetBrains Mono","SF Mono","Fira Code",ui-monospace,monospace;
+  --sidebar-w: 260px;
 }
+
 *{box-sizing:border-box;margin:0;padding:0}
 
 html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;background:#fafaf7;-webkit-font-smoothing:antialiased}
