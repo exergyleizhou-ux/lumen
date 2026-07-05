@@ -75,10 +75,14 @@ async function loadProjects(){
   var nav=$("projectList");nav.innerHTML="";
   if(!list||!list.length){nav.innerHTML='<a href="#" onclick="document.getElementById(\'newProjectBtn\').click();return false" class="btn fill" style="font-size:11px;text-align:left;text-decoration:none">📋 暂无课题，点击创建</a>';return;}
   list.forEach(function(p){
-    var b=document.createElement("button");b.textContent=p.title;
+    var row=document.createElement("div");row.style.cssText="display:flex;align-items:center;gap:2px";
+    var b=document.createElement("button");b.textContent=p.title;b.style.cssText="flex:1;text-align:left;height:34px;padding:0 10px;font-size:12px;border:none;border-radius:8px;background:transparent;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:inherit;color:inherit";
     b.onclick=function(){activeProject=p;loadProjects();refreshFiles();};
     if(activeProject&&activeProject.slug===p.slug)b.classList.add("active");
-    nav.appendChild(b);
+    var d=document.createElement("button");d.innerHTML="✕";d.title="删除课题";d.style.cssText="width:24px;height:24px;border:none;border-radius:6px;background:transparent;color:var(--ocs-muted);cursor:pointer;font-size:14px;flex-shrink:0;opacity:0;transition:opacity .15s";
+    d.onclick=async function(e){e.stopPropagation();if(!confirm('删除课题: '+p.title+'?'))return;await api('/api/lab/projects/'+p.slug,{method:'DELETE'});if(activeProject&&activeProject.slug===p.slug)activeProject=null;loadProjects();};
+    row.onmouseenter=function(){d.style.opacity="1";};row.onmouseleave=function(){d.style.opacity="0";};
+    row.appendChild(b);row.appendChild(d);nav.appendChild(row);
   });
   if(!activeProject&&list.length){activeProject=list[0];refreshFiles();}
 }

@@ -176,6 +176,15 @@ func (s *Store) ProjectDir(slug string) (string, error) {
 	return s.projectDir(slug), nil
 }
 
+
+// Delete removes a project and all its data.
+func (s *Store) Delete(slug string) error {
+	if !slugRe.MatchString(slug) {
+		return fmt.Errorf("invalid slug %q", slug)
+	}
+	return os.RemoveAll(s.projectDir(slug))
+}
+
 func (s *Store) save(p Project) error {
 	dir := s.projectDir(p.Slug)
 	data, err := json.MarshalIndent(p, "", "  ")

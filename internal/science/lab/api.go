@@ -152,6 +152,14 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := parts[0]
 	if len(parts) == 1 {
+		if r.Method == http.MethodDelete {
+			if err := a.projects.Delete(slug); err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+			return
+		}
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
