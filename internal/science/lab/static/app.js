@@ -74,7 +74,7 @@ async function streamChat(prompt, mode) {
   // User bubble
   var ue = document.createElement("div"); ue.className = "chat-msg user"; ue.textContent = prompt;
   $("chatScroll").appendChild(ue);
-  // Agent bubble — single element, text accumulated
+  // Agent bubble
   $("welcome")?.remove();
   var ae = document.createElement("div"); ae.className = "chat-msg agent";
   $("chatScroll").appendChild(ae);
@@ -82,21 +82,9 @@ async function streamChat(prompt, mode) {
   try {
     var res = await fetch("/api/lab/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
     var reader = res.body.getReader(); var dec = new TextDecoder(); var buf = "";
-    while(true){
-      var r = await reader.read(); if(r.done)break;
-      buf += dec.decode(r.value,{stream:true});
-      var lines = buf.split("\n"); buf = lines.pop();
-      for(var i=0;i<lines.length;i++){
-        var line = lines[i]; if(line.indexOf("data:")!==0)continue;
-        var json = line.slice(5).trim(); if(!json.startsWith("{"))continue;
-        try{var ev=JSON.parse(json);
-          if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.textContent=textAcc;}
-          if(ev.kind==="error"){textAcc+="\n❌ "+(ev.text||"err");ae.textContent=textAcc;}
-        }catch(_){}
-      }
-      $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
-    }
-  }catch(e){ae.textContent = "错误: "+e.message;}
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.textContent=textAcc;}}}
+  }catch(e){ae.textContent="错误: "+e.message;}
+  $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
   refreshFiles();
 }
 
@@ -327,21 +315,6 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
   if(rr&&ip)makeResizable(rr,ip,true);
 })();
 
-
-function wireChips() {
-  document.querySelectorAll(".chip").forEach(function(btn) {
-    btn.addEventListener("click", async function() {
-      if (this.dataset.brief) {
-        var p = await ensureProject();
-        var res = await api("/api/lab/brief", { method: "POST", body: JSON.stringify({ project_id: p.slug, topic: this.dataset.brief }) });
-        appendMsg("agent", "Brief 已写入 " + res.path);
-        return;
-      }
-      if (this.dataset.prompt) streamChat(this.dataset.prompt).catch(function(e) { appendMsg("agent", e.message); });
-    });
-  });
-}
-wireChips();
 
 // ── Init ──
 (async function(){
