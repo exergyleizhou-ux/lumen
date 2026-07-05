@@ -168,7 +168,8 @@ function addToolCard(parent, name, state) {
   hd.className = `tool-hd ${state}`;
   const spin = state === "running" ? '<span class="tool-spin"></span>' : "";
   const icon = state === "done-ok" ? "✓" : state === "done-err" ? "✗" : "⚙";
-  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>`;
+  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>` +
+    (state === "running" ? '<span class="tool-approve-btn" style="margin-left:auto;font-size:10px;cursor:pointer;padding:2px 8px;border-radius:4px;background:var(--ocs-success, #5b8c7a);color:#fff" onclick="event.stopPropagation();if(window.pendingApprovalId){fetch('/api/approve/'+window.pendingApprovalId,{method:'POST'});this.textContent='已批准';this.style.background='var(--ocs-muted)';?.close();}">✓ 批准</span>' : '');
   card.appendChild(hd);
   parent.querySelector(".msg-body").appendChild(card);
   return hd;
@@ -1038,3 +1039,60 @@ if(!_origHandleSSE){
   });
 }
 
+
+// Input bar enhancements
+function fillInput(text){
+  var inp=$("input"); if(inp){inp.value+=text;inp.focus();}
+  var menu=$("mentionMenu"); if(menu)menu.style.display="none";
+}
+$("mentionBtn")?.addEventListener("click",function(e){
+  e.stopPropagation();
+  var menu=$("mentionMenu"); if(menu)menu.style.display=menu.style.display==="block"?"none":"block";
+});
+document.addEventListener("click",function(){var m=$("mentionMenu");if(m)m.style.display="none";});
+// Hover style for mention items
+document.querySelectorAll(".mention-item").forEach(function(el){
+  el.addEventListener("mouseenter",function(){this.style.background="var(--accent-light)";});
+  el.addEventListener("mouseleave",function(){this.style.background="";});
+});
+
+// Plan send button
+$("planSendBtn")?.addEventListener("click",function(){
+  var inp=$("input"); if(!inp||!inp.value.trim()) return;
+  // Set mode to plan and submit
+  var modeSel=$("modeSelect"); if(modeSel)modeSel.value="plan";
+  $("composer")?.querySelector('[type="submit"]')?.click();
+});
+
+// Token estimator
+$("input")?.addEventListener("input",function(){
+  var chars=this.value.length;
+  var tokens=Math.max(1,Math.round(chars/4));
+  var est=$("tokenEst"); if(est)est.textContent="~"+tokens+" tokens";
+});
+
+// ⌘K Command palette
+document.addEventListener("keydown",function(e){
+  if((e.metaKey||e.ctrlKey)&&e.key==="k"){e.preventDefault();showCmdPalette();}
+});
+function showCmdPalette(){
+  var existing=$("cmdPalette");if(existing){existing.style.display="flex";return;}
+  var overlay=document.createElement("div");overlay.id="cmdPalette";overlay.style.cssText="position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;justify-content:center;padding-top:16vh;backdrop-filter:blur(4px)";
+  var box=document.createElement("div");box.style.cssText="width:440px;max-height:360px;background:var(--surface);border-radius:14px;box-shadow:0 16px 48px rgba(0,0,0,.2);overflow:hidden;border:1px solid var(--rule)";
+  var inp=document.createElement("input");inp.placeholder="搜索命令…";inp.style.cssText="width:100%;padding:12px 16px;border:none;border-bottom:1px solid var(--rule);font-size:14px;outline:none;font-family:inherit;background:transparent;color:var(--ink)";
+  var results=document.createElement("div");results.style.cssText="max-height:280px;overflow-y:auto";
+  var cmds=[
+    {label:"/workflow 工作流",action:function(){fillInput("/workflow ");closePalette();}},
+    {label:"/ultra 超级模式",action:function(){fillInput("/ultra ");closePalette();}},
+    {label:"切换 Plan 模式",action:function(){var m=$("modeSelect");if(m)m.value="plan";closePalette();}},
+    {label:"切换暗色模式",action:function(){var b=$("dmToggle");if(b)b.click();closePalette();}},
+    {label:"打开文件面板",action:function(){toggleFilePanel();closePalette();}},
+    {label:"打开设置",action:function(){$("settingsBtn")?.click();closePalette();}},
+  ];
+  function render(q){results.innerHTML="";cmds.filter(function(c){return c.label.toLowerCase().includes((q||"").toLowerCase());}).forEach(function(c){var d=document.createElement("div");d.style.cssText="padding:8px 16px;font-size:13px;cursor:pointer;font-weight:650";d.textContent=c.label;d.addEventListener("click",c.action);d.addEventListener("mouseenter",function(){d.style.background="var(--sidebar-hover)";});results.appendChild(d);});}
+  render("");inp.addEventListener("input",function(){render(inp.value);});
+  inp.addEventListener("keydown",function(e){if(e.key==="Escape")closePalette();if(e.key==="Enter"){var first=results.querySelector("div");if(first)first.click();}});
+  overlay.addEventListener("click",function(e){if(e.target===overlay)closePalette();});
+  function closePalette(){overlay.remove();}
+  box.appendChild(inp);box.appendChild(results);overlay.appendChild(box);document.body.appendChild(overlay);inp.focus();
+}
