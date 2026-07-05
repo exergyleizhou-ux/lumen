@@ -117,14 +117,31 @@
     </main>
 
     <aside class="file-panel" id="filePanel" hidden>
-      <div class="file-panel-hd"><span>📁 文件</span><span id="changedHint" style="font-size:10px;color:var(--accent);margin-left:8px"></span>
-        <div style="display:flex;gap:4px">
+      <div class="file-panel-hd">
+        <div class="fp-tabs" style="display:flex;gap:4px">
+          <button class="fp-tab active" data-fptab="files" style="font-size:11px;font-weight:650;padding:4px 10px;border:none;border-radius:6px;background:var(--accent-soft);color:var(--accent);cursor:pointer">📁 文件</button>
+          <button class="fp-tab" data-fptab="plan" style="font-size:11px;font-weight:650;padding:4px 10px;border:none;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer">📋 计划</button>
+        </div>
+        <button class="btn-icon sm" id="filePanelClose" type="button">✕</button>
+      </div>
+      <div id="fpFilesPane" class="scrollbar-subtle" style="flex:1;overflow-y:auto">
+        <div style="display:flex;gap:4px;margin:6px 0">
           <input type="file" id="fileUploadInput" multiple style="display:none" onchange="uploadFiles(this.files)">
           <button class="btn-icon sm" id="uploadBtn" type="button" title="上传文件">📤</button>
           <button class="btn-icon sm" id="deleteFileBtn" type="button" title="删除选中文件" style="color:#b42318">🗑 删除</button>
-        </div><button class="btn-icon sm" id="filePanelClose" type="button">✕</button></div>
-      <div class="file-panel-tree scrollbar-subtle" id="fileTree"></div>
-      <div class="file-panel-preview" id="filePreview"></div>
+        </div>
+        <div class="file-panel-tree" id="fileTree"></div>
+        <div class="file-panel-preview" id="filePreview"></div>
+      </div>
+      <div id="fpPlanPane" style="flex:1;overflow-y:auto;padding:8px;display:none">
+        <div id="planStats" style="font-size:11px;color:var(--muted);margin-bottom:8px;display:none"></div>
+        <div id="planSteps"></div>
+        <div id="planActions" style="display:none;margin-top:8px;display:flex;gap:6px">
+          <button id="planApproveAll" class="btn sm" style="flex:1;background:var(--ocs-success);color:#fff;border-color:var(--ocs-success)">✓ 批准全部安全步骤</button>
+          <button id="planRejectAll" class="btn sm" style="flex:1;color:#b42318">✗ 拒绝并重新规划</button>
+        </div>
+      </div>
+    </aside>
     <div class="sidebar-ft" style="padding:8px 12px;border-top:1px solid var(--rule);font-size:10px;line-height:1.5;color:var(--muted)">
         <div id="sbFleet">⚡ —</div>
         <div id="sbModel">🧠 —</div>

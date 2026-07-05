@@ -247,6 +247,12 @@ async function streamWorkflow(action, prompt) {
             scrollChat();
           } else if (ev.kind === "plan_ready") {
             showPlanBar(ev.text || prompt);
+          } else if (ev.kind === "plan_start") {
+            onPlanStart();
+          } else if (ev.kind === "plan_step") {
+            onPlanStep(ev.step || ev);
+          } else if (ev.kind === "plan_done") {
+            onPlanDone();
           } else if (ev.kind === "workflow_done") {
             hidePlanBar();
           } else if (ev.kind === "error") {
@@ -495,6 +501,12 @@ async function send() {
             case "turn_done":
               turn++;
               break;
+            case "plan_start":
+              onPlanStart(); break;
+            case "plan_step":
+              onPlanStep(ev.step || ev); break;
+            case "plan_done":
+              onPlanDone(); break;
           }
         } catch (_) {}
       }
@@ -940,3 +952,89 @@ function previewFile(path){
 }
 document.getElementById("filesBtn")?.addEventListener("click",toggleFilePanel);
 document.getElementById("filePanelClose")?.addEventListener("click",function(){filePanelOpen=false;var p=document.getElementById("filePanel");if(p)p.hidden=true;});
+
+// ── Plan 看板 ──
+var planSteps=[], planOpen=false, planApproved={};
+
+function showPlanPanel(){
+  var fp=$("filePanel"); if(fp)fp.hidden=false; planOpen=true;
+  var pane=$("fpFilesPane"),ppane=$("fpPlanPane");
+  if(pane)pane.style.display="none"; if(ppane)ppane.style.display="block";
+  document.querySelectorAll(".fp-tab").forEach(function(t){t.classList.toggle("active",t.dataset.fptab==="plan");});
+}
+function showFilesPanel(){
+  var pane=$("fpFilesPane"),ppane=$("fpPlanPane");
+  if(pane)pane.style.display="block"; if(ppane)ppane.style.display="none";
+  planOpen=false;
+  document.querySelectorAll(".fp-tab").forEach(function(t){t.classList.toggle("active",t.dataset.fptab==="files");});
+}
+// Tab clicks
+document.querySelectorAll(".fp-tab").forEach(function(t){t.addEventListener("click",function(){
+  if(this.dataset.fptab==="plan")showPlanPanel();else showFilesPanel();
+});});
+
+function renderPlanStep(step){
+  var el=$("planSteps"); if(!el) return;
+  var card=document.createElement("div");
+  card.className="plan-step-card"; card.setAttribute("data-step-id",step.id||"");
+  card.style.cssText="margin-bottom:8px;padding:10px 12px;border:1px solid var(--ocs-line);border-radius:10px;background:var(--ocs-surface-soft);border-left:4px solid "+(planApproved[step.id]?"var(--ocs-success)":"var(--ocs-accent)");
+  var riskColors={low:"#5b8c7a",mid:"#c28b4b",high:"#b42318"};
+  var risk=step.risk||"low";
+  card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div style="font-size:12px;font-weight:650;color:var(--ocs-ink)">'+(step.idx||"")+". '+escapeHtml(step.title||"步骤")+'</div><div style="font-size:11px;color:var(--ocs-muted);margin-top:2px">'+escapeHtml(step.desc||"")+'</div>'+
+    (step.files&&step.files.length?'<div style="margin-top:4px;font-size:10px">'+step.files.map(function(f){return'<span style="color:var(--ocs-accent);cursor:pointer;margin-right:8px">📄 '+escapeHtml(f)+'</span>';}).join("")+'</div>':'')+
+    '<div style="display:flex;gap:6px;margin-top:6px"><span style="font-size:10px;padding:1px 6px;border-radius:4px;background:'+(riskColors[risk]||riskColors.low)+'20;color:'+(riskColors[risk]||riskColors.low)+'">'+(step.risk||"低")+'风险</span><span style="font-size:10px;color:var(--ocs-muted)">~'+((step.lines||0)||"?")+' 行</span></div></div>'+
+    (planApproved[step.id]?'<span style="color:var(--ocs-success);font-weight:650;font-size:11px">✓ 已批准</span>':'<div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0"><button class="btn sm plan-approve" style="font-size:10px;background:var(--ocs-success);color:#fff;border-color:var(--ocs-success)" data-sid="'+step.id+'">批准</button><button class="btn sm plan-skip" style="font-size:10px;color:var(--ocs-muted)" data-sid="'+step.id+'">跳过</button></div>')+
+    '</div>';
+  el.appendChild(card);
+  // Wire buttons
+  card.querySelector(".plan-approve")?.addEventListener("click",function(e){e.stopPropagation();planApproved[step.id]=true;refreshPlanUI();});
+  card.querySelector(".plan-skip")?.addEventListener("click",function(e){e.stopPropagation();planApproved[step.id]="skip";refreshPlanUI();});
+}
+
+function refreshPlanUI(){
+  var el=$("planSteps"); if(!el)return; el.innerHTML="";
+  planSteps.forEach(renderPlanStep);
+  // Show/hide actions
+  var act=$("planActions"); if(act)act.style.display=planSteps.some(function(s){return planApproved[s.id];})?"flex":"none";
+  // Update stats
+  var stats=$("planStats"); if(stats&&planSteps.length){
+    var files=new Set(); planSteps.forEach(function(s){(s.files||[]).forEach(function(f){files.add(f);});});
+    stats.style.display="block";
+    stats.innerHTML="📋 "+planSteps.length+" 步骤 · 📄 "+files.size+" 文件 · ~"+(planSteps.reduce(function(a,s){return a+(s.lines||0);},0)||"?")+" 行";
+  }
+  // Auto-show plan panel when steps arrive
+  if(planSteps.length>0&&!planOpen) showPlanPanel();
+}
+
+// SSE plan event handlers
+function onPlanStart(){planSteps=[];planApproved={};var el=$("planSteps");if(el)el.innerHTML="";showPlanPanel();}
+function onPlanStep(step){planSteps.push(step);renderPlanStep(step);refreshPlanUI();}
+function onPlanDone(){refreshPlanUI();var act=$("planActions");if(act)act.style.display="flex";}
+
+// Wire approve all / reject all
+$("planApproveAll")?.addEventListener("click",function(){
+  planSteps.forEach(function(s){if(planApproved[s.id]!="skip")planApproved[s.id]=true;});
+  refreshPlanUI();
+  // Notify backend
+  try{fetch("/api/plan/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({approved:Object.keys(planApproved).filter(function(k){return planApproved[k]===true;})})});}catch(_){}
+});
+$("planRejectAll")?.addEventListener("click",function(){planSteps=[];planApproved={};refreshPlanUI();showFilesPanel();});
+
+// Intercept SSE in the existing message handlers - patch the plan_ready case
+var _origPlanReady = window.showPlanBar;
+window.showPlanBar = function(prompt){
+  if(_origPlanReady) _origPlanReady(prompt);
+  // Also open plan panel
+  setTimeout(function(){onPlanStart();},100);
+};
+
+// Hook into the existing SSE stream for plan_step events
+var _origHandleSSE = window._handleChatLine || window.handleSSE;
+if(!_origHandleSSE){
+  // The SSE handling is inline in streamChat - we need to patch it
+  // We'll hook via a MutationObserver on the chat container
+  var planObserver = new MutationObserver(function(mutations){
+    // Check if plan bar appeared
+  });
+}
+
