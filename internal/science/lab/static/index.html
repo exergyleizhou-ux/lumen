@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Lumen Science · 实验室</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{surface:'#0f172a',card:'#1e2937',hover:'#334155',ink:'#e2e8f0',muted:'#94a3b8',dim:'#64748b',accent:{DEFAULT:'#10b981',hover:'#059669',soft:'rgba(16,185,129,.1)'},rule:'#475569',success:'#22c55e',warn:'#f59e0b',danger:'#ef4444',user:'#1a3a2a',userBd:'#10b981'}}}}</script>
+<script>tailwind.config={theme:{extend:{colors:{surface:'#fafaf7',card:'#f4f3ef',hover:'#ebeae4',ink:'#e2e8f0',muted:'#94a3b8',dim:'#64748b',accent:{DEFAULT:'#10b981',hover:'#059669',soft:'rgba(16,185,129,.1)'},rule:'#e7e5e0',success:'#22c55e',warn:'#f59e0b',danger:'#ef4444',user:'#1a3a2a',userBd:'#10b981'}}}}</script>
 <style>:root {
   --font: "Geist","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
   --mono: "Geist Mono",ui-monospace,monospace;
@@ -43,7 +43,7 @@
 <!-- Left Sidebar -->
 <aside class="w-[280px] bg-card border-r border-rule flex flex-col flex-shrink-0 overflow-y-auto">
   <div class="p-4">
-    <div class="bg-surface rounded-2xl p-4 border border-rule mb-3">
+    <div class="bg-white rounded-2xl p-4 border border-rule mb-3">
       <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-1">🔬 当前课题</div>
       <div class="text-sm font-bold text-ink" id="activeProjectName">未选择</div>
       <div class="text-xs text-dim mt-0.5" id="activeProjectMeta"></div>
@@ -98,7 +98,7 @@
     </section>
   </div>
   <div id="changeBar" class="hidden px-5 py-1.5 text-xs text-muted border-t border-rule bg-card">📝 <span id="changeList"></span></div>
-  <form id="composer" class="p-4 border-t border-rule flex-shrink-0"><div class="flex gap-2"><input id="promptInput" placeholder="描述科研任务…" class="flex-1 h-10 px-4 text-sm bg-surface border border-rule rounded-2xl text-ink placeholder:text-dim focus:outline-none focus:border-accent transition-colors" autocomplete="off"><button type="submit" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button></div></form>
+  <form id="composer" class="p-4 border-t border-rule flex-shrink-0"><div class="flex gap-2"><input id="promptInput" placeholder="描述科研任务…" class="flex-1 h-10 px-4 text-sm bg-white border border-rule rounded-2xl text-ink placeholder:text-dim focus:outline-none focus:border-accent transition-colors" autocomplete="off"><button type="submit" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button></div></form>
 </main>
 
 <!-- Right Panel -->
@@ -176,18 +176,18 @@ async function streamChat(prompt){
   var elapsed=(Date.now()-start)/1000;var tb=$("tokenBadge");if(tb)tb.textContent=Math.round(elapsed*20)+" tok · "+elapsed.toFixed(1)+"s";
 }
 
-function renderLabPlanStep(s){var el=$("labPlanSteps");if(!el)return;var card=document.createElement("div");card.className="bg-surface rounded-2xl p-4 border border-rule border-l-4 border-l-accent";card.innerHTML='<div class="text-sm font-bold">'+(s.idx||"")+'. '+escHtml(s.title||"步骤")+'</div><div class="text-xs text-muted mt-1">'+escHtml(s.desc||"")+'</div>';el.appendChild(card);}
+function renderLabPlanStep(s){var el=$("labPlanSteps");if(!el)return;var card=document.createElement("div");card.className="bg-white rounded-2xl p-4 border border-rule border-l-4 border-l-accent";card.innerHTML='<div class="text-sm font-bold">'+(s.idx||"")+'. '+escHtml(s.title||"步骤")+'</div><div class="text-xs text-muted mt-1">'+escHtml(s.desc||"")+'</div>';el.appendChild(card);}
 
 function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
 async function refreshFiles(){var el=$("fileTree");if(!el||!activeProject)return;try{var d=await api("/api/lab/files?project_id="+activeProject.slug);el.innerHTML=(d.files||[]).map(function(f){return'<div class="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-hover cursor-pointer text-xs" onclick="previewFile(\''+f.name+'\')"><span>📄</span><span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">'+f.name+'</span></div>';}).join("");}catch(e){el.innerHTML='<div class="text-xs text-danger">'+e.message+'</div>';}}
 
-async function previewFile(path){var fp=$("filePreview");if(!fp||!activeProject)return;try{var d=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));fp.innerHTML='<div class="text-xs text-muted mb-1">📄 '+d.path+'</div><pre class="text-xs font-mono whitespace-pre-wrap max-h-[200px] overflow-auto bg-surface p-3 rounded-xl">'+escHtml(d.content||"")+'</pre>';}catch(e){fp.innerHTML='<div class="text-xs text-danger">'+e.message+'</div>';}}
+async function previewFile(path){var fp=$("filePreview");if(!fp||!activeProject)return;try{var d=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));fp.innerHTML='<div class="text-xs text-muted mb-1">📄 '+d.path+'</div><pre class="text-xs font-mono whitespace-pre-wrap max-h-[200px] overflow-auto bg-white p-3 rounded-xl">'+escHtml(d.content||"")+'</pre>';}catch(e){fp.innerHTML='<div class="text-xs text-danger">'+e.message+'</div>';}}
 
 async function loadSkills(){var el=$("skillsBody");if(!el)return;try{var d=await api("/api/lab/skills?project_id="+(activeProject?activeProject.slug:""));var s=d.skills||[];el.innerHTML=s.length?s.map(function(sk){return'<div class="py-1 px-2 rounded-lg hover:bg-hover text-xs">📋 '+escHtml(sk.name||sk)+'</div>';}).join(""):'<div class="text-xs text-dim">暂无技能</div>';}catch(e){el.innerHTML='<div class="text-xs text-dim">加载失败</div>';}}
 
 var ketcherLoaded=false;function loadKetcher(){if(!ketcherLoaded){ketcherLoaded=true;$("ketcherFrame").src="https://lifescience.opensource.epam.com/ketcher/standalone/index.html";}}
-var molLoaded=false;function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#0f172a"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#10b981"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}}
+var molLoaded=false;function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#fafaf7"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#10b981"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}}
 
 // Tab switching
 document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("text-accent","border-accent");b.classList.add("text-muted");});this.classList.add("text-accent","border-accent");this.classList.remove("text-muted");var p=this.dataset.pane;["statusPane","filesPane","skillsPane","planPane","chemPane","molPane"].forEach(function(id){var el=$(id);if(el)el.classList.toggle("hidden",id!==p+"Pane");});if(p==="files")refreshFiles();if(p==="skills")loadSkills();if(p==="chem")loadKetcher();if(p==="mol")loadMol();});});
