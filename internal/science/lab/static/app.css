@@ -442,4 +442,4 @@ body::before{
 #chatScroll::-webkit-scrollbar-track{background:transparent;margin:4px 0}
 #chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.15);border-radius:4px}
 #chatScroll::-webkit-scrollbar-thumb:hover{background:rgba(76,29,149,.3)}
-.chat-msg.user,.chat-msg.agent-wrap{margin-bottom:20px}
+.chat-msg.user,.chat-msg.agent-wrap{margin-bottom:20px}.tool-tag{display:inline-block;margin:3px 4px;padding:2px 8px;background:rgba(76,29,149,.08);color:#4c1d95;font-size:11px;font-weight:650;border-radius:6px}.tool-done{display:inline-block;color:#5b8c7a;font-size:11px;margin:0 2px}
