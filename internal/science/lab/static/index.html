@@ -15,7 +15,7 @@
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div id="projectList"></div>
-      <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
+      
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
     <section class="ctr">
@@ -49,7 +49,7 @@ async function refreshHealth(){
   $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
   var f=h.fleet||{};
   $("fleetBadge").textContent="⚡ "+(f.connected_total||0)+"/"+(f.cs_domains||0);
-  $("modeHint").textContent=h.science_mode||"hybrid";
+  
   $("inspectorBody").innerHTML='<div class="sr"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="sr-div"></div><div class="sr"><span class="k">Research</span><span class="v">'+(h.research_pack||{}).domain_tools+' tools</span></div><div class="sr"><span class="k">Fleet</span><span class="v">'+f.connected_total+'/'+f.cs_domains+'</span></div><div class="sr-div"></div><div class="sr"><span class="k">模型</span><span class="v">'+((h.provider||{}).masked||"—")+'</span></div>';
   return h;
 }
