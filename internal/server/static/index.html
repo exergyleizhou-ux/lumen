@@ -44,7 +44,7 @@
           <button class="btn-icon sidebar-toggle" id="sidebarToggle" type="button" aria-label="打开菜单" aria-expanded="false">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
           </button>
-          <h1 class="topbar-title">编程智能体</h1>
+          <div id="convTabs" class="conv-tabs"><button class="conv-tab active" data-cid="main">对话</button><button class="conv-tab-add" id="newConvBtn">＋</button></div>
           <span class="model-badge" id="modelBadge">未连接</span>
         </div>
         <div class="topbar-right">
@@ -327,6 +327,78 @@ document.addEventListener("paste", async function(e){
     }
   }
 });
+</script>
+
+<script>
+// Multi-tab conversation support
+var conversations = {main: {id:"main",title:"对话",messages:[],sessionId:"main"}};
+var activeConv = "main";
+
+function switchConv(cid){
+  activeConv = cid;
+  document.querySelectorAll(".conv-tab").forEach(function(t){t.classList.toggle("active",t.dataset.cid===cid);});
+  // Restore messages for this conversation
+  var chat = document.getElementById("chat");
+  if(chat){
+    chat.innerHTML = "";
+    var msgs = conversations[cid]?.messages || [];
+    msgs.forEach(function(m){chat.appendChild(m.el);});
+    if(!msgs.length){
+      chat.innerHTML = '<section class="welcome" id="welcome"><p class="welcome-kicker">Lumen · 对标 Claude Code</p><h2 class="welcome-title">编程智能体</h2><p>描述任务，Lumen 会读文件、跑命令、自我验证。</p></section>';
+    }
+  }
+}
+
+function newConv(){
+  var cid = "conv_" + Date.now();
+  conversations[cid] = {id:cid,title:"新对话",messages:[],sessionId:cid};
+  renderConvTabs();
+  switchConv(cid);
+}
+
+function closeConv(cid, e){
+  e.stopPropagation();
+  if(Object.keys(conversations).length <= 1) return;
+  delete conversations[cid];
+  if(activeConv === cid) activeConv = Object.keys(conversations)[0];
+  renderConvTabs();
+  switchConv(activeConv);
+}
+
+function renderConvTabs(){
+  var el = document.getElementById("convTabs");
+  if(!el) return;
+  el.innerHTML = Object.values(conversations).map(function(c){
+    return '<button class="conv-tab'+(c.id===activeConv?" active":"")+'" data-cid="'+c.id+'" onclick="switchConv(''+c.id+'')">'+c.title+'<span class="close" onclick="closeConv(''+c.id+'',event)">×</span></button>';
+  }).join("") + '<button class="conv-tab-add" onclick="newConv()">＋</button>';
+}
+
+// Store messages per conversation
+var _origAppend = window.appendToChat || function(el){document.getElementById("chat")?.appendChild(el);};
+window.appendToChat = function(el, cid){
+  cid = cid || activeConv;
+  if(conversations[cid]){
+    conversations[cid].messages.push({el:el.cloneNode(true)});
+    if(conversations[cid].messages.length === 1) conversations[cid].title = (el.textContent||"").slice(0,30) || "对话";
+    renderConvTabs();
+  }
+  _origAppend(el);
+};
+
+// Override session ID in chat requests
+var _origFetch = window.fetch;
+window.fetch = function(url, opts){
+  if(typeof url === "string" && url.indexOf("/api/chat") >= 0 && opts?.body){
+    try{
+      var body = JSON.parse(opts.body);
+      body.session_id = activeConv;
+      opts.body = JSON.stringify(body);
+    }catch(_){}
+  }
+  return _origFetch(url, opts);
+};
+
+renderConvTabs();
 </script>
 </body>
 </html>
