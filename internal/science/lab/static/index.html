@@ -80,7 +80,24 @@
     <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="mol">分子</button>
   </div>
   <div class="p-4 flex-1 overflow-y-auto">
-    <div id="statusPane"><div id="inspectorBody" class="text-xs space-y-2"></div></div>
+    <div class="card p-5 mb-3">
+      <div class="text-xs text-muted uppercase tracking-wider">Fleet</div>
+      <div class="text-4xl font-bold text-accent mt-1" id="bigFleet">28</div>
+      <div class="text-xs text-dim mt-1">/23 CS + 5 原生 MCP</div>
+    </div>
+    <div class="card p-5 mb-3">
+      <div class="text-xs text-muted uppercase tracking-wider">Tools</div>
+      <div class="text-4xl font-bold text-accent mt-1" id="bigTools">247</div>
+    </div>
+    <div class="card p-5 mb-3">
+      <div class="text-xs text-muted uppercase tracking-wider">Skills</div>
+      <div class="text-4xl font-bold text-accent mt-1" id="bigSkills">29</div>
+    </div>
+    <div class="card p-5 mb-3">
+      <div class="text-xs text-muted uppercase tracking-wider">模型</div>
+      <div class="text-sm font-mono text-ink mt-1" id="bigModel">deepseek-chat</div>
+    </div>
+    <div id="statusPane" class="hidden"><div id="inspectorBody" class="text-xs space-y-2"></div></div>
     <div id="filesPane" class="hidden"><input type="file" id="labFileInput" multiple class="hidden"><div class="flex gap-2 mb-3"><button class="text-xs px-3 py-1.5 bg-accent text-white rounded-xl font-semibold" onclick="document.getElementById('labFileInput').click()">📤</button><button class="text-xs px-3 py-1.5 bg-danger/20 text-danger rounded-xl font-semibold" id="labDeleteBtn">🗑</button></div><div id="fileTree" class="space-y-0.5 text-xs"></div><div id="filePreview" class="mt-3 text-xs font-mono"></div></div>
     <div id="skillsPane" class="hidden"><div id="skillsBody" class="space-y-0.5 text-xs"></div></div>
     <div id="planPane" class="hidden"><div id="labPlanSteps" class="space-y-2"></div><div id="labPlanActions" class="flex gap-2 mt-3 hidden"><button id="labPlanApproveAll" class="flex-1 py-2 bg-accent text-white font-semibold rounded-2xl text-xs">✓ 批准全部</button><button id="labPlanRejectAll" class="flex-1 py-2 bg-danger/20 text-danger font-semibold rounded-2xl text-xs">✗ 拒绝</button></div></div>
@@ -96,7 +113,11 @@ var activeProject=null,activeThread="main",conversations={main:{id:"main",title:
 
 async function api(p,o){var r=await fetch(p,{headers:{"Content-Type":"application/json"},...o});var t=await r.text();try{return JSON.parse(t);}catch(e){return{raw:t}};}
 
-async function refreshHealth(){var h=await api("/api/lab/health");var f=h.fleet||{},p2=h.research_pack||{};$("packBadge").textContent=(p2.domain_tools||0)+" tools";$("fleetBadge").textContent=(f.connected_total||0)+"/"+(f.cs_domains||0)+" fleet";$("inspectorBody").innerHTML='<div class="flex justify-between text-xs"><span class="text-muted">Fleet</span><span class="text-accent font-semibold">'+(f.connected_total||0)+'/'+(f.cs_domains||0)+' CS + '+(f.lumen_native||0)+' 原生</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">Tools</span><span class="font-semibold">'+(p2.domain_tools||0)+'</span></div><div class="flex justify-between text-xs"><span class="text-muted">Skills</span><span class="font-semibold">'+(p2.skills||0)+'</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">模型</span><span class="font-semibold">'+((h.provider||{}).masked||"—")+'</span></div>';var sf=$("sbFleet");if(sf)sf.textContent=(f.connected_total||0)+"/"+(f.cs_domains||0);var sp=$("sbPack");if(sp)sp.textContent=(p2.domain_tools||0)+" tools · "+(p2.skills||0)+" skills";}
+async function refreshHealth(){var h=await api("/api/lab/health");var f=h.fleet||{},p2=h.research_pack||{};$("packBadge").textContent=(p2.domain_tools||0)+" tools";$("fleetBadge").textContent=(f.connected_total||0)+"/"+(f.cs_domains||0)+" fleet";$("inspectorBody").innerHTML='<div class="flex justify-between text-xs"><span class="text-muted">Fleet</span><span class="text-accent font-semibold">'+(f.connected_total||0)+'/'+(f.cs_domains||0)+' CS + '+(f.lumen_native||0)+' 原生</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">Tools</span><span class="font-semibold">'+(p2.domain_tools||0)+'</span></div><div class="flex justify-between text-xs"><span class="text-muted">Skills</span><span class="font-semibold">'+(p2.skills||0)+'</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">模型</span><span class="font-semibold">'+((h.provider||{}).masked||"—")+'</span></div>';var bf=$("bigFleet");if(bf)bf.textContent=f.connected_total||0;
+  var bt=$("bigTools");if(bt)bt.textContent=p2.domain_tools||0;
+  var bs=$("bigSkills");if(bs)bs.textContent=p2.skills||0;
+  var bm=$("bigModel");if(bm)bm.textContent=(h.provider||{}).masked||"deepseek-chat";
+  var sf=$("sbFleet");if(sf)sf.textContent=(f.connected_total||0)+"/"+(f.cs_domains||0);var sp=$("sbPack");if(sp)sp.textContent=(p2.domain_tools||0)+" tools · "+(p2.skills||0)+" skills";}
 
 async function loadProjects(){var list=await api("/api/lab/projects");var nav=$("projectList");nav.innerHTML="";if(!list||!list.length){nav.innerHTML='<div class="text-xs text-dim p-2">点击 ＋ 新建课题</div>';return;}list.forEach(function(p){var b=document.createElement("button");b.textContent=p.title;b.className="w-full text-left text-xs py-1.5 px-2 rounded-lg hover:bg-hover transition-colors overflow-hidden text-ellipsis whitespace-nowrap";b.onclick=function(){activeProject=p;loadProjects();refreshFiles();var c=$("activeProjectName");if(c)c.textContent=p.title;var m=$("activeProjectMeta");if(m)m.textContent=p.slug;};if(activeProject&&activeProject.slug===p.slug)b.classList.add("bg-accent-soft","text-accent","font-semibold");nav.appendChild(b);});if(!activeProject&&list.length){activeProject=list[0];refreshFiles();var c=$("activeProjectName");if(c)c.textContent=list[0].title;}}
 
