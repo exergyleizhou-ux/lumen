@@ -86,8 +86,7 @@ async function streamChat(prompt){
   try{
     var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:"plan",session_id:activeThread})});
     var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("
-");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
       if(ev.kind==="text"){ta+=ev.text||"";resp.innerHTML=renderMD(ta);}
       else if(ev.kind==="thinking"){if(!think){think=document.createElement("details");think.className="think-block";think.open=true;think.innerHTML='<summary class="think-summary"><span class="think-dot"></span>🧠 思考中…</summary><div class="think-body"></div>';wrap.insertBefore(think,resp);tb=think.querySelector(".think-body");}tb.textContent+=ev.text||"";}
       else if(ev.kind==="tool_dispatch"){tc++;var tn=(ev.tool&&ev.tool.name)?ev.tool.name:("tool_"+tc);resp.innerHTML+='<span class="tool-tag">🔧 '+escHtml(tn)+'</span>';}
