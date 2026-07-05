@@ -18,6 +18,10 @@ html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1)
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div style="display:flex;gap:4px;margin-bottom:6px"><input type="file" id="labFileInput2" multiple style="display:none" onchange="uploadLabFiles(this.files)"><button class="btn sm" onclick="document.getElementById('labFileInput2').click()" style="font-size:10px" title="上传文件到当前课题">📤</button><button class="btn sm" id="briefBtn2" style="flex:1;font-size:10px">📋 Brief</button><button class="btn sm" id="c2dBtn2" style="flex:1;font-size:10px">🏷 C2D</button></div>
       <div id="projectList"></div>
+      <div style="margin-top:8px;border-top:1px solid var(--ocs-line);padding-top:8px">
+        <div style="font-size:11px;font-weight:650;color:var(--ocs-accent);cursor:pointer;margin-bottom:4px" onclick="var t=this.nextElementSibling;t.hidden=!t.hidden;this.querySelector('span').textContent=t.hidden?'▸':'▾'">📁 工作区文件 <span>▾</span></div>
+        <div id="wsTree" style="max-height:200px;overflow:auto;font-size:10px"></div>
+      </div>
       <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
         <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 连接状态 <span id="statusDot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#5b8c7a;margin-left:4px;box-shadow:0 0 0 3px rgba(91,140,122,.2)"></span></div>
         <div id="sbFleet" style="color:var(--ocs-muted);cursor:pointer" onclick="document.querySelector('.insp-tab[data-pane=status]').click()" title="点击查看详情">—</div>
@@ -29,6 +33,7 @@ html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1)
       <div class="scroll" id="chatScroll" style="overflow-y:scroll !important">
         <div class="hero" id="welcome"><h2>Lumen Science 实验室</h2><p>CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p></div>
       </div>
+      <div id="changeBar" style="display:none;padding:4px 16px;font-size:10px;color:var(--ocs-muted);border-top:1px solid var(--ocs-line);background:var(--ocs-surface-soft)">📝 <span id="changeList"></span></div>
       <form class="composer" id="composer"><input id="promptInput" placeholder="描述科研任务…" autocomplete="off"><button class="btn primary" type="submit">发送</button></form>
     </section>
     <div class="resize" id="resizeRight"></div>
@@ -178,5 +183,101 @@ setInterval(function(){
 setTimeout(function(){
   try{var msgs=JSON.parse(localStorage.getItem("lab-msgs")||"[]");msgs.forEach(function(m){var e=document.createElement("div");e.className=m.c;e.textContent=m.t;$("chatScroll").appendChild(e);});}catch(_){}
 },300);
+
+
+// Multi-tab conversations
+var conversations = {main: {id:"main",title:"对话",messages:[],sessionId:"main"}};
+var activeConv = "main";
+
+function switchConv(cid){
+  activeConv = cid;
+  document.querySelectorAll(".ctr-tab").forEach(function(t){t.classList.toggle("active",t.dataset.cid===cid);});
+  var chat = $("chatScroll");
+  chat.innerHTML = "";
+  var msgs = conversations[cid]?.messages || [];
+  msgs.forEach(function(m){chat.appendChild(m.el);});
+  if(!msgs.length){chat.innerHTML='<div class="hero" id="welcome"><h2>Lumen Science 实验室</h2><p>CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p></div>';}
+}
+function newConv(){
+  var cid = "conv_" + Date.now();
+  conversations[cid] = {id:cid,title:"新对话",messages:[],sessionId:cid};
+  renderConvTabs(); switchConv(cid);
+}
+function closeConv(cid, e){e.stopPropagation();if(Object.keys(conversations).length<=1)return;delete conversations[cid];if(activeConv===cid)activeConv=Object.keys(conversations)[0];renderConvTabs();switchConv(activeConv);}
+function renderConvTabs(){
+  var el = document.getElementById("convTabs"); if(!el) return;
+  el.innerHTML = Object.values(conversations).map(function(c){return'<button class="ctr-tab'+(c.id===activeConv?" active":"")+'" data-cid="'+c.id+'" onclick="switchConv(''+c.id+'')">'+c.title+'<span class="close" onclick="closeConv(''+c.id+'',event)" style="margin-left:6px;font-size:14px;cursor:pointer;opacity:.5;display:none">×</span></button>';}).join("")+'<button class="ctr-tab-add" onclick="newConv()">＋</button>';
+  // Hover to show close
+  setTimeout(function(){
+    document.querySelectorAll(".ctr-tab").forEach(function(t){t.onmouseenter=function(){var c=this.querySelector(".close");if(c)c.style.display="inline";};t.onmouseleave=function(){var c=this.querySelector(".close");if(c)c.style.display="none";};});
+  },100);
+}
+
+// Override streamChat to scope messages per tab
+var _origStream = streamChat;
+streamChat = async function(prompt, mode){
+  var cid = activeConv;
+  // Pass session_id via fetch override
+  var _origFetch = window.fetch;
+  window.fetch = function(url, opts){
+    if(typeof url === "string" && url.indexOf("/api/lab/chat") >= 0 && opts?.body){
+      try{var body=JSON.parse(opts.body);body.session_id=cid;opts.body=JSON.stringify(body);}catch(_){}
+    }
+    return _origFetch(url, opts);
+  };
+  await _origStream(prompt, mode);
+  window.fetch = _origFetch;
+  // Store message
+  var msgs = $("chatScroll").querySelectorAll(".chat-msg");
+  if(msgs.length && conversations[cid]){
+    conversations[cid].messages = [];
+    msgs.forEach(function(m){conversations[cid].messages.push({el:m.cloneNode(true)});});
+    var first = msgs[0]; if(first.classList.contains("user")) conversations[cid].title = first.textContent.slice(0,30)||"对话";
+    renderConvTabs();
+  }
+  // Show changes
+  showChangeBar();
+};
+
+// Save sessions
+function saveSessions(){
+  var data={};
+  Object.keys(conversations).forEach(function(c){data[c]={id:c,title:conversations[c].title,count:(conversations[c].messages||[]).length};});
+  try{localStorage.setItem("lab-tabs",JSON.stringify(data));}catch(_){}
+}
+setInterval(saveSessions,5000);
+
+// Workspace tree loader
+async function loadWorkspaceTree(){
+  var el = $("wsTree"); if(!el) return;
+  if(!activeProject){el.innerHTML='<span class="hint">选择课题查看文件</span>';return;}
+  try{
+    var d = await api("/api/lab/files?project_id="+activeProject.slug);
+    var files = d.files||[];
+    el.innerHTML = files.map(function(f){return'<div style="padding:2px 4px;cursor:pointer;border-radius:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onmouseover="this.style.background=\'var(--ocs-accent-light)\'" onmouseout="this.style.background=\'\'" onclick="var inp=$('promptInput');if(inp)inp.value+=' 查看文件: '+this.textContent.trim()">'+(f.isDir?'📁':'📄')+' '+f.name+'</div>';}).join("")||'<span class="hint">空目录</span>';
+  }catch(e){el.innerHTML='<span class="hint">无法加载</span>';}
+}
+
+// Workspace change bar
+async function showChangeBar(){
+  var bar = $("changeBar"), list = $("changeList"); if(!bar||!list||!activeProject) return;
+  try{var d=await api("/api/lab/files?project_id="+activeProject.slug);var files=d.files||[];list.textContent=files.slice(0,5).map(function(f){return f.name;}).join(", ")||"无文件";bar.style.display="block";setTimeout(function(){bar.style.display="none";},6000);}catch(_){}
+}
+
+// Refresh workspace tree on project switch
+var _origLP = loadProjects;
+loadProjects = async function(){await _origLP();loadWorkspaceTree();};
+
+// Override newProjectBtn to also refresh tree
+var _origNP = $("newProjectBtn").onclick;
+$("newProjectBtn").onclick = async function(e){await _origNP(e);setTimeout(loadWorkspaceTree,500);};
+
+// Init: load tree after projects
+setTimeout(function(){
+  var _origInit = refreshHealth;
+  refreshHealth = async function(){await _origInit();setTimeout(loadWorkspaceTree,300);};
+},100);
+
+renderConvTabs();
 
 </script></body></html>
