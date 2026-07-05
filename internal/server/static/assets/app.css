@@ -934,3 +934,40 @@ body {
 /* Dark mode support */
 html.dark-mode{filter:invert(0.92) hue-rotate(180deg)}
 html.dark-mode img,html.dark-mode canvas,html.dark-mode iframe{filter:invert(1) hue-rotate(180deg)}
+
+/* ── Grok design system upgrades ── */
+/* Unified card style */
+.card,.plan-step-card,.tool-card,.set-card{
+  border-radius:14px !important;
+  box-shadow:0 2px 8px rgba(0,0,0,.06) !important;
+  transition:all .18s ease !important;
+}
+.card:hover,.plan-step-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.1) !important;transform:translateY(-1px)}
+
+/* Button micro-interactions */
+.btn,.btn-send,.btn-stop,.btn-icon,.btn-sm,suggest-chip{
+  transition:all .15s ease !important;
+  cursor:pointer !important;
+}
+.btn:active,.btn-send:active{transform:scale(.97)}
+
+/* Message fade-in */
+.msg,.chat-msg{animation:msgFadeIn .25s ease}
+@keyframes msgFadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* Skeleton loading */
+.skeleton{background:linear-gradient(90deg,var(--sidebar) 25%,var(--rule) 50%,var(--sidebar) 75%);background-size:200% 100%;animation:skeletonShimmer 1.5s infinite;border-radius:8px}
+@keyframes skeletonShimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+
+/* Better spacing */
+.ctr .scroll,.scroll{padding:28px 36px !important}
+.msg,.chat-msg{padding:8px 0 !important;margin:4px 0 !important}
+
+/* Hover card lift */
+.suggest-chip:hover,tool-card:hover,.skill-card:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(0,0,0,.12) !important}
+
+/* Focus rings */
+button:focus-visible,input:focus-visible,textarea:focus-visible{
+  outline:2px solid var(--accent) !important;
+  outline-offset:2px !important;
+}

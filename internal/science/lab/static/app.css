@@ -447,3 +447,37 @@ body::before{
 #chatScroll::-webkit-scrollbar{width:12px;display:block !important}
 #chatScroll::-webkit-scrollbar-track{background:rgba(76,29,149,.06);border-radius:6px}
 #chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.2);border-radius:6px}
+
+/* ── Grok design system upgrades ── */
+.card,.plan-step-card,.set-card,.ft-row{
+  border-radius:14px !important;
+  box-shadow:0 2px 8px rgba(0,0,0,.04) !important;
+  transition:all .18s ease !important;
+}
+.card:hover,.set-card:hover,.ft-row:hover{box-shadow:0 4px 16px rgba(0,0,0,.08) !important;transform:translateY(-1px)}
+
+/* Button micro-interactions */
+.btn,.insp-tab,.ctr-tab,.chip,.tb-link{
+  transition:all .15s ease !important;
+  cursor:pointer !important;
+}
+.btn:active{transform:scale(.97)}
+
+/* Message fade-in */
+.chat-msg{animation:msgIn .25s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+
+/* Better spacing */
+#chatScroll{padding:28px 40px !important}
+.chat-msg.user{margin:10px 0 10px auto !important}
+.chat-msg.agent-wrap{margin:12px 0 !important}
+
+/* Focus rings */
+button:focus-visible,input:focus-visible,textarea:focus-visible{
+  outline:2px solid var(--ocs-accent) !important;
+  outline-offset:2px !important;
+}
+
+/* Hover lifts */
+.chip:hover,.ctr-tab:hover{transform:translateY(-1px)}
+.btn.primary:hover{box-shadow:0 4px 12px rgba(76,29,149,.25)}
