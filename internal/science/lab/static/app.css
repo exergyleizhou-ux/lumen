@@ -350,3 +350,13 @@ body::before{
 .chat-msg.agent strong{font-weight:700}
 .chat-msg.agent code{font-family:var(--mono);font-size:11px;background:var(--ocs-accent-light);padding:2px 5px;border-radius:4px}
 .chat-msg.agent pre{background:var(--ocs-surface-soft);padding:10px 14px;border-radius:10px;overflow-x:auto;font-size:11px;font-family:var(--mono);margin:6px 0}
+
+/* Think block — gray, collapsible */
+.think-block{margin:4px 0;border:1px solid rgba(76,29,149,.08);border-radius:8px;overflow:hidden}
+.think-block[open]{border-color:rgba(76,29,149,.15)}
+.think-summary{display:flex;align-items:center;gap:6px;padding:5px 10px;font-size:11px;color:#8c8478;cursor:pointer;background:rgba(76,29,149,.03);list-style:none;user-select:none}
+.think-summary::-webkit-details-marker{display:none}
+.think-dot{width:5px;height:5px;border-radius:50%;background:#c28b4b;flex-shrink:0}
+.think-block[open] .think-dot{background:#4c1d95;animation:pulse 1.5s infinite}
+.think-body{padding:6px 10px;font-size:11px;color:#8c8478;white-space:pre-wrap;max-height:200px;overflow:auto;border-top:1px solid rgba(76,29,149,.06)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
