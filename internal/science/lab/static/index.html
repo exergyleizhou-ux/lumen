@@ -42,7 +42,7 @@ html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1)
         <button class="insp-tab" data-pane="log">日志</button>
       </div>
       <div class="pane" id="statusPane"><div id="inspectorBody">加载中…</div></div>
-      <div class="pane" id="filesPane" hidden><div id="fileTree"></div><div id="filePreview"></div></div>
+      <div class="pane" id="filesPane" hidden><input type="file" id="labFileInput" multiple style="display:none" onchange="uploadLabFiles(this.files)"><div style="display:flex;gap:4px;margin-bottom:6px"><button class="btn sm" onclick="document.getElementById('labFileInput').click()">📤 上传</button><button class="btn sm" id="labDeleteBtn">🗑 删除</button></div><div id="fileTree"></div><div id="filePreview"></div></div>
       <div class="pane" id="skillsPane" hidden><div id="skillsBody"></div></div>
       <div class="pane" id="chemPane" hidden><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span class="hint">Ketcher 分子编辑器</span><button class="btn sm" onclick="document.querySelector('.insp-tab[data-pane=status]').click()" style="font-size:16px;line-height:1">✕</button></div><iframe id="ketcherFrame" src="about:blank" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></iframe></div>
       <div class="pane" id="logPane" hidden><div id="logBody" class="mono" style="font-size:10px;white-space:pre-wrap;max-height:400px;overflow:auto"></div></div>
@@ -145,5 +145,25 @@ async function loadLogs(){
     el.innerHTML='<div class="set-card"><h3>📡 连接</h3><div class="set-row"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="set-row"><span class="k">版本</span><span class="v">'+(r.version||"dev")+'</span></div></div><div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 MCP</span><span class="v">'+(f.lumen_native||0)+'</span></div></div><div class="set-card"><h3>📦 Research</h3><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div></div>';
   }catch(e){el.textContent=e.message;}
 }
+var labSelectedFile=null;
+async function uploadLabFiles(files){
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    try{
+      var fd=new FormData();fd.append("file",f);
+      await fetch("/api/lab/files/upload?project_id="+(activeProject?activeProject.slug:"")+"&path="+encodeURIComponent(f.name),{method:"POST",body:fd});
+    }catch(e){}
+  }
+  refreshFiles();
+}
+$("labDeleteBtn").onclick=async function(){
+  if(!labSelectedFile||!activeProject){alert("请先选择文件");return;}
+  if(!confirm("删除 "+labSelectedFile+"？"))return;
+  try{await fetch("/api/lab/files/delete?project_id="+activeProject.slug+"&path="+encodeURIComponent(labSelectedFile),{method:"DELETE"});refreshFiles();}catch(e){alert(e.message);}
+};
+// Override previewFile to track selection
+var _pf=previewFile;
+previewFile=function(path){labSelectedFile=path;_pf(path);};
+
 (async function(){await refreshHealth();await loadProjects();})();
 </script></body></html>

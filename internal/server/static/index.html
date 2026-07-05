@@ -32,7 +32,11 @@
         <button class="sidebar-link" id="skillsBtn" type="button">Skills</button>
         <a class="sidebar-link" href="https://github.com/exergyleizhou-ux/lumen" target="_blank" rel="noopener">源码</a>
       </div>
-    </aside>
+    <div class="sidebar-ft" style="padding:8px 12px;border-top:1px solid var(--rule);font-size:10px;line-height:1.5;color:var(--muted)">
+        <div id="sbFleet">⚡ —</div>
+        <div id="sbModel">🧠 —</div>
+      </div>
+      </aside>
 
     <main class="workspace">
       <header class="topbar">
@@ -108,10 +112,19 @@
     </main>
 
     <aside class="file-panel" id="filePanel" hidden>
-      <div class="file-panel-hd"><span>📁 文件</span><button class="btn-icon sm" id="filePanelClose" type="button">✕</button></div>
+      <div class="file-panel-hd"><span>📁 文件</span>
+        <div style="display:flex;gap:4px">
+          <input type="file" id="fileUploadInput" multiple style="display:none" onchange="uploadFiles(this.files)">
+          <button class="btn-icon sm" id="uploadBtn" type="button" title="上传文件">📤</button>
+          <button class="btn-icon sm" id="deleteFileBtn" type="button" title="删除选中文件">🗑</button>
+        </div><button class="btn-icon sm" id="filePanelClose" type="button">✕</button></div>
       <div class="file-panel-tree scrollbar-subtle" id="fileTree"></div>
       <div class="file-panel-preview" id="filePreview"></div>
-    </aside>
+    <div class="sidebar-ft" style="padding:8px 12px;border-top:1px solid var(--rule);font-size:10px;line-height:1.5;color:var(--muted)">
+        <div id="sbFleet">⚡ —</div>
+        <div id="sbModel">🧠 —</div>
+      </div>
+      </aside>
   </div>
 
   <dialog class="modal" id="setupModal">
@@ -224,6 +237,45 @@ var d=document.documentElement.classList.contains("dark-mode");
 localStorage.setItem("lumen-dm",d?"dark":"light");
 btn.textContent=d?"☀":"🌙";
 };}
+</script>
+<script>
+// Fleet status in sidebar
+(async function(){
+  try{var r=await fetch("/api/health");var d=await r.json();
+    var f=document.getElementById("sbFleet");if(f)f.textContent="⚡ "+((d.fleet||{}).connected_total||"?")+" fleet";
+    var m=document.getElementById("sbModel");if(m)m.textContent="🧠 "+(d.provider||"deepseek");
+  }catch(_){}
+})();
+
+// File upload
+document.getElementById("uploadBtn").onclick=function(){document.getElementById("fileUploadInput").click();};
+async function uploadFiles(files){
+  for(var i=0;i<files.length;i++){
+    var f=files[i];
+    try{
+      var fd=new FormData();fd.append("file",f);
+      var r=await fetch("/api/files/upload?path="+encodeURIComponent(f.name),{method:"POST",body:fd});
+      if(r.ok){/* refresh file tree */}else{console.error("upload failed:",f.name);}
+    }catch(e){console.error(e);}
+  }
+  // Refresh file tree
+  if(typeof loadFileTree==="function")loadFileTree();
+}
+
+// File delete
+var selectedFile=null;
+document.getElementById("deleteFileBtn").onclick=async function(){
+  if(!selectedFile){alert("请先在文件树中选择要删除的文件");return;}
+  if(!confirm("确认删除 "+selectedFile+"？"))return;
+  try{
+    await fetch("/api/files/delete?path="+encodeURIComponent(selectedFile),{method:"DELETE"});
+    if(typeof loadFileTree==="function")loadFileTree();
+  }catch(e){alert(e.message);}
+};
+
+// Track selected file from file tree clicks
+var _origPreview=previewFile||function(){};
+previewFile=function(path){selectedFile=path;_origPreview(path);};
 </script>
 </body>
 </html>
