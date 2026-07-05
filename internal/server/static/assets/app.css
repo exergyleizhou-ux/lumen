@@ -19,9 +19,9 @@ html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;ba
 .brand{font-family:var(--display);font-size:20px;letter-spacing:-.01em;color:#18181b;font-weight:700;line-height:1}
 
 /* ── sidebar sections ── */
-.side-section{padding:16px 18px}
-.side-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:rgb(24 24 27/.4);margin-bottom:10px;font-weight:600}
-.side-item,.session-item{display:flex;align-items:center;gap:8px;padding:8px 14px;border-radius:12px;font-size:13px;cursor:pointer;color:rgb(24 24 27/.6);font-weight:450;transition:all .12s;border:none;background:none;width:100%;text-align:left}
+.side-section{padding:20px 18px 16px}
+.side-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:rgb(24 24 27/.35);margin-bottom:12px;font-weight:600}
+.side-item,.session-item{display:flex;align-items:center;gap:6px;padding:7px 12px;border-radius:10px;font-size:12px;cursor:pointer;color:rgb(24 24 27/.55);font-weight:450;transition:all .12s;border:none;background:none;width:100%;text-align:left;line-height:1.4}
 .side-item:hover,.session-item:hover{background:rgb(235 234 228);color:#18181b}
 .side-item.active,.session-item.active{background:rgb(235 234 228);color:#18181b;font-weight:550}
 
