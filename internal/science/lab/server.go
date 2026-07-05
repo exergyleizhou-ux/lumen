@@ -49,7 +49,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	// Start all domain connections (CS bio-tools + 5-ship native); failures are non-blocking.
-	_ = fleet.ConnectAll()
+	go fleet.ConnectAll() // async fleet — server ready immediately
 	// Seed embedded elevation skills on first launch.
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}

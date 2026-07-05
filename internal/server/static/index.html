@@ -5,25 +5,26 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Lumen · 编程智能体</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{surface:'#0f172a',card:'#1e2937',hover:'#334155',ink:'#e2e8f0',muted:'#94a3b8',dim:'#64748b',accent:{DEFAULT:'#10b981',hover:'#059669',soft:'rgba(16,185,129,.1)'},rule:'#475569',success:'#22c55e',warn:'#f59e0b',danger:'#ef4444'}}}}</script>
+<script>tailwind.config={theme:{extend:{colors:{paper:'#fafaf7',surface:'#ffffff',card:'#f4f3ef',hover:'#ebeae4',ink:'#18181b',muted:'#71717a',dim:'#a1a1a1',accent:{DEFAULT:'#b45309',hover:'#92400e',soft:'rgba(180,83,9,.08)'},rule:'#e7e5e0',success:'#047857',warn:'#e0982f',danger:'#dc2626'}}}}</script>
 <style>
-*{box-sizing:border-box}body{margin:0;font:13px/1.55 system-ui,sans-serif;background:#0f172a;color:#e2e8f0;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}body{margin:0;font:13px/1.55 system-ui,sans-serif;background:#fafaf7;color:#e2e8f0;-webkit-font-smoothing:antialiased}
 .msg-fade{animation:in .25s ease}@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-.skeleton{background:linear-gradient(90deg,#1e2937 25%,#334155 50%,#1e2937 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:12px}
+.skeleton{background:linear-gradient(90deg,#f4f3ef 25%,#ebeae4 50%,#f4f3ef 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:12px}
 @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#475569;border-radius:3px}
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/geist@1.3.0/dist/font.css">
 </head>
 <body class="h-screen flex flex-col overflow-hidden">
 <div id="app" class="flex flex-1 overflow-hidden">
 
 <!-- Left Sidebar 280px -->
-<aside class="w-[280px] bg-card border-r border-rule flex flex-col flex-shrink-0">
+<aside class="w-[280px] bg-paper border-r border-rule flex flex-col flex-shrink-0">
   <div class="p-4 border-b border-rule">
     <div class="text-lg font-bold text-accent tracking-tight">Lumen</div>
     <div class="text-xs text-muted mt-0.5">编程智能体 · 对标 Claude Code</div>
   </div>
-  <div class="p-3"><input id="sessionSearch" placeholder="搜索会话…" class="w-full h-8 px-3 text-xs bg-surface border border-rule rounded-xl text-ink placeholder:text-dim focus:outline-none focus:border-accent"></div>
+  <div class="p-3"><input id="sessionSearch" placeholder="搜索会话…" class="w-full h-8 px-3 text-xs bg-paper border border-rule rounded-xl text-ink placeholder:text-dim focus:outline-none focus:border-accent"></div>
   <nav id="sessionList" class="flex-1 overflow-y-auto px-2 space-y-0.5"></nav>
   <div class="p-3 border-t border-rule">
     <button id="memPill" class="w-full text-left text-xs text-muted hover:text-ink py-1.5 px-2 rounded-lg hover:bg-hover transition-colors">🧠 记忆管理</button>
@@ -32,10 +33,10 @@
 
 <!-- Center Chat -->
 <main class="flex-1 flex flex-col min-w-0">
-  <header class="h-14 px-5 flex items-center justify-between bg-card border-b border-rule flex-shrink-0">
+  <header class="h-14 px-5 flex items-center justify-between bg-paper border-b border-rule flex-shrink-0">
     <div class="flex items-center gap-4">
-      <select id="providerSelect" class="h-8 px-3 text-xs bg-surface border border-rule rounded-xl text-ink"><option>deepseek-chat</option><option>deepseek-v4-pro</option><option>qwen-plus</option><option>moonshot-v1</option><option>glm-4</option><option>minimax-m3</option></select>
-      <div class="flex bg-surface rounded-xl p-0.5">
+      <select id="providerSelect" class="h-8 px-3 text-xs bg-paper border border-rule rounded-xl text-ink"><option>deepseek-chat</option><option>deepseek-v4-pro</option><option>qwen-plus</option><option>moonshot-v1</option><option>glm-4</option><option>minimax-m3</option></select>
+      <div class="flex bg-paper rounded-xl p-0.5">
         <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg transition-colors" data-mode="bypass">Bypass</button>
         <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg bg-accent text-white transition-colors" data-mode="plan">Plan</button>
         <button class="mode-btn px-3 py-1 text-xs font-semibold rounded-lg transition-colors" data-mode="default">Default</button>
@@ -68,7 +69,7 @@
         <div class="flex justify-between items-center mb-2">
           <div class="text-xs text-muted uppercase tracking-wider font-semibold">最近活动</div>
         </div>
-        <div id="activityList" class="space-y-2"><div class="flex items-center justify-between bg-card rounded-2xl px-4 py-3 border border-rule"><div><div class="font-medium text-sm">创建新对话</div><div class="text-xs text-dim">刚刚</div></div><div class="text-accent text-sm font-semibold">✨</div></div></div>
+        <div id="activityList" class="space-y-2"><div class="flex items-center justify-between bg-surface rounded-2xl px-4 py-3 border border-rule"><div><div class="font-medium text-sm">创建新对话</div><div class="text-xs text-dim">刚刚</div></div><div class="text-accent text-sm font-semibold">✨</div></div></div>
       </div>
     </section>
     <section id="welcomeOld" class="text-center py-16 hidden">
@@ -88,20 +89,20 @@
 
   <div class="p-4 border-t border-rule flex-shrink-0">
     <div class="flex items-center gap-2">
-      <button id="mentionBtn" class="w-8 h-8 flex items-center justify-center bg-surface border border-rule rounded-xl text-accent text-sm hover:border-accent transition-colors">@</button>
+      <button id="mentionBtn" class="w-8 h-8 flex items-center justify-center bg-paper border border-rule rounded-xl text-accent text-sm hover:border-accent transition-colors">@</button>
       <div class="flex-1 relative">
-        <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行" class="w-full bg-surface border border-rule rounded-2xl px-4 py-2.5 text-sm placeholder:text-dim resize-none focus:outline-none focus:border-accent transition-colors"></textarea>
+        <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行" class="w-full bg-paper border border-rule rounded-2xl px-4 py-2.5 text-sm placeholder:text-dim resize-none focus:outline-none focus:border-accent transition-colors"></textarea>
         <span id="tokenEst" class="absolute right-3 top-2.5 text-xs text-dim">~0 tokens</span>
       </div>
       <button id="planSendBtn" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">Plan 发送</button>
       <button id="sendBtn" class="px-5 py-2.5 bg-hover hover:bg-rule text-ink font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button>
     </div>
-    <div id="mentionMenu" class="hidden absolute bottom-20 left-56 bg-card border border-rule rounded-2xl p-1 shadow-2xl z-10"></div>
+    <div id="mentionMenu" class="hidden absolute bottom-20 left-56 bg-paper border border-rule rounded-2xl p-1 shadow-2xl z-10"></div>
   </div>
 </main>
 
 <!-- Right Panel 360px -->
-<aside class="w-[360px] bg-card border-l border-rule flex flex-col flex-shrink-0">
+<aside class="w-[360px] bg-paper border-l border-rule flex flex-col flex-shrink-0">
   <div class="flex border-b border-rule">
     <button class="rp-tab flex-1 text-center py-3 text-xs font-semibold text-accent border-b-2 border-accent" data-rptab="files">📁 文件</button>
     <button class="rp-tab flex-1 text-center py-3 text-xs font-semibold text-muted" data-rptab="plan">📋 计划</button>
