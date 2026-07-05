@@ -398,7 +398,7 @@ body::before{
 
 
 
-#chatScroll{display:flex;flex-direction:column;gap:20px;padding:28px 36px}
+#chatScroll{display:flex;flex-direction:column;gap:20px;padding:28px 36px;overflow-y:auto;flex:1}
 /* User — purple gradient card, right side */
 .chat-msg.user{
   align-self:flex-end;max-width:72%;padding:12px 18px;
