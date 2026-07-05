@@ -38,8 +38,8 @@
       <div class="pane" id="statusPane"><div id="inspectorBody">加载中…</div></div>
       <div class="pane" id="filesPane" hidden><div id="fileTree"></div><div id="filePreview"></div></div>
       <div class="pane" id="skillsPane" hidden><div id="skillsBody"></div></div>
-      <div class="pane" id="chemPane" hidden><iframe id="ketcherFrame" src="about:blank" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></iframe></div>
-      <div class="pane" id="molPane" hidden><div id="molViewer" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></div></div>
+      <div class="pane" id="chemPane" hidden><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span class="hint">Ketcher 分子编辑器</span><button class="btn sm" onclick="document.querySelector('.insp-tab[data-pane=status]').click()" style="font-size:16px;line-height:1">✕</button></div><iframe id="ketcherFrame" src="about:blank" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></iframe></div>
+      <div class="pane" id="molPane" hidden><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span class="hint">3Dmol 蛋白预览</span><button class="btn sm" onclick="document.querySelector('.insp-tab[data-pane=status]').click()" style="font-size:16px;line-height:1">✕</button></div><div id="molViewer" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></div></div>
     </aside>
   </div>
 </div>
