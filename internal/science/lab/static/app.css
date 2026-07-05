@@ -398,7 +398,7 @@ body::before{
 
 
 
-#chatScroll{padding:28px 36px;overflow-y:scroll !important;height:0;flex:1 1 0px !important}
+#chatScroll{padding:28px 36px;overflow-y:scroll !important;height:calc(100vh - 180px) !important;flex:none !important}
 /* User — purple gradient card, right side */
 .chat-msg.user{
   align-self:flex-end;max-width:72%;padding:12px 18px;
@@ -438,12 +438,7 @@ body::before{
 
 .side{overflow:hidden;flex-shrink:0}
 
-#chatScroll::-webkit-scrollbar{width:10px}
-#chatScroll::-webkit-scrollbar-track{background:transparent;margin:4px 0}
-#chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.15);border-radius:4px}
-#chatScroll::-webkit-scrollbar-thumb:hover{background:rgba(76,29,149,.3)}
-.chat-msg.user,.chat-msg.agent-wrap{margin-bottom:20px}.tool-tag{display:inline-block;margin:3px 4px;padding:2px 8px;background:rgba(76,29,149,.08);color:#4c1d95;font-size:11px;font-weight:650;border-radius:6px}.tool-done{display:inline-block;color:#5b8c7a;font-size:11px;margin:0 2px}
-#chatScroll::-webkit-scrollbar{width:14px;display:block !important}
-#chatScroll::-webkit-scrollbar-track{background:rgba(76,29,149,.04);border-radius:7px}
-#chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.2);border-radius:7px;border:3px solid transparent;background-clip:padding-box}
-#chatScroll::-webkit-scrollbar-thumb:hover{background:rgba(76,29,149,.4);background-clip:padding-box}
+#chatScroll::-webkit-scrollbar{width:14px}
+#chatScroll::-webkit-scrollbar-track{background:rgba(76,29,149,.08);border-radius:7px}
+#chatScroll::-webkit-scrollbar-thumb{background:rgba(76,29,149,.22);border-radius:7px}
+#chatScroll::-webkit-scrollbar-thumb:hover{background:rgba(76,29,149,.4)}
