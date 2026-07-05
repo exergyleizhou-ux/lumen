@@ -361,17 +361,12 @@ body::before{
 .think-body{padding:6px 10px;font-size:11px;color:#8c8478;white-space:pre-wrap;max-height:200px;overflow:auto;border-top:1px solid rgba(76,29,149,.06)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-.think-block{margin:8px 0;border:2px dashed rgba(76,29,149,.2);border-radius:10px;overflow:hidden;background:#faf8ff}
-.think-summary{display:flex;align-items:center;gap:8px;padding:8px 14px;font-size:12px;color:#6d28d9;cursor:pointer;background:linear-gradient(135deg,#ede9f6,#f5f0ff);list-style:none;user-select:none;font-weight:700;transition:background .15s;letter-spacing:.02em}
 .think-summary:hover{background:#e8e2f4}
 .think-summary::-webkit-details-marker{display:none}
 .think-summary::before{content:"▸";font-size:10px;color:#4c1d95;transition:transform .15s;display:inline-block;width:12px}
 .think-block[open] .think-summary::before{transform:rotate(90deg)}
-.think-dot{width:6px;height:6px;border-radius:50%;background:#4c1d95;flex-shrink:0;animation:pulse 1.5s infinite}
 .think-block:not([open]) .think-dot{background:#8c8478;animation:none}
-.think-body{padding:10px 16px;font-size:12px;color:#5b5568;white-space:pre-wrap;max-height:260px;overflow:auto;border-top:1px solid rgba(76,29,149,.1);line-height:1.7;font-style:italic;background:#faf8ff}
 .think-body p{margin:2px 0}
-.chat-msg.agent-wrap{margin:6px 0;clear:both}
 .chat-msg.agent h1,.chat-msg.agent h2,.chat-msg.agent h3{font-size:15px;font-weight:700;margin:10px 0 4px}
 .chat-msg.agent p{margin:4px 0}
 .chat-msg.agent strong{font-weight:700}
@@ -385,20 +380,20 @@ body::before{
 @keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
 
 /* Turn separation — clear visual breaks between exchanges */
-.chat-msg.agent-wrap{margin:16px 0;padding-bottom:12px;border-bottom:1px solid rgba(76,29,149,.06);clear:both}
 .chat-msg.agent-wrap:last-child{border-bottom:none}
 /* User bubble spacing */
-.chat-msg.user{margin-top:16px !important}
 /* First user message no top margin */
 .chat-msg.user:first-child{margin-top:8px !important}
 
 /* DeepSeek-inspired chat spacing */
 .chat-msg{padding:10px 0;margin:2px 0}
-.chat-msg.user{margin-bottom:20px !important}
-.chat-msg.agent-wrap{margin:14px 0 24px !important}
 .chat-msg.agent-wrap:last-child{margin-bottom:8px !important}
-.chat-msg.agent{padding:14px 18px !important}
 /* Wider chat area */  
 .ctr .scroll{padding:20px 40px}
 /* Smoother scroll */
 .scroll{scroll-behavior:smooth}
+
+/* Ensure chat messages don't run together */
+#chatScroll{display:flex;flex-direction:column;gap:0}
+.chat-msg.user{align-self:flex-end}
+.chat-msg.agent-wrap{align-self:stretch}
