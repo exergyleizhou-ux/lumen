@@ -223,15 +223,7 @@ document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("c
 
 // Simple markdown renderer
 function renderMD(t){
-  return (t||"")
-    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
-    .replace(/```(\w*)\n([\s\S]*?)```/g,"<pre><code>$2</code></pre>")
-    .replace(/`([^`]+)`/g,"<code>$1</code>")
-    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g,"<em>$1</em>")
-    .replace(/
-
-/g,"</p><p>").replace(/^(.+)$/gm,"<p>$1</p>");
+  return (t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/```([\s\S]*?)```/g,"<pre><code>$1</code></pre>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\*(.+?)\*/g,"<em>$1</em>");
 }
 
 // Apply markdown to agent bubble after streaming
