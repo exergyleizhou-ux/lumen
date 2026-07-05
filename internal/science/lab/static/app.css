@@ -310,3 +310,7 @@ body::before{
 .embed-oasis .shell{padding:8px}
 .msg-body{word-break:break-word;white-space:pre-wrap}
 .chat-tool-inline{font-size:11px;color:var(--ocs-accent);font-weight:650;background:var(--ocs-accent-soft);padding:1px 5px;border-radius:4px;margin:0 2px}
+/* Also cover msg class for backward compat */
+.msg.user{color:var(--ocs-user-fg);font-weight:650;background:var(--ocs-user-bg);padding:8px 14px;border-radius:12px;margin:4px 0 4px auto;max-width:80%;display:inline-block}
+.msg.agent{padding:4px 0;font-size:13px;line-height:1.65;word-break:break-word}
+.msg.tool{font-size:11px;font-family:var(--mono);color:var(--ocs-muted);background:var(--ocs-surface-soft);padding:6px 10px;border-radius:8px;margin:3px 0}

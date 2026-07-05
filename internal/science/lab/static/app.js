@@ -17,7 +17,7 @@ async function api(path, opts = {}) {
 function appendMsg(cls, text) {
   $("welcome")?.remove();
   const el = document.createElement("div");
-  el.className = `msg ${cls}`;
+  el.className = "chat-msg " + cls;
   el.textContent = text;
   $("chatScroll").appendChild(el);
   el.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -71,50 +71,32 @@ async function ensureProject() {
 async function streamChat(prompt, mode) {
   mode = mode || "plan";
   var p = await ensureProject();
-  appendMsg("user", prompt);
-  var res = await fetch("/api/lab/chat", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ project_id: p.slug, prompt: prompt, mode: mode, session_id: activeThread }),
-  });
-  var reader = res.body.getReader();
-  var dec = new TextDecoder();
-  var buf = "";
-  // Prepare a single agent bubble for all text
+  // User bubble
+  var ue = document.createElement("div"); ue.className = "chat-msg user"; ue.textContent = prompt;
+  $("chatScroll").appendChild(ue);
+  // Agent bubble — single element, text accumulated
   $("welcome")?.remove();
-  var el = document.createElement("div"); el.className = "chat-msg agent";
-  var body = document.createElement("div"); body.className = "msg-body";
-  el.appendChild(body); $("chatScroll").appendChild(el);
+  var ae = document.createElement("div"); ae.className = "chat-msg agent";
+  $("chatScroll").appendChild(ae);
   var textAcc = "";
-  while (true) {
-    var r = await reader.read();
-    if (r.done) break;
-    buf += dec.decode(r.value, { stream: true });
-    var lines = buf.split("\n");
-    buf = lines.pop();
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i];
-      if (line.indexOf("data:") !== 0) continue;
-      var json = line.slice(5).trim();
-      if (!json.startsWith("{")) continue;
-      try {
-        var ev = JSON.parse(json);
-        if (ev.text && (ev.kind === "text" || ev.kind === "thinking")) {
-          textAcc += ev.text;
-          body.textContent = textAcc;
-          $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
-        }
-        if (ev.kind === "tool" || ev.tool) {
-          var tn = document.createElement("span");
-          tn.className = "chat-tool-inline";
-          tn.textContent = " 🔧 " + (ev.tool?.name || ev.name || "tool") + " ";
-          body.appendChild(tn);
-        }
-        if (ev.kind === "error") {
-          body.textContent += "\n❌ " + (ev.text || "错误");
-        }
-      } catch (_) {}
+  try {
+    var res = await fetch("/api/lab/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
+    var reader = res.body.getReader(); var dec = new TextDecoder(); var buf = "";
+    while(true){
+      var r = await reader.read(); if(r.done)break;
+      buf += dec.decode(r.value,{stream:true});
+      var lines = buf.split("\n"); buf = lines.pop();
+      for(var i=0;i<lines.length;i++){
+        var line = lines[i]; if(line.indexOf("data:")!==0)continue;
+        var json = line.slice(5).trim(); if(!json.startsWith("{"))continue;
+        try{var ev=JSON.parse(json);
+          if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.textContent=textAcc;}
+          if(ev.kind==="error"){textAcc+="\n❌ "+(ev.text||"err");ae.textContent=textAcc;}
+        }catch(_){}
+      }
+      $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
     }
-  }
+  }catch(e){ae.textContent = "错误: "+e.message;}
   refreshFiles();
 }
 
