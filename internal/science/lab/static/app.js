@@ -126,16 +126,18 @@ async function loadProvenance(path) {
   try {
     const data = await api(`/api/lab/provenance?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
     if (!data.count) return '<div class="pv-empty">无溯源记录</div>';
-    return data.records.map(r => {
-      const mcp = (r.mcp_calls || []).map(m => `${m.tool}("${m.query || ''}")`).join(', ');
-      return `<div class="pv-row">
-        <span class="pv ts">${(r.ts || '').slice(0,19).replace('T',' ')}</span>
-        <span class="pv tag">${r.kind || 'artifact'}</span>
-        <span class="pv model">${r.model || '—'}</span>
-        ${mcp ? `<span class="pv mcp">🔗 ${mcp}</span>` : ''}
-        ${r.content_hash ? `<span class="pv hash">#${r.content_hash.slice(7,15)}</span>` : ''}
-      </div>`;
+    var totalMcp=0,tools={},models={};
+    data.records.forEach(function(r){
+      if(r.kind==="mcp_call"||(r.mcp_calls||[]).length>0)totalMcp++;
+      (r.mcp_calls||[]).forEach(function(m){tools[m.tool]=1;});
+      if(r.model)models[r.model]=1;
+    });
+    var summary='<div class="pv-summary">📋 '+data.records.length+' 记录 · 🔗 '+totalMcp+' MCP调用 · 🧠 '+Object.keys(models).join(", ")+' · 🔧 '+Object.keys(tools).slice(0,5).join(", ")+(Object.keys(tools).length>5?"…":"")+'</div>';
+    var rows=data.records.slice(0,10).map(function(r){
+      var mcp=(r.mcp_calls||[]).map(function(m){return m.tool+'("'+(m.query||'').slice(0,30)+'")';}).join(', ');
+      return '<div class="pv-row"><span class="pv ts">'+(r.ts||'').slice(0,19).replace('T',' ')+'</span><span class="pv tag">'+(r.kind||'artifact')+'</span><span class="pv model">'+(r.model||'—')+'</span>'+(mcp?'<span class="pv mcp">🔗 '+mcp+'</span>':'')+(r.content_hash?'<span class="pv hash">#'+r.content_hash.slice(7,15)+'</span>':'')+'</div>';
     }).join('');
+    return summary+rows+(data.records.length>10?'<div class="pv-empty">… 还有 '+(data.records.length-10)+' 条</div>':'');
   } catch {
     return '';
   }

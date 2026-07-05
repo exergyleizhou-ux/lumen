@@ -350,3 +350,4 @@ body::before{
 .composer-model{font-size:11px;color:var(--ocs-accent);font-weight:650;padding:3px 8px;background:var(--ocs-accent-soft);border-radius:6px}
 .composer-clear{height:28px;padding:0 10px;font-size:11px;font-family:inherit;border:1px solid var(--ocs-line);border-radius:8px;background:transparent;color:var(--ocs-muted);cursor:pointer;margin-left:auto}
 .composer-clear:hover{background:var(--ocs-accent-light);color:var(--ocs-accent)}
+.pv-summary{font-size:11px;padding:4px 0 6px;color:var(--ocs-accent);font-weight:650;border-bottom:1px solid var(--ocs-line);margin-bottom:4px}
