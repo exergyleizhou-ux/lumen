@@ -76,7 +76,7 @@ body::before{
 .tb-btn:hover{background:var(--ocs-accent-light);color:var(--ocs-ink)}
 
 /* ── Main layout ── */
-.main{display:flex;flex:1;overflow:hidden;min-height:0}
+.main{display:flex;flex:1;min-height:0}
 .side,.ctr,.insp{
   height:100%;min-height:0;overflow:hidden;
   border:1px solid var(--ocs-line);
@@ -398,7 +398,7 @@ body::before{
 
 
 
-#chatScroll{padding:28px 36px;overflow-y:scroll;flex:1;min-height:0;max-height:100%}
+#chatScroll{padding:28px 36px;overflow-y:scroll;height:0;flex:1 1 0px}
 /* User — purple gradient card, right side */
 .chat-msg.user{
   align-self:flex-end;max-width:72%;padding:12px 18px;
