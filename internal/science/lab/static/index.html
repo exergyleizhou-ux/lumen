@@ -98,9 +98,7 @@ async function streamChat(prompt){
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
 }
 
-function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/
-
-/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
+function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/\n\n/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
 function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function fmtSize(b){if(!b||b<1024)return(b||0)+"B";if(b<1048576)return(b/1024).toFixed(1)+"KB";return(b/1048576).toFixed(1)+"MB";}
 
