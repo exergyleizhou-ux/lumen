@@ -16,7 +16,7 @@ html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1)
   <div class="main">
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
-      <div style="display:flex;gap:4px;margin-bottom:6px"><button class="btn sm" id="briefBtn2" style="flex:1;font-size:10px">📋 Brief</button><button class="btn sm" id="c2dBtn2" style="flex:1;font-size:10px">🏷 C2D</button></div>
+      <div style="display:flex;gap:4px;margin-bottom:6px"><input type="file" id="labFileInput2" multiple style="display:none" onchange="uploadLabFiles(this.files)"><button class="btn sm" onclick="document.getElementById('labFileInput2').click()" style="font-size:10px" title="上传文件到当前课题">📤</button><button class="btn sm" id="briefBtn2" style="flex:1;font-size:10px">📋 Brief</button><button class="btn sm" id="c2dBtn2" style="flex:1;font-size:10px">🏷 C2D</button></div>
       <div id="projectList"></div>
       <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
         <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 连接状态 <span id="statusDot" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#5b8c7a;margin-left:4px;box-shadow:0 0 0 3px rgba(91,140,122,.2)"></span></div>
