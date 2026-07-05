@@ -37,13 +37,13 @@ html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;ba
 @keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
 
 /* user bubble = ink-black (matching Oasis primary button) */
-.msg.user .bubble{background:#18181b;color:#fafaf7;padding:12px 20px;border-radius:24px 24px 4px 24px;font-weight:500;font-size:14px;line-height:1.65}
-.msg.assistant .bubble{padding:4px 0;font-size:14px;line-height:1.7;color:#18181b}
+.msg.user .msg-body{background:#18181b;color:#fafaf7;padding:12px 20px;border-radius:24px 24px 4px 24px;font-weight:500;font-size:14px;line-height:1.65}
+.msg.assistant .msg-body{padding:4px 0;font-size:14px;line-height:1.7;color:#18181b}
 
 /* tables inside messages */
-.msg.assistant .bubble table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px;border-radius:12px;overflow:hidden;border:1px solid rgb(231 229 224)}
-.msg.assistant .bubble th,.msg.assistant .bubble td{padding:10px 14px;text-align:left;border:1px solid rgb(231 229 224)}
-.msg.assistant .bubble th{background:rgb(244 243 239);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:rgb(24 24 27/.6)}
+.msg.assistant .msg-body table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px;border-radius:12px;overflow:hidden;border:1px solid rgb(231 229 224)}
+.msg.assistant .msg-body th,.msg.assistant .msg-body td{padding:10px 14px;text-align:left;border:1px solid rgb(231 229 224)}
+.msg.assistant .msg-body th{background:rgb(244 243 239);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:rgb(24 24 27/.6)}
 
 /* thinking = muted italic */
 .msg-thinking{color:rgb(24 24 27/.4);font-size:12px;font-style:italic;padding:4px 0}
@@ -97,3 +97,29 @@ html,body{height:100%;overflow:hidden;font:14px/1.6 var(--font);color:#18181b;ba
 .mb-1{margin-bottom:4px}
 .overflow-auto{overflow:auto}
 .whitespace-pre-wrap{white-space:pre-wrap}
+
+/* JS-created elements */
+.msg-avatar{width:28px;height:28px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}
+.msg.user .msg-avatar{background:#18181b;color:#fafaf7}
+.msg.assistant .msg-avatar{background:rgb(244 243 239);color:#18181b}
+.tool-card{margin:6px 0;border-radius:12px;border:1px solid rgb(231 229 224);overflow:hidden}
+.tool-hd{display:flex;align-items:center;gap:6px;padding:7px 12px;font-size:12px;font-weight:600;transition:all .15s}
+.tool-hd.running{background:rgba(180,83,9,.06);color:#b45309}
+.tool-hd.done-ok{background:rgba(4,120,87,.06);color:#047857}
+.tool-hd.done-err{background:rgba(220,38,38,.06);color:#dc2626}
+.think-block{padding:8px 14px;margin:4px 0;background:rgb(244 243 239);border-radius:10px;font-size:12px;color:rgb(24 24 27/.5);font-style:italic;line-height:1.6;max-height:200px;overflow-y:auto}
+.think-block summary{cursor:pointer;font-weight:600;color:rgb(24 24 27/.6);margin-bottom:4px}
+.stat-busy{color:#b45309;display:flex;align-items:center;gap:4px}
+.stat-ok{color:#047857;display:flex;align-items:center;gap:4px}
+.mem-del{opacity:0;color:rgb(24 24 27/.4);font-size:12px;padding:2px 6px;border-radius:4px;transition:opacity .12s;background:none;border:none;cursor:pointer}
+.side-item:hover .mem-del,.session-item:hover .mem-del{opacity:1}
+.mem-del:hover{color:#dc2626;background:rgba(220,38,38,.08)}
+.skill-invoke{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:8px;font-size:11px;font-weight:500;cursor:pointer;background:rgba(180,83,9,.08);color:#b45309;border:1px solid rgba(180,83,9,.15);transition:all .12s}
+.skill-invoke:hover{background:rgba(180,83,9,.14)}
+
+/* Mobile responsive */
+@media(max-width:768px){
+  #app{grid-template-columns:1fr}
+  .sidebar{position:fixed;left:0;top:48px;bottom:0;z-index:40;transform:translateX(-100%);transition:transform .2s}
+  .sidebar.open{transform:translateX(0)}
+}
