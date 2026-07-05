@@ -897,3 +897,31 @@ body {
 .scrollbar-subtle::-webkit-scrollbar-thumb{background:var(--rule);border-radius:4px}
 /* sm icon button */
 .btn-icon.sm{width:26px;height:26px;font-size:14px}
+
+/* Enhanced messages — thinking, tool, diff */
+.msg-thinking{margin:6px 0;border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+.msg-thinking-hd{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:11px;color:var(--muted);cursor:pointer;background:var(--sidebar)}
+.msg-thinking-hd:hover{background:var(--sidebar-hover)}
+.msg-thinking-dot{width:6px;height:6px;border-radius:50%;background:var(--forest);animation:pulse 1.5s infinite}
+.msg-thinking-body{display:none;padding:8px 12px;font-size:11px;color:var(--muted);max-height:300px;overflow:auto}
+.msg-thinking.open .msg-thinking-body{display:block}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+.msg-tool{margin:4px 0;border:1px solid var(--rule);border-radius:8px;overflow:hidden;font-size:11px}
+.msg-tool-hd{display:flex;align-items:center;gap:6px;padding:5px 10px;cursor:pointer;background:var(--sidebar)}
+.msg-tool-hd:hover{background:var(--sidebar-hover)}
+.msg-tool-name{font-weight:600;overflow:hidden;text-overflow:ellipsis}
+.msg-tool-status{font-size:10px;color:var(--muted);margin-left:auto}
+.msg-tool-body{display:none;padding:8px 12px}
+.msg-tool.open .msg-tool-body{display:block}
+.msg-tool.done .msg-tool-status{color:var(--forest)}
+.msg-tool pre{font-family:var(--mono);font-size:10px;white-space:pre-wrap;word-break:break-all;margin:0}
+
+.msg-diff{border:1px solid var(--rule);border-radius:8px;overflow:hidden;margin:4px 0;font-size:11px;font-family:var(--mono)}
+.msg-diff .add{background:#d1fae5;color:#065f46}
+.msg-diff .del{background:#fee2e2;color:#991b1b}
+.msg-diff .hdr{background:var(--sidebar);padding:4px 10px;font-weight:600;color:var(--muted)}
+
+/* File change notification */
+.change-toast{position:fixed;bottom:60px;right:20px;z-index:50;background:var(--forest);color:#fff;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.12);animation:slideUp .3s ease}
+@keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
