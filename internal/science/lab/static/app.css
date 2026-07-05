@@ -326,3 +326,27 @@ body::before{
 .chat-msg{padding:6px 0;font-size:13px;line-height:1.65;word-break:break-word;clear:both}
 .chat-msg.user{color:var(--ocs-user-fg);font-weight:650;background:var(--ocs-user-bg);padding:8px 14px;border-radius:12px;margin:8px 0 8px auto;max-width:80%;float:right;clear:both}
 .chat-msg.agent{padding:8px 0;margin:6px 0;white-space:pre-wrap;clear:both}
+
+/* Thinking block */
+.msg-thinking{margin:4px 0;border:1px solid var(--ocs-line);border-radius:10px;overflow:hidden}
+.msg-thinking-hd{display:flex;align-items:center;gap:6px;padding:5px 10px;font-size:11px;color:var(--ocs-muted);cursor:pointer;background:var(--ocs-surface-soft)}
+.msg-thinking-dot{width:6px;height:6px;border-radius:50%;background:var(--ocs-accent);animation:pulse 1.5s infinite}
+.msg-thinking-body{display:none;padding:8px 12px;font-size:11px;color:var(--ocs-muted);max-height:300px;overflow:auto;white-space:pre-wrap}
+.msg-thinking.open .msg-thinking-body{display:block}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+
+/* Agent wrap — contains thinking + response */
+.chat-msg.agent-wrap{margin:6px 0;clear:both}
+
+/* Markdown tables */
+.chat-msg.agent table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
+.chat-msg.agent th{background:var(--ocs-accent-soft);color:var(--ocs-accent);font-weight:650;padding:6px 10px;text-align:left;border:1px solid var(--ocs-line)}
+.chat-msg.agent td{padding:5px 10px;border:1px solid var(--ocs-line)}
+.chat-msg.agent tr:nth-child(even){background:var(--ocs-surface-soft)}
+.chat-msg.agent h1,.chat-msg.agent h2,.chat-msg.agent h3{font-size:15px;font-weight:700;margin:10px 0 4px}
+.chat-msg.agent ul,.chat-msg.agent ol{margin:4px 0;padding-left:20px}
+.chat-msg.agent li{margin:2px 0}
+.chat-msg.agent p{margin:4px 0}
+.chat-msg.agent strong{font-weight:700}
+.chat-msg.agent code{font-family:var(--mono);font-size:11px;background:var(--ocs-accent-light);padding:2px 5px;border-radius:4px}
+.chat-msg.agent pre{background:var(--ocs-surface-soft);padding:10px 14px;border-radius:10px;overflow-x:auto;font-size:11px;font-family:var(--mono);margin:6px 0}

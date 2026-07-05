@@ -223,6 +223,13 @@ document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("c
 
 // Simple markdown renderer
 function renderMD(t){
+  if(!t)return"";
+  // Tables first
+  t=t.replace(/\n\|(.+)\|\n\|[-| ]+\|\n((?:\n\|.+\|)+)/g,function(m,hdr,rows){
+    var h=hdr.split("|").map(function(c){return"<th>"+c.trim()+"</th>";}).join("");
+    var r=rows.trim().split("\n").map(function(row){return"<tr>"+row.split("|").slice(1,-1).map(function(c){return"<td>"+c.trim()+"</td>";}).join("")+"</tr>";}).join("");
+    return"<table>"+h+r+"</table>";
+  });
   return (t||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/```([\s\S]*?)```/g,"<pre><code>$1</code></pre>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/\*(.+?)\*/g,"<em>$1</em>");
 }
 
@@ -230,19 +237,36 @@ function renderMD(t){
 var orig_streamChat = streamChat;
 streamChat = async function(prompt, mode){
   var p = await ensureProject();
+  // User bubble — right aligned
   var ue = document.createElement("div"); ue.className = "chat-msg user"; ue.textContent = prompt;
   $("chatScroll").appendChild(ue);
+  // Agent container
   var w = $("welcome"); if(w) w.style.display = "none";
+  var wrap = document.createElement("div"); wrap.className = "chat-msg agent-wrap";
+  $("chatScroll").appendChild(wrap);
+  // Thinking block
+  var think = document.createElement("div"); think.className = "msg-thinking";
+  think.innerHTML = '<div class="msg-thinking-hd" onclick="this.parentElement.classList.toggle(\'open\')"><span class="msg-thinking-dot"></span>思考中…</div><div class="msg-thinking-body"></div>';
+  wrap.appendChild(think); think.classList.add("open");
+  var thinkBody = think.querySelector(".msg-thinking-body");
+  // Agent response
   var ae = document.createElement("div"); ae.className = "chat-msg agent";
-  $("chatScroll").appendChild(ae);
-  var textAcc = "";
+  wrap.appendChild(ae);
+  var textAcc = "", thinkingAcc = "";
   try {
     var res = await fetch("/api/lab/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode||"plan",session_id:activeThread})});
     var reader = res.body.getReader(); var dec = new TextDecoder(); var buf = "";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.innerHTML=renderMD(textAcc);}if(ev.kind==="usage"&&ev.total_tokens){var st=$("statTokens");if(st)st.textContent=ev.total_tokens+" tokens";if(ev.cache_hit_pct!==undefined){var sc=$("statCache");if(sc)sc.textContent="缓存 "+(ev.cache_hit_pct||0)+"%";}}}}
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
+      if(ev.kind==="thinking"){thinkingAcc+=ev.text||"";thinkBody.textContent=thinkingAcc;}
+      else if(ev.kind==="text"){textAcc+=ev.text||"";ae.innerHTML=renderMD(textAcc);think.classList.remove("open");}
+      else if(ev.kind==="tool"||ev.tool){var tn=document.createElement("span");tn.className="chat-tool-inline";tn.textContent=" 🔧 "+(ev.tool?.name||ev.name||"tool")+" ";ae.appendChild(tn);think.classList.remove("open");}
+      else if(ev.kind==="error"){ae.innerHTML+='<span style="color:#b42318">❌ '+(ev.text||"err")+'</span>';}
+    }}
   }catch(e){ae.textContent="错误: "+e.message;}
+  if(!textAcc&&thinkingAcc){ae.textContent=thinkingAcc;think.classList.remove("open");}
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
   refreshFiles();
+};
 }
 // Goal management
 window._goals=[];
