@@ -80,22 +80,26 @@ async function streamChat(prompt){
   var w=$("welcome");if(w)w.style.display="none";
   var wrap=document.createElement("div");wrap.className="chat-msg agent-wrap";$("chatScroll").appendChild(wrap);
   var think=document.createElement("details");think.className="think-block";think.open=true;
-  think.innerHTML='<summary class="think-summary"><span class="think-dot"></span><span class="think-label">思考中…</span></summary><div class="think-body"></div>';
+  think.innerHTML='<summary class="think-summary"><span class="think-dot"></span><span class="think-label">🧠 思考中…</span></summary><div class="think-body"></div>';
   wrap.appendChild(think);
   var tb=think.querySelector(".think-body"),tl=think.querySelector(".think-label");
   var resp=document.createElement("div");resp.className="chat-msg agent";wrap.appendChild(resp);
-  var ta="",tha="",tc=0;
+  var ta="",tha="",tc=0,streaming=false;
   try{
     var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:"plan",session_id:activeThread})});
     var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
     while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
-      if(ev.kind==="thinking"){tha+=ev.text||"";tb.textContent=tha;}
-      else if(ev.kind==="text"){if(!ta){think.open=false;tl.textContent="思考 ("+tha.length+"字)";}ta+=ev.text||"";resp.innerHTML=renderMD(ta);}
-      else if(ev.kind==="tool"||ev.tool){tc++;tl.textContent="🔧 调用工具 ("+tc+")";}
-      else if(ev.kind==="error"){resp.innerHTML+='<span style="color:#b42318">❌ '+(ev.text||"err")+'</span>';}
+      if(ev.kind==="thinking"){tha+=ev.text||"";tb.innerHTML=renderMD(tha);tl.textContent="🧠 思考中…";}
+      else if(ev.kind==="text"){
+        if(!ta){think.open=false;tl.textContent="🧠 思考完成 · 点击展开";streaming=true;}
+        ta+=ev.text||"";resp.innerHTML=renderMD(ta)+(streaming?'<span class="cursor">▌</span>':'');
+      }
+      else if(ev.kind==="tool"||ev.tool){tc++;tl.textContent="🔧 已调用 "+tc+" 个工具";}
+      else if(ev.kind==="error"){resp.innerHTML+='<span style="color:#b42318"> ❌ '+(ev.text||"err")+'</span>';}
+      else if(ev.kind==="turn_done"){streaming=false;resp.innerHTML=renderMD(ta);}
     }}
   }catch(e){resp.textContent="错误: "+e.message;}
-  if(!ta&&tha){resp.textContent=tha;think.open=false;tl.textContent="思考";}
+  if(!ta&&tha){resp.innerHTML=renderMD(tha);think.open=false;tl.textContent="🧠 思考 · 点击展开";}
   if(!tha&&!ta)think.remove();
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
 }
@@ -118,7 +122,22 @@ async function previewFile(path){
 }
 
 function fmtSize(b){if(!b||b<1024)return (b||0)+"B";if(b<1048576)return (b/1024).toFixed(1)+"KB";return (b/1048576).toFixed(1)+"MB";}
-function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/\n\n/g,"</p><p>").replace(/\n- /g,"\n<li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
+function renderMD(t){if(!t)return"";
+  t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+  // Tables: | a | b |\n|--|--|\n| 1 | 2 |
+  t=t.replace(/\|(.+)\|\n\|[-: |]+\|\n((?:\|.+\|\n?)+)/gm,function(m,h,r){
+    var hdr="<tr>"+h.split("|").map(function(c){return"<th>"+c.trim()+"</th>";}).join("")+"</tr>";
+    var rows=r.trim().split("\n").map(function(rw){return"<tr>"+rw.split("|").filter(function(c){return c.trim();}).map(function(c){return"<td>"+c.trim()+"</td>";}).join("")+"</tr>";}).join("");
+    return"<table>"+hdr+rows+"</table>";
+  });
+  // Headings, bold, code, lists
+  t=t.replace(/^### (.+)$/gm,"<h3>$1</h3>").replace(/^## (.+)$/gm,"<h2>$1</h2>").replace(/^# (.+)$/gm,"<h1>$1</h1>");
+  t=t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>");
+  t=t.replace(/^- (.+)$/gm,"<li>$1</li>").replace(/(<li>.*<\/li>)/s,"<ul>$1</ul>");
+  t=t.replace(/^> (.+)$/gm,"<blockquote>$1</blockquote>");
+  t=t.replace(/\n\n/g,"</p><p>");
+  if(!t.match(/^<[a-z]/))t="<p>"+t+"</p>";
+  return t;}
 function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 
 // Events

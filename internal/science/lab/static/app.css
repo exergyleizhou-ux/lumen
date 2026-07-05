@@ -361,11 +361,16 @@ body::before{
 .think-body{padding:6px 10px;font-size:11px;color:#8c8478;white-space:pre-wrap;max-height:200px;overflow:auto;border-top:1px solid rgba(76,29,149,.06)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 
-.think-block{margin:4px 0;border:1px solid rgba(76,29,149,.08);border-radius:8px;overflow:hidden}
-.think-summary{display:flex;align-items:center;gap:6px;padding:5px 10px;font-size:11px;color:#8c8478;cursor:pointer;background:rgba(76,29,149,.03);list-style:none;user-select:none}
+.think-block{margin:8px 0;border:1px solid rgba(76,29,149,.15);border-radius:10px;overflow:hidden;background:#f8f6fc}
+.think-summary{display:flex;align-items:center;gap:8px;padding:7px 12px;font-size:12px;color:#8c8478;cursor:pointer;background:#f0ecf8;list-style:none;user-select:none;font-weight:650;transition:background .15s}
+.think-summary:hover{background:#e8e2f4}
 .think-summary::-webkit-details-marker{display:none}
-.think-dot{width:5px;height:5px;border-radius:50%;background:#c28b4b;flex-shrink:0}
-.think-body{padding:6px 10px;font-size:11px;color:#8c8478;white-space:pre-wrap;max-height:200px;overflow:auto;border-top:1px solid rgba(76,29,149,.06)}
+.think-summary::before{content:"▸";font-size:10px;color:#4c1d95;transition:transform .15s;display:inline-block;width:12px}
+.think-block[open] .think-summary::before{transform:rotate(90deg)}
+.think-dot{width:6px;height:6px;border-radius:50%;background:#4c1d95;flex-shrink:0;animation:pulse 1.5s infinite}
+.think-block:not([open]) .think-dot{background:#8c8478;animation:none}
+.think-body{padding:8px 12px;font-size:11px;color:#706b78;white-space:pre-wrap;max-height:260px;overflow:auto;border-top:1px solid rgba(76,29,149,.08);line-height:1.6}
+.think-body p{margin:2px 0}
 .chat-msg.agent-wrap{margin:6px 0;clear:both}
 .chat-msg.agent h1,.chat-msg.agent h2,.chat-msg.agent h3{font-size:15px;font-weight:700;margin:10px 0 4px}
 .chat-msg.agent p{margin:4px 0}
@@ -375,3 +380,6 @@ body::before{
 .chat-msg.agent table{border-collapse:collapse;margin:8px 0;font-size:12px;width:100%}
 .chat-msg.agent th{background:rgba(76,29,149,.08);color:var(--ocs-accent);font-weight:650;padding:6px 10px;text-align:left;border:1px solid var(--ocs-line)}
 .chat-msg.agent td{padding:5px 10px;border:1px solid var(--ocs-line)}
+
+.cursor{animation:blink .8s infinite;color:var(--ocs-accent);font-weight:400}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
