@@ -170,4 +170,13 @@ var _pf=previewFile;
 previewFile=function(path){labSelectedFile=path;_pf(path);};
 
 (async function(){await refreshHealth();await loadProjects();})();
+
+setInterval(function(){
+  var msgs=[];document.querySelectorAll("#chatScroll .chat-msg").forEach(function(e){msgs.push({c:e.className,t:e.textContent.slice(0,500)});});
+  try{localStorage.setItem("lab-msgs",JSON.stringify(msgs.slice(-30)));}catch(_){}
+},3000);
+setTimeout(function(){
+  try{var msgs=JSON.parse(localStorage.getItem("lab-msgs")||"[]");msgs.forEach(function(m){var e=document.createElement("div");e.className=m.c;e.textContent=m.t;$("chatScroll").appendChild(e);});}catch(_){}
+},300);
+
 </script></body></html>
