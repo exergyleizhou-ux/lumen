@@ -1494,3 +1494,11 @@ setTimeout(function() {
     topBar.appendChild(expBtn);
   }
 }, 2000);
+
+// Hide welcome state on first message
+var _origAppendMsg2 = appendMsg;
+appendMsg = function(role, text) {
+  var w = document.getElementById("welcomeState");
+  if (w) w.style.display = "none";
+  return _origAppendMsg2(role, text);
+};
