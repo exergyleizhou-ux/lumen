@@ -15,7 +15,19 @@
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div id="projectList"></div>
-      <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6"><div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 状态</div><div id="sbFleet" style="color:var(--ocs-muted)">—</div><div id="sbPack" style="color:var(--ocs-muted);margin-top:2px">—</div></div>
+      <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
+      <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:6px">🔬 系统状态</div>
+      <div id="sbFleet" style="color:var(--ocs-muted)">—</div>
+      <div id="sbPack" style="color:var(--ocs-muted);margin-top:2px">—</div>
+      <details style="margin-top:8px"><summary style="color:var(--ocs-accent);font-weight:650;font-size:11px;cursor:pointer">🖥 SSH 计算</summary>
+        <div id="sbSSH" style="margin-top:4px"><span class="hint">加载中…</span></div>
+        <div style="display:flex;gap:4px;margin-top:4px">
+          <select id="sshHost" style="flex:1;height:24px;font-size:10px;border:1px solid var(--ocs-line);border-radius:4px;background:var(--ocs-surface-soft)"><option value="">选主机…</option></select>
+        </div>
+        <input id="sshCmd" placeholder="命令…" style="width:100%;margin-top:4px;height:24px;padding:0 6px;font-size:10px;border:1px solid var(--ocs-line);border-radius:4px;background:var(--ocs-surface-soft)">
+        <button class="btn sm fill" id="sshRun" style="margin-top:4px">执行</button>
+      </details>
+    </div>
       <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
@@ -152,6 +164,35 @@ function loadKetcher(){if(!ketcherLoaded){ketcherLoaded=true;$("ketcherFrame").s
 // 3Dmol lazy load
 var molLoaded=false;
 function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#fbf9f6"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#4c1d95"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}}
+
+
+// SSH hosts
+async function loadSSH(){
+  try{var d=await api("/api/lab/compute/ssh-hosts");var hosts=d.hosts||[];var el=$("sbSSH"),sel=$("sshHost");if(el)el.innerHTML=hosts.length?hosts.map(function(h){return'<div>'+h.alias+' ('+(h.hostname||"")+')</div>';}).join(""):'<span class="hint">无 SSH 配置</span>';if(sel)sel.innerHTML='<option value="">选主机…</option>'+hosts.map(function(h){return'<option value="'+h.alias+'">'+h.alias+'</option>';}).join("");}catch(e){var el=$("sbSSH");if(el)el.innerHTML='<span class="hint">不可用</span>';}
+}
+$("sshRun").addEventListener("click",async function(){
+  var host=$("sshHost").value,cmd=$("sshCmd").value.trim();
+  if(!host||!cmd||!activeProject)return;$("sshCmd").value="";
+  try{var j=await api("/api/lab/compute/jobs?project_id="+activeProject.slug,{method:"POST",body:JSON.stringify({host:host,command:cmd})});appendMsg("agent","🖥 SSH 任务: "+j.id);}catch(e){}
+});
+loadSSH();
+
+
+// SSH hosts loader
+async function loadSSH(){
+  var el=$("sbSSH");if(!el)return;
+  try{var d=await api("/api/lab/compute/ssh-hosts");var h=d.hosts||[];el.innerHTML=h.length?h.map(function(x){return'<div>🖥 '+x.alias+'</div>';}).join(""):'无 SSH 配置';}catch(e){el.innerHTML='不可用';}
+}
+// Brief quick action
+$("briefBtn").addEventListener("click",async function(){
+  if(!activeProject){activeProject=await ensureProject();}
+  var t=prompt("Brief 主题");if(!t)return;
+  try{var r=await api("/api/lab/brief",{method:"POST",body:JSON.stringify({project_id:activeProject.slug,topic:t})});streamChat("请分析刚生成的 Brief: "+t);}catch(e){}
+});
+// C2D quick action
+$("c2dBtn").addEventListener("click",function(){window.open("https://demo.oasisdata2026.xyz/c2d","_blank");});
+// Load SSH on init
+loadSSH();
 
 setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1000);
 (async function(){try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}})();
