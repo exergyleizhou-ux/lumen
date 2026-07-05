@@ -1,8 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let activeProject = null;
 
-
-
+var threads=[{id:"main",title:"对话"}],activeThread="main";
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -17,8 +16,8 @@ async function api(path, opts = {}) {
 
 function appendMsg(cls, text) {
   $("welcome")?.remove();
-  var el = document.createElement("div");
-  el.className = "chat-msg " + cls;
+  const el = document.createElement("div");
+  el.className = `msg ${cls}`;
   el.textContent = text;
   $("chatScroll").appendChild(el);
   el.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -69,10 +68,98 @@ async function ensureProject() {
   return p;
 }
 
-var currentMsgEl=null,currentToolEl=null,thinkingBlock=null;
+async function streamChat(prompt, mode) {
+  mode = mode || "plan";
+  var p = await ensureProject();
+  appendMsg("user", prompt);
+  var res = await fetch("/api/lab/chat", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ project_id: p.slug, prompt: prompt, mode: mode, session_id: activeThread }),
+  });
+  var reader = res.body.getReader();
+  var dec = new TextDecoder();
+  var buf = "";
+  while (true) {
+    var r = await reader.read();
+    if (r.done) break;
+    buf += dec.decode(r.value, { stream: true });
+    var parts = buf.split("\n\n");
+    buf = parts.pop() || "";
+    for (var i = 0; i < parts.length; i++) {
+      var line = parts[i].trim();
+      if (line.indexOf("data:") !== 0) continue;
+      var json = line.slice(5).trim();
+      if (!json.startsWith("{")) continue;
+      try {
+        var ev = JSON.parse(json);
+        if (ev.text && (ev.kind === "text" || ev.kind === "thinking")) {
+          appendMsg("agent", ev.text);
+        }
+        if (ev.kind === "tool" || ev.tool) {
+          appendMsg("tool", "🔧 " + (ev.tool?.name || ev.name || "tool"));
+        }
+        if (ev.kind === "error") {
+          appendMsg("agent", "❌ " + (ev.text || "错误"));
+        }
+      } catch (_) {}
+    }
+  }
+  refreshFiles();
+}
 
+// ── File panel ──
 
+async function refreshFiles() {
+  const el = $("fileTree");
+  if (!el || !activeProject) return;
+  try {
+    const data = await api(`/api/lab/files?project_id=${activeProject.slug}`);
+    const files = data.files || [];
+    el.innerHTML = files.map(f => {
+      const icon = f.isDir ? "📁" : fileIcon(f.name);
+      return `<div class="ft-row ${f.isDir ? "dir" : ""}" data-path="${f.name}" onclick="${f.isDir ? "" : `previewFile('${f.name}')`}">
+        <span style="flex-shrink:0;font-size:.9rem">${icon}</span>
+        <span class="ft-name">${f.name}</span>
+        ${!f.isDir ? `<span class="ft-size">${fmtSize(f.size)}</span>` : ""}
+      </div>`;
+    }).join("");
+  } catch (e) {
+    el.innerHTML = `<div class="ft-err">${e.message}</div>`;
+  }
+}
 
+async function previewFile(path) {
+  const preview = $("filePreview");
+  if (!preview || !activeProject) return;
+  try {
+    const data = await api(`/api/lab/files/content?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
+    const prov = await loadProvenance(path);
+    preview.innerHTML = `<div class="fp-hd">📄 ${data.path} (${fmtSize(data.size)})</div>
+      <pre class="fp-body">${escHtml(data.content)}</pre>
+      <div class="pv">${prov}</div>`;
+  } catch (e) {
+    preview.innerHTML = `<div class="ft-err">${e.message}</div>`;
+  }
+}
+
+async function loadProvenance(path) {
+  try {
+    const data = await api(`/api/lab/provenance?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
+    if (!data.count) return '<div class="pv-empty">无溯源记录</div>';
+    return data.records.map(r => {
+      const mcp = (r.mcp_calls || []).map(m => `${m.tool}("${m.query || ''}")`).join(', ');
+      return `<div class="pv-row">
+        <span class="pv ts">${(r.ts || '').slice(0,19).replace('T',' ')}</span>
+        <span class="pv tag">${r.kind || 'artifact'}</span>
+        <span class="pv model">${r.model || '—'}</span>
+        ${mcp ? `<span class="pv mcp">🔗 ${mcp}</span>` : ''}
+        ${r.content_hash ? `<span class="pv hash">#${r.content_hash.slice(7,15)}</span>` : ''}
+      </div>`;
+    }).join('');
+  } catch {
+    return '';
+  }
+}
 
 function fileIcon(name) {
   const ext = name.split(".").pop().toLowerCase();
@@ -92,7 +179,7 @@ function escHtml(s) {
 
 // ── Event wiring ──
 
-$("composer")?.addEventListener("submit", (e) => {
+$("composer")?.addEventListener("submit", function(e) {
   e.preventDefault();
   var inp = $("promptInput"); if (!inp) return;
   var prompt = inp.value.trim(); if (!prompt) return;
@@ -228,75 +315,42 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
   }
 })();
 
-
-
-function highlightCode(code, lang){
-  if (!code) return "";
-  var h = escHtml(code);
-  if (lang === "python" || lang === "py" || lang === "go" || lang === "js" || lang === "ts" || lang === "rust" || lang === "sh" || lang === "bash" || !lang){
-    h = h.replace(/\b(import|from|def|class|return|if|else|elif|for|while|try|except|finally|with|as|yield|raise|pass|break|continue|and|or|not|in|is|None|True|False|func|var|let|const|function|async|await|export|default|package|type|struct|interface|map|chan|go|defer|select|switch|case|range|fn|impl|use|mod|pub|mut|self|print|echo|exit|return)\b/g,'<span class="kw">$1</span>');
-    h = h.replace(/(["'`])(?:(?!\1).)*\1/g,'<span class="str">$&</span>');
-    h = h.replace(/(\d+\.?\d*)/g,'<span class="num">$1</span>');
-    h = h.replace(/(#|\/\/).*$/gm,'<span class="cm">$&</span>');
-    h = h.replace(/\b([a-zA-Z_]\w*)\s*\(/g,'<span class="fn">$1</span>(');
-  }
-  return h;
-}
-
-// Override the MD code block rendering
-var _origRenderMD = renderMD;
-renderMD = function(text){
-  if (!text) return "";
-  var html = _origRenderMD(text);
-  // Add syntax highlight to code blocks
-  html = html.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, function(m, code){
-    var lang = "auto";
-    var codeText = code.replace(/^\n+/, "");
-    return '<pre><code>'+highlightCode(codeText, lang)+'</code></pre>';
-  });
-  return html;
-};
-
-// ── Diff renderer ──
-function renderDiff(diffText){
-  if (!diffText) return "";
-  var lines = diffText.split("\n");
-  var html = '<div class="diff-block"><div class="diff-hd">📄 文件变更</div><div class="diff-body">';
-  for (var i = 0; i < lines.length; i++){
-    var line = lines[i];
-    var cls = "";
-    if (line.startsWith("+")) cls = "add";
-    else if (line.startsWith("-")) cls = "del";
-    else if (line.startsWith("@@")) cls = "hdr";
-    html += '<div class="diff-line '+cls+'">'+escHtml(line)+'</div>';
-  }
-  html += '</div></div>';
-  return html;
-}
-
-// ── Git status ──
-async function checkGitStatus(){
-  try {
-    var r = await api("/api/lab/files?project_id="+activeProject.slug);
-    var files = r.files||[];
-    var dirty = files.length > 0;
-    var badge = document.querySelector(".git-badge");
-    if (badge){ badge.textContent = dirty ? "● "+files.length+" changed" : "✓ clean"; badge.className = "git-badge"+(dirty?" dirty":""); }
-  } catch(_){}
-}
-
-// Add diff rendering to chat tool output
-var _origHandleSSE_streamChat_vars = null;
-// Hook into streamChat to render diffs
+// ── Resize handles ──
 (function(){
-  var orig = streamChat;
-  // Watch for diff in tool output
-  setInterval(function(){
-    document.querySelectorAll(".chat-tool-output").forEach(function(el){
-      var text = el.textContent||"";
-      if (text.startsWith("diff ") || text.includes("@@ -") || text.includes("+++ ")){
-        el.innerHTML = renderDiff(text);
-      }
+  function makeResizable(handle,panel,isRight){
+    var startX,startW;
+    handle.addEventListener("mousedown",function(e){
+      startX=e.clientX;startW=panel.getBoundingClientRect().width;
+      document.body.style.cursor="col-resize";document.body.style.userSelect="none";
+      handle.classList.add("active");
+      function onMove(e){var delta=isRight?startX-e.clientX:e.clientX-startX;panel.style.width=Math.max(180,Math.min(480,startW+delta))+"px";}
+      function onUp(){document.body.style.cursor="";document.body.style.userSelect="";handle.classList.remove("active");document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);}
+      document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
     });
-  }, 500);
+  }
+  var rl=$("resizeLeft"),rr=$("resizeRight"),sp=$("sidebarPanel"),ip=$("inspectorPanel");
+  if(rl&&sp)makeResizable(rl,sp,false);
+  if(rr&&ip)makeResizable(rr,ip,true);
+})();
+
+
+function wireChips() {
+  document.querySelectorAll(".chip").forEach(function(btn) {
+    btn.addEventListener("click", async function() {
+      if (this.dataset.brief) {
+        var p = await ensureProject();
+        var res = await api("/api/lab/brief", { method: "POST", body: JSON.stringify({ project_id: p.slug, topic: this.dataset.brief }) });
+        appendMsg("agent", "Brief 已写入 " + res.path);
+        return;
+      }
+      if (this.dataset.prompt) streamChat(this.dataset.prompt).catch(function(e) { appendMsg("agent", e.message); });
+    });
+  });
+}
+wireChips();
+
+// ── Init ──
+(async function(){
+  try{await refreshHealth();await loadProjects();renderThreadTabs();}catch(e){$("inspectorBody").innerHTML='<div class="ft-err">'+e.message+'</div>';}
+  setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1200);
 })();
