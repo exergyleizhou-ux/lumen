@@ -79,33 +79,45 @@ async function streamChat(prompt, mode) {
   var reader = res.body.getReader();
   var dec = new TextDecoder();
   var buf = "";
+  // Prepare a single agent bubble for all text
+  $("welcome")?.remove();
+  var el = document.createElement("div"); el.className = "chat-msg agent";
+  var body = document.createElement("div"); body.className = "msg-body";
+  el.appendChild(body); $("chatScroll").appendChild(el);
+  var textAcc = "";
   while (true) {
     var r = await reader.read();
     if (r.done) break;
     buf += dec.decode(r.value, { stream: true });
-    var parts = buf.split("\n\n");
-    buf = parts.pop() || "";
-    for (var i = 0; i < parts.length; i++) {
-      var line = parts[i].trim();
+    var lines = buf.split("\n");
+    buf = lines.pop();
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
       if (line.indexOf("data:") !== 0) continue;
       var json = line.slice(5).trim();
       if (!json.startsWith("{")) continue;
       try {
         var ev = JSON.parse(json);
         if (ev.text && (ev.kind === "text" || ev.kind === "thinking")) {
-          appendMsg("agent", ev.text);
+          textAcc += ev.text;
+          body.textContent = textAcc;
+          $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
         }
         if (ev.kind === "tool" || ev.tool) {
-          appendMsg("tool", "🔧 " + (ev.tool?.name || ev.name || "tool"));
+          var tn = document.createElement("span");
+          tn.className = "chat-tool-inline";
+          tn.textContent = " 🔧 " + (ev.tool?.name || ev.name || "tool") + " ";
+          body.appendChild(tn);
         }
         if (ev.kind === "error") {
-          appendMsg("agent", "❌ " + (ev.text || "错误"));
+          body.textContent += "\n❌ " + (ev.text || "错误");
         }
       } catch (_) {}
     }
   }
   refreshFiles();
 }
+
 
 // ── File panel ──
 

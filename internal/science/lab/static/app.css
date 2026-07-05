@@ -308,3 +308,5 @@ body::before{
 /* Embed */
 .embed-oasis .tb{display:none}
 .embed-oasis .shell{padding:8px}
+.msg-body{word-break:break-word;white-space:pre-wrap}
+.chat-tool-inline{font-size:11px;color:var(--ocs-accent);font-weight:650;background:var(--ocs-accent-soft);padding:1px 5px;border-radius:4px;margin:0 2px}
