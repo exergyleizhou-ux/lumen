@@ -303,3 +303,35 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
     $("inspectorBody").textContent = String(e);
   }
 })();
+
+// ── Resize handles ──
+(function(){
+  function makeResizable(handle, panel, isRight) {
+    let startX, startW;
+    handle.addEventListener("mousedown", (e) => {
+      startX = e.clientX;
+      startW = panel.getBoundingClientRect().width;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      function onMove(e) {
+        const delta = isRight ? startX - e.clientX : e.clientX - startX;
+        const w = Math.max(180, Math.min(480, startW + delta));
+        panel.style.width = w + "px";
+      }
+      function onUp() {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
+  var rl = document.getElementById("resizeLeft");
+  var rr = document.getElementById("resizeRight");
+  var sp = document.getElementById("sidebarPanel");
+  var ip = document.getElementById("inspectorPanel");
+  if (rl && sp) makeResizable(rl, sp, false);
+  if (rr && ip) makeResizable(rr, ip, true);
+})();

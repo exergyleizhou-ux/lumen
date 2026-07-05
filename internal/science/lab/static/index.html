@@ -4,69 +4,76 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Lumen Science · 实验室</title>
-<link rel="stylesheet" href="assets/app.css?v=5">
+<link rel="stylesheet" href="assets/app.css?v=6">
 </head>
 <body>
-
-<header class="tb">
-  <div class="tb-logo">
+<div class="shell" id="shell">
+  <header class="tb">
     <span class="tb-lumen">Lumen</span>
-    <span class="tb-label">Science 实验室</span>
-  </div>
-  <div class="tb-spacer"></div>
-  <div class="tb-meta">
-    <span class="tb-stat" id="packBadge">—</span>
+    <span class="tb-label">Science Lab</span>
+    <span class="tb-spacer"></span>
+    <span class="tb-stat"><span class="tb-dot"></span><span id="packBadge">—</span></span>
     <span class="tb-stat" id="fleetBadge">—</span>
-  </div>
-  <a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
-</header>
+    <a class="tb-link" href="http://127.0.0.1:18990/">Bridge</a>
+  </header>
 
-<div class="main">
-  <nav class="side">
-    <button class="btn fill" id="newProjectBtn">＋ 新建课题</button>
-    <div id="projectList"></div>
-    <span class="dim sm" id="modeHint">—</span>
-  </nav>
+  <div class="main">
+    <!-- Left sidebar -->
+    <nav class="side" id="sidebarPanel">
+      <div class="side-inner">
+        <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
+        <div id="projectList"></div>
+        <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
+      </div>
+    </nav>
+    <div class="resize" id="resizeLeft"></div>
 
-  <section class="ctr">
-    <div class="scroll" id="chatScroll">
-      <div class="hero" id="welcome">
-        <h2>Lumen Science 实验室</h2>
-        <p>CS Research Pack · 23 域 · 247 工具 · 29 Skills · 国产模型直连</p>
-        <div class="row chips">
-          <button class="chip" data-prompt="用 pubmed 域检索 aspirin 药理文献">文献检索</button>
-          <button class="chip" data-prompt="生成 aspirin 四源 Research Brief">生成简报</button>
-          <button class="chip" data-brief="EGFR 抑制剂">一键 Brief</button>
+    <!-- Center chat -->
+    <section class="ctr">
+      <div class="ctr-tabs">
+        <button class="ctr-tab active">对话</button>
+      </div>
+      <div class="scroll" id="chatScroll">
+        <div class="hero" id="welcome">
+          <h2>Lumen Science 实验室</h2>
+          <p>CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p>
+          <div class="chips">
+            <button class="chip" data-prompt="用 pubmed 域检索 aspirin 药理文献">文献检索</button>
+            <button class="chip" data-prompt="生成 aspirin 四源 Research Brief">生成简报</button>
+            <button class="chip" data-brief="EGFR 抑制剂">一键 Brief</button>
+          </div>
         </div>
       </div>
-    </div>
-    <form class="composer" id="composer">
-      <input id="promptInput" placeholder="描述科研任务… ⌘K 命令面板" autocomplete="off">
-      <button class="btn" type="submit">发送</button>
-    </form>
-  </section>
+      <form class="composer" id="composer">
+        <input id="promptInput" placeholder="描述科研任务… ⌘K 命令面板" autocomplete="off">
+        <button class="btn primary" type="submit">发送</button>
+      </form>
+    </section>
+    <div class="resize" id="resizeRight"></div>
 
-  <aside class="insp">
-    <nav class="insp-tabs">
-      <button class="insp-tab sel" data-pane="status">状态</button>
-      <button class="insp-tab" data-pane="files">文件</button>
-      <button class="insp-tab" data-pane="ketcher">化学</button>
-      <button class="insp-tab" data-pane="molecule">分子</button>
-    </nav>
-    <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
-    <div class="pane" id="filesPane" hidden>
-      <div id="fileTree"></div>
-      <div id="filePreview"></div>
-    </div>
-    <div class="pane" id="ketcherPane" hidden>
-      <p class="dim sm">Ketcher 分子编辑器</p>
-      <iframe id="ketcherFrame" src="about:blank" title="Ketcher"></iframe>
-    </div>
-    <div class="pane" id="moleculePane" hidden>
-      <p class="dim sm">3Dmol 蛋白/分子预览</p>
-      <div id="molViewer"></div>
-    </div>
-  </aside>
+    <!-- Right inspector -->
+    <aside class="insp" id="inspectorPanel">
+      <div class="insp-tabs">
+        <button class="insp-tab active" data-pane="status">状态</button>
+        <button class="insp-tab" data-pane="files">文件</button>
+        <button class="insp-tab" data-pane="ketcher">化学</button>
+        <button class="insp-tab" data-pane="molecule">分子</button>
+      </div>
+      <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
+      <div class="pane" id="filesPane" hidden>
+        <div id="fileTree"></div>
+        <div id="filePreview"></div>
+      </div>
+      <div class="pane" id="ketcherPane" hidden>
+        <p class="hint" style="padding:0 0 8px">Ketcher 分子结构编辑器</p>
+        <iframe id="ketcherFrame" src="about:blank" title="Ketcher"></iframe>
+      </div>
+      <div class="pane" id="moleculePane" hidden>
+        <p class="hint" style="padding:0 0 8px">3Dmol 蛋白/分子 3D 预览</p>
+        <div id="molViewer"></div>
+      </div>
+    </aside>
+  </div>
 </div>
 
 <div id="cmdPalette" class="overlay" hidden>
@@ -76,6 +83,6 @@
   </div>
 </div>
 
-<script src="assets/app.js?v=5" defer></script>
+<script src="assets/app.js?v=6" defer></script>
 </body>
 </html>
