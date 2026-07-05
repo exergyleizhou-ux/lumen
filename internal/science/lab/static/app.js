@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 let activeProject = null;
 
 
-var threads=[{id:"main",title:"对话"}],activeThread="main";
+
 async function api(path, opts = {}) {
   const r = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
@@ -70,113 +70,9 @@ async function ensureProject() {
 }
 
 var currentMsgEl=null,currentToolEl=null,thinkingBlock=null;
-function thinkBlock(){var e=document.createElement("div");e.className="chat-thinking";e.innerHTML='<div class="chat-thinking-hd" onclick="this.parentElement.classList.toggle(\'open\')"><span class="chat-thinking-dot"></span>思考中…</div><div class="chat-thinking-body"></div>';return e;}
-function toolCard(name,args){var e=document.createElement("div");e.className="chat-tool open";var a=typeof args==="string"?args:JSON.stringify(args||{}).slice(0,200);e.innerHTML='<div class="chat-tool-hd" onclick="this.parentElement.classList.toggle(\'open\')"><span class="chat-tool-icon">🔧</span><span class="chat-tool-name">'+escHtml(name)+'</span><span class="chat-tool-status">执行中…</span></div><div class="chat-tool-body"><pre>'+escHtml(a)+'</pre><div class="chat-tool-output"></div></div>';return e;}
-function updTool(el,t,d){var s=el.querySelector(".chat-tool-status");if(s)s.textContent=d?"✓ 完成":t||"执行中…";if(d)el.classList.add("done");}
-function msgEl(cls){var e=document.createElement("div");e.className="chat-msg "+cls;return e;}
 
-async function streamChat(prompt,mode){
-  mode=mode||"plan";var p=await ensureProject();
-  var w=$("welcome");if(w)w.remove();
-  var ue=msgEl("user");ue.textContent=prompt;$("chatScroll").appendChild(ue);
-  var ae=msgEl("agent");$("chatScroll").appendChild(ae);
-  currentMsgEl=ae;currentToolEl=null;thinkingBlock=null;textBuf="";
-  try{
-    var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
-    var reader=res.body.getReader();var dec=new TextDecoder();var leftover="";
-    while(true){
-      var r=await reader.read();if(r.done)break;
-      leftover+=dec.decode(r.value,{stream:true});
-      // Split on double newline (SSE boundary)
-      var chunks=leftover.split("\n\n");leftover=chunks.pop()||"";
-      for(var ci=0;ci<chunks.length;ci++){
-        var chunk=chunks[ci].trim();if(!chunk)continue;
-        // Extract JSON from "data: {...}" line
-        var json=chunk;
-        if(json.indexOf("data:")===0)json=json.slice(5).trim();
-        if(!json.startsWith("{"))continue;
-        try{
-          var ev=JSON.parse(json);var k=ev.kind||"";
-          if(k==="phase"){
-            var ph=document.createElement("div");ph.className="chat-phase";ph.textContent=(ev.text||"")+" · 执行中";ae.appendChild(ph);setTimeout(function(){ph.style.opacity="0";setTimeout(function(){ph.remove();},300);},3000);
-          }else if(k==="text"){
-            if(!thinkingBlock){thinkingBlock=thinkBlock();ae.appendChild(thinkingBlock);}
-            var bd=thinkingBlock.querySelector(".chat-thinking-body");
-            textBuf+=ev.text||"";bd.textContent=textBuf;bd.scrollTop=bd.scrollHeight;
-          }else if(k==="tool"){
-            if(thinkingBlock){thinkingBlock.classList.remove("open");thinkingBlock=null;textBuf="";}
-            if(currentToolEl)updTool(currentToolEl,"",true);
-            currentToolEl=toolCard(ev.tool?.name||ev.name||"tool",ev.tool?.input||ev.input||{});ae.appendChild(currentToolEl);
-          }else if(k==="tool_result"||k==="tool_output"){
-            if(currentToolEl){var out=currentToolEl.querySelector(".chat-tool-output");out.textContent=(ev.text||"").slice(0,2000);updTool(currentToolEl,"",true);}
-          }else if(k==="error"){
-            var errEl=document.createElement("div");errEl.style.color="#b42318";errEl.style.fontSize="13px";errEl.textContent="❌ "+(ev.text||"err");ae.appendChild(errEl);
-          }else if(k==="turn_done"){
-            if(currentToolEl)updTool(currentToolEl,"",true);
-            if(thinkingBlock){thinkingBlock.classList.remove("open");thinkingBlock=null;textBuf="";}
-          }
-        }catch(_){}
-      }
-    }
-  }catch(e){var errEl=document.createElement("div");errEl.style.color="#b42318";errEl.textContent="错误: "+e.message;ae.appendChild(errEl);}
-  currentMsgEl=null;currentToolEl=null;thinkingBlock=null;textBuf="";refreshFiles();
-}
 
-// ── File panel ──
 
-async function refreshFiles() {
-  const el = $("fileTree");
-  if (!el || !activeProject) return;
-  try {
-    const data = await api(`/api/lab/files?project_id=${activeProject.slug}`);
-    const files = data.files || [];
-    el.innerHTML = files.map(f => {
-      const icon = f.isDir ? "📁" : fileIcon(f.name);
-      return `<div class="ft-row ${f.isDir ? "dir" : ""}" data-path="${f.name}" onclick="${f.isDir ? "" : `previewFile('${f.name}')`}">
-        <span style="flex-shrink:0;font-size:.9rem">${icon}</span>
-        <span class="ft-name">${f.name}</span>
-        ${!f.isDir ? `<span class="ft-size">${fmtSize(f.size)}</span>` : ""}
-      </div>`;
-    }).join("");
-  } catch (e) {
-    el.innerHTML = `<div class="ft-err">${e.message}</div>`;
-  }
-}
-
-async function previewFile(path) {
-  const preview = $("filePreview");
-  if (!preview || !activeProject) return;
-  try {
-    const data = await api(`/api/lab/files/content?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
-    const prov = await loadProvenance(path);
-    preview.innerHTML = `<div class="fp-hd">📄 ${data.path} (${fmtSize(data.size)})</div>
-      <pre class="fp-body">${escHtml(data.content)}</pre>
-      <div class="pv">${prov}</div>`;
-  } catch (e) {
-    preview.innerHTML = `<div class="ft-err">${e.message}</div>`;
-  }
-}
-
-async function loadProvenance(path) {
-  try {
-    const data = await api(`/api/lab/provenance?project_id=${activeProject.slug}&path=${encodeURIComponent(path)}`);
-    if (!data.count) return '<div class="pv-empty">无溯源记录</div>';
-    var totalMcp=0,tools={},models={};
-    data.records.forEach(function(r){
-      if(r.kind==="mcp_call"||(r.mcp_calls||[]).length>0)totalMcp++;
-      (r.mcp_calls||[]).forEach(function(m){tools[m.tool]=1;});
-      if(r.model)models[r.model]=1;
-    });
-    var summary='<div class="pv-summary">📋 '+data.records.length+' 记录 · 🔗 '+totalMcp+' MCP调用 · 🧠 '+Object.keys(models).join(", ")+' · 🔧 '+Object.keys(tools).slice(0,5).join(", ")+(Object.keys(tools).length>5?"…":"")+'</div>';
-    var rows=data.records.slice(0,10).map(function(r){
-      var mcp=(r.mcp_calls||[]).map(function(m){return m.tool+'("'+(m.query||'').slice(0,30)+'")';}).join(', ');
-      return '<div class="pv-row"><span class="pv ts">'+(r.ts||'').slice(0,19).replace('T',' ')+'</span><span class="pv tag">'+(r.kind||'artifact')+'</span><span class="pv model">'+(r.model||'—')+'</span>'+(mcp?'<span class="pv mcp">🔗 '+mcp+'</span>':'')+(r.content_hash?'<span class="pv hash">#'+r.content_hash.slice(7,15)+'</span>':'')+'</div>';
-    }).join('');
-    return summary+rows+(data.records.length>10?'<div class="pv-empty">… 还有 '+(data.records.length-10)+' 条</div>':'');
-  } catch {
-    return '';
-  }
-}
 
 function fileIcon(name) {
   const ext = name.split(".").pop().toLowerCase();
@@ -333,28 +229,7 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
 })();
 
 
-function wireChips() {
-  document.querySelectorAll(".chip").forEach(function(btn) {
-    btn.addEventListener("click", async function() {
-      if (this.dataset.brief) {
-        var p = await ensureProject();
-        var res = await api("/api/lab/brief", { method: "POST", body: JSON.stringify({ project_id: p.slug, topic: this.dataset.brief }) });
-        appendMsg("agent", "Brief 已写入 " + res.path);
-        setTimeout(refreshFiles, 1500);
-        return;
-      }
-      if (this.dataset.prompt) streamChat(this.dataset.prompt).catch(function(e) { appendMsg("agent", e.message); });
-    });
-  });
-}
 
-// ── Init ──
-(async function(){
-  try{await refreshHealth();await loadProjects();renderThreadTabs();}catch(e){$("inspectorBody").innerHTML='<div class="ft-err">'+e.message+'</div>';}
-  setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1200);
-})();
-
-// ── Syntax highlighting (simple) ──
 function highlightCode(code, lang){
   if (!code) return "";
   var h = escHtml(code);
