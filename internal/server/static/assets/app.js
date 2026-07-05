@@ -1251,3 +1251,104 @@ function showDiff(oldText, newText, path) {
 
 // ── Inject plan events into SSE handler ──
 // approval + plan SSE hooks removed (now in main handler)
+
+// ═══════════ PRODUCTION FEATURES ═══════════
+
+// ── Override renderMarkdown with inline Apply ──
+var _origRenderMD = renderMarkdown;
+renderMarkdown = function(text) {
+  if (!text) return "";
+  var out = _origRenderMD(text);
+  // Inject Apply buttons after code blocks with file paths
+  out = out.replace(/<pre class="[^"]*"><code>\/\/\s*(\S+\.\w+)\n([\s\S]*?)<\/code><\/pre>/g, function(_, path, code) {
+    return '<div style="margin:8px 0"><div style="display:flex;align-items:center;gap:8px;margin-bottom:4px"><span class="font-mono text-xs" style="color:rgb(24 24 27/.6)">'+escapeHtml(path)+'</span><button class="btn btn-sm btn-primary" onclick="applyInlineEdit(\''+escapeAttr(path)+'\',`'+escapeBackticks(code.trim())+'`)" style="font-size:10px;padding:2px 8px">Apply</button></div><pre class="font-mono text-xs" style="background:rgb(244 243 239);padding:12px;border-radius:8px;max-height:400px;overflow:auto"><code>'+escapeHtml(code.trim())+'</code></pre></div>';
+  });
+  return out;
+};
+
+async function applyInlineEdit(path, code) {
+  try {
+    var r = await fetch("/api/files/write", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({path:path,content:code})});
+    var d = await r.json();
+    showToast(d.ok?"✅ "+path:"❌ "+(d.error||"failed"));
+  } catch(e) { showToast("❌ "+e.message); }
+}
+
+// ── Git Status Panel ──
+async function refreshGitStatus() {
+  var el = document.getElementById("gitStatus");
+  if (!el) return;
+  try {
+    var r = await fetch("/api/git/status");
+    var d = await r.json();
+    var html = "";
+    if (d.files && d.files.length) {
+      html += '<div class="side-label" style="margin-top:8px">Git ('+d.files.length+')</div>';
+      d.files.slice(0,12).forEach(function(f){
+        var icon = f.status==="A"?"+":f.status==="D"?"-":"~";
+        html += '<div class="side-item" onclick="showGitDiff(\''+escapeAttr(f.path)+'\')"><span style="color:'+(f.status==="A"?"#047857":f.status==="D"?"#dc2626":"#b45309")+';font-weight:700">'+icon+'</span> '+escapeHtml(f.path)+'</div>';
+      });
+    }
+    el.innerHTML = html || '<div class="text-xs" style="padding:8px;color:rgb(24 24 27/.4)">Git: clean</div>';
+  } catch(_) {}
+}
+
+async function showGitDiff(fp) {
+  try {
+    var r = await fetch("/api/git/diff?path="+encodeURIComponent(fp));
+    var d = await r.json();
+    if (typeof showDiff === "function") showDiff(d.old||"",d.new||"",fp);
+  } catch(e) {}
+}
+
+// ── Code Search ──
+var _searchTimer;
+function searchSymbols(q) {
+  clearTimeout(_searchTimer);
+  if (q.length < 2) { var r=document.getElementById("searchResults");if(r)r.innerHTML=""; return; }
+  _searchTimer = setTimeout(async function() {
+    var el = document.getElementById("searchResults");
+    if (!el) return;
+    try {
+      var r = await fetch("/api/code/search?q="+encodeURIComponent(q));
+      var d = await r.json();
+      var html = "";
+      (d.results||[]).slice(0,20).forEach(function(s){
+        html += '<div class="side-item" style="font-size:11px" onclick="openFile(\''+escapeAttr(s.file)+'\','+(s.line||1)+')">🔍 '+escapeHtml(s.symbol||s.name)+' <span style="color:rgb(24 24 27/.4);font-size:10px">'+escapeHtml(s.file||"")+'</span></div>';
+      });
+      el.innerHTML = html || '<div class="text-xs" style="padding:8px;color:rgb(24 24 27/.4)">无结果</div>';
+    } catch(_) {}
+  },300);
+}
+
+// ── SSE Auto-Reconnect ──
+var _sseRetry = 0;
+function sseReconnect(delay) {
+  if (_sseRetry >= 5) { showToast("⚠️ 连接失败，请刷新"); return; }
+  _sseRetry++;
+  setTimeout(function() {
+    showToast("🔄 重连 "+_sseRetry+"/5");
+    if (window._lastPrompt) streamChat(window._lastPrompt);
+  }, delay || _sseRetry*2000);
+}
+
+// ── Toast ──
+function showToast(msg) {
+  var t = document.getElementById("toast");
+  if (!t) {
+    t = document.createElement("div"); t.id = "toast";
+    t.style.cssText = "position:fixed;bottom:80px;right:20px;z-index:100;background:#18181b;color:#fafaf7;padding:8px 16px;border-radius:9999px;font-size:12px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,.15);transition:opacity .3s;pointer-events:none";
+    document.body.appendChild(t);
+  }
+  t.textContent = msg; t.style.opacity = "1";
+  clearTimeout(t._to); t._to = setTimeout(function(){t.style.opacity="0"},2500);
+}
+
+// ── Helpers ──
+function escapeAttr(s) { return (s||"").replace(/'/g,"\\'").replace(/"/g,"&quot;"); }
+function escapeBackticks(s) { return (s||"").replace(/`/g,"\\`").replace(/\\$/g,"\\\\$"); }
+if (typeof escapeHtml !== "function") { function escapeHtml(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); } }
+
+// ── Init production features ──
+setTimeout(refreshGitStatus, 2000);
+setInterval(refreshGitStatus, 60000);
