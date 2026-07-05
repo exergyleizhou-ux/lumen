@@ -342,9 +342,23 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	a.turnMu.Lock()
 	defer a.turnMu.Unlock()
 
+	// Configure with timeout to prevent indefinite hang
+	cfgCtx, cfgCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cfgCancel()
+
 	sink := sseSink{w: w, flusher: flusher}
-	if err := a.labCtrl.Configure(slug, req.SessionID, sink, webApprover(sink.emitPayload)); err != nil {
-		sink.emit("error", err.Error())
+	done := make(chan error, 1)
+	go func() { done <- a.labCtrl.Configure(slug, req.SessionID, sink, webApprover(sink.emitPayload)) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			sink.emit("error", err.Error())
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		}
+	case <-cfgCtx.Done():
+		sink.emit("error", "配置超时，请刷新页面重试")
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 		flusher.Flush()
 		return
