@@ -53,6 +53,7 @@
               <option value="accept-edits">Accept edits</option>
             </select>
           </label>
+          <button class="btn-icon" id="dmToggle" type="button" title="暗色模式">🌙</button>
           <button class="btn-icon" id="settingsBtn" type="button" title="模型设置" aria-label="模型设置">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
           </button>
@@ -193,6 +194,21 @@
     </div>
   </dialog>
 
-  <script src="assets/app.js?v=8" defer></script>
+  <script src="assets/app.js?v=8" defer>
+// Dark mode
+(function(){
+  var dm=localStorage.getItem("lumen-dm");
+  if(dm==="dark"||(!dm&&window.matchMedia("(prefers-color-scheme:dark)").matches)){
+    document.documentElement.style.filter="invert(0.92) hue-rotate(180deg)";
+    document.documentElement.style.background="#111";
+  }
+  var btn=document.getElementById("dmToggle");
+  if(btn)btn.onclick=function(){
+    var isDark=document.documentElement.style.filter;
+    if(isDark){document.documentElement.style.filter="";document.documentElement.style.background="";localStorage.setItem("lumen-dm","light");btn.textContent="🌙";}
+    else{document.documentElement.style.filter="invert(0.92) hue-rotate(180deg)";document.documentElement.style.background="#111";localStorage.setItem("lumen-dm","dark");btn.textContent="☀";}
+  };
+})();
+</script>
 </body>
 </html>

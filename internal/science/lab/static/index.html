@@ -162,6 +162,44 @@ document.querySelector('[data-pane="molecule"]').onclick=function(){
 // Tab handlers for fleet/settings/ketcher/molecule
 document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){var p=this.dataset.pane;["statusPane","filesPane","fleetPane","ketcherPane","moleculePane","settingsPane"].forEach(function(id){var el=document.getElementById(id);if(el)el.hidden=id!==p+"Pane";});if(p==="fleet")refreshFleet();if(p==="settings"){refreshFleet();var h=refreshHealth();}});});
 
+
+// Simple markdown renderer
+function renderMD(t){
+  return (t||"")
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/```(\w*)\n([\s\S]*?)```/g,"<pre><code>$2</code></pre>")
+    .replace(/`([^`]+)`/g,"<code>$1</code>")
+    .replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g,"<em>$1</em>")
+    .replace(/
+
+/g,"</p><p>").replace(/^(.+)$/gm,"<p>$1</p>");
+}
+
+// Apply markdown to agent bubble after streaming
+var orig_streamChat = streamChat;
+streamChat = async function(prompt, mode){
+  var p = await ensureProject();
+  var ue = document.createElement("div"); ue.className = "chat-msg user"; ue.textContent = prompt;
+  $("chatScroll").appendChild(ue);
+  var w = $("welcome"); if(w) w.style.display = "none";
+  var ae = document.createElement("div"); ae.className = "chat-msg agent";
+  $("chatScroll").appendChild(ae);
+  var textAcc = "";
+  try {
+    var res = await fetch("/api/lab/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode||"plan",session_id:activeThread})});
+    var reader = res.body.getReader(); var dec = new TextDecoder(); var buf = "";
+    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.innerHTML=renderMD(textAcc);}if(ev.kind==="usage"&&ev.total_tokens){var st=$("statTokens");if(st)st.textContent=ev.total_tokens+" tokens";if(ev.cache_hit_pct!==undefined){var sc=$("statCache");if(sc)sc.textContent="缓存 "+(ev.cache_hit_pct||0)+"%";}}}}
+  }catch(e){ae.textContent="错误: "+e.message;}
+  $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
+  refreshFiles();
+};
+
+// Add status bar
+var stbar=document.createElement("div");stbar.id="statusbar";stbar.className="statusbar";
+stbar.innerHTML='<span id="statTokens">— tokens</span><span id="statCache">—</span><span id="statModel">deepseek-chat</span>';
+document.querySelector(".ctr").appendChild(stbar);
+
 // Init
 (async function(){try{await refreshHealth();await loadProjects();setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},800);}catch(e){$("inspectorBody").textContent=e.message;}})();
 </script></body></html>
