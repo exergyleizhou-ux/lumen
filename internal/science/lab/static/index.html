@@ -15,6 +15,11 @@
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div id="projectList"></div>
+      <div style="margin-top:auto;padding-top:10px;border-top:1px solid var(--ocs-line);font-size:11px;line-height:1.6">
+        <div style="color:var(--ocs-accent);font-weight:650;margin-bottom:4px">🔬 连接状态</div>
+        <div id="sbFleet" style="color:var(--ocs-muted)">—</div>
+        <div id="sbPack" style="color:var(--ocs-muted);margin-top:2px">—</div>
+      </div>
       
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
@@ -45,6 +50,16 @@ async function api(path,opts){
 }
 
 async function refreshHealth(){
+  var h=await api("/api/lab/health");
+  $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
+  var f=h.fleet||{};
+  $("fleetBadge").textContent=(f.connected_total||0)+"/"+(f.cs_domains||0)+" fleet";
+  $("inspectorBody").innerHTML='<div class="sr"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="sr-div"></div><div class="sr"><span class="k">Research</span><span class="v">'+(h.research_pack||{}).domain_tools+' tools</span></div><div class="sr"><span class="k">Fleet</span><span class="v">'+f.connected_total+'/'+f.cs_domains+' CS + '+f.lumen_native+' 原生</span></div><div class="sr-div"></div><div class="sr"><span class="k">模型</span><span class="v">'+((h.provider||{}).masked||"—")+'</span></div>';
+  // Sidebar
+  var sf=$("sbFleet");if(sf)sf.innerHTML="⚡ "+f.connected_total+"/"+f.cs_domains+" CS domains · "+f.lumen_native+" 原生 MCP";
+  var sp=$("sbPack");if(sp)sp.innerHTML="📦 "+((h.research_pack||{}).domain_tools||0)+" tools · "+((h.research_pack||{}).skills||0)+" skills";
+  return h;
+}
   var h=await api("/api/lab/health");
   $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
   var f=h.fleet||{};
