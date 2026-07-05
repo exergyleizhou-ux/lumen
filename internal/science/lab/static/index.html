@@ -91,16 +91,21 @@ async function streamChat(prompt){
         tha+=ev.text||"";tb.innerHTML=renderMD(tha);
       }
       else if(ev.kind==="text"){
-        if(!ta&&think){think.open=false;tl.textContent="🧠 思考完成 · 点击展开";}streaming=true;
+        if(!ta&&think){think.open=false;tl.innerHTML='<span class="think-dot"></span> 思考完成 · 点击展开';}streaming=true;
         ta+=ev.text||"";resp.innerHTML=renderMD(ta)+(streaming?'<span class="cursor">▌</span>':'');
       }
-      else if(ev.kind==="tool"||ev.tool){
-        if(!think){think=document.createElement("details");think.className="think-block";think.open=false;think.innerHTML='<summary class="think-summary"><span class="think-dot"></span><span class="think-label">🔧 工具调用</span></summary><div class="think-body"></div>';wrap.insertBefore(think,resp);tb=think.querySelector(".think-body");tl=think.querySelector(".think-label");}
-        tc++;tl.textContent="🔧 已调用 "+tc+" 个工具";
-        tb.innerHTML+="<div>工具: "+(ev.tool?.name||ev.name||ev.tool)+"</div>";
+      else if(ev.kind==="tool_dispatch"||ev.kind==="tool"||ev.tool){
+        tc++;var tn=ev.tool?.name||ev.name||ev.tool||("tool_"+tc);
+        if(!think){think=document.createElement("details");think.className="think-block";think.open=true;think.innerHTML='<summary class="think-summary"><span class="think-dot"></span><span class="think-label">🔧 '+tn+'</span></summary><div class="think-body"></div>';wrap.insertBefore(think,resp);tb=think.querySelector(".think-body");tl=think.querySelector(".think-label");}
+        else{tl.innerHTML='<span class="think-dot"></span> 🔧 '+tn+' (共'+tc+'个工具)';}
+        if(!tb)tb=think.querySelector(".think-body");
+        tb.innerHTML+="<div style='margin:4px 0;padding:4px 8px;background:#fff;border-radius:4px;font-style:normal'><strong>"+tn+"</strong></div>";
+      }
+      else if(ev.kind==="tool_result"){
+        if(tb)tb.innerHTML+="<div style='color:#5b8c7a;margin:2px 0'>✓ 完成</div>";
       }
       else if(ev.kind==="error"){resp.innerHTML+='<span style="color:#b42318"> ❌ '+(ev.text||"err")+'</span>';}
-      else if(ev.kind==="turn_done"){streaming=false;resp.innerHTML=renderMD(ta);if(think&&!tha&&!tc)think.remove();}
+      else if(ev.kind==="turn_done"){streaming=false;resp.innerHTML=renderMD(ta);if(think&&!tha&&tc<2)think.remove();}
     }}
   }catch(e){resp.textContent="错误: "+e.message;}
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
