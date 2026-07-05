@@ -58,7 +58,7 @@
             </label>
             <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;">
               <button class="btn secondary compact" id="switchProfileBtn" type="button">切换</button>
-              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测 key</button>
+              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测</button>
               <button class="btn ghost compact" id="addProfileBtn" type="button">新建</button>
             </div>
             <label class="field" style="margin-top:10px;">
@@ -79,8 +79,8 @@
           <section class="card tp-only reveal">
             <p class="card-kicker">auth</p>
             <label class="field">
-              <span class="field-label" id="keyLabel">API Key</span>
-              <div class="row">
+              <span class="field-label" id="keyLabel" style="font-size:11px;color:rgb(24 24 27/.5);text-transform:uppercase;letter-spacing:.04em">🔑 API Key</span>
+              <div class="row" style="gap:6px">
                 <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
                 <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
                 <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
