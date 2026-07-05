@@ -26,7 +26,7 @@ html.dark img,html.dark canvas,html.dark iframe,html.dark video{filter:invert(1)
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
     <section class="ctr">
-      <div class="scroll" id="chatScroll">
+      <div class="scroll" id="chatScroll" style="overflow-y:scroll !important">
         <div class="hero" id="welcome"><h2>Lumen Science 实验室</h2><p>CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p></div>
       </div>
       <form class="composer" id="composer"><input id="promptInput" placeholder="描述科研任务…" autocomplete="off"><button class="btn primary" type="submit">发送</button></form>
@@ -113,7 +113,7 @@ async function streamChat(prompt){
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
 }
 
-function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/\n\n/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
+function renderMD(t){if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");t=t.replace(/\|(.+)\|\n\|[-: |]+\|\n((?:\|.+\|\n?)+)/gm,function(m,h,r){var hdr="<tr>"+h.split("|").map(function(c){return"<th>"+c.trim()+"</th>";}).join("")+"</tr>";var rows=r.trim().split("\n").map(function(rw){return"<tr>"+rw.split("|").filter(function(c){return c;}).map(function(c){return"<td>"+c.trim()+"</td>";}).join("")+"</tr>";}).join("");return"<table>"+hdr+rows+"</table>";});t=t.replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/\n\n/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}if(!t)return"";t=t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\*\*(.+?)\*\*/g,"<strong>$1</strong>").replace(/`([^`]+)`/g,"<code>$1</code>").replace(/### (.+)/g,"<h3>$1</h3>").replace(/## (.+)/g,"<h2>$1</h2>").replace(/\n\n/g,"</p><p>").replace(/^- (.+)$/gm,"<li>$1</li>").replace(/^(?!<)(.+)$/gm,"<p>$1</p>");return t;}
 function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
 function fmtSize(b){if(!b||b<1024)return(b||0)+"B";if(b<1048576)return(b/1024).toFixed(1)+"KB";return(b/1048576).toFixed(1)+"MB";}
 

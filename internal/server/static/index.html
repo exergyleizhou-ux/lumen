@@ -277,5 +277,8 @@ document.getElementById("deleteFileBtn").onclick=async function(){
 var _origPreview=previewFile||function(){};
 previewFile=function(path){selectedFile=path;_origPreview(path);};
 </script>
+<script>
+(async function(){try{var r=await fetch("/api/health");var d=await r.json();var f=document.getElementById("sbFleet");if(f)f.textContent="⚡ online";var m=document.getElementById("sbModel");if(m)m.textContent="🧠 "+(d.provider||"deepseek");}catch(_){}})();
+</script>
 </body>
 </html>
