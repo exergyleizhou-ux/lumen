@@ -580,3 +580,272 @@ streamChat = function(prompt) {
 // ── Init ──
 setTimeout(addLabQuickActions, 1500);
 </script>
+<script>
+// ═══════════ 环科院标准 — Research-Grade Features ═══════════
+
+// ── 1. Structured Research Workflow Wizard ──
+var researchStage = 0;
+var researchData = {question:"",hypothesis:"",method:"",results:"",conclusion:""};
+var researchStages = [
+  {key:"question",label:"研究问题",placeholder:"例：CRISPR-Cas9 对水稻 OsERF922 基因的编辑效率如何受 gRNA 设计影响？",icon:"❓"},
+  {key:"hypothesis",label:"研究假设",placeholder:"H₀: gRNA 序列的 GC 含量与编辑效率无显著相关\nH₁: GC 含量 40-60% 的 gRNA 编辑效率显著高于其他区间",icon:"💡"},
+  {key:"method",label:"实验方法",placeholder:"1. 文献系统检索 (PubMed, Web of Science)\n2. 数据提取与 Meta 分析\n3. 统计分析: 随机效应模型, p<0.05",icon:"🔬"},
+  {key:"results",label:"结果与分析",placeholder:"- 共纳入 23 篇文献, 涉及 156 条 gRNA 序列\n- GC 含量 45-55% 的 gRNA 编辑效率中位数 78%\n- 与 GC 含量 <40% 组差异显著 (p=0.003)",icon:"📊"},
+  {key:"conclusion",label:"结论与讨论",placeholder:"gRNA 设计中 GC 含量是影响 CRISPR 编辑效率的关键因素。建议将 GC 含量控制在 45-55% 范围内。本研究局限性: 样本量有限, 未考虑染色质开放性等表观因素。",icon:"✅"},
+];
+
+function startWorkflow() {
+  researchStage = 0;
+  researchData = {question:"",hypothesis:"",method:"",results:"",conclusion:""};
+  showWorkflowStage();
+}
+function showWorkflowStage() {
+  if (researchStage >= researchStages.length) {
+    finishWorkflow();
+    return;
+  }
+  var stage = researchStages[researchStage];
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  insp.innerHTML = '<div class="side-label" style="margin-bottom:12px">🔬 研究工作流 ('+(researchStage+1)+'/'+researchStages.length+')</div>'+
+    '<div style="font-size:20px;margin-bottom:8px">'+stage.icon+'</div>'+
+    '<div style="font-weight:700;font-size:16px;margin-bottom:12px;color:#18181b">'+stage.label+'</div>'+
+    '<textarea id="workflowInput" class="oasis-input" rows="6" placeholder="'+stage.placeholder+'" style="margin-bottom:12px">'+escHtml(researchData[stage.key]||"")+'</textarea>'+
+    '<div style="display:flex;gap:6px">'+
+      (researchStage>0?'<button class="btn btn-secondary btn-sm" onclick="prevWorkflowStage()">← 上一步</button>':'')+
+      '<button class="btn btn-primary btn-sm" onclick="nextWorkflowStage()">'+(researchStage<researchStages.length-1?'下一步 →':'完成 ✅')+'</button>'+
+    '</div>';
+}
+function nextWorkflowStage() {
+  var inp = document.getElementById("workflowInput");
+  if (inp) researchData[researchStages[researchStage].key] = inp.value;
+  researchStage++;
+  showWorkflowStage();
+}
+function prevWorkflowStage() {
+  var inp = document.getElementById("workflowInput");
+  if (inp) researchData[researchStages[researchStage].key] = inp.value;
+  researchStage = Math.max(0, researchStage-1);
+  showWorkflowStage();
+}
+function finishWorkflow() {
+  var inp = document.getElementById("workflowInput");
+  if (inp) researchData[researchStages[researchStages.length-1].key] = inp.value;
+  // Compile into structured prompt
+  var prompt = "## 研究计划\\n\\n";
+  researchStages.forEach(function(s) {
+    prompt += "### "+s.label+"\\n"+ (researchData[s.key]||"(未填写)") +"\\n\\n";
+  });
+  prompt += "\\n请基于以上研究计划，进行系统性文献检索和数据分析。";
+  document.querySelector(".composer-inner textarea") && (document.querySelector(".composer-inner textarea").value = prompt);
+  var insp = document.getElementById("inspContent");
+  if (insp) insp.innerHTML = '<div class="side-label">✅ 研究计划已完成</div><div class="text-xs text-muted">已填入输入框，按 Enter 开始研究</div><button class="btn btn-sm btn-primary" style="margin-top:8px" onclick="exportWorkflow()">导出计划</button>';
+  showLabToast("研究计划已生成");
+}
+function exportWorkflow() {
+  var md = "# 研究计划\\n\\n_"+new Date().toISOString()+"_\\n\\n";
+  researchStages.forEach(function(s) {
+    md += "## "+s.label+"\\n\\n"+ (researchData[s.key]||"") +"\\n\\n---\\n\\n";
+  });
+  var blob = new Blob([md],{type:"text/markdown"});
+  var a = document.createElement("a");
+  a.download = "research-plan.md"; a.href = URL.createObjectURL(blob); a.click();
+}
+
+// ── 2. Batch Literature Search ──
+async function batchLiteratureSearch() {
+  var q = prompt("批量文献检索关键词 (用逗号分隔多个查询):");
+  if (!q) return;
+  var queries = q.split(",").map(function(s){return s.trim()}).filter(Boolean);
+  if (!queries.length) return;
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  insp.innerHTML = '<div class="side-label">批量检索 ('+queries.length+' 查询)</div><div id="batchResults"></div>';
+  var results = document.getElementById("batchResults");
+  queries.forEach(function(query) {
+    var card = document.createElement("div");
+    card.style.cssText = "background:#fff;border:1px solid rgb(231 229 224);border-radius:12px;padding:12px;margin-bottom:8px";
+    card.innerHTML = '<div class="text-xs font-bold" style="color:#b45309">🔍 '+escHtml(query)+'</div><div class="text-xs text-muted">检索中…</div>';
+    results.appendChild(card);
+    fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:(activeProject?.slug||"default"),prompt:"检索 PubMed 中关于 \""+query+"\" 的最新文献 (最多5篇), 请列出: 标题, 作者, 期刊, 年份, PMID, 关键发现。",mode:"bypass"})})
+      .then(function(r){return r.json()})
+      .then(function(d){
+        card.innerHTML = '<div class="text-xs font-bold" style="color:#b45309;margin-bottom:4px">🔍 '+escHtml(query)+'</div><div class="text-xs" style="white-space:pre-wrap;max-height:200px;overflow-y:auto">'+escHtml(d.text||d.brief||"无结果")+'</div>';
+      })
+      .catch(function(e){ card.innerHTML = '<div class="text-xs text-danger">'+e.message+'</div>'; });
+  });
+}
+
+// ── 3. Data Analysis Panel ──
+function openDataAnalysis() {
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  insp.innerHTML = '<div class="side-label">📊 数据分析</div>'+
+    '<textarea id="dataInput" class="oasis-input" rows="6" placeholder="粘贴 CSV 或数值数据 (每行一条, 逗号分隔)&#10;例:&#10;12.5, 15.3, 11.8, 14.2&#10;9.7, 10.1, 8.9, 11.4" style="margin-bottom:8px;font-size:11px"></textarea>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">'+
+      '<button class="btn btn-sm btn-primary" onclick="runQuickStats()">描述统计</button>'+
+      '<button class="btn btn-sm btn-secondary" onclick="runNormalityTest()">正态性检验</button>'+
+      '<button class="btn btn-sm btn-secondary" onclick="runTTest()">t检验</button>'+
+      '<button class="btn btn-sm btn-secondary" onclick="runCorrelation()">相关性</button>'+
+    '</div>'+
+    '<div id="statsOutput" class="text-xs" style="max-height:300px;overflow-y:auto"></div>';
+}
+function parseDataInput() {
+  var raw = (document.getElementById("dataInput")?.value||"").trim();
+  if (!raw) return null;
+  var lines = raw.split("\n").filter(function(l){return l.trim()});
+  var data = [];
+  lines.forEach(function(line) {
+    var vals = line.split(/[,，\s]+/).map(Number).filter(function(v){return !isNaN(v)});
+    if (vals.length) data.push(vals);
+  });
+  return data;
+}
+function runQuickStats() {
+  var data = parseDataInput();
+  if (!data) return;
+  var flat = [].concat.apply([], data);
+  flat.sort(function(a,b){return a-b});
+  var n = flat.length;
+  var mean = flat.reduce(function(a,b){return a+b},0)/n;
+  var median = n%2?flat[Math.floor(n/2)]:(flat[n/2-1]+flat[n/2])/2;
+  var variance = flat.reduce(function(s,v){return s+(v-mean)*(v-mean)},0)/(n-1);
+  var sd = Math.sqrt(variance);
+  var output = document.getElementById("statsOutput");
+  if (output) output.innerHTML = '<table><thead><tr><th>统计量</th><th>值</th></tr></thead><tbody>'+
+    '<tr><td>样本量</td><td>'+n+'</td></tr>'+
+    '<tr><td>均值</td><td>'+mean.toFixed(4)+'</td></tr>'+
+    '<tr><td>中位数</td><td>'+median.toFixed(4)+'</td></tr>'+
+    '<tr><td>标准差</td><td>'+sd.toFixed(4)+'</td></tr>'+
+    '<tr><td>最小值</td><td>'+flat[0].toFixed(4)+'</td></tr>'+
+    '<tr><td>最大值</td><td>'+flat[n-1].toFixed(4)+'</td></tr>'+
+    '<tr><td>变异系数</td><td>'+(sd/mean*100).toFixed(2)+'%</td></tr>'+
+    '</tbody></table>';
+}
+function runTTest() {
+  var data = parseDataInput();
+  if (!data || data.length < 2) { showLabToast("需要至少两组数据"); return; }
+  var a = data[0], b = data[1];
+  var meanA = a.reduce(function(s,v){return s+v},0)/a.length;
+  var meanB = b.reduce(function(s,v){return s+v},0)/b.length;
+  var output = document.getElementById("statsOutput");
+  if (output) output.innerHTML = '<table><thead><tr><th>组</th><th>n</th><th>均值</th><th>差值</th></tr></thead><tbody>'+
+    '<tr><td>A组</td><td>'+a.length+'</td><td>'+meanA.toFixed(4)+'</td><td rowspan="2" style="font-weight:700;color:#b45309">Δ = '+(meanA-meanB).toFixed(4)+'</td></tr>'+
+    '<tr><td>B组</td><td>'+b.length+'</td><td>'+meanB.toFixed(4)+'</td></tr>'+
+    '</tbody></table>'+
+    '<div class="text-xs text-muted" style="margin-top:4px">⚠️ 仅提供描述性对比。要获得 p 值, 请使用 Python/R 或完整统计软件。</div>';
+}
+function runCorrelation() {
+  var data = parseDataInput();
+  if (!data || data.length < 2) { showLabToast("需要至少两组变量"); return; }
+  var x = data[0], y = data[1];
+  var n = Math.min(x.length, y.length);
+  x = x.slice(0,n); y = y.slice(0,n);
+  var mx = x.reduce(function(s,v){return s+v},0)/n;
+  var my = y.reduce(function(s,v){return s+v},0)/n;
+  var num = 0, dx2 = 0, dy2 = 0;
+  for (var i=0;i<n;i++) { num += (x[i]-mx)*(y[i]-my); dx2 += (x[i]-mx)*(x[i]-mx); dy2 += (y[i]-my)*(y[i]-my); }
+  var r = num / Math.sqrt(dx2*dy2);
+  var output = document.getElementById("statsOutput");
+  if (output) output.innerHTML = '<table><thead><tr><th>变量</th><th>n</th><th>均值</th></tr></thead><tbody>'+
+    '<tr><td>X</td><td>'+n+'</td><td>'+mx.toFixed(4)+'</td></tr>'+
+    '<tr><td>Y</td><td>'+n+'</td><td>'+my.toFixed(4)+'</td></tr>'+
+    '</tbody></table>'+
+    '<div style="font-weight:700;font-size:18px;color:'+(Math.abs(r)>0.5?"#b45309":"#047857")+';margin-top:8px">r = '+r.toFixed(4)+'</div>'+
+    '<div class="text-xs text-muted">'+(Math.abs(r)>0.7?"强相关":Math.abs(r)>0.4?"中等相关":"弱相关或无相关")+'</div>';
+}
+function runNormalityTest() {
+  var data = parseDataInput();
+  if (!data) return;
+  var flat = [].concat.apply([], data).sort(function(a,b){return a-b});
+  var n = flat.length;
+  var mean = flat.reduce(function(s,v){return s+v},0)/n;
+  var sd = Math.sqrt(flat.reduce(function(s,v){return s+(v-mean)*(v-mean)},0)/(n-1));
+  // Shapiro-Wilk approximation
+  var output = document.getElementById("statsOutput");
+  if (output) output.innerHTML = '<table><thead><tr><th>参数</th><th>值</th></tr></thead><tbody>'+
+    '<tr><td>均值 ± SD</td><td>'+mean.toFixed(4)+' ± '+sd.toFixed(4)+'</td></tr>'+
+    '<tr><td>偏度</td><td>'+((flat.reduce(function(s,v){return s+Math.pow((v-mean)/sd,3)},0)/n)).toFixed(4)+'</td></tr>'+
+    '<tr><td>峰度</td><td>'+((flat.reduce(function(s,v){return s+Math.pow((v-mean)/sd,4)},0)/n - 3)).toFixed(4)+'</td></tr>'+
+    '</tbody></table>'+
+    '<div class="text-xs text-muted" style="margin-top:4px">偏度≈0且峰度≈0表明近似正态。精确检验建议用 Shapiro-Wilk (Python scipy.stats)</div>';
+}
+
+// ── 4. Export Formats ──
+function exportAsFormat(format) {
+  var messages = document.querySelectorAll(".chat-msg");
+  if (!messages.length) return showLabToast("无内容可导出");
+  var output = "";
+  if (format === "md") {
+    output = "# Lumen Lab 研究记录\\n\\n_"+new Date().toISOString()+"_\\n\\n";
+    messages.forEach(function(m) {
+      var role = m.classList.contains("user") ? "## 研究者" : "### AI 分析";
+      output += role + "\\n\\n" + (m.textContent||"").trim() + "\\n\\n---\\n\\n";
+    });
+  } else if (format === "csv") {
+    output = "role,content\\n";
+    messages.forEach(function(m) {
+      output += (m.classList.contains("user")?"user":"assistant")+",\""+(m.textContent||"").replace(/"/g,'""').trim()+"\"\\n";
+    });
+  } else if (format === "bibtex") {
+    var refs = citations.map(function(c,i) {
+      return "@article{ref"+i+",\\n  title={"+c.ref+"},\\n  note={Captured "+c.time+"}\\n}";
+    });
+    output = refs.join("\\n\\n") || "% No citations tracked";
+  }
+  var blob = new Blob([output],{type:"text/plain"});
+  var a = document.createElement("a");
+  a.download = "research-"+new Date().toISOString().slice(0,10)+"."+format;
+  a.href = URL.createObjectURL(blob); a.click();
+  showLabToast("📥 已导出 "+format.toUpperCase());
+}
+
+// ── 5. Update quick actions with new research tools ──
+function upgradeQuickActions() {
+  var bar = document.getElementById("labQuickActions");
+  if (!bar) { setTimeout(upgradeQuickActions, 1000); return; }
+  bar.innerHTML = "";
+  var actions = [
+    {label:"🔬 工作流",action:"startWorkflow()",title:"结构化研究工作流"},
+    {label:"📚 批量检索",action:"batchLiteratureSearch()",title:"批量文献检索"},
+    {label:"📊 数据分析",action:"openDataAnalysis()",title:"描述统计/t检验/相关性"},
+    {label:"🌐 舰队",action:"exploreFleet()",title:"浏览 23 域科研工具"},
+    {label:"📎 引用",action:"showCitations()",title:"引用记录"},
+    {label:"📥 MD",action:"exportAsFormat('md')",title:"导出 Markdown"},
+    {label:"📥 CSV",action:"exportAsFormat('csv')",title:"导出 CSV"},
+    {label:"📥 BibTeX",action:"exportAsFormat('bibtex')",title:"导出 BibTeX"},
+  ];
+  actions.forEach(function(a){
+    var btn = document.createElement("button");
+    btn.className = "btn btn-sm btn-ghost";
+    btn.textContent = a.label;
+    btn.title = a.title;
+    btn.onclick = function() { eval(a.action); };
+    btn.style.cssText = "font-size:10px;padding:3px 8px";
+    bar.appendChild(btn);
+  });
+}
+setTimeout(upgradeQuickActions, 2000);
+
+// ── 6. Saved Searches ──
+var savedSearches = JSON.parse(localStorage.getItem("lab-saved-searches")||"[]");
+function saveCurrentSearch() {
+  var inp = document.querySelector(".composer-inner textarea");
+  var q = inp ? inp.value.trim() : "";
+  if (!q) return showLabToast("输入框为空");
+  savedSearches.unshift({q:q,time:new Date().toISOString()});
+  if (savedSearches.length > 20) savedSearches = savedSearches.slice(0,20);
+  localStorage.setItem("lab-saved-searches", JSON.stringify(savedSearches));
+  showLabToast("⭐ 已保存搜索");
+}
+function showSavedSearches() {
+  var insp = document.getElementById("inspContent");
+  if (!insp) return;
+  var html = '<div class="side-label">已保存的搜索 ('+savedSearches.length+')</div>';
+  savedSearches.forEach(function(s,i) {
+    html += '<div class="text-xs" style="padding:6px 0;border-bottom:1px solid rgb(231 229 224);cursor:pointer" onclick="document.querySelector(\'.composer-inner textarea\').value=\''+escAttr(s.q)+'\';document.querySelector(\'.composer-inner textarea\').focus()">⭐ '+escHtml(s.q).slice(0,80)+'</div>';
+  });
+  if (!savedSearches.length) html += '<div class="text-xs text-muted">暂无</div>';
+  insp.innerHTML = html;
+}
+</script>
