@@ -78,13 +78,46 @@ async function streamChat(prompt,mode){
   var w=$("welcome");if(w)w.remove();
   var ue=msgEl("user");ue.textContent=prompt;$("chatScroll").appendChild(ue);
   var ae=msgEl("agent");$("chatScroll").appendChild(ae);
-  currentMsgEl=ae;currentToolEl=null;thinkingBlock=null;
+  currentMsgEl=ae;currentToolEl=null;thinkingBlock=null;textBuf="";
   try{
     var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
-    var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop()||"";for(var i=0;i<lines.length;i++){var line=lines[i].trim();if(!line)continue;if(line.indexOf("data:")===0){line=line.slice(5).trim();}if(!line.startsWith("{"))continue;try{var ev=JSON.parse(line);var k=ev.kind||"";if(k==="phase"){var ph=document.createElement("div");ph.className="chat-phase";ph.textContent=(ev.text||"")+" · 执行中";ae.appendChild(ph);setTimeout(function(){ph.style.opacity="0";setTimeout(function(){ph.remove();},300);},3000);}else if(k==="text"||k==="thinking"){if(!thinkingBlock){thinkingBlock=thinkBlock();ae.appendChild(thinkingBlock);thinkingBlock.classList.add("open");}var bd=thinkingBlock.querySelector(".chat-thinking-body");bd.textContent+=ev.text||"";bd.scrollTop=bd.scrollHeight;}else if(k==="tool"){if(thinkingBlock)thinkingBlock.classList.remove("open");if(currentToolEl)updTool(currentToolEl,"",true);currentToolEl=toolCard(ev.tool?.name||ev.name||"tool",ev.tool?.input||ev.input||{});ae.appendChild(currentToolEl);thinkingBlock=null;}else if(k==="tool_result"||k==="tool_output"){if(currentToolEl){var out=currentToolEl.querySelector(".chat-tool-output");out.textContent=(ev.text||"").slice(0,2000);updTool(currentToolEl,"",true);}}else if(k==="error"){appendMsg("agent","❌ "+(ev.text||"err"));}else if(k==="turn_done"){if(currentToolEl)updTool(currentToolEl,"",true);if(thinkingBlock)thinkingBlock.classList.remove("open");}else if(k==="usage"){}}catch(_){}}}
-  }catch(e){appendMsg("agent","错误: "+e.message);}
-  currentMsgEl=null;currentToolEl=null;thinkingBlock=null;refreshFiles();
+    var reader=res.body.getReader();var dec=new TextDecoder();var leftover="";
+    while(true){
+      var r=await reader.read();if(r.done)break;
+      leftover+=dec.decode(r.value,{stream:true});
+      // Split on double newline (SSE boundary)
+      var chunks=leftover.split("\n\n");leftover=chunks.pop()||"";
+      for(var ci=0;ci<chunks.length;ci++){
+        var chunk=chunks[ci].trim();if(!chunk)continue;
+        // Extract JSON from "data: {...}" line
+        var json=chunk;
+        if(json.indexOf("data:")===0)json=json.slice(5).trim();
+        if(!json.startsWith("{"))continue;
+        try{
+          var ev=JSON.parse(json);var k=ev.kind||"";
+          if(k==="phase"){
+            var ph=document.createElement("div");ph.className="chat-phase";ph.textContent=(ev.text||"")+" · 执行中";ae.appendChild(ph);setTimeout(function(){ph.style.opacity="0";setTimeout(function(){ph.remove();},300);},3000);
+          }else if(k==="text"){
+            if(!thinkingBlock){thinkingBlock=thinkBlock();ae.appendChild(thinkingBlock);}
+            var bd=thinkingBlock.querySelector(".chat-thinking-body");
+            textBuf+=ev.text||"";bd.textContent=textBuf;bd.scrollTop=bd.scrollHeight;
+          }else if(k==="tool"){
+            if(thinkingBlock){thinkingBlock.classList.remove("open");thinkingBlock=null;textBuf="";}
+            if(currentToolEl)updTool(currentToolEl,"",true);
+            currentToolEl=toolCard(ev.tool?.name||ev.name||"tool",ev.tool?.input||ev.input||{});ae.appendChild(currentToolEl);
+          }else if(k==="tool_result"||k==="tool_output"){
+            if(currentToolEl){var out=currentToolEl.querySelector(".chat-tool-output");out.textContent=(ev.text||"").slice(0,2000);updTool(currentToolEl,"",true);}
+          }else if(k==="error"){
+            var errEl=document.createElement("div");errEl.style.color="#b42318";errEl.style.fontSize="13px";errEl.textContent="❌ "+(ev.text||"err");ae.appendChild(errEl);
+          }else if(k==="turn_done"){
+            if(currentToolEl)updTool(currentToolEl,"",true);
+            if(thinkingBlock){thinkingBlock.classList.remove("open");thinkingBlock=null;textBuf="";}
+          }
+        }catch(_){}
+      }
+    }
+  }catch(e){var errEl=document.createElement("div");errEl.style.color="#b42318";errEl.textContent="错误: "+e.message;ae.appendChild(errEl);}
+  currentMsgEl=null;currentToolEl=null;thinkingBlock=null;textBuf="";refreshFiles();
 }
 
 // ── File panel ──
