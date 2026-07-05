@@ -925,3 +925,12 @@ body {
 /* File change notification */
 .change-toast{position:fixed;bottom:60px;right:20px;z-index:50;background:var(--forest);color:#fff;padding:8px 14px;border-radius:8px;font-size:12px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.12);animation:slideUp .3s ease}
 @keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+
+/* User/AI message distinction */
+.msg.user{background:linear-gradient(135deg,#4c1d95,#6d28d9);color:#fff;padding:10px 16px;border-radius:14px 14px 4px 14px;margin:10px 0 10px auto;max-width:72%;font-weight:600;box-shadow:0 2px 8px rgba(76,29,149,.15)}
+.msg.assistant{padding:10px 0;line-height:1.75;font-size:14px}
+.msg.thinking{color:#8c8478;font-size:12px;font-style:italic;padding:4px 12px;margin:4px 0;border-left:3px solid rgba(76,29,149,.2)}
+.msg.tool-call{display:inline-block;background:rgba(76,29,149,.08);color:#4c1d95;font-size:11px;padding:3px 10px;border-radius:8px;margin:3px 4px;font-weight:650}
+/* Dark mode support */
+html.dark-mode{filter:invert(0.92) hue-rotate(180deg)}
+html.dark-mode img,html.dark-mode canvas,html.dark-mode iframe{filter:invert(1) hue-rotate(180deg)}
