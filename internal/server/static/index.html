@@ -9,7 +9,9 @@
 <body>
   <div class="app" id="app">
     <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
-    <aside class="sidebar" id="sidebar" aria-label="会话">
+    <div style="border-bottom:1px solid var(--rule);padding:8px 12px;cursor:pointer;font-size:11px;font-weight:650;color:var(--muted)" onclick="this.nextElementSibling.hidden=!this.nextElementSibling.hidden">📁 项目文件 <span style="float:right">▾</span></div>
+      <div id="projectTree" style="max-height:240px;overflow:auto;padding:4px 8px;font-size:11px"><span style="color:var(--muted)">加载中…</span></div>
+      <aside class="sidebar" id="sidebar" aria-label="会话">
       <div class="sidebar-hd">
         <a class="brand" href="https://demo.oasisdata2026.xyz" target="_blank" rel="noopener">
           <span class="brand-mark">Lumen</span>
@@ -79,10 +81,13 @@
             </div>
           </section>
         </div>
+        <div id="changeBar" style="display:none;padding:6px 16px;border-top:1px solid var(--rule);font-size:11px;color:var(--muted);background:var(--sidebar)">
+          📝 本轮修改: <span id="changeList"></span>
+        </div>
       </div>
 
       <div class="plan-bar" id="planBar" hidden>
-        <p class="plan-bar-text" id="planBarText">计划待审</p>
+        <div><p class="plan-bar-text" id="planBarText">计划待审</p><pre id="planDetail" style="display:none;font-size:11px;color:var(--muted);max-height:100px;overflow:auto;margin-top:4px;white-space:pre-wrap"></pre></div>
         <div class="plan-bar-actions">
           <button class="btn-plan-reject" id="planRejectBtn" type="button">拒绝</button>
           <button class="btn-plan-exec" id="planExecBtn" type="button">执行计划</button>
@@ -106,8 +111,8 @@
       <footer class="statusbar" aria-live="polite">
         <span id="statTokens">— tokens</span>
         <span id="statCost">—</span>
-        <span id="statTurn">turn —</span>
-        <span id="statStatus" class="stat-ok">就绪</span>
+        <span id="statTurn">turn —</span><span id="statCompact" style="margin:0 4px;font-size:10px;color:var(--accent);display:none"></span>
+        <span id="statCache" style="margin:0 8px">—</span><span id="statStatus" class="stat-ok">就绪</span>
       </footer>
     </main>
 
@@ -399,6 +404,67 @@ window.fetch = function(url, opts){
 };
 
 renderConvTabs();
+</script>
+
+<script>
+// Session auto-save per tab — Reasonix snapshot pattern
+function saveSessions(){
+  var data = {};
+  Object.keys(conversations).forEach(function(cid){
+    data[cid] = {id:cid, title:conversations[cid].title, msgCount:conversations[cid].messages.length};
+  });
+  try{localStorage.setItem("lumen-tabs",JSON.stringify(data));}catch(_){}
+}
+function restoreSessions(){
+  try{
+    var data = JSON.parse(localStorage.getItem("lumen-tabs")||"{}");
+    Object.keys(data).forEach(function(cid){
+      if(!conversations[cid]){conversations[cid]={id:cid,title:data[cid].title||"对话",messages:[],sessionId:cid};}
+    });
+    renderConvTabs();
+  }catch(_){}
+}
+setInterval(saveSessions,5000);
+setTimeout(restoreSessions,200);
+</script>
+<script>
+// Project file tree
+(async function loadProjectTree(){
+  var el = document.getElementById("projectTree"); if(!el) return;
+  try{
+    var r = await fetch("/api/files?path=.");
+    var d = await r.json();
+    var files = d.files || [];
+    el.innerHTML = files.map(function(f){
+      return "<div style=\'padding:2px 4px;cursor:pointer;border-radius:4px\' onmouseover=\'this.style.background="var(--sidebar-hover)"\' onmouseout=\'this.style.background=""\' onclick=\'fetch(\"/api/files/content?path="+encodeURIComponent(f.name)+"\").then(r=>r.json()).then(d=>{var inp=document.getElementById(\"input\");if(inp)inp.value+=\"\\n查看文件: "+f.name+"\\n\"+d.content.slice(0,500);})\'>"+(f.isDir?"📁":"📄")+" "+f.name+"</div>";
+    }).join("") || "<span style=\'color:var(--muted)\'>空目录</span>";
+  }catch(e){el.innerHTML = "<span style=\'color:var(--muted)\'>无法加载</span>";}
+})();
+
+// Workspace change tracking
+var _origStream = window.streamChat;
+if(typeof window.streamChat === "function"){
+  window.streamChat = async function(prompt, mode){
+    var bar = document.getElementById("changeBar");
+    var list = document.getElementById("changeList");
+    if(bar) bar.style.display = "none";
+    await _origStream(prompt, mode);
+    // After turn done, check for file changes
+    setTimeout(async function(){
+      try{
+        var r = await fetch("/api/files?path=.");
+        var d = await r.json();
+        // Simplified: show recent files
+        if(bar && d.files){
+          var recent = d.files.slice(0,5).map(function(f){return f.name;}).join(", ");
+          list.textContent = recent || "无文件变更";
+          bar.style.display = "block";
+          setTimeout(function(){bar.style.display="none";},8000);
+        }
+      }catch(_){}
+    },500);
+  };
+}
 </script>
 </body>
 </html>
