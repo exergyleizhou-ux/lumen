@@ -622,17 +622,30 @@ async function loadSessions() {
     }
     empty.hidden = true;
     sessions.slice(0, 12).forEach((s) => {
+      const row = document.createElement("div");
+      row.className = "session-item";
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "session-item";
       const label = s.name.replace(".jsonl", "");
       btn.textContent = label.length > 28 ? label.slice(0, 25) + "…" : label;
       btn.title = s.mtime;
+      btn.style.cssText = "flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
       btn.addEventListener("click", () => {
         resumeSession(s.name);
         setSidebarOpen(false);
       });
-      list.appendChild(btn);
+      const del = document.createElement("span");
+      del.className = "session-del";
+      del.textContent = "✕";
+      del.title = "删除会话";
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (!confirm("删除会话: " + label + "?")) return;
+        fetch("/api/sessions/" + encodeURIComponent(s.name), { method: "DELETE" }).then(() => renderSessions());
+      });
+      row.appendChild(btn);
+      row.appendChild(del);
+      list.appendChild(row);
     });
   } catch (_) {}
 }
