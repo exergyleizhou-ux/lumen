@@ -116,7 +116,7 @@
         <div style="display:flex;gap:4px">
           <input type="file" id="fileUploadInput" multiple style="display:none" onchange="uploadFiles(this.files)">
           <button class="btn-icon sm" id="uploadBtn" type="button" title="上传文件">📤</button>
-          <button class="btn-icon sm" id="deleteFileBtn" type="button" title="删除选中文件">🗑</button>
+          <button class="btn-icon sm" id="deleteFileBtn" type="button" title="删除选中文件" style="color:#b42318">🗑 删除</button>
         </div><button class="btn-icon sm" id="filePanelClose" type="button">✕</button></div>
       <div class="file-panel-tree scrollbar-subtle" id="fileTree"></div>
       <div class="file-panel-preview" id="filePreview"></div>
@@ -279,6 +279,33 @@ previewFile=function(path){selectedFile=path;_origPreview(path);};
 </script>
 <script>
 (async function(){try{var r=await fetch("/api/health");var d=await r.json();var f=document.getElementById("sbFleet");if(f)f.textContent="⚡ online";var m=document.getElementById("sbModel");if(m)m.textContent="🧠 "+(d.provider||"deepseek");}catch(_){}})();
+</script>
+<script>
+// File panel enhancements — add delete to each row
+var _origLoadFiles = loadFileTree;
+if(typeof loadFileTree !== "undefined"){
+  loadFileTree = async function(){
+    await _origLoadFiles();
+    // Add delete buttons to each file row
+    setTimeout(function(){
+      document.querySelectorAll("#fileTree .ft-item").forEach(function(row){
+        if(row.querySelector(".ft-del")) return;
+        var del = document.createElement("span");
+        del.className = "ft-del"; del.innerHTML = "✕"; 
+        del.style.cssText = "margin-left:auto;color:#b42318;cursor:pointer;font-size:14px;opacity:0;transition:opacity .15s;flex-shrink:0";
+        del.onclick = async function(e){
+          e.stopPropagation();
+          var name = row.querySelector(".ft-name").textContent;
+          if(!confirm("删除文件: "+name+"?")) return;
+          try{ await fetch("/api/files/delete?path="+encodeURIComponent(name),{method:"DELETE"}); loadFileTree(); }catch(e){alert(e.message);}
+        };
+        row.appendChild(del);
+        row.onmouseenter = function(){ del.style.opacity = "1"; };
+        row.onmouseleave = function(){ del.style.opacity = "0"; };
+      });
+    },200);
+  };
+}
 </script>
 </body>
 </html>
