@@ -51,7 +51,7 @@
     </div>
   </header>
 
-  <div id="chatScroll" class="flex-1 overflow-y-auto p-6 space-y-4">
+  <div id="chatScroll"><div id="welcomeState" style="display:flex;align-items:center;justify-content:center;height:100%;flex-direction:column;gap:14px"><div style="font-family:var(--display);font-size:26px;color:#18181b">Lumen</div><div style="font-size:13px;color:rgb(24 24 27/.4);max-width:380px;text-align:center;line-height:1.7">AI 编程助手 · 描述任务开始</div><div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:6px"><button class="btn btn-secondary btn-sm" onclick="document.getElementById("input").value="审查代码";document.getElementById("input").focus()">代码审查</button><button class="btn btn-secondary btn-sm" onclick="document.getElementById("input").value="解释项目架构";document.getElementById("input").focus()">项目架构</button><button class="btn btn-secondary btn-sm" onclick="document.getElementById("input").value="修复错误";document.getElementById("input").focus()">修复错误</button><button class="btn btn-secondary btn-sm" onclick="document.getElementById("input").value="写测试";document.getElementById("input").focus()">写测试</button></div></div> class="flex-1 overflow-y-auto p-6 space-y-4">
     <section id="welcome" class="py-8 px-2">
       <div class="flex items-end justify-between mb-8">
         <div>
