@@ -408,46 +408,17 @@ body {
   to { opacity: 1; transform: none; }
 }
 
-.msg.system 
-
-.msg.system .bubble {
-  background: var(--gold-50);
-  border: 1px solid var(--gold-100);
-  font-size: 13px;
-}
-
-.msg.user { flex-direction: row-reverse; }
 
 
 
-.msg.assistant 
-
-.msg.user 
 
 
 
-.msg.user 
 
-.bubble {
-  padding: 14px 18px;
-  border-radius: 16px;
-  font-size: 15px;
-  line-height: 1.6;
-  word-break: break-word;
-}
 
-.msg.user .bubble {
-  background: var(--user-bubble);
-  border-bottom-right-radius: 4px;
-  max-width: 100%;
-}
 
-.msg.assistant .bubble {
-  background: white;
-  border: 1px solid var(--rule);
-  border-bottom-left-radius: 4px;
-  box-shadow: var(--shadow-sm);
-}
+
+
 
 .bubble p { margin: 0 0 10px; }
 .bubble p:last-child { margin-bottom: 0; }
@@ -893,10 +864,10 @@ body {
 @keyframes slideUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 
 /* User/AI message distinction */
-.msg.user{background:linear-gradient(135deg,#4c1d95,#6d28d9);color:#fff;padding:10px 16px;border-radius:14px 14px 4px 14px;margin:10px 0 10px auto;max-width:72%;font-weight:600;box-shadow:0 2px 8px rgba(76,29,149,.15)}
-.msg.assistant{padding:10px 0;line-height:1.75;font-size:14px}
-.msg.thinking{color:#8c8478;font-size:12px;font-style:italic;padding:4px 12px;margin:4px 0;border-left:3px solid rgba(76,29,149,.2)}
-.msg.tool-call{display:inline-block;background:rgba(76,29,149,.08);color:#4c1d95;font-size:11px;padding:3px 10px;border-radius:8px;margin:3px 4px;font-weight:650}
+
+
+
+
 /* Dark mode support */
 html.dark-mode{filter:invert(0.92) hue-rotate(180deg)}
 html.dark-mode img,html.dark-mode canvas,html.dark-mode iframe{filter:invert(1) hue-rotate(180deg)}
@@ -938,10 +909,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
   outline-offset:2px !important;
 }
 
-.msg.user{background:#064e3b!important;color:#d1fae5!important;border-radius:16px 16px 4px 16px!important;padding:10px 16px!important}
-.msg.assistant{color:#e2e8f0!important}
-.msg.thinking{color:#94a3b8!important;font-style:italic!important}
-.msg.tool-call{background:rgba(16,185,129,.1)!important;color:#10b981!important}
+
+
+
+
 #chat 
 .chat-scroll{background:#0f172a!important}
 .welcome{color:#e2e8f0!important}
@@ -949,12 +920,33 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
 .welcome-kicker{color:#94a3b8!important}
 
 .msg{padding:6px 0;clear:both}
+
+
+
+
+
+
+
+
+.msg-error{color:#ef4444!important;font-size:12px!important}
+
+/* Chat bubbles — professional dark theme */
+.msg{padding:6px 0;clear:both}
+.msg-body{flex:1;min-width:0;max-width:75%}
 .msg.user{flex-direction:row-reverse}
-.msg-body{flex:1;min-width:0;max-width:92%}
 .msg.user .msg-body{display:flex;justify-content:flex-end}
-.msg.user .msg-body > *{background:#064e3b!important;color:#d1fae5!important;padding:10px 16px!important;border-radius:16px 16px 4px 16px!important;max-width:70%}
+.msg.user .msg-body > *{
+  background:#312e81!important;color:#fff!important;
+  padding:12px 20px!important;border-radius:24px 24px 6px 24px!important;
+  max-width:72%!important;font-weight:500!important;
+  box-shadow:0 2px 8px rgba(49,46,129,.2)!important;
+}
 .msg-body > *{color:#e2e8f0!important;line-height:1.7}
-.msg.assistant .msg-body > *{background:#1e2937!important;border-radius:14px!important;padding:14px 18px!important;margin:4px 0!important}
-.msg.thinking{color:#94a3b8!important;font-style:italic!important;font-size:12px!important;padding:4px 12px!important}
-.msg.tool-call{display:inline-block!important;background:rgba(16,185,129,.12)!important;color:#10b981!important;font-size:11px!important;padding:3px 10px!important;border-radius:8px!important;margin:2px 4px!important;font-weight:650!important}
+.msg.assistant .msg-body > *, .msg-body > *:not(.msg.user .msg-body > *){
+  background:#1e2937!important;border:1px solid #475569!important;
+  border-radius:20px!important;padding:14px 20px!important;
+  margin:4px 0!important;max-width:85%!important;
+}
+.msg.thinking{color:#94a3b8!important;font-style:italic!important;font-size:12px!important;padding:4px 16px!important}
+.msg.tool-call{display:inline-block!important;background:rgba(16,185,129,.1)!important;color:#10b981!important;font-size:11px!important;padding:3px 10px!important;border-radius:8px!important;margin:2px 4px!important;font-weight:650!important}
 .msg-error{color:#ef4444!important;font-size:12px!important}
