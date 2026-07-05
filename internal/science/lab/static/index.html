@@ -187,6 +187,9 @@ $("c2dBtn").addEventListener("click",function(){window.open("https://demo.oasisd
 // Load SSH on init
 loadSSH();
 
-setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1000);
-(async function(){try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}})();
+(async function(){
+  try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}
+  setTimeout(function(){var s=$("splash");if(s){s.style.opacity="0";s.style.visibility="hidden";s.style.pointerEvents="none";}},5000);
+  var s=$("splash");if(s){s.style.opacity="0";s.style.visibility="hidden";s.style.pointerEvents="none";}
+})();
 </script></body></html>
