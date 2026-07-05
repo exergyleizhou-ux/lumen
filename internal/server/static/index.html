@@ -24,7 +24,7 @@
         <p class="session-empty" id="sessionEmpty">暂无历史会话</p>
       </nav>
       <div class="sidebar-ft">
-        <button class="mem-pill" id="memPill" type="button" hidden title="管理记忆">
+        <button class="mem-pill" id="memPill" type="button" title="管理记忆">
           <span class="mem-dot" aria-hidden="true"></span>
           <span id="memCount">0</span> 条记忆
         </button>
@@ -112,7 +112,7 @@
     </main>
 
     <aside class="file-panel" id="filePanel" hidden>
-      <div class="file-panel-hd"><span>📁 文件</span>
+      <div class="file-panel-hd"><span>📁 文件</span><span id="changedHint" style="font-size:10px;color:var(--accent);margin-left:8px"></span>
         <div style="display:flex;gap:4px">
           <input type="file" id="fileUploadInput" multiple style="display:none" onchange="uploadFiles(this.files)">
           <button class="btn-icon sm" id="uploadBtn" type="button" title="上传文件">📤</button>
@@ -306,6 +306,27 @@ if(typeof loadFileTree !== "undefined"){
     },200);
   };
 }
+</script>
+<script>
+// Image paste support
+document.addEventListener("paste", async function(e){
+  var items = e.clipboardData?.items;
+  if(!items) return;
+  for(var i=0;i<items.length;i++){
+    if(items[i].type.indexOf("image")===0){
+      e.preventDefault();
+      var blob = items[i].getAsFile();
+      var fd = new FormData(); fd.append("file", blob, "pasted-image.png");
+      try{
+        var r = await fetch("/api/files/upload?path=pasted-"+Date.now()+".png",{method:"POST",body:fd});
+        if(r.ok){
+          var input = document.getElementById("input");
+          if(input) input.value += " [已粘贴图片] ";
+        }
+      }catch(_){}
+    }
+  }
+});
 </script>
 </body>
 </html>
