@@ -10,11 +10,9 @@
 <body>
   <div class="shell" id="shell">
     <header class="top" data-drag>
-      <div style="display:flex;align-items:baseline;gap:8px;flex-shrink:0">
-        <span style="font-size:17px;font-weight:700;letter-spacing:-.02em;line-height:1">Lumen</span>
-        <span style="font-size:12px;font-weight:500;color:#8c8478;text-transform:uppercase;letter-spacing:.04em;line-height:1">Science Bridge</span>
-      </div>
-      <span style="flex:1;min-width:8px"></span>
+      <b class="brand-title" style="font-size:16px;font-weight:700;flex-shrink:0">Lumen</b>
+      <span style="color:#8c8478;font-size:12px;flex-shrink:0">Science · 绿洲桥接</span>
+      <span style="flex:1;min-width:4px"></span>
       <a class="btn-ghost" href="http://127.0.0.1:18992/" id="labLink">实验室 <span id="labDot" style="font-size:10px">·</span></a>
       <button class="btn-ghost" id="quitBtn" type="button">退出</button>
     </header>
@@ -43,12 +41,12 @@
       <p class="alert info official-only">官方模式直连你的 Claude Science 订阅，Lumen 不托管官方登录。</p>
 
       <!-- Lab iframe container -->
-      <div id="labContainer" style="display:none; flex:1; min-height:0">
+      <div id="labContainer" style="display:none; position:absolute; top:48px; left:0; right:0; bottom:0; z-index:10;">
         <iframe id="labFrame" src="about:blank" style="width:100%;height:100%;border:none;"
           title="Lumen Science 实验室" allow="clipboard-read; clipboard-write"></iframe>
       </div>
 
-      <div class="settings-grid" id="bridgeContent"><div class="settings-grid" id="bridgeContent">
+      <div class="settings-grid" id="bridgeContent">
         <div class="controls-grid">
           <section class="card tp-only reveal" id="profilesCard">
             <p class="card-kicker">profiles · 多配置</p>
@@ -58,7 +56,7 @@
             </label>
             <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;">
               <button class="btn secondary compact" id="switchProfileBtn" type="button">切换</button>
-              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测</button>
+              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测 key</button>
               <button class="btn ghost compact" id="addProfileBtn" type="button">新建</button>
             </div>
             <label class="field" style="margin-top:10px;">
@@ -79,8 +77,8 @@
           <section class="card tp-only reveal">
             <p class="card-kicker">auth</p>
             <label class="field">
-              <span class="field-label" id="keyLabel">🔑 API Key</span>
-              <div class="row" style="gap:6px">
+              <span class="field-label" id="keyLabel" style="font-size:11px;opacity:.7">API Key</span>
+              <div class="row">
                 <input id="keyInput" type="password" placeholder="粘贴 key，仅存本地" autocomplete="off" />
                 <button class="btn secondary" id="saveKeyBtn" type="button">保存</button>
                 <button class="btn primary compact" id="verifyKeyBtn" type="button">验证</button>
