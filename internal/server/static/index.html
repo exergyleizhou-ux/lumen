@@ -233,5 +233,18 @@ window._showTool=function(name){
   el.appendChild(t);
 };
 </script>
+<script>
+(function(){
+  var dm=localStorage.getItem("lumen-dm");
+  if(dm==="dark")document.documentElement.classList.add("dark-mode");
+  var btn=document.getElementById("dmToggle");
+  if(btn){btn.textContent=dm==="dark"?"☀":"🌙";btn.onclick=function(){
+    document.documentElement.classList.toggle("dark-mode");
+    var d=document.documentElement.classList.contains("dark-mode");
+    localStorage.setItem("lumen-dm",d?"dark":"light");
+    btn.textContent=d?"☀":"🌙";
+  };}
+})();
+</script>
 </body>
 </html>
