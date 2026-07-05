@@ -919,7 +919,6 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
 .welcome-title{color:#e2e8f0!important}
 .welcome-kicker{color:#94a3b8!important}
 
-.msg{padding:6px 0;clear:both}
 
 
 
@@ -928,10 +927,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
 
 
 
-.msg-error{color:#ef4444!important;font-size:12px!important}
+
+
 
 /* Chat bubbles — professional dark theme */
-.msg{padding:6px 0;clear:both}
 
 
 
@@ -940,24 +939,37 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
 
 
 
-.msg-error{color:#ef4444!important;font-size:12px!important}
+
+
 
 /* Bubbles — warm amber + clean dark */
+
+
+
+
+
+.msg.assistant 
+
+
+
+
+
+/* ── Chat bubbles: warm user + white AI ── */
 .msg{padding:8px 0;clear:both}
-.msg-body{flex:1;min-width:0;max-width:80%}
+.msg-body{flex:1;min-width:0;max-width:78%}
 .msg.user{flex-direction:row-reverse}
 .msg.user .msg-body{display:flex;justify-content:flex-end}
 .msg.user .msg-body > *{
-  background:#b45309!important;color:#fff!important;
-  padding:12px 20px!important;border-radius:18px 18px 4px 18px!important;
-  max-width:75%!important;font-weight:500!important;
+  background:#d97706!important;color:#fff!important;
+  padding:10px 18px!important;border-radius:20px 20px 4px 20px!important;
+  max-width:72%!important;font-weight:500!important;
 }
-.msg-body > *{color:#f1f5f9!important;line-height:1.75}
+.msg-body > *{color:#0f172a!important;line-height:1.75}
 .msg.assistant .msg-body > *{
-  background:#0f172a!important;border:1px solid #334155!important;
+  background:#fff!important;border:1px solid #e2e8f0!important;
   border-radius:16px!important;padding:14px 20px!important;
-  margin:6px 0!important;max-width:88%!important;
+  margin:3px 0!important;max-width:88%!important;
 }
-.msg.thinking{color:#94a3b8!important;font-style:italic!important;font-size:12px!important;padding:4px 16px!important}
-.msg.tool-call{background:rgba(180,83,9,.15)!important;color:#fb923c!important;font-size:11px!important;padding:3px 10px!important;border-radius:8px!important;margin:2px 4px!important;font-weight:650!important}
+.msg.thinking{color:#64748b!important;font-size:12px!important;padding:4px 16px!important}
+.msg.tool-call{background:rgba(217,119,6,.12)!important;color:#d97706!important;font-size:11px!important;padding:3px 10px!important;border-radius:8px!important;margin:2px 4px!important;font-weight:650!important}
 .msg-error{color:#ef4444!important;font-size:12px!important}
