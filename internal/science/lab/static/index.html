@@ -369,5 +369,5 @@ $("sshRun").onclick=async function(){
 loadSSHHosts();
 
 // Init
-(async function(){try{await refreshHealth();await loadProjects();setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},800);}catch(e){$("inspectorBody").textContent=e.message;}})();
+(async function(){setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1200);try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}})();
 </script></body></html>
