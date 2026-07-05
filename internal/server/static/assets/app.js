@@ -1096,3 +1096,47 @@ function showCmdPalette(){
   function closePalette(){overlay.remove();}
   box.appendChild(inp);box.appendChild(results);overlay.appendChild(box);document.body.appendChild(overlay);inp.focus();
 }
+
+// ── Right panel tabs ──
+document.querySelectorAll(".rp-tab").forEach(function(t){t.addEventListener("click",function(){
+  document.querySelectorAll(".rp-tab").forEach(function(b){b.classList.remove("text-accent","border-accent");b.classList.add("text-muted");});
+  this.classList.add("text-accent","border-accent");this.classList.remove("text-muted");
+  var p=this.dataset.rptab;
+  ["rpFiles","rpPlan","rpChanges"].forEach(function(id){var el=document.getElementById(id);if(el)el.style.display=id==="rp"+p.charAt(0).toUpperCase()+p.slice(1)?"block":"none";});
+});});
+
+// ── Mode buttons ──
+document.querySelectorAll(".mode-btn").forEach(function(b){b.addEventListener("click",function(){
+  document.querySelectorAll(".mode-btn").forEach(function(x){x.classList.remove("bg-accent","text-white");});
+  this.classList.add("bg-accent","text-white");window._chatMode=this.dataset.mode;
+});});
+
+// ── Suggest tasks ──
+var suggestTasks=[{icon:"🔍",text:"分析项目结构",prompt:"分析当前项目的代码结构和主要模块"},{icon:"🐛",text:"找 bug",prompt:"我遇到了一个 bug，帮我排查"},{icon:"✨",text:"加新功能",prompt:"我想给项目添加一个新功能"},{icon:"📝",text:"写测试",prompt:"帮我写单元测试"},{icon:"📚",text:"解释代码",prompt:"帮我解释一下这段代码"}];
+(function(){var el=document.getElementById("suggestTasks");if(!el)return;el.innerHTML=suggestTasks.map(function(t){return'<button class="flex items-center gap-2 px-4 py-2.5 text-xs font-semibold bg-card border border-rule rounded-2xl hover:border-accent hover:bg-accent-soft transition-all" onclick="var i=document.getElementById(\'input\');if(i){i.value=this.dataset.p;document.getElementById(\'sendBtn\').click();}" data-p="'+t.prompt+'">'+t.icon+' '+t.text+'</button>';}).join("");})();
+
+// ── Token estimator ──
+document.getElementById("input")?.addEventListener("input",function(){var t=document.getElementById("tokenEst");if(t)t.textContent="~"+Math.max(1,Math.round(this.value.length/4))+" tokens";});
+
+// ── Plan send ──
+document.getElementById("planSendBtn")?.addEventListener("click",function(){window._chatMode="plan";document.getElementById("sendBtn")?.click();});
+
+// ── Session filter ──
+document.getElementById("sessionSearch")?.addEventListener("input",function(){var q=this.value.toLowerCase();document.querySelectorAll("#sessionList .session-item").forEach(function(r){r.style.display=q&&!r.textContent.toLowerCase().includes(q)?"none":"";});});
+
+// ── Mention menu ──
+var mentionItems=[{label:"📄 @file 引用文件",cmd:"@file "},{label:"🧩 @skill 调用技能",cmd:"@skill "},{label:"🧠 @memory 引用记忆",cmd:"@memory "}];
+var mm=document.getElementById("mentionMenu");
+if(mm){mm.innerHTML=mentionItems.map(function(m){return'<div class="px-3 py-1.5 text-xs hover:bg-hover cursor-pointer rounded-lg transition-colors" onclick="fillInput(\''+m.cmd+'\');document.getElementById(\'mentionMenu\').classList.add(\'hidden\')">'+m.label+'</div>';}).join("");}
+document.getElementById("mentionBtn")?.addEventListener("click",function(e){e.stopPropagation();var m=document.getElementById("mentionMenu");if(m)m.classList.toggle("hidden");});
+document.addEventListener("click",function(){document.getElementById("mentionMenu")?.classList.add("hidden");});
+
+function fillInput(t){var i=document.getElementById("input");if(i){i.value+=t;i.focus();}}
+
+// ── Dark mode ──
+var dm=localStorage.getItem("lumen-dm"),dt=document.getElementById("dmToggle");
+if(dm==="dark")document.documentElement.classList.add("dark-mode");
+if(dt){dt.textContent=dm==="dark"?"☀":"🌙";dt.onclick=function(){document.documentElement.classList.toggle("dark-mode");var d=document.documentElement.classList.contains("dark-mode");localStorage.setItem("lumen-dm",d?"dark":"light");dt.textContent=d?"☀":"🌙";};}
+
+// Widen file panel toggle
+window.toggleFilePanel=function(){var fp=document.getElementById("rpFiles");if(fp)fp.closest("aside").classList.toggle("w-[360px]");};
