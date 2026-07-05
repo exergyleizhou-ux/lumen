@@ -318,3 +318,6 @@ body::before{
 .statusbar span{white-space:nowrap}
 #statModel{color:var(--ocs-accent);font-weight:650}
 .mem-section{margin-top:6px}.mem-summary{font-size:11px;color:var(--ocs-accent);cursor:pointer;font-weight:650}.mem-list{max-height:120px;overflow-y:auto;margin-top:4px}.mem-item{font-size:11px;padding:4px 6px;border-radius:4px;cursor:pointer}.mem-item:hover{background:var(--ocs-accent-light)}
+.goal-section{margin-top:10px;border-top:1px solid var(--ocs-line);padding-top:8px}
+.goal-summary{font-size:11px;color:var(--ocs-accent);cursor:pointer;font-weight:650}
+.goal-item{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px}

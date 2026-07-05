@@ -40,7 +40,18 @@
     <aside class="insp" id="inspectorPanel">
       <div class="insp-tabs"><button class="insp-tab active" data-pane="status">状态</button><button class="insp-tab" data-pane="files">文件</button><button class="insp-tab" data-pane="fleet">舰队</button><button class="insp-tab" data-pane="ketcher">化学</button><button class="insp-tab" data-pane="molecule">分子</button><button class="insp-tab" data-pane="settings">设置</button></div>
       <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
-      <div class="pane" id="filesPane" hidden><div id="fileTree"></div><div id="filePreview"></div></div>
+      <div class="pane" id="filesPane" hidden>
+        <div id="fileTree"></div>
+        <div id="filePreview"></div>
+        <details class="goal-section" style="margin-top:12px">
+          <summary class="goal-summary">🎯 目标管理</summary>
+          <div id="goalList"><span class="hint">暂无活跃目标</span></div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <input id="goalInput" placeholder="新目标…" style="flex:1;height:28px;padding:0 8px;font-size:11px;border:1px solid var(--ocs-line);border-radius:6px;background:var(--ocs-surface-soft)">
+            <button class="btn sm" id="goalAdd">添加</button>
+          </div>
+        </details>
+      </div>
       <div class="pane" id="fleetPane" hidden><div id="fleetList"></div></div>
       <div class="pane" id="ketcherPane" hidden><p class="hint" style="padding:0 0 8px">Ketcher 分子编辑器</p><iframe id="ketcherFrame" src="about:blank" title="Ketcher"></iframe></div>
       <div class="pane" id="moleculePane" hidden><p class="hint" style="padding:0 0 8px">3Dmol 预览</p><div id="molViewer"></div></div>
@@ -109,6 +120,17 @@ async function streamChat(prompt){
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
   refreshFiles();
 }
+// Goal management
+window._goals=[];
+$("goalAdd").onclick=function(){
+  var v=$("goalInput").value.trim();if(!v)return;
+  window._goals.push({text:v,done:false});
+  $("goalInput").value="";renderGoals();
+};
+function renderGoals(){
+  var el=$("goalList");if(!el)return;
+  el.innerHTML=window._goals.map(function(g,i){return '<div class="goal-item"><input type="checkbox" '+(g.done?"checked":"")+' onchange="window._goals['+i+'].done=this.checked;renderGoals();"><span style="'+(g.done?'text-decoration:line-through;opacity:.5':'')+'">'+g.text+'</span></div>';}).join("")||'<span class="hint">暂无活跃目标</span>';
+}
 
 // Files
 async function refreshFiles(){
@@ -119,7 +141,18 @@ async function refreshFiles(){
   }catch(e){el.innerHTML='<div class="ft-err">'+e.message+'</div>';}
 }
 
-async function previewFile(path){
+async function isPDF(n){return n.toLowerCase().endsWith(".pdf");}
+function isImage(n){var e=n.toLowerCase();return e.endsWith(".png")||e.endsWith(".jpg")||e.endsWith(".jpeg")||e.endsWith(".gif")||e.endsWith(".svg");}
+function previewFile(path){
+  var fp=$("filePreview");if(!fp||!activeProject)return;
+  if(isPDF(path)){
+    fp.innerHTML='<div class="fp-hd">📕 '+path+'</div><iframe src="http://127.0.0.1:18992/api/lab/files/download?project_id='+activeProject.slug+'&path='+encodeURIComponent(path)+'" style="width:100%;height:400px;border:1px solid var(--ocs-line);border-radius:8px"></iframe>';
+    return;
+  }
+  if(isImage(path)){
+    fp.innerHTML='<div class="fp-hd">🖼 '+path+'</div><img src="http://127.0.0.1:18992/api/lab/files/download?project_id='+activeProject.slug+'&path='+encodeURIComponent(path)+'" style="max-width:100%;max-height:400px;border-radius:8px">';
+    return;
+  }
   var fp=$("filePreview");if(!fp||!activeProject)return;
   try{
     var data=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));
@@ -152,7 +185,7 @@ async function refreshFleet(){
   try{
     var h=await api("/api/lab/health");
     var f=h.fleet||{},p=h.research_pack||{};
-    el.innerHTML='<div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v g">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 fleet</span><span class="v g">'+(f.lumen_native||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div></div><div class="set-card"><h3>📡 原生 MCP</h3>'+["pubmed","chembl","geo","oasis","c2d"].map(function(x){return '<div class="flt-domain"><span class="flt-dot"></span><span class="flt-name">'+x+'</span></div>';}).join("")+'</div>';
+    el.innerHTML='<div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v g">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 fleet</span><span class="v g">'+(f.lumen_native||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div></div><div class="set-card"><h3>📡 原生 MCP</h3>'+["pubmed","chembl","geo","oasis","c2d","openalex","arxiv","semantic_scholar"].map(function(x){return '<div class="flt-domain"><span class="flt-dot"></span><span class="flt-name">'+x+'</span></div>';}).join("")+'</div>';
   }catch(e){}
 }
 $("c2dBtn").onclick=function(){window.open("https://demo.oasisdata2026.xyz/c2d","_blank");};
@@ -203,6 +236,17 @@ streamChat = async function(prompt, mode){
   }catch(e){ae.textContent="错误: "+e.message;}
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
   refreshFiles();
+}
+// Goal management
+window._goals=[];
+$("goalAdd").onclick=function(){
+  var v=$("goalInput").value.trim();if(!v)return;
+  window._goals.push({text:v,done:false});
+  $("goalInput").value="";renderGoals();
+};
+function renderGoals(){
+  var el=$("goalList");if(!el)return;
+  el.innerHTML=window._goals.map(function(g,i){return '<div class="goal-item"><input type="checkbox" '+(g.done?"checked":"")+' onchange="window._goals['+i+'].done=this.checked;renderGoals();"><span style="'+(g.done?'text-decoration:line-through;opacity:.5':'')+'">'+g.text+'</span></div>';}).join("")||'<span class="hint">暂无活跃目标</span>';
 };
 
 // Add status bar
