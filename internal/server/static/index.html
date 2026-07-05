@@ -7,7 +7,8 @@
   <link rel="stylesheet" href="assets/app.css?v=7" />
 
 
-<script src="https://cdn.tailwindcss.com"></script></head>
+<script src="https://cdn.tailwindcss.com"></script><style>.session-item{display:flex;align-items:center}.session-del{display:none;font-size:14px;color:#ef4444;cursor:pointer;padding:2px 6px;border-radius:4px}.session-item:hover .session-del{display:block}</style>
+</head>
 <body>
   <div class="app" id="app">
     <div class="sidebar-backdrop" id="sidebarBackdrop" hidden></div>
@@ -102,7 +103,6 @@
           <div id="mentionMenu" style="display:none;position:absolute;left:40px;top:8px;background:var(--surface);border:1px solid var(--rule);border-radius:10px;padding:4px;z-index:10;box-shadow:0 4px 16px rgba(0,0,0,.1)"><div class="mention-item" onclick="fillInput('@file ')" style="padding:4px 10px;cursor:pointer;font-size:11px">📄 @file</div><div class="mention-item" onclick="fillInput('@skill ')" style="padding:4px 10px;cursor:pointer;font-size:11px">🧩 @skill</div><div class="mention-item" onclick="fillInput('@memory ')" style="padding:4px 10px;cursor:pointer;font-size:11px">🧠 @memory</div></div>
           <textarea id="input" rows="1" placeholder="描述任务… Enter 发送，Shift+Enter 换行，Ctrl+V 粘贴图片" aria-label="消息输入"></textarea>
           <div class="composer-actions">
-            <span class="composer-hint" id="attachHint" hidden>已附加图片</span>
             <button class="btn-stop" id="stopBtn" type="button" hidden>停止</button>
             <button class="btn-send" id="planSendBtn" type="button" style="background:var(--ocs-success,#5b8c7a);color:#fff;margin-right:4px;font-size:11px;padding:4px 10px;border-radius:8px;border:none;cursor:pointer">Plan</button>
             <button class="btn-send" id="sendBtn" type="button" aria-label="发送">
