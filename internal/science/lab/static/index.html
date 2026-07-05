@@ -6,95 +6,16 @@
 <title>Lumen Science · 实验室</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>tailwind.config={theme:{extend:{colors:{surface:'#0f172a',card:'#1e2937',hover:'#334155',ink:'#e2e8f0',muted:'#94a3b8',dim:'#64748b',accent:{DEFAULT:'#10b981',hover:'#059669',soft:'rgba(16,185,129,.1)'},rule:'#475569',success:'#22c55e',warn:'#f59e0b',danger:'#ef4444',user:'#1a3a2a',userBd:'#10b981'}}}}</script>
-<style>/* Oasis Lab — same design system as Oasis ui.tsx */
+<style>
 :root {
   --paper: #fafaf7; --ink: #18181b; --ink-60: rgba(24,24,27,.6); --ink-40: rgba(24,24,27,.4);
   --accent: #b45309; --accent-hover: #92400e; --accent-soft: rgba(180,83,9,.08);
   --green: #047857; --green-soft: rgba(4,120,87,.08);
   --surface: #fff; --sidebar: #f4f3ef; --sidebar-hover: #ebeae4;
-  --rule: #e7e5e0; --shadow-card: 0 1px 2px rgba(24,24,27,.03),0 8px 24px -16px rgba(24,24,27,.1);
-  --focus-ring: 0 0 0 2px rgba(24,24,27,.05);
-  --radius-full: 9999px; --radius: 12px; --radius-lg: 16px; --radius-xl: 24px;
+  --rule: #e7e5e0; --shadow: 0 4px 20px rgba(24,24,27,.06);
+  --radius: 12px; --radius-lg: 16px;
   --font: "Geist","Inter",-apple-system,sans-serif; --mono: "Geist Mono",ui-monospace,monospace;
-  --display: "Instrument Serif","Georgia",serif;
 }
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%;overflow:hidden;font-family:var(--font);background:var(--paper);color:var(--ink);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased}
-a{color:var(--ink);text-decoration:none}
-button{cursor:pointer;font-family:var(--font);font-size:inherit}
-input,textarea{font-family:var(--font);font-size:inherit}
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:transparent}
-::-webkit-scrollbar-thumb{background:var(--rule);border-radius:3px}
-
-/* Top bar — Oasis Nav style */
-.top{display:flex;align-items:center;gap:12px;padding:10px 20px;border-bottom:1px solid var(--rule);background:var(--paper);flex-shrink:0;min-height:48px}
-.brand{font-family:var(--display);font-size:1.25rem;letter-spacing:-.01em;font-weight:700}
-.brand-dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
-.top-spacer{flex:1}
-.top-status{font-size:12px;color:var(--ink-40);padding:4px 10px;background:var(--sidebar);border-radius:var(--radius-full)}
-
-/* Layout */
-.main{display:flex;flex:1;min-height:0;overflow:hidden}
-.side{width:260px;background:var(--sidebar);border-right:1px solid var(--rule);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
-.ctr{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--paper)}
-.insp{width:300px;background:var(--sidebar);border-left:1px solid var(--rule);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
-.resizer{cursor:col-resize;width:4px;flex-shrink:0;background:transparent;transition:background .2s}
-.resizer:hover{background:var(--ink-40)}
-
-/* Oasis Button */
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:var(--radius-full);padding:7px 16px;font-size:12px;font-weight:500;line-height:1;transition:all .15s;border:1px solid transparent;outline:none}
-.btn:focus-visible{box-shadow:var(--focus-ring)}
-.btn-primary{background:var(--ink);color:var(--paper)}
-.btn-primary:hover{background:rgba(24,24,27,.85)}
-.btn-secondary{background:var(--surface);color:var(--ink);border-color:var(--rule)}
-.btn-secondary:hover{background:var(--paper)}
-.btn-ghost{background:transparent;color:var(--ink-60)}
-.btn-ghost:hover{background:var(--paper);color:var(--ink)}
-.btn-sm{padding:4px 12px;font-size:11px}
-
-/* Sidebar */
-.side-section{padding:14px 16px}
-.side-label{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-40);margin-bottom:8px;font-weight:600}
-.project-item,.skill-item{display:flex;align-items:center;gap:8px;padding:7px 12px;border-radius:var(--radius);font-size:13px;cursor:pointer;color:var(--ink-60);transition:all .12s}
-.project-item:hover,.skill-item:hover{background:var(--sidebar-hover);color:var(--ink)}
-.project-item.active{background:var(--sidebar-hover);color:var(--ink);font-weight:550}
-
-/* Chat — clean Oasis messages */
-.chat{flex:1;overflow-y:auto;padding:24px 32px}
-.conversations{display:flex;gap:2px;padding:6px 12px 0;overflow-x:auto;border-bottom:1px solid var(--rule)}
-.conv-tab{padding:6px 14px;border-radius:var(--radius) var(--radius) 0 0;font-size:12px;cursor:pointer;white-space:nowrap;color:var(--ink-40);border:1px solid transparent;border-bottom:none;transition:all .12s}
-.conv-tab.active{background:var(--paper);color:var(--ink);border-color:var(--rule);font-weight:600}
-
-.msg-user{display:flex;justify-content:flex-end;margin:16px 0}
-.msg-user-inner{background:var(--ink);color:var(--paper);padding:10px 18px;border-radius:var(--radius-xl) var(--radius-xl) 4px var(--radius-xl);max-width:70%;font-weight:500;font-size:14px}
-.msg-agent-inner{padding:8px 0;line-height:1.75;font-size:14px;max-width:720px}
-.msg-agent-inner table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13px}
-.msg-agent-inner th,.msg-agent-inner td{border:1px solid var(--rule);padding:8px 12px;text-align:left}
-.msg-agent-inner th{background:var(--sidebar);font-weight:600}
-.msg-thinking{color:var(--ink-40);font-size:12px;font-style:italic;padding:4px 0}
-.msg-tool{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:11px;padding:2px 8px;border-radius:6px;margin:2px 4px;font-weight:650}
-
-/* Composer — Oasis input */
-.composer{padding:16px 24px;border-top:1px solid var(--rule);background:var(--paper)}
-.composer-inner{display:flex;align-items:flex-end;gap:8px;background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius-lg);padding:8px 14px;transition:border-color .15s}
-.composer-inner:focus-within{border-color:var(--ink);box-shadow:var(--focus-ring)}
-.composer-inner textarea{flex:1;border:none;outline:none;resize:none;font-size:13px;background:transparent;color:var(--ink);padding:4px 0;min-height:24px;max-height:120px}
-.send-btn{background:var(--ink);color:var(--paper);border:none;border-radius:var(--radius-full);padding:6px 16px;font-weight:600;font-size:13px;transition:background .15s;flex-shrink:0}
-.send-btn:hover{background:rgba(24,24,27,.85)}
-
-/* Inspector */
-.insp-tabs{display:flex;border-bottom:1px solid var(--rule);flex-shrink:0}
-.insp-tab{flex:1;padding:10px 0;text-align:center;font-size:12px;color:var(--ink-40);cursor:pointer;border-bottom:2px solid transparent;transition:all .12s}
-.insp-tab.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:600}
-.insp-content{flex:1;overflow-y:auto;padding:14px 16px;font-size:13px}
-
-/* File tree */
-.file-row{display:flex;align-items:center;justify-content:space-between;padding:5px 10px;border-radius:6px;font-size:12px;cursor:pointer;color:var(--ink-60)}
-.file-row:hover{background:var(--sidebar-hover);color:var(--ink)}
-.file-del{opacity:0;color:var(--ink-40);font-size:12px;padding:2px 6px;border-radius:4px}
-.file-row:hover .file-del{opacity:1}
-.file-del:hover{color:#dc2626;background:rgba(220,38,38,.08)}
 </style>
 </head>
 <body class="h-screen flex flex-col overflow-hidden">

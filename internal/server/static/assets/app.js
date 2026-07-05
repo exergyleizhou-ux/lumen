@@ -141,7 +141,7 @@ function appendMsg(role, text) {
   div.appendChild(avatar);
 
   const body = document.createElement("div");
-  body.className = "bubble";
+  body.className = "msg-body";
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   if (role === "assistant" || role === "system") {
@@ -171,7 +171,7 @@ function addToolCard(parent, name, state) {
   hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>` +
     (state === "running" ? '<span class="tool-approve-btn" style="margin-left:auto;font-size:10px;cursor:pointer;padding:2px 8px;border-radius:4px;background:var(--ocs-success, #5b8c7a);color:#fff" onclick="event.stopPropagation();if(window.pendingApprovalId){fetch('/api/approve/'+window.pendingApprovalId,{method:'POST'});this.textContent='已批准';this.style.background='var(--ocs-muted)';?.close();}">✓ 批准</span>' : '');
   card.appendChild(hd);
-  parent.querySelector(".bubble").appendChild(card);
+  parent.querySelector(".msg-body").appendChild(card);
   return hd;
 }
 
@@ -260,7 +260,7 @@ async function streamWorkflow(action, prompt) {
             const err = document.createElement("div");
             err.className = "msg-error";
             err.textContent = ev.text || "工作流错误";
-            el.querySelector(".bubble").appendChild(err);
+            el.querySelector(".msg-body").appendChild(err);
           }
         } catch (_) {}
       }
@@ -460,7 +460,7 @@ async function send() {
               if (!thinkEl) {
                 thinkEl = document.createElement("div");
                 thinkEl.className = "think-block";
-                el.querySelector(".bubble").insertBefore(thinkEl, bubble);
+                el.querySelector(".msg-body").insertBefore(thinkEl, bubble);
               }
               thinkEl.textContent = (thinkEl.textContent || "思考中… ") + (ev.text || "");
               break;
@@ -491,7 +491,7 @@ async function send() {
                 const err = document.createElement("div");
                 err.className = "msg-error";
                 err.textContent = ev.text;
-                el.querySelector(".bubble").appendChild(err);
+                el.querySelector(".msg-body").appendChild(err);
               }
               break;
             case "approval_request":
@@ -528,7 +528,7 @@ async function send() {
       const err = document.createElement("div");
       err.className = "msg-error";
       err.textContent = "连接中断，请重试";
-      el.querySelector(".bubble").appendChild(err);
+      el.querySelector(".msg-body").appendChild(err);
     }
   }
 
