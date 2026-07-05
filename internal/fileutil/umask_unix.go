@@ -2,10 +2,15 @@
 
 package fileutil
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
-var processUmask = func() os.FileMode {
-	old := syscall.Umask(0)
-	syscall.Umask(old)
-	return os.FileMode(old)
-}()
+func init() {
+	processUmask = func() os.FileMode {
+		old := syscall.Umask(0)
+		syscall.Umask(old)
+		return os.FileMode(old)
+	}()
+}
