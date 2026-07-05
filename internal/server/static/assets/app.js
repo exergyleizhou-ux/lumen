@@ -1352,3 +1352,145 @@ if (typeof escapeHtml !== "function") { function escapeHtml(s) { return (s||"").
 // ── Init production features ──
 setTimeout(refreshGitStatus, 2000);
 setInterval(refreshGitStatus, 60000);
+
+// ═══════════ 200% FEATURES — Beyond Claude Code ═══════════
+
+// ── 1. Multi-Model Compare ──
+var compareModels = ["deepseek-chat","kimi-k2","minimax-m3"];
+async function compareWithModels(prompt) {
+  if (!prompt) { prompt = window._lastPrompt; if (!prompt) return showToast("先发一条消息"); }
+  var container = document.createElement("div");
+  container.className = "compare-panel";
+  container.innerHTML = '<div class="side-label">多模型对比</div><div id="compareResults" style="display:grid;grid-template-columns:1fr 1fr;gap:12px"></div>';
+  var chat = document.querySelector(".chat");
+  if (chat) chat.appendChild(container);
+
+  var results = document.getElementById("compareResults");
+  compareModels.forEach(function(model) {
+    var card = document.createElement("div");
+    card.className = "bg-white rounded-2xl p-4 border border-rule";
+    card.innerHTML = '<div class="text-xs font-bold mb-2">'+model+'</div><div class="text-xs text-muted">请求中…</div>';
+    results.appendChild(card);
+
+    fetch("/api/compare", {
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({prompt:prompt,model:model})
+    }).then(function(r){return r.json()}).then(function(d) {
+      card.innerHTML = '<div class="text-xs font-bold mb-2" style="color:'+(d.model===compareModels[0]?"#b45309":"#047857")+'">'+d.model+'</div><div class="text-xs" style="white-space:pre-wrap;max-height:300px;overflow-y:auto">'+escapeHtml(d.text||d.error||"无响应")+'</div><div class="text-xs text-muted mt-1">'+((d.tokens||0)+" tok · "+(d.time||"")+"s")+'</div>';
+    }).catch(function(e) {
+      card.innerHTML = '<div class="text-xs font-bold mb-2">'+model+'</div><div class="text-xs text-danger">'+e.message+'</div>';
+    });
+  });
+}
+
+// ── 2. Smart Context — Auto-Summarize ──
+var contextSummary = "";
+var messageCountSinceSummary = 0;
+var MAX_MSGS_BEFORE_SUMMARY = 12;
+
+function maybeSummarizeContext() {
+  messageCountSinceSummary++;
+  if (messageCountSinceSummary < MAX_MSGS_BEFORE_SUMMARY) return;
+  messageCountSinceSummary = 0;
+  showToast("🧠 自动总结上下文…");
+  var messages = document.querySelectorAll(".msg");
+  if (messages.length < 10) return;
+  var text = "";
+  messages.forEach(function(m) { text += (m.textContent||"").slice(0,200)+"\\n"; });
+  fetch("/api/summarize", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:text.slice(0,4000)})})
+    .then(function(r){return r.json()})
+    .then(function(d) { if(d.summary) { contextSummary = d.summary; showToast("✅ 上下文已压缩"); } })
+    .catch(function(){});
+}
+
+// ── 3. Export Session as Markdown ──
+function exportSession() {
+  var messages = document.querySelectorAll(".msg");
+  var md = "# Lumen Session\\n\\n_"+new Date().toISOString()+"_\\n\\n";
+  messages.forEach(function(m) {
+    var role = m.classList.contains("user") ? "## 用户" : "### AI";
+    var text = (m.querySelector(".msg-body")||m).textContent.trim();
+    md += role + "\\n\\n" + text + "\\n\\n---\\n\\n";
+  });
+  var blob = new Blob([md],{type:"text/markdown"});
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "lumen-session-"+new Date().toISOString().slice(0,10)+".md";
+  a.click();
+  showToast("📥 已导出 Markdown");
+}
+
+// ── 4. ⌘K Command Palette ──
+var cmdPalette = null;
+function toggleCmdPalette() {
+  if (cmdPalette) { cmdPalette.remove(); cmdPalette = null; return; }
+  cmdPalette = document.createElement("div");
+  cmdPalette.style.cssText = "position:fixed;inset:0;background:rgba(24,24,27,.3);z-index:200;display:flex;align-items:flex-start;justify-content:center;padding-top:15vh";
+  cmdPalette.onclick = function(e) { if (e.target === cmdPalette) { cmdPalette.remove(); cmdPalette = null; } };
+  var commands = [
+    {key:"⌘K",label:"命令面板",action:"toggleCmdPalette()"},
+    {key:"⌘N",label:"新建会话",action:"newSession()"},
+    {key:"⌘E",label:"导出 Markdown",action:"exportSession()"},
+    {key:"⌘L",label:"清空聊天",action:"clearChat()"},
+    {key:"⌘S",label:"切换侧栏",action:"toggleSidebar()"},
+    {key:"⌘D",label:"暗色模式",action:"toggleDarkMode()"},
+    {key:"⌘⇧C",label:"多模型对比",action:"compareWithModels()"},
+    {key:"Enter",label:"发送",action:"$('input').focus()"},
+  ];
+  var html = '<div class="modal" style="max-width:500px;padding:16px"><input id="cmdInput" class="oasis-input" placeholder="搜索命令…" style="margin-bottom:12px" autofocus oninput="filterCommands()">';
+  commands.forEach(function(c) {
+    html += '<div class="cmd-item" data-label="'+c.label+'" onclick="'+c.action+';toggleCmdPalette();" style="display:flex;justify-content:space-between;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:13px;transition:background .1s"><span>'+c.label+'</span><kbd style="font-size:10px;color:rgb(24 24 27/.4)">'+c.key+'</kbd></div>';
+  });
+  html += '</div>';
+  cmdPalette.innerHTML = html;
+  document.body.appendChild(cmdPalette);
+  setTimeout(function() { var inp = document.getElementById("cmdInput"); if (inp) inp.focus(); }, 100);
+}
+function filterCommands() {
+  var q = (document.getElementById("cmdInput")?.value||"").toLowerCase();
+  document.querySelectorAll(".cmd-item").forEach(function(el) {
+    el.style.display = q && !(el.dataset.label||"").toLowerCase().includes(q) ? "none" : "flex";
+  });
+}
+
+// ── Keyboard bindings ──
+document.addEventListener("keydown", function(e) {
+  if ((e.metaKey||e.ctrlKey) && e.key === "k") { e.preventDefault(); toggleCmdPalette(); }
+  if ((e.metaKey||e.ctrlKey) && e.key === "e") { e.preventDefault(); exportSession(); }
+  if ((e.metaKey||e.ctrlKey) && e.shiftKey && e.key === "c") { e.preventDefault(); compareWithModels(); }
+});
+
+// ── Inject context summary into stream ──
+var _origAppendMsg = appendMsg;
+appendMsg = function(role, text) {
+  var result = _origAppendMsg(role, text);
+  setTimeout(maybeSummarizeContext, 500);
+  return result;
+};
+
+// ── Compare button in composer actions ──
+setTimeout(function() {
+  var actions = document.querySelector(".composer-actions");
+  if (actions) {
+    var btn = document.createElement("button");
+    btn.className = "btn btn-sm btn-ghost";
+    btn.textContent = "对比";
+    btn.title = "多模型并行对比 (⌘⇧C)";
+    btn.onclick = function() { compareWithModels(); };
+    btn.style.cssText = "margin-right:4px";
+    actions.insertBefore(btn, actions.firstChild);
+  }
+}, 2000);
+
+// ── Export button ──
+setTimeout(function() {
+  var topBar = document.querySelector(".top-bar");
+  if (topBar) {
+    var expBtn = document.createElement("button");
+    expBtn.className = "btn btn-sm btn-ghost";
+    expBtn.textContent = "导出";
+    expBtn.title = "导出 Markdown (⌘E)";
+    expBtn.onclick = exportSession;
+    topBar.appendChild(expBtn);
+  }
+}, 2000);
