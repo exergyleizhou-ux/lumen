@@ -165,8 +165,13 @@ document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("c
 // Init
 async function loadLogs(){
   var el=$("logBody");if(!el)return;
-  try{var r=await api("/api/lab/health");var f=r.fleet||{},p=r.research_pack||{};
-    el.innerHTML='<div class="set-card"><h3>📡 连接</h3><div class="set-row"><span class="k">状态</span><span class="v g">● 在线</span></div><div class="set-row"><span class="k">版本</span><span class="v">'+(r.version||"dev")+'</span></div></div><div class="set-card"><h3>🚀 舰队</h3><div class="set-row"><span class="k">CS domains</span><span class="v">'+(f.cs_connected||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">原生 MCP</span><span class="v">'+(f.lumen_native||0)+'</span></div></div><div class="set-card"><h3>📦 Research</h3><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div><div class="set-row"><span class="k">Skills</span><span class="v">'+(p.skills||0)+'</span></div></div>';
+  try{
+    // Load provenance if project active
+    var prov=[];
+    if(activeProject){try{var d=await api("/api/lab/provenance?project_id="+activeProject.slug);prov=d.records||[];}catch(e){}}
+    var r=await api("/api/lab/health");var f=r.fleet||{},p=r.research_pack||{};
+    el.innerHTML='<div class="set-card"><h3>📡 连接</h3><div class="set-row"><span class="k">Fleet</span><span class="v g">'+(f.connected_total||0)+'/'+(f.cs_domains||0)+'</span></div><div class="set-row"><span class="k">Tools</span><span class="v">'+(p.domain_tools||0)+'</span></div></div>'+
+      '<div class="set-card"><h3>🔗 Provenance 时间线</h3>'+(prov.length?prov.slice(0,10).map(function(r,i){return'<div style="display:flex;gap:8px;padding:4px 0;font-size:10px;align-items:flex-start"><div style="width:2px;height:100%;background:var(--ocs-line);flex-shrink:0;margin-top:4px;border-radius:1px"></div><div style="flex:1"><div style="color:var(--ocs-muted)">'+(r.ts||"").slice(0,19).replace("T"," ")+'</div><div style="font-weight:650">'+(r.kind||"event")+'</div>'+(r.model?'<div style="color:var(--ocs-accent);font-size:9px">'+r.model+'</div>':'')+'</div></div>';}).join("")+'<div style="font-size:10px;color:var(--ocs-muted);margin-top:4px">共 '+prov.length+' 条记录</div>'):'<div class="hint">选择课题查看溯源记录</div>')+'</div>';
   }catch(e){el.textContent=e.message;}
 }
 var labSelectedFile=null;

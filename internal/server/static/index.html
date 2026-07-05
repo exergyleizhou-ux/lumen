@@ -22,6 +22,7 @@
         <span class="btn-new-icon" aria-hidden="true">+</span>
         新对话
       </button>
+      <div style="padding:4px 12px"><input id="sessionSearch" placeholder="搜索会话…" style="width:100%;height:28px;padding:0 8px;font-size:11px;border:1px solid var(--rule);border-radius:8px;background:var(--sidebar);color:var(--ink);outline:none" oninput="filterSessions(this.value)"></div>
       <nav class="session-list" id="sessionList" aria-label="历史会话">
         <p class="session-empty" id="sessionEmpty">暂无历史会话</p>
       </nav>
@@ -525,6 +526,14 @@ var suggestTasks = [
 // Hide welcome when messages appear
 var obs=new MutationObserver(function(){var msgs=document.querySelectorAll(".msg");if(msgs.length){var w=document.getElementById("welcome");if(w)w.style.display="none";}});
 obs.observe(document.getElementById("chat")||document.body,{childList:true,subtree:true});
+</script>
+<script>
+var allSessions=[];
+function filterSessions(q){
+  var rows=document.querySelectorAll("#sessionList .session-item");
+  q=(q||"").toLowerCase();
+  rows.forEach(function(r){r.style.display=q?(!r.textContent.toLowerCase().includes(q)?"none":""):"";});
+}
 </script>
 </body>
 </html>
