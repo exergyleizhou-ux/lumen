@@ -49,7 +49,7 @@ async function api(path,opts){
   var t=await r.text();try{return JSON.parse(t);}catch(_){return{raw:t}};
 }
 
-async async function refreshHealth(){
+async function refreshHealth(){
   var h=await api("/api/lab/health");
   $("packBadge").textContent=(h.research_pack||{}).healthy?(h.research_pack.domain_tools||0)+" tools":"Pack ✗";
   var f=h.fleet||{};
