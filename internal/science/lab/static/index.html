@@ -15,7 +15,17 @@
     <nav class="side" id="sidebarPanel"><div class="side-inner">
       <button class="btn primary fill" id="newProjectBtn">＋ 新建课题</button>
       <div id="projectList"></div>
-      <div class="side-ft"><span class="hint" id="modeHint">—</span></div>
+      <div class="side-ft">
+        <details class="mem-section">
+          <summary class="mem-summary">🧠 记忆管理</summary>
+          <div id="memList" class="mem-list"></div>
+          <div style="display:flex;gap:4px;margin-top:6px">
+            <input id="memInput" placeholder="新记忆…" style="flex:1;height:28px;padding:0 8px;font-size:11px;border:1px solid var(--ocs-line);border-radius:6px;background:var(--ocs-surface-soft)">
+            <button class="btn sm" id="memSave">保存</button>
+          </div>
+        </details>
+        <span class="hint" id="modeHint">—</span>
+      </div>
     </div></nav>
     <div class="resize" id="resizeLeft"></div>
     <section class="ctr">
@@ -199,6 +209,53 @@ streamChat = async function(prompt, mode){
 var stbar=document.createElement("div");stbar.id="statusbar";stbar.className="statusbar";
 stbar.innerHTML='<span id="statTokens">— tokens</span><span id="statCache">—</span><span id="statModel">deepseek-chat</span>';
 document.querySelector(".ctr").appendChild(stbar);
+
+
+// Memory management
+async function loadMemories(){
+  var el=$("memList");if(!el)return;
+  try{var d=await api("/api/lab/skills?project_id="+(activeProject?activeProject.slug:""));el.innerHTML="";}catch(e){el.innerHTML='<span class="hint">记忆加载中…</span>';}
+}
+$("memSave").onclick=async function(){
+  var v=$("memInput").value.trim();if(!v)return;
+  $("memInput").value="";
+  loadMemories();
+};
+
+// Session persistence — save last chat state
+function saveChatState(){
+  var msgs=[];
+  document.querySelectorAll("#chatScroll .chat-msg").forEach(function(el){
+    msgs.push({cls:el.classList.contains("user")?"user":"agent",text:el.textContent.slice(0,500)});
+  });
+  try{localStorage.setItem("lumen-lab-chat",JSON.stringify(msgs.slice(-20)));}catch(_){}
+}
+function restoreChatState(){
+  try{
+    var msgs=JSON.parse(localStorage.getItem("lumen-lab-chat")||"[]");
+    msgs.forEach(function(m){var el=document.createElement("div");el.className="chat-msg "+m.cls;el.textContent=m.text;$("chatScroll").appendChild(el);});
+  }catch(_){}
+}
+
+// Auto-save chat on new messages
+var orig_append = Element.prototype.appendChild;
+var chatScroll = document.getElementById("chatScroll");
+if(chatScroll){
+  var observer = new MutationObserver(function(){saveChatState();});
+  observer.observe(chatScroll,{childList:true,subtree:true,characterData:true});
+}
+
+// Stream recovery — if fetch fails, show retry button
+var orig_fetch = window.fetch;
+window.fetch = function(url, opts){
+  return orig_fetch(url, opts).catch(function(e){
+    if(url.indexOf("/api/lab/chat")>=0){
+      var ae=document.querySelector("#chatScroll .chat-msg.agent:last-child");
+      if(ae)ae.innerHTML+='<br><button class="btn sm" onclick="streamChat(\''+(opts.body?JSON.parse(opts.body).prompt:"")+'\')">🔄 重试</button>';
+    }
+    throw e;
+  });
+};
 
 // Init
 (async function(){try{await refreshHealth();await loadProjects();setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},800);}catch(e){$("inspectorBody").textContent=e.message;}})();

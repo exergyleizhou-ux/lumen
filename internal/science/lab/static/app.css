@@ -317,3 +317,4 @@ body::before{
 .statusbar{display:flex;align-items:center;gap:16px;padding:4px 16px;font-size:10px;color:var(--ocs-muted);border-top:1px solid var(--ocs-line);flex-shrink:0;background:var(--ocs-surface-soft)}
 .statusbar span{white-space:nowrap}
 #statModel{color:var(--ocs-accent);font-weight:650}
+.mem-section{margin-top:6px}.mem-summary{font-size:11px;color:var(--ocs-accent);cursor:pointer;font-weight:650}.mem-list{max-height:120px;overflow-y:auto;margin-top:4px}.mem-item{font-size:11px;padding:4px 6px;border-radius:4px;cursor:pointer}.mem-item:hover{background:var(--ocs-accent-light)}
