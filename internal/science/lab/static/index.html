@@ -29,9 +29,24 @@
     </section>
     <div class="resize" id="resizeRight"></div>
     <aside class="insp" id="inspectorPanel">
-      <div class="insp-tabs"><button class="insp-tab active" data-pane="status">状态</button><button class="insp-tab" data-pane="files">文件</button></div>
+      <div class="insp-tabs">
+      <button class="insp-tab active" data-pane="status">状态</button>
+      <button class="insp-tab" data-pane="files">文件</button>
+      <button class="insp-tab" data-pane="skills">技能</button>
+      <button class="insp-tab" data-pane="chem">化学</button>
+      <button class="insp-tab" data-pane="mol">分子</button>
+    </div>
       <div class="pane" id="statusPane"><div id="inspectorBody"></div></div>
       <div class="pane" id="filesPane" hidden><div id="fileTree"></div><div id="filePreview"></div></div>
+      <div class="pane" id="skillsPane" hidden><div id="skillsBody"><span class="hint">加载中…</span></div></div>
+      <div class="pane" id="chemPane" hidden>
+        <p class="hint" style="padding:0 0 6px">Ketcher 分子编辑器</p>
+        <iframe id="ketcherFrame" src="about:blank" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></iframe>
+      </div>
+      <div class="pane" id="molPane" hidden>
+        <p class="hint" style="padding:0 0 6px">3Dmol 蛋白/分子预览</p>
+        <div id="molViewer" style="width:100%;height:420px;border:1px solid var(--ocs-line);border-radius:8px"></div>
+      </div>
     </aside>
   </div>
 </div>
@@ -117,10 +132,27 @@ $("composer").addEventListener("submit",function(e){e.preventDefault();var p=$("
 $("newProjectBtn").addEventListener("click",async function(){var t=prompt("课题名称");if(!t)return;activeProject=await api("/api/lab/projects",{method:"POST",body:JSON.stringify({title:t})});await loadProjects();});
 document.querySelectorAll(".chip").forEach(function(b){b.addEventListener("click",function(){if(this.dataset.prompt)streamChat(this.dataset.prompt);});});
 // Tabs
-document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("active");});this.classList.add("active");var p=this.dataset.pane;$("statusPane").hidden=p!=="status";$("filesPane").hidden=p!=="files";if(p==="files")refreshFiles();});});
+document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("active");});this.classList.add("active");var p=this.dataset.pane;["statusPane","filesPane","skillsPane","chemPane","molPane"].forEach(function(id){var el=$(id);if(el)el.hidden=id!==p+"Pane";});
+      if(p==="files")refreshFiles();
+      if(p==="skills")loadSkills();
+      if(p==="chem")loadKetcher();
+      if(p==="mol")loadMol();});});
 // Resize
 (function(){function mk(h,p,d){h.onmousedown=function(e){e.preventDefault();var sx=e.clientX,sw=p.getBoundingClientRect().width;h.classList.add("active");document.body.style.cursor="col-resize";document.body.style.userSelect="none";function mv(e){p.style.width=Math.max(160,Math.min(500,sw+(d?sx-e.clientX:e.clientX-sx)))+"px";}function up(){h.classList.remove("active");document.body.style.cursor="";document.body.style.userSelect="";document.removeEventListener("mousemove",mv);document.removeEventListener("mouseup",up);}document.addEventListener("mousemove",mv);document.addEventListener("mouseup",up);};}var rl=$("resizeLeft"),rr=$("resizeRight"),sp=$("sidebarPanel"),ip=$("inspectorPanel");if(rl&&sp)mk(rl,sp,false);if(rr&&ip)mk(rr,ip,true);})();
 // Init
+
+// Skills loader
+async function loadSkills(){
+  var el=$("skillsBody");if(!el)return;
+  try{var d=await api("/api/lab/skills?project_id="+(activeProject?activeProject.slug:""));var s=d.skills||[];el.innerHTML=s.length?s.map(function(sk){return'<div class="ft-row"><span>📋</span><span class="ft-name">'+escHtml(sk.name||sk)+'</span></div>';}).join(""):'<span class="hint">暂无技能</span>';}catch(e){el.innerHTML='<span class="hint">加载失败</span>';}
+}
+// Ketcher lazy load
+var ketcherLoaded=false;
+function loadKetcher(){if(!ketcherLoaded){ketcherLoaded=true;$("ketcherFrame").src="https://lifescience.opensource.epam.com/ketcher/standalone/index.html";}}
+// 3Dmol lazy load
+var molLoaded=false;
+function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#fbf9f6"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#4c1d95"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}}
+
 setTimeout(function(){var s=$("splash");if(s)s.classList.add("hide");},1000);
 (async function(){try{await refreshHealth();await loadProjects();}catch(e){$("inspectorBody").textContent=e.message;}})();
 </script></body></html>
