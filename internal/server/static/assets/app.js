@@ -256,6 +256,10 @@ async function streamWorkflow(action, prompt) {
             onPlanDone();
           } else if (ev.kind === "workflow_done") {
             hidePlanBar();
+          } else if (ev.kind === "approval_request") {
+            pendingApprovalId = ev.id;
+            if (typeof showApprovalModal === "function") showApprovalModal(
+              (ev.tool || "工具") + ": " + (ev.summary || ""));
           } else if (ev.kind === "error") {
             const err = document.createElement("div");
             err.className = "msg-error";
@@ -1246,14 +1250,4 @@ function showDiff(oldText, newText, path) {
 }
 
 // ── Inject plan events into SSE handler ──
-var _origHandleLine = window._handleLine;
-window._handleLine = function(line) {
-  try {
-    var ev = JSON.parse(line);
-    if (ev.kind === "plan_start") { onPlanStart(); return; }
-    if (ev.kind === "plan_step") { onPlanStep(ev.step || ev); return; }
-    if (ev.kind === "plan_done") { onPlanDone(); return; }
-    if (ev.kind === "approval_request") { showApprovalModal(ev.tool_name || ev.name || "未知工具"); return; }
-  } catch(_){}
-  if (_origHandleLine) _origHandleLine(line);
-};
+// approval + plan SSE hooks removed (now in main handler)

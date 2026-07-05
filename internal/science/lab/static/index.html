@@ -273,6 +273,7 @@ async function streamChat(prompt){
       else if(ev.kind==="plan_start"){var pp=$("labPlanSteps");if(pp)pp.innerHTML="";}
       else if(ev.kind==="plan_step"){renderLabPlanStep(ev.step||ev);}
       else if(ev.kind==="plan_done"){var pa=$("labPlanActions");if(pa)pa.style.display="flex";}
+      else if(ev.kind==="approval_request"){showLabApproval(ev.tool||"工具",ev.summary||"");}
     }}
   }catch(e){ae.textContent="错误: "+e.message;}
   $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
