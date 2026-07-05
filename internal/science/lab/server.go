@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
-	"strconv"
 	"time"
 
 	"lumen/internal/config"
