@@ -56,7 +56,7 @@ async function refreshHealth(){
 
 async function loadProjects(){
   var list=await api("/api/lab/projects");
-  var nav=$("projectList");nav.innerHTML="";
+  var nav=$("projectList");nav.innerHTML="";if(!list.length)nav.innerHTML="<span class="hint">暂无课题，点击上方按钮创建</span>";
   list.forEach(function(p){
     var b=document.createElement("button");b.textContent=p.title;
     b.onclick=function(){activeProject=p;loadProjects();refreshFiles();};
