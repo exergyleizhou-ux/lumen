@@ -563,52 +563,99 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	rel := r.URL.Query().Get("path")
-	if rel == "" {
-		// List directory
-		root, _ := g.Resolve(".")
-		entries, err := os.ReadDir(root)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		var files []map[string]any
-		for _, e := range entries {
-			info, _ := e.Info()
-			entry := map[string]any{
-				"name":  e.Name(),
-				"isDir": e.IsDir(),
-			}
-			if info != nil && !e.IsDir() {
-				entry["size"] = info.Size()
-				entry["mtime"] = info.ModTime().UTC().Format(time.RFC3339)
-			}
-			files = append(files, entry)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"files": files, "root": root})
+	if rel == "" || rel == "." {
+		a.writeDirListing(w, g, ".")
 		return
 	}
 
-	// Read file content
 	abs, err := g.Resolve(rel)
 	if err != nil {
 		writeErr(w, http.StatusForbidden, err)
 		return
 	}
+	st, err := os.Stat(abs)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	if st.IsDir() {
+		a.writeDirListing(w, g, rel)
+		return
+	}
+
 	data, err := os.ReadFile(abs)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
 	maxSize := 512 * 1024
-	if len(data) > maxSize {
+	trunc := len(data) > maxSize
+	if trunc {
 		data = data[:maxSize]
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"path":    rel,
-		"content": string(data),
-		"size":    len(data),
-		"truncated": len(data) >= maxSize,
+		"path":        rel,
+		"content":     string(data),
+		"size":        st.Size(),
+		"truncated":   trunc,
+		"previewKind": previewKind(rel),
+		"isDir":       false,
 	})
+}
+
+func (a *API) writeDirListing(w http.ResponseWriter, g *workspace.Guard, rel string) {
+	root, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	var files []map[string]any
+	for _, e := range entries {
+		info, _ := e.Info()
+		name := e.Name()
+		path := name
+		if rel != "" && rel != "." {
+			path = filepath.Join(rel, name)
+		}
+		entry := map[string]any{
+			"name":        name,
+			"path":        path,
+			"isDir":       e.IsDir(),
+			"previewKind": previewKind(name),
+		}
+		if info != nil && !e.IsDir() {
+			entry["size"] = info.Size()
+			entry["mtime"] = info.ModTime().UTC().Format(time.RFC3339)
+		}
+		files = append(files, entry)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "path": rel, "root": root})
+}
+
+func previewKind(name string) string {
+	ext := strings.ToLower(filepath.Ext(name))
+	switch ext {
+	case ".md", ".markdown":
+		return "markdown"
+	case ".json", ".jsonl", ".yml", ".yaml", ".toml", ".csv", ".tsv", ".txt", ".log", ".py", ".r", ".go", ".js", ".ts", ".html", ".css":
+		return "text"
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg":
+		return "image"
+	case ".pdf":
+		return "pdf"
+	case ".pdb", ".cif", ".sdf", ".mol":
+		return "molecule"
+	default:
+		if ext == "" {
+			return "text"
+		}
+		return "binary"
+	}
 }
 
 func (a *API) handleFileDownload(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
