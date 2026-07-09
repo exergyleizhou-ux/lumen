@@ -439,6 +439,28 @@ func (s *Store) saveSession(slug string, sess Session) error {
 	return os.WriteFile(filepath.Join(dir, sess.ID+".json"), append(data, '\n'), 0o600)
 }
 
+// ImportSession creates a session with optional preloaded turns (e.g. JSON restore).
+func (s *Store) ImportSession(slug, title string, turns []Turn) (Session, error) {
+	if strings.TrimSpace(title) == "" {
+		title = "导入会话"
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	// Cap import size for safety
+	if len(turns) > 500 {
+		turns = turns[:500]
+	}
+	sess, err := s.CreateSession(slug, title)
+	if err != nil {
+		return Session{}, err
+	}
+	if len(turns) == 0 {
+		return sess, nil
+	}
+	return s.AppendTurns(slug, sess.ID, turns...)
+}
+
 // AppendTurns appends turns to a session (creates session file if needed via CreateSession first).
 func (s *Store) AppendTurns(slug, sessionID string, turns ...Turn) (Session, error) {
 	sess, err := s.GetSession(slug, sessionID)

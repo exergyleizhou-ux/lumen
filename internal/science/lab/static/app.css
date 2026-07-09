@@ -513,6 +513,17 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .fav-chip-row { display: flex; align-items: center; gap: 2px; }
 .fav-chip-row .chip { flex: 1; min-width: 0; }
 .fav-chip-row .fav-del { flex-shrink: 0; }
+.shortcuts-body { display: flex; flex-direction: column; gap: 8px; padding: 8px 4px; }
+.sc-row {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  font-size: 13px; padding: 4px 0; border-bottom: 1px solid var(--ocs-line);
+}
+.sc-row kbd {
+  display: inline-block; padding: 2px 6px; margin: 0 1px;
+  border: 1px solid var(--ocs-line); border-radius: 6px;
+  background: var(--ocs-accent-light); font-family: var(--mono); font-size: 11px;
+}
+#usageBadge { font-variant-numeric: tabular-nums; min-width: 3.5em; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

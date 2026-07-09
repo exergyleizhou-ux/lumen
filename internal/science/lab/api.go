@@ -302,6 +302,47 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// /api/lab/projects/:slug/sessions/import  POST {title?, turns}
+		if len(parts) == 3 && parts[2] == "import" && r.Method == http.MethodPost {
+			var body struct {
+				Title string         `json:"title"`
+				Turns []project.Turn `json:"turns"`
+				// also accept a full exported session object
+				Session *project.Session `json:"session"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			title := body.Title
+			turns := body.Turns
+			if body.Session != nil {
+				if title == "" {
+					title = body.Session.Title
+				}
+				if len(turns) == 0 {
+					turns = body.Session.Turns
+				}
+			}
+			sess, err := a.projects.ImportSession(slug, title, turns)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			// return full with turns
+			full, err := a.projects.GetSession(slug, sess.ID)
+			if err != nil {
+				writeJSON(w, http.StatusOK, sess)
+				return
+			}
+			writeJSON(w, http.StatusOK, full)
+			return
+		}
+		// /api/lab/projects/:slug/sessions/export-all?format=md|json
+		if len(parts) == 3 && parts[2] == "export-all" && r.Method == http.MethodGet {
+			a.handleSessionsExportAll(w, r, slug)
+			return
+		}
 		// /api/lab/projects/:slug/sessions/search?q= (alias)
 		if len(parts) == 3 && parts[2] == "search" && r.Method == http.MethodGet {
 			q := r.URL.Query().Get("q")
@@ -388,6 +429,64 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// handleSessionsExportAll exports every session under a project as one md/json download.
+func (a *API) handleSessionsExportAll(w http.ResponseWriter, r *http.Request, slug string) {
+	list, err := a.projects.ListSessions(slug)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	format := strings.ToLower(r.URL.Query().Get("format"))
+	if format == "" {
+		format = "md"
+	}
+	type fullSess struct {
+		project.Session
+	}
+	var full []project.Session
+	for _, s := range list {
+		got, err := a.projects.GetSession(slug, s.ID)
+		if err != nil {
+			continue
+		}
+		full = append(full, got)
+	}
+	if full == nil {
+		full = []project.Session{}
+	}
+	switch format {
+	case "json":
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-sessions.json"`, slug))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"project": slug, "count": len(full), "sessions": full,
+		})
+	default:
+		var b strings.Builder
+		b.WriteString("# Sessions · " + slug + "\n\n")
+		b.WriteString(fmt.Sprintf("exported: %s · count: %d\n\n", time.Now().UTC().Format(time.RFC3339), len(full)))
+		for _, sess := range full {
+			b.WriteString("---\n\n# ")
+			b.WriteString(sess.Title)
+			b.WriteString(fmt.Sprintf("\n\n- id: `%s`\n- updated: %s\n\n", sess.ID, sess.UpdatedAt.Format(time.RFC3339)))
+			for i, t := range sess.Turns {
+				role := t.Role
+				if role == "" {
+					role = "message"
+				}
+				b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, role))
+				if t.Text != "" {
+					b.WriteString(t.Text)
+					b.WriteString("\n\n")
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s-sessions.md"`, slug))
+		_, _ = w.Write([]byte(b.String()))
+	}
 }
 
 // handleSessionExport returns session as markdown or json (?format=md|json).

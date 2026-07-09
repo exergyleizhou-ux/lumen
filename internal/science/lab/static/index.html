@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=39">
+  <link rel="stylesheet" href="app.css?v=40">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -18,10 +18,12 @@
       </div>
       <span class="tb-spacer"></span>
       <span class="tb-stat"><span class="tb-dot" id="liveDot"></span><span id="runStatus">就绪</span></span>
+      <span class="tb-stat hide-sm" id="usageBadge" title="Token 用量">—</span>
       <span class="tb-stat" id="packBadge">—</span>
       <span class="tb-stat" id="fleetBadge">—</span>
       <span class="tb-stat hide-sm" id="modeHint">hybrid</span>
       <a class="tb-link hide-sm" id="bridgeLink" href="/lumen-science/?embed=1&oasis=1">Bridge</a>
+      <button class="tb-btn" id="btnShortcuts" type="button" title="快捷键 ⌘/">?</button>
       <button class="tb-btn" id="dmToggle" type="button" title="主题">🌙</button>
       <button type="button" class="tb-btn mobile-only" id="btnInsp" title="面板">▦</button>
     </header>
@@ -71,6 +73,10 @@
           <button class="ctr-tab-add" type="button" id="newConvBtn" title="新对话">＋</button>
           <button class="btn sm hide-sm" type="button" id="exportMdBtn" title="导出 Markdown">导出 MD</button>
           <button class="btn sm hide-sm" type="button" id="exportJsonBtn" title="导出 JSON">导出 JSON</button>
+          <button class="btn sm hide-sm" type="button" id="exportAllSessBtn" title="导出课题全部会话">导出全部</button>
+          <label class="btn sm hide-sm" title="导入会话 JSON">导入
+            <input type="file" id="importSessFile" accept=".json,application/json" hidden />
+          </label>
           <button class="btn sm hide-sm" type="button" id="forkSessBtn" title="分支当前会话">分支</button>
           <button class="btn sm hide-sm" type="button" id="deleteSessBtn" title="删除当前会话">删除会话</button>
         </div>
@@ -290,6 +296,25 @@
     </div>
   </div>
 
-  <script src="app.js?v=39"></script>
+  <div id="shortcutsModal" class="preview-modal" hidden>
+    <div class="preview-modal-box" style="max-width:480px">
+      <div class="preview-modal-hd">
+        <span>键盘快捷键</span>
+        <button type="button" class="btn sm" id="shortcutsClose">关闭</button>
+      </div>
+      <div class="preview-modal-body shortcuts-body">
+        <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>K</kbd><span>命令面板</span></div>
+        <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>/</kbd><span>快捷键帮助</span></div>
+        <div class="sc-row"><kbd>Enter</kbd><span>发送消息</span></div>
+        <div class="sc-row"><kbd>Shift</kbd>+<kbd>Enter</kbd><span>换行</span></div>
+        <div class="sc-row"><kbd>@</kbd><span>引用工作区文件</span></div>
+        <div class="sc-row"><kbd>Esc</kbd><span>关闭面板 / 菜单</span></div>
+        <div class="sc-row"><span class="hint">双击会话标签</span><span>重命名会话</span></div>
+        <div class="sc-row"><span class="hint">拖拽到输入框</span><span>上传附件</span></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=40"></script>
 </body>
 </html>

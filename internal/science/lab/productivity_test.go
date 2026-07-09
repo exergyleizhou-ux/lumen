@@ -184,6 +184,60 @@ func TestProjectRenameAPI(t *testing.T) {
 	}
 }
 
+func TestSessionImportAndExportAll(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "ImportExp")
+	// import with turns
+	body := `{"title":"imported","turns":[{"role":"user","text":"hello import"},{"role":"assistant","text":"hi back"}]}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/projects/"+slug+"/sessions/import",
+		bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("import %d", res.StatusCode)
+	}
+	var sess project.Session
+	_ = json.NewDecoder(res.Body).Decode(&sess)
+	if sess.ID == "" || len(sess.Turns) != 2 {
+		t.Fatalf("import sess %+v", sess)
+	}
+	// export-all md
+	md, err := http.Get(ts.URL + "/api/lab/projects/" + slug + "/sessions/export-all?format=md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer md.Body.Close()
+	if md.StatusCode != 200 {
+		t.Fatalf("export-all md %d", md.StatusCode)
+	}
+	raw, _ := io.ReadAll(md.Body)
+	if !strings.Contains(string(raw), "hello import") {
+		snippet := string(raw)
+		if len(snippet) > 200 {
+			snippet = snippet[:200]
+		}
+		t.Fatalf("md missing content: %s", snippet)
+	}
+	// export-all json
+	js, err := http.Get(ts.URL + "/api/lab/projects/" + slug + "/sessions/export-all?format=json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer js.Body.Close()
+	if js.StatusCode != 200 {
+		t.Fatalf("export-all json %d", js.StatusCode)
+	}
+	var pack map[string]any
+	_ = json.NewDecoder(js.Body).Decode(&pack)
+	if pack["count"].(float64) < 1 {
+		t.Fatalf("%v", pack)
+	}
+}
+
 func TestFileStatsAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "Stats")

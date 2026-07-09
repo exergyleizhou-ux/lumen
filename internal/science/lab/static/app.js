@@ -266,8 +266,18 @@ function reduceSSE(state, ev) {
     case "turn_done":
       state.turn = "done";
       break;
-    case "phase":
     case "usage":
+      state.usage = {
+        input_tokens: ev.input_tokens || ev.prompt_tokens || (ev.usage && ev.usage.input_tokens) || 0,
+        output_tokens: ev.output_tokens || ev.completion_tokens || (ev.usage && ev.usage.output_tokens) || 0,
+        total_tokens: ev.total_tokens || (ev.usage && ev.usage.total_tokens) || 0,
+        raw: ev,
+      };
+      if (!state.usage.total_tokens && (state.usage.input_tokens || state.usage.output_tokens)) {
+        state.usage.total_tokens = (state.usage.input_tokens || 0) + (state.usage.output_tokens || 0);
+      }
+      break;
+    case "phase":
     case "notice":
     case "perf":
     case "file_preview":
@@ -1055,6 +1065,17 @@ function statusLabel(status) {
   }
 }
 
+var runTimerId = null;
+var runStartedAt = 0;
+var lastUsage = null;
+
+function formatElapsed(ms) {
+  var s = Math.floor(ms / 1000);
+  var m = Math.floor(s / 60);
+  s = s % 60;
+  return m > 0 ? (m + ":" + String(s).padStart(2, "0")) : (s + "s");
+}
+
 function setRunStatus(running) {
   var dot = $("liveDot");
   var label = $("runStatus");
@@ -1067,13 +1088,37 @@ function setRunStatus(running) {
     if (hint) hint.textContent = "生成中… Enter 发送 · Shift+Enter 换行";
     if (stopBtn) stopBtn.disabled = false;
     if (sendBtn) sendBtn.disabled = true;
+    runStartedAt = Date.now();
+    if (runTimerId) clearInterval(runTimerId);
+    runTimerId = setInterval(function () {
+      if (!label) return;
+      var t = formatElapsed(Date.now() - runStartedAt);
+      var u = lastUsage && (lastUsage.total_tokens || lastUsage.total) ?
+        " · " + (lastUsage.total_tokens || lastUsage.total) + " tok" : "";
+      label.textContent = "运行中 " + t + u;
+    }, 500);
   } else {
+    if (runTimerId) { clearInterval(runTimerId); runTimerId = null; }
     if (dot) dot.style.background = "";
-    if (label) label.textContent = "就绪";
+    var doneLabel = "就绪";
+    if (runStartedAt) {
+      doneLabel = "就绪 · " + formatElapsed(Date.now() - runStartedAt);
+      if (lastUsage && (lastUsage.total_tokens || lastUsage.total)) {
+        doneLabel += " · " + (lastUsage.total_tokens || lastUsage.total) + " tok";
+      }
+    }
+    if (label) label.textContent = doneLabel;
     if (hint) hint.textContent = "就绪 · Enter 发送 · Shift+Enter 换行";
     if (stopBtn) stopBtn.disabled = true;
     if (sendBtn) sendBtn.disabled = false;
   }
+}
+
+function maybeScrollChat() {
+  var scroll = $("chatScroll");
+  if (!scroll) return;
+  var dist = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+  if (dist < 160) scroll.scrollTop = scroll.scrollHeight;
 }
 
 function addErrorBubble(toolLog, message) {
@@ -1103,7 +1148,18 @@ function handleSSEEvent(ev, state, bubble) {
     bubble.textDiv.innerHTML = renderMarkdown(state.text) + '<span class="cursor">|</span>';
     bindWorkspaceRefs(bubble.textDiv);
     bindCodeCopy(bubble.textDiv);
-    $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
+    maybeScrollChat();
+  }
+
+  // Token usage
+  if (kind === "usage" && state.usage) {
+    lastUsage = state.usage;
+    var usageEl = $("usageBadge");
+    if (usageEl) {
+      var tot = state.usage.total_tokens || ((state.usage.input_tokens || 0) + (state.usage.output_tokens || 0));
+      usageEl.textContent = tot ? (tot + " tok") : "—";
+      usageEl.title = "in " + (state.usage.input_tokens || 0) + " / out " + (state.usage.output_tokens || 0);
+    }
   }
 
   // Session id from server
@@ -1163,6 +1219,7 @@ function handleSSEEvent(ev, state, bubble) {
       var cur = bubble.textDiv.querySelector(".cursor");
       if (cur) cur.remove();
     }
+    maybeScrollChat();
     refreshFiles();
     loadSessions();
     currentAbort = null;
@@ -3216,6 +3273,11 @@ var paletteCmds = [
   { label: "导出当前会话 Markdown", action: function () { exportActiveSession("md"); } },
   { label: "重命名当前会话", action: function () { if (activeThread) renameSession(activeThread); } },
   { label: "分支当前会话", action: function () { if (activeThread) forkSession(activeThread); } },
+  { label: "导出全部会话 Markdown", action: function () {
+    if (!activeProject) return;
+    window.open(labPath("/api/lab/projects/" + activeProject.slug + "/sessions/export-all?format=md"), "_blank");
+  } },
+  { label: "快捷键帮助", action: function () { openShortcuts(); }, hotkey: "⌘/" },
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
@@ -3261,6 +3323,12 @@ $("paletteInput") && $("paletteInput").addEventListener("keydown", function (e) 
 $("cmdPalette") && $("cmdPalette").addEventListener("click", function (e) { if (e.target === $("cmdPalette")) closePalette(); });
 document.addEventListener("keydown", function (e) {
   if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openPalette(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === "/") { e.preventDefault(); openShortcuts(); }
+  if (e.key === "Escape") {
+    closeShortcuts();
+    closePalette();
+    hideAtMenu();
+  }
 });
 
 /* ── 14. Embed + Resize ── */
@@ -3321,6 +3389,54 @@ $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e
 });
 $("exportMdBtn") && $("exportMdBtn").addEventListener("click", function () { exportActiveSession("md"); });
 $("exportJsonBtn") && $("exportJsonBtn").addEventListener("click", function () { exportActiveSession("json"); });
+$("exportAllSessBtn") && $("exportAllSessBtn").addEventListener("click", function () {
+  if (!activeProject) { alert("请先选择课题"); return; }
+  var fmt = confirm("导出 JSON？\n确定=JSON，取消=Markdown") ? "json" : "md";
+  window.open(labPath("/api/lab/projects/" + activeProject.slug + "/sessions/export-all?format=" + fmt), "_blank");
+});
+$("importSessFile") && $("importSessFile").addEventListener("change", async function () {
+  var f = this.files && this.files[0];
+  this.value = "";
+  if (!f || !activeProject) {
+    if (!activeProject) alert("请先选择课题");
+    return;
+  }
+  try {
+    var text = await f.text();
+    var data = JSON.parse(text);
+    var payload = {};
+    if (data.turns) {
+      payload = { title: data.title || f.name, turns: data.turns };
+    } else if (data.sessions && data.sessions[0]) {
+      // export-all pack — import first session only, or all
+      var list = data.sessions;
+      if (list.length > 1 && !confirm("检测到 " + list.length + " 个会话，全部导入？\n取消=只导入第一个")) {
+        list = [list[0]];
+      }
+      for (var i = 0; i < list.length; i++) {
+        await api("/api/lab/projects/" + activeProject.slug + "/sessions/import", {
+          method: "POST",
+          body: JSON.stringify({ title: list[i].title, turns: list[i].turns || [], session: list[i] }),
+        });
+      }
+      await loadSessions();
+      if (threads.length) openSession(threads[0].id);
+      return;
+    } else if (data.role || Array.isArray(data)) {
+      payload = { title: "导入 " + f.name, turns: Array.isArray(data) ? data : [data] };
+    } else {
+      payload = { title: data.title || f.name, turns: data.turns || [], session: data };
+    }
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions/import", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    await loadSessions();
+    if (sess.id) openSession(sess.id);
+  } catch (e) {
+    alert("导入失败: " + e.message);
+  }
+});
 $("forkSessBtn") && $("forkSessBtn").addEventListener("click", function () {
   if (activeThread) forkSession(activeThread);
   else alert("请先选择会话");
@@ -3328,6 +3444,20 @@ $("forkSessBtn") && $("forkSessBtn").addEventListener("click", function () {
 $("deleteSessBtn") && $("deleteSessBtn").addEventListener("click", function () {
   if (activeThread) deleteSession(activeThread);
   else alert("请先选择会话");
+});
+
+function openShortcuts() {
+  var m = $("shortcutsModal");
+  if (m) m.hidden = false;
+}
+function closeShortcuts() {
+  var m = $("shortcutsModal");
+  if (m) m.hidden = true;
+}
+$("btnShortcuts") && $("btnShortcuts").addEventListener("click", openShortcuts);
+$("shortcutsClose") && $("shortcutsClose").addEventListener("click", closeShortcuts);
+$("shortcutsModal") && $("shortcutsModal").addEventListener("click", function (e) {
+  if (e.target === $("shortcutsModal")) closeShortcuts();
 });
 $("artifactsRefresh") && $("artifactsRefresh").addEventListener("click", loadArtifacts);
 $("workspaceExportBtn") && $("workspaceExportBtn").addEventListener("click", function () {
