@@ -56,3 +56,21 @@ func TestCreateProjectWithSeedTemplate(t *testing.T) {
 		t.Fatalf("seeded README missing at %s: %v", got, err)
 	}
 }
+
+func TestCreateChineseTitleUniqueSlug(t *testing.T) {
+	s := NewStore(t.TempDir())
+	p1, err := s.Create("验收课题", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, err := s.Create("验收课题", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Slug == p2.Slug {
+		t.Fatalf("slugs should differ: %s", p1.Slug)
+	}
+	if p1.Title != "验收课题" {
+		t.Fatalf("title lost: %s", p1.Title)
+	}
+}

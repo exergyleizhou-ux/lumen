@@ -35,8 +35,10 @@ func (s *Store) projectDir(slug string) string {
 	return filepath.Join(s.root, slug)
 }
 
-// SlugFromTitle converts a title to a URL-safe slug.
-func SlugFromTitle(title string) string {
+// SlugFromTitle converts a title to a URL-safe slug (public for tests).
+func SlugFromTitle(title string) string { return slugFromTitle(title) }
+
+func slugFromTitle(title string) string {
 	t := strings.ToLower(strings.TrimSpace(title))
 	var b strings.Builder
 	prevDash := false
@@ -51,15 +53,15 @@ func SlugFromTitle(title string) string {
 				prevDash = true
 			}
 		default:
-			// skip other runes
+			// skip CJK/other — uniqueness comes from Create's random suffix
 		}
 	}
 	out := strings.Trim(b.String(), "-")
 	if out == "" {
 		out = "project"
 	}
-	if len(out) > 64 {
-		out = out[:64]
+	if len(out) > 48 {
+		out = out[:48]
 	}
 	return out
 }
@@ -125,13 +127,33 @@ func (s *Store) Create(title, template string) (Project, error) {
 	if title == "" {
 		return Project{}, fmt.Errorf("title is required")
 	}
-	slug := SlugFromTitle(title)
+	base := slugFromTitle(title)
+	// Always uniquify: Chinese-only titles collapse to "project"; collisions used to overwrite.
+	suffix := newID("")
+	if len(suffix) > 8 {
+		suffix = suffix[len(suffix)-8:] // last 8 hex of proj_xxxxxxxx or raw
+	}
+	suffix = strings.TrimPrefix(suffix, "_")
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	slug := base + "-" + suffix
+	if len(slug) > 64 {
+		slug = slug[:64]
+	}
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return Project{}, err
 	}
+	// Rare collision loop
 	dir := s.projectDir(slug)
-	if _, err := os.Stat(dir); err == nil {
-		slug = slug + "-2"
+	for n := 0; n < 5; n++ {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			break
+		}
+		slug = base + "-" + newID("x")[2:10]
+		if len(slug) > 64 {
+			slug = slug[:64]
+		}
 		dir = s.projectDir(slug)
 	}
 	now := time.Now().UTC()
