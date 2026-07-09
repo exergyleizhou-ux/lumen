@@ -787,9 +787,52 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleWorkspaceExport(w, r, g)
 	case sub == "import":
 		a.handleWorkspaceImport(w, r, g)
+	case sub == "delete":
+		a.handleFilesDelete(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleFilesDelete removes workspace files/dirs (POST {paths:[]}).
+func (a *API) handleFilesDelete(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost && r.Method != http.MethodDelete {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Paths) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("paths required"))
+		return
+	}
+	if len(body.Paths) > 200 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("too many paths (max 200)"))
+		return
+	}
+	var deleted []string
+	var failed []map[string]string
+	for _, p := range body.Paths {
+		p = filepath.ToSlash(filepath.Clean(p))
+		if p == "." || p == "" || strings.HasPrefix(p, "..") {
+			failed = append(failed, map[string]string{"path": p, "error": "invalid path"})
+			continue
+		}
+		abs, err := g.Resolve(p)
+		if err != nil {
+			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
+			continue
+		}
+		if err := os.RemoveAll(abs); err != nil {
+			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
+			continue
+		}
+		deleted = append(deleted, p)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "deleted": deleted, "count": len(deleted), "failed": failed,
+	})
 }
 
 // handleWorkspaceImport unpacks a zip into the workspace (multipart field "file").
@@ -1547,6 +1590,11 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, j)
 		return
 	}
+	// GET .../jobs/:id/log — SSE tail of job.Output until terminal status
+	if len(parts) == 2 && parts[1] == "log" && r.Method == http.MethodGet {
+		a.handleComputeJobLog(w, r, store, id)
+		return
+	}
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1557,6 +1605,57 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, j)
+}
+
+// handleComputeJobLog streams job output as SSE for live log UI.
+func (a *API) handleComputeJobLog(w http.ResponseWriter, r *http.Request, store *compute.Store, id string) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+
+	lastLen := -1
+	ticker := time.NewTicker(400 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.After(30 * time.Minute)
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-deadline:
+			fmt.Fprintf(w, "event: done\ndata: {\"reason\":\"timeout\"}\n\n")
+			flusher.Flush()
+			return
+		case <-ticker.C:
+			j, err := store.Get(id)
+			if err != nil {
+				fmt.Fprintf(w, "event: error\ndata: {\"error\":%q}\n\n", err.Error())
+				flusher.Flush()
+				return
+			}
+			out := j.Output
+			if len(out) != lastLen {
+				lastLen = len(out)
+				payload, _ := json.Marshal(map[string]any{
+					"id": j.ID, "status": j.Status, "output": out,
+					"output_truncated": j.OutputTruncated, "error": j.Error,
+				})
+				fmt.Fprintf(w, "data: %s\n\n", payload)
+				flusher.Flush()
+			}
+			switch j.Status {
+			case "done", "failed", "timeout", "cancelled":
+				fmt.Fprintf(w, "event: done\ndata: {\"status\":%q}\n\n", j.Status)
+				flusher.Flush()
+				return
+			}
+		}
+	}
 }
 
 // handleComputeImport copies one or all job outputs into workspace/imports/<jobid>/.

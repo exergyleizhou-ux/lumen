@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=30">
+  <link rel="stylesheet" href="app.css?v=31">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -122,6 +122,8 @@
           <div id="tasksPane" class="insp-scroll" style="display:none">
             <div class="set-k soft">本回合工具 / 任务</div>
             <div id="tasksBody" class="hint">发送消息后，工具调用会出现在这里</div>
+            <div class="set-k soft" style="margin-top:12px">子代理时间线</div>
+            <div id="subagentTimeline" class="hint">本回合无子代理 / 嵌套工具</div>
           </div>
           <div id="filesPane" class="insp-scroll" style="display:none">
             <div class="file-bar">
@@ -184,12 +186,15 @@
               <button type="button" class="btn sm" id="computeRefresh">刷新列表</button>
             </div>
             <div id="computeJobs" class="compute-jobs hint" style="margin-top:10px">暂无任务</div>
+            <div class="set-k soft" style="margin-top:10px">SSE 实时日志</div>
+            <pre id="jobLogLive" class="job-out" hidden style="max-height:220px"></pre>
           </div>
           <div id="ketcherPane" style="display:none;height:100%">
             <iframe id="ketcherFrame" title="Ketcher" style="width:100%;height:100%;border:none"></iframe>
           </div>
-          <div id="moleculePane" style="display:none;height:100%">
-            <div id="molViewer" style="width:100%;height:100%"></div>
+          <div id="moleculePane" class="mol-pane" style="display:none">
+            <div class="hint" id="molLabel" style="padding:6px 10px">选择 .pdb/.sdf/.mol 文件打开</div>
+            <div id="molViewer" style="width:100%;height:calc(100% - 32px);min-height:280px"></div>
           </div>
         </div>
       </aside>
@@ -215,6 +220,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=30"></script>
+  <script src="app.js?v=31"></script>
 </body>
 </html>

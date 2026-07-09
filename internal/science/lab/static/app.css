@@ -369,6 +369,18 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 }
 .tool-card-children { margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .job-card.status-cancelled { opacity: 0.75; border-color: var(--ocs-muted); }
+.file-sel-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.ft-check { margin-right: 4px; }
+.tl-node {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; padding: 4px 0; border-left: 2px solid var(--ocs-line);
+}
+.tl-node.status-running { border-left-color: #f59e0b; }
+.tl-node.status-done { border-left-color: #22c55e; }
+.tl-node.status-error { border-left-color: #ef4444; }
+.tl-name { font-weight: 650; flex: 1; }
+.tl-st { font-size: 10px; color: var(--ocs-muted); }
+.task-row.nested { margin-left: 12px; opacity: 0.95; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

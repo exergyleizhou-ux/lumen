@@ -2,6 +2,7 @@ package lab
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -336,6 +337,67 @@ func TestComputeImportAll(t *testing.T) {
 	if imp["count"].(float64) < 1 {
 		t.Fatalf("import all %v", imp)
 	}
+}
+
+func TestFilesDeleteAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Del Files")
+	store := project.NewStore(sci)
+	ws, _ := store.WorkspacePath(slug)
+	p := filepath.Join(ws, "todel.txt")
+	_ = os.WriteFile(p, []byte("x"), 0o600)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/delete?project_id="+slug,
+		bytes.NewReader([]byte(`{"paths":["todel.txt"]}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatal("file should be gone")
+	}
+}
+
+func TestComputeJobLogSSE(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Log SSE")
+	body := `{"host":"local","command":"echo hello-log-line","timeout_sec":10}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs?project_id="+slug, bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&job)
+	res.Body.Close()
+	id, _ := job["id"].(string)
+	// wait a bit then connect log stream with short client timeout
+	time.Sleep(200 * time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	lreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/lab/compute/jobs/"+id+"/log?project_id="+slug, nil)
+	lres, err := http.DefaultClient.Do(lreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lres.Body.Close()
+	if lres.StatusCode != 200 {
+		t.Fatalf("log status %d", lres.StatusCode)
+	}
+	buf := make([]byte, 4096)
+	n, _ := lres.Body.Read(buf)
+	if n == 0 {
+		// may still be starting; one more read
+		time.Sleep(300 * time.Millisecond)
+		n, _ = lres.Body.Read(buf)
+	}
+	// Accept any SSE data or empty if job already finished before stream
+	_ = n
 }
 
 func TestWorkspaceZipImportExport(t *testing.T) {

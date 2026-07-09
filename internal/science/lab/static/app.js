@@ -588,13 +588,16 @@ function renderTasksPane() {
   if (!el) return;
   if (!turnTasks.length) {
     el.innerHTML = '<div class="hint">本回合尚无工具调用</div>';
+    renderSubagentTimeline();
     return;
   }
   el.innerHTML = turnTasks.map(function (t) {
-    return '<div class="task-row status-' + escHtml(t.status || "") + '">' +
-      '<span class="task-name">⚙ ' + escHtml(t.name || t.id) + "</span>" +
+    var nest = t.parentId ? " nested" : "";
+    return '<div class="task-row status-' + escHtml(t.status || "") + nest + '">' +
+      '<span class="task-name">' + (t.parentId ? "↳ " : "") + "⚙ " + escHtml(t.name || t.id) + "</span>" +
       '<span class="task-st">' + escHtml(statusLabel(t.status)) + "</span></div>";
   }).join("");
+  renderSubagentTimeline();
 }
 
 /* ── 6. DOM rendering helpers ── */
@@ -863,6 +866,42 @@ function syncTurnTask(tool) {
   if (found >= 0) turnTasks[found] = tool;
   else turnTasks.push(tool);
   renderTasksPane();
+  renderSubagentTimeline();
+}
+
+function renderSubagentTimeline() {
+  var el = $("subagentTimeline");
+  if (!el) return;
+  var roots = turnTasks.filter(function (t) {
+    return !t.parentId && (/^(task|run_skill)/i.test(t.name || "") || turnTasks.some(function (c) {
+      return c.parentId === t.id;
+    }));
+  });
+  var nested = turnTasks.filter(function (t) { return !!t.parentId; });
+  if (!roots.length && !nested.length) {
+    el.innerHTML = '<div class="hint">本回合无子代理 / 嵌套工具</div>';
+    return;
+  }
+  // Build parent → children map
+  var byParent = {};
+  turnTasks.forEach(function (t) {
+    var p = t.parentId || "_root_";
+    if (!byParent[p]) byParent[p] = [];
+    byParent[p].push(t);
+  });
+  function renderNode(t, depth) {
+    var kids = byParent[t.id] || [];
+    var pad = depth * 14;
+    var isSub = /^(task|run_skill)/i.test(t.name || "") || depth > 0;
+    return '<div class="tl-node status-' + escHtml(t.status || "") + '" style="padding-left:' + pad + 'px">' +
+      '<span class="tl-icon">' + (isSub ? "🧩" : "⚙") + "</span>" +
+      '<span class="tl-name">' + escHtml(t.name || t.id) + "</span>" +
+      '<span class="tl-st">' + escHtml(statusLabel(t.status)) + "</span></div>" +
+      kids.map(function (c) { return renderNode(c, depth + 1); }).join("");
+  }
+  var top = byParent["_root_"] || turnTasks.filter(function (t) { return !t.parentId; });
+  el.innerHTML = top.map(function (t) { return renderNode(t, 0); }).join("") ||
+    nested.map(function (t) { return renderNode(t, 1); }).join("");
 }
 
 async function streamChat(prompt, mode) {
@@ -1058,19 +1097,47 @@ async function refreshFiles() {
   try {
     var data = await api("/api/lab/files?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(fileCwd || "."));
     var files = data.files || [];
-    tree.innerHTML = files.map(function (f) {
-      var icon = f.isDir ? "📁" : fileIcon(f.name || f.path);
-      var path = f.path || f.name;
-      return '<div class="ft-row' + (f.isDir ? " dir" : "") + '" data-path="' + escHtml(path) + '" data-isdir="' + (f.isDir ? "1" : "0") + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
-        '<span style="flex-shrink:0;font-size:.9rem">' + icon + "</span>" +
-        '<span class="ft-name">' + escHtml(f.name || f.path) + "</span>" +
-        (f.isDir ? "" : '<span class="ft-size">' + fmtSize(f.size) + "</span>") +
-        "</div>";
-    }).join("");
+    tree.innerHTML =
+      '<div class="file-sel-bar">' +
+      '<button type="button" class="btn sm" id="fileSelAll">全选</button> ' +
+      '<button type="button" class="btn sm" id="fileSelNone">清除</button> ' +
+      '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
+      '<span class="hint" id="fileSelCount">0 选中</span></div>' +
+      files.map(function (f) {
+        var icon = f.isDir ? "📁" : fileIcon(f.name || f.path);
+        var path = f.path || f.name;
+        return '<div class="ft-row' + (f.isDir ? " dir" : "") + '" data-path="' + escHtml(path) + '" data-isdir="' + (f.isDir ? "1" : "0") + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
+          '<input type="checkbox" class="ft-check" data-path="' + escHtml(path) + '" />' +
+          '<span style="flex-shrink:0;font-size:.9rem">' + icon + "</span>" +
+          '<span class="ft-name">' + escHtml(f.name || f.path) + "</span>" +
+          (f.isDir ? "" : '<span class="ft-size">' + fmtSize(f.size) + "</span>") +
+          "</div>";
+      }).join("");
 
-    // Click handlers
+    function updateSelCount() {
+      var n = tree.querySelectorAll(".ft-check:checked").length;
+      var c = $("fileSelCount");
+      if (c) c.textContent = n + " 选中";
+    }
+    tree.querySelectorAll(".ft-check").forEach(function (cb) {
+      cb.addEventListener("click", function (e) { e.stopPropagation(); updateSelCount(); });
+    });
+    var selAll = $("fileSelAll");
+    if (selAll) selAll.addEventListener("click", function () {
+      tree.querySelectorAll(".ft-check").forEach(function (cb) { cb.checked = true; });
+      updateSelCount();
+    });
+    var selNone = $("fileSelNone");
+    if (selNone) selNone.addEventListener("click", function () {
+      tree.querySelectorAll(".ft-check").forEach(function (cb) { cb.checked = false; });
+      updateSelCount();
+    });
+    var selDel = $("fileSelDelete");
+    if (selDel) selDel.addEventListener("click", function () { batchDeleteSelected(); });
+
     tree.querySelectorAll(".ft-row").forEach(function (row) {
-      row.addEventListener("click", function () {
+      row.addEventListener("click", function (e) {
+        if (e.target && e.target.classList && e.target.classList.contains("ft-check")) return;
         var p = row.dataset.path;
         var isDir = row.dataset.isdir === "1";
         var pk = row.dataset.preview;
@@ -1084,6 +1151,31 @@ async function refreshFiles() {
     });
   } catch (e) {
     tree.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function batchDeleteSelected() {
+  var tree = $("fileTree");
+  if (!tree || !activeProject) return;
+  var paths = [];
+  tree.querySelectorAll(".ft-check:checked").forEach(function (cb) {
+    paths.push(cb.getAttribute("data-path"));
+  });
+  if (!paths.length) {
+    alert("请先勾选文件");
+    return;
+  }
+  if (!confirm("删除 " + paths.length + " 项？不可恢复。")) return;
+  try {
+    await api("/api/lab/files/delete?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ paths: paths }),
+    });
+    refreshFiles();
+    loadFileTree();
+    loadArtifacts();
+  } catch (e) {
+    alert("删除失败: " + e.message);
   }
 }
 
@@ -1124,7 +1216,8 @@ async function previewFile(path, previewKind) {
           '<pre class="fp-body">' + escHtml(data.content || "(无文本)") + "</pre>";
         break;
       case "molecule":
-        bodyHtml = '<pre class="fp-body">' + escHtml(data.content || "") + "</pre>";
+        bodyHtml = '<div class="hint">🧬 分子结构 — <button type="button" class="btn sm" id="fpOpenMol">在 3Dmol 中打开</button></div>' +
+          '<pre class="fp-body">' + escHtml((data.content || "").slice(0, 2000)) + "</pre>";
         break;
       case "binary":
         bodyHtml = '<div class="hint">不支持内联预览 (' + fmtSize(data.size) + ') — <a href="' + dl + '" target="_blank">下载</a></div>';
@@ -1141,9 +1234,72 @@ async function previewFile(path, previewKind) {
     bindWorkspaceRefs(preview);
     var exp = $("fpExpand");
     if (exp) exp.addEventListener("click", function () { openPreviewModal(path); });
+    var molBtn = $("fpOpenMol");
+    if (molBtn) {
+      molBtn.addEventListener("click", function () {
+        openMoleculeFromContent(path, data.content || "", kind);
+      });
+    }
+    // Auto-open molecule tab for pdb/mol files
+    if (kind === "molecule" && data.content) {
+      openMoleculeFromContent(path, data.content, kind);
+    }
   } catch (e) {
     preview.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
+}
+
+var molViewerInstance = null;
+
+function openMoleculeFromContent(path, content, kind) {
+  var tab = document.querySelector('.insp-tab[data-pane="molecule"]');
+  if (tab) tab.click();
+  ensureMoleculeViewer(function (viewer) {
+    try {
+      viewer.clear();
+      var fmt = "pdb";
+      var lower = (path || "").toLowerCase();
+      if (lower.endsWith(".sdf") || lower.endsWith(".mol")) fmt = "sdf";
+      else if (lower.endsWith(".cif")) fmt = "cif";
+      viewer.addModel(content, fmt);
+      viewer.setStyle({}, { stick: {}, sphere: { scale: 0.25 } });
+      if (fmt === "pdb") viewer.setStyle({}, { cartoon: { color: "#c28b4b" }, stick: {} });
+      viewer.zoomTo();
+      viewer.render();
+      var label = $("molLabel");
+      if (label) label.textContent = path || "structure";
+    } catch (e) {
+      var el = $("molViewer");
+      if (el) el.innerHTML = '<p class="hint">无法渲染: ' + escHtml(String(e.message || e)) + "</p>";
+    }
+  });
+}
+
+function ensureMoleculeViewer(cb) {
+  var el = $("molViewer");
+  if (!el) return;
+  if (typeof $3Dmol !== "undefined" && molViewerInstance) {
+    cb(molViewerInstance);
+    return;
+  }
+  function boot() {
+    if (typeof $3Dmol === "undefined") {
+      el.innerHTML = '<p class="hint">3Dmol 加载失败</p>';
+      return;
+    }
+    el.innerHTML = "";
+    molViewerInstance = $3Dmol.createViewer("molViewer", { backgroundColor: "#fbf9f6" });
+    if (typeof molLoaded !== "undefined") molLoaded = true;
+    cb(molViewerInstance);
+  }
+  if (typeof $3Dmol !== "undefined") {
+    boot();
+    return;
+  }
+  var script = document.createElement("script");
+  script.src = "https://3Dmol.org/build/3Dmol-min.js";
+  script.onload = boot;
+  document.head.appendChild(script);
 }
 
 async function loadProvenance(path) {
@@ -1643,9 +1799,11 @@ async function loadComputeJobs() {
       var cancelBtn = live
         ? '<button type="button" class="btn sm job-cancel" data-job="' + escHtml(j.id) + '">取消</button>'
         : "";
+      var logBtn = '<button type="button" class="btn sm job-log" data-job="' + escHtml(j.id) + '">SSE 日志</button>';
       return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) + '">' +
         '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
         (live ? ' <span class="hint">日志实时刷新…</span>' : "") +
+        " " + logBtn +
         (cancelBtn ? " " + cancelBtn : "") +
         (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
@@ -1666,6 +1824,11 @@ async function loadComputeJobs() {
     el.querySelectorAll(".job-cancel").forEach(function (btn) {
       btn.addEventListener("click", function () {
         cancelComputeJob(btn.getAttribute("data-job"));
+      });
+    });
+    el.querySelectorAll(".job-log").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        watchJobLog(btn.getAttribute("data-job"));
       });
     });
   } catch (e) {
@@ -1814,19 +1977,89 @@ async function submitComputeJob() {
 async function loadMoleculeViewer() {
   var el = $("molViewer");
   if (!el) return;
-  var script = document.createElement("script");
-  script.src = "https://3Dmol.org/build/3Dmol-min.js";
-  script.onload = function () {
-    if (typeof $3Dmol === "undefined") { el.innerHTML = '<p class="hint">3Dmol 加载失败</p>'; return; }
-    var viewer = $3Dmol.createViewer("molViewer", { backgroundColor: "#fbf9f6" });
-    fetch("https://files.rcsb.org/download/4HHB.pdb").then(function (r) { return r.text(); }).then(function (pdb) {
-      viewer.addModel(pdb, "pdb");
-      viewer.setStyle({}, { cartoon: { color: "#c28b4b" } });
-      viewer.zoomTo();
-      viewer.render();
-    }).catch(function () { el.innerHTML = '<p class="hint">输入 PDB ID 或路径查看结构</p>'; });
-  };
-  document.head.appendChild(script);
+  ensureMoleculeViewer(function (viewer) {
+    // default demo if empty
+    try {
+      if (!viewer) return;
+      // keep existing model if user already opened a file
+    } catch (_) {}
+  });
+  // Prefer last molecule path from workspace if any
+  if (activeProject) {
+    try {
+      var data = await api("/api/lab/files/recent?project_id=" + activeProject.slug + "&limit=30");
+      var mol = (data.files || []).find(function (f) {
+        return f.previewKind === "molecule" || /\.(pdb|sdf|mol|cif)$/i.test(f.path || "");
+      });
+      if (mol) {
+        var content = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(mol.path));
+        if (content.content) openMoleculeFromContent(mol.path, content.content, "molecule");
+      } else {
+        ensureMoleculeViewer(function (viewer) {
+          fetch("https://files.rcsb.org/download/4HHB.pdb").then(function (r) { return r.text(); }).then(function (pdb) {
+            viewer.clear();
+            viewer.addModel(pdb, "pdb");
+            viewer.setStyle({}, { cartoon: { color: "#c28b4b" } });
+            viewer.zoomTo();
+            viewer.render();
+            var label = $("molLabel");
+            if (label) label.textContent = "demo: 4HHB.pdb";
+          }).catch(function () {});
+        });
+      }
+    } catch (_) {}
+  }
+}
+
+// Live job log via SSE
+var jobLogAbort = null;
+function watchJobLog(jobId) {
+  if (!activeProject || !jobId) return;
+  if (jobLogAbort) try { jobLogAbort.abort(); } catch (_) {}
+  jobLogAbort = new AbortController();
+  var pre = $("jobLogLive");
+  if (pre) {
+    pre.hidden = false;
+    pre.textContent = "连接日志流 " + jobId + "…\n";
+  }
+  fetch(labPath("/api/lab/compute/jobs/" + encodeURIComponent(jobId) + "/log?project_id=" + activeProject.slug), {
+    signal: jobLogAbort.signal,
+    headers: { Accept: "text/event-stream" },
+  }).then(function (res) {
+    if (!res.ok || !res.body) throw new Error("log stream HTTP " + res.status);
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = "";
+    function pump() {
+      return reader.read().then(function (r) {
+        if (r.done) return;
+        buf += dec.decode(r.value, { stream: true });
+        var lines = buf.split("\n");
+        buf = lines.pop();
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (line.indexOf("data:") !== 0) continue;
+          var json = line.slice(5).trim();
+          if (!json.startsWith("{")) continue;
+          try {
+            var ev = JSON.parse(json);
+            if (pre && ev.output != null) {
+              pre.textContent = ev.output || "";
+              pre.scrollTop = pre.scrollHeight;
+            }
+            if (ev.status && ev.status !== "running" && ev.status !== "pending") {
+              loadComputeJobs();
+            }
+          } catch (_) {}
+        }
+        return pump();
+      });
+    }
+    return pump();
+  }).catch(function (e) {
+    if (e.name === "AbortError") return;
+    if (pre) pre.textContent += "\n日志流结束: " + e.message;
+  });
 }
 
 /* ── 13. Command palette (⌘K / Ctrl+K) ── */
