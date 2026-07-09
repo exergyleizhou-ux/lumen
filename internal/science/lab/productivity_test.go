@@ -126,6 +126,30 @@ func TestSessionHistoryAPI(t *testing.T) {
 	if len(got.Turns) != 2 {
 		t.Fatalf("turns lost on rename: %d", len(got.Turns))
 	}
+	// Fork session
+	freq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/projects/"+slug+"/sessions/"+sess.ID+"/fork",
+		bytes.NewReader([]byte(`{"title":"forked"}`)))
+	freq.Header.Set("Content-Type", "application/json")
+	fres, err := http.DefaultClient.Do(freq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fres.Body.Close()
+	if fres.StatusCode != 200 {
+		t.Fatalf("fork %d", fres.StatusCode)
+	}
+	var forked project.Session
+	_ = json.NewDecoder(fres.Body).Decode(&forked)
+	if forked.ID == "" || forked.ID == sess.ID {
+		t.Fatalf("fork id %q", forked.ID)
+	}
+	fullFork, err := store.GetSession(slug, forked.ID)
+	if err != nil || len(fullFork.Turns) != 2 {
+		t.Fatalf("fork turns %v %+v", err, fullFork)
+	}
+	if fullFork.Title != "forked" {
+		t.Fatalf("fork title %q", fullFork.Title)
+	}
 }
 
 func TestNotebooksAPI(t *testing.T) {

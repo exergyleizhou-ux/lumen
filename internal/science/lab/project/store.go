@@ -303,6 +303,43 @@ func (s *Store) ListSessions(slug string) ([]Session, error) {
 	return out, nil
 }
 
+// ForkSession copies turns from an existing session into a new session.
+func (s *Store) ForkSession(slug, sessionID, title string) (Session, error) {
+	src, err := s.GetSession(slug, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	if strings.TrimSpace(title) == "" {
+		title = "分支 · " + src.Title
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	dst, err := s.CreateSession(slug, title)
+	if err != nil {
+		return Session{}, err
+	}
+	// re-load and attach turns (CreateSession returns empty turns)
+	dst, err = s.GetSession(slug, dst.ID)
+	if err != nil {
+		return Session{}, err
+	}
+	// deep-ish copy turns without sharing slice
+	if len(src.Turns) > 0 {
+		dst.Turns = make([]Turn, len(src.Turns))
+		copy(dst.Turns, src.Turns)
+		dst.TurnCount = len(dst.Turns)
+		dst.UpdatedAt = time.Now().UTC()
+		if err := s.saveSession(slug, dst); err != nil {
+			return Session{}, err
+		}
+	}
+	out := dst
+	out.TurnCount = len(dst.Turns)
+	out.Turns = nil // list-shaped for clients that only need meta; full via GetSession
+	return out, nil
+}
+
 // RenameSession updates a session title.
 func (s *Store) RenameSession(slug, sessionID, title string) (Session, error) {
 	title = strings.TrimSpace(title)

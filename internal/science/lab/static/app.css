@@ -477,6 +477,29 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
   resize: vertical; box-sizing: border-box;
 }
 .fp-view { max-height: 50vh; overflow: auto; }
+.agent-actions {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin-top: 6px; padding-top: 4px;
+  opacity: 0.75;
+}
+.agent-wrap:hover .agent-actions { opacity: 1; }
+.at-menu {
+  position: absolute; left: 8px; right: 8px; bottom: 100%;
+  margin-bottom: 4px; max-height: 220px; overflow: auto;
+  z-index: 30; border-radius: 12px;
+  border: 1px solid var(--ocs-line);
+  background: var(--ocs-surface-strong, #fff);
+  box-shadow: var(--ocs-shadow);
+  padding: 4px;
+}
+.at-item {
+  display: block; width: 100%; text-align: left;
+  border: none; background: transparent; color: inherit;
+  font: inherit; font-size: 12px; font-family: var(--mono);
+  padding: 6px 10px; border-radius: 8px; cursor: pointer;
+}
+.at-item:hover, .at-item.active { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
+.at-empty { padding: 8px 10px; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

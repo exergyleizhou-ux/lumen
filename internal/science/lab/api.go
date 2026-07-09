@@ -296,11 +296,28 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "count": len(hits), "q": q})
 			return
 		}
-		// /api/lab/projects/:slug/sessions/:id[/export]
+		// /api/lab/projects/:slug/sessions/:id[/export|/fork]
 		if len(parts) >= 3 {
 			sid := parts[2]
 			if len(parts) == 4 && parts[3] == "export" && r.Method == http.MethodGet {
 				a.handleSessionExport(w, r, slug, sid)
+				return
+			}
+			if len(parts) == 4 && parts[3] == "fork" && r.Method == http.MethodPost {
+				var body struct {
+					Title string `json:"title"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				sess, err := a.projects.ForkSession(slug, sid, body.Title)
+				if err != nil {
+					if os.IsNotExist(err) {
+						writeErr(w, http.StatusNotFound, err)
+						return
+					}
+					writeErr(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, sess)
 				return
 			}
 			if len(parts) == 3 {

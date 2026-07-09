@@ -309,6 +309,7 @@ var fileCwd = ".";
 var sseState = null; // per-turn SSE accumulator
 var turnTasks = []; // this-turn tools for tasks pane
 var skillsCache = [];
+var atMenuState = { active: false, start: -1, items: [], idx: 0 };
 
 /* ── 4. API functions ── */
 
@@ -549,11 +550,18 @@ function renderSessionListSide() {
       '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
       '<span class="sess-title">' + escHtml(t.title || t.id) + "</span>" +
       '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>" +
+      '<button type="button" class="btn sm sess-fork" data-fork="' + escHtml(t.id) + '" title="分支会话">⎇</button>' +
       '<button type="button" class="btn sm sess-ren" data-ren="' + escHtml(t.id) + '" title="重命名">✎</button>' +
       '<button type="button" class="btn sm sess-del" data-del="' + escHtml(t.id) + '" title="删除">×</button></div>';
   }).join("");
   el.querySelectorAll(".sess-item").forEach(function (btn) {
     btn.addEventListener("click", function () { openSession(btn.dataset.id); });
+  });
+  el.querySelectorAll(".sess-fork").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      forkSession(btn.getAttribute("data-fork"));
+    });
   });
   el.querySelectorAll(".sess-ren").forEach(function (btn) {
     btn.addEventListener("click", function (e) {
@@ -567,6 +575,23 @@ function renderSessionListSide() {
       deleteSession(btn.getAttribute("data-del"));
     });
   });
+}
+
+async function forkSession(id) {
+  if (!activeProject || !id) return;
+  var cur = threads.find(function (t) { return t.id === id; });
+  var title = prompt("分支会话标题", "分支 · " + ((cur && cur.title) || "对话"));
+  if (title == null) return;
+  try {
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions/" + encodeURIComponent(id) + "/fork", {
+      method: "POST",
+      body: JSON.stringify({ title: title.trim() || undefined }),
+    });
+    await loadSessions();
+    if (sess.id) openSession(sess.id);
+  } catch (e) {
+    alert("分支失败: " + e.message);
+  }
 }
 
 async function renameSession(id) {
@@ -748,9 +773,52 @@ function createAgentBubble() {
   toolLog.className = "tool-log";
   wrap.appendChild(toolLog);
 
+  // Footer actions
+  var actions = document.createElement("div");
+  actions.className = "agent-actions";
+  actions.innerHTML =
+    '<button type="button" class="btn sm agent-copy">复制回复</button> ' +
+    '<button type="button" class="btn sm agent-tools-toggle">展开工具</button>';
+  wrap.appendChild(actions);
+  actions.querySelector(".agent-copy").addEventListener("click", function () {
+    var text = textDiv.innerText || textDiv.textContent || "";
+    copyTextToClipboard(text, actions.querySelector(".agent-copy"));
+  });
+  actions.querySelector(".agent-tools-toggle").addEventListener("click", function () {
+    var cards = toolLog.querySelectorAll(".tool-card");
+    if (!cards.length) return;
+    var anyOpen = toolLog.querySelector(".tool-card.is-open");
+    var open = !anyOpen;
+    cards.forEach(function (c) { setToolCardOpen(c, open); });
+    actions.querySelector(".agent-tools-toggle").textContent = open ? "折叠工具" : "展开工具";
+  });
+
   $("chatScroll").appendChild(wrap);
   wrap.scrollIntoView({ behavior: "smooth", block: "end" });
   return { wrap: wrap, think: think, thinkBody: think.querySelector(".think-body"), textDiv: textDiv, toolLog: toolLog };
+}
+
+function copyTextToClipboard(text, btn) {
+  if (!text) return;
+  var done = function () {
+    if (!btn) return;
+    var old = btn.textContent;
+    btn.textContent = "已复制";
+    setTimeout(function () { btn.textContent = old; }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(function () {
+      try {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        done();
+      } catch (_) {}
+    });
+  }
 }
 
 function findToolCard(toolLog, id) {
@@ -1821,6 +1889,8 @@ $("fileRefresh") && $("fileRefresh").addEventListener("click", function () { ref
 // Composer
 $("promptInput") && $("promptInput").addEventListener("keydown", function (e) {
   if (e.key === "Enter" && !e.shiftKey) {
+    // defer to @menu when open
+    if (atMenuState && atMenuState.active && atMenuState.items && atMenuState.items.length) return;
     e.preventDefault();
     submitPrompt();
   }
@@ -2899,6 +2969,7 @@ var paletteCmds = [
   { label: "刷新状态", action: function () { refreshHealth(); } },
   { label: "导出当前会话 Markdown", action: function () { exportActiveSession("md"); } },
   { label: "重命名当前会话", action: function () { if (activeThread) renameSession(activeThread); } },
+  { label: "分支当前会话", action: function () { if (activeThread) forkSession(activeThread); } },
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
@@ -2982,6 +3053,10 @@ $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e
 });
 $("exportMdBtn") && $("exportMdBtn").addEventListener("click", function () { exportActiveSession("md"); });
 $("exportJsonBtn") && $("exportJsonBtn").addEventListener("click", function () { exportActiveSession("json"); });
+$("forkSessBtn") && $("forkSessBtn").addEventListener("click", function () {
+  if (activeThread) forkSession(activeThread);
+  else alert("请先选择会话");
+});
 $("deleteSessBtn") && $("deleteSessBtn").addEventListener("click", function () {
   if (activeThread) deleteSession(activeThread);
   else alert("请先选择会话");
@@ -3017,9 +3092,135 @@ $("previewModalClose") && $("previewModalClose").addEventListener("click", close
 $("previewModal") && $("previewModal").addEventListener("click", function (e) {
   if (e.target === $("previewModal")) closePreviewModal();
 });
-// @ mention: type @ to insert path from recent (simple: insert @)
-$("promptInput") && $("promptInput").addEventListener("input", function () {
-  // no-op hook for future autocomplete
+/* ── @path autocomplete ── */
+var atMenuTimer = null;
+
+function ensureAtMenu() {
+  var m = $("atMenu");
+  if (m) return m;
+  m = document.createElement("div");
+  m.id = "atMenu";
+  m.className = "at-menu";
+  m.hidden = true;
+  var wrap = $("composerDrop") || $("composer") || document.body;
+  wrap.appendChild(m);
+  return m;
+}
+
+function hideAtMenu() {
+  atMenuState.active = false;
+  atMenuState.items = [];
+  atMenuState.idx = 0;
+  var m = $("atMenu");
+  if (m) { m.hidden = true; m.innerHTML = ""; }
+}
+
+function renderAtMenu() {
+  var m = ensureAtMenu();
+  var items = atMenuState.items;
+  if (!items.length) {
+    m.innerHTML = '<div class="at-empty hint">无匹配文件</div>';
+    m.hidden = false;
+    atMenuState.active = true;
+    return;
+  }
+  m.innerHTML = items.map(function (it, i) {
+    return '<button type="button" class="at-item' + (i === atMenuState.idx ? " active" : "") +
+      '" data-i="' + i + '">' + escHtml(it.path || it) + "</button>";
+  }).join("");
+  m.hidden = false;
+  atMenuState.active = true;
+  m.querySelectorAll(".at-item").forEach(function (btn) {
+    btn.addEventListener("mousedown", function (e) {
+      e.preventDefault();
+      pickAtItem(parseInt(btn.getAttribute("data-i"), 10));
+    });
+  });
+}
+
+function pickAtItem(i) {
+  var inp = $("promptInput");
+  if (!inp || !atMenuState.items[i]) return;
+  var path = atMenuState.items[i].path || atMenuState.items[i];
+  var val = inp.value || "";
+  var start = atMenuState.start;
+  if (start < 0) start = val.lastIndexOf("@");
+  var caret = typeof inp.selectionStart === "number" ? inp.selectionStart : val.length;
+  // replace from @start to caret
+  var before = val.slice(0, start);
+  var after = val.slice(caret);
+  var insert = "@" + path + " ";
+  inp.value = before + insert + after;
+  var pos = (before + insert).length;
+  try { inp.setSelectionRange(pos, pos); } catch (_) {}
+  hideAtMenu();
+  inp.focus();
+}
+
+async function queryAtPaths(q) {
+  if (!activeProject) return [];
+  try {
+    if (q) {
+      var data = await api("/api/lab/files/search?project_id=" + activeProject.slug +
+        "&q=" + encodeURIComponent(q) + "&limit=12");
+      return (data.hits || []).filter(function (h) { return !h.isDir; }).slice(0, 12);
+    }
+    var recent = await api("/api/lab/files/recent?project_id=" + activeProject.slug + "&limit=12");
+    return (recent.files || []).slice(0, 12).map(function (f) {
+      return { path: f.path || f.name };
+    });
+  } catch (_) {
+    return [];
+  }
+}
+
+function onPromptAtInput() {
+  var inp = $("promptInput");
+  if (!inp) return;
+  var val = inp.value || "";
+  var caret = typeof inp.selectionStart === "number" ? inp.selectionStart : val.length;
+  var before = val.slice(0, caret);
+  var m = before.match(/(?:^|[\s\n])@([\w./\-]*)$/);
+  if (!m) {
+    hideAtMenu();
+    return;
+  }
+  atMenuState.start = before.length - m[1].length - 1; // position of @
+  var q = m[1] || "";
+  clearTimeout(atMenuTimer);
+  atMenuTimer = setTimeout(async function () {
+    atMenuState.items = await queryAtPaths(q);
+    atMenuState.idx = 0;
+    renderAtMenu();
+  }, 120);
+}
+
+$("promptInput") && $("promptInput").addEventListener("input", onPromptAtInput);
+$("promptInput") && $("promptInput").addEventListener("keydown", function (e) {
+  if (!atMenuState.active) return;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    atMenuState.idx = Math.min(atMenuState.items.length - 1, atMenuState.idx + 1);
+    renderAtMenu();
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    atMenuState.idx = Math.max(0, atMenuState.idx - 1);
+    renderAtMenu();
+  } else if (e.key === "Enter" || e.key === "Tab") {
+    if (atMenuState.items.length) {
+      e.preventDefault();
+      pickAtItem(atMenuState.idx);
+    }
+  } else if (e.key === "Escape") {
+    hideAtMenu();
+  }
+});
+// hide when clicking outside
+document.addEventListener("click", function (e) {
+  var m = $("atMenu");
+  if (!m || m.hidden) return;
+  if (e.target === $("promptInput") || (m.contains && m.contains(e.target))) return;
+  hideAtMenu();
 });
 
 /* ── 15. Init ── */
