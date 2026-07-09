@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=31">
+  <link rel="stylesheet" href="app.css?v=32">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -116,6 +116,8 @@
           <button class="insp-tab" type="button" data-pane="compute">算力</button>
           <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
           <button class="insp-tab" type="button" data-pane="molecule">分子</button>
+          <button class="insp-tab" type="button" data-pane="diff">Diff</button>
+          <button class="insp-tab" type="button" data-pane="config">配置</button>
         </div>
         <div class="insp-body">
           <div id="statusPane"><div id="inspectorBody" class="insp-scroll"></div></div>
@@ -160,7 +162,10 @@
           <div id="skillsPane" class="insp-scroll" style="display:none">
             <div class="btn-row" style="margin-bottom:8px">
               <button type="button" class="btn sm primary" id="skillsSaveBtn">保存启用</button>
-              <span class="hint" id="skillsHint">点名称注入输入框</span>
+              <label class="btn sm">导入 .md/.zip
+                <input type="file" id="skillsImport" accept=".md,.zip,text/markdown,application/zip" hidden />
+              </label>
+              <span class="hint" id="skillsHint">点名称注入；运行=发送</span>
             </div>
             <div id="skillsBody" class="hint">加载技能目录…</div>
           </div>
@@ -189,12 +194,46 @@
             <div class="set-k soft" style="margin-top:10px">SSE 实时日志</div>
             <pre id="jobLogLive" class="job-out" hidden style="max-height:220px"></pre>
           </div>
-          <div id="ketcherPane" style="display:none;height:100%">
-            <iframe id="ketcherFrame" title="Ketcher" style="width:100%;height:100%;border:none"></iframe>
+          <div id="ketcherPane" style="display:none;height:100%;display:none;flex-direction:column">
+            <div class="btn-row" style="padding:6px 8px;flex-shrink:0">
+              <input type="text" id="molSavePath" class="file-search" style="flex:1" placeholder="molecules/structure.mol" value="molecules/structure.mol" />
+              <button type="button" class="btn sm primary" id="molSaveBtn">保存到工作区</button>
+              <button type="button" class="btn sm" id="molLoadBtn">加载路径</button>
+              <button type="button" class="btn sm" id="molTo3dBtn">→ 3Dmol</button>
+            </div>
+            <textarea id="molEditor" class="mol-editor" placeholder="MOL/SDF 文本（从 Ketcher 导出后粘贴，或从工作区加载）"></textarea>
+            <iframe id="ketcherFrame" title="Ketcher" style="width:100%;flex:1;min-height:200px;border:none;border-top:1px solid var(--ocs-line)"></iframe>
           </div>
           <div id="moleculePane" class="mol-pane" style="display:none">
             <div class="hint" id="molLabel" style="padding:6px 10px">选择 .pdb/.sdf/.mol 文件打开</div>
             <div id="molViewer" style="width:100%;height:calc(100% - 32px);min-height:280px"></div>
+          </div>
+          <div id="diffPane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">工作区文件 Diff</div>
+            <input type="text" id="diffPathA" class="file-search" placeholder="路径 A（旧）" />
+            <input type="text" id="diffPathB" class="file-search" placeholder="路径 B（新）" style="margin-top:4px" />
+            <div class="btn-row" style="margin-top:6px">
+              <button type="button" class="btn sm primary" id="diffRunBtn">对比</button>
+            </div>
+            <pre id="diffBody" class="diff-body hint">选择两个工作区路径进行内容对比</pre>
+          </div>
+          <div id="configPane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">Lab 配置</div>
+            <div class="set-row"><span class="k">模型提示</span><span class="v" id="cfgModel">—</span></div>
+            <div class="set-row"><span class="k">版本</span><span class="v" id="cfgVersion">—</span></div>
+            <div class="set-k soft" style="margin-top:10px">默认对话模式</div>
+            <select id="cfgDefaultMode" class="mode-sel fill-sel">
+              <option value="agent">Agent · 工具+审批</option>
+              <option value="plan">Plan · 只规划</option>
+              <option value="bypass">Bypass · 全自动</option>
+              <option value="default">Default</option>
+            </select>
+            <div class="set-k soft" style="margin-top:10px">工具 Profile</div>
+            <input type="text" id="cfgToolProfile" class="file-search" placeholder="full_science" />
+            <div class="btn-row" style="margin-top:10px">
+              <button type="button" class="btn sm primary" id="cfgSaveBtn">保存配置</button>
+              <span class="hint" id="cfgHint">写入 lab.json</span>
+            </div>
           </div>
         </div>
       </aside>
@@ -220,6 +259,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=32"></script>
 </body>
 </html>

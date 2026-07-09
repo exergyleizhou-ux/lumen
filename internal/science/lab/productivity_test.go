@@ -339,6 +339,101 @@ func TestComputeImportAll(t *testing.T) {
 	}
 }
 
+func TestConfigAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/lab/config",
+		bytes.NewReader([]byte(`{"default_mode":"plan","tool_profile":"full_science"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("put %d", res.StatusCode)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	if body["default_mode"] != "plan" {
+		t.Fatalf("%v", body)
+	}
+}
+
+func TestFileWriteAndDiff(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Diff")
+	// write two files via API
+	for _, pair := range []struct{ p, c string }{
+		{"a.txt", "line1\nline2\n"},
+		{"b.txt", "line1\nline2x\n"},
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+			bytes.NewReader([]byte(`{"path":"`+pair.p+`","content":`+mustJSON(pair.c)+`}`)))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Fatalf("write %s %d", pair.p, res.StatusCode)
+		}
+	}
+	_ = sci
+	dres, err := http.Get(ts.URL + "/api/lab/files/diff?project_id=" + slug + "&a=a.txt&b=b.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dres.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(dres.Body).Decode(&body)
+	diff, _ := body["diff"].(string)
+	if !strings.Contains(diff, "-line2") && !strings.Contains(diff, "+line2x") {
+		// at least not identical
+		if body["identical"] == true {
+			t.Fatal("should differ")
+		}
+	}
+	if body["identical"] == true {
+		t.Fatal("expected different files")
+	}
+}
+
+func mustJSON(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func TestSkillsImportMD(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Skill Imp")
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := w.CreateFormFile("file", "my-skill.md")
+	_, _ = part.Write([]byte("---\nname: my-skill\ndescription: test skill\n---\n\n# Hello\nDo science.\n"))
+	_ = w.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/skills/import?project_id="+slug, &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	store := project.NewStore(sci)
+	pd, _ := store.ProjectDir(slug)
+	if _, err := os.Stat(filepath.Join(pd, ".lumen", "skills", "my-skill.md")); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFilesDeleteAPI(t *testing.T) {
 	ts, sci := testLabServer(t)
 	slug := createProject(t, ts, "Del Files")

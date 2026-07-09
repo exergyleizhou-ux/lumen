@@ -1510,7 +1510,7 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "diff", "config"];
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
@@ -1518,13 +1518,20 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     var pane = t.dataset.pane;
     PANE_IDS.forEach(function (id) {
       var el = $(id + "Pane");
-      if (el) el.style.display = pane === id ? "block" : "none";
+      if (!el) return;
+      if (pane === id) {
+        el.style.display = (id === "ketcher" || id === "molecule") ? "flex" : "block";
+        if (id === "ketcher") el.style.flexDirection = "column";
+      } else {
+        el.style.display = "none";
+      }
     });
     if (pane === "skills") loadSkills();
     if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); }
     if (pane === "tasks") renderTasksPane();
     if (pane === "files") { refreshFiles(); loadFileRecent(); loadFileTree(); }
     if (pane === "artifacts") loadArtifacts();
+    if (pane === "config") loadLabConfig();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       var frame = $("ketcherFrame");
@@ -1536,6 +1543,104 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     }
   });
 });
+
+async function loadLabConfig() {
+  try {
+    var d = await api("/api/lab/config");
+    if ($("cfgModel")) $("cfgModel").textContent = d.model_hint || "—";
+    if ($("cfgVersion")) $("cfgVersion").textContent = d.version || "—";
+    if ($("cfgDefaultMode") && d.default_mode) $("cfgDefaultMode").value = d.default_mode;
+    if ($("cfgToolProfile")) $("cfgToolProfile").value = d.tool_profile || "full_science";
+    // apply default mode to composer if still default agent
+    if (d.default_mode && $("chatMode")) {
+      // only set once when loading config tab if user hasn't changed — always sync from config on open
+      $("chatMode").value = d.default_mode;
+    }
+  } catch (e) {
+    if ($("cfgHint")) $("cfgHint").textContent = e.message;
+  }
+}
+
+async function saveLabConfig() {
+  try {
+    var body = {
+      default_mode: ($("cfgDefaultMode") && $("cfgDefaultMode").value) || "agent",
+      tool_profile: ($("cfgToolProfile") && $("cfgToolProfile").value) || "full_science",
+    };
+    await api("/api/lab/config", { method: "PUT", body: JSON.stringify(body) });
+    if ($("cfgHint")) $("cfgHint").textContent = "已保存";
+    if ($("chatMode")) $("chatMode").value = body.default_mode;
+  } catch (e) {
+    if ($("cfgHint")) $("cfgHint").textContent = e.message;
+  }
+}
+
+async function runFileDiff() {
+  if (!activeProject) return;
+  var a = ($("diffPathA") && $("diffPathA").value.trim()) || "";
+  var b = ($("diffPathB") && $("diffPathB").value.trim()) || "";
+  if (!a || !b) { alert("需要两个路径"); return; }
+  try {
+    var d = await api("/api/lab/files/diff?project_id=" + activeProject.slug +
+      "&a=" + encodeURIComponent(a) + "&b=" + encodeURIComponent(b));
+    var el = $("diffBody");
+    if (!el) return;
+    el.className = "diff-body";
+    el.textContent = d.diff || "(empty)";
+    if (d.identical) el.textContent = "文件内容相同\n\n" + (d.diff || "");
+  } catch (e) {
+    if ($("diffBody")) $("diffBody").textContent = e.message;
+  }
+}
+
+async function saveMolToWorkspace() {
+  if (!activeProject) { alert("请先选择课题"); return; }
+  var path = ($("molSavePath") && $("molSavePath").value.trim()) || "molecules/structure.mol";
+  var content = ($("molEditor") && $("molEditor").value) || "";
+  if (!content.trim()) { alert("编辑器为空 — 从 Ketcher 导出 MOL 后粘贴，或加载工作区文件"); return; }
+  try {
+    var res = await api("/api/lab/files/write?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ path: path, content: content }),
+    });
+    if ($("composerHint")) $("composerHint").textContent = "已保存 " + (res.path || path);
+    refreshFiles();
+    loadFileTree();
+    loadArtifacts();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function loadMolFromWorkspace() {
+  if (!activeProject) return;
+  var path = ($("molSavePath") && $("molSavePath").value.trim()) || "";
+  if (!path) { alert("填写路径"); return; }
+  try {
+    var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
+    if ($("molEditor")) $("molEditor").value = data.content || "";
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function importSkillFile(file) {
+  if (!activeProject || !file) return;
+  try {
+    var fd = new FormData();
+    fd.append("file", file);
+    var res = await fetch(labPath("/api/lab/skills/import?project_id=" + activeProject.slug), {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    var body = await res.json();
+    if ($("skillsHint")) $("skillsHint").textContent = "导入 " + (body.count || 0) + " 个技能";
+    loadSkills();
+  } catch (e) {
+    alert("技能导入失败: " + e.message);
+  }
+}
 
 async function loadFileRecent() {
   var el = $("fileRecent");
@@ -2163,6 +2268,21 @@ $("workspaceExportBtn") && $("workspaceExportBtn").addEventListener("click", fun
 $("workspaceImport") && $("workspaceImport").addEventListener("change", function () {
   var f = this.files && this.files[0];
   if (f) importWorkspaceZip(f);
+  this.value = "";
+});
+$("cfgSaveBtn") && $("cfgSaveBtn").addEventListener("click", saveLabConfig);
+$("diffRunBtn") && $("diffRunBtn").addEventListener("click", runFileDiff);
+$("molSaveBtn") && $("molSaveBtn").addEventListener("click", saveMolToWorkspace);
+$("molLoadBtn") && $("molLoadBtn").addEventListener("click", loadMolFromWorkspace);
+$("molTo3dBtn") && $("molTo3dBtn").addEventListener("click", function () {
+  var path = ($("molSavePath") && $("molSavePath").value) || "structure.mol";
+  var content = ($("molEditor") && $("molEditor").value) || "";
+  if (!content.trim()) { alert("编辑器为空"); return; }
+  openMoleculeFromContent(path, content, "molecule");
+});
+$("skillsImport") && $("skillsImport").addEventListener("change", function () {
+  var f = this.files && this.files[0];
+  if (f) importSkillFile(f);
   this.value = "";
 });
 $("hostRegisterBtn") && $("hostRegisterBtn").addEventListener("click", registerHost);

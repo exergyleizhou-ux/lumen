@@ -381,6 +381,22 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .tl-name { font-weight: 650; flex: 1; }
 .tl-st { font-size: 10px; color: var(--ocs-muted); }
 .task-row.nested { margin-left: 12px; opacity: 0.95; }
+.mol-editor {
+  width: 100%; min-height: 100px; max-height: 160px; resize: vertical;
+  font-family: var(--mono); font-size: 11px; padding: 8px;
+  border: none; border-bottom: 1px solid var(--ocs-line);
+  background: var(--ocs-surface-soft); color: var(--ocs-ink);
+}
+#ketcherPane { flex-direction: column; height: 100%; }
+.diff-body {
+  margin-top: 8px; max-height: 50vh; overflow: auto;
+  font-family: var(--mono); font-size: 11px; white-space: pre-wrap;
+  padding: 10px; border-radius: 8px; background: var(--ocs-surface-soft);
+  border: 1px solid var(--ocs-line);
+}
+.set-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; }
+.set-row .k { color: var(--ocs-muted); }
+.set-row .v { font-weight: 650; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

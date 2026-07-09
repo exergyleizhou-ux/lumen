@@ -84,6 +84,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/projects", a.handleProjects)
 	mux.HandleFunc("/api/lab/projects/", a.handleProjectSub)
 	mux.HandleFunc("/api/lab/skills", a.handleSkills)
+	mux.HandleFunc("/api/lab/skills/", a.handleSkillsSub)
+	mux.HandleFunc("/api/lab/config", a.handleConfig)
 	mux.HandleFunc("/api/lab/chat", a.handleChat)
 	mux.HandleFunc("/api/lab/approve", a.handleApprove)
 	mux.HandleFunc("/api/lab/brief", a.handleBrief)
@@ -382,6 +384,159 @@ func (a *API) handleSessionExport(w http.ResponseWriter, r *http.Request, slug, 
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, sid))
 		_, _ = w.Write([]byte(b.String()))
 	}
+}
+
+func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		cfg := loadLocalConfig(a.sciDir)
+		// re-read disk so UI sees latest after PUT without restart (also update a.local)
+		a.local = cfg
+		model := ""
+		if sci, err := scienceConfig(a.sciDir); err == nil {
+			if p := sci.ActiveProfile(); p != nil {
+				model = p.ID
+				if p.Name != "" {
+					model = p.Name
+				}
+			}
+		}
+		if m := os.Getenv("LUMEN_SCIENCE_MODEL"); m != "" {
+			model = m
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"default_mode":  cfg.DefaultMode,
+			"tool_profile":  cfg.ToolProfile,
+			"default_port":  cfg.DefaultPort,
+			"model_hint":    model,
+			"version":       a.version,
+			"modes":         []string{"agent", "plan", "bypass", "default"},
+		})
+	case http.MethodPut, http.MethodPost:
+		var body struct {
+			DefaultMode string `json:"default_mode"`
+			ToolProfile string `json:"tool_profile"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid body"))
+			return
+		}
+		cfg := loadLocalConfig(a.sciDir)
+		if body.DefaultMode != "" {
+			cfg.DefaultMode = body.DefaultMode
+		}
+		if body.ToolProfile != "" {
+			cfg.ToolProfile = body.ToolProfile
+		}
+		if err := saveLocalConfig(a.sciDir, cfg); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		a.local = cfg
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "default_mode": cfg.DefaultMode, "tool_profile": cfg.ToolProfile,
+		})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleSkillsSub routes /api/lab/skills/import
+func (a *API) handleSkillsSub(w http.ResponseWriter, r *http.Request) {
+	sub := strings.TrimPrefix(r.URL.Path, "/api/lab/skills/")
+	sub = strings.Trim(sub, "/")
+	if sub == "import" {
+		a.handleSkillsImport(w, r)
+		return
+	}
+	http.NotFound(w, r)
+}
+
+// handleSkillsImport accepts multipart .md or .zip of skills into project .lumen/skills.
+func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := r.URL.Query().Get("project_id")
+	if slug == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+		return
+	}
+	if p, err := a.projects.Get(slug); err == nil {
+		slug = p.Slug
+	}
+	projDir, err := a.projects.ProjectDir(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	destDir := filepath.Join(projDir, ".lumen", "skills")
+	if err := os.MkdirAll(destDir, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
+	if err := r.ParseMultipartForm(16 << 20); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("upload too large or bad form"))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("需要 file 字段（.md 或 .zip）"))
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	name := strings.ToLower(header.Filename)
+	var written []string
+	if strings.HasSuffix(name, ".zip") {
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid zip"))
+			return
+		}
+		for _, f := range zr.File {
+			if f.FileInfo().IsDir() {
+				continue
+			}
+			base := filepath.Base(f.Name)
+			if !strings.HasSuffix(strings.ToLower(base), ".md") {
+				continue
+			}
+			if strings.Contains(base, "..") {
+				continue
+			}
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			body, _ := io.ReadAll(io.LimitReader(rc, 1<<20))
+			_ = rc.Close()
+			dst := filepath.Join(destDir, base)
+			if err := os.WriteFile(dst, body, 0o600); err == nil {
+				written = append(written, base)
+			}
+		}
+	} else {
+		// single .md
+		base := filepath.Base(header.Filename)
+		if !strings.HasSuffix(strings.ToLower(base), ".md") {
+			base = base + ".md"
+		}
+		if err := os.WriteFile(filepath.Join(destDir, base), data, 0o600); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		written = append(written, base)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "imported": written, "count": len(written), "dir": ".lumen/skills",
+	})
 }
 
 func (a *API) handleSkills(w http.ResponseWriter, r *http.Request) {
@@ -789,9 +944,180 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleWorkspaceImport(w, r, g)
 	case sub == "delete":
 		a.handleFilesDelete(w, r, g)
+	case sub == "write":
+		a.handleFileWrite(w, r, g)
+	case sub == "diff":
+		a.handleFileDiff(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleFileWrite writes text content into a workspace path.
+// POST {path, content}
+func (a *API) handleFileWrite(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("path required"))
+		return
+	}
+	rel := filepath.ToSlash(filepath.Clean(body.Path))
+	if rel == "." || strings.HasPrefix(rel, "..") {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
+		return
+	}
+	abs, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	// cap 8 MiB text writes
+	if len(body.Content) > 8<<20 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
+		return
+	}
+	if err := os.WriteFile(abs, []byte(body.Content), 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	st, _ := os.Stat(abs)
+	size := int64(len(body.Content))
+	if st != nil {
+		size = st.Size()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "path": rel, "size": size, "previewKind": previewKind(rel),
+	})
+}
+
+// handleFileDiff returns a simple unified-ish diff between two workspace files.
+// GET ?a=&b=
+func (a *API) handleFileDiff(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	pa := r.URL.Query().Get("a")
+	pb := r.URL.Query().Get("b")
+	if pa == "" || pb == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("a and b paths required"))
+		return
+	}
+	absA, err := g.Resolve(pa)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	absB, err := g.Resolve(pb)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	dataA, err := os.ReadFile(absA)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	dataB, err := os.ReadFile(absB)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	// cap
+	const max = 256 * 1024
+	truncA, truncB := false, false
+	if len(dataA) > max {
+		dataA = dataA[:max]
+		truncA = true
+	}
+	if len(dataB) > max {
+		dataB = dataB[:max]
+		truncB = true
+	}
+	diffText := simpleLineDiff(pa, pb, string(dataA), string(dataB))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"a": pa, "b": pb,
+		"diff":     diffText,
+		"identical": string(dataA) == string(dataB),
+		"truncated_a": truncA,
+		"truncated_b": truncB,
+	})
+}
+
+// simpleLineDiff is a minimal LCS-free line diff for productivity previews.
+func simpleLineDiff(nameA, nameB, a, b string) string {
+	la := strings.Split(strings.ReplaceAll(a, "\r\n", "\n"), "\n")
+	lb := strings.Split(strings.ReplaceAll(b, "\r\n", "\n"), "\n")
+	var out strings.Builder
+	out.WriteString("--- " + nameA + "\n+++ " + nameB + "\n")
+	// Myers-lite: walk with index maps for equal lines (O(n) greedy)
+	i, j := 0, 0
+	for i < len(la) || j < len(lb) {
+		if i < len(la) && j < len(lb) && la[i] == lb[j] {
+			out.WriteString(" ")
+			out.WriteString(la[i])
+			out.WriteByte('\n')
+			i++
+			j++
+			continue
+		}
+		// look ahead for match
+		found := false
+		if i < len(la) {
+			for k := j; k < len(lb) && k < j+20; k++ {
+				if la[i] == lb[k] {
+					for j < k {
+						out.WriteString("+")
+						out.WriteString(lb[j])
+						out.WriteByte('\n')
+						j++
+					}
+					found = true
+					break
+				}
+			}
+		}
+		if !found && j < len(lb) {
+			for k := i; k < len(la) && k < i+20; k++ {
+				if lb[j] == la[k] {
+					for i < k {
+						out.WriteString("-")
+						out.WriteString(la[i])
+						out.WriteByte('\n')
+						i++
+					}
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			if i < len(la) {
+				out.WriteString("-")
+				out.WriteString(la[i])
+				out.WriteByte('\n')
+				i++
+			}
+			if j < len(lb) {
+				out.WriteString("+")
+				out.WriteString(lb[j])
+				out.WriteByte('\n')
+				j++
+			}
+		}
+	}
+	return out.String()
 }
 
 // handleFilesDelete removes workspace files/dirs (POST {paths:[]}).

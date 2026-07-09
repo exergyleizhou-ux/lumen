@@ -45,6 +45,33 @@ func loadLocalConfig(sciDir string) LocalConfig {
 	return cfg
 }
 
+func saveLocalConfig(sciDir string, cfg LocalConfig) error {
+	if cfg.DefaultPort == 0 {
+		cfg.DefaultPort = DefaultPort
+	}
+	if cfg.ToolProfile == "" {
+		cfg.ToolProfile = defaultToolProfile
+	}
+	if cfg.DefaultMode == "" {
+		cfg.DefaultMode = "agent"
+	}
+	// normalize mode
+	switch cfg.DefaultMode {
+	case "plan", "agent", "bypass", "default":
+	default:
+		cfg.DefaultMode = "agent"
+	}
+	path := localConfigPath(sciDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
+}
+
 func scienceConfig(sciDir string) (sciconfig.File, error) {
 	return sciconfig.Load(sciDir)
 }
