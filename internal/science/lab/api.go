@@ -227,6 +227,26 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 			return
 		}
+		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			var body struct {
+				Title string `json:"title"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			p, err := a.projects.Rename(slug, body.Title)
+			if err != nil {
+				if os.IsNotExist(err) {
+					writeErr(w, http.StatusNotFound, err)
+					return
+				}
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, p)
+			return
+		}
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return

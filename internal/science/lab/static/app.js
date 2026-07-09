@@ -356,12 +356,18 @@ async function loadProjects() {
       btn.className = "proj-pick" + ((activeProject && activeProject.slug === p.slug) ? " active" : "");
       btn.textContent = p.title;
       btn.addEventListener("click", function () {
+        saveComposerDraft();
         activeProject = p;
         activeThread = "";
         loadProjects();
         refreshFiles();
         loadSessions().then(function () {
           if (activeThread) openSession(activeThread);
+          else {
+            var inp = $("promptInput");
+            if (inp) inp.value = "";
+            loadComposerDraft();
+          }
         });
         loadSkills();
         loadComputeHosts();
@@ -370,6 +376,15 @@ async function loadProjects() {
         var mt = $("activeProjectMeta");
         if (nm) nm.textContent = p.title;
         if (mt) mt.textContent = p.slug;
+      });
+      var ren = document.createElement("button");
+      ren.type = "button";
+      ren.className = "btn sm proj-ren";
+      ren.title = "重命名课题";
+      ren.textContent = "✎";
+      ren.addEventListener("click", function (e) {
+        e.stopPropagation();
+        renameProject(p.slug, p.title);
       });
       var del = document.createElement("button");
       del.type = "button";
@@ -381,6 +396,7 @@ async function loadProjects() {
         deleteProject(p.slug, p.title);
       });
       row.appendChild(btn);
+      row.appendChild(ren);
       row.appendChild(del);
       nav.appendChild(row);
     });
@@ -401,6 +417,28 @@ async function loadProjects() {
   } catch (e) {
     var nav = $("projectList");
     if (nav) nav.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function renameProject(slug, curTitle) {
+  if (!slug) return;
+  var title = prompt("课题名称", curTitle || "");
+  if (title == null) return;
+  title = title.trim();
+  if (!title) return;
+  try {
+    var p = await api("/api/lab/projects/" + encodeURIComponent(slug), {
+      method: "PATCH",
+      body: JSON.stringify({ title: title }),
+    });
+    if (activeProject && activeProject.slug === slug) {
+      activeProject.title = p.title || title;
+      var nm = $("activeProjectName");
+      if (nm) nm.textContent = activeProject.title;
+    }
+    await loadProjects();
+  } catch (e) {
+    alert("重命名失败: " + e.message);
   }
 }
 
@@ -658,6 +696,8 @@ async function loadSessions() {
 
 async function openSession(id) {
   if (!activeProject || !id) return;
+  // persist draft for previous session before switching
+  saveComposerDraft();
   activeThread = id;
   sseState = null;
   turnTasks = [];
@@ -669,6 +709,10 @@ async function openSession(id) {
   } catch (e) {
     clearChatScroll('<div class="ft-err">加载会话失败: ' + escHtml(e.message) + "</div>");
   }
+  // load draft for new session
+  var inp = $("promptInput");
+  if (inp) inp.value = "";
+  loadComposerDraft();
 }
 
 function clearChatScroll(html) {
@@ -778,11 +822,24 @@ function createAgentBubble() {
   actions.className = "agent-actions";
   actions.innerHTML =
     '<button type="button" class="btn sm agent-copy">复制回复</button> ' +
+    '<button type="button" class="btn sm agent-quote">引用到输入框</button> ' +
+    '<button type="button" class="btn sm agent-continue">继续</button> ' +
     '<button type="button" class="btn sm agent-tools-toggle">展开工具</button>';
   wrap.appendChild(actions);
   actions.querySelector(".agent-copy").addEventListener("click", function () {
     var text = textDiv.innerText || textDiv.textContent || "";
     copyTextToClipboard(text, actions.querySelector(".agent-copy"));
+  });
+  actions.querySelector(".agent-quote").addEventListener("click", function () {
+    var text = textDiv.innerText || textDiv.textContent || "";
+    quoteIntoComposer(text);
+  });
+  actions.querySelector(".agent-continue").addEventListener("click", function () {
+    var inp = $("promptInput");
+    if (inp) {
+      if (!inp.value.trim()) inp.value = "请继续，补充细节并给出下一步可执行建议。";
+      inp.focus();
+    }
   });
   actions.querySelector(".agent-tools-toggle").addEventListener("click", function () {
     var cards = toolLog.querySelectorAll(".tool-card");
@@ -819,6 +876,51 @@ function copyTextToClipboard(text, btn) {
       } catch (_) {}
     });
   }
+}
+
+function quoteIntoComposer(text) {
+  var inp = $("promptInput");
+  if (!inp || !text) return;
+  var clipped = text.trim();
+  if (clipped.length > 2500) clipped = clipped.slice(0, 2500) + "…";
+  var quoted = clipped.split("\n").map(function (l) { return "> " + l; }).join("\n");
+  var prefix = quoted + "\n\n";
+  inp.value = prefix + (inp.value || "");
+  inp.focus();
+  try {
+    inp.setSelectionRange(inp.value.length, inp.value.length);
+  } catch (_) {}
+  saveComposerDraft();
+}
+
+function draftKey() {
+  var slug = (activeProject && activeProject.slug) || "none";
+  var sid = activeThread || "none";
+  return "lumen-draft:" + slug + ":" + sid;
+}
+
+function saveComposerDraft() {
+  var inp = $("promptInput");
+  if (!inp) return;
+  try {
+    var v = inp.value || "";
+    if (v) localStorage.setItem(draftKey(), v);
+    else localStorage.removeItem(draftKey());
+  } catch (_) {}
+}
+
+function loadComposerDraft() {
+  var inp = $("promptInput");
+  if (!inp) return;
+  try {
+    var v = localStorage.getItem(draftKey()) || "";
+    // don't clobber if user already typed
+    if (!inp.value && v) inp.value = v;
+  } catch (_) {}
+}
+
+function clearComposerDraft() {
+  try { localStorage.removeItem(draftKey()); } catch (_) {}
 }
 
 function findToolCard(toolLog, id) {
@@ -1795,6 +1897,7 @@ function submitPrompt() {
   try { localStorage.setItem("lumen-last-prompt", lastPrompt); } catch (_) {}
   inp.value = "";
   inp.style.height = "auto";
+  clearComposerDraft();
   var rerun = $("btnRerun");
   if (rerun) rerun.disabled = false;
   streamChat(prompt, lastMode).catch(function (err) {
@@ -1894,6 +1997,11 @@ $("promptInput") && $("promptInput").addEventListener("keydown", function (e) {
     e.preventDefault();
     submitPrompt();
   }
+});
+var draftSaveTimer = null;
+$("promptInput") && $("promptInput").addEventListener("input", function () {
+  clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(saveComposerDraft, 400);
 });
 // Paste images/files from clipboard into attachments
 $("promptInput") && $("promptInput").addEventListener("paste", async function (e) {
@@ -2963,6 +3071,7 @@ function watchJobLog(jobId) {
 
 var paletteCmds = [
   { label: "新建课题", action: function () { $("newProjectBtn") && $("newProjectBtn").click(); }, hotkey: "⌘N" },
+  { label: "重命名当前课题", action: function () { if (activeProject) renameProject(activeProject.slug, activeProject.title); } },
   { label: "一键 Brief: aspirin", action: function () { ensureProject().then(function (p) { return api("/api/lab/brief", { method: "POST", body: JSON.stringify({ project_id: p.slug, topic: "aspirin" }) }); }).then(function (r) { var d = document.createElement("div"); d.className = "chat-msg agent"; d.textContent = "Brief 已写入 " + r.path; $("chatScroll").appendChild(d); }).catch(function (e) { addErrorBubble($("chatScroll"), e.message); }); } },
   { label: "文献检索: PubMed", action: function () { streamChat("用 pubmed 域检索最新文献").catch(function (e) { addErrorBubble($("chatScroll"), e.message); }); } },
   { label: "打开 Bridge", action: function () { window.open(API_BASE ? "/lumen-science/?embed=1&oasis=1" : "http://127.0.0.1:18990/", "_blank"); } },
@@ -3092,6 +3201,32 @@ $("previewModalClose") && $("previewModalClose").addEventListener("click", close
 $("previewModal") && $("previewModal").addEventListener("click", function (e) {
   if (e.target === $("previewModal")) closePreviewModal();
 });
+function bindChatScrollJump() {
+  var scroll = $("chatScroll");
+  if (!scroll) return;
+  var btn = $("jumpBottomBtn");
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.id = "jumpBottomBtn";
+    btn.className = "jump-bottom";
+    btn.hidden = true;
+    btn.textContent = "↓ 最新";
+    btn.title = "滚到最新";
+    var ctr = scroll.parentElement || document.body;
+    if (getComputedStyle(ctr).position === "static") ctr.style.position = "relative";
+    ctr.appendChild(btn);
+    btn.addEventListener("click", function () {
+      scroll.scrollTop = scroll.scrollHeight;
+      btn.hidden = true;
+    });
+  }
+  scroll.addEventListener("scroll", function () {
+    var dist = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
+    btn.hidden = dist < 120;
+  });
+}
+
 /* ── @path autocomplete ── */
 var atMenuTimer = null;
 
@@ -3232,6 +3367,7 @@ document.addEventListener("click", function (e) {
     if (activeProject) {
       await loadSessions();
       if (activeThread) await openSession(activeThread);
+      else loadComposerDraft();
       loadSkills();
       loadComputeHosts();
     } else {
@@ -3241,6 +3377,9 @@ document.addEventListener("click", function (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
+  // periodic health refresh
+  setInterval(function () { refreshHealth().catch(function () {}); }, 45000);
+  bindChatScrollJump();
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");

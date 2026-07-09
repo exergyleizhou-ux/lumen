@@ -199,6 +199,27 @@ func (s *Store) ProjectDir(slug string) (string, error) {
 }
 
 
+// Rename updates a project's display title (slug unchanged).
+func (s *Store) Rename(slug, title string) (Project, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return Project{}, fmt.Errorf("title required")
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	p, err := s.Get(slug)
+	if err != nil {
+		return Project{}, err
+	}
+	p.Title = title
+	p.UpdatedAt = time.Now().UTC()
+	if err := s.save(p); err != nil {
+		return Project{}, err
+	}
+	return p, nil
+}
+
 // Delete removes a project and all its data.
 func (s *Store) Delete(slug string) error {
 	if !slugRe.MatchString(slug) {

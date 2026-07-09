@@ -152,6 +152,38 @@ func TestSessionHistoryAPI(t *testing.T) {
 	}
 }
 
+func TestProjectRenameAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Old Title")
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/lab/projects/"+slug,
+		bytes.NewReader([]byte(`{"title":"New Title"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("rename %d", res.StatusCode)
+	}
+	var p map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&p)
+	if p["title"] != "New Title" || p["slug"] != slug {
+		t.Fatalf("%v", p)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/projects/" + slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	proj, _ := body["project"].(map[string]any)
+	if proj == nil || proj["title"] != "New Title" {
+		t.Fatalf("get %v", body)
+	}
+}
+
 func TestNotebooksAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "NB")

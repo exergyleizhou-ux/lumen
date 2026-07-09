@@ -500,6 +500,15 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 }
 .at-item:hover, .at-item.active { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
 .at-empty { padding: 8px 10px; }
+.jump-bottom {
+  position: absolute; right: 16px; bottom: 88px; z-index: 20;
+  border: 1px solid var(--ocs-line); border-radius: 999px;
+  background: var(--ocs-surface-strong, #fff); color: var(--ocs-ink);
+  box-shadow: var(--ocs-shadow); padding: 6px 12px;
+  font: inherit; font-size: 12px; font-weight: 650; cursor: pointer;
+}
+.jump-bottom:hover { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
+#projectList .proj-ren { flex-shrink: 0; width: auto; height: 28px; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;
