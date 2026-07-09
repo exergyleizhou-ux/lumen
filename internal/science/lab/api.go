@@ -1114,8 +1114,116 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileCopy(w, r, g)
 	case sub == "stats":
 		a.handleFileStats(w, r, g)
+	case sub == "zip":
+		a.handleFilesZip(w, r, g)
 	default:
 		http.NotFound(w, r)
+	}
+}
+
+// handleFilesZip builds a zip of selected workspace paths (POST {paths:[]}).
+func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Paths []string `json:"paths"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || len(body.Paths) == 0 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("paths required"))
+		return
+	}
+	if len(body.Paths) > 200 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("too many paths (max 200)"))
+		return
+	}
+	slug := r.URL.Query().Get("project_id")
+	name := "selection.zip"
+	if slug != "" {
+		name = slug + "-selection.zip"
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	const maxFiles = 2000
+	const maxTotal = 64 << 20
+	var nFiles int
+	var total int64
+	seen := map[string]bool{}
+	addFile := func(rel, abs string, size int64) error {
+		rel = filepath.ToSlash(rel)
+		if seen[rel] {
+			return nil
+		}
+		if size > 8<<20 {
+			return nil
+		}
+		if nFiles >= maxFiles || total >= maxTotal {
+			return fmt.Errorf("limit")
+		}
+		data, err := os.ReadFile(abs)
+		if err != nil {
+			return nil
+		}
+		fw, err := zw.Create(rel)
+		if err != nil {
+			return nil
+		}
+		_, _ = fw.Write(data)
+		seen[rel] = true
+		nFiles++
+		total += int64(len(data))
+		return nil
+	}
+	for _, p := range body.Paths {
+		p = filepath.ToSlash(filepath.Clean(strings.TrimSpace(p)))
+		if p == "" || p == "." || strings.HasPrefix(p, "..") {
+			continue
+		}
+		abs, err := g.Resolve(p)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(abs)
+		if err != nil {
+			continue
+		}
+		if !info.IsDir() {
+			_ = addFile(p, abs, info.Size())
+			continue
+		}
+		// walk directory
+		_ = filepath.Walk(abs, func(path string, fi os.FileInfo, err error) error {
+			if err != nil || fi.IsDir() {
+				return nil
+			}
+			if nFiles >= maxFiles || total >= maxTotal {
+				return filepath.SkipAll
+			}
+			rel, err := filepath.Rel(filepath.Dir(abs), path)
+			if err != nil {
+				return nil
+			}
+			// keep parent folder name in zip
+			rel = filepath.ToSlash(filepath.Join(filepath.Base(abs), rel))
+			// better: relative to workspace
+			if root, e2 := g.Resolve("."); e2 == nil {
+				if r2, e3 := filepath.Rel(root, path); e3 == nil {
+					rel = filepath.ToSlash(r2)
+				}
+			}
+			_ = addFile(rel, path, fi.Size())
+			return nil
+		})
+	}
+	if nFiles == 0 {
+		// zip already started — write a note file
+		fw, err := zw.Create("README.txt")
+		if err == nil {
+			_, _ = fw.Write([]byte("no files matched selection\n"))
+		}
 	}
 }
 

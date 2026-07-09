@@ -524,6 +524,36 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
   background: var(--ocs-accent-light); font-family: var(--mono); font-size: 11px;
 }
 #usageBadge { font-variant-numeric: tabular-nums; min-width: 3.5em; }
+.user-actions {
+  display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;
+  opacity: 0.7;
+}
+.chat-msg.user:hover .user-actions { opacity: 1; }
+.pin-mark { margin-right: 4px; }
+.toast-host {
+  position: fixed; right: 16px; bottom: 16px; z-index: 100;
+  display: flex; flex-direction: column; gap: 8px; pointer-events: none;
+}
+.lab-toast {
+  min-width: 200px; max-width: 320px;
+  padding: 10px 14px; border-radius: 12px;
+  background: var(--ocs-surface-strong, #1e1b24);
+  color: var(--ocs-ink); border: 1px solid var(--ocs-line);
+  box-shadow: var(--ocs-shadow); font-size: 13px;
+  animation: toast-in 0.2s ease;
+}
+.lab-toast.out { opacity: 0; transform: translateY(8px); transition: 0.25s ease; }
+.toast-t { font-weight: 700; }
+.toast-b { margin-top: 4px; color: var(--ocs-muted); font-size: 12px; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+html.compact .chat-msg { padding: 8px 10px; margin-bottom: 6px; }
+html.compact .tool-card-hd { padding: 4px 8px; }
+html.compact .composer textarea { min-height: 40px; }
+html.compact .tb { height: 42px; }
+html.compact .side-inner { gap: 6px; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

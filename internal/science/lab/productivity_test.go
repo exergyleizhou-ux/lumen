@@ -238,6 +238,47 @@ func TestSessionImportAndExportAll(t *testing.T) {
 	}
 }
 
+func TestFilesZipAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "ZipSel")
+	for _, pair := range []struct{ p, c string }{
+		{"a.txt", "aaa"},
+		{"sub/b.txt", "bbb"},
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+			bytes.NewReader([]byte(`{"path":"`+pair.p+`","content":`+mustJSON(pair.c)+`}`)))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+	}
+	zreq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/zip?project_id="+slug,
+		bytes.NewReader([]byte(`{"paths":["a.txt","sub/b.txt"]}`)))
+	zreq.Header.Set("Content-Type", "application/json")
+	zres, err := http.DefaultClient.Do(zreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zres.Body.Close()
+	if zres.StatusCode != 200 {
+		t.Fatalf("zip status %d", zres.StatusCode)
+	}
+	ct := zres.Header.Get("Content-Type")
+	if !strings.Contains(ct, "zip") {
+		t.Fatalf("content-type %s", ct)
+	}
+	raw, _ := io.ReadAll(zres.Body)
+	if len(raw) < 40 {
+		t.Fatalf("zip too small %d", len(raw))
+	}
+	// zip magic PK
+	if raw[0] != 'P' || raw[1] != 'K' {
+		t.Fatalf("not zip magic")
+	}
+}
+
 func TestFileStatsAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "Stats")

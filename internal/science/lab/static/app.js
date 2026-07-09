@@ -601,6 +601,44 @@ function renderThreadTabs() {
   renderSessionListSide();
 }
 
+function pinKey() {
+  return "lumen-pins:" + ((activeProject && activeProject.slug) || "none");
+}
+function loadPins() {
+  try {
+    return JSON.parse(localStorage.getItem(pinKey()) || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+function savePins(ids) {
+  try { localStorage.setItem(pinKey(), JSON.stringify(ids.slice(0, 50))); } catch (_) {}
+}
+function isPinned(id) {
+  return loadPins().indexOf(id) >= 0;
+}
+function togglePin(id) {
+  var pins = loadPins();
+  var i = pins.indexOf(id);
+  if (i >= 0) pins.splice(i, 1);
+  else pins.unshift(id);
+  savePins(pins);
+  renderThreadTabs();
+}
+
+function sortThreadsWithPins(list) {
+  var pins = loadPins();
+  return list.slice().sort(function (a, b) {
+    var ap = pins.indexOf(a.id);
+    var bp = pins.indexOf(b.id);
+    var aPin = ap >= 0 ? 1 : 0;
+    var bPin = bp >= 0 ? 1 : 0;
+    if (aPin !== bPin) return bPin - aPin;
+    if (aPin && bPin) return ap - bp;
+    return 0;
+  });
+}
+
 function renderSessionListSide() {
   var el = $("sessionList");
   if (!el) return;
@@ -612,17 +650,27 @@ function renderSessionListSide() {
     el.innerHTML = '<div class="hint">暂无会话</div>';
     return;
   }
-  el.innerHTML = threads.map(function (t) {
+  var ordered = sortThreadsWithPins(threads);
+  el.innerHTML = ordered.map(function (t) {
+    var pin = isPinned(t.id);
     return '<div class="sess-item-row">' +
       '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
+      (pin ? '<span class="pin-mark">📌</span>' : "") +
       '<span class="sess-title">' + escHtml(t.title || t.id) + "</span>" +
       '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>" +
+      '<button type="button" class="btn sm sess-pin" data-pin="' + escHtml(t.id) + '" title="置顶">' + (pin ? "★" : "☆") + "</button>" +
       '<button type="button" class="btn sm sess-fork" data-fork="' + escHtml(t.id) + '" title="分支会话">⎇</button>' +
       '<button type="button" class="btn sm sess-ren" data-ren="' + escHtml(t.id) + '" title="重命名">✎</button>' +
       '<button type="button" class="btn sm sess-del" data-del="' + escHtml(t.id) + '" title="删除">×</button></div>';
   }).join("");
   el.querySelectorAll(".sess-item").forEach(function (btn) {
     btn.addEventListener("click", function () { openSession(btn.dataset.id); });
+  });
+  el.querySelectorAll(".sess-pin").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      togglePin(btn.getAttribute("data-pin"));
+    });
   });
   el.querySelectorAll(".sess-fork").forEach(function (btn) {
     btn.addEventListener("click", function (e) {
@@ -1121,6 +1169,32 @@ function maybeScrollChat() {
   if (dist < 160) scroll.scrollTop = scroll.scrollHeight;
 }
 
+function showLabToast(title, body) {
+  var host = $("toastHost");
+  if (!host) {
+    host = document.createElement("div");
+    host.id = "toastHost";
+    host.className = "toast-host";
+    document.body.appendChild(host);
+  }
+  var el = document.createElement("div");
+  el.className = "lab-toast";
+  el.innerHTML = '<div class="toast-t">' + escHtml(title || "") + '</div>' +
+    (body ? '<div class="toast-b">' + escHtml(body) + "</div>" : "");
+  host.appendChild(el);
+  setTimeout(function () {
+    el.classList.add("out");
+    setTimeout(function () { el.remove(); }, 300);
+  }, 3500);
+}
+
+function toggleCompactMode() {
+  var on = document.documentElement.classList.toggle("compact");
+  try { localStorage.setItem("lumen-compact", on ? "1" : "0"); } catch (_) {}
+  var btn = $("btnCompact");
+  if (btn) btn.textContent = on ? "宽松" : "紧凑";
+}
+
 function addErrorBubble(toolLog, message) {
   var div = document.createElement("div");
   div.className = "chat-msg error-msg";
@@ -1223,6 +1297,14 @@ function handleSSEEvent(ev, state, bubble) {
     refreshFiles();
     loadSessions();
     currentAbort = null;
+    if (document.hidden) {
+      showLabToast("回合完成", (state.text || "").slice(0, 80) || "Agent 已回复");
+      try {
+        if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+          new Notification("Lumen Lab", { body: "回合完成", silent: true });
+        }
+      } catch (_) {}
+    }
   }
 
   return state;
@@ -1294,7 +1376,11 @@ function renderUserBubble(text) {
   if (body) {
     html += '<div class="msg-user-text">' + escHtml(body).replace(/\n/g, "<br>") + "</div>";
   }
+  html += '<div class="user-actions">' +
+    '<button type="button" class="btn sm user-edit">编辑到输入框</button> ' +
+    '<button type="button" class="btn sm user-resend">重发</button></div>';
   ue.innerHTML = html || escHtml(text);
+  ue._rawPrompt = text;
   ue.querySelectorAll(".msg-attach-card").forEach(function (btn) {
     btn.addEventListener("click", function () {
       var p = btn.getAttribute("data-path");
@@ -1303,6 +1389,28 @@ function renderUserBubble(text) {
       previewFile(p, "");
     });
   });
+  var editBtn = ue.querySelector(".user-edit");
+  if (editBtn) {
+    editBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var inp = $("promptInput");
+      if (!inp) return;
+      inp.value = text || "";
+      inp.focus();
+      saveComposerDraft();
+    });
+  }
+  var resendBtn = ue.querySelector(".user-resend");
+  if (resendBtn) {
+    resendBtn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      if (!text) return;
+      var mode = ($("chatMode") && $("chatMode").value) || "agent";
+      streamChat(text, mode).catch(function (err) {
+        addErrorBubble($("chatScroll"), err.message);
+      });
+    });
+  }
   return ue;
 }
 
@@ -1329,6 +1437,11 @@ async function streamChat(prompt, mode) {
   renderTasksPane();
   setRunStatus(true);
   currentAbort = new AbortController();
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      Notification.requestPermission().catch(function () {});
+    }
+  } catch (_) {}
 
   try {
     var res = await fetch(labPath("/api/lab/chat"), {
@@ -1506,6 +1619,7 @@ async function refreshFiles() {
       '<button type="button" class="btn sm" id="fileSelRename">重命名</button> ' +
       '<button type="button" class="btn sm" id="fileSelCopy">复制</button> ' +
       '<button type="button" class="btn sm" id="fileSelDownload">下载</button> ' +
+      '<button type="button" class="btn sm" id="fileSelZip">打包 ZIP</button> ' +
       '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
       '<button type="button" class="btn sm" id="fileSelDiff">对比所选</button> ' +
       '<span class="hint" id="fileSelCount">0 选中</span></div>' +
@@ -1550,6 +1664,8 @@ async function refreshFiles() {
     if (copyBtn) copyBtn.addEventListener("click", function () { fileCopySelected(); });
     var dlBtn = $("fileSelDownload");
     if (dlBtn) dlBtn.addEventListener("click", function () { fileDownloadSelected(); });
+    var zipBtn = $("fileSelZip");
+    if (zipBtn) zipBtn.addEventListener("click", function () { fileZipSelected(); });
     var selDiff = $("fileSelDiff");
     if (selDiff) selDiff.addEventListener("click", function () {
       var paths = [];
@@ -1736,6 +1852,38 @@ function fileDownloadSelected() {
     var url = labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(p));
     window.open(url, "_blank");
   });
+}
+
+async function fileZipSelected() {
+  if (!activeProject) return;
+  var paths = selectedFilePaths();
+  if (!paths.length) {
+    alert("请先勾选文件或目录");
+    return;
+  }
+  try {
+    var res = await fetch(labPath("/api/lab/files/zip?project_id=" + activeProject.slug), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paths: paths }),
+    });
+    if (!res.ok) {
+      var txt = await res.text();
+      throw new Error(txt || ("HTTP " + res.status));
+    }
+    var blob = await res.blob();
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = activeProject.slug + "-selection.zip";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+      a.remove();
+    }, 1000);
+  } catch (e) {
+    alert("打包失败: " + e.message);
+  }
 }
 
 var previewEditPath = "";
@@ -2012,20 +2160,31 @@ function rerunLastPrompt() {
 
 /* ── 11. Chrome wiring ── */
 
-// Dark mode
+// Dark mode + compact
 (function () {
   var toggle = $("dmToggle");
-  if (!toggle) return;
-  // Restore preference
-  if (localStorage.getItem("lumen-dark") === "1") {
-    document.documentElement.classList.add("dark");
-    toggle.textContent = "☀️";
+  if (toggle) {
+    if (localStorage.getItem("lumen-dark") === "1") {
+      document.documentElement.classList.add("dark");
+      toggle.textContent = "☀️";
+    }
+    toggle.addEventListener("click", function () {
+      var isDark = document.documentElement.classList.toggle("dark");
+      localStorage.setItem("lumen-dark", isDark ? "1" : "0");
+      toggle.textContent = isDark ? "☀️" : "🌙";
+    });
   }
-  toggle.addEventListener("click", function () {
-    var isDark = document.documentElement.classList.toggle("dark");
-    localStorage.setItem("lumen-dark", isDark ? "1" : "0");
-    toggle.textContent = isDark ? "☀️" : "🌙";
-  });
+  if (localStorage.getItem("lumen-compact") === "1") {
+    document.documentElement.classList.add("compact");
+    if ($("btnCompact")) $("btnCompact").textContent = "宽松";
+  }
+  $("btnCompact") && $("btnCompact").addEventListener("click", toggleCompactMode);
+  // ask notification permission lazily once
+  try {
+    if (typeof Notification !== "undefined" && Notification.permission === "default") {
+      // don't prompt aggressively — only after first send
+    }
+  } catch (_) {}
 })();
 
 // Mobile sidebar / inspector toggles + mask
@@ -3278,6 +3437,8 @@ var paletteCmds = [
     window.open(labPath("/api/lab/projects/" + activeProject.slug + "/sessions/export-all?format=md"), "_blank");
   } },
   { label: "快捷键帮助", action: function () { openShortcuts(); }, hotkey: "⌘/" },
+  { label: "切换紧凑布局", action: function () { toggleCompactMode(); } },
+  { label: "置顶/取消当前会话", action: function () { if (activeThread) togglePin(activeThread); } },
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
