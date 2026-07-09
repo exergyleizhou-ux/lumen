@@ -50,12 +50,23 @@
 | 工作台 | CS 官方 UI | 三栏 + 文件预览 + 分子查看 |
 | 双模 | 仅 CS | hybrid: B→A 一键复现 |
 
+## 生产硬化（2026-07-09）
+
+| 维度 | 能力 |
+|------|------|
+| Lab 并发 | 全局 turn 池 4 + 每课题互斥 + controller 池 8 |
+| 审批 | 真等待 + `/api/lab/approve` + 10min 超时拒绝 |
+| 满载 | `503 Retry-After` / `readyz` |
+| Bridge 策略 | force-shell · Kimi thinking · capability_rules on `/health` |
+| 运维文档 | `docs/science/OPS-HARDENING.md` |
+
 ## 剩余边界
 
 | 项 | 状态 |
 |----|------|
 | RM-04/06/13 真 OAuth | HUMAN-deferred |
 | Eval 全量 model run | 结构闸门已覆盖 |
+| Office 全预览 / job harvest | M2+ backlog |
 
 ## 本地验证
 

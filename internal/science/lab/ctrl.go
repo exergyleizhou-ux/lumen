@@ -151,15 +151,31 @@ func (c *Controller) Run(ctx context.Context, prompt, mode string) error {
 	}
 }
 
-// webApprover builds an SSE approval handler like internal/server.
-func webApprover(emit func(kind string, payload map[string]any)) func(context.Context, string, json.RawMessage) (bool, error) {
+// PermissionMode returns the current agent permission mode (for approval hub).
+func (c *Controller) PermissionMode() permission.Mode {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctrl == nil {
+		return permission.ModeDefault
+	}
+	return c.ctrl.PermissionMode()
+}
+
+// makeApprover builds an SSE approval handler that blocks until /api/lab/approve.
+func (a *API) makeApprover(emit func(kind string, payload map[string]any)) func(context.Context, string, json.RawMessage) (bool, error) {
 	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
-		id := fmt.Sprintf("appr-%d", os.Getpid())
-		emit("approval_request", map[string]any{
-			"id":      id,
-			"tool":    toolName,
-			"summary": permission.SummarizeArgs(toolName, args),
+		if a.approvals == nil {
+			return false, fmt.Errorf("approval hub not configured")
+		}
+		// emit signature for hub uses map; adapt string errors via payload
+		return a.approvals.decide(ctx, toolName, args, func(kind string, payload map[string]any) {
+			if kind == "error" {
+				if t, ok := payload["text"].(string); ok {
+					emit("error", map[string]any{"text": t})
+					return
+				}
+			}
+			emit(kind, payload)
 		})
-		return true, nil
 	}
 }

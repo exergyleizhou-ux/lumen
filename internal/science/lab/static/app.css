@@ -305,6 +305,18 @@ body::before{
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
 
+/* Mobile: stack panels like InternAgentS responsive mode */
+@media (max-width: 900px) {
+  .main{flex-direction:column}
+  .side,.insp{width:100%!important;min-width:0!important;max-height:34vh;border-radius:0}
+  .ctr{min-height:42vh}
+  .resize{display:none}
+  .shell{padding:8px}
+  #chatScroll{padding:16px!important}
+  .hero{padding:32px 12px 24px}
+  .insp-tabs{overflow-x:auto}
+}
+
 /* Embed */
 .embed-oasis .tb{display:none}
 .embed-oasis .shell{padding:8px}
@@ -481,3 +493,17 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{
 /* Hover lifts */
 .chip:hover,.ctr-tab:hover{transform:translateY(-1px)}
 .btn.primary:hover{box-shadow:0 4px 12px rgba(76,29,149,.25)}
+
+/* Tool log + approval cards (OCS-aligned) */
+.tool-log{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.tool-row{font-size:12px;color:var(--ocs-muted,#6b7280);padding:6px 10px;border-radius:8px;background:rgba(76,29,149,.06)}
+.tool-row.err{color:#b91c1c;background:rgba(185,28,28,.08)}
+.approval-card{border:1px solid rgba(76,29,149,.25);border-radius:12px;padding:12px 14px;background:#fff;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+.approval-card.ok{border-color:#059669}
+.approval-card.deny{border-color:#b91c1c;opacity:.85}
+.appr-title{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:#6b7280;margin-bottom:4px}
+.appr-tool{font-weight:600;font-size:13px;margin-bottom:4px}
+.appr-sum{font-size:12px;color:#4b5563;margin-bottom:10px;word-break:break-word}
+.appr-actions{display:flex;gap:8px;align-items:center;font-size:12px}
+body.dark .approval-card{background:#1e1b2e;border-color:rgba(167,139,250,.35)}
+

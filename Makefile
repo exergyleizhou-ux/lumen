@@ -21,6 +21,9 @@ science-test-all:
 science-full-verify:
 	bash scripts/science/full-verify.sh
 
+science-lab-stress:
+	bash scripts/science/lab-stress.sh
+
 goal-all-verify:
 	bash scripts/goal-all-verify.sh
 

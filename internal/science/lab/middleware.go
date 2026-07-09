@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -36,7 +37,15 @@ func wrapMiddleware(next http.Handler) http.Handler {
 			}
 		}()
 		if r.Method == http.MethodPost || r.Method == http.MethodPut {
-			r.Body = http.MaxBytesReader(rw, r.Body, maxBodyBytes)
+			// Chat allows larger prompts; other POSTs stay tight.
+			limit := int64(maxBodyBytes)
+			if strings.HasPrefix(r.URL.Path, "/api/lab/chat") {
+				limit = ChatBodyMaxBytes
+			}
+			if strings.HasPrefix(r.URL.Path, "/api/lab/files") {
+				limit = 64 << 20
+			}
+			r.Body = http.MaxBytesReader(rw, r.Body, limit)
 		}
 		next.ServeHTTP(rw, r)
 		if rw.status >= 500 {

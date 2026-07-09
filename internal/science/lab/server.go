@@ -9,11 +9,12 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"lumen/internal/config"
-	"lumen/internal/tlsutil"
 	labruntime "lumen/internal/science/lab/runtime"
+	"lumen/internal/tlsutil"
 )
 
 const DefaultPort = 18992
@@ -142,10 +143,16 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		allowed := origin == "http://"+s.cfg.Addr ||
+			origin == "https://"+s.cfg.Addr ||
 			origin == "https://demo.oasisdata2026.xyz" ||
-			origin == "http://localhost:3100"
+			origin == "http://localhost:3100" ||
+			origin == "http://127.0.0.1:3000" ||
+			strings.HasSuffix(origin, ".oasisdata2026.xyz")
 		if allowed && origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		} else if origin == "" {
+			// same-origin / embed without Origin
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "http://"+s.cfg.Addr)
 		}

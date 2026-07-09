@@ -148,6 +148,7 @@ func TestServerHealthAndModels(t *testing.T) {
 }
 
 func TestServerAuthSecret(t *testing.T) {
+	// /health is intentionally public (orchestrator probes). Secrets guard /v1/*.
 	srv := newTestServer(t, ModeAnthropic, nil)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		srv.handleHTTP(w, r)
@@ -159,8 +160,17 @@ func TestServerAuthSecret(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("expected 403 without secret, got %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health should be public, got %d", resp.StatusCode)
+	}
+
+	resp2, err := http.Get(ts.URL + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 on /v1/models without secret, got %d", resp2.StatusCode)
 	}
 }
 

@@ -266,22 +266,78 @@ function updateBaseURLUI() {
   }
 }
 
+const CAT_LABELS = { official: "官方", cn_official: "国内", custom: "自定义" };
+
 function renderProfiles() {
   const sel = $("profileSelect");
-  if (!sel) return;
+  const list = $("profileList");
   if (!profiles.length) {
-    sel.innerHTML = `<option value="">（无配置 — 用下方线路+key）</option>`;
+    if (sel) sel.innerHTML = `<option value="">（无配置）</option>`;
+    if (list) list.innerHTML = `<p class="field-hint">暂无配置档。填写 key 后点「新建配置」，或从 CSSwitch 导入 ~/.csswitch/config.json。</p>`;
     return;
   }
-  sel.innerHTML = profiles
-    .map((p) => {
-      const star = p.active ? "★ " : "";
-      const badge = p.verified ? "✓" : p.verified_hint ? "?" : "";
-      return `<option value="${p.id}">${star}${badge}${p.name} · ${p.template_id}</option>`;
-    })
-    .join("");
-  sel.value = activeProfileId || profiles[0]?.id || "";
+  if (sel) {
+    sel.innerHTML = profiles
+      .map((p) => `<option value="${p.id}">${p.name}</option>`)
+      .join("");
+    sel.value = activeProfileId || profiles[0]?.id || "";
+  }
+  if (list) {
+    list.innerHTML = profiles
+      .map((p) => {
+        const active = p.id === activeProfileId || p.active;
+        const cat = CAT_LABELS[p.category] || p.category || "自定义";
+        const model = p.model ? `<span class="pf-model">${p.model}</span>` : "";
+        const key = p.key_masked || p.masked_key || (p.has_key ? "••••" : "未设置 key");
+        return `<article class="pf-card${active ? " active" : ""}" data-id="${p.id}" role="listitem">
+          <div class="pf-head">
+            <strong class="pf-name">${p.name}</strong>
+            ${active ? '<span class="pf-badge">当前</span>' : ""}
+          </div>
+          <div class="pf-meta"><span class="pf-cat">${cat}</span> · ${p.template_id || "custom"} ${model}</div>
+          <div class="pf-url">${p.base_url || "默认端点"}</div>
+          <div class="pf-key">${key}</div>
+          <div class="pf-actions">
+            <button type="button" class="btn secondary compact pf-act" data-act="switch">设为当前</button>
+            <button type="button" class="btn ghost compact pf-act" data-act="probe">探测</button>
+            <button type="button" class="btn ghost compact pf-act" data-act="delete">删除</button>
+          </div>
+        </article>`;
+      })
+      .join("");
+    list.querySelectorAll(".pf-card").forEach((card) => {
+      const id = card.dataset.id;
+      card.querySelectorAll(".pf-act").forEach((btn) => {
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          if (sel) sel.value = id;
+          const act = btn.dataset.act;
+          if (act === "switch") await switchProfile();
+          else if (act === "probe") await probeProfile();
+          else if (act === "delete") await deleteProfile(id);
+        });
+      });
+      card.addEventListener("click", () => {
+        if (sel) sel.value = id;
+        updateProfileHint();
+      });
+    });
+  }
   updateProfileHint();
+}
+
+async function deleteProfile(id) {
+  if (!id || !confirm("删除此配置？")) return;
+  setBusy(true);
+  try {
+    await api("/api/profiles?id=" + encodeURIComponent(id), { method: "DELETE" });
+    await loadConfig();
+    setMsg("已删除配置", "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  } finally {
+    setBusy(false);
+  }
 }
 
 function updateProfileHint() {
@@ -558,6 +614,8 @@ async function oneClick() {
       // Show prominent sandbox link (works without popup permission)
       var bar = $("urlBar");
       if (bar) { bar.href = r.url; bar.hidden = false; bar.querySelector(".cert-id").textContent = r.url; }
+      // 一键跳转到沙箱 Science 会话
+      window.open(r.url, "_blank");
     }
   } catch (e) {
     setMsg(String(e.message || e), "err");

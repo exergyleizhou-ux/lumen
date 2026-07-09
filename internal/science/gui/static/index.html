@@ -49,21 +49,17 @@
       <div class="settings-grid" id="bridgeContent">
         <div class="controls-grid">
           <section class="card tp-only reveal" id="profilesCard">
-            <p class="card-kicker">profiles · 多配置</p>
-            <label class="field">
-              <span class="field-label">当前配置</span>
-              <select id="profileSelect"></select>
-            </label>
-            <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;">
-              <button class="btn secondary compact" id="switchProfileBtn" type="button">切换</button>
-              <button class="btn ghost compact" id="probeProfileBtn" type="button">探测 key</button>
-              <button class="btn ghost compact" id="addProfileBtn" type="button">新建</button>
+            <p class="card-kicker">profiles · 对标 CSSwitch</p>
+            <div id="profileList" class="profile-list" role="list"></div>
+            <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px;">
+              <button class="btn secondary compact" id="addProfileBtn" type="button">＋ 新建配置</button>
             </div>
             <label class="field" style="margin-top:10px;">
-              <span class="field-label">新建来源</span>
+              <span class="field-label">模板来源</span>
               <select id="templateSelect"></select>
             </label>
-            <p class="field-hint" id="profileHint" style="font-size:12px;color:#5f5f68;margin:8px 0 0;">命名配置档，切换前上游探活</p>
+            <select id="profileSelect" hidden aria-hidden="true"></select>
+            <p class="field-hint" id="profileHint" style="font-size:12px;color:#5f5f68;margin:8px 0 0;">多配置管理：设为当前前自动探测上游</p>
           </section>
 
           <section class="card tp-only reveal">

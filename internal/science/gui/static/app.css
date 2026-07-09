@@ -1070,3 +1070,48 @@ body.embed-oasis #urlBar::after {
   font-size: 16px;
   color: #fff;
 }
+
+/* CSSwitch-style profile cards */
+.profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+.pf-card {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--paper);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.pf-card:hover { border-color: var(--gold-100); box-shadow: 0 4px 14px rgba(24, 24, 27, 0.06); }
+.pf-card.active { border-color: var(--gold); background: var(--gold-50); }
+.pf-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pf-name { font-size: 13px; font-weight: 650; }
+.pf-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--gold-700);
+  background: var(--gold-100);
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.pf-meta, .pf-url, .pf-key {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}

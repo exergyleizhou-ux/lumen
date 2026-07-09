@@ -16,6 +16,8 @@ type Template struct {
 	WebsiteURL            string
 	Icon                  string
 	IconColor             string
+	// ThinkingPolicy: "" | "enabled" | "adaptive" (CSSwitch-aligned).
+	ThinkingPolicy string
 }
 
 var templates = []Template{
@@ -37,9 +39,19 @@ var templates = []Template{
 		WebsiteURL: "https://siliconflow.cn", Icon: "siliconflow", IconColor: "#7C3AED",
 		BuiltinModels: []string{"deepseek-ai/DeepSeek-V3", "zai-org/GLM-5.2"}},
 	{ID: "openrouter", Name: "OpenRouter", Category: "custom", APIFormat: "anthropic", Adapter: "relay",
-		BaseURL: "https://openrouter.ai/api", BaseURLEditable: true, WebsiteURL: "https://openrouter.ai",
-		Icon: "openrouter", IconColor: "#6467F2",
-		BuiltinModels: []string{"anthropic/claude-sonnet-5", "anthropic/claude-opus-4.8-fast"}},
+		BaseURL: "https://openrouter.ai/api", BaseURLEditable: true, RequiresModelOverride: true,
+		WebsiteURL: "https://openrouter.ai", Icon: "openrouter", IconColor: "#6467F2",
+		BuiltinModels: []string{"anthropic/claude-sonnet-5", "anthropic/claude-opus-4.8", "anthropic/claude-opus-4.8-fast"}},
+	{ID: "kimi", Name: "Kimi（Moonshot）", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
+		BaseURL: "https://api.moonshot.cn/anthropic", BaseURLEditable: true, RequiresModelOverride: true,
+		WebsiteURL: "https://platform.moonshot.cn", Icon: "kimi", IconColor: "#16182F",
+		ThinkingPolicy: "enabled",
+		BuiltinModels:  []string{"kimi-k2.7-code", "kimi-k2.7-code-highspeed", "kimi-k2.6"}},
+	{ID: "minimax", Name: "MiniMax", Category: "cn_official", APIFormat: "anthropic", Adapter: "relay",
+		BaseURL: "https://api.minimaxi.com/anthropic", BaseURLEditable: true, RequiresModelOverride: true,
+		WebsiteURL: "https://platform.minimaxi.com", Icon: "minimax", IconColor: "#E1341E",
+		ThinkingPolicy: "adaptive",
+		BuiltinModels:  []string{"MiniMax-M3", "MiniMax-M2.7", "MiniMax-M2.7-highspeed"}},
 	{ID: "qwen", Name: "通义千问", Category: "cn_official", APIFormat: "openai_chat", Adapter: "qwen",
 		BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", WebsiteURL: "https://dashscope.aliyun.com",
 		Icon: "qwen", IconColor: "#615CED",
@@ -52,7 +64,11 @@ var templates = []Template{
 		BaseURL: "https://open.bigmodel.cn/api/paas/v4", WebsiteURL: "https://open.bigmodel.cn",
 		Icon: "zhipu", IconColor: "#2E6BE6",
 		BuiltinModels: []string{"glm-4", "glm-4-flash"}},
-	{ID: "custom", Name: "自定义中转", Category: "custom", APIFormat: "anthropic", Adapter: "relay",
+	{ID: "custom-openai", Name: "自定义 OpenAI", Category: "custom", APIFormat: "openai_chat", Adapter: "openai-custom",
+		BaseURLEditable: true, RequiresModelOverride: true, Icon: "custom", IconColor: "#2563EB"},
+	{ID: "custom-openai-responses", Name: "自定义 OpenAI Responses", Category: "custom", APIFormat: "openai_responses", Adapter: "openai-responses",
+		BaseURLEditable: true, RequiresModelOverride: true, Icon: "custom", IconColor: "#0F766E"},
+	{ID: "custom", Name: "自定义 Anthropic", Category: "custom", APIFormat: "anthropic", Adapter: "relay",
 		BaseURLEditable: true, RequiresModelOverride: true, Icon: "custom", IconColor: "#6B7280"},
 }
 

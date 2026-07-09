@@ -11,16 +11,22 @@ import (
 )
 
 // RelaySpec builds an Anthropic-compatible relay provider from base URL + key + models.
+// When modelOverride is set, Science sees a single claude-opus-4-8 shell whose
+// display_name is the real model (CSSwitch force-shell), and outbound model is forced.
 func RelaySpec(baseURL, apiKey, modelOverride string, models []ModelEntry) ProviderSpec {
 	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	url := base + "/v1/messages"
-	if !strings.HasSuffix(base, "/anthropic") && !strings.Contains(base, "/v1") {
+	if strings.HasSuffix(base, "/v1/messages") {
+		url = base
+	} else if !strings.HasSuffix(base, "/anthropic") && !strings.Contains(base, "/v1") {
 		// Common relay layouts: /api, /api/anthropic, bare host
 		if strings.HasSuffix(base, "/api") {
 			url = base + "/v1/messages"
 		} else {
 			url = base + "/anthropic/v1/messages"
 		}
+	} else if strings.HasSuffix(base, "/anthropic") {
+		url = base + "/v1/messages"
 	}
 	spec := ProviderSpec{
 		Name:         "relay",
@@ -33,17 +39,29 @@ func RelaySpec(baseURL, apiKey, modelOverride string, models []ModelEntry) Provi
 		DefaultModel: "",
 		DualAuth:     true,
 	}
+	if modelOverride != "" {
+		// Force-shell for Science model selector (issue CSSwitch #11).
+		display := modelOverride
+		spec.ForceModelOverride = true
+		spec.ForceModel = modelOverride
+		spec.DefaultModel = modelOverride
+		spec.Models = []ModelEntry{{ID: "claude-opus-4-8", DisplayName: display}}
+		spec.ModelMap = map[string]string{
+			"claude-opus-4-8":   modelOverride,
+			"claude-sonnet-5":   modelOverride,
+			"claude-sonnet-4-6": modelOverride,
+			"claude-haiku-4-5":  modelOverride,
+		}
+		if strings.Contains(strings.ToLower(modelOverride), "kimi") {
+			spec.ThinkingPolicy = ThinkingPolicyEnabled
+		}
+		return spec
+	}
 	if len(models) > 0 {
 		spec.DefaultModel = models[0].ID
 		for _, m := range models {
 			spec.ModelMap[m.ID] = m.ID
-			if modelOverride != "" {
-				spec.ModelMap[m.ID] = modelOverride
-			}
 		}
-	}
-	if modelOverride != "" {
-		spec.DefaultModel = modelOverride
 	}
 	return spec
 }

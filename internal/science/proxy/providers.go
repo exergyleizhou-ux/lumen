@@ -6,8 +6,9 @@ import "strings"
 type Mode string
 
 const (
-	ModeAnthropic Mode = "anthropic" // native Anthropic wire — passthrough + remap
-	ModeOpenAI    Mode = "openai"    // OpenAI-compatible — translate Anthropic↔OpenAI
+	ModeAnthropic  Mode = "anthropic"  // native Anthropic wire — passthrough + remap
+	ModeOpenAI     Mode = "openai"     // OpenAI Chat Completions — translate Anthropic↔OpenAI
+	ModeResponses  Mode = "responses"  // OpenAI Responses API — translate Anthropic↔Responses
 )
 
 // ModelEntry is one model exposed to Claude Science's selector.
@@ -29,6 +30,12 @@ type ProviderSpec struct {
 	DefaultModel string
 	DsmlCapable  bool // DeepSeek may leak DSML tool calls as plain text
 	DualAuth     bool // relay: send x-api-key + Authorization Bearer
+
+	// ThinkingPolicy: "" | "enabled" | "adaptive" (CSSwitch-aligned).
+	ThinkingPolicy string
+	// ForceModelOverride: Science selector shows one claude- shell; outbound uses ForceModel.
+	ForceModelOverride bool
+	ForceModel         string
 }
 
 // BuiltInProviders maps CLI/config provider names to proxy presets.
@@ -118,10 +125,11 @@ var BuiltInProviders = map[string]ProviderSpec{
 		DefaultModel: "qwen-plus",
 	},
 	"minimax": {
-		Name:   "minimax",
-		Mode:   ModeAnthropic,
-		URL:    "https://api.minimax.chat/anthropic/v1/messages",
-		KeyEnv: "MINIMAX_API_KEY",
+		Name:           "minimax",
+		Mode:           ModeAnthropic,
+		URL:            "https://api.minimaxi.com/anthropic/v1/messages",
+		KeyEnv:         "MINIMAX_API_KEY",
+		ThinkingPolicy: ThinkingPolicyAdaptive,
 		Models: []ModelEntry{
 			{ID: "claude-opus-4-8", DisplayName: "MiniMax M3"},
 			{ID: "claude-haiku-4-5", DisplayName: "MiniMax M1"},

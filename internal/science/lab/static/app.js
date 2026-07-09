@@ -1,9 +1,51 @@
 const $ = (id) => document.getElementById(id);
 let activeProject = null;
 
-var threads=[{id:"main",title:"对话"}],activeThread="main";
+/** Oasis embed: prefix API when served under /lumen-lab/ */
+const API_BASE = (function () {
+  const p = location.pathname || "";
+  if (p.startsWith("/lumen-lab")) return "/lumen-lab";
+  return "";
+})();
+function labPath(path) {
+  return API_BASE + path;
+}
+
+var threads = [{ id: "main", title: "对话" }], activeThread = "main";
+
+function renderThreadTabs() {
+  const host = $("convTabs");
+  if (!host) return;
+  host.innerHTML = threads
+    .map(
+      (t) =>
+        `<button type="button" class="ctr-tab${t.id === activeThread ? " active" : ""}" data-id="${t.id}"><span>${escHtml(t.title)}</span></button>`
+    )
+    .join("");
+  host.querySelectorAll(".ctr-tab").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      activeThread = btn.dataset.id || "main";
+      renderThreadTabs();
+    });
+  });
+}
+
+function newConv() {
+  const id = "t-" + Date.now().toString(36);
+  threads.push({ id, title: "对话 " + threads.length });
+  activeThread = id;
+  renderThreadTabs();
+  const scroll = $("chatScroll");
+  if (scroll) {
+    const hero = document.createElement("section");
+    hero.className = "hero";
+    hero.innerHTML = "<h2>新对话</h2><p>描述你的科研任务</p>";
+    scroll.appendChild(hero);
+  }
+}
+
 async function api(path, opts = {}) {
-  const r = await fetch(path, {
+  const r = await fetch(labPath(path), {
     headers: { "Content-Type": "application/json", ...(opts.headers || {}) },
     ...opts,
   });
@@ -54,10 +96,39 @@ async function loadProjects() {
     btn.type = "button";
     btn.className = "" + (activeProject?.slug === p.slug ? " active" : "");
     btn.textContent = p.title;
-    btn.onclick = () => { activeProject = p; loadProjects(); refreshFiles(); };
+    btn.onclick = () => {
+      activeProject = p;
+      loadProjects();
+      refreshFiles();
+      const name = $("activeProjectName");
+      const meta = $("activeProjectMeta");
+      if (name) name.textContent = p.title;
+      if (meta) meta.textContent = p.slug;
+    };
     nav.appendChild(btn);
   });
-  if (!activeProject && list.length) { activeProject = list[0]; refreshFiles(); }
+  if (!activeProject && list.length) {
+    activeProject = list[0];
+    refreshFiles();
+    const name = $("activeProjectName");
+    const meta = $("activeProjectMeta");
+    if (name) name.textContent = list[0].title;
+    if (meta) meta.textContent = list[0].slug;
+  }
+}
+
+async function loadSkills() {
+  const el = $("skillsBody");
+  if (!el) return;
+  try {
+    const d = await api(`/api/lab/skills?project_id=${activeProject ? activeProject.slug : ""}`);
+    const s = d.skills || [];
+    el.innerHTML = s.length
+      ? s.map((sk) => `<div class="ft-row"><span>📋 ${escHtml(sk.name || sk)}</span></div>`).join("")
+      : '<div class="hint">暂无技能 — 安装 Research Pack 后可用</div>';
+  } catch (e) {
+    el.innerHTML = `<div class="ft-err">${e.message}</div>`;
+  }
 }
 
 async function ensureProject() {
@@ -69,7 +140,7 @@ async function ensureProject() {
 }
 
 async function streamChat(prompt, mode) {
-  mode = mode || "plan";
+  mode = mode || "agent";
   var p = await ensureProject();
   // User bubble
   var ue = document.createElement("div"); ue.className = "chat-msg user"; ue.textContent = prompt;
@@ -79,13 +150,119 @@ async function streamChat(prompt, mode) {
   var ae = document.createElement("div"); ae.className = "chat-msg agent";
   $("chatScroll").appendChild(ae);
   var textAcc = "";
+  var toolsHost = document.createElement("div");
+  toolsHost.className = "tool-log";
+  ae.appendChild(document.createElement("div")).className = "agent-text";
+  var textEl = ae.querySelector(".agent-text");
+  ae.appendChild(toolsHost);
   try {
-    var res = await fetch("/api/lab/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:mode,session_id:activeThread})});
-    var reader = res.body.getReader(); var dec = new TextDecoder(); var buf = "";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);if(ev.text&&(ev.kind==="text"||ev.kind==="thinking")){textAcc+=ev.text;ae.textContent=textAcc;}}}
-  }catch(e){ae.textContent="错误: "+e.message;}
-  $("chatScroll").scrollTop=$("chatScroll").scrollHeight;
+    var res = await fetch(labPath("/api/lab/chat"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ project_id: p.slug, prompt: prompt, mode: mode, session_id: activeThread }),
+    });
+    if (!res.ok) {
+      textEl.textContent = "错误: HTTP " + res.status;
+      return;
+    }
+    var reader = res.body.getReader();
+    var dec = new TextDecoder();
+    var buf = "";
+    while (true) {
+      var r = await reader.read();
+      if (r.done) break;
+      buf += dec.decode(r.value, { stream: true });
+      var lines = buf.split("\n");
+      buf = lines.pop();
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.indexOf("data:") !== 0) continue;
+        var json = line.slice(5).trim();
+        if (!json.startsWith("{")) continue;
+        var ev;
+        try { ev = JSON.parse(json); } catch (e) { continue; }
+        handleSSEEvent(ev, textEl, toolsHost, function (t) {
+          textAcc = t;
+          textEl.textContent = textAcc;
+        }, textAcc, function (t) { textAcc = t; });
+      }
+    }
+  } catch (e) {
+    textEl.textContent = "错误: " + e.message;
+  }
+  $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
   refreshFiles();
+}
+
+function handleSSEEvent(ev, textEl, toolsHost, setText, textAcc, setAcc) {
+  var kind = ev.kind || "";
+  if (kind === "text" || kind === "thinking") {
+    if (ev.text) {
+      var next = (typeof textAcc === "string" ? textAcc : "") + ev.text;
+      // textAcc is closed over wrongly — use setAcc
+      if (setAcc) setAcc((textEl._acc || "") + ev.text);
+      textEl._acc = (textEl._acc || "") + ev.text;
+      textEl.textContent = textEl._acc;
+    }
+    return;
+  }
+  if (kind === "tool" || kind === "tool_call" || (ev.tool && kind !== "approval_request")) {
+    var row = document.createElement("div");
+    row.className = "tool-row";
+    row.textContent = "⚙ " + (ev.tool || ev.text || "tool");
+    toolsHost.appendChild(row);
+    return;
+  }
+  if (kind === "approval_request") {
+    renderApprovalCard(toolsHost, ev);
+    return;
+  }
+  if (kind === "error") {
+    var err = document.createElement("div");
+    err.className = "tool-row err";
+    err.textContent = "⚠ " + (ev.text || "error");
+    toolsHost.appendChild(err);
+    return;
+  }
+  if (kind === "turn_done" || kind === "turn_started") {
+    return;
+  }
+}
+
+function renderApprovalCard(host, ev) {
+  var card = document.createElement("div");
+  card.className = "approval-card";
+  card.innerHTML =
+    '<div class="appr-title">需要确认工具</div>' +
+    '<div class="appr-tool">' + escHtml(ev.tool || "") + "</div>" +
+    '<div class="appr-sum">' + escHtml(ev.summary || "") + "</div>" +
+    '<div class="appr-actions">' +
+    '<button type="button" class="btn primary sm appr-yes">允许</button>' +
+    '<button type="button" class="btn sm appr-no">拒绝</button>' +
+    "</div>";
+  var yes = card.querySelector(".appr-yes");
+  var no = card.querySelector(".appr-no");
+  var done = false;
+  async function reply(allow) {
+    if (done) return;
+    done = true;
+    yes.disabled = true;
+    no.disabled = true;
+    try {
+      await api("/api/lab/approve", {
+        method: "POST",
+        body: JSON.stringify({ id: ev.id, allow: allow }),
+      });
+      card.classList.add(allow ? "ok" : "deny");
+      card.querySelector(".appr-actions").textContent = allow ? "已允许" : "已拒绝";
+    } catch (e) {
+      card.querySelector(".appr-actions").textContent = "提交失败: " + e.message;
+    }
+  }
+  yes.addEventListener("click", function () { reply(true); });
+  no.addEventListener("click", function () { reply(false); });
+  host.appendChild(card);
+  card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
 
@@ -166,7 +343,7 @@ $("composer")?.addEventListener("submit", function(e) {
   var inp = $("promptInput"); if (!inp) return;
   var prompt = inp.value.trim(); if (!prompt) return;
   inp.value = "";
-  var mode = $("chatMode")?.value || "plan";
+  var mode = $("chatMode")?.value || "agent";
   streamChat(prompt, mode).catch(function(err) { appendMsg("agent", "错误: " + err.message); });
 });
 
@@ -200,6 +377,10 @@ document.querySelectorAll(".insp-tab").forEach((t) => {
     const pane = t.dataset.pane;
     $("statusPane").style.display = pane === "status" ? "block" : "none";
     $("filesPane").style.display = pane === "files" ? "block" : "none";
+    if ($("skillsPane")) {
+      $("skillsPane").style.display = pane === "skills" ? "block" : "none";
+      if (pane === "skills") loadSkills();
+    }
     if ($("ketcherPane")) $("ketcherPane").style.display = pane === "ketcher" ? "block" : "none";
     if ($("moleculePane")) $("moleculePane").style.display = pane === "molecule" ? "block" : "none";
     if (pane === "ketcher" && !ketcherLoaded) {
@@ -240,7 +421,7 @@ const paletteCmds = [
   { label: "新建课题", action: () => { $("newProjectBtn")?.click(); }, hotkey: "⌘N" },
   { label: "一键 Brief: aspirin", action: () => { ensureProject().then(p => api("/api/lab/brief", { method: "POST", body: JSON.stringify({ project_id: p.slug, topic: "aspirin" }) })).then(r => appendMsg("agent", "Brief 已写入 " + r.path)).catch(e => appendMsg("agent", e.message)); } },
   { label: "文献检索: PubMed", action: () => { streamChat("用 pubmed 域检索最新文献").catch(e => appendMsg("agent", e.message)); } },
-  { label: "打开 Bridge", action: () => { window.open("http://127.0.0.1:18990/", "_blank"); } },
+  { label: "打开 Bridge", action: () => { window.open(API_BASE ? "/lumen-science/?embed=1&oasis=1" : "http://127.0.0.1:18990/", "_blank"); } },
   { label: "刷新状态", action: () => { refreshHealth(); } },
 ];
 

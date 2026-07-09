@@ -26,7 +26,8 @@ func localConfigPath(sciDir string) string {
 }
 
 func loadLocalConfig(sciDir string) LocalConfig {
-	cfg := LocalConfig{DefaultPort: DefaultPort, ToolProfile: defaultToolProfile, DefaultMode: "plan"}
+	// Default agent so tool calls + approval path are exercised (plan never runs tools).
+	cfg := LocalConfig{DefaultPort: DefaultPort, ToolProfile: defaultToolProfile, DefaultMode: "agent"}
 	data, err := os.ReadFile(localConfigPath(sciDir))
 	if err != nil {
 		return cfg
@@ -39,7 +40,7 @@ func loadLocalConfig(sciDir string) LocalConfig {
 		cfg.ToolProfile = defaultToolProfile
 	}
 	if cfg.DefaultMode == "" {
-		cfg.DefaultMode = "plan"
+		cfg.DefaultMode = "agent"
 	}
 	return cfg
 }

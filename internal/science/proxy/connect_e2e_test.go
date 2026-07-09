@@ -44,6 +44,7 @@ func TestConnectE2EClaudeCom401(t *testing.T) {
 }
 
 func TestAuthE2EForbiddenWithoutSecret(t *testing.T) {
+	// /health stays public; path-secret guards model/messages endpoints.
 	spec := BuiltInProviders["deepseek"]
 	addr, _ := startProxyServer(t, Config{
 		Provider: spec, APIKey: "sk-test", AuthSecret: "s3cret",
@@ -52,9 +53,17 @@ func TestAuthE2EForbiddenWithoutSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("want 403 without secret, got %d", resp.StatusCode)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health should be public, got %d", resp.StatusCode)
+	}
+	resp2, err := http.Get("http://" + addr + "/v1/models")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusForbidden {
+		t.Fatalf("want 403 on /v1/models without secret, got %d", resp2.StatusCode)
 	}
 }
 

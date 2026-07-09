@@ -1,196 +1,115 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Lumen Science · 实验室</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<script>tailwind.config={theme:{extend:{colors:{surface:'#ffffff',card:'#f4f3ef',hover:'#ebeae4',ink:'#18181b',muted:'#71717a',dim:'#a1a1a1',accent:{DEFAULT:'#b45309',hover:'#92400e',soft:'rgba(180,83,9,.08)'},rule:'#e7e5e0',success:'#92400e',warn:'#e0982f',danger:'#dc2626',user:'#18181b',userBd:'#b45309'}}}}</script>
-<style>
-*{box-sizing:border-box}body{margin:0;font:13px/1.55 system-ui,sans-serif;background:#fafaf7;color:#18181b;-webkit-font-smoothing:antialiased}
-.msg-fade{animation:in .25s ease}@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
-::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:#e7e5e0;border-radius:3px}
-.chat-msg.user{background:linear-gradient(135deg,#b45309,#92400e);color:#fff;padding:10px 16px;border-radius:16px 16px 4px 16px;margin:10px 0 10px auto;max-width:72%;font-weight:600;float:right;clear:both;box-shadow:0 2px 8px rgba(16,185,129,.15)}
-.chat-msg.agent{padding:10px 0;line-height:1.75;font-size:14px;clear:both}
-.chat-msg.agent-wrap{margin:12px 0;clear:both}
-.tool-tag{display:inline-block;background:rgba(16,185,129,.1);color:#b45309;font-size:11px;padding:3px 10px;border-radius:8px;margin:3px 4px;font-weight:650}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Lumen Science · 实验室</title>
+  <link rel="stylesheet" href="app.css?v=13">
 </head>
-<body class="h-screen flex flex-col overflow-hidden">
+<body>
+  <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
 
-<header class="h-12 px-5 flex items-center bg-card border-b border-rule flex-shrink-0 gap-3">
-  <span class="text-lg font-bold text-accent tracking-tight">Lumen</span>
-  <span class="text-xs text-muted uppercase tracking-wider">Science Lab</span>
-  <span class="flex-1"></span>
-  <span class="flex items-center gap-1.5 text-xs text-muted"><span class="w-2 h-2 rounded-full bg-success shadow-[0_0_0_3px_rgba(34,197,94,.15)]"></span><span id="packBadge">—</span></span>
-  <span class="text-xs text-muted" id="fleetBadge">—</span>
-  <span class="text-xs text-dim" id="tokenBadge">— tokens</span>
-  <button id="dmToggle" class="text-sm w-7 h-7 flex items-center justify-center rounded-lg hover:bg-hover">🌙</button>
-  <a href="http://127.0.0.1:18990/" class="text-xs text-accent font-semibold hover:text-accent-hover transition-colors">Bridge</a>
-</header>
-
-<div class="flex flex-1 overflow-hidden">
-
-<!-- Left Sidebar -->
-<aside class="w-[280px] bg-card border-r border-rule flex flex-col flex-shrink-0 overflow-y-auto">
-  <div class="p-4">
-    <div class="bg-surface rounded-2xl p-4 border border-rule mb-3">
-      <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-1">🔬 当前课题</div>
-      <div class="text-sm font-bold text-ink" id="activeProjectName">未选择</div>
-      <div class="text-xs text-dim mt-0.5" id="activeProjectMeta"></div>
-      <div class="flex gap-2 mt-3">
-        <button id="newProjectBtn" class="flex-1 py-1.5 text-xs font-semibold bg-accent hover:bg-accent-hover text-white rounded-lg transition-all">＋ 新建</button>
-        <button id="briefBtn2" class="px-3 py-1.5 text-xs font-semibold bg-hover text-ink rounded-lg transition-all">📋 Brief</button>
-        <button id="c2dBtn2" class="px-3 py-1.5 text-xs font-semibold bg-hover text-ink rounded-lg transition-all">🏷 C2D</button>
+  <div class="shell">
+    <header class="tb">
+      <div class="tb-logo">
+        <span class="tb-lumen">Lumen</span>
+        <span class="tb-label">Science Lab</span>
       </div>
-    </div>
-    <div id="projectList" class="space-y-0.5"></div>
-    <div class="mt-4 border-t border-rule pt-3 text-xs space-y-1">
-      <div class="flex justify-between text-muted"><span>Fleet</span><span id="sbFleet" class="text-accent font-semibold">—</span></div>
-      <div class="flex justify-between text-muted"><span>Tools</span><span id="sbPack" class="text-accent font-semibold">—</span></div>
-    </div>
-  </div>
-</aside>
+      <span class="tb-spacer"></span>
+      <span class="tb-stat"><span class="tb-dot"></span><span id="packBadge">—</span></span>
+      <span class="tb-stat" id="fleetBadge">—</span>
+      <span class="tb-stat" id="modeHint">hybrid</span>
+      <a class="tb-link" id="bridgeLink" href="/lumen-science/?embed=1&oasis=1">Bridge</a>
+      <button class="tb-btn" id="dmToggle" type="button" title="主题">🌙</button>
+    </header>
 
-<!-- Center -->
-<main class="flex-1 flex flex-col min-w-0">
-  <div class="flex items-end gap-1 px-3 pt-2 border-b border-rule overflow-x-auto">
-    <div id="convTabs" class="flex items-end gap-1"></div>
-    <button onclick="newConv()" class="text-accent text-lg px-2 pb-1.5 hover:bg-hover rounded-t-lg transition-colors flex-shrink-0">＋</button>
-  </div>
-  <div id="chatScroll" class="flex-1 overflow-y-scroll p-6 space-y-2">
-    <section id="welcome" class="py-8">
-      <div class="text-center mb-8">
-        <div class="text-5xl mb-3 opacity-80">🔬</div>
-        <h2 class="text-3xl font-bold text-ink tracking-tight">Lumen Science 实验室</h2>
-        <p class="text-sm text-muted max-w-md mx-auto mt-2">CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p>
-      </div>
-      <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-3">快速操作</div>
-      <div class="grid grid-cols-3 gap-3 mb-8">
-        <div onclick="document.getElementById('briefBtn2').click()" class="card p-4 cursor-pointer hover:border-accent transition-all">
-          <div class="text-2xl mb-2">📝</div><div class="font-semibold text-sm">生成 Brief</div><div class="text-xs text-dim mt-1">四源研究简报</div>
+    <div class="main">
+      <aside class="side" id="sidebarPanel">
+        <div class="side-inner">
+          <div class="set-card">
+            <div class="set-k">🔬 当前课题</div>
+            <div class="set-v" id="activeProjectName">未选择</div>
+            <div class="hint" id="activeProjectMeta"></div>
+            <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+              <button class="btn primary sm" id="newProjectBtn" type="button">＋ 新建</button>
+              <button class="btn sm chip" type="button" data-brief="aspirin">📋 Brief</button>
+              <button class="btn sm chip" type="button" data-prompt="列出可用的 C2D 算法并说明如何上架绿洲">🏷 C2D</button>
+            </div>
+          </div>
+          <div id="projectList"></div>
         </div>
-        <div onclick="document.getElementById('c2dBtn2').click()" class="card p-4 cursor-pointer hover:border-accent transition-all">
-          <div class="text-2xl mb-2">🧬</div><div class="font-semibold text-sm">C2D 算法</div><div class="text-xs text-dim mt-1">隐私计算脚手架</div>
+        <div class="side-ft">
+          <span class="hint">⌘K 命令面板</span>
         </div>
-        <div onclick="streamChat('检索最新的 PubMed 文献')" class="card p-4 cursor-pointer hover:border-accent transition-all">
-          <div class="text-2xl mb-2">🔍</div><div class="font-semibold text-sm">文献检索</div><div class="text-xs text-dim mt-1">PubMed 数据库</div>
+      </aside>
+
+      <div class="resize" id="resizeLeft" aria-hidden="true"></div>
+
+      <section class="ctr">
+        <div style="display:flex;align-items:flex-end;border-bottom:1px solid var(--ocs-line);padding:6px 10px 0">
+          <div class="ctr-tabs" id="convTabs" style="flex:1;border:none;padding:0"></div>
+          <button class="ctr-tab-add" type="button" onclick="newConv()" title="新对话">＋</button>
         </div>
-      </div>
-      <div id="labActivity" class="border-t border-rule pt-4 hidden">
-        <div class="text-xs text-muted uppercase tracking-wider font-semibold mb-2">最近实验记录</div>
-        <div id="labActivityList" class="space-y-2"></div>
-      </div>
-    </section>
-    <section id="welcomeOld" class="text-center py-20 hidden">
-      <div class="text-5xl mb-4 opacity-80">🔬</div>
-      <h2 class="text-3xl font-bold text-ink mb-2 tracking-tight">Lumen Science 实验室</h2>
-      <p class="text-sm text-muted max-w-md mx-auto">CS Research Pack · 23 域 · 247 工具 · 国产模型直连</p>
-    </section>
+        <div id="chatScroll">
+          <section id="welcome" class="hero">
+            <h2>Lumen Science 实验室</h2>
+            <p>对标 OpenClaudeScience · CS Research Pack · 国产模型 · 绿洲 C2D</p>
+            <div class="chips">
+              <button class="chip" type="button" data-brief="aspirin">生成 Brief</button>
+              <button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献">文献检索</button>
+              <button class="chip" type="button" data-prompt="解释当前课题工作区里有哪些文件，并建议下一步实验">检查工作区</button>
+            </div>
+          </section>
+        </div>
+        <form id="composer" class="composer">
+          <select id="chatMode" class="btn sm" style="height:38px" title="agent=可工具+审批 · plan=只规划 · bypass=全自动">
+            <option value="agent" selected>Agent</option>
+            <option value="plan">Plan</option>
+            <option value="bypass">Bypass</option>
+            <option value="default">Default</option>
+          </select>
+          <input id="promptInput" type="text" placeholder="描述科研任务… Enter 发送" autocomplete="off" />
+          <button class="btn primary" type="submit">发送</button>
+        </form>
+      </section>
+
+      <div class="resize" id="resizeRight" aria-hidden="true"></div>
+
+      <aside class="insp" id="inspectorPanel">
+        <div class="insp-tabs">
+          <button class="insp-tab active" type="button" data-pane="status">状态</button>
+          <button class="insp-tab" type="button" data-pane="files">文件</button>
+          <button class="insp-tab" type="button" data-pane="skills">技能</button>
+          <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
+          <button class="insp-tab" type="button" data-pane="molecule">分子</button>
+        </div>
+        <div class="insp-body">
+          <div id="statusPane"><div id="inspectorBody" class="insp-scroll"></div></div>
+          <div id="filesPane" class="insp-scroll" style="display:none">
+            <div id="fileTree"></div>
+            <div id="filePreview" class="fp"></div>
+          </div>
+          <div id="skillsPane" class="insp-scroll" style="display:none">
+            <div id="skillsBody" class="hint">加载技能目录…</div>
+          </div>
+          <div id="ketcherPane" style="display:none;height:100%">
+            <iframe id="ketcherFrame" title="Ketcher" style="width:100%;height:100%;border:none"></iframe>
+          </div>
+          <div id="moleculePane" style="display:none;height:100%">
+            <div id="molViewer" style="width:100%;height:100%"></div>
+          </div>
+        </div>
+      </aside>
+    </div>
   </div>
-  <div id="changeBar" class="hidden px-5 py-1.5 text-xs text-muted border-t border-rule bg-card">📝 <span id="changeList"></span></div>
-  <form id="composer" class="p-4 border-t border-rule flex-shrink-0"><div class="flex gap-2"><input id="promptInput" placeholder="描述科研任务…" class="flex-1 h-10 px-4 text-sm bg-surface border border-rule rounded-2xl text-ink placeholder:text-dim focus:outline-none focus:border-accent transition-colors" autocomplete="off"><button type="submit" class="px-5 py-2.5 bg-accent hover:bg-accent-hover text-white font-semibold rounded-2xl text-sm transition-all active:scale-[.98]">发送</button></div></form>
-</main>
 
-<!-- Right Panel -->
-<aside class="w-[340px] bg-card border-l border-rule flex flex-col flex-shrink-0 overflow-y-auto">
-  <div class="flex border-b border-rule overflow-x-auto">
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-accent border-b-2 border-accent flex-shrink-0" data-pane="status">状态</button>
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="files">文件</button>
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="skills">技能</button>
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="plan">计划</button>
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="chem">化学</button>
-    <button class="insp-tab flex-1 text-center py-3 text-xs font-semibold text-muted flex-shrink-0" data-pane="mol">分子</button>
+  <div id="cmdPalette" class="palette" style="display:none">
+    <div class="palette-box">
+      <input id="paletteInput" type="text" placeholder="搜索命令…" autocomplete="off" />
+      <div id="paletteResults"></div>
+    </div>
   </div>
-  <div class="p-4 flex-1 overflow-y-auto">
-    <div class="card p-5 mb-3">
-      <div class="text-xs text-muted uppercase tracking-wider">Fleet</div>
-      <div class="text-4xl font-bold text-accent mt-1" id="bigFleet">28</div>
-      <div class="text-xs text-dim mt-1">/23 CS + 5 原生 MCP</div>
-    </div>
-    <div class="card p-5 mb-3">
-      <div class="text-xs text-muted uppercase tracking-wider">Tools</div>
-      <div class="text-4xl font-bold text-accent mt-1" id="bigTools">247</div>
-    </div>
-    <div class="card p-5 mb-3">
-      <div class="text-xs text-muted uppercase tracking-wider">Skills</div>
-      <div class="text-4xl font-bold text-accent mt-1" id="bigSkills">29</div>
-    </div>
-    <div class="card p-5 mb-3">
-      <div class="text-xs text-muted uppercase tracking-wider">模型</div>
-      <div class="text-sm font-mono text-ink mt-1" id="bigModel">deepseek-chat</div>
-    </div>
-    <div id="statusPane" class="hidden"><div id="inspectorBody" class="text-xs space-y-2"></div></div>
-    <div id="filesPane" class="hidden"><input type="file" id="labFileInput" multiple class="hidden"><div class="flex gap-2 mb-3"><button class="text-xs px-3 py-1.5 bg-accent text-white rounded-xl font-semibold" onclick="document.getElementById('labFileInput').click()">📤</button><button class="text-xs px-3 py-1.5 bg-danger/20 text-danger rounded-xl font-semibold" id="labDeleteBtn">🗑</button></div><div id="fileTree" class="space-y-0.5 text-xs"></div><div id="filePreview" class="mt-3 text-xs font-mono"></div></div>
-    <div id="skillsPane" class="hidden"><div id="skillsBody" class="space-y-0.5 text-xs"></div></div>
-    <div id="planPane" class="hidden"><div id="labPlanSteps" class="space-y-2"></div><div id="labPlanActions" class="flex gap-2 mt-3 hidden"><button id="labPlanApproveAll" class="flex-1 py-2 bg-accent text-white font-semibold rounded-2xl text-xs">✓ 批准全部</button><button id="labPlanRejectAll" class="flex-1 py-2 bg-danger/20 text-danger font-semibold rounded-2xl text-xs">✗ 拒绝</button></div></div>
-    <div id="chemPane" class="hidden"><div class="flex justify-between items-center mb-2"><span class="text-xs text-muted">Ketcher 分子编辑器</span><button class="text-xs text-muted hover:text-ink" onclick="document.querySelector('[data-pane=status]').click()">✕</button></div><iframe id="ketcherFrame" src="about:blank" class="w-full h-[380px] border border-rule rounded-2xl"></iframe></div>
-    <div id="molPane" class="hidden"><div class="flex justify-between items-center mb-2"><span class="text-xs text-muted">3Dmol 预览</span><button class="text-xs text-muted hover:text-ink" onclick="document.querySelector('[data-pane=status]').click()">✕</button></div><div id="molViewer" class="w-full h-[380px] border border-rule rounded-2xl"></div></div>
-  </div>
-</aside>
-</div>
 
-<script>
-var $=function(id){return document.getElementById(id);};
-var activeProject=null,activeThread="main",conversations={main:{id:"main",title:"对话",messages:[],sessionId:"main"}},activeConv="main";
-
-async function api(p,o){var r=await fetch(p,{headers:{"Content-Type":"application/json"},...o});var t=await r.text();try{return JSON.parse(t);}catch(e){return{raw:t}};}
-
-async function refreshHealth(){var h=await api("/api/lab/health");var f=h.fleet||{},p2=h.research_pack||{};$("packBadge").textContent=(p2.domain_tools||0)+" tools";$("fleetBadge").textContent=(f.connected_total||0)+"/"+(f.cs_domains||0)+" fleet";$("inspectorBody").innerHTML='<div class="flex justify-between text-xs"><span class="text-muted">Fleet</span><span class="text-accent font-semibold">'+(f.connected_total||0)+'/'+(f.cs_domains||0)+' CS + '+(f.lumen_native||0)+' 原生</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">Tools</span><span class="font-semibold">'+(p2.domain_tools||0)+'</span></div><div class="flex justify-between text-xs"><span class="text-muted">Skills</span><span class="font-semibold">'+(p2.skills||0)+'</span></div><div class="h-px bg-rule my-2"></div><div class="flex justify-between text-xs"><span class="text-muted">模型</span><span class="font-semibold">'+((h.provider||{}).masked||"—")+'</span></div>';var bf=$("bigFleet");if(bf)bf.textContent=f.connected_total||0;
-  var bt=$("bigTools");if(bt)bt.textContent=p2.domain_tools||0;
-  var bs=$("bigSkills");if(bs)bs.textContent=p2.skills||0;
-  var bm=$("bigModel");if(bm)bm.textContent=(h.provider||{}).masked||"deepseek-chat";
-  var sf=$("sbFleet");if(sf)sf.textContent=(f.connected_total||0)+"/"+(f.cs_domains||0);var sp=$("sbPack");if(sp)sp.textContent=(p2.domain_tools||0)+" tools · "+(p2.skills||0)+" skills";}
-
-async function loadProjects(){var list=await api("/api/lab/projects");var nav=$("projectList");nav.innerHTML="";if(!list||!list.length){nav.innerHTML='<div class="text-xs text-dim p-2">点击 ＋ 新建课题</div>';return;}list.forEach(function(p){var b=document.createElement("button");b.textContent=p.title;b.className="w-full text-left text-xs py-1.5 px-2 rounded-lg hover:bg-hover transition-colors overflow-hidden text-ellipsis whitespace-nowrap";b.onclick=function(){activeProject=p;loadProjects();refreshFiles();var c=$("activeProjectName");if(c)c.textContent=p.title;var m=$("activeProjectMeta");if(m)m.textContent=p.slug;};if(activeProject&&activeProject.slug===p.slug)b.classList.add("bg-accent-soft","text-accent","font-semibold");nav.appendChild(b);});if(!activeProject&&list.length){activeProject=list[0];refreshFiles();var c=$("activeProjectName");if(c)c.textContent=list[0].title;}}
-
-async function ensureProject(){if(activeProject)return activeProject;activeProject=await api("/api/lab/projects",{method:"POST",body:JSON.stringify({title:"默认课题"})});await loadProjects();return activeProject;}
-
-async function streamChat(prompt){
-  var p=await ensureProject();
-  var ue=document.createElement("div");ue.className="chat-msg user";ue.textContent=prompt;$("chatScroll").appendChild(ue);
-  var w=$("welcome");if(w)w.style.display="none";
-  var ae=document.createElement("div");ae.className="chat-msg agent";$("chatScroll").appendChild(ae);
-  var ta="";var start=Date.now();
-  try{
-    var res=await fetch("/api/lab/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:p.slug,prompt:prompt,mode:"plan",session_id:activeThread})});
-    var reader=res.body.getReader();var dec=new TextDecoder();var buf="";
-    while(true){var r=await reader.read();if(r.done)break;buf+=dec.decode(r.value,{stream:true});var lines=buf.split("\n");buf=lines.pop();for(var i=0;i<lines.length;i++){var line=lines[i];if(line.indexOf("data:")!==0)continue;var json=line.slice(5).trim();if(!json.startsWith("{"))continue;var ev=JSON.parse(json);
-      if(ev.kind==="text"){ta+=ev.text||"";ae.textContent=ta;}
-      else if(ev.kind==="tool_dispatch"){var tn=(ev.tool&&ev.tool.name)?ev.tool.name:"tool";ta+="\n🔧 "+tn;ae.textContent=ta;}
-      else if(ev.kind==="plan_start"){var pp=$("labPlanSteps");if(pp)pp.innerHTML="";}
-      else if(ev.kind==="plan_step"){renderLabPlanStep(ev.step||ev);}
-      else if(ev.kind==="plan_done"){var pa=$("labPlanActions");if(pa)pa.style.display="flex";}
-    }}
-  }catch(e){ae.textContent="错误: "+e.message;}
-  $("chatScroll").scrollTop=$("chatScroll").scrollHeight;refreshFiles();
-  var elapsed=(Date.now()-start)/1000;var tb=$("tokenBadge");if(tb)tb.textContent=Math.round(elapsed*20)+" tok · "+elapsed.toFixed(1)+"s";
-}
-
-function renderLabPlanStep(s){var el=$("labPlanSteps");if(!el)return;var card=document.createElement("div");card.className="bg-surface rounded-2xl p-4 border border-rule border-l-4 border-l-accent";card.innerHTML='<div class="text-sm font-bold">'+(s.idx||"")+'. '+escHtml(s.title||"步骤")+'</div><div class="text-xs text-muted mt-1">'+escHtml(s.desc||"")+'</div>';el.appendChild(card);}
-
-function escHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
-
-async function refreshFiles(){var el=$("fileTree");if(!el||!activeProject)return;try{var d=await api("/api/lab/files?project_id="+activeProject.slug);el.innerHTML=(d.files||[]).map(function(f){return'<div class="flex items-center gap-2 py-1 px-2 rounded-lg hover:bg-hover cursor-pointer text-xs" onclick="previewFile(\''+f.name+'\')"><span>📄</span><span class="flex-1 overflow-hidden text-ellipsis whitespace-nowrap font-semibold">'+f.name+'</span></div>';}).join("");}catch(e){el.innerHTML='<div class="text-xs text-danger">'+e.message+'</div>';}}
-
-async function previewFile(path){var fp=$("filePreview");if(!fp||!activeProject)return;try{var d=await api("/api/lab/files/content?project_id="+activeProject.slug+"&path="+encodeURIComponent(path));fp.innerHTML='<div class="text-xs text-muted mb-1">📄 '+d.path+'</div><pre class="text-xs font-mono whitespace-pre-wrap max-h-[200px] overflow-auto bg-surface p-3 rounded-xl">'+escHtml(d.content||"")+'</pre>';}catch(e){fp.innerHTML='<div class="text-xs text-danger">'+e.message+'</div>';}}
-
-async function loadSkills(){var el=$("skillsBody");if(!el)return;try{var d=await api("/api/lab/skills?project_id="+(activeProject?activeProject.slug:""));var s=d.skills||[];el.innerHTML=s.length?s.map(function(sk){return'<div class="py-1 px-2 rounded-lg hover:bg-hover text-xs">📋 '+escHtml(sk.name||sk)+'</div>';}).join(""):'<div class="text-xs text-dim">暂无技能</div>';}catch(e){el.innerHTML='<div class="text-xs text-dim">加载失败</div>';}}
-
-var ketcherLoaded=false;function loadKetcher(){if(!ketcherLoaded){ketcherLoaded=true;$("ketcherFrame").src="https://lifescience.opensource.epam.com/ketcher/standalone/index.html";}}
-var molLoaded=false;function loadMol(){if(!molLoaded){molLoaded=true;var s=document.createElement("script");s.src="https://3Dmol.org/build/3Dmol-min.js";s.onload=function(){if(typeof $3Dmol!=="undefined"){var v=$3Dmol.createViewer("molViewer",{backgroundColor:"#fafaf7"});fetch("https://files.rcsb.org/download/4HHB.pdb").then(function(r){return r.text();}).then(function(pdb){v.addModel(pdb,"pdb");v.setStyle({},{cartoon:{color:"#b45309"}});v.zoomTo();v.render();});}};document.head.appendChild(s);}}
-
-// Tab switching
-document.querySelectorAll(".insp-tab").forEach(function(t){t.addEventListener("click",function(){document.querySelectorAll(".insp-tab").forEach(function(b){b.classList.remove("text-accent","border-accent");b.classList.add("text-muted");});this.classList.add("text-accent","border-accent");this.classList.remove("text-muted");var p=this.dataset.pane;["statusPane","filesPane","skillsPane","planPane","chemPane","molPane"].forEach(function(id){var el=$(id);if(el)el.classList.toggle("hidden",id!==p+"Pane");});if(p==="files")refreshFiles();if(p==="skills")loadSkills();if(p==="chem")loadKetcher();if(p==="mol")loadMol();});});
-
-// Events
-$("composer").addEventListener("submit",function(e){e.preventDefault();var p=$("promptInput").value.trim();if(!p)return;$("promptInput").value="";streamChat(p);});
-$("newProjectBtn").addEventListener("click",async function(){var t=prompt("课题名称");if(!t)return;activeProject=await api("/api/lab/projects",{method:"POST",body:JSON.stringify({title:t})});await loadProjects();});
-// Dark mode
-var dm=localStorage.getItem("lumen-dm"),dt=$("dmToggle");if(dm==="dark")document.documentElement.classList.add("dark-mode");if(dt){dt.textContent=dm==="dark"?"☀":"🌙";dt.onclick=function(){document.documentElement.classList.toggle("dark-mode");var d=document.documentElement.classList.contains("dark-mode");localStorage.setItem("lumen-dm",d?"dark":"light");dt.textContent=d?"☀":"🌙";};}
-
-// Init
-(async function(){await refreshHealth();await loadProjects();})();
-</script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>

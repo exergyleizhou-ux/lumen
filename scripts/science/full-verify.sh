@@ -56,6 +56,8 @@ fi
 
 run_gate native-verify bash scripts/goal-native-workbench-verify.sh
 
+run_gate lab-stress bash scripts/science/lab-stress.sh
+
 LAB_EC=0
 bash scripts/science/lab-smoke.sh > "$SCRATCH/lab-smoke.log" 2>&1 || LAB_EC=$?
 if [[ "$LAB_EC" -eq 0 ]]; then

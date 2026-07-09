@@ -6,6 +6,9 @@ var dateSuffixRE = regexp.MustCompile(`-\d{8}$`)
 
 // ResolveModel maps a Science-side model id to the upstream model name.
 func ResolveModel(spec ProviderSpec, name string) string {
+	if spec.ForceModelOverride && spec.ForceModel != "" {
+		return spec.ForceModel
+	}
 	if name == "" {
 		return spec.DefaultModel
 	}

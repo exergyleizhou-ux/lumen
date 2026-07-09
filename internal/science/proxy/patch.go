@@ -39,45 +39,86 @@ func PatchAnthropicBodyRaw(raw []byte, spec ProviderSpec, cacheBoost bool) ([]by
 		fields["max_tokens"] = json.RawMessage(fmt.Sprintf("%d", clamped))
 	}
 
-	if th := patchThinking(spec.Name, fields["thinking"], fields["tool_choice"]); len(th) > 0 {
-		fields["thinking"] = th
-	} else {
+	forcing := toolChoiceIsForcing(fields["tool_choice"])
+	thType := thinkingTypeOf(fields["thinking"])
+	tr := NormalizeThinking(spec.Name, spec.ThinkingPolicy, target, forcing, thType)
+	if tr.DropToolChoice {
+		delete(fields, "tool_choice")
+	}
+	if tr.ThinkingJSON != "" {
+		fields["thinking"] = json.RawMessage(tr.ThinkingJSON)
+	} else if thType == "" {
 		delete(fields, "thinking")
+	}
+	// else keep original thinking bytes
+
+	if tr.FilterWebSearch || ShouldFilterKimiWebSearch(spec, target) {
+		if tools, ok := fields["tools"]; ok {
+			fields["tools"] = filterWebSearchToolRaw(tools)
+		}
 	}
 
 	return stableMarshal(fields, anthropicKeyOrder), nil
 }
 
-func patchThinking(providerName string, thinkingRaw, toolChoiceRaw json.RawMessage) json.RawMessage {
-	forcing := false
-	if len(toolChoiceRaw) > 0 {
-		var tc map[string]any
-		if json.Unmarshal(toolChoiceRaw, &tc) == nil {
-			t, _ := tc["type"].(string)
-			forcing = t == "any" || t == "tool"
-		}
+func toolChoiceIsForcing(toolChoiceRaw json.RawMessage) bool {
+	if len(toolChoiceRaw) == 0 {
+		return false
 	}
-	if forcing {
-		switch providerName {
-		case "minimax":
-			if len(thinkingRaw) == 0 {
-				return thinkingRaw
-			}
-		default:
-			return json.RawMessage(`{"type":"disabled"}`)
-		}
+	var tc map[string]any
+	if json.Unmarshal(toolChoiceRaw, &tc) != nil {
+		return false
 	}
+	t, _ := tc["type"].(string)
+	return t == "any" || t == "tool"
+}
+
+func thinkingTypeOf(thinkingRaw json.RawMessage) string {
 	if len(thinkingRaw) == 0 {
-		return thinkingRaw
+		return ""
 	}
 	var th map[string]any
 	if json.Unmarshal(thinkingRaw, &th) != nil {
-		return thinkingRaw
+		return ""
 	}
-	if th["type"] == "auto" {
-		th["type"] = "adaptive"
-		b, _ := json.Marshal(th)
-		return b
+	t, _ := th["type"].(string)
+	return t
+}
+
+// filterWebSearchToolRaw removes tools named web_search (Kimi server-tool conflict).
+func filterWebSearchToolRaw(toolsRaw json.RawMessage) json.RawMessage {
+	var tools []map[string]any
+	if json.Unmarshal(toolsRaw, &tools) != nil {
+		return toolsRaw
+	}
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		name, _ := t["name"].(string)
+		if name == "web_search" {
+			continue
+		}
+		out = append(out, t)
+	}
+	if len(out) == len(tools) {
+		return toolsRaw
+	}
+	if len(out) == 0 {
+		return json.RawMessage("[]")
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return toolsRaw
+	}
+	return b
+}
+
+// patchThinking is retained for older tests; prefer PatchAnthropicBodyRaw + policy.
+func patchThinking(providerName string, thinkingRaw, toolChoiceRaw json.RawMessage) json.RawMessage {
+	forcing := toolChoiceIsForcing(toolChoiceRaw)
+	thType := thinkingTypeOf(thinkingRaw)
+	tr := NormalizeThinking(providerName, "", "", forcing, thType)
+	if tr.ThinkingJSON != "" {
+		return json.RawMessage(tr.ThinkingJSON)
 	}
 	return thinkingRaw
 }

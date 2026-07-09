@@ -933,6 +933,22 @@ async function init() {
 }
 
 init();
+// ── File upload handler ──
+document.getElementById("fileUploadInput")?.addEventListener("change", async function(){
+  if(!this.files||!this.files.length)return;
+  for(var i=0;i<this.files.length;i++){
+    var fd=new FormData();
+    fd.append("file",this.files[i]);
+    try{
+      var r=await fetch(API_BASE+"/api/files/upload",{method:"POST",body:fd});
+      var d=await r.json();
+      if(!r.ok)throw new Error(d.error||"上传失败");
+      showToast("✅ 已上传 "+d.uploaded);
+    }catch(e){showToast("❌ "+e.message);}
+  }
+  this.value="";
+  loadFileTree();
+});
 // ── File panel ──
 var filePanelOpen=false;
 function toggleFilePanel(){
@@ -944,9 +960,11 @@ function toggleFilePanel(){
 async function loadFileTree(){
   var el=document.getElementById("fileTree");if(!el)return;
   try{
-    var data=await lumenAPI("/api/files?path=.");
+    var r=await fetch(API_BASE+"/api/files?path=.");
+    var data=await r.json();
+    if(!r.ok)throw new Error(data.error||"HTTP "+r.status);
     var files=data.files||[];
-    el.innerHTML=files.map(function(f){return '<div class="ft-item'+(f.isDir?' ft-dir':'')+'" style="cursor:pointer"><span>'+(f.isDir?'📁':'📄')+'</span><span class="ft-name">'+escHtml(f.name)+'</span></div>';}).join("");
+    el.innerHTML=files.map(function(f){return '<div class="ft-item'+(f.isDir?' ft-dir':'')+'" style="cursor:pointer"'+(f.isDir?'':" onclick=\"previewFile('"+escHtml(f.name)+"')\"")+'><span>'+(f.isDir?'📁':'📄')+'</span><span class="ft-name">'+escHtml(f.name)+'</span></div>';}).join("");
   }catch(e){el.innerHTML='<div class="ft-item"><span class="ft-name" style="color:var(--muted)">'+e.message+'</span></div>';}
 }
 function previewFile(path){

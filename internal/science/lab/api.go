@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -11,7 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"sync/atomic"
+
 	"lumen/internal/event"
+	"lumen/internal/permission"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/project"
@@ -32,9 +36,17 @@ type API struct {
 	projects   *project.Store
 	fleet      *labruntime.FleetManager
 	local      LocalConfig
-	turnMu     sync.Mutex
-	labCtrl    *Controller
+	turns      *turnPool
+	ctrls      *controllerPool
+	approvals  *approvalHub
+	// activeMode is read by approval hub during a turn.
+	modeMu     sync.Mutex
+	activeMode permission.Mode
 	startedAt  time.Time
+	// metrics
+	turnsTotal   atomic.Uint64
+	turnsFailed  atomic.Uint64
+	approvalsTot atomic.Uint64
 }
 
 // NewAPI builds the lab API.
@@ -43,25 +55,35 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 		listenPort = DefaultPort
 	}
 	store := project.NewStore(sciDir)
-	return &API{
-		sciDir:     sciDir,
-		version:    version,
-		listenPort: listenPort,
-		projects:   store,
-		fleet:      fleet,
-		local:      loadLocalConfig(sciDir),
-		labCtrl:    NewController(sciDir, fleet, store),
+	api := &API{
+		sciDir:      sciDir,
+		version:     version,
+		listenPort:  listenPort,
+		projects:    store,
+		fleet:       fleet,
+		local:       loadLocalConfig(sciDir),
+		turns:      newTurnPool(MaxConcurrentTurns),
+		ctrls:      newControllerPool(sciDir, fleet, store, MaxControllers),
+		activeMode: permission.ModeDefault,
 		startedAt:  time.Now(),
 	}
+	api.approvals = newApprovalHub(func() permission.Mode {
+		api.modeMu.Lock()
+		defer api.modeMu.Unlock()
+		return api.activeMode
+	})
+	return api
 }
 
 // Register mounts routes on mux.
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/health", a.handleHealth)
+	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
 	mux.HandleFunc("/api/lab/projects", a.handleProjects)
 	mux.HandleFunc("/api/lab/projects/", a.handleProjectSub)
 	mux.HandleFunc("/api/lab/skills", a.handleSkills)
 	mux.HandleFunc("/api/lab/chat", a.handleChat)
+	mux.HandleFunc("/api/lab/approve", a.handleApprove)
 	mux.HandleFunc("/api/lab/brief", a.handleBrief)
 	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
 	mux.HandleFunc("/api/lab/files", a.handleFiles)
@@ -91,6 +113,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if a.fleet != nil {
 		fleetSt = a.fleet.Status()
 	}
+	ctrlTotal, ctrlBusy := a.ctrls.stats()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"port":         a.listenPort,
@@ -111,7 +134,43 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"masked":  masked,
 			"adapter": adapter,
 		},
+		"capacity": map[string]any{
+			"turns_active":    a.turns.active(),
+			"turns_capacity":  a.turns.capacity(),
+			"controllers":     ctrlTotal,
+			"controllers_busy": ctrlBusy,
+			"max_controllers": MaxControllers,
+			"turns_total":     a.turnsTotal.Load(),
+			"turns_failed":    a.turnsFailed.Load(),
+			"approvals_total": a.approvalsTot.Load(),
+		},
+		"limits": map[string]any{
+			"max_concurrent_turns": MaxConcurrentTurns,
+			"approval_timeout_sec": int(ApprovalTimeout.Seconds()),
+			"turn_timeout_sec":     int(DefaultTurnTimeout.Seconds()),
+		},
 	})
+}
+
+// handleReadyz is a stricter probe for orchestrators (Caddy/k8s).
+func (a *API) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Ready when server process is up; fleet may still be connecting (non-blocking).
+	ready := a.turns.active() < a.turns.capacity()
+	status := http.StatusOK
+	body := map[string]any{
+		"ready":        ready,
+		"turns_active": a.turns.active(),
+		"turns_cap":    a.turns.capacity(),
+	}
+	if !ready {
+		status = http.StatusServiceUnavailable
+		body["reason"] = "at capacity"
+	}
+	writeJSON(w, status, body)
 }
 
 func (a *API) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -319,6 +378,8 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Long scientific prompts may exceed default middleware body cap.
+	r.Body = http.MaxBytesReader(w, r.Body, ChatBodyMaxBytes)
 	var req struct {
 		ProjectID string `json:"project_id"`
 		SessionID string `json:"session_id"`
@@ -337,9 +398,25 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !a.turns.tryAcquire() {
+		w.Header().Set("Retry-After", "2")
+		writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("实验室繁忙（并发上限 %d），请稍后重试", MaxConcurrentTurns))
+		return
+	}
+	defer a.turns.release()
+
+	ctrl, err := a.ctrls.acquire(slug)
+	if err != nil {
+		w.Header().Set("Retry-After", "1")
+		writeErr(w, http.StatusConflict, err)
+		return
+	}
+	defer a.ctrls.release(slug)
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -347,45 +424,78 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a.turnMu.Lock()
-	defer a.turnMu.Unlock()
+	sink := sseSink{w: w, flusher: flusher}
+	mode := req.Mode
+	if mode == "" {
+		mode = a.local.DefaultMode
+	}
+	a.setActiveMode(mode)
 
 	// Configure with timeout to prevent indefinite hang
-	cfgCtx, cfgCancel := context.WithTimeout(r.Context(), 30*time.Second)
+	cfgCtx, cfgCancel := context.WithTimeout(r.Context(), ConfigureTimeout)
 	defer cfgCancel()
 
-	sink := sseSink{w: w, flusher: flusher}
 	done := make(chan error, 1)
-	go func() { done <- a.labCtrl.Configure(slug, req.SessionID, sink, webApprover(sink.emitPayload)) }()
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				done <- fmt.Errorf("configure panic: %v", rec)
+			}
+		}()
+		done <- ctrl.Configure(slug, req.SessionID, sink, a.makeApprover(sink.emitPayload))
+	}()
 	select {
 	case err := <-done:
 		if err != nil {
+			a.turnsFailed.Add(1)
 			sink.emit("error", err.Error())
 			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 			flusher.Flush()
 			return
 		}
 	case <-cfgCtx.Done():
+		a.turnsFailed.Add(1)
 		sink.emit("error", "配置超时，请刷新页面重试")
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 		flusher.Flush()
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), DefaultTurnTimeout)
 	defer cancel()
 
+	a.turnsTotal.Add(1)
 	sink.emit("turn_started", "")
-	mode := req.Mode
-	if mode == "" {
-		mode = a.local.DefaultMode
-	}
-	if err := a.labCtrl.Run(ctx, req.Prompt, mode); err != nil {
-		sink.emit("error", err.Error())
+	runErr := func() (err error) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				err = fmt.Errorf("turn panic: %v", rec)
+			}
+		}()
+		return ctrl.Run(ctx, req.Prompt, mode)
+	}()
+	if runErr != nil {
+		a.turnsFailed.Add(1)
+		sink.emit("error", runErr.Error())
 	}
 	sink.emit("turn_done", "")
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
+}
+
+func (a *API) setActiveMode(mode string) {
+	var m permission.Mode
+	switch mode {
+	case "plan", "":
+		m = permission.ModePlan
+	case "bypass":
+		m = permission.ModeBypass
+	default:
+		m = permission.ModeDefault
+	}
+	a.modeMu.Lock()
+	a.activeMode = m
+	a.modeMu.Unlock()
 }
 
 type sseSink struct {
@@ -435,7 +545,7 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route sub-paths: /api/lab/files/content?path=, /api/lab/files/download?path=
+	// Route sub-paths: /api/lab/files/content?path=, /api/lab/files/download?path=, /api/lab/files/upload
 	sub := strings.TrimPrefix(r.URL.Path, "/api/lab/files")
 	sub = strings.TrimPrefix(sub, "/")
 
@@ -444,6 +554,8 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileContent(w, r, g)
 	case sub == "download":
 		a.handleFileDownload(w, r, g)
+	case sub == "upload":
+		a.handleFileUpload(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
@@ -514,6 +626,53 @@ func (a *API) handleFileDownload(w http.ResponseWriter, r *http.Request, g *work
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
 	_, _ = w.Write(data)
+}
+
+// handleFileUpload accepts multipart file uploads into the project workspace.
+func (a *API) handleFileUpload(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// Limit upload to 64 MB
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("文件过大或格式错误: %w", err))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("未选择文件: %w", err))
+		return
+	}
+	defer file.Close()
+
+	// Resolve safe path inside workspace
+	abs, err := g.Resolve(header.Filename)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	dst, err := os.Create(abs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer dst.Close()
+	written, err := io.Copy(dst, file)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"uploaded": header.Filename,
+		"size":     written,
+	})
 }
 
 // handleProvenance returns provenance.jsonl records for a project.
@@ -604,15 +763,20 @@ func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "count": len(jobs)})
 	case http.MethodPost:
 		var body struct {
-			Host    string `json:"host"`
-			Command string `json:"command"`
+			Host       string `json:"host"`
+			Command    string `json:"command"`
+			TimeoutSec int    `json:"timeout_sec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Host == "" || body.Command == "" {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("host and command required"))
 			return
 		}
 		ws, _ := a.projects.WorkspacePath(slug)
-		j, err := store.Submit(body.Host, body.Command, ws)
+		opts := compute.SubmitOpts{}
+		if body.TimeoutSec > 0 {
+			opts.Timeout = time.Duration(body.TimeoutSec) * time.Second
+		}
+		j, err := store.SubmitOpts(body.Host, body.Command, ws, opts)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return

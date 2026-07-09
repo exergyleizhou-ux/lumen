@@ -179,6 +179,16 @@ func (s *Server) handleHealth(w http.ResponseWriter) {
 	out := map[string]any{
 		"status":   "ok",
 		"provider": s.spec.Name,
+		"mode":     string(s.spec.Mode),
+	}
+	if s.spec.ForceModelOverride {
+		out["force_model"] = s.spec.ForceModel
+	}
+	if s.spec.ThinkingPolicy != "" {
+		out["thinking_policy"] = s.spec.ThinkingPolicy
+	}
+	if rules := MatchCapabilityRules(s.spec); len(rules) > 0 {
+		out["capability_rules"] = rules
 	}
 	for k, v := range s.CacheStats.Snapshot() {
 		out["cache_"+k] = v
@@ -187,8 +197,17 @@ func (s *Server) handleHealth(w http.ResponseWriter) {
 }
 
 func (s *Server) handleModels(w http.ResponseWriter) {
-	data := make([]map[string]any, 0, len(s.spec.Models))
-	for _, m := range s.spec.Models {
+	models := s.spec.Models
+	// Force-shell: Science only understands claude-* ids; expose one shell with real display name.
+	if s.spec.ForceModelOverride && s.spec.ForceModel != "" {
+		display := s.spec.ForceModel
+		if len(s.spec.Models) > 0 && s.spec.Models[0].DisplayName != "" {
+			display = s.spec.Models[0].DisplayName
+		}
+		models = []ModelEntry{{ID: "claude-opus-4-8", DisplayName: display}}
+	}
+	data := make([]map[string]any, 0, len(models))
+	for _, m := range models {
 		data = append(data, map[string]any{
 			"type":         "model",
 			"id":           m.ID,
@@ -201,8 +220,8 @@ func (s *Server) handleModels(w http.ResponseWriter) {
 		firstID, _ = data[0]["id"].(string)
 		lastID, _ = data[len(data)-1]["id"].(string)
 	}
-	ids := make([]string, len(s.spec.Models))
-	for i, m := range s.spec.Models {
+	ids := make([]string, len(models))
+	for i, m := range models {
 		ids[i] = m.ID
 	}
 	s.log(fmt.Sprintf("GET /v1/models -> %s: %s", s.spec.Name, strings.Join(ids, ", ")))
@@ -242,6 +261,8 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request) {
 	switch s.spec.Mode {
 	case ModeAnthropic:
 		s.handleAnthropic(w, r.Context(), raw, areq)
+	case ModeResponses:
+		s.handleResponses(w, r.Context(), areq)
 	default:
 		s.handleOpenAI(w, r.Context(), areq)
 	}

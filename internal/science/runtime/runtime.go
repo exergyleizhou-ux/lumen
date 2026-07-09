@@ -111,10 +111,8 @@ func (m *Manager) StartProxy() (ProxyAction, error) {
 		return "", err
 	}
 	keyFP := KeyFingerprint(apiKey)
-	provider := resolved.Adapter
-	if resolved.ProfileID != "" {
-		provider = resolved.ProfileID
-	}
+	// Fingerprint includes adapter/api_format/model so protocol switches always restart.
+	provider := SpecFingerprint(resolved)
 
 	m.mu.Lock()
 	if m.proxySrv != nil &&

@@ -18,7 +18,16 @@ Base: `http://127.0.0.1:18992`
 ### Health
 ```
 GET /api/lab/health
-→ { status, port, science_mode, research_pack, fleet, provider }
+→ { status, port, science_mode, research_pack, fleet, provider, capacity, limits }
+
+GET /api/lab/readyz
+→ { ready, turns_active, turns_cap }   # 503 when at capacity
+```
+
+### Approve (Agent mode tool gate)
+```
+POST /api/lab/approve  { id, allow }
+→ { id, allowed }
 ```
 
 ### Projects

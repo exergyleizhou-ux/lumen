@@ -4,6 +4,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -27,6 +28,9 @@ func (s *Server) routesAPI() {
 	s.mux.HandleFunc("/v1/rewind", s.handleRewind)
 	s.mux.HandleFunc("/v1/sessions/content", s.handleSessionContent)
 	s.mux.HandleFunc("/v1/sessions/resume", s.handleSessionResume)
+	// File API
+	s.mux.HandleFunc("/api/files", s.handleFilesList)
+	s.mux.HandleFunc("/api/files/", s.handleFilesList)
 	s.routesApproval()
 }
 
@@ -496,4 +500,170 @@ func (s *Server) findSkill(name string) *skill.Skill {
 		}
 	}
 	return nil
+}
+
+// ── File API ──
+
+func (s *Server) workspaceRoot() string {
+	if d := os.Getenv("LUMEN_WORKSPACE_ROOT"); d != "" {
+		return d
+	}
+	wd, _ := os.Getwd()
+	return wd
+}
+
+func (s *Server) resolveSafe(rel string) (string, error) {
+	root, err := filepath.Abs(s.workspaceRoot())
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Clean(filepath.Join(root, rel))
+	if !strings.HasPrefix(target, root) {
+		return "", fmt.Errorf("路径越界")
+	}
+	return target, nil
+}
+
+func (s *Server) handleFilesList(w http.ResponseWriter, r *http.Request) {
+	sub := strings.TrimPrefix(r.URL.Path, "/api/files")
+	sub = strings.TrimPrefix(sub, "/")
+
+	switch {
+	case sub == "upload":
+		s.handleFileUpload(w, r)
+	case sub == "content" || strings.HasPrefix(sub, "content"):
+		s.handleFileContent(w, r)
+	case sub == "write":
+		s.handleFileWrite(w, r)
+	default:
+		s.handleFileList(w, r)
+	}
+}
+
+func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
+	rel := r.URL.Query().Get("path")
+	if rel == "" {
+		rel = "."
+	}
+	abs, err := s.resolveSafe(rel)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	var files []map[string]any
+	for _, e := range entries {
+		info, _ := e.Info()
+		entry := map[string]any{
+			"name":  e.Name(),
+			"isDir": e.IsDir(),
+		}
+		if info != nil && !e.IsDir() {
+			entry["size"] = info.Size()
+			entry["mtime"] = info.ModTime().Format("2006-01-02T15:04:05Z")
+		}
+		files = append(files, entry)
+	}
+	jsonOK(w, map[string]any{"files": files, "root": abs})
+}
+
+func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
+	rel := r.URL.Query().Get("path")
+	if rel == "" {
+		jsonErr(w, "path required", http.StatusBadRequest)
+		return
+	}
+	abs, err := s.resolveSafe(rel)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	data, err := os.ReadFile(abs)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	maxSize := 512 * 1024
+	if len(data) > maxSize {
+		data = data[:maxSize]
+	}
+	jsonOK(w, map[string]any{
+		"path":      rel,
+		"content":   string(data),
+		"size":      len(data),
+		"truncated": len(data) >= maxSize,
+	})
+}
+
+func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		jsonErr(w, "文件过大或格式错误", http.StatusBadRequest)
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		jsonErr(w, "未选择文件", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	abs, err := s.resolveSafe(header.Filename)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	dst, err := os.Create(abs)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+	written, err := io.Copy(dst, file)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]any{"uploaded": header.Filename, "size": written})
+}
+
+func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Path == "" {
+		jsonErr(w, "path and content required", http.StatusBadRequest)
+		return
+	}
+	abs, err := s.resolveSafe(req.Path)
+	if err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := os.WriteFile(abs, []byte(req.Content), 0644); err != nil {
+		jsonErr(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, map[string]any{"ok": true, "path": req.Path})
 }
