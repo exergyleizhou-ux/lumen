@@ -481,12 +481,18 @@ function renderThreadTabs() {
   host.innerHTML = threads
     .map(function (t) {
       var count = t.turn_count != null ? t.turn_count : (t.turns ? t.turns.length : 0);
-      return '<button type="button" class="ctr-tab' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '"><span>' + escHtml(t.title || t.id) + (count ? " · " + count : "") + "</span></button>";
+      return '<button type="button" class="ctr-tab' + (t.id === activeThread ? " active" : "") +
+        '" data-id="' + escHtml(t.id) + '" title="双击重命名">' +
+        '<span>' + escHtml(t.title || t.id) + (count ? " · " + count : "") + "</span></button>";
     })
     .join("");
   host.querySelectorAll(".ctr-tab").forEach(function (btn) {
     btn.addEventListener("click", function () {
       openSession(btn.dataset.id);
+    });
+    btn.addEventListener("dblclick", function (e) {
+      e.preventDefault();
+      renameSession(btn.dataset.id);
     });
   });
   renderSessionListSide();
@@ -508,10 +514,17 @@ function renderSessionListSide() {
       '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
       '<span class="sess-title">' + escHtml(t.title || t.id) + "</span>" +
       '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>" +
+      '<button type="button" class="btn sm sess-ren" data-ren="' + escHtml(t.id) + '" title="重命名">✎</button>' +
       '<button type="button" class="btn sm sess-del" data-del="' + escHtml(t.id) + '" title="删除">×</button></div>';
   }).join("");
   el.querySelectorAll(".sess-item").forEach(function (btn) {
     btn.addEventListener("click", function () { openSession(btn.dataset.id); });
+  });
+  el.querySelectorAll(".sess-ren").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      renameSession(btn.getAttribute("data-ren"));
+    });
   });
   el.querySelectorAll(".sess-del").forEach(function (btn) {
     btn.addEventListener("click", function (e) {
@@ -519,6 +532,27 @@ function renderSessionListSide() {
       deleteSession(btn.getAttribute("data-del"));
     });
   });
+}
+
+async function renameSession(id) {
+  if (!activeProject || !id) return;
+  var cur = threads.find(function (t) { return t.id === id; });
+  var title = prompt("会话标题", (cur && cur.title) || "");
+  if (title == null) return;
+  title = title.trim();
+  if (!title) return;
+  try {
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions/" + encodeURIComponent(id), {
+      method: "PATCH",
+      body: JSON.stringify({ title: title }),
+    });
+    threads.forEach(function (t) {
+      if (t.id === id) t.title = sess.title || title;
+    });
+    renderThreadTabs();
+  } catch (e) {
+    alert("重命名失败: " + e.message);
+  }
 }
 
 async function deleteSession(id) {
@@ -1189,6 +1223,7 @@ async function refreshFiles() {
       '<button type="button" class="btn sm" id="fileMkdir">新建目录</button> ' +
       '<button type="button" class="btn sm" id="fileSelRename">重命名</button> ' +
       '<button type="button" class="btn sm" id="fileSelCopy">复制</button> ' +
+      '<button type="button" class="btn sm" id="fileSelDownload">下载</button> ' +
       '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
       '<button type="button" class="btn sm" id="fileSelDiff">对比所选</button> ' +
       '<span class="hint" id="fileSelCount">0 选中</span></div>' +
@@ -1229,6 +1264,8 @@ async function refreshFiles() {
     if (renameBtn) renameBtn.addEventListener("click", function () { fileRenameSelected(); });
     var copyBtn = $("fileSelCopy");
     if (copyBtn) copyBtn.addEventListener("click", function () { fileCopySelected(); });
+    var dlBtn = $("fileSelDownload");
+    if (dlBtn) dlBtn.addEventListener("click", function () { fileDownloadSelected(); });
     var selDiff = $("fileSelDiff");
     if (selDiff) selDiff.addEventListener("click", function () {
       var paths = [];
@@ -1402,6 +1439,19 @@ async function fileCopySelected() {
   } catch (e) {
     alert("复制失败: " + e.message);
   }
+}
+
+function fileDownloadSelected() {
+  if (!activeProject) return;
+  var paths = selectedFilePaths();
+  if (!paths.length) {
+    alert("请先勾选文件");
+    return;
+  }
+  paths.forEach(function (p) {
+    var url = labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(p));
+    window.open(url, "_blank");
+  });
 }
 
 async function previewFile(path, previewKind) {
@@ -1646,45 +1696,52 @@ $("btnStop") && $("btnStop").addEventListener("click", function () {
   }
 });
 
+async function uploadFilesList(files) {
+  files = files ? Array.prototype.slice.call(files) : [];
+  if (!files.length) return [];
+  if (!activeProject) await ensureProject();
+  var uploadedList = [];
+  for (var i = 0; i < files.length; i++) {
+    var file = files[i];
+    var fd = new FormData();
+    fd.append("file", file);
+    var res = await fetch(labPath("/api/lab/files/upload?project_id=" + activeProject.slug), {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) {
+      var txt = await res.text();
+      throw new Error(file.name + ": " + txt);
+    }
+    var uploaded = file.name;
+    try {
+      var body = await res.json();
+      if (body.uploaded) uploaded = body.uploaded;
+      else if (body.path) uploaded = body.path;
+    } catch (_) {}
+    if (pendingAttachments.indexOf(uploaded) < 0) pendingAttachments.push(uploaded);
+    uploadedList.push(uploaded);
+  }
+  renderAttachmentChips();
+  var inp = $("promptInput");
+  if (inp) {
+    var tags = uploadedList.map(function (u) { return "[附件] " + u; }).join("\n") + "\n";
+    inp.value = tags + (inp.value || "");
+    inp.focus();
+  }
+  var hint = $("composerHint");
+  if (hint) hint.textContent = "已上传 " + uploadedList.length + " 个附件";
+  await refreshFiles();
+  loadFileTree();
+  return uploadedList;
+}
+
 // File upload — multi-file; inject paths into composer for agent context
 $("fileUpload") && $("fileUpload").addEventListener("change", async function () {
   var files = this.files ? Array.prototype.slice.call(this.files) : [];
   if (!files.length) return;
   try {
-    if (!activeProject) await ensureProject();
-    var uploadedList = [];
-    for (var i = 0; i < files.length; i++) {
-      var file = files[i];
-      var fd = new FormData();
-      fd.append("file", file);
-      var res = await fetch(labPath("/api/lab/files/upload?project_id=" + activeProject.slug), {
-        method: "POST",
-        body: fd,
-      });
-      if (!res.ok) {
-        var txt = await res.text();
-        throw new Error(file.name + ": " + txt);
-      }
-      var uploaded = file.name;
-      try {
-        var body = await res.json();
-        if (body.uploaded) uploaded = body.uploaded;
-        else if (body.path) uploaded = body.path;
-      } catch (_) {}
-      if (pendingAttachments.indexOf(uploaded) < 0) pendingAttachments.push(uploaded);
-      uploadedList.push(uploaded);
-    }
-    renderAttachmentChips();
-    var inp = $("promptInput");
-    if (inp) {
-      var tags = uploadedList.map(function (u) { return "[附件] " + u; }).join("\n") + "\n";
-      inp.value = tags + (inp.value || "");
-      inp.focus();
-    }
-    var hint = $("composerHint");
-    if (hint) hint.textContent = "已上传 " + uploadedList.length + " 个附件";
-    await refreshFiles();
-    loadFileTree();
+    var uploadedList = await uploadFilesList(files);
     var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
     if (filesTab) filesTab.click();
     if (uploadedList.length) previewFile(uploadedList[0], "");
@@ -1693,6 +1750,53 @@ $("fileUpload") && $("fileUpload").addEventListener("change", async function () 
   }
   this.value = "";
 });
+
+// Drag-drop attachments onto composer
+(function bindComposerDrop() {
+  var wrap = $("composerDrop") || $("composer");
+  var overlay = $("dropOverlay");
+  if (!wrap) return;
+  var dragDepth = 0;
+  function hasFiles(e) {
+    var dt = e.dataTransfer;
+    if (!dt) return false;
+    if (dt.types && (dt.types.indexOf("Files") >= 0 || (dt.types.contains && dt.types.contains("Files")))) return true;
+    return dt.files && dt.files.length > 0;
+  }
+  wrap.addEventListener("dragenter", function (e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth++;
+    if (overlay) overlay.hidden = false;
+    wrap.classList.add("is-dragover");
+  });
+  wrap.addEventListener("dragover", function (e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  });
+  wrap.addEventListener("dragleave", function (e) {
+    if (!hasFiles(e) && dragDepth === 0) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) {
+      if (overlay) overlay.hidden = true;
+      wrap.classList.remove("is-dragover");
+    }
+  });
+  wrap.addEventListener("drop", async function (e) {
+    e.preventDefault();
+    dragDepth = 0;
+    if (overlay) overlay.hidden = true;
+    wrap.classList.remove("is-dragover");
+    var files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    try {
+      await uploadFilesList(files);
+    } catch (err) {
+      alert("上传失败: " + err.message);
+    }
+  });
+})();
 
 // Chips
 document.querySelectorAll(".chip").forEach(function (btn) {
@@ -1732,7 +1836,8 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "diff", "config"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "config"];
+var activeNotebook = "";
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
@@ -1754,6 +1859,7 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "files") { refreshFiles(); loadFileRecent(); loadFileTree(); }
     if (pane === "artifacts") loadArtifacts();
     if (pane === "config") loadLabConfig();
+    if (pane === "notebooks") loadNotebooks();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       var frame = $("ketcherFrame");
@@ -1769,6 +1875,158 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "ketcher") loadMoleculeBrowser();
   });
 });
+
+async function loadNotebooks() {
+  var listEl = $("nbList");
+  if (!listEl || !activeProject) return;
+  listEl.innerHTML = '<div class="hint">加载中…</div>';
+  try {
+    var data = await api("/api/lab/notebooks?project_id=" + activeProject.slug);
+    if ($("nbJupyterHint")) {
+      $("nbJupyterHint").textContent = data.jupyter_available ? "Jupyter ✓" : "Jupyter 未安装（只读/建本可用）";
+    }
+    var nbs = data.notebooks || [];
+    if (!nbs.length) {
+      listEl.innerHTML = '<div class="hint">暂无 notebook — 点「新建」</div>';
+    } else {
+      listEl.innerHTML = nbs.map(function (n) {
+        var name = n.name || n.Name || "";
+        return '<button type="button" class="btn sm nb-pick' + (name === activeNotebook ? " primary" : "") +
+          '" data-name="' + escHtml(name) + '">' + escHtml(name) +
+          (n.cells != null ? " · " + n.cells + " 格" : "") + "</button>";
+      }).join(" ");
+      listEl.querySelectorAll(".nb-pick").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          openNotebook(btn.getAttribute("data-name"));
+        });
+      });
+    }
+    if (activeNotebook) openNotebook(activeNotebook);
+    else if (nbs.length) openNotebook(nbs[0].name || nbs[0].Name);
+  } catch (e) {
+    listEl.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function openNotebook(name) {
+  if (!activeProject || !name) return;
+  activeNotebook = name;
+  if ($("nbTitle")) $("nbTitle").textContent = name;
+  var cellsEl = $("nbCells");
+  if (!cellsEl) return;
+  cellsEl.innerHTML = '<div class="hint">加载单元…</div>';
+  try {
+    var data = await api("/api/lab/notebooks/cells/" + encodeURIComponent(name) + "?project_id=" + activeProject.slug);
+    var cells = data.cells || [];
+    if (!cells.length) {
+      cellsEl.innerHTML = '<div class="hint">空笔记本</div>';
+      return;
+    }
+    cellsEl.innerHTML = cells.map(function (c, i) {
+      var src = Array.isArray(c.source) ? c.source.join("") : (c.source || "");
+      var outs = (c.outputs || []).map(function (o) {
+        return escHtml(o.text || o.Text || "");
+      }).filter(Boolean).join("\n");
+      return '<div class="nb-cell">' +
+        '<div class="nb-cell-hd">' + escHtml(c.cell_type || "code") + " #" + (i + 1) + "</div>" +
+        '<pre class="nb-src">' + escHtml(src) + "</pre>" +
+        (outs ? '<pre class="nb-out">' + outs + "</pre>" : "") +
+        "</div>";
+    }).join("");
+    // refresh pick highlight
+    document.querySelectorAll(".nb-pick").forEach(function (b) {
+      b.classList.toggle("primary", b.getAttribute("data-name") === name);
+    });
+  } catch (e) {
+    cellsEl.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function createNotebook() {
+  if (!activeProject) {
+    try { await ensureProject(); } catch (e) { alert(e.message); return; }
+  }
+  var name = prompt("笔记本文件名", "analysis.ipynb");
+  if (!name) return;
+  if (!/\.ipynb$/i.test(name)) name += ".ipynb";
+  try {
+    var res = await api("/api/lab/notebooks?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ name: name }),
+    });
+    activeNotebook = res.name || name;
+    await loadNotebooks();
+  } catch (e) {
+    alert("创建失败: " + e.message);
+  }
+}
+
+async function addNotebookCell() {
+  if (!activeProject || !activeNotebook) {
+    alert("请先选择笔记本");
+    return;
+  }
+  var src = ($("nbCellSource") && $("nbCellSource").value) || "";
+  if (!src.trim()) {
+    alert("请输入代码");
+    return;
+  }
+  try {
+    await api("/api/lab/notebooks/cell/" + encodeURIComponent(activeNotebook) + "?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ source: src }),
+    });
+    if ($("nbCellSource")) $("nbCellSource").value = "";
+    await openNotebook(activeNotebook);
+  } catch (e) {
+    alert("追加失败: " + e.message);
+  }
+}
+
+async function execNotebook() {
+  if (!activeProject || !activeNotebook) {
+    alert("请先选择笔记本");
+    return;
+  }
+  try {
+    var res = await api("/api/lab/notebooks/execute/" + encodeURIComponent(activeNotebook) + "?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (res.ok === false) {
+      alert("执行失败: " + (res.error || "unknown"));
+    }
+    await openNotebook(activeNotebook);
+  } catch (e) {
+    alert("执行失败: " + e.message);
+  }
+}
+
+async function injectNotebookToChat() {
+  if (!activeProject || !activeNotebook) {
+    alert("请先选择笔记本");
+    return;
+  }
+  try {
+    var data = await api("/api/lab/notebooks/cells/" + encodeURIComponent(activeNotebook) + "?project_id=" + activeProject.slug);
+    var md = data.markdown || "";
+    var path = "notebooks/" + activeNotebook;
+    var prompt = "请基于笔记本 " + path + " 给出分析建议：\n\n" + md.slice(0, 6000);
+    var inp = $("promptInput");
+    if (inp) {
+      inp.value = prompt;
+      inp.focus();
+    }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+$("nbCreateBtn") && $("nbCreateBtn").addEventListener("click", createNotebook);
+$("nbRefreshBtn") && $("nbRefreshBtn").addEventListener("click", loadNotebooks);
+$("nbAddCellBtn") && $("nbAddCellBtn").addEventListener("click", addNotebookCell);
+$("nbExecBtn") && $("nbExecBtn").addEventListener("click", execNotebook);
+$("nbInjectBtn") && $("nbInjectBtn").addEventListener("click", injectNotebookToChat);
 
 async function loadLabConfig() {
   try {
@@ -2459,8 +2717,10 @@ var paletteCmds = [
   { label: "打开 Bridge", action: function () { window.open(API_BASE ? "/lumen-science/?embed=1&oasis=1" : "http://127.0.0.1:18990/", "_blank"); } },
   { label: "刷新状态", action: function () { refreshHealth(); } },
   { label: "导出当前会话 Markdown", action: function () { exportActiveSession("md"); } },
+  { label: "重命名当前会话", action: function () { if (activeThread) renameSession(activeThread); } },
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
+  { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
 ];
 
 function openPalette() {

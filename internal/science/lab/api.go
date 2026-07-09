@@ -313,6 +313,25 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 					}
 					writeJSON(w, http.StatusOK, sess)
 					return
+				case http.MethodPatch, http.MethodPut:
+					var body struct {
+						Title string `json:"title"`
+					}
+					if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+						writeErr(w, http.StatusBadRequest, err)
+						return
+					}
+					sess, err := a.projects.RenameSession(slug, sid, body.Title)
+					if err != nil {
+						if os.IsNotExist(err) {
+							writeErr(w, http.StatusNotFound, err)
+							return
+						}
+						writeErr(w, http.StatusBadRequest, err)
+						return
+					}
+					writeJSON(w, http.StatusOK, sess)
+					return
 				case http.MethodDelete:
 					if err := a.projects.DeleteSession(slug, sid); err != nil {
 						if os.IsNotExist(err) {

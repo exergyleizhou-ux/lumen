@@ -303,6 +303,31 @@ func (s *Store) ListSessions(slug string) ([]Session, error) {
 	return out, nil
 }
 
+// RenameSession updates a session title.
+func (s *Store) RenameSession(slug, sessionID, title string) (Session, error) {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return Session{}, fmt.Errorf("title required")
+	}
+	if len(title) > 200 {
+		title = title[:200]
+	}
+	sess, err := s.GetSession(slug, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	sess.Title = title
+	sess.UpdatedAt = time.Now().UTC()
+	if err := s.saveSession(slug, sess); err != nil {
+		return Session{}, err
+	}
+	// list-shaped response (no bulky turns)
+	out := sess
+	out.TurnCount = len(sess.Turns)
+	out.Turns = nil
+	return out, nil
+}
+
 // DeleteSession removes a session JSON file.
 func (s *Store) DeleteSession(slug, sessionID string) error {
 	if !slugRe.MatchString(slug) {

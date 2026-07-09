@@ -427,6 +427,34 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .code-lang { font-weight: 650; text-transform: lowercase; }
 .code-wrap pre { margin: 0; padding: 10px 12px; overflow: auto; max-height: 360px; }
 .code-wrap code { font-size: 12px; }
+.composer-drop-wrap { position: relative; }
+.composer-drop-wrap.is-dragover textarea {
+  outline: 2px dashed var(--ocs-accent, #3b82f6);
+  outline-offset: -2px;
+  background: rgba(59,130,246,.06);
+}
+.drop-overlay {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(59,130,246,.12); border: 2px dashed var(--ocs-accent, #3b82f6);
+  border-radius: 10px; font-weight: 650; color: var(--ocs-accent, #3b82f6);
+  pointer-events: none; z-index: 2;
+}
+.nb-cells { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.nb-cell {
+  border: 1px solid var(--ocs-line); border-radius: 10px; overflow: hidden;
+  background: var(--ocs-surface, transparent);
+}
+.nb-cell-hd {
+  padding: 4px 8px; font-size: 11px; font-weight: 650; color: var(--ocs-muted);
+  border-bottom: 1px solid var(--ocs-line); background: rgba(0,0,0,.04);
+}
+.nb-src, .nb-out {
+  margin: 0; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; word-break: break-word;
+  max-height: 200px; overflow: auto;
+}
+.nb-out { border-top: 1px solid var(--ocs-line); color: var(--ocs-muted); background: rgba(0,0,0,.03); }
+.sess-item-row { display: flex; align-items: center; gap: 2px; }
+.sess-item-row .sess-item { flex: 1; min-width: 0; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

@@ -102,6 +102,76 @@ func TestSessionHistoryAPI(t *testing.T) {
 	if len(full.Turns) != 2 || full.Turns[0].Text != "persist me" {
 		t.Fatalf("turns %+v", full.Turns)
 	}
+	// Rename session
+	preq, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/lab/projects/"+slug+"/sessions/"+sess.ID,
+		bytes.NewReader([]byte(`{"title":"renamed-lab"}`)))
+	preq.Header.Set("Content-Type", "application/json")
+	pres, err := http.DefaultClient.Do(preq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pres.Body.Close()
+	if pres.StatusCode != 200 {
+		t.Fatalf("rename status %d", pres.StatusCode)
+	}
+	var renamed project.Session
+	_ = json.NewDecoder(pres.Body).Decode(&renamed)
+	if renamed.Title != "renamed-lab" {
+		t.Fatalf("title %q", renamed.Title)
+	}
+	got, err := store.GetSession(slug, sess.ID)
+	if err != nil || got.Title != "renamed-lab" {
+		t.Fatalf("persist rename %v %+v", err, got)
+	}
+	if len(got.Turns) != 2 {
+		t.Fatalf("turns lost on rename: %d", len(got.Turns))
+	}
+}
+
+func TestNotebooksAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "NB")
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/notebooks?project_id="+slug,
+		bytes.NewReader([]byte(`{"name":"demo.ipynb"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("create %d", res.StatusCode)
+	}
+	list, err := http.Get(ts.URL + "/api/lab/notebooks?project_id=" + slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer list.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(list.Body).Decode(&body)
+	if body["count"].(float64) < 1 {
+		t.Fatalf("list %v", body)
+	}
+	// append cell
+	creq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/notebooks/cell/demo.ipynb?project_id="+slug,
+		bytes.NewReader([]byte(`{"source":"print(1+1)"}`)))
+	creq.Header.Set("Content-Type", "application/json")
+	cres, err := http.DefaultClient.Do(creq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cres.Body.Close()
+	if cres.StatusCode != 200 {
+		t.Fatalf("cell %d", cres.StatusCode)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/notebooks/cells/demo.ipynb?project_id=" + slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	if get.StatusCode != 200 {
+		t.Fatalf("get cells %d", get.StatusCode)
+	}
 }
 
 func TestFileSearchAPI(t *testing.T) {

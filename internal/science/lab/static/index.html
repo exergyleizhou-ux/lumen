@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=34">
+  <link rel="stylesheet" href="app.css?v=35">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -96,7 +96,10 @@
             </label>
           </div>
           <div id="attachChips" class="attach-chips" hidden></div>
-          <textarea id="promptInput" rows="2" placeholder="描述科研任务… 可用 @path 引用文件 · Enter 发送 · Shift+Enter 换行" autocomplete="off"></textarea>
+          <div id="composerDrop" class="composer-drop-wrap">
+            <textarea id="promptInput" rows="2" placeholder="描述科研任务… 拖拽文件到此上传 · @path 引用 · Enter 发送" autocomplete="off"></textarea>
+            <div id="dropOverlay" class="drop-overlay" hidden>松开以上传附件</div>
+          </div>
           <div class="composer-bot">
             <span class="hint" id="composerHint">就绪</span>
             <button class="btn primary" type="submit" id="btnSend">发送</button>
@@ -116,6 +119,7 @@
           <button class="insp-tab" type="button" data-pane="compute">算力</button>
           <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
           <button class="insp-tab" type="button" data-pane="molecule">分子</button>
+          <button class="insp-tab" type="button" data-pane="notebooks">Notebook</button>
           <button class="insp-tab" type="button" data-pane="diff">Diff</button>
           <button class="insp-tab" type="button" data-pane="config">配置</button>
         </div>
@@ -210,6 +214,24 @@
             <div id="molBrowser2" class="mol-browser hint" style="padding:4px 8px"></div>
             <div id="molViewer" style="width:100%;height:calc(100% - 60px);min-height:280px"></div>
           </div>
+          <div id="notebooksPane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">Jupyter Notebooks</div>
+            <div class="btn-row" style="margin-bottom:8px">
+              <button type="button" class="btn sm primary" id="nbCreateBtn">新建</button>
+              <button type="button" class="btn sm" id="nbRefreshBtn">刷新</button>
+              <span class="hint" id="nbJupyterHint">—</span>
+            </div>
+            <div id="nbList" class="hint">加载 notebooks…</div>
+            <div class="set-k soft" style="margin-top:10px">当前笔记本</div>
+            <div id="nbTitle" class="mono hint">未选择</div>
+            <textarea id="nbCellSource" class="compute-cmd" rows="4" placeholder="追加代码单元…" style="margin-top:6px"></textarea>
+            <div class="btn-row" style="margin-top:6px">
+              <button type="button" class="btn sm" id="nbAddCellBtn">追加代码单元</button>
+              <button type="button" class="btn sm primary" id="nbExecBtn">执行（需 Jupyter）</button>
+              <button type="button" class="btn sm" id="nbInjectBtn">注入对话</button>
+            </div>
+            <div id="nbCells" class="nb-cells hint" style="margin-top:8px">选择笔记本查看单元</div>
+          </div>
           <div id="diffPane" class="insp-scroll" style="display:none">
             <div class="set-k soft">工作区文件 Diff</div>
             <input type="text" id="diffPathA" class="file-search" placeholder="路径 A（旧）" />
@@ -261,6 +283,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=34"></script>
+  <script src="app.js?v=35"></script>
 </body>
 </html>
