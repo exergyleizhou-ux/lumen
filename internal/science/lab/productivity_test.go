@@ -387,6 +387,82 @@ func TestConfigAPI(t *testing.T) {
 	}
 }
 
+func TestFileMkdirRenameCopy(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "FileOps")
+	// mkdir
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/mkdir?project_id="+slug,
+		bytes.NewReader([]byte(`{"path":"notes/sub"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("mkdir %d", res.StatusCode)
+	}
+	// write a file under notes
+	wreq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+		bytes.NewReader([]byte(`{"path":"notes/a.txt","content":"hello"}`)))
+	wreq.Header.Set("Content-Type", "application/json")
+	wres, err := http.DefaultClient.Do(wreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wres.Body.Close()
+	// copy
+	creq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/copy?project_id="+slug,
+		bytes.NewReader([]byte(`{"from":"notes/a.txt","to":"notes/b.txt"}`)))
+	creq.Header.Set("Content-Type", "application/json")
+	cres, err := http.DefaultClient.Do(creq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cres.Body.Close()
+	if cres.StatusCode != 200 {
+		t.Fatalf("copy %d", cres.StatusCode)
+	}
+	// rename
+	rreq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/rename?project_id="+slug,
+		bytes.NewReader([]byte(`{"from":"notes/b.txt","to":"notes/c.txt"}`)))
+	rreq.Header.Set("Content-Type", "application/json")
+	rres, err := http.DefaultClient.Do(rreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rres.Body.Close()
+	if rres.StatusCode != 200 {
+		t.Fatalf("rename %d", rres.StatusCode)
+	}
+	// read via content API
+	get, err := http.Get(ts.URL + "/api/lab/files/content?project_id=" + slug + "&path=notes/c.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	if get.StatusCode != 200 {
+		t.Fatalf("content %d", get.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	if body["content"] != "hello" {
+		t.Fatalf("content %v", body)
+	}
+	// conflict: copy onto existing
+	bad, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/copy?project_id="+slug,
+		bytes.NewReader([]byte(`{"from":"notes/a.txt","to":"notes/c.txt"}`)))
+	bad.Header.Set("Content-Type", "application/json")
+	bres, err := http.DefaultClient.Do(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bres.Body.Close()
+	if bres.StatusCode == 200 {
+		t.Fatal("expected conflict on existing dest")
+	}
+}
+
 func TestFileWriteAndDiff(t *testing.T) {
 	ts, sci := testLabServer(t)
 	slug := createProject(t, ts, "Diff")

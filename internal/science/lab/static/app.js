@@ -50,10 +50,13 @@ function renderMarkdown(src) {
   // Safe subset: escHtml first, then regex → HTML
   var html = escHtml(src);
 
-  // Fenced code blocks (before inline code)
+  // Fenced code blocks (before inline code) — wrap with copy button
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function (_, lang, code) {
     var cls = lang ? ' class="language-' + escHtml(lang) + '"' : "";
-    return "<pre><code" + cls + ">" + code.trimEnd() + "</code></pre>";
+    var label = lang ? escHtml(lang) : "code";
+    return '<div class="code-wrap"><div class="code-hd"><span class="code-lang">' + label +
+      '</span><button type="button" class="btn sm code-copy">复制</button></div>' +
+      "<pre><code" + cls + ">" + code.trimEnd() + "</code></pre></div>";
   });
 
   // Inline code
@@ -89,6 +92,7 @@ function renderMarkdown(src) {
   html = html.replace(/<p><\/p>/g, "");
   html = html.replace(/<p>(<li>[\s\S]*?<\/li>)<\/p>/g, "<ul>$1</ul>");
   html = html.replace(/<p>(<h[123][\s\S]*?<\/h[123]>)<\/p>/g, "$1");
+  html = html.replace(/<p>(<div class="code-wrap">[\s\S]*?<\/div>)<\/p>/g, "$1");
   html = html.replace(/<p>(<pre>[\s\S]*?<\/pre>)<\/p>/g, "$1");
   html = html.replace(/<p>(<blockquote>[\s\S]*?<\/blockquote>)<\/p>/g, "$1");
   html = html.replace(/<p>(<hr>)<\/p>/g, "$1");
@@ -97,6 +101,38 @@ function renderMarkdown(src) {
   // @file / bare paths → clickable (after esc+md so paths are text)
   html = linkifyWorkspacePaths(html);
   return html;
+}
+
+function bindCodeCopy(root) {
+  if (!root) return;
+  root.querySelectorAll(".code-copy").forEach(function (btn) {
+    if (btn._bound) return;
+    btn._bound = true;
+    btn.addEventListener("click", function () {
+      var wrap = btn.closest(".code-wrap");
+      var code = wrap && wrap.querySelector("code");
+      var text = code ? code.textContent : "";
+      if (!text) return;
+      var done = function () {
+        btn.textContent = "已复制";
+        setTimeout(function () { btn.textContent = "复制"; }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () {
+          // fallback
+          try {
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand("copy");
+            document.body.removeChild(ta);
+            done();
+          } catch (_) {}
+        });
+      }
+    });
+  });
 }
 
 /** Mark workspace-like paths for click-to-preview (operates on safe HTML). */
@@ -241,7 +277,28 @@ function reduceSSE(state, ev) {
   return state;
 }
 
-window.LabUI = { escHtml: escHtml, renderMarkdown: renderMarkdown, reduceSSE: reduceSSE };
+function parseAttachmentPaths(text) {
+  var paths = [];
+  var re = /\[(附件|产物)\]\s*([^\n\r]+)/g;
+  var m;
+  while ((m = re.exec(text || "")) !== null) {
+    var p = m[2].trim();
+    if (p && paths.indexOf(p) < 0) paths.push(p);
+  }
+  // also @path
+  re = /@([\w./\-]+\.[\w]+)/g;
+  while ((m = re.exec(text || "")) !== null) {
+    if (paths.indexOf(m[1]) < 0) paths.push(m[1]);
+  }
+  return paths;
+}
+
+window.LabUI = {
+  escHtml: escHtml,
+  renderMarkdown: renderMarkdown,
+  reduceSSE: reduceSSE,
+  parseAttachmentPaths: parseAttachmentPaths,
+};
 
 /* ── 3. Global state ── */
 var activeProject = null;
@@ -544,6 +601,7 @@ function renderHistory(turns) {
       if (t.text) {
         bubble.textDiv.innerHTML = renderMarkdown(t.text);
         bindWorkspaceRefs(bubble.textDiv);
+        bindCodeCopy(bubble.textDiv);
       }
       (t.tools || []).forEach(function (tool) {
         upsertToolCard(bubble.toolLog, {
@@ -786,6 +844,7 @@ function handleSSEEvent(ev, state, bubble) {
   if (state.text && bubble.textDiv) {
     bubble.textDiv.innerHTML = renderMarkdown(state.text) + '<span class="cursor">|</span>';
     bindWorkspaceRefs(bubble.textDiv);
+    bindCodeCopy(bubble.textDiv);
     $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
   }
 
@@ -899,22 +958,6 @@ function renderSubagentTimeline() {
   var top = byParent["_root_"] || turnTasks.filter(function (t) { return !t.parentId; });
   el.innerHTML = top.map(function (t) { return renderNode(t, 0); }).join("") ||
     nested.map(function (t) { return renderNode(t, 1); }).join("");
-}
-
-function parseAttachmentPaths(text) {
-  var paths = [];
-  var re = /\[(附件|产物)\]\s*([^\n\r]+)/g;
-  var m;
-  while ((m = re.exec(text || "")) !== null) {
-    var p = m[2].trim();
-    if (p && paths.indexOf(p) < 0) paths.push(p);
-  }
-  // also @path
-  re = /@([\w./\-]+\.[\w]+)/g;
-  while ((m = re.exec(text || "")) !== null) {
-    if (paths.indexOf(m[1]) < 0) paths.push(m[1]);
-  }
-  return paths;
 }
 
 function renderUserBubble(text) {
@@ -1133,7 +1176,7 @@ async function refreshFiles() {
   var cwdEl = $("fileCwd");
   if (!tree || !activeProject) return;
 
-  if (cwdEl) cwdEl.textContent = fileCwd || ".";
+  renderFileBreadcrumb();
   loadFileRecent();
 
   try {
@@ -1143,6 +1186,9 @@ async function refreshFiles() {
       '<div class="file-sel-bar">' +
       '<button type="button" class="btn sm" id="fileSelAll">全选</button> ' +
       '<button type="button" class="btn sm" id="fileSelNone">清除</button> ' +
+      '<button type="button" class="btn sm" id="fileMkdir">新建目录</button> ' +
+      '<button type="button" class="btn sm" id="fileSelRename">重命名</button> ' +
+      '<button type="button" class="btn sm" id="fileSelCopy">复制</button> ' +
       '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
       '<button type="button" class="btn sm" id="fileSelDiff">对比所选</button> ' +
       '<span class="hint" id="fileSelCount">0 选中</span></div>' +
@@ -1177,6 +1223,12 @@ async function refreshFiles() {
     });
     var selDel = $("fileSelDelete");
     if (selDel) selDel.addEventListener("click", function () { batchDeleteSelected(); });
+    var mkdirBtn = $("fileMkdir");
+    if (mkdirBtn) mkdirBtn.addEventListener("click", function () { fileMkdirPrompt(); });
+    var renameBtn = $("fileSelRename");
+    if (renameBtn) renameBtn.addEventListener("click", function () { fileRenameSelected(); });
+    var copyBtn = $("fileSelCopy");
+    if (copyBtn) copyBtn.addEventListener("click", function () { fileCopySelected(); });
     var selDiff = $("fileSelDiff");
     if (selDiff) selDiff.addEventListener("click", function () {
       var paths = [];
@@ -1247,6 +1299,111 @@ function fileUp() {
   refreshFiles();
 }
 
+function renderFileBreadcrumb() {
+  var cwdEl = $("fileCwd");
+  if (!cwdEl) return;
+  var cwd = fileCwd || ".";
+  if (cwd === ".") {
+    cwdEl.innerHTML = '<button type="button" class="bc-seg" data-path=".">.</button>';
+  } else {
+    var parts = cwd.split("/").filter(Boolean);
+    var html = '<button type="button" class="bc-seg" data-path=".">.</button>';
+    var acc = [];
+    parts.forEach(function (seg) {
+      acc.push(seg);
+      html += ' <span class="bc-sep">/</span> <button type="button" class="bc-seg" data-path="' +
+        escHtml(acc.join("/")) + '">' + escHtml(seg) + "</button>";
+    });
+    cwdEl.innerHTML = html;
+  }
+  cwdEl.querySelectorAll(".bc-seg").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      fileCwd = btn.getAttribute("data-path") || ".";
+      refreshFiles();
+    });
+  });
+}
+
+function selectedFilePaths() {
+  var tree = $("fileTree");
+  var paths = [];
+  if (!tree) return paths;
+  tree.querySelectorAll(".ft-check:checked").forEach(function (cb) {
+    paths.push(cb.getAttribute("data-path"));
+  });
+  return paths;
+}
+
+async function fileMkdirPrompt() {
+  if (!activeProject) return;
+  var name = prompt("新建目录名（相对当前目录 " + (fileCwd || ".") + "）", "notes");
+  if (!name) return;
+  name = name.replace(/^\/+/, "").replace(/\.\./g, "");
+  var path = (fileCwd && fileCwd !== ".") ? (fileCwd + "/" + name) : name;
+  try {
+    await api("/api/lab/files/mkdir?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ path: path }),
+    });
+    refreshFiles();
+    loadFileTree();
+  } catch (e) {
+    alert("创建失败: " + e.message);
+  }
+}
+
+async function fileRenameSelected() {
+  if (!activeProject) return;
+  var paths = selectedFilePaths();
+  if (paths.length !== 1) {
+    alert("请恰好勾选 1 项重命名");
+    return;
+  }
+  var from = paths[0];
+  var base = from.split("/").pop();
+  var toName = prompt("重命名为（可含相对路径）", base);
+  if (!toName) return;
+  toName = toName.replace(/^\/+/, "").replace(/\.\./g, "");
+  var dir = from.indexOf("/") >= 0 ? from.slice(0, from.lastIndexOf("/")) : "";
+  var to = toName.indexOf("/") >= 0 ? toName : (dir ? dir + "/" + toName : toName);
+  try {
+    await api("/api/lab/files/rename?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ from: from, to: to }),
+    });
+    refreshFiles();
+    loadFileTree();
+  } catch (e) {
+    alert("重命名失败: " + e.message);
+  }
+}
+
+async function fileCopySelected() {
+  if (!activeProject) return;
+  var paths = selectedFilePaths();
+  if (paths.length !== 1) {
+    alert("请恰好勾选 1 项复制");
+    return;
+  }
+  var from = paths[0];
+  var base = from.split("/").pop();
+  var def = from.replace(/(\.[^.]+)?$/, function (m) { return "_copy" + (m || ""); });
+  if (def === from) def = from + "_copy";
+  var to = prompt("复制到路径", def.indexOf(base) >= 0 ? def : from + "_copy");
+  if (!to) return;
+  to = to.replace(/^\/+/, "").replace(/\.\./g, "");
+  try {
+    await api("/api/lab/files/copy?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ from: from, to: to }),
+    });
+    refreshFiles();
+    loadFileTree();
+  } catch (e) {
+    alert("复制失败: " + e.message);
+  }
+}
+
 async function previewFile(path, previewKind) {
   var preview = $("filePreview");
   if (!preview || !activeProject) return Promise.resolve();
@@ -1291,6 +1448,7 @@ async function previewFile(path, previewKind) {
       bodyHtml +
       '<div class="pv">' + prov + "</div>";
     bindWorkspaceRefs(preview);
+    bindCodeCopy(preview);
     var exp = $("fpExpand");
     if (exp) exp.addEventListener("click", function () { openPreviewModal(path); });
     var molBtn = $("fpOpenMol");
@@ -1488,43 +1646,48 @@ $("btnStop") && $("btnStop").addEventListener("click", function () {
   }
 });
 
-// File upload — inject path into composer for agent context
+// File upload — multi-file; inject paths into composer for agent context
 $("fileUpload") && $("fileUpload").addEventListener("change", async function () {
-  var file = this.files && this.files[0];
-  if (!file) return;
+  var files = this.files ? Array.prototype.slice.call(this.files) : [];
+  if (!files.length) return;
   try {
     if (!activeProject) await ensureProject();
-    var fd = new FormData();
-    fd.append("file", file);
-    var res = await fetch(labPath("/api/lab/files/upload?project_id=" + activeProject.slug), {
-      method: "POST",
-      body: fd,
-    });
-    if (!res.ok) {
-      var txt = await res.text();
-      throw new Error(txt);
+    var uploadedList = [];
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i];
+      var fd = new FormData();
+      fd.append("file", file);
+      var res = await fetch(labPath("/api/lab/files/upload?project_id=" + activeProject.slug), {
+        method: "POST",
+        body: fd,
+      });
+      if (!res.ok) {
+        var txt = await res.text();
+        throw new Error(file.name + ": " + txt);
+      }
+      var uploaded = file.name;
+      try {
+        var body = await res.json();
+        if (body.uploaded) uploaded = body.uploaded;
+        else if (body.path) uploaded = body.path;
+      } catch (_) {}
+      if (pendingAttachments.indexOf(uploaded) < 0) pendingAttachments.push(uploaded);
+      uploadedList.push(uploaded);
     }
-    var uploaded = file.name;
-    try {
-      var body = await res.json();
-      if (body.uploaded) uploaded = body.uploaded;
-      else if (body.path) uploaded = body.path;
-    } catch (_) {}
-    if (pendingAttachments.indexOf(uploaded) < 0) pendingAttachments.push(uploaded);
     renderAttachmentChips();
     var inp = $("promptInput");
     if (inp) {
-      var tag = "[附件] " + uploaded + "\n";
-      if (inp.value.indexOf(uploaded) < 0) inp.value = tag + (inp.value || "");
+      var tags = uploadedList.map(function (u) { return "[附件] " + u; }).join("\n") + "\n";
+      inp.value = tags + (inp.value || "");
       inp.focus();
     }
     var hint = $("composerHint");
-    if (hint) hint.textContent = "已上传 " + uploaded + "（附件芯片 + 输入框）";
+    if (hint) hint.textContent = "已上传 " + uploadedList.length + " 个附件";
     await refreshFiles();
     loadFileTree();
     var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
     if (filesTab) filesTab.click();
-    previewFile(uploaded, "");
+    if (uploadedList.length) previewFile(uploadedList[0], "");
   } catch (e) {
     alert("上传失败: " + e.message);
   }

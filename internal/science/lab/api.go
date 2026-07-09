@@ -951,6 +951,12 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileWrite(w, r, g)
 	case sub == "diff":
 		a.handleFileDiff(w, r, g)
+	case sub == "mkdir":
+		a.handleFileMkdir(w, r, g)
+	case sub == "rename":
+		a.handleFileRename(w, r, g)
+	case sub == "copy":
+		a.handleFileCopy(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
@@ -1121,6 +1127,212 @@ func simpleLineDiff(nameA, nameB, a, b string) string {
 		}
 	}
 	return out.String()
+}
+
+// relPathOK rejects empty, absolute, and parent-escape paths.
+func relPathOK(p string) (string, error) {
+	p = filepath.ToSlash(filepath.Clean(strings.TrimSpace(p)))
+	if p == "" || p == "." {
+		return "", fmt.Errorf("invalid path")
+	}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "..") || strings.Contains(p, "/../") {
+		return "", fmt.Errorf("invalid path")
+	}
+	return p, nil
+}
+
+// handleFileMkdir creates a directory under the workspace.
+// POST {path}
+func (a *API) handleFileMkdir(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	p, err := relPathOK(body.Path)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	abs, err := g.Resolve(p)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": p})
+}
+
+// handleFileRename renames/moves a workspace path.
+// POST {from, to}
+func (a *API) handleFileRename(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	from, err := relPathOK(body.From)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("from: %w", err))
+		return
+	}
+	to, err := relPathOK(body.To)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
+		return
+	}
+	src, err := g.Resolve(from)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	dst, err := g.Resolve(to)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if _, err := os.Stat(src); err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
+		return
+	}
+	if _, err := os.Stat(dst); err == nil {
+		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := os.Rename(src, dst); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "from": from, "to": to})
+}
+
+// handleFileCopy copies a file (or small dir recursively) within the workspace.
+// POST {from, to}
+func (a *API) handleFileCopy(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	from, err := relPathOK(body.From)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("from: %w", err))
+		return
+	}
+	to, err := relPathOK(body.To)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
+		return
+	}
+	src, err := g.Resolve(from)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	dst, err := g.Resolve(to)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
+		return
+	}
+	if _, err := os.Stat(dst); err == nil {
+		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
+		return
+	}
+	if info.IsDir() {
+		if err := copyDirLimited(src, dst, 500, 32<<20); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	} else {
+		if info.Size() > 32<<20 {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("file too large to copy (max 32MB)"))
+			return
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		data, err := os.ReadFile(src)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if err := os.WriteFile(dst, data, 0o600); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "from": from, "to": to})
+}
+
+// copyDirLimited copies a directory tree with file/byte caps.
+func copyDirLimited(src, dst string, maxFiles int, maxBytes int64) error {
+	var n int
+	var total int64
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		if n >= maxFiles {
+			return fmt.Errorf("too many files (max %d)", maxFiles)
+		}
+		if total+info.Size() > maxBytes {
+			return fmt.Errorf("directory too large to copy")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, data, 0o600); err != nil {
+			return err
+		}
+		n++
+		total += int64(len(data))
+		return nil
+	})
 }
 
 // handleFilesDelete removes workspace files/dirs (POST {paths:[]}).

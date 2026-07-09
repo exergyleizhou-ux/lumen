@@ -58,6 +58,21 @@ function runOnce(runLabel) {
   assert(md.includes("<li>item one</li>") || md.includes("<li>"), "md list li: " + md);
   console.log("OK renderMarkdown bold/list/code tags present");
 
+  // fenced code block has copy button
+  const fenced = L.renderMarkdown("```js\nconst x = 1;\n```");
+  assert(fenced.includes("code-wrap"), "fenced code-wrap: " + fenced.slice(0, 120));
+  assert(fenced.includes("code-copy"), "fenced copy btn");
+  assert(fenced.includes("const x = 1"), "fenced body");
+  console.log("OK fenced code has code-wrap + copy");
+
+  // attachment path parse
+  if (typeof L.parseAttachmentPaths === "function") {
+    const paths = L.parseAttachmentPaths("[附件] data/a.csv\nhello @notes/b.txt");
+    assert(paths.includes("data/a.csv"), "attach card path: " + JSON.stringify(paths));
+    assert(paths.includes("notes/b.txt"), "at path: " + JSON.stringify(paths));
+    console.log("OK parseAttachmentPaths");
+  }
+
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
   assert(!xss.includes("<img"), "md no raw img tag after escape: " + xss);

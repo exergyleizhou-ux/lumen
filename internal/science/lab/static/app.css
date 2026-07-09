@@ -407,6 +407,26 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .msg-attach-card:hover { background: rgba(255,255,255,.28); }
 .msg-user-text { word-break: break-word; }
 .mol-browser { display: flex; flex-wrap: wrap; gap: 4px; max-height: 72px; overflow: auto; }
+.file-cwd { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-width: 0; }
+.bc-seg {
+  background: transparent; border: none; color: var(--ocs-accent, #3b82f6);
+  font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; cursor: pointer; padding: 0 2px; border-radius: 4px;
+}
+.bc-seg:hover { background: var(--ocs-accent-light, rgba(59,130,246,.12)); text-decoration: underline; }
+.bc-sep { color: var(--ocs-muted); font-size: 11px; }
+.code-wrap {
+  position: relative; margin: 8px 0; border-radius: 10px;
+  border: 1px solid var(--ocs-line); overflow: hidden; background: var(--ocs-surface, #0f172a);
+}
+.code-hd {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; font-size: 11px; color: var(--ocs-muted);
+  border-bottom: 1px solid var(--ocs-line); background: rgba(0,0,0,.15);
+}
+.code-lang { font-weight: 650; text-transform: lowercase; }
+.code-wrap pre { margin: 0; padding: 10px 12px; overflow: auto; max-height: 360px; }
+.code-wrap code { font-size: 12px; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;
