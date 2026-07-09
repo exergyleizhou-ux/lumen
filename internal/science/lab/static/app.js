@@ -536,10 +536,7 @@ function renderHistory(turns) {
   }
   turns.forEach(function (t) {
     if (t.role === "user") {
-      var ue = document.createElement("div");
-      ue.className = "chat-msg user";
-      ue.textContent = t.text || "";
-      $("chatScroll").appendChild(ue);
+      $("chatScroll").appendChild(renderUserBubble(t.text || ""));
       return;
     }
     if (t.role === "assistant") {
@@ -904,6 +901,53 @@ function renderSubagentTimeline() {
     nested.map(function (t) { return renderNode(t, 1); }).join("");
 }
 
+function parseAttachmentPaths(text) {
+  var paths = [];
+  var re = /\[(附件|产物)\]\s*([^\n\r]+)/g;
+  var m;
+  while ((m = re.exec(text || "")) !== null) {
+    var p = m[2].trim();
+    if (p && paths.indexOf(p) < 0) paths.push(p);
+  }
+  // also @path
+  re = /@([\w./\-]+\.[\w]+)/g;
+  while ((m = re.exec(text || "")) !== null) {
+    if (paths.indexOf(m[1]) < 0) paths.push(m[1]);
+  }
+  return paths;
+}
+
+function renderUserBubble(text) {
+  var ue = document.createElement("div");
+  ue.className = "chat-msg user";
+  var paths = parseAttachmentPaths(text);
+  var body = text;
+  // strip attachment lines for cleaner text if we show cards
+  if (paths.length) {
+    body = text.replace(/\[(附件|产物)\]\s*[^\n\r]+\n?/g, "").trim();
+  }
+  var html = "";
+  if (paths.length) {
+    html += '<div class="msg-attach-list">' + paths.map(function (p) {
+      return '<button type="button" class="msg-attach-card" data-path="' + escHtml(p) + '">' +
+        '<span class="msg-attach-icon">📎</span><span class="msg-attach-path">' + escHtml(p) + "</span></button>";
+    }).join("") + "</div>";
+  }
+  if (body) {
+    html += '<div class="msg-user-text">' + escHtml(body).replace(/\n/g, "<br>") + "</div>";
+  }
+  ue.innerHTML = html || escHtml(text);
+  ue.querySelectorAll(".msg-attach-card").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var p = btn.getAttribute("data-path");
+      var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+      if (filesTab) filesTab.click();
+      previewFile(p, "");
+    });
+  });
+  return ue;
+}
+
 async function streamChat(prompt, mode) {
   mode = mode || "agent";
   var p;
@@ -913,10 +957,8 @@ async function streamChat(prompt, mode) {
   }
   $("welcome") && $("welcome").remove();
 
-  // User bubble
-  var ue = document.createElement("div");
-  ue.className = "chat-msg user";
-  ue.textContent = prompt;
+  // User bubble (structured attachments)
+  var ue = renderUserBubble(prompt);
   $("chatScroll").appendChild(ue);
   ue.scrollIntoView({ behavior: "smooth", block: "end" });
 
@@ -1102,6 +1144,7 @@ async function refreshFiles() {
       '<button type="button" class="btn sm" id="fileSelAll">全选</button> ' +
       '<button type="button" class="btn sm" id="fileSelNone">清除</button> ' +
       '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
+      '<button type="button" class="btn sm" id="fileSelDiff">对比所选</button> ' +
       '<span class="hint" id="fileSelCount">0 选中</span></div>' +
       files.map(function (f) {
         var icon = f.isDir ? "📁" : fileIcon(f.name || f.path);
@@ -1134,6 +1177,22 @@ async function refreshFiles() {
     });
     var selDel = $("fileSelDelete");
     if (selDel) selDel.addEventListener("click", function () { batchDeleteSelected(); });
+    var selDiff = $("fileSelDiff");
+    if (selDiff) selDiff.addEventListener("click", function () {
+      var paths = [];
+      tree.querySelectorAll(".ft-check:checked").forEach(function (cb) {
+        paths.push(cb.getAttribute("data-path"));
+      });
+      if (paths.length !== 2) {
+        alert("请恰好勾选 2 个文件做 Diff");
+        return;
+      }
+      if ($("diffPathA")) $("diffPathA").value = paths[0];
+      if ($("diffPathB")) $("diffPathB").value = paths[1];
+      var tab = document.querySelector('.insp-tab[data-pane="diff"]');
+      if (tab) tab.click();
+      runFileDiff();
+    });
 
     tree.querySelectorAll(".ft-row").forEach(function (row) {
       row.addEventListener("click", function (e) {
@@ -1537,10 +1596,14 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
       var frame = $("ketcherFrame");
       if (frame) frame.src = "https://lifescience.opensource.epam.com/ketcher/standalone/index.html";
     }
-    if (pane === "molecule" && !molLoaded) {
-      molLoaded = true;
-      loadMoleculeViewer();
+    if (pane === "molecule") {
+      if (!molLoaded) {
+        molLoaded = true;
+        loadMoleculeViewer();
+      }
+      loadMoleculeBrowser();
     }
+    if (pane === "ketcher") loadMoleculeBrowser();
   });
 });
 
@@ -1764,21 +1827,27 @@ async function loadComputeHosts() {
 function renderHostRegistry(hosts) {
   var el = $("hostRegistry");
   if (!el) return;
-  var reg = (hosts || []).filter(function (h) {
-    return h && (h.source === "registry" || (!h.source && h.alias && h.alias !== "local"));
-  });
-  // only show registered ones for delete
-  reg = (hosts || []).filter(function (h) { return h && h.source === "registry"; });
-  if (!reg.length) {
-    el.innerHTML = '<div class="hint">尚无注册主机 — 下方可添加</div>';
+  // show local + registry + first few ssh_config for ping
+  var list = (hosts || []).filter(function (h) {
+    if (!h) return false;
+    if (h.source === "registry" || h.alias === "local") return true;
+    return h.source === "ssh_config";
+  }).slice(0, 12);
+  if (!list.length) {
+    el.innerHTML = '<div class="hint">尚无主机 — 下方可添加</div>';
     return;
   }
-  el.innerHTML = reg.map(function (h) {
+  el.innerHTML = list.map(function (h) {
+    var alias = h.alias || h.Alias || "";
+    var canDel = h.source === "registry";
     return '<div class="host-row">' +
-      '<span class="mono">' + escHtml(h.alias) + "</span> " +
-      '<span class="hint">' + escHtml(h.user || "") + (h.hostname ? "@" + escHtml(h.hostname) : "") + "</span>" +
+      '<span class="mono">' + escHtml(alias) + "</span> " +
+      '<span class="hint">' + escHtml(h.user || "") + (h.hostname ? "@" + escHtml(h.hostname) : "") +
+      (h.source ? " · " + escHtml(h.source) : "") + "</span>" +
       (h.notes ? ' <span class="hint">(' + escHtml(h.notes) + ")</span>" : "") +
-      ' <button type="button" class="btn sm host-del" data-alias="' + escHtml(h.alias) + '">删除</button></div>';
+      ' <button type="button" class="btn sm host-ping" data-alias="' + escHtml(alias) + '">探测</button>' +
+      (canDel ? ' <button type="button" class="btn sm host-del" data-alias="' + escHtml(alias) + '">删除</button>' : "") +
+      ' <span class="hint host-ping-res" data-alias="' + escHtml(alias) + '"></span></div>';
   }).join("");
   el.querySelectorAll(".host-del").forEach(function (btn) {
     btn.addEventListener("click", async function () {
@@ -1788,6 +1857,57 @@ function renderHostRegistry(hosts) {
       } catch (e) { alert(e.message); }
     });
   });
+  el.querySelectorAll(".host-ping").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      var alias = btn.getAttribute("data-alias");
+      var resEl = el.querySelector('.host-ping-res[data-alias="' + alias + '"]');
+      if (resEl) resEl.textContent = "探测中…";
+      try {
+        var r = await api("/api/lab/compute/ssh-hosts/ping", {
+          method: "POST",
+          body: JSON.stringify({ alias: alias }),
+        });
+        if (resEl) {
+          resEl.textContent = (r.ok ? "✓ " : "✗ ") + (r.message || "") + " (" + r.latency_ms + "ms)";
+          resEl.style.color = r.ok ? "var(--ocs-success)" : "var(--ocs-danger)";
+        }
+      } catch (e) {
+        if (resEl) resEl.textContent = "✗ " + e.message;
+      }
+    });
+  });
+}
+
+async function loadMoleculeBrowser() {
+  var els = [$("molBrowser"), $("molBrowser2")].filter(Boolean);
+  if (!els.length || !activeProject) return;
+  try {
+    var data = await api("/api/lab/files/recent?project_id=" + activeProject.slug + "&limit=50");
+    var mols = (data.files || []).filter(function (f) {
+      return f.previewKind === "molecule" || /\.(pdb|sdf|mol|cif)$/i.test(f.path || "");
+    });
+    var html = !mols.length
+      ? '<div class="hint">工作区暂无 .pdb/.sdf/.mol 文件</div>'
+      : mols.map(function (f) {
+          return '<button type="button" class="btn sm mol-pick" data-path="' + escHtml(f.path) + '">' + escHtml(f.path) + "</button>";
+        }).join(" ");
+    els.forEach(function (el) {
+      el.innerHTML = html;
+      el.querySelectorAll(".mol-pick").forEach(function (btn) {
+        btn.addEventListener("click", async function () {
+          var path = btn.getAttribute("data-path");
+          try {
+            var content = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
+            if ($("molEditor")) $("molEditor").value = content.content || "";
+            if ($("molSavePath")) $("molSavePath").value = path;
+            openMoleculeFromContent(path, content.content || "", "molecule");
+          } catch (e) { alert(e.message); }
+        });
+      });
+    });
+  } catch (e) {
+    els.forEach(function (el) { el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>"; });
+  }
 }
 
 async function registerHost() {

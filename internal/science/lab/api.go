@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -94,7 +95,9 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/files/", a.handleFiles)
 	mux.HandleFunc("/api/lab/provenance", a.handleProvenance)
 	mux.HandleFunc("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
+	mux.HandleFunc("/api/lab/compute/ssh-hosts/", a.handleComputeSSHHosts)
 	mux.HandleFunc("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
+	mux.HandleFunc("/api/lab/compute/hosts/", a.handleComputeSSHHosts)
 	mux.HandleFunc("/api/lab/compute/jobs", a.handleComputeJobs)
 	mux.HandleFunc("/api/lab/compute/jobs/", a.handleComputeJob)
 	mux.HandleFunc("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
@@ -1751,6 +1754,11 @@ func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
 // ── Compute endpoints ──
 
 func (a *API) handleComputeSSHHosts(w http.ResponseWriter, r *http.Request) {
+	// POST /api/lab/compute/ssh-hosts/ping  {alias} or {host}
+	if strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/ping") || r.URL.Query().Get("action") == "ping" {
+		a.handleHostPing(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		local := compute.SSHHost{Alias: "local", Hostname: "local-shell", User: "local"}
@@ -1811,6 +1819,80 @@ func (a *API) handleComputeSSHHosts(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// handleHostPing checks SSH/local connectivity for a host alias.
+// POST { "alias": "local" | "gpu1" } or GET ?alias=
+func (a *API) handleHostPing(w http.ResponseWriter, r *http.Request) {
+	alias := r.URL.Query().Get("alias")
+	if r.Method == http.MethodPost {
+		var body struct {
+			Alias string `json:"alias"`
+			Host  string `json:"host"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body.Alias != "" {
+			alias = body.Alias
+		} else if body.Host != "" {
+			alias = body.Host
+		}
+	}
+	if alias == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("alias required"))
+		return
+	}
+	start := time.Now()
+	ok := false
+	msg := ""
+	if compute.IsLocalHost(alias) {
+		cmd := exec.Command("sh", "-lc", "echo ok")
+		out, err := cmd.CombinedOutput()
+		ok = err == nil && strings.Contains(string(out), "ok")
+		if err != nil {
+			msg = err.Error()
+		} else {
+			msg = "local shell ok"
+		}
+	} else {
+		// Prefer registered hostname if present
+		target := alias
+		if reg, err := LoadRegisteredHosts(a.sciDir); err == nil {
+			for _, h := range reg {
+				if h.Alias == alias {
+					if h.Hostname != "" {
+						target = h.Hostname
+						if h.User != "" {
+							target = h.User + "@" + h.Hostname
+						}
+					}
+					break
+				}
+			}
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, "ssh",
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=5",
+			"-o", "StrictHostKeyChecking=accept-new",
+			target, "echo ok")
+		out, err := cmd.CombinedOutput()
+		ok = err == nil && strings.Contains(string(out), "ok")
+		if err != nil {
+			msg = strings.TrimSpace(string(out) + " " + err.Error())
+			if len(msg) > 300 {
+				msg = msg[:300] + "…"
+			}
+		} else {
+			msg = "ssh ok"
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"alias":      alias,
+		"ok":         ok,
+		"message":    msg,
+		"latency_ms": time.Since(start).Milliseconds(),
+	})
 }
 
 func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {

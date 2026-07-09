@@ -339,6 +339,29 @@ func TestComputeImportAll(t *testing.T) {
 	}
 }
 
+func TestHostPingLocal(t *testing.T) {
+	ts, _ := testLabServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/ssh-hosts/ping",
+		bytes.NewReader([]byte(`{"alias":"local"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	if body["ok"] != true {
+		t.Fatalf("local ping should ok: %v", body)
+	}
+	if body["alias"] != "local" {
+		t.Fatalf("%v", body)
+	}
+}
+
 func TestConfigAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	req, _ := http.NewRequest(http.MethodPut, ts.URL+"/api/lab/config",

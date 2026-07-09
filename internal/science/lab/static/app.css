@@ -397,6 +397,16 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .set-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 12px; }
 .set-row .k { color: var(--ocs-muted); }
 .set-row .v { font-weight: 650; }
+.msg-attach-list { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.msg-attach-card {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,.35);
+  background: rgba(255,255,255,.18); color: inherit; font: inherit; font-size: 12px; font-weight: 650;
+  cursor: pointer;
+}
+.msg-attach-card:hover { background: rgba(255,255,255,.28); }
+.msg-user-text { word-break: break-word; }
+.mol-browser { display: flex; flex-wrap: wrap; gap: 4px; max-height: 72px; overflow: auto; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;
