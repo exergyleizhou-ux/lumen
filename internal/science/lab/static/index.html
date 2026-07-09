@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=35">
+  <link rel="stylesheet" href="app.css?v=36">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -90,6 +90,7 @@
               <option value="default">Default</option>
             </select>
             <button type="button" class="btn sm" id="btnStop" disabled title="中止当前回合">停止</button>
+            <button type="button" class="btn sm" id="btnRerun" disabled title="重跑上一条">重跑</button>
             <label class="btn sm upload-btn">
               附件
               <input type="file" id="fileUpload" multiple hidden />
@@ -97,7 +98,7 @@
           </div>
           <div id="attachChips" class="attach-chips" hidden></div>
           <div id="composerDrop" class="composer-drop-wrap">
-            <textarea id="promptInput" rows="2" placeholder="描述科研任务… 拖拽文件到此上传 · @path 引用 · Enter 发送" autocomplete="off"></textarea>
+            <textarea id="promptInput" rows="2" placeholder="描述科研任务… 拖拽/粘贴文件 · @path · Enter 发送" autocomplete="off"></textarea>
             <div id="dropOverlay" class="drop-overlay" hidden>松开以上传附件</div>
           </div>
           <div class="composer-bot">
@@ -283,6 +284,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=35"></script>
+  <script src="app.js?v=36"></script>
 </body>
 </html>

@@ -455,6 +455,27 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 .nb-out { border-top: 1px solid var(--ocs-line); color: var(--ocs-muted); background: rgba(0,0,0,.03); }
 .sess-item-row { display: flex; align-items: center; gap: 2px; }
 .sess-item-row .sess-item { flex: 1; min-width: 0; }
+.proj-row { display: flex; align-items: center; gap: 2px; margin-bottom: 2px; }
+.proj-row .proj-pick {
+  flex: 1; min-width: 0; text-align: left;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 8px; padding: 6px 8px; cursor: pointer; font: inherit; color: inherit;
+}
+.proj-row .proj-pick:hover { background: var(--ocs-accent-light, rgba(59,130,246,.1)); }
+.proj-row .proj-pick.active {
+  background: var(--ocs-accent-light, rgba(59,130,246,.14));
+  border-color: var(--ocs-line); font-weight: 650;
+}
+.fp-editor {
+  width: 100%; min-height: 220px; max-height: 50vh;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.45;
+  padding: 10px; border-radius: 10px;
+  border: 1px solid var(--ocs-line);
+  background: var(--ocs-surface, #0b1220); color: inherit;
+  resize: vertical; box-sizing: border-box;
+}
+.fp-view { max-height: 50vh; overflow: auto; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

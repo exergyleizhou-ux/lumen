@@ -348,9 +348,11 @@ async function loadProjects() {
     if (!nav) return;
     nav.innerHTML = "";
     list.forEach(function (p) {
+      var row = document.createElement("div");
+      row.className = "proj-row";
       var btn = document.createElement("button");
       btn.type = "button";
-      btn.className = (activeProject && activeProject.slug === p.slug) ? " active" : "";
+      btn.className = "proj-pick" + ((activeProject && activeProject.slug === p.slug) ? " active" : "");
       btn.textContent = p.title;
       btn.addEventListener("click", function () {
         activeProject = p;
@@ -368,7 +370,18 @@ async function loadProjects() {
         if (nm) nm.textContent = p.title;
         if (mt) mt.textContent = p.slug;
       });
-      nav.appendChild(btn);
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "btn sm proj-del";
+      del.title = "删除课题";
+      del.textContent = "×";
+      del.addEventListener("click", function (e) {
+        e.stopPropagation();
+        deleteProject(p.slug, p.title);
+      });
+      row.appendChild(btn);
+      row.appendChild(del);
+      nav.appendChild(row);
     });
     if (!activeProject && list.length) {
       activeProject = list[0];
@@ -387,6 +400,28 @@ async function loadProjects() {
   } catch (e) {
     var nav = $("projectList");
     if (nav) nav.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function deleteProject(slug, title) {
+  if (!slug) return;
+  if (!confirm("删除课题「" + (title || slug) + "」？工作区与会话不可恢复。")) return;
+  try {
+    await api("/api/lab/projects/" + encodeURIComponent(slug), { method: "DELETE" });
+    if (activeProject && activeProject.slug === slug) {
+      activeProject = null;
+      activeThread = "";
+      clearChatScroll('<section class="hero" id="welcome"><h2>课题已删除</h2><p>新建或选择其它课题</p></section>');
+      var nm = $("activeProjectName");
+      var mt = $("activeProjectMeta");
+      if (nm) nm.textContent = "未选择";
+      if (mt) mt.textContent = "";
+      var tree = $("fileTree");
+      if (tree) tree.innerHTML = "";
+    }
+    await loadProjects();
+  } catch (e) {
+    alert("删除失败: " + e.message);
   }
 }
 
@@ -1221,6 +1256,7 @@ async function refreshFiles() {
       '<button type="button" class="btn sm" id="fileSelAll">全选</button> ' +
       '<button type="button" class="btn sm" id="fileSelNone">清除</button> ' +
       '<button type="button" class="btn sm" id="fileMkdir">新建目录</button> ' +
+      '<button type="button" class="btn sm" id="fileNew">新建文件</button> ' +
       '<button type="button" class="btn sm" id="fileSelRename">重命名</button> ' +
       '<button type="button" class="btn sm" id="fileSelCopy">复制</button> ' +
       '<button type="button" class="btn sm" id="fileSelDownload">下载</button> ' +
@@ -1260,6 +1296,8 @@ async function refreshFiles() {
     if (selDel) selDel.addEventListener("click", function () { batchDeleteSelected(); });
     var mkdirBtn = $("fileMkdir");
     if (mkdirBtn) mkdirBtn.addEventListener("click", function () { fileMkdirPrompt(); });
+    var newFileBtn = $("fileNew");
+    if (newFileBtn) newFileBtn.addEventListener("click", function () { fileNewPrompt(); });
     var renameBtn = $("fileSelRename");
     if (renameBtn) renameBtn.addEventListener("click", function () { fileRenameSelected(); });
     var copyBtn = $("fileSelCopy");
@@ -1454,47 +1492,68 @@ function fileDownloadSelected() {
   });
 }
 
+var previewEditPath = "";
+var previewEditOriginal = "";
+
 async function previewFile(path, previewKind) {
   var preview = $("filePreview");
   if (!preview || !activeProject) return Promise.resolve();
+  previewEditPath = path || "";
+  previewEditOriginal = "";
   try {
     var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
     var prov = await loadProvenance(path);
     var kind = previewKind || data.previewKind || "text";
+    var content = data.content || "";
+    previewEditOriginal = content;
 
     var bodyHtml = "";
     var dl = labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
+    var canEdit = !(kind === "molecule" || kind === "office" || kind === "image" || kind === "pdf" || kind === "binary");
+    if (content.length > 2 * 1024 * 1024) canEdit = false;
+
     switch (kind) {
       case "markdown":
-        bodyHtml = '<div class="fp-md">' + renderMarkdown(data.content || "") + "</div>";
+        bodyHtml = '<div class="fp-view" id="fpView"><div class="fp-md">' + renderMarkdown(content) + "</div></div>" +
+          '<textarea id="fpEditor" class="fp-editor" hidden></textarea>';
         break;
       case "image":
         bodyHtml = '<img src="' + dl + '" alt="' + escHtml(path) + '" style="max-width:100%;border-radius:8px" loading="lazy" />';
+        canEdit = false;
         break;
       case "pdf":
         bodyHtml = '<div class="hint">📕 PDF (' + fmtSize(data.size) + ') — <a href="' + dl + '" target="_blank">下载 / 新窗口打开</a></div>' +
           '<iframe class="fp-pdf" src="' + dl + '" title="pdf"></iframe>';
+        canEdit = false;
         break;
       case "office":
         bodyHtml = '<div class="hint">📄 Office 文本抽取 (' + escHtml(data.officeKind || "office") + ") · " + fmtSize(data.size) +
           ' — <a href="' + dl + '" target="_blank">下载原文件</a></div>' +
           (data.hint ? '<div class="hint">' + escHtml(data.hint) + "</div>" : "") +
-          '<pre class="fp-body">' + escHtml(data.content || "(无文本)") + "</pre>";
+          '<pre class="fp-body">' + escHtml(content || "(无文本)") + "</pre>";
+        canEdit = false;
         break;
       case "molecule":
         bodyHtml = '<div class="hint">🧬 分子结构 — <button type="button" class="btn sm" id="fpOpenMol">在 3Dmol 中打开</button></div>' +
-          '<pre class="fp-body">' + escHtml((data.content || "").slice(0, 2000)) + "</pre>";
+          '<pre class="fp-body">' + escHtml(content.slice(0, 2000)) + "</pre>";
+        canEdit = false;
         break;
       case "binary":
         bodyHtml = '<div class="hint">不支持内联预览 (' + fmtSize(data.size) + ') — <a href="' + dl + '" target="_blank">下载</a></div>';
+        canEdit = false;
         break;
       default:
-        bodyHtml = '<pre class="fp-body">' + escHtml(data.content || "") + "</pre>";
+        bodyHtml = '<div class="fp-view" id="fpView"><pre class="fp-body">' + escHtml(content) + "</pre></div>" +
+          '<textarea id="fpEditor" class="fp-editor" hidden></textarea>';
         break;
     }
     preview.innerHTML =
-      '<div class="fp-hd">📄 ' + escHtml(data.path || path) + " (" + fmtSize(data.size) + ') ' +
-      '<button type="button" class="btn sm" id="fpExpand">全屏</button></div>' +
+      '<div class="fp-hd">📄 ' + escHtml(data.path || path) + " (" + fmtSize(data.size) + ") " +
+      (canEdit ? '<button type="button" class="btn sm" id="fpEdit">编辑</button> ' +
+        '<button type="button" class="btn sm primary" id="fpSave" hidden>保存</button> ' +
+        '<button type="button" class="btn sm" id="fpCancelEdit" hidden>取消</button> ' : "") +
+      '<button type="button" class="btn sm" id="fpExpand">全屏</button> ' +
+      '<span class="hint" id="fpEditHint"></span></div>' +
       bodyHtml +
       '<div class="pv">' + prov + "</div>";
     bindWorkspaceRefs(preview);
@@ -1504,15 +1563,78 @@ async function previewFile(path, previewKind) {
     var molBtn = $("fpOpenMol");
     if (molBtn) {
       molBtn.addEventListener("click", function () {
-        openMoleculeFromContent(path, data.content || "", kind);
+        openMoleculeFromContent(path, content, kind);
+      });
+    }
+    var editBtn = $("fpEdit");
+    var saveBtn = $("fpSave");
+    var cancelBtn = $("fpCancelEdit");
+    var editor = $("fpEditor");
+    var view = $("fpView");
+    var hint = $("fpEditHint");
+    if (editBtn && editor) {
+      editBtn.addEventListener("click", function () {
+        editor.value = previewEditOriginal;
+        editor.hidden = false;
+        if (view) view.hidden = true;
+        editBtn.hidden = true;
+        if (saveBtn) saveBtn.hidden = false;
+        if (cancelBtn) cancelBtn.hidden = false;
+        if (hint) hint.textContent = "编辑中…";
+        editor.focus();
+      });
+    }
+    if (cancelBtn && editor) {
+      cancelBtn.addEventListener("click", function () {
+        editor.hidden = true;
+        if (view) view.hidden = false;
+        if (editBtn) editBtn.hidden = false;
+        if (saveBtn) saveBtn.hidden = true;
+        cancelBtn.hidden = true;
+        if (hint) hint.textContent = "";
+      });
+    }
+    if (saveBtn && editor) {
+      saveBtn.addEventListener("click", async function () {
+        try {
+          await api("/api/lab/files/write?project_id=" + activeProject.slug, {
+            method: "POST",
+            body: JSON.stringify({ path: path, content: editor.value }),
+          });
+          if (hint) hint.textContent = "已保存";
+          await previewFile(path, kind);
+          loadFileRecent();
+        } catch (e) {
+          if (hint) hint.textContent = "保存失败";
+          alert("保存失败: " + e.message);
+        }
       });
     }
     // Auto-open molecule tab for pdb/mol files
-    if (kind === "molecule" && data.content) {
-      openMoleculeFromContent(path, data.content, kind);
+    if (kind === "molecule" && content) {
+      openMoleculeFromContent(path, content, kind);
     }
   } catch (e) {
     preview.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function fileNewPrompt() {
+  if (!activeProject) return;
+  var name = prompt("新建文件名（相对当前目录 " + (fileCwd || ".") + "）", "notes/draft.md");
+  if (!name) return;
+  name = name.replace(/^\/+/, "").replace(/\.\./g, "");
+  var path = (fileCwd && fileCwd !== "." && name.indexOf("/") < 0) ? (fileCwd + "/" + name) : name;
+  try {
+    await api("/api/lab/files/write?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ path: path, content: "" }),
+    });
+    refreshFiles();
+    loadFileTree();
+    previewFile(path, "");
+  } catch (e) {
+    alert("新建失败: " + e.message);
   }
 }
 
@@ -1591,16 +1713,37 @@ async function loadProvenance(path) {
 
 /* ── 10. Composer ── */
 
+var lastPrompt = "";
+var lastMode = "agent";
+
 function submitPrompt() {
   var inp = $("promptInput");
   if (!inp) return;
   var prompt = inp.value.trim();
   if (!prompt && !pendingAttachments.length) return;
   prompt = injectAttachmentsIntoPrompt(prompt || "请查看附件并分析。");
+  lastPrompt = prompt;
+  lastMode = ($("chatMode") && $("chatMode").value) || "agent";
+  try { localStorage.setItem("lumen-last-prompt", lastPrompt); } catch (_) {}
   inp.value = "";
   inp.style.height = "auto";
-  var mode = ($("chatMode") && $("chatMode").value) || "agent";
-  streamChat(prompt, mode).catch(function (err) {
+  var rerun = $("btnRerun");
+  if (rerun) rerun.disabled = false;
+  streamChat(prompt, lastMode).catch(function (err) {
+    addErrorBubble($("chatScroll"), err.message);
+  });
+}
+
+function rerunLastPrompt() {
+  if (!lastPrompt) {
+    try { lastPrompt = localStorage.getItem("lumen-last-prompt") || ""; } catch (_) {}
+  }
+  if (!lastPrompt) {
+    alert("没有可重跑的上一条消息");
+    return;
+  }
+  var mode = lastMode || ($("chatMode") && $("chatMode").value) || "agent";
+  streamChat(lastPrompt, mode).catch(function (err) {
     addErrorBubble($("chatScroll"), err.message);
   });
 }
@@ -1682,10 +1825,48 @@ $("promptInput") && $("promptInput").addEventListener("keydown", function (e) {
     submitPrompt();
   }
 });
+// Paste images/files from clipboard into attachments
+$("promptInput") && $("promptInput").addEventListener("paste", async function (e) {
+  var cd = e.clipboardData;
+  if (!cd) return;
+  var files = [];
+  if (cd.files && cd.files.length) {
+    files = Array.prototype.slice.call(cd.files);
+  } else if (cd.items) {
+    for (var i = 0; i < cd.items.length; i++) {
+      var it = cd.items[i];
+      if (it.kind === "file") {
+        var f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+  }
+  if (!files.length) return;
+  e.preventDefault();
+  try {
+    // name clipboard images
+    files = files.map(function (f, idx) {
+      if (f.name && f.name !== "image.png" && f.name !== "blob") return f;
+      var ext = (f.type && f.type.split("/")[1]) || "png";
+      return new File([f], "paste-" + Date.now() + "-" + idx + "." + ext, { type: f.type || "image/png" });
+    });
+    await uploadFilesList(files);
+  } catch (err) {
+    alert("粘贴上传失败: " + err.message);
+  }
+});
 $("composer") && $("composer").addEventListener("submit", function (e) {
   e.preventDefault();
   submitPrompt();
 });
+$("btnRerun") && $("btnRerun").addEventListener("click", function () { rerunLastPrompt(); });
+// restore last prompt availability
+(function () {
+  try {
+    lastPrompt = localStorage.getItem("lumen-last-prompt") || "";
+    if (lastPrompt && $("btnRerun")) $("btnRerun").disabled = false;
+  } catch (_) {}
+})();
 
 // Stop button
 $("btnStop") && $("btnStop").addEventListener("click", function () {
@@ -2721,6 +2902,8 @@ var paletteCmds = [
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
+  { label: "重跑上一条消息", action: function () { rerunLastPrompt(); } },
+  { label: "新建工作区文件", action: function () { var t = document.querySelector('.insp-tab[data-pane="files"]'); if (t) t.click(); fileNewPrompt(); } },
 ];
 
 function openPalette() {
