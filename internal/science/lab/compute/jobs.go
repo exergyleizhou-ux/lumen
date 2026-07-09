@@ -138,35 +138,73 @@ func IsLocalHost(host string) bool {
 func (s *Store) run(id, host, command, workDir string, timeout time.Duration, globs []string, localDir string) {
 	s.patch(id, func(j *Job) {
 		j.Status = "running"
+		j.Output = ""
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	var out []byte
-	var err error
+	var cmd *exec.Cmd
 	if IsLocalHost(host) {
-		// Local shell: no SSH required — productivity path for harvest demos & CI.
 		shell := "sh"
 		if _, lookErr := exec.LookPath("bash"); lookErr == nil {
 			shell = "bash"
 		}
-		cmd := exec.CommandContext(ctx, shell, "-lc", command)
+		cmd = exec.CommandContext(ctx, shell, "-lc", command)
 		if workDir != "" {
 			cmd.Dir = workDir
 		}
-		cmd.Stdin = nil
-		out, err = cmd.CombinedOutput()
 	} else {
 		remote := command
 		if workDir != "" {
 			remote = "cd " + shellQuote(workDir) + " && " + command
 		}
-		cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote)
-		cmd.Stdin = nil
-		out, err = cmd.CombinedOutput()
+		cmd = exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote)
 	}
-	outStr, truncated := truncateOutput(string(out), MaxOutputBytes)
+	cmd.Stdin = nil
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.patch(id, func(j *Job) {
+			j.Status = "failed"
+			j.Error = err.Error()
+			j.ExitCode = 1
+		})
+		return
+	}
+	cmd.Stderr = cmd.Stdout // merge
+
+	if err := cmd.Start(); err != nil {
+		s.patch(id, func(j *Job) {
+			j.Status = "failed"
+			j.Error = err.Error()
+			j.ExitCode = 1
+		})
+		return
+	}
+
+	// Live-tail: append output as it streams so GET job shows progress.
+	var acc strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := stdout.Read(buf)
+		if n > 0 {
+			acc.Write(buf[:n])
+			cur, trunc := truncateOutput(acc.String(), MaxOutputBytes)
+			s.patch(id, func(j *Job) {
+				j.Output = cur
+				j.OutputTruncated = trunc
+			})
+			if trunc {
+				// stop growing buffer
+				break
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	err = cmd.Wait()
+	outStr, truncated := truncateOutput(acc.String(), MaxOutputBytes)
 
 	status := "done"
 	exitCode := 0

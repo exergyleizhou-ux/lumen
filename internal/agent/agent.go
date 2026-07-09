@@ -62,8 +62,10 @@ type Asker interface {
 }
 
 // Gate decides, per tool call, whether it may run.
+// newArgs, when non-nil and allow is true, replaces the tool call arguments
+// (used when the user edits args during interactive approval).
 type Gate interface {
-	Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error)
+	Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, newArgs json.RawMessage, err error)
 }
 
 // ── Agent ──────────────────────────────────────────────────
@@ -685,9 +687,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 
-	// Permission gate
+	// Permission gate (may return edited args from interactive approval)
+	execArgs := json.RawMessage(call.Arguments)
 	if a.gate != nil {
-		allow, reason, err := a.gate.Check(ctx, call.Name, json.RawMessage(call.Arguments), t.ReadOnly())
+		allow, reason, newArgs, err := a.gate.Check(ctx, call.Name, execArgs, t.ReadOnly())
 		if err != nil {
 			return toolOutcome{
 				output:  fmt.Sprintf("blocked: %s (%v)", reason, err),
@@ -702,6 +705,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 				errMsg:  "blocked by permission policy",
 			}
 		}
+		if len(newArgs) > 0 {
+			execArgs = newArgs
+			call.Arguments = string(newArgs)
+		}
 	}
 
 	// Pre-edit snapshot: compute the change once, BEFORE Execute mutates disk
@@ -710,7 +717,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	var changedPath string
 	if !t.ReadOnly() {
 		if pv, ok := t.(tool.Previewer); ok {
-			if change, err := pv.Preview(json.RawMessage(call.Arguments)); err == nil {
+			if change, err := pv.Preview(execArgs); err == nil {
 				changedPath = change.Path
 				if a.onPreEdit != nil {
 					a.onPreEdit(change)
@@ -726,10 +733,10 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 
-	result, err := t.Execute(ctx, json.RawMessage(call.Arguments))
+	result, err := t.Execute(ctx, execArgs)
 	// Record evidence receipt for host-observable validation
 	if a.evidence != nil {
-		rec := evidence.ReceiptFromToolCall(call.Name, json.RawMessage(call.Arguments), err == nil, t.ReadOnly())
+		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly())
 		a.evidence.Record(rec)
 	}
 	// Audit trail: one disk-backed line per tool call so `audit_query` can later

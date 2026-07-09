@@ -50,7 +50,7 @@ func NewController(sciDir string, fleet *labruntime.FleetManager, projects *proj
 }
 
 // Configure prepares the agent for a project workspace.
-func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver func(context.Context, string, json.RawMessage) (bool, error)) error {
+func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver permission.Asker) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.slug = slug
@@ -229,12 +229,12 @@ func (c *Controller) PermissionMode() permission.Mode {
 }
 
 // makeApprover builds an SSE approval handler that blocks until /api/lab/approve.
-func (a *API) makeApprover(emit func(kind string, payload map[string]any)) func(context.Context, string, json.RawMessage) (bool, error) {
-	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+// May return edited args JSON when the user modifies the approval card.
+func (a *API) makeApprover(emit func(kind string, payload map[string]any)) permission.Asker {
+	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		if a.approvals == nil {
-			return false, fmt.Errorf("approval hub not configured")
+			return false, nil, fmt.Errorf("approval hub not configured")
 		}
-		// emit signature for hub uses map; adapt string errors via payload
 		return a.approvals.decide(ctx, toolName, args, func(kind string, payload map[string]any) {
 			if kind == "error" {
 				if t, ok := payload["text"].(string); ok {

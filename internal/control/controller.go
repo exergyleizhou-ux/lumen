@@ -61,12 +61,12 @@ type Controller struct {
 	permMode    permission.Mode
 	sinkRef     atomic.Pointer[event.Sink] // via sink()/store; safe vs a mid-turn redirect
 	asker       agent.Asker
-	autoApprove func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) // terminal auto-approve
+	autoApprove permission.Asker // terminal auto-approve
 	// approver, when set (interactive chat/tui), is consulted by the permission
 	// gate for tools that require confirmation. When nil (headless run/eval) the
 	// gate auto-approves — there is no human to prompt, and the guard still blocks
-	// dangerous commands. Set via SetApprover.
-	approver func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
+	// dangerous commands. Set via SetApprover. May return newArgs to rewrite tool args.
+	approver permission.Asker
 
 	// Agent (created by Configure)
 	ag                *agent.Agent
@@ -559,19 +559,20 @@ func (c *Controller) AddExtraTools(tools []tool.Tool) {
 	c.ag.InvalidateSchemaCache()
 }
 
-func (c *Controller) SetApprover(fn func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)) {
+func (c *Controller) SetApprover(fn permission.Asker) {
 	c.approver = fn
 }
 
 // approveCallback builds the gate's approval callback: delegate to the
 // interactive approver when one is set, else auto-approve (headless). It reads
 // c.approver at call time so SetApprover works regardless of ordering.
-func (c *Controller) approveCallback() func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
-	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+// newArgs may rewrite tool arguments after user edit in the approval UI.
+func (c *Controller) approveCallback() permission.Asker {
+	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		if c.approver != nil {
 			return c.approver(ctx, toolName, args)
 		}
-		return true, nil
+		return true, nil, nil
 	}
 }
 

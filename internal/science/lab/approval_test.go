@@ -26,7 +26,7 @@ func TestApprovalHubBlocksUntilResolve(t *testing.T) {
 	}
 	done := make(chan bool, 1)
 	go func() {
-		ok, err := h.decide(context.Background(), "bash", json.RawMessage(`{}`), emit)
+		ok, _, err := h.decide(context.Background(), "bash", json.RawMessage(`{}`), emit)
 		if err != nil {
 			t.Errorf("decide: %v", err)
 		}
@@ -38,7 +38,7 @@ func TestApprovalHubBlocksUntilResolve(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no approval id emitted")
 	}
-	if !h.resolve(gotID, true) {
+	if !h.resolve(gotID, true, nil) {
 		t.Fatal("resolve failed")
 	}
 	select {
@@ -53,7 +53,7 @@ func TestApprovalHubBlocksUntilResolve(t *testing.T) {
 
 func TestApprovalHubPlanDenies(t *testing.T) {
 	h := newApprovalHub(func() permission.Mode { return permission.ModePlan })
-	ok, err := h.decide(context.Background(), "bash", nil, func(string, map[string]any) {})
+	ok, _, err := h.decide(context.Background(), "bash", nil, func(string, map[string]any) {})
 	if err != nil || ok {
 		t.Fatalf("plan should deny, ok=%v err=%v", ok, err)
 	}
@@ -61,8 +61,38 @@ func TestApprovalHubPlanDenies(t *testing.T) {
 
 func TestApprovalHubBypassAllows(t *testing.T) {
 	h := newApprovalHub(func() permission.Mode { return permission.ModeBypass })
-	ok, err := h.decide(context.Background(), "bash", nil, func(string, map[string]any) {})
+	ok, _, err := h.decide(context.Background(), "bash", nil, func(string, map[string]any) {})
 	if err != nil || !ok {
 		t.Fatalf("bypass should allow, ok=%v err=%v", ok, err)
+	}
+}
+
+func TestApprovalHubEditedArgs(t *testing.T) {
+	h := newApprovalHub(func() permission.Mode { return permission.ModeDefault })
+	idCh := make(chan string, 1)
+	emit := func(kind string, payload map[string]any) {
+		if kind == "approval_request" {
+			idCh <- payload["id"].(string)
+		}
+	}
+	done := make(chan struct{})
+	var gotArgs json.RawMessage
+	var ok bool
+	var err error
+	go func() {
+		ok, gotArgs, err = h.decide(context.Background(), "bash", json.RawMessage(`{"command":"rm x"}`), emit)
+		close(done)
+	}()
+	id := <-idCh
+	edited := json.RawMessage(`{"command":"echo safe"}`)
+	if !h.resolve(id, true, edited) {
+		t.Fatal("resolve")
+	}
+	<-done
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	if string(gotArgs) != string(edited) {
+		t.Fatalf("args %s", gotArgs)
 	}
 }

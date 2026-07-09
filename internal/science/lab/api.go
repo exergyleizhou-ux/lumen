@@ -1,6 +1,7 @@
 package lab
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -781,9 +782,72 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileRecent(w, r, g)
 	case sub == "tree":
 		a.handleFileTree(w, r, g)
+	case sub == "export":
+		a.handleWorkspaceExport(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleWorkspaceExport zips the project workspace (path-filtered) as application/zip.
+func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root, err := g.Resolve(".")
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	slug := r.URL.Query().Get("project_id")
+	name := "workspace.zip"
+	if slug != "" {
+		name = slug + "-workspace.zip"
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	zw := zip.NewWriter(w)
+	defer zw.Close()
+	const maxFiles = 5000
+	const maxTotal = 64 << 20 // 64 MiB
+	var nFiles int
+	var total int64
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		base := info.Name()
+		if info.IsDir() {
+			if base == ".git" || base == "node_modules" || base == ".lumen" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if nFiles >= maxFiles || total >= maxTotal {
+			return filepath.SkipAll
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		if info.Size() > 8<<20 {
+			return nil // skip huge single files
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		fw, err := zw.Create(rel)
+		if err != nil {
+			return nil
+		}
+		_, _ = fw.Write(data)
+		nFiles++
+		total += int64(len(data))
+		return nil
+	})
 }
 
 // handleFileTree returns a nested directory tree (depth-limited).

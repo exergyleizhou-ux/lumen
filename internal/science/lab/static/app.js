@@ -926,7 +926,7 @@ async function streamChat(prompt, mode) {
   $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
 }
 
-/* ── 8. Approval card ── */
+/* ── 8. Approval card (editable args applied on allow) ── */
 
 function renderApprovalCard(toolLog, ev) {
   var card = document.createElement("div");
@@ -935,27 +935,32 @@ function renderApprovalCard(toolLog, ev) {
   if (typeof argsText !== "string") {
     try { argsText = JSON.stringify(argsText, null, 2); } catch (_) { argsText = String(argsText); }
   }
+  var originalArgs = argsText;
   try {
     var parsed = JSON.parse(argsText);
     argsText = JSON.stringify(parsed, null, 2);
+    originalArgs = argsText;
   } catch (_) {}
   card.innerHTML =
     '<div class="appr-title">需要确认工具</div>' +
     '<div class="appr-tool">' + escHtml(ev.tool || "tool") + "</div>" +
     '<div class="appr-sum">' + escHtml(ev.summary || "") + "</div>" +
     (argsText
-      ? '<div class="appr-args-label">参数（只读展示；网关仍用原始参数执行）</div>' +
-        '<textarea class="appr-args" rows="6" readonly>' + escHtml(argsText) + "</textarea>"
+      ? '<div class="appr-args-label">参数（可编辑 JSON；允许时按编辑后内容执行）</div>' +
+        '<textarea class="appr-args" rows="6">' + escHtml(argsText) + "</textarea>"
       : "") +
     '<div class="appr-actions">' +
     '<button type="button" class="btn primary sm appr-yes">允许</button>' +
     '<button type="button" class="btn sm appr-no">拒绝</button>' +
     '<button type="button" class="btn sm appr-copy">复制参数</button>' +
+    '<button type="button" class="btn sm appr-reset">重置</button>' +
     "</div>";
 
   var yesBtn = card.querySelector(".appr-yes");
   var noBtn = card.querySelector(".appr-no");
   var copyBtn = card.querySelector(".appr-copy");
+  var resetBtn = card.querySelector(".appr-reset");
+  var ta = card.querySelector(".appr-args");
   var done = false;
 
   async function reply(allow) {
@@ -964,13 +969,39 @@ function renderApprovalCard(toolLog, ev) {
     yesBtn.disabled = true;
     noBtn.disabled = true;
     if (copyBtn) copyBtn.disabled = true;
+    if (resetBtn) resetBtn.disabled = true;
+    if (ta) ta.readOnly = true;
+    var body = { id: ev.id, allow: allow };
+    if (allow && ta) {
+      var edited = ta.value.trim();
+      if (edited && edited !== originalArgs) {
+        try {
+          JSON.parse(edited); // validate
+          body.args = JSON.parse(edited); // send as object; backend re-marshals? 
+          // Actually handleApprove expects json.RawMessage for args - if we send object in body, Decode puts it as RawMessage if type is RawMessage... 
+          // In Go json.RawMessage unmarshals from JSON value correctly when field is RawMessage.
+          // But JSON.stringify whole body with object works: "args": {...}
+          body.args = JSON.parse(edited);
+        } catch (e) {
+          card.querySelector(".appr-actions").textContent = "参数 JSON 无效: " + e.message;
+          done = false;
+          yesBtn.disabled = false;
+          noBtn.disabled = false;
+          if (ta) ta.readOnly = false;
+          return;
+        }
+      }
+    }
     try {
+      // api() stringifies body - if args is object OK
       await api("/api/lab/approve", {
         method: "POST",
-        body: JSON.stringify({ id: ev.id, allow: allow }),
+        body: JSON.stringify(body),
       });
       card.classList.add(allow ? "ok" : "deny");
-      card.querySelector(".appr-actions").textContent = allow ? "已允许" : "已拒绝";
+      var note = allow ? "已允许" : "已拒绝";
+      if (allow && body.args) note += "（参数已改）";
+      card.querySelector(".appr-actions").textContent = note;
     } catch (e) {
       card.querySelector(".appr-actions").textContent = "提交失败: " + e.message;
     }
@@ -980,9 +1011,11 @@ function renderApprovalCard(toolLog, ev) {
   noBtn.addEventListener("click", function () { reply(false); });
   if (copyBtn) {
     copyBtn.addEventListener("click", function () {
-      var ta = card.querySelector(".appr-args");
       if (ta && navigator.clipboard) navigator.clipboard.writeText(ta.value);
     });
+  }
+  if (resetBtn && ta) {
+    resetBtn.addEventListener("click", function () { ta.value = originalArgs; });
   }
   toolLog.appendChild(card);
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -1582,11 +1615,13 @@ async function loadComputeJobs() {
       var batchBtn = outs.length > 1
         ? '<button type="button" class="btn sm job-import-all" data-job="' + escHtml(j.id) + '">全部入库</button>'
         : "";
-      return '<div class="job-card status-' + escHtml(j.status || "") + '">' +
+      var live = j.status === "running" || j.status === "pending";
+      return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) + '">' +
         '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
+        (live ? ' <span class="hint">日志实时刷新…</span>' : "") +
         (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
-        (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(0, 500)) + "</pre>" : "") +
+        (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(-4000)) + "</pre>" : '<pre class="job-out hint">(尚无输出)</pre>') +
         (outsHtml ? '<div class="job-outs">' + outsHtml + "</div>" : "") +
         "</div>";
     }).join("");
@@ -1821,6 +1856,10 @@ $("deleteSessBtn") && $("deleteSessBtn").addEventListener("click", function () {
   else alert("请先选择会话");
 });
 $("artifactsRefresh") && $("artifactsRefresh").addEventListener("click", loadArtifacts);
+$("workspaceExportBtn") && $("workspaceExportBtn").addEventListener("click", function () {
+  if (!activeProject) { alert("请先选择课题"); return; }
+  window.open(labPath("/api/lab/files/export?project_id=" + encodeURIComponent(activeProject.slug)), "_blank");
+});
 $("hostRegisterBtn") && $("hostRegisterBtn").addEventListener("click", registerHost);
 $("fileTreeRefresh") && $("fileTreeRefresh").addEventListener("click", loadFileTree);
 $("previewModalClose") && $("previewModalClose").addEventListener("click", closePreviewModal);

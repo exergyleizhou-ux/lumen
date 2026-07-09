@@ -11,9 +11,12 @@ import (
 // the behavior `lumen run`/eval depend on.
 func TestApproveCallbackHeadlessAutoApproves(t *testing.T) {
 	c := &Controller{}
-	allow, err := c.approveCallback()(context.Background(), "bash", nil)
+	allow, newArgs, err := c.approveCallback()(context.Background(), "bash", nil)
 	if err != nil || !allow {
 		t.Fatalf("headless (no approver) should auto-approve, got allow=%v err=%v", allow, err)
+	}
+	if newArgs != nil {
+		t.Fatalf("headless should not rewrite args: %s", newArgs)
 	}
 }
 
@@ -22,15 +25,30 @@ func TestApproveCallbackHeadlessAutoApproves(t *testing.T) {
 func TestApproveCallbackDelegatesToInteractiveApprover(t *testing.T) {
 	c := &Controller{}
 	called := false
-	c.SetApprover(func(ctx context.Context, tool string, args json.RawMessage) (bool, error) {
+	c.SetApprover(func(ctx context.Context, tool string, args json.RawMessage) (bool, json.RawMessage, error) {
 		called = true
-		return false, nil // user denied
+		return false, nil, nil // user denied
 	})
-	allow, _ := c.approveCallback()(context.Background(), "bash", json.RawMessage(`{"command":"rm x"}`))
+	allow, _, _ := c.approveCallback()(context.Background(), "bash", json.RawMessage(`{"command":"rm x"}`))
 	if !called {
 		t.Error("expected the interactive approver to be consulted")
 	}
 	if allow {
 		t.Error("approver denied, so the gate must deny too — got allow=true")
+	}
+}
+
+func TestApproveCallbackEditedArgs(t *testing.T) {
+	c := &Controller{}
+	edited := json.RawMessage(`{"command":"echo safe"}`)
+	c.SetApprover(func(ctx context.Context, tool string, args json.RawMessage) (bool, json.RawMessage, error) {
+		return true, edited, nil
+	})
+	allow, newArgs, err := c.approveCallback()(context.Background(), "bash", json.RawMessage(`{"command":"rm -rf /"}`))
+	if err != nil || !allow {
+		t.Fatalf("allow=%v err=%v", allow, err)
+	}
+	if string(newArgs) != string(edited) {
+		t.Fatalf("newArgs %s", newArgs)
 	}
 }

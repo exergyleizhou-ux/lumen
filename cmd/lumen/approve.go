@@ -13,19 +13,19 @@ import (
 // the agent wants to run and reads a y/N line. Anything other than an explicit
 // yes (default No) denies — the safe default for a destructive prompt. Reading
 // from injectable in/out makes it unit-testable without a TTY.
-func newConfirmApprover(in io.Reader, out io.Writer) func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+func newConfirmApprover(in io.Reader, out io.Writer) func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 	r := bufio.NewReader(in)
-	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, error) {
+	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		fmt.Fprintf(out, "\n⚠️  Allow %s%s? [y/N] ", toolName, approvalDetail(toolName, args))
 		line, err := r.ReadString('\n')
 		if err != nil && line == "" {
-			return false, nil // EOF / no input → deny (safe default)
+			return false, nil, nil // EOF / no input → deny (safe default)
 		}
 		switch strings.ToLower(strings.TrimSpace(line)) {
 		case "y", "yes":
-			return true, nil
+			return true, nil, nil
 		default:
-			return false, nil
+			return false, nil, nil
 		}
 	}
 }

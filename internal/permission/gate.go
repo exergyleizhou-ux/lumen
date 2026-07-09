@@ -74,19 +74,23 @@ var writePathGuardedTools = map[string]bool{
 	"delete_range":  true,
 }
 
+// Asker decides interactive tool approval. newArgs, when non-nil, replaces the
+// tool arguments after allow (user edited JSON in the approval UI).
+type Asker func(ctx context.Context, toolName string, args json.RawMessage) (allow bool, newArgs json.RawMessage, err error)
+
 // Gate implements agent.Gate with mode-based decision logic.
 type Gate struct {
 	mode  Mode
-	asker func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)
+	asker Asker
 }
 
 // NewGate creates a permission gate in the given mode.
-func NewGate(mode Mode, asker func(ctx context.Context, toolName string, args json.RawMessage) (bool, error)) *Gate {
+func NewGate(mode Mode, asker Asker) *Gate {
 	return &Gate{mode: mode, asker: asker}
 }
 
 // Check implements agent.Gate.
-func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, err error) {
+func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (allow bool, reason string, newArgs json.RawMessage, err error) {
 	// ── Bash content inspection (fires for ALL modes) ──────
 	if toolName == "bash" {
 		var p struct {
@@ -94,7 +98,7 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		}
 		if err := json.Unmarshal(args, &p); err == nil && p.Command != "" {
 			if r := guard.CheckBash(p.Command); !r.Safe {
-				return false, "blocked: " + r.Reason, nil
+				return false, "blocked: " + r.Reason, nil, nil
 			}
 		}
 	}
@@ -111,58 +115,61 @@ func (g *Gate) Check(ctx context.Context, toolName string, args json.RawMessage,
 		}
 		if err := json.Unmarshal(args, &p); err == nil && p.Path != "" {
 			if r := guard.CheckWritePath(p.Path); !r.Safe {
-				return false, "blocked: " + r.Reason, nil
+				return false, "blocked: " + r.Reason, nil, nil
 			}
 		}
 	}
 
 	switch g.mode {
 	case ModeBypass:
-		return true, "", nil
+		return true, "", nil, nil
 	case ModePlan:
 		if readOnly {
-			return true, "", nil
+			return true, "", nil, nil
 		}
-		return false, "plan mode is read-only — approve the plan first, or switch to accept-edits mode", nil
+		return false, "plan mode is read-only — approve the plan first, or switch to accept-edits mode", nil, nil
 	case ModeAcceptEdits:
 		// Allow all tools except dangerous ones
 		if DangerousTools[toolName] {
 			if g.asker != nil {
-				allow, err := g.asker(ctx, toolName, args)
-				return allow, "user denied: " + toolName, err
+				allow, newArgs, err := g.asker(ctx, toolName, args)
+				if !allow {
+					return false, "user denied: " + toolName, nil, err
+				}
+				return true, "", newArgs, err
 			}
-			return false, "tool " + toolName + " requires approval in accept-edits mode", nil
+			return false, "tool " + toolName + " requires approval in accept-edits mode", nil, nil
 		}
-		return true, "", nil
+		return true, "", nil, nil
 	default: // ModeDefault
 		// Always allow safe read-only tools
 		if AlwaysAllowTools[toolName] {
-			return true, "", nil
+			return true, "", nil, nil
 		}
 		// Dangerous tools always ask
 		if DangerousTools[toolName] {
 			if g.asker != nil {
-				allow, err := g.asker(ctx, toolName, args)
+				allow, newArgs, err := g.asker(ctx, toolName, args)
 				if !allow {
-					return false, "user denied: " + toolName, err
+					return false, "user denied: " + toolName, nil, err
 				}
-				return true, "", nil
+				return true, "", newArgs, err
 			}
-			return false, "tool " + toolName + " requires interactive approval in default mode", nil
+			return false, "tool " + toolName + " requires interactive approval in default mode", nil, nil
 		}
 		// Writer tools: ask when interactive, allow in headless
 		if !readOnly {
 			if g.asker != nil {
-				allow, err := g.asker(ctx, toolName, args)
+				allow, newArgs, err := g.asker(ctx, toolName, args)
 				if !allow {
-					return false, "user denied: " + toolName, err
+					return false, "user denied: " + toolName, nil, err
 				}
-				return true, "", nil
+				return true, "", newArgs, err
 			}
 			// Headless: allow non-dangerous writer tools
-			return true, "", nil
+			return true, "", nil, nil
 		}
-		return true, "", nil
+		return true, "", nil, nil
 	}
 }
 

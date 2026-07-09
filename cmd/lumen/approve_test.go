@@ -24,7 +24,7 @@ func TestConfirmApproverYesNo(t *testing.T) {
 	}
 	for _, tc := range cases {
 		approve := newConfirmApprover(strings.NewReader(tc.in), io.Discard)
-		got, err := approve(context.Background(), "bash", json.RawMessage(`{"command":"rm -rf /"}`))
+		got, _, err := approve(context.Background(), "bash", json.RawMessage(`{"command":"rm -rf /"}`))
 		if err != nil {
 			t.Fatalf("input %q: unexpected error %v", tc.in, err)
 		}

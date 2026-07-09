@@ -167,7 +167,9 @@ func runOneShot(args []string) {
 		os.Exit(1)
 	}
 
-	headlessApprove := func(context.Context, string, json.RawMessage) (bool, error) { return true, nil }
+	headlessApprove := func(context.Context, string, json.RawMessage) (bool, json.RawMessage, error) {
+		return true, nil, nil
+	}
 	ctrl.Agent().SetGate(permission.NewGate(ctrl.PermissionMode(), headlessApprove))
 
 	ctx, cancel := context.WithCancel(context.Background())

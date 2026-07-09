@@ -422,8 +422,8 @@ func TestRunWithoutToolsProducesAnswer(t *testing.T) {
 
 type denyAllGate struct{}
 
-func (g *denyAllGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, error) {
-	return false, "denied by test", nil
+func (g *denyAllGate) Check(ctx context.Context, toolName string, args json.RawMessage, readOnly bool) (bool, string, json.RawMessage, error) {
+	return false, "denied by test", nil, nil
 }
 
 func contains(s, substr string) bool {
