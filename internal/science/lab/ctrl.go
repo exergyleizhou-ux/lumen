@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"lumen/internal/config"
@@ -90,7 +91,12 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	// Inject conda/python from the cloned research pack into bash PATH.
 	labruntime.InjectLabPath(c.sciDir)
 
-	c.ctrl.SetExtraMemoryPrompt(scienceSystemPrompt)
+	// Build system prompt: science base + enabled project skills (bodies).
+	mem := scienceSystemPrompt
+	if skillBlock := c.buildEnabledSkillsPrompt(slug, ws, projDir); skillBlock != "" {
+		mem = mem + "\n\n" + skillBlock
+	}
+	c.ctrl.SetExtraMemoryPrompt(mem)
 	sink = wrapProvenanceSink(sink, c.provenance, g)
 	if err := c.ctrl.Configure(sink, nil, lumenCfgPath); err != nil {
 		return err
@@ -109,21 +115,82 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	}
 	extra = append(extra, briefTool)
 	c.ctrl.AddExtraTools(extra)
+	return nil
+}
 
+// buildEnabledSkillsPrompt injects enabled skill bodies into the system prompt.
+// If no enable list is saved, injects a short catalog of names only (not full bodies)
+// to avoid huge prompts; when enable list is set, inject full body for each enabled skill.
+func (c *Controller) buildEnabledSkillsPrompt(slug, ws, projDir string) string {
 	home, _ := os.UserHomeDir()
 	skillPaths := []string{
+		filepath.Join(home, ".lumen", "skills"),
+		filepath.Join(home, ".lumen", "imported-skills"),
 		filepath.Join(c.sciDir, "skills"),
 		filepath.Join(projDir, ".lumen", "skills"),
 	}
 	if packSkills := labruntime.SkillsDir(c.sciDir); packSkills != "" {
 		skillPaths = append(skillPaths, packSkills)
 	}
-	_ = skill.New(skill.Options{
+	store := skill.New(skill.Options{
 		HomeDir:     home,
 		ProjectRoot: ws,
 		CustomPaths: skillPaths,
 	})
-	return nil
+	list := store.List()
+	if len(list) == 0 {
+		return ""
+	}
+	enabled, _ := c.projects.LoadEnabledSkills(slug)
+	enSet := map[string]bool{}
+	for _, n := range enabled {
+		enSet[n] = true
+	}
+	filter := len(enabled) > 0
+
+	var b strings.Builder
+	if filter {
+		b.WriteString("## Enabled science skills (follow these when relevant)\n")
+		for _, sk := range list {
+			if !enSet[sk.Name] {
+				continue
+			}
+			b.WriteString("\n### Skill: ")
+			b.WriteString(sk.Name)
+			b.WriteString("\n")
+			if sk.Description != "" {
+				b.WriteString(sk.Description)
+				b.WriteString("\n")
+			}
+			body := strings.TrimSpace(sk.Body)
+			if body != "" {
+				// Cap each skill body to keep prompt bounded
+				runes := []rune(body)
+				if len(runes) > 6000 {
+					body = string(runes[:6000]) + "\n…[skill truncated]…"
+				}
+				b.WriteString(body)
+				b.WriteString("\n")
+			}
+		}
+	} else {
+		b.WriteString("## Available science skills (catalog)\n")
+		b.WriteString("User has not filtered skills; prefer these when the task matches:\n")
+		n := 0
+		for _, sk := range list {
+			b.WriteString("- **")
+			b.WriteString(sk.Name)
+			b.WriteString("**: ")
+			b.WriteString(sk.Description)
+			b.WriteString("\n")
+			n++
+			if n >= 40 {
+				b.WriteString("…\n")
+				break
+			}
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // Run executes one chat turn. File tools resolve paths via LUMEN_WORKSPACE_ROOT

@@ -90,6 +90,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/files/", a.handleFiles)
 	mux.HandleFunc("/api/lab/provenance", a.handleProvenance)
 	mux.HandleFunc("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
+	mux.HandleFunc("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
 	mux.HandleFunc("/api/lab/compute/jobs", a.handleComputeJobs)
 	mux.HandleFunc("/api/lab/compute/jobs/", a.handleComputeJob)
 	mux.HandleFunc("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
@@ -778,9 +779,104 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileSearch(w, r, g)
 	case sub == "recent":
 		a.handleFileRecent(w, r, g)
+	case sub == "tree":
+		a.handleFileTree(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleFileTree returns a nested directory tree (depth-limited).
+func (a *API) handleFileTree(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rootRel := r.URL.Query().Get("path")
+	if rootRel == "" {
+		rootRel = "."
+	}
+	maxDepth := 4
+	if v := r.URL.Query().Get("depth"); v != "" {
+		fmt.Sscanf(v, "%d", &maxDepth)
+	}
+	if maxDepth < 1 {
+		maxDepth = 1
+	}
+	if maxDepth > 8 {
+		maxDepth = 8
+	}
+	abs, err := g.Resolve(rootRel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	tree, err := buildFileTree(abs, rootRel, 0, maxDepth, 500)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tree": tree, "path": rootRel, "depth": maxDepth})
+}
+
+type fileTreeNode struct {
+	Name        string         `json:"name"`
+	Path        string         `json:"path"`
+	IsDir       bool           `json:"isDir"`
+	PreviewKind string         `json:"previewKind,omitempty"`
+	Size        int64          `json:"size,omitempty"`
+	Children    []fileTreeNode `json:"children,omitempty"`
+}
+
+func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, error) {
+	st, err := os.Stat(abs)
+	if err != nil {
+		return fileTreeNode{}, err
+	}
+	name := filepath.Base(abs)
+	if rel == "." || rel == "" {
+		name = "."
+	}
+	node := fileTreeNode{
+		Name: name, Path: filepath.ToSlash(rel), IsDir: st.IsDir(),
+	}
+	if !st.IsDir() {
+		node.Size = st.Size()
+		node.PreviewKind = previewKind(name)
+		return node, nil
+	}
+	if depth >= maxDepth || budget <= 0 {
+		return node, nil
+	}
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return node, err
+	}
+	left := budget
+	for _, e := range entries {
+		if left <= 0 {
+			break
+		}
+		base := e.Name()
+		if base == ".git" || base == "node_modules" {
+			continue
+		}
+		childRel := base
+		if rel != "" && rel != "." {
+			childRel = filepath.ToSlash(filepath.Join(rel, base))
+		}
+		childAbs := filepath.Join(abs, base)
+		child, err := buildFileTree(childAbs, childRel, depth+1, maxDepth, left-1)
+		if err != nil {
+			continue
+		}
+		node.Children = append(node.Children, child)
+		left--
+		if e.IsDir() {
+			// children already counted roughly
+		}
+	}
+	return node, nil
 }
 
 // handleFileRecent returns files under workspace sorted by mtime desc.
@@ -1132,26 +1228,66 @@ func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
 // ── Compute endpoints ──
 
 func (a *API) handleComputeSSHHosts(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		local := compute.SSHHost{Alias: "local", Hostname: "local-shell", User: "local"}
+		out := []map[string]any{
+			{"alias": "local", "hostname": "local-shell", "user": "local", "source": "builtin"},
+		}
+		// Lab-registered hosts
+		if reg, err := LoadRegisteredHosts(a.sciDir); err == nil {
+			for _, h := range reg {
+				out = append(out, map[string]any{
+					"alias": h.Alias, "hostname": h.Hostname, "user": h.User,
+					"port": h.Port, "notes": h.Notes, "source": "registry",
+				})
+			}
+		}
+		// ~/.ssh/config
+		if hosts, err := compute.ParseSSHConfig(); err == nil {
+			for _, h := range hosts {
+				out = append(out, map[string]any{
+					"alias": h.Alias, "hostname": h.Hostname, "user": h.User,
+					"port": h.Port, "source": "ssh_config",
+				})
+			}
+		} else {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"hosts": out, "count": len(out),
+				"error": err.Error(),
+				"hint":  "无 ~/.ssh/config 时仍可用 local；可在 UI 注册主机",
+			})
+			return
+		}
+		_ = local
+		writeJSON(w, http.StatusOK, map[string]any{"hosts": out, "count": len(out)})
+	case http.MethodPost:
+		var body RegisteredHost
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Alias) == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("alias required"))
+			return
+		}
+		list, err := UpsertRegisteredHost(a.sciDir, body)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hosts": list, "count": len(list)})
+	case http.MethodDelete:
+		alias := r.URL.Query().Get("alias")
+		if alias == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("alias required"))
+			return
+		}
+		list, err := DeleteRegisteredHost(a.sciDir, alias)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "hosts": list, "count": len(list)})
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	// Always expose local shell first — works without SSH for harvest/dev.
-	local := compute.SSHHost{Alias: "local", Hostname: "local-shell", User: "local"}
-	hosts, err := compute.ParseSSHConfig()
-	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"hosts": []compute.SSHHost{local},
-			"count": 1,
-			"error": err.Error(),
-			"hint":  "无 ~/.ssh/config 时仍可用 local 本机执行",
-		})
-		return
-	}
-	out := make([]compute.SSHHost, 0, len(hosts)+1)
-	out = append(out, local)
-	out = append(out, hosts...)
-	writeJSON(w, http.StatusOK, map[string]any{"hosts": out, "count": len(out)})
 }
 
 func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=27">
+  <link rel="stylesheet" href="app.css?v=28">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -95,7 +95,8 @@
               <input type="file" id="fileUpload" hidden />
             </label>
           </div>
-          <textarea id="promptInput" rows="2" placeholder="描述科研任务… Enter 发送 · Shift+Enter 换行" autocomplete="off"></textarea>
+          <div id="attachChips" class="attach-chips" hidden></div>
+          <textarea id="promptInput" rows="2" placeholder="描述科研任务… 可用 @path 引用文件 · Enter 发送 · Shift+Enter 换行" autocomplete="off"></textarea>
           <div class="composer-bot">
             <span class="hint" id="composerHint">就绪</span>
             <button class="btn primary" type="submit" id="btnSend">发送</button>
@@ -135,6 +136,10 @@
             <div id="fileSearchHits" class="file-hits" hidden></div>
             <div class="set-k soft">最近修改</div>
             <div id="fileRecent" class="file-recent hint">—</div>
+            <div class="set-k soft" style="margin-top:8px">目录树
+              <button type="button" class="btn sm" id="fileTreeRefresh">↻</button>
+            </div>
+            <div id="fileTreeView" class="file-tree-view hint">—</div>
             <div class="set-k soft" style="margin-top:8px">当前目录</div>
             <div id="fileTree"></div>
             <div id="filePreview" class="fp"></div>
@@ -156,7 +161,16 @@
           <div id="computePane" class="insp-scroll" style="display:none">
             <div class="set-k soft">执行主机</div>
             <select id="computeHost" class="mode-sel fill-sel"></select>
-            <div class="hint" style="margin-top:4px">默认 local=本机 shell（无需 SSH）；远程主机来自 ~/.ssh/config</div>
+            <div class="hint" style="margin-top:4px">local=本机；registry=UI 注册；ssh_config=~/.ssh/config</div>
+            <div class="set-k soft" style="margin-top:8px">注册主机</div>
+            <div id="hostRegistry" class="hint">—</div>
+            <div class="host-form">
+              <input type="text" id="hostAlias" class="file-search" placeholder="alias（如 gpu1）" />
+              <input type="text" id="hostHostname" class="file-search" placeholder="hostname / IP" />
+              <input type="text" id="hostUser" class="file-search" placeholder="user" />
+              <input type="text" id="hostNotes" class="file-search" placeholder="备注" />
+              <button type="button" class="btn sm primary" id="hostRegisterBtn">保存主机</button>
+            </div>
             <div class="set-k soft" style="margin-top:8px">命令</div>
             <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="echo ok > result.txt  或  sbatch run.sh"></textarea>
             <div class="set-k soft" style="margin-top:8px">产物 glob（可选，逗号分隔）</div>
@@ -180,6 +194,16 @@
 
   <div id="sideMask" class="mask" hidden></div>
 
+  <div id="previewModal" class="preview-modal" hidden>
+    <div class="preview-modal-box">
+      <div class="preview-modal-hd">
+        <span id="previewModalTitle">预览</span>
+        <button type="button" class="btn sm" id="previewModalClose">关闭</button>
+      </div>
+      <div id="previewModalBody" class="preview-modal-body"></div>
+    </div>
+  </div>
+
   <div id="cmdPalette" class="palette" style="display:none">
     <div class="palette-box">
       <input id="paletteInput" type="text" placeholder="搜索命令…" autocomplete="off" />
@@ -187,6 +211,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=27"></script>
+  <script src="app.js?v=28"></script>
 </body>
 </html>

@@ -555,6 +555,41 @@ html.dark .appr-sum { color: #d1d5db; }
   font-size: 10px; font-weight: 650; color: var(--ocs-accent);
   background: var(--ocs-accent-soft); padding: 1px 6px; border-radius: 4px;
 }
+.ws-ref { color: var(--ocs-accent); font-weight: 650; text-decoration: underline; cursor: pointer; }
+.appr-args-label { font-size: 10px; color: var(--ocs-muted); margin: 8px 0 4px; font-weight: 650; }
+.appr-args {
+  width: 100%; font-family: var(--mono); font-size: 11px;
+  padding: 8px; border-radius: 8px; border: 1px solid var(--ocs-line);
+  background: var(--ocs-surface-soft); color: var(--ocs-ink); resize: vertical;
+}
+.attach-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 6px; }
+.attach-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11px; font-weight: 650; padding: 4px 8px; border-radius: 999px;
+  background: var(--ocs-accent-soft); color: var(--ocs-accent);
+}
+.attach-x { border: none; background: transparent; cursor: pointer; color: inherit; font-size: 14px; padding: 0 2px; }
+.file-tree-view { max-height: 200px; overflow: auto; font-size: 12px; margin-bottom: 6px; }
+.tree-node { cursor: pointer; padding: 2px 4px; border-radius: 4px; }
+.tree-node:hover { background: var(--ocs-accent-light); }
+.tree-kids { }
+.host-form { display: flex; flex-direction: column; gap: 4px; margin: 6px 0; }
+.host-row { font-size: 12px; padding: 4px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.preview-modal {
+  position: fixed; inset: 0; z-index: 200; display: flex; align-items: center; justify-content: center;
+  background: rgba(12, 8, 18, 0.55); backdrop-filter: blur(4px);
+}
+.preview-modal[hidden] { display: none !important; }
+.preview-modal-box {
+  width: min(920px, 94vw); max-height: 88vh; overflow: hidden; display: flex; flex-direction: column;
+  background: var(--ocs-surface-strong); border: 1px solid var(--ocs-line); border-radius: 16px;
+  box-shadow: var(--ocs-shadow);
+}
+.preview-modal-hd {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--ocs-line); font-weight: 650;
+}
+.preview-modal-body { padding: 14px 16px; overflow: auto; flex: 1; }
 
 /* Skills */
 .skill-row {

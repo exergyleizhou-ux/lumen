@@ -52,10 +52,15 @@ func (h *approvalHub) decide(ctx context.Context, toolName string, args json.Raw
 		h.mu.Unlock()
 	}()
 
+	argsStr := string(args)
+	if len(argsStr) > 8000 {
+		argsStr = argsStr[:8000] + "…[truncated]"
+	}
 	emit("approval_request", map[string]any{
 		"id":      id,
 		"tool":    toolName,
 		"summary": permission.SummarizeArgs(toolName, args),
+		"args":    argsStr, // full args JSON for UI inspection (gate still uses original)
 	})
 
 	// Bound wait so abandoned browser tabs cannot pin agent goroutines forever.

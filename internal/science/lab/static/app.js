@@ -94,7 +94,61 @@ function renderMarkdown(src) {
   html = html.replace(/<p>(<hr>)<\/p>/g, "$1");
   html = html.replace(/<p>\s*<\/p>/g, "");
 
+  // @file / bare paths → clickable (after esc+md so paths are text)
+  html = linkifyWorkspacePaths(html);
   return html;
+}
+
+/** Mark workspace-like paths for click-to-preview (operates on safe HTML). */
+function linkifyWorkspacePaths(html) {
+  // @path/to/file
+  html = html.replace(/(^|[^"'>])@([\w./\-]+\.[\w]+)/g, function (_, pre, p) {
+    return pre + '<a href="#" class="ws-ref" data-path="' + p + '">@' + p + "</a>";
+  });
+  // [产物] path or [附件] path
+  html = html.replace(/\[(产物|附件)\]\s*([\w./\-]+)/g, function (_, kind, p) {
+    return '[<a href="#" class="ws-ref" data-path="' + p + '">' + kind + " " + p + "</a>]";
+  });
+  return html;
+}
+
+function bindWorkspaceRefs(root) {
+  if (!root) return;
+  root.querySelectorAll("a.ws-ref").forEach(function (a) {
+    if (a._bound) return;
+    a._bound = true;
+    a.addEventListener("click", function (e) {
+      e.preventDefault();
+      var p = a.getAttribute("data-path");
+      if (!p) return;
+      var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+      if (filesTab) filesTab.click();
+      previewFile(p, "");
+      openPreviewModal(p);
+    });
+  });
+}
+
+function openPreviewModal(path) {
+  var modal = $("previewModal");
+  var body = $("previewModalBody");
+  var title = $("previewModalTitle");
+  if (!modal || !body) return;
+  if (title) title.textContent = path || "预览";
+  modal.hidden = false;
+  // clone filePreview content if available
+  var fp = $("filePreview");
+  body.innerHTML = fp && fp.innerHTML ? fp.innerHTML : '<div class="hint">加载中…</div>';
+  if (!fp || !fp.innerHTML) {
+    previewFile(path, "").then(function () {
+      body.innerHTML = ($("filePreview") && $("filePreview").innerHTML) || "";
+    }).catch(function () {});
+  }
+}
+
+function closePreviewModal() {
+  var modal = $("previewModal");
+  if (modal) modal.hidden = true;
 }
 
 function reduceSSE(state, ev) {
@@ -487,7 +541,10 @@ function renderHistory(turns) {
     }
     if (t.role === "assistant") {
       var bubble = createAgentBubble();
-      if (t.text) bubble.textDiv.innerHTML = renderMarkdown(t.text);
+      if (t.text) {
+        bubble.textDiv.innerHTML = renderMarkdown(t.text);
+        bindWorkspaceRefs(bubble.textDiv);
+      }
       (t.tools || []).forEach(function (tool) {
         upsertToolCard(bubble.toolLog, {
           id: tool.id || tool.name,
@@ -704,6 +761,7 @@ function handleSSEEvent(ev, state, bubble) {
   // Update markdown text
   if (state.text && bubble.textDiv) {
     bubble.textDiv.innerHTML = renderMarkdown(state.text) + '<span class="cursor">|</span>';
+    bindWorkspaceRefs(bubble.textDiv);
     $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
   }
 
@@ -873,17 +931,31 @@ async function streamChat(prompt, mode) {
 function renderApprovalCard(toolLog, ev) {
   var card = document.createElement("div");
   card.className = "approval-card";
+  var argsText = ev.args || "";
+  if (typeof argsText !== "string") {
+    try { argsText = JSON.stringify(argsText, null, 2); } catch (_) { argsText = String(argsText); }
+  }
+  try {
+    var parsed = JSON.parse(argsText);
+    argsText = JSON.stringify(parsed, null, 2);
+  } catch (_) {}
   card.innerHTML =
     '<div class="appr-title">需要确认工具</div>' +
     '<div class="appr-tool">' + escHtml(ev.tool || "tool") + "</div>" +
     '<div class="appr-sum">' + escHtml(ev.summary || "") + "</div>" +
+    (argsText
+      ? '<div class="appr-args-label">参数（只读展示；网关仍用原始参数执行）</div>' +
+        '<textarea class="appr-args" rows="6" readonly>' + escHtml(argsText) + "</textarea>"
+      : "") +
     '<div class="appr-actions">' +
     '<button type="button" class="btn primary sm appr-yes">允许</button>' +
     '<button type="button" class="btn sm appr-no">拒绝</button>' +
+    '<button type="button" class="btn sm appr-copy">复制参数</button>' +
     "</div>";
 
   var yesBtn = card.querySelector(".appr-yes");
   var noBtn = card.querySelector(".appr-no");
+  var copyBtn = card.querySelector(".appr-copy");
   var done = false;
 
   async function reply(allow) {
@@ -891,6 +963,7 @@ function renderApprovalCard(toolLog, ev) {
     done = true;
     yesBtn.disabled = true;
     noBtn.disabled = true;
+    if (copyBtn) copyBtn.disabled = true;
     try {
       await api("/api/lab/approve", {
         method: "POST",
@@ -905,6 +978,12 @@ function renderApprovalCard(toolLog, ev) {
 
   yesBtn.addEventListener("click", function () { reply(true); });
   noBtn.addEventListener("click", function () { reply(false); });
+  if (copyBtn) {
+    copyBtn.addEventListener("click", function () {
+      var ta = card.querySelector(".appr-args");
+      if (ta && navigator.clipboard) navigator.clipboard.writeText(ta.value);
+    });
+  }
   toolLog.appendChild(card);
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
@@ -962,7 +1041,7 @@ function fileUp() {
 
 async function previewFile(path, previewKind) {
   var preview = $("filePreview");
-  if (!preview || !activeProject) return;
+  if (!preview || !activeProject) return Promise.resolve();
   try {
     var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
     var prov = await loadProvenance(path);
@@ -998,9 +1077,13 @@ async function previewFile(path, previewKind) {
         break;
     }
     preview.innerHTML =
-      '<div class="fp-hd">📄 ' + escHtml(data.path || path) + " (" + fmtSize(data.size) + ")</div>" +
+      '<div class="fp-hd">📄 ' + escHtml(data.path || path) + " (" + fmtSize(data.size) + ') ' +
+      '<button type="button" class="btn sm" id="fpExpand">全屏</button></div>' +
       bodyHtml +
       '<div class="pv">' + prov + "</div>";
+    bindWorkspaceRefs(preview);
+    var exp = $("fpExpand");
+    if (exp) exp.addEventListener("click", function () { openPreviewModal(path); });
   } catch (e) {
     preview.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
@@ -1032,7 +1115,8 @@ function submitPrompt() {
   var inp = $("promptInput");
   if (!inp) return;
   var prompt = inp.value.trim();
-  if (!prompt) return;
+  if (!prompt && !pendingAttachments.length) return;
+  prompt = injectAttachmentsIntoPrompt(prompt || "请查看附件并分析。");
   inp.value = "";
   inp.style.height = "auto";
   var mode = ($("chatMode") && $("chatMode").value) || "agent";
@@ -1154,19 +1238,18 @@ $("fileUpload") && $("fileUpload").addEventListener("change", async function () 
       if (body.uploaded) uploaded = body.uploaded;
       else if (body.path) uploaded = body.path;
     } catch (_) {}
-    // Inject attachment tag into prompt for the agent
+    if (pendingAttachments.indexOf(uploaded) < 0) pendingAttachments.push(uploaded);
+    renderAttachmentChips();
     var inp = $("promptInput");
     if (inp) {
       var tag = "[附件] " + uploaded + "\n";
-      if (inp.value.indexOf(uploaded) < 0) {
-        inp.value = tag + (inp.value || "");
-      }
+      if (inp.value.indexOf(uploaded) < 0) inp.value = tag + (inp.value || "");
       inp.focus();
     }
     var hint = $("composerHint");
-    if (hint) hint.textContent = "已上传 " + uploaded + "（路径已写入输入框）";
+    if (hint) hint.textContent = "已上传 " + uploaded + "（附件芯片 + 输入框）";
     await refreshFiles();
-    // switch to files pane and preview if possible
+    loadFileTree();
     var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
     if (filesTab) filesTab.click();
     previewFile(uploaded, "");
@@ -1227,7 +1310,7 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "skills") loadSkills();
     if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); }
     if (pane === "tasks") renderTasksPane();
-    if (pane === "files") { refreshFiles(); loadFileRecent(); }
+    if (pane === "files") { refreshFiles(); loadFileRecent(); loadFileTree(); }
     if (pane === "artifacts") loadArtifacts();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
@@ -1343,20 +1426,138 @@ async function loadComputeHosts() {
   try {
     var data = await api("/api/lab/compute/ssh-hosts");
     var hosts = data.hosts || [];
-    // Always ensure local option for zero-SSH productivity
     var hasLocal = hosts.some(function (h) {
       var a = typeof h === "string" ? h : (h.alias || h.Alias || "");
       return a === "local" || a === "localhost";
     });
-    if (!hasLocal) hosts = [{ alias: "local" }].concat(hosts);
+    if (!hasLocal) hosts = [{ alias: "local", source: "builtin" }].concat(hosts);
     sel.innerHTML = hosts.map(function (h) {
       var name = typeof h === "string" ? h : (h.alias || h.Alias || h.Host || h.host || h.name || "local");
-      var label = name === "local" ? "local（本机 shell，无需 SSH）" : name;
+      var src = (h && h.source) || "";
+      var label = name === "local" ? "local（本机 shell）" : name + (src ? " [" + src + "]" : "");
       return '<option value="' + escHtml(name) + '">' + escHtml(label) + "</option>";
     }).join("");
+    renderHostRegistry(hosts);
   } catch (e) {
     sel.innerHTML = '<option value="local">local（本机 shell）</option>';
   }
+}
+
+function renderHostRegistry(hosts) {
+  var el = $("hostRegistry");
+  if (!el) return;
+  var reg = (hosts || []).filter(function (h) {
+    return h && (h.source === "registry" || (!h.source && h.alias && h.alias !== "local"));
+  });
+  // only show registered ones for delete
+  reg = (hosts || []).filter(function (h) { return h && h.source === "registry"; });
+  if (!reg.length) {
+    el.innerHTML = '<div class="hint">尚无注册主机 — 下方可添加</div>';
+    return;
+  }
+  el.innerHTML = reg.map(function (h) {
+    return '<div class="host-row">' +
+      '<span class="mono">' + escHtml(h.alias) + "</span> " +
+      '<span class="hint">' + escHtml(h.user || "") + (h.hostname ? "@" + escHtml(h.hostname) : "") + "</span>" +
+      (h.notes ? ' <span class="hint">(' + escHtml(h.notes) + ")</span>" : "") +
+      ' <button type="button" class="btn sm host-del" data-alias="' + escHtml(h.alias) + '">删除</button></div>';
+  }).join("");
+  el.querySelectorAll(".host-del").forEach(function (btn) {
+    btn.addEventListener("click", async function () {
+      try {
+        await api("/api/lab/compute/ssh-hosts?alias=" + encodeURIComponent(btn.getAttribute("data-alias")), { method: "DELETE" });
+        loadComputeHosts();
+      } catch (e) { alert(e.message); }
+    });
+  });
+}
+
+async function registerHost() {
+  var alias = ($("hostAlias") && $("hostAlias").value.trim()) || "";
+  var hostname = ($("hostHostname") && $("hostHostname").value.trim()) || "";
+  var user = ($("hostUser") && $("hostUser").value.trim()) || "";
+  var notes = ($("hostNotes") && $("hostNotes").value.trim()) || "";
+  if (!alias) { alert("需要别名 alias"); return; }
+  try {
+    await api("/api/lab/compute/ssh-hosts", {
+      method: "POST",
+      body: JSON.stringify({ alias: alias, hostname: hostname, user: user, notes: notes }),
+    });
+    if ($("hostAlias")) $("hostAlias").value = "";
+    loadComputeHosts();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function loadFileTree() {
+  var el = $("fileTreeView");
+  if (!el || !activeProject) return;
+  try {
+    var data = await api("/api/lab/files/tree?project_id=" + activeProject.slug + "&path=.&depth=4");
+    el.innerHTML = renderTreeNodes(data.tree ? (data.tree.children || [data.tree]) : [], 0);
+    el.querySelectorAll("[data-path]").forEach(function (n) {
+      n.addEventListener("click", function (e) {
+        e.stopPropagation();
+        var p = n.getAttribute("data-path");
+        var isDir = n.getAttribute("data-isdir") === "1";
+        if (isDir) {
+          fileCwd = p;
+          refreshFiles();
+        } else {
+          previewFile(p, n.getAttribute("data-preview") || "");
+        }
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+function renderTreeNodes(nodes, depth) {
+  if (!nodes || !nodes.length) return "";
+  return nodes.map(function (n) {
+    var pad = depth * 12;
+    var icon = n.isDir ? "📁" : fileIcon(n.name || n.path);
+    var kids = n.isDir && n.children && n.children.length
+      ? '<div class="tree-kids">' + renderTreeNodes(n.children, depth + 1) + "</div>"
+      : "";
+    return '<div class="tree-node" style="padding-left:' + pad + 'px" data-path="' + escHtml(n.path) +
+      '" data-isdir="' + (n.isDir ? "1" : "0") + '" data-preview="' + escHtml(n.previewKind || "") + '">' +
+      '<span class="tree-label">' + icon + " " + escHtml(n.name || n.path) + "</span></div>" + kids;
+  }).join("");
+}
+
+// Attachments state
+var pendingAttachments = [];
+
+function renderAttachmentChips() {
+  var el = $("attachChips");
+  if (!el) return;
+  if (!pendingAttachments.length) {
+    el.innerHTML = "";
+    el.hidden = true;
+    return;
+  }
+  el.hidden = false;
+  el.innerHTML = pendingAttachments.map(function (p, i) {
+    return '<span class="attach-chip">' + escHtml(p) +
+      ' <button type="button" data-i="' + i + '" class="attach-x">×</button></span>';
+  }).join("");
+  el.querySelectorAll(".attach-x").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      pendingAttachments.splice(parseInt(btn.getAttribute("data-i"), 10), 1);
+      renderAttachmentChips();
+    });
+  });
+}
+
+function injectAttachmentsIntoPrompt(prompt) {
+  if (!pendingAttachments.length) return prompt;
+  var block = pendingAttachments.map(function (p) { return "[附件] " + p; }).join("\n");
+  pendingAttachments = [];
+  renderAttachmentChips();
+  return block + "\n" + prompt;
 }
 
 async function loadComputeJobs() {
@@ -1620,6 +1821,16 @@ $("deleteSessBtn") && $("deleteSessBtn").addEventListener("click", function () {
   else alert("请先选择会话");
 });
 $("artifactsRefresh") && $("artifactsRefresh").addEventListener("click", loadArtifacts);
+$("hostRegisterBtn") && $("hostRegisterBtn").addEventListener("click", registerHost);
+$("fileTreeRefresh") && $("fileTreeRefresh").addEventListener("click", loadFileTree);
+$("previewModalClose") && $("previewModalClose").addEventListener("click", closePreviewModal);
+$("previewModal") && $("previewModal").addEventListener("click", function (e) {
+  if (e.target === $("previewModal")) closePreviewModal();
+});
+// @ mention: type @ to insert path from recent (simple: insert @)
+$("promptInput") && $("promptInput").addEventListener("input", function () {
+  // no-op hook for future autocomplete
+});
 
 /* ── 15. Init ── */
 

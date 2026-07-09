@@ -336,6 +336,61 @@ func TestComputeImportAll(t *testing.T) {
 	}
 }
 
+func TestHostsRegistryAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/ssh-hosts",
+		bytes.NewReader([]byte(`{"alias":"box1","hostname":"1.2.3.4","user":"u","notes":"n"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("post %d", res.StatusCode)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/compute/ssh-hosts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	get.Body.Close()
+	hosts, _ := body["hosts"].([]any)
+	found := false
+	for _, h := range hosts {
+		m, _ := h.(map[string]any)
+		if m["alias"] == "box1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hosts %v", body)
+	}
+}
+
+func TestFileTreeAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Tree")
+	store := project.NewStore(sci)
+	ws, _ := store.WorkspacePath(slug)
+	_ = os.MkdirAll(filepath.Join(ws, "sub"), 0o700)
+	_ = os.WriteFile(filepath.Join(ws, "sub", "a.md"), []byte("x"), 0o600)
+	res, err := http.Get(ts.URL + "/api/lab/files/tree?project_id=" + slug + "&depth=3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	if body["tree"] == nil {
+		t.Fatalf("%v", body)
+	}
+}
+
 func TestDeleteSessionAPI(t *testing.T) {
 	ts, sci := testLabServer(t)
 	slug := createProject(t, ts, "Del Sess")
