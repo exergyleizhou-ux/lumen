@@ -65,3 +65,46 @@ func TestSubmitRequiresHost(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestParseHarvestLines(t *testing.T) {
+	outs := ParseHarvestLines("results/out.csv\t128\n\nfigs/a.png\t999")
+	if len(outs) != 2 {
+		t.Fatalf("%+v", outs)
+	}
+	if outs[0].Path != "results/out.csv" || outs[0].Size != 128 {
+		t.Fatalf("%+v", outs[0])
+	}
+	if outs[1].Path != "figs/a.png" || outs[1].Size != 999 {
+		t.Fatalf("%+v", outs[1])
+	}
+}
+
+func TestSubmitOptsStoresGlobs(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	j, err := store.SubmitOpts("invalid-host.example", "true", "/tmp", SubmitOpts{
+		Timeout:     1 * time.Second,
+		OutputGlobs: []string{"*.csv", "out/*"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Get(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.OutputGlobs) != 2 || got.OutputGlobs[0] != "*.csv" {
+		t.Fatalf("%+v", got.OutputGlobs)
+	}
+	// Wait terminal so goroutine does not leak into other tests
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ = store.Get(j.ID)
+		if got.Status == "done" || got.Status == "failed" || got.Status == "timeout" {
+			break
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+}

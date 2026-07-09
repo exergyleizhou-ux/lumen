@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=22">
+  <link rel="stylesheet" href="app.css?v=23">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -40,6 +40,8 @@
           </div>
           <div class="set-k soft">课题列表</div>
           <div id="projectList" class="proj-list"></div>
+          <div class="set-k soft">会话（持久化）</div>
+          <div id="sessionList" class="sess-list hint">选择课题后加载…</div>
           <div class="set-k soft">快捷任务</div>
           <div class="chip-col">
             <button class="chip" type="button" data-brief="aspirin">生成 Brief · aspirin</button>
@@ -49,7 +51,7 @@
           </div>
         </div>
         <div class="side-ft">
-          <span class="hint">⌘K 命令面板 · Enter 发送 · Shift+Enter 换行</span>
+          <span class="hint">⌘K · Enter 发送 · Shift+Enter 换行</span>
         </div>
       </aside>
 
@@ -63,7 +65,7 @@
         <div id="chatScroll">
           <section id="welcome" class="hero">
             <h2>科研对话工作台</h2>
-            <p>体验对标 OpenClaudeScience：工具卡片 · 审批门闩 · 文件预览 · 溯源</p>
+            <p>OCS 级生产力：工具卡 · 审批 · 会话历史 · 工作区搜索 · 远程算力 · 技能</p>
             <div class="chips">
               <button class="chip" type="button" data-brief="aspirin">生成 Brief</button>
               <button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献，给出 3 条要点。">文献检索</button>
@@ -98,24 +100,52 @@
       <aside class="insp" id="inspectorPanel">
         <div class="insp-tabs">
           <button class="insp-tab active" type="button" data-pane="status">状态</button>
+          <button class="insp-tab" type="button" data-pane="tasks">本回合</button>
           <button class="insp-tab" type="button" data-pane="files">文件</button>
           <button class="insp-tab" type="button" data-pane="skills">技能</button>
+          <button class="insp-tab" type="button" data-pane="compute">算力</button>
           <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
           <button class="insp-tab" type="button" data-pane="molecule">分子</button>
         </div>
         <div class="insp-body">
           <div id="statusPane"><div id="inspectorBody" class="insp-scroll"></div></div>
+          <div id="tasksPane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">本回合工具 / 任务</div>
+            <div id="tasksBody" class="hint">发送消息后，工具调用会出现在这里</div>
+          </div>
           <div id="filesPane" class="insp-scroll" style="display:none">
             <div class="file-bar">
               <button type="button" class="btn sm" id="fileUp" title="上级">↑</button>
               <span class="mono file-cwd" id="fileCwd">.</span>
               <button type="button" class="btn sm" id="fileRefresh">↻</button>
             </div>
+            <div class="file-search-row">
+              <input type="search" id="fileSearch" class="file-search" placeholder="搜索文件名或内容…" autocomplete="off" />
+              <button type="button" class="btn sm" id="fileSearchBtn">搜</button>
+            </div>
+            <div id="fileSearchHits" class="file-hits" hidden></div>
             <div id="fileTree"></div>
             <div id="filePreview" class="fp"></div>
           </div>
           <div id="skillsPane" class="insp-scroll" style="display:none">
+            <div class="btn-row" style="margin-bottom:8px">
+              <button type="button" class="btn sm primary" id="skillsSaveBtn">保存启用</button>
+              <span class="hint" id="skillsHint">点名称注入输入框</span>
+            </div>
             <div id="skillsBody" class="hint">加载技能目录…</div>
+          </div>
+          <div id="computePane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">SSH 主机</div>
+            <select id="computeHost" class="mode-sel fill-sel"></select>
+            <div class="set-k soft" style="margin-top:8px">命令</div>
+            <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="sbatch run.sh 或 python train.py"></textarea>
+            <div class="set-k soft" style="margin-top:8px">产物 glob（可选，逗号分隔）</div>
+            <input type="text" id="computeGlobs" class="file-search" placeholder="*.csv, results/*" />
+            <div class="btn-row" style="margin-top:8px">
+              <button type="button" class="btn primary sm" id="computeSubmit">提交任务</button>
+              <button type="button" class="btn sm" id="computeRefresh">刷新列表</button>
+            </div>
+            <div id="computeJobs" class="compute-jobs hint" style="margin-top:10px">暂无任务</div>
           </div>
           <div id="ketcherPane" style="display:none;height:100%">
             <iframe id="ketcherFrame" title="Ketcher" style="width:100%;height:100%;border:none"></iframe>
@@ -137,6 +167,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=22"></script>
+  <script src="app.js?v=23"></script>
 </body>
 </html>

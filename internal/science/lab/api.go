@@ -232,54 +232,131 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"project": p, "sessions": sessions})
 		return
 	}
-	if parts[1] == "sessions" && r.Method == http.MethodPost {
-		var body struct {
-			Title string `json:"title"`
+	// /api/lab/projects/:slug/sessions
+	if parts[1] == "sessions" {
+		if len(parts) == 2 {
+			switch r.Method {
+			case http.MethodGet:
+				sessions, err := a.projects.ListSessions(slug)
+				if err != nil {
+					writeErr(w, http.StatusInternalServerError, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "count": len(sessions)})
+				return
+			case http.MethodPost:
+				var body struct {
+					Title string `json:"title"`
+				}
+				_ = json.NewDecoder(r.Body).Decode(&body)
+				sess, err := a.projects.CreateSession(slug, body.Title)
+				if err != nil {
+					writeErr(w, http.StatusBadRequest, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, sess)
+				return
+			default:
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
 		}
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		sess, err := a.projects.CreateSession(slug, body.Title)
-		if err != nil {
-			writeErr(w, http.StatusBadRequest, err)
+		// /api/lab/projects/:slug/sessions/:id
+		if len(parts) == 3 {
+			sid := parts[2]
+			if r.Method != http.MethodGet {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			sess, err := a.projects.GetSession(slug, sid)
+			if err != nil {
+				writeErr(w, http.StatusNotFound, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, sess)
 			return
 		}
-		writeJSON(w, http.StatusOK, sess)
-		return
 	}
 	http.NotFound(w, r)
 }
 
 func (a *API) handleSkills(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	slug := r.URL.Query().Get("project_id")
-	ws := ""
-	if slug != "" {
-		if p, err := a.projects.Get(slug); err == nil {
-			ws, _ = a.projects.WorkspacePath(p.Slug)
+	switch r.Method {
+	case http.MethodGet:
+		ws := ""
+		if slug != "" {
+			if p, err := a.projects.Get(slug); err == nil {
+				ws, _ = a.projects.WorkspacePath(p.Slug)
+				slug = p.Slug
+			}
 		}
-	}
-	home, _ := os.UserHomeDir()
-	skillPaths := []string{filepath.Join(a.sciDir, "skills")}
-	if packSkills := labruntime.SkillsDir(a.sciDir); packSkills != "" {
-		skillPaths = append(skillPaths, packSkills)
-	}
-	store := skill.New(skill.Options{
-		HomeDir:     home,
-		ProjectRoot: ws,
-		CustomPaths: skillPaths,
-	})
-	list := store.List()
-	out := make([]map[string]string, 0, len(list))
-	for _, sk := range list {
-		out = append(out, map[string]string{
-			"name":        sk.Name,
-			"description": sk.Description,
-			"scope":       string(sk.Scope),
+		home, _ := os.UserHomeDir()
+		skillPaths := []string{
+			filepath.Join(home, ".lumen", "skills"),
+			filepath.Join(home, ".lumen", "imported-skills"),
+			filepath.Join(a.sciDir, "skills"),
+		}
+		if packSkills := labruntime.SkillsDir(a.sciDir); packSkills != "" {
+			skillPaths = append(skillPaths, packSkills)
+		}
+		store := skill.New(skill.Options{
+			HomeDir:     home,
+			ProjectRoot: ws,
+			CustomPaths: skillPaths,
 		})
+		list := store.List()
+		enabled, _ := a.projects.LoadEnabledSkills(slug)
+		enSet := map[string]bool{}
+		for _, n := range enabled {
+			enSet[n] = true
+		}
+		// nil enabled list → treat all as enabled for UI checkboxes
+		allEnabled := len(enabled) == 0
+		out := make([]map[string]any, 0, len(list))
+		for _, sk := range list {
+			en := allEnabled || enSet[sk.Name]
+			out = append(out, map[string]any{
+				"name":        sk.Name,
+				"description": sk.Description,
+				"scope":       string(sk.Scope),
+				"source":      string(sk.Scope),
+				"enabled":     en,
+			})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"skills":         out,
+			"count":          len(out),
+			"enabled":        enabled,
+			"enabled_filter": !allEnabled,
+		})
+	case http.MethodPut, http.MethodPost:
+		var body struct {
+			ProjectID string   `json:"project_id"`
+			Enabled   []string `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid body"))
+			return
+		}
+		if body.ProjectID == "" {
+			body.ProjectID = slug
+		}
+		if body.ProjectID == "" {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
+			return
+		}
+		if p, err := a.projects.Get(body.ProjectID); err == nil {
+			body.ProjectID = p.Slug
+		}
+		if err := a.projects.SaveEnabledSkills(body.ProjectID, body.Enabled); err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "enabled": body.Enabled})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"skills": out, "count": len(out)})
 }
 
 func (a *API) handleBrief(w http.ResponseWriter, r *http.Request) {
@@ -424,12 +501,25 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sink := sseSink{w: w, flusher: flusher}
+	sse := sseSink{w: w, flusher: flusher}
+	hist := newHistorySink(sse)
 	mode := req.Mode
 	if mode == "" {
 		mode = a.local.DefaultMode
 	}
 	a.setActiveMode(mode)
+
+	// Persist session id (create if missing / unknown)
+	if sess, err := a.projects.EnsureSession(slug, req.SessionID, ""); err == nil {
+		req.SessionID = sess.ID
+		// Tell client the canonical session id early
+		sse.emitPayload("session", map[string]any{"id": sess.ID, "title": sess.Title})
+		_, _ = a.projects.AppendTurns(slug, sess.ID, project.Turn{
+			Role: "user",
+			Text: req.Prompt,
+			Mode: mode,
+		})
+	}
 
 	// Configure with timeout to prevent indefinite hang
 	cfgCtx, cfgCancel := context.WithTimeout(r.Context(), ConfigureTimeout)
@@ -442,20 +532,20 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 				done <- fmt.Errorf("configure panic: %v", rec)
 			}
 		}()
-		done <- ctrl.Configure(slug, req.SessionID, sink, a.makeApprover(sink.emitPayload))
+		done <- ctrl.Configure(slug, req.SessionID, hist, a.makeApprover(sse.emitPayload))
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
 			a.turnsFailed.Add(1)
-			sink.emit("error", err.Error())
+			sse.emit("error", err.Error())
 			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 			flusher.Flush()
 			return
 		}
 	case <-cfgCtx.Done():
 		a.turnsFailed.Add(1)
-		sink.emit("error", "配置超时，请刷新页面重试")
+		sse.emit("error", "配置超时，请刷新页面重试")
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 		flusher.Flush()
 		return
@@ -465,7 +555,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	a.turnsTotal.Add(1)
-	sink.emit("turn_started", "")
+	sse.emit("turn_started", "")
 	runErr := func() (err error) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -476,9 +566,20 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	}()
 	if runErr != nil {
 		a.turnsFailed.Add(1)
-		sink.emit("error", runErr.Error())
+		sse.emit("error", runErr.Error())
 	}
-	sink.emit("turn_done", "")
+	// Persist assistant turn summary
+	if req.SessionID != "" {
+		text, tools := hist.snapshot()
+		if text != "" || len(tools) > 0 || runErr != nil {
+			asst := project.Turn{Role: "assistant", Text: text, Tools: tools, Mode: mode}
+			if runErr != nil && text == "" {
+				asst.Text = runErr.Error()
+			}
+			_, _ = a.projects.AppendTurns(slug, req.SessionID, asst)
+		}
+	}
+	sse.emit("turn_done", "")
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
 }
@@ -545,7 +646,7 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route sub-paths: /api/lab/files/content?path=, /api/lab/files/download?path=, /api/lab/files/upload
+	// Route sub-paths: /api/lab/files/content?path=, /api/lab/files/download?path=, /api/lab/files/upload, /api/lab/files/search
 	sub := strings.TrimPrefix(r.URL.Path, "/api/lab/files")
 	sub = strings.TrimPrefix(sub, "/")
 
@@ -556,9 +657,41 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileDownload(w, r, g)
 	case sub == "upload":
 		a.handleFileUpload(w, r, g)
+	case sub == "search":
+		a.handleFileSearch(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (a *API) handleFileSearch(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if strings.TrimSpace(q) == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"hits": []any{}, "count": 0, "q": q})
+		return
+	}
+	root, err := g.Resolve(".")
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	limit := 50
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	hits, err := SearchWorkspace(root, q, limit)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if hits == nil {
+		hits = []FileSearchHit{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "count": len(hits), "q": q})
 }
 
 func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
@@ -810,20 +943,34 @@ func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"jobs": jobs, "count": len(jobs)})
 	case http.MethodPost:
 		var body struct {
-			Host       string `json:"host"`
-			Command    string `json:"command"`
-			TimeoutSec int    `json:"timeout_sec"`
+			Host        string   `json:"host"`
+			Command     string   `json:"command"`
+			WorkDir     string   `json:"work_dir"`
+			TimeoutSec  int      `json:"timeout_sec"`
+			OutputGlobs []string `json:"output_globs"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Host == "" || body.Command == "" {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("host and command required"))
 			return
 		}
 		ws, _ := a.projects.WorkspacePath(slug)
-		opts := compute.SubmitOpts{}
+		workDir := body.WorkDir
+		if workDir == "" {
+			workDir = ws
+		}
+		opts := compute.SubmitOpts{
+			OutputGlobs: body.OutputGlobs,
+		}
 		if body.TimeoutSec > 0 {
 			opts.Timeout = time.Duration(body.TimeoutSec) * time.Second
 		}
-		j, err := store.SubmitOpts(body.Host, body.Command, ws, opts)
+		// Harvest into project .lumen/compute/outputs
+		if len(body.OutputGlobs) > 0 {
+			if pd, err := a.projects.ProjectDir(slug); err == nil {
+				opts.LocalHarvestDir = filepath.Join(pd, ".lumen", "compute", "outputs")
+			}
+		}
+		j, err := store.SubmitOpts(body.Host, body.Command, workDir, opts)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return

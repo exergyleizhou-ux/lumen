@@ -188,11 +188,13 @@ window.LabUI = { escHtml: escHtml, renderMarkdown: renderMarkdown, reduceSSE: re
 
 /* ── 3. Global state ── */
 var activeProject = null;
-var threads = [{ id: "main", title: "对话" }];
-var activeThread = "main";
+var threads = []; // {id,title,turn_count} from API sessions
+var activeThread = "";
 var currentAbort = null;
 var fileCwd = ".";
 var sseState = null; // per-turn SSE accumulator
+var turnTasks = []; // this-turn tools for tasks pane
+var skillsCache = [];
 
 /* ── 4. API functions ── */
 
@@ -238,8 +240,15 @@ async function loadProjects() {
       btn.textContent = p.title;
       btn.addEventListener("click", function () {
         activeProject = p;
+        activeThread = "";
         loadProjects();
         refreshFiles();
+        loadSessions().then(function () {
+          if (activeThread) openSession(activeThread);
+        });
+        loadSkills();
+        loadComputeHosts();
+        loadComputeJobs();
         var nm = $("activeProjectName");
         var mt = $("activeProjectMeta");
         if (nm) nm.textContent = p.title;
@@ -250,6 +259,12 @@ async function loadProjects() {
     if (!activeProject && list.length) {
       activeProject = list[0];
       refreshFiles();
+      loadSessions().then(function () {
+        if (activeThread) openSession(activeThread);
+      });
+      loadSkills();
+      loadComputeHosts();
+      loadComputeJobs();
       var nm = $("activeProjectName");
       var mt = $("activeProjectMeta");
       if (nm) nm.textContent = list[0].title;
@@ -275,59 +290,210 @@ async function loadSkills() {
   try {
     var slug = activeProject ? activeProject.slug : "";
     var d = await api("/api/lab/skills?project_id=" + slug);
-    var s = d.skills || [];
-    el.innerHTML = s.length
-      ? s.map(function (sk) { return '<div class="ft-row"><span>📋 ' + escHtml(sk.name || sk) + "</span></div>"; }).join("")
-      : '<div class="hint">暂无技能 — 安装 Research Pack 后可用</div>';
+    skillsCache = d.skills || [];
+    var s = skillsCache;
+    if (!s.length) {
+      el.innerHTML = '<div class="hint">暂无技能 — 安装 Research Pack 或 ~/.lumen/skills</div>';
+      return;
+    }
+    el.innerHTML = s.map(function (sk) {
+      var name = sk.name || sk;
+      var en = sk.enabled !== false;
+      return '<div class="skill-row">' +
+        '<label class="skill-en"><input type="checkbox" data-skill="' + escHtml(name) + '"' + (en ? " checked" : "") + " /> 启用</label>" +
+        '<button type="button" class="skill-name" data-inject="' + escHtml(name) + '">📋 ' + escHtml(name) + "</button>" +
+        '<div class="skill-desc hint">' + escHtml(sk.description || "") + "</div>" +
+        '<div class="skill-src hint">' + escHtml(sk.scope || sk.source || "") + "</div></div>";
+    }).join("");
+    el.querySelectorAll("[data-inject]").forEach(function (btn) {
+      btn.addEventListener("click", function () { injectSkill(btn.getAttribute("data-inject")); });
+    });
   } catch (e) {
     el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
 }
 
-/* ── 5. Thread tabs ── */
+function injectSkill(name) {
+  var inp = $("promptInput");
+  if (!inp) return;
+  var prefix = "请使用技能「" + name + "」：";
+  if (inp.value.indexOf(prefix) !== 0) inp.value = prefix + (inp.value || "");
+  inp.focus();
+  var hint = $("skillsHint");
+  if (hint) hint.textContent = "已注入 " + name;
+}
+
+async function saveSkillsEnabled() {
+  if (!activeProject) return;
+  var enabled = [];
+  document.querySelectorAll("#skillsBody input[data-skill]").forEach(function (b) {
+    if (b.checked) enabled.push(b.getAttribute("data-skill"));
+  });
+  try {
+    await api("/api/lab/skills?project_id=" + activeProject.slug, {
+      method: "PUT",
+      body: JSON.stringify({ project_id: activeProject.slug, enabled: enabled }),
+    });
+    var hint = $("skillsHint");
+    if (hint) hint.textContent = "已保存 " + enabled.length + " 项";
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+/* ── 5. Sessions (persisted) ── */
 
 function renderThreadTabs() {
   var host = $("convTabs");
   if (!host) return;
+  if (!threads.length) {
+    host.innerHTML = '<span class="hint" style="padding:8px">无会话 — 点 ＋ 新建</span>';
+    return;
+  }
   host.innerHTML = threads
     .map(function (t) {
-      return '<button type="button" class="ctr-tab' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '"><span>' + escHtml(t.title) + '</span><span class="close" data-close="' + escHtml(t.id) + '">×</span></button>';
+      var count = t.turn_count != null ? t.turn_count : (t.turns ? t.turns.length : 0);
+      return '<button type="button" class="ctr-tab' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '"><span>' + escHtml(t.title || t.id) + (count ? " · " + count : "") + "</span></button>";
     })
     .join("");
   host.querySelectorAll(".ctr-tab").forEach(function (btn) {
-    btn.addEventListener("click", function (e) {
-      if (e.target.classList.contains("close")) {
-        e.stopPropagation();
-        closeThread(e.target.dataset.close);
-        return;
-      }
-      activeThread = btn.dataset.id || "main";
-      sseState = null;
-      renderThreadTabs();
+    btn.addEventListener("click", function () {
+      openSession(btn.dataset.id);
     });
+  });
+  renderSessionListSide();
+}
+
+function renderSessionListSide() {
+  var el = $("sessionList");
+  if (!el) return;
+  if (!activeProject) {
+    el.innerHTML = '<div class="hint">选择课题后加载…</div>';
+    return;
+  }
+  if (!threads.length) {
+    el.innerHTML = '<div class="hint">暂无会话</div>';
+    return;
+  }
+  el.innerHTML = threads.map(function (t) {
+    return '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
+      '<span class="sess-title">' + escHtml(t.title || t.id) + "</span>" +
+      '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>";
+  }).join("");
+  el.querySelectorAll(".sess-item").forEach(function (btn) {
+    btn.addEventListener("click", function () { openSession(btn.dataset.id); });
   });
 }
 
-function closeThread(id) {
-  if (threads.length <= 1) return;
-  threads = threads.filter(function (t) { return t.id !== id; });
-  if (activeThread === id) activeThread = threads[0].id;
-  renderThreadTabs();
+async function loadSessions() {
+  if (!activeProject) return;
+  try {
+    var data = await api("/api/lab/projects/" + activeProject.slug + "/sessions");
+    threads = data.sessions || [];
+    if (!threads.length) {
+      var created = await api("/api/lab/projects/" + activeProject.slug + "/sessions", {
+        method: "POST",
+        body: JSON.stringify({ title: "对话" }),
+      });
+      threads = [created];
+    }
+    if (!activeThread || !threads.some(function (t) { return t.id === activeThread; })) {
+      activeThread = threads[0].id;
+    }
+    renderThreadTabs();
+  } catch (e) {
+    var el = $("sessionList");
+    if (el) el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
 }
 
-function newConv() {
-  var id = "t-" + Date.now().toString(36);
-  threads.push({ id: id, title: "对话 " + threads.length });
+async function openSession(id) {
+  if (!activeProject || !id) return;
   activeThread = id;
   sseState = null;
+  turnTasks = [];
+  renderTasksPane();
   renderThreadTabs();
-  var scroll = $("chatScroll");
-  if (scroll) {
-    var hero = document.createElement("section");
-    hero.className = "hero";
-    hero.innerHTML = "<h2>新对话</h2><p>描述你的科研任务</p>";
-    scroll.appendChild(hero);
+  try {
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions/" + encodeURIComponent(id));
+    renderHistory(sess.turns || []);
+  } catch (e) {
+    clearChatScroll('<div class="ft-err">加载会话失败: ' + escHtml(e.message) + "</div>");
   }
+}
+
+function clearChatScroll(html) {
+  var scroll = $("chatScroll");
+  if (!scroll) return;
+  scroll.innerHTML = html || "";
+}
+
+function renderHistory(turns) {
+  clearChatScroll("");
+  if (!turns || !turns.length) {
+    clearChatScroll(
+      '<section class="hero" id="welcome"><h2>空会话</h2><p>发送消息开始；历史会持久化，刷新后可恢复。</p></section>'
+    );
+    return;
+  }
+  turns.forEach(function (t) {
+    if (t.role === "user") {
+      var ue = document.createElement("div");
+      ue.className = "chat-msg user";
+      ue.textContent = t.text || "";
+      $("chatScroll").appendChild(ue);
+      return;
+    }
+    if (t.role === "assistant") {
+      var bubble = createAgentBubble();
+      if (t.text) bubble.textDiv.innerHTML = renderMarkdown(t.text);
+      (t.tools || []).forEach(function (tool) {
+        upsertToolCard(bubble.toolLog, {
+          id: tool.id || tool.name,
+          name: tool.name,
+          args: tool.args || "",
+          output: tool.output || "",
+          err: tool.err || "",
+          status: tool.status || (tool.err ? "error" : "done"),
+        });
+      });
+    }
+  });
+  $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
+}
+
+async function newConv() {
+  if (!activeProject) {
+    try { await ensureProject(); } catch (e) { alert(e.message); return; }
+  }
+  try {
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions", {
+      method: "POST",
+      body: JSON.stringify({ title: "对话 " + (threads.length + 1) }),
+    });
+    threads.unshift({ id: sess.id, title: sess.title, turn_count: 0 });
+    activeThread = sess.id;
+    renderThreadTabs();
+    clearChatScroll(
+      '<section class="hero" id="welcome"><h2>新对话</h2><p>描述你的科研任务 — 此会话会保存到服务器</p></section>'
+    );
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+function renderTasksPane() {
+  var el = $("tasksBody");
+  if (!el) return;
+  if (!turnTasks.length) {
+    el.innerHTML = '<div class="hint">本回合尚无工具调用</div>';
+    return;
+  }
+  el.innerHTML = turnTasks.map(function (t) {
+    return '<div class="task-row status-' + escHtml(t.status || "") + '">' +
+      '<span class="task-name">⚙ ' + escHtml(t.name || t.id) + "</span>" +
+      '<span class="task-st">' + escHtml(statusLabel(t.status)) + "</span></div>";
+  }).join("");
 }
 
 /* ── 6. DOM rendering helpers ── */
@@ -500,9 +666,24 @@ function handleSSEEvent(ev, state, bubble) {
     $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
   }
 
+  // Session id from server
+  if (kind === "session" && ev.id) {
+    activeThread = ev.id;
+    var found = false;
+    threads.forEach(function (t) {
+      if (t.id === ev.id) {
+        found = true;
+        if (ev.title) t.title = ev.title;
+      }
+    });
+    if (!found) threads.unshift({ id: ev.id, title: ev.title || "对话", turn_count: 0 });
+    renderThreadTabs();
+  }
+
   // Tool dispatch
   if (kind === "tool_dispatch" && ev.tool && ev.tool.id) {
     upsertToolCard(bubble.toolLog, state.tools[ev.tool.id]);
+    syncTurnTask(state.tools[ev.tool.id]);
   }
 
   // Tool result
@@ -513,6 +694,7 @@ function handleSSEEvent(ev, state, bubble) {
     } else {
       upsertToolCard(bubble.toolLog, state.tools[ev.tool.id]);
     }
+    syncTurnTask(state.tools[ev.tool.id]);
   }
 
   // Tool progress
@@ -537,22 +719,37 @@ function handleSSEEvent(ev, state, bubble) {
   }
   if (kind === "turn_done") {
     setRunStatus(false);
-    // Remove cursor
     if (bubble.textDiv) {
       var cur = bubble.textDiv.querySelector(".cursor");
       if (cur) cur.remove();
     }
     refreshFiles();
+    loadSessions();
     currentAbort = null;
   }
 
   return state;
 }
 
+function syncTurnTask(tool) {
+  if (!tool) return;
+  var i, found = -1;
+  for (i = 0; i < turnTasks.length; i++) {
+    if (turnTasks[i].id === tool.id) { found = i; break; }
+  }
+  if (found >= 0) turnTasks[found] = tool;
+  else turnTasks.push(tool);
+  renderTasksPane();
+}
+
 async function streamChat(prompt, mode) {
   mode = mode || "agent";
   var p;
   try { p = await ensureProject(); } catch (e) { addErrorBubble($("chatScroll"), "无法获取课题: " + e.message); return; }
+  if (!activeThread) {
+    try { await loadSessions(); } catch (_) {}
+  }
+  $("welcome") && $("welcome").remove();
 
   // User bubble
   var ue = document.createElement("div");
@@ -566,6 +763,8 @@ async function streamChat(prompt, mode) {
 
   // Reset state
   sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null };
+  turnTasks = [];
+  renderTasksPane();
   setRunStatus(true);
   currentAbort = new AbortController();
 
@@ -573,7 +772,7 @@ async function streamChat(prompt, mode) {
     var res = await fetch(labPath("/api/lab/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ project_id: p.slug, prompt: prompt, mode: mode, session_id: activeThread }),
+      body: JSON.stringify({ project_id: p.slug, prompt: prompt, mode: mode, session_id: activeThread || "" }),
       signal: currentAbort.signal,
     });
 
@@ -839,6 +1038,9 @@ $("refreshAllBtn") && $("refreshAllBtn").addEventListener("click", function () {
   refreshHealth();
   loadProjects();
   refreshFiles();
+  loadSessions();
+  loadSkills();
+  loadComputeJobs();
 });
 
 // New project
@@ -940,19 +1142,20 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
+var PANE_IDS = ["status", "tasks", "files", "skills", "compute", "ketcher", "molecule"];
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
     t.classList.add("active");
     var pane = t.dataset.pane;
-    $("statusPane") && ($("statusPane").style.display = pane === "status" ? "block" : "none");
-    $("filesPane") && ($("filesPane").style.display = pane === "files" ? "block" : "none");
-    if ($("skillsPane")) {
-      $("skillsPane").style.display = pane === "skills" ? "block" : "none";
-      if (pane === "skills") loadSkills();
-    }
-    if ($("ketcherPane")) $("ketcherPane").style.display = pane === "ketcher" ? "block" : "none";
-    if ($("moleculePane")) $("moleculePane").style.display = pane === "molecule" ? "block" : "none";
+    PANE_IDS.forEach(function (id) {
+      var el = $(id + "Pane");
+      if (el) el.style.display = pane === id ? (id === "ketcher" || id === "molecule" ? "block" : "block") : "none";
+    });
+    if (pane === "skills") loadSkills();
+    if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); }
+    if (pane === "tasks") renderTasksPane();
+    if (pane === "files") refreshFiles();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       var frame = $("ketcherFrame");
@@ -964,6 +1167,119 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     }
   });
 });
+
+/* ── File search ── */
+async function runFileSearch() {
+  var qEl = $("fileSearch");
+  var hitsEl = $("fileSearchHits");
+  if (!qEl || !hitsEl || !activeProject) return;
+  var q = qEl.value.trim();
+  if (!q) {
+    hitsEl.hidden = true;
+    hitsEl.innerHTML = "";
+    return;
+  }
+  try {
+    var data = await api("/api/lab/files/search?project_id=" + activeProject.slug + "&q=" + encodeURIComponent(q));
+    var hits = data.hits || [];
+    hitsEl.hidden = false;
+    if (!hits.length) {
+      hitsEl.innerHTML = '<div class="hint">无匹配</div>';
+      return;
+    }
+    hitsEl.innerHTML = hits.map(function (h) {
+      return '<div class="ft-row hit" data-path="' + escHtml(h.path) + '" data-isdir="' + (h.isDir ? "1" : "0") + '" data-preview="' + escHtml(h.previewKind || "") + '">' +
+        '<span class="ft-name">' + escHtml(h.path) + '</span>' +
+        '<span class="ft-size">' + escHtml(h.match) + "</span>" +
+        (h.snippet ? '<div class="hit-snip">' + escHtml(h.snippet) + "</div>" : "") +
+        "</div>";
+    }).join("");
+    hitsEl.querySelectorAll(".ft-row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        if (row.dataset.isdir === "1") {
+          fileCwd = row.dataset.path;
+          refreshFiles();
+        } else {
+          previewFile(row.dataset.path, row.dataset.preview);
+        }
+      });
+    });
+  } catch (e) {
+    hitsEl.hidden = false;
+    hitsEl.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+/* ── Compute ── */
+async function loadComputeHosts() {
+  var sel = $("computeHost");
+  if (!sel) return;
+  try {
+    var data = await api("/api/lab/compute/ssh-hosts");
+    var hosts = data.hosts || [];
+    sel.innerHTML = hosts.length
+      ? hosts.map(function (h) {
+          var name = typeof h === "string" ? h : (h.Host || h.host || h.name || JSON.stringify(h));
+          return '<option value="' + escHtml(name) + '">' + escHtml(name) + "</option>";
+        }).join("")
+      : '<option value="">（无 ~/.ssh/config 主机）</option>';
+  } catch (e) {
+    sel.innerHTML = '<option value="">加载失败</option>';
+  }
+}
+
+async function loadComputeJobs() {
+  var el = $("computeJobs");
+  if (!el || !activeProject) return;
+  try {
+    var data = await api("/api/lab/compute/jobs?project_id=" + activeProject.slug);
+    var jobs = data.jobs || [];
+    if (!jobs.length) {
+      el.innerHTML = '<div class="hint">暂无任务</div>';
+      return;
+    }
+    el.innerHTML = jobs.map(function (j) {
+      var outs = (j.outputs || []).map(function (o) {
+        return escHtml(o.path) + (o.local_path ? " → " + escHtml(o.local_path) : "") + (o.error ? " (" + escHtml(o.error) + ")" : "");
+      }).join("; ");
+      return '<div class="job-card status-' + escHtml(j.status || "") + '">' +
+        '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) + "</div>" +
+        '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
+        (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(0, 500)) + "</pre>" : "") +
+        (outs ? '<div class="hint">产物: ' + outs + "</div>" : "") +
+        "</div>";
+    }).join("");
+  } catch (e) {
+    el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function submitComputeJob() {
+  if (!activeProject) return;
+  var host = $("computeHost") && $("computeHost").value;
+  var cmd = $("computeCmd") && $("computeCmd").value.trim();
+  var globsRaw = $("computeGlobs") && $("computeGlobs").value.trim();
+  if (!host || !cmd) {
+    alert("需要主机和命令");
+    return;
+  }
+  var globs = globsRaw ? globsRaw.split(",").map(function (s) { return s.trim(); }).filter(Boolean) : [];
+  try {
+    await api("/api/lab/compute/jobs?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ host: host, command: cmd, timeout_sec: 600, output_globs: globs }),
+    });
+    loadComputeJobs();
+    // Poll a few times
+    var n = 0;
+    var timer = setInterval(function () {
+      loadComputeJobs();
+      if (++n > 20) clearInterval(timer);
+    }, 2000);
+  } catch (e) {
+    alert(e.message);
+  }
+}
 
 async function loadMoleculeViewer() {
   var el = $("molViewer");
@@ -1055,13 +1371,29 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
   makeResizable($("resizeRight"), $("inspectorPanel"), true);
 })();
 
+// Productivity wiring
+$("skillsSaveBtn") && $("skillsSaveBtn").addEventListener("click", saveSkillsEnabled);
+$("fileSearchBtn") && $("fileSearchBtn").addEventListener("click", runFileSearch);
+$("fileSearch") && $("fileSearch").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") { e.preventDefault(); runFileSearch(); }
+});
+$("computeSubmit") && $("computeSubmit").addEventListener("click", submitComputeJob);
+$("computeRefresh") && $("computeRefresh").addEventListener("click", loadComputeJobs);
+
 /* ── 15. Init ── */
 
 (async function init() {
   try {
     await refreshHealth();
     await loadProjects();
-    renderThreadTabs();
+    if (activeProject) {
+      await loadSessions();
+      if (activeThread) await openSession(activeThread);
+      loadSkills();
+      loadComputeHosts();
+    } else {
+      renderThreadTabs();
+    }
   } catch (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
@@ -1069,5 +1401,5 @@ if (params.get("embed") || params.get("oasis")) document.body.classList.add("emb
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");
-  }, 1200);
+  }, 800);
 })();

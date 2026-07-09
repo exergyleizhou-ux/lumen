@@ -23,26 +23,40 @@ const (
 	MaxJobTimeout = 2 * time.Hour
 )
 
+// JobOutput is one harvested artifact path (remote and optional local copy).
+type JobOutput struct {
+	Path      string `json:"path"`
+	Size      int64  `json:"size,omitempty"`
+	LocalPath string `json:"local_path,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 // Job represents a detached compute job submitted to a remote host.
 type Job struct {
-	ID              string    `json:"id"`
-	Host            string    `json:"host"`
-	Command         string    `json:"command"`
-	WorkDir         string    `json:"work_dir"`
-	Status          string    `json:"status"` // pending, running, done, failed, timeout
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	PID             int       `json:"pid,omitempty"`
-	ExitCode        int       `json:"exit_code,omitempty"`
-	Output          string    `json:"output,omitempty"`
-	OutputTruncated bool      `json:"output_truncated,omitempty"`
-	TimeoutSec      int       `json:"timeout_sec,omitempty"`
-	Error           string    `json:"error,omitempty"`
+	ID              string      `json:"id"`
+	Host            string      `json:"host"`
+	Command         string      `json:"command"`
+	WorkDir         string      `json:"work_dir"`
+	Status          string      `json:"status"` // pending, running, done, failed, timeout
+	CreatedAt       time.Time   `json:"created_at"`
+	UpdatedAt       time.Time   `json:"updated_at"`
+	PID             int         `json:"pid,omitempty"`
+	ExitCode        int         `json:"exit_code,omitempty"`
+	Output          string      `json:"output,omitempty"`
+	OutputTruncated bool        `json:"output_truncated,omitempty"`
+	TimeoutSec      int         `json:"timeout_sec,omitempty"`
+	Error           string      `json:"error,omitempty"`
+	OutputGlobs     []string    `json:"output_globs,omitempty"`
+	Outputs         []JobOutput `json:"outputs,omitempty"`
+	LocalOutDir     string      `json:"local_out_dir,omitempty"`
 }
 
 // SubmitOpts optional job parameters.
 type SubmitOpts struct {
-	Timeout time.Duration
+	Timeout     time.Duration
+	OutputGlobs []string
+	// LocalHarvestDir if set, scp matching files into this directory after success.
+	LocalHarvestDir string
 }
 
 // Store manages job state on disk.
@@ -91,27 +105,31 @@ func (s *Store) SubmitOpts(host, command, workDir string, opts SubmitOpts) (*Job
 	s.mu.Lock()
 	now := time.Now().UTC()
 	j := &Job{
-		ID:         newJobID(),
-		Host:       host,
-		Command:    command,
-		WorkDir:    workDir,
-		Status:     "pending",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-		TimeoutSec: int(timeout.Seconds()),
+		ID:          newJobID(),
+		Host:        host,
+		Command:     command,
+		WorkDir:     workDir,
+		Status:      "pending",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		TimeoutSec:  int(timeout.Seconds()),
+		OutputGlobs: append([]string(nil), opts.OutputGlobs...),
+		LocalOutDir: opts.LocalHarvestDir,
 	}
 	if err := s.saveLocked(j); err != nil {
 		s.mu.Unlock()
 		return nil, err
 	}
 	id := j.ID
+	globs := append([]string(nil), opts.OutputGlobs...)
+	localDir := opts.LocalHarvestDir
 	s.mu.Unlock()
 
-	go s.run(id, host, command, workDir, timeout)
+	go s.run(id, host, command, workDir, timeout, globs, localDir)
 	return j, nil
 }
 
-func (s *Store) run(id, host, command, workDir string, timeout time.Duration) {
+func (s *Store) run(id, host, command, workDir string, timeout time.Duration, globs []string, localDir string) {
 	s.patch(id, func(j *Job) {
 		j.Status = "running"
 	})
@@ -128,29 +146,127 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration) {
 	out, err := cmd.CombinedOutput()
 	outStr, truncated := truncateOutput(string(out), MaxOutputBytes)
 
+	status := "done"
+	exitCode := 0
+	errMsg := ""
+	if ctx.Err() == context.DeadlineExceeded {
+		status = "timeout"
+		exitCode = -1
+		errMsg = fmt.Sprintf("exceeded timeout %s", timeout)
+	} else if err != nil {
+		status = "failed"
+		errMsg = err.Error()
+		if ee, ok := err.(*exec.ExitError); ok {
+			exitCode = ee.ExitCode()
+		} else {
+			exitCode = 1
+		}
+	}
+
+	var outputs []JobOutput
+	if status == "done" && len(globs) > 0 {
+		outputs = harvestOutputs(host, workDir, globs, localDir, id)
+	}
+
 	s.patch(id, func(j *Job) {
 		j.Output = outStr
 		j.OutputTruncated = truncated
 		j.UpdatedAt = time.Now().UTC()
-		if ctx.Err() == context.DeadlineExceeded {
-			j.Status = "timeout"
-			j.ExitCode = -1
-			j.Error = fmt.Sprintf("exceeded timeout %s", timeout)
-			return
+		j.Status = status
+		j.ExitCode = exitCode
+		j.Error = errMsg
+		if len(outputs) > 0 {
+			j.Outputs = outputs
 		}
-		if err != nil {
-			j.Status = "failed"
-			j.Error = err.Error()
-			if ee, ok := err.(*exec.ExitError); ok {
-				j.ExitCode = ee.ExitCode()
-			} else {
-				j.ExitCode = 1
-			}
-			return
-		}
-		j.Status = "done"
-		j.ExitCode = 0
 	})
+}
+
+// harvestOutputs lists remote files matching globs and optionally scp into localDir/jobID/.
+// Pure-ish helper used by run; unit-tested with empty host for path logic via BuildHarvestList.
+func harvestOutputs(host, workDir string, globs []string, localDir, jobID string) []JobOutput {
+	if host == "" || len(globs) == 0 {
+		return nil
+	}
+	// Remote: printf each match with size via stat when possible.
+	// shell: cd workdir && for g in globs; do ls -1 $g 2>/dev/null; done
+	var script strings.Builder
+	if workDir != "" {
+		script.WriteString("cd " + shellQuote(workDir) + " && ")
+	}
+	script.WriteString("for g in")
+	for _, g := range globs {
+		script.WriteString(" " + shellQuote(g))
+	}
+	script.WriteString("; do for f in $g; do [ -f \"$f\" ] && printf '%s\\t%s\\n' \"$f\" \"$(wc -c < \"$f\" 2>/dev/null || echo 0)\"; done; done")
+	cmd := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, script.String())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return []JobOutput{{Path: strings.Join(globs, ","), Error: "harvest list failed: " + err.Error()}}
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	var outs []JobOutput
+	var destRoot string
+	if localDir != "" {
+		destRoot = filepath.Join(localDir, jobID)
+		_ = os.MkdirAll(destRoot, 0o700)
+	}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		rel := strings.TrimSpace(parts[0])
+		if rel == "" {
+			continue
+		}
+		jo := JobOutput{Path: rel}
+		if len(parts) > 1 {
+			var sz int64
+			fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &sz)
+			jo.Size = sz
+		}
+		if destRoot != "" {
+			// scp host:workDir/rel dest
+			remotePath := rel
+			if workDir != "" {
+				remotePath = filepath.Join(workDir, rel)
+			}
+			localPath := filepath.Join(destRoot, filepath.Base(rel))
+			scp := exec.Command("scp", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+				host+":"+remotePath, localPath)
+			if err := scp.Run(); err != nil {
+				jo.Error = "scp: " + err.Error()
+			} else {
+				jo.LocalPath = localPath
+				if st, err := os.Stat(localPath); err == nil {
+					jo.Size = st.Size()
+				}
+			}
+		}
+		outs = append(outs, jo)
+	}
+	return outs
+}
+
+// ParseHarvestLines is a pure helper for tests: "path\\tsize" lines → JobOutput.
+func ParseHarvestLines(raw string) []JobOutput {
+	var outs []JobOutput
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\t", 2)
+		jo := JobOutput{Path: strings.TrimSpace(parts[0])}
+		if len(parts) > 1 {
+			var sz int64
+			fmt.Sscanf(strings.TrimSpace(parts[1]), "%d", &sz)
+			jo.Size = sz
+		}
+		outs = append(outs, jo)
+	}
+	return outs
 }
 
 func truncateOutput(s string, max int) (string, bool) {

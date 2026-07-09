@@ -287,8 +287,145 @@ func (s *Store) ListSessions(slug string) ([]Session, error) {
 		}
 		var sess Session
 		if json.Unmarshal(data, &sess) == nil {
-			out = append(out, sess)
+			// List responses omit bulky turn bodies; GetSession returns full turns.
+			listCopy := sess
+			listCopy.TurnCount = len(sess.Turns)
+			listCopy.Turns = nil
+			out = append(out, listCopy)
+		}
+	}
+	// newest first
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 0 && out[j].UpdatedAt.After(out[j-1].UpdatedAt); j-- {
+			out[j], out[j-1] = out[j-1], out[j]
 		}
 	}
 	return out, nil
+}
+
+// GetSession loads one session including turns.
+func (s *Store) GetSession(slug, sessionID string) (Session, error) {
+	if !slugRe.MatchString(slug) {
+		return Session{}, fmt.Errorf("invalid slug %q", slug)
+	}
+	if sessionID == "" || strings.Contains(sessionID, "/") || strings.Contains(sessionID, "..") {
+		return Session{}, fmt.Errorf("invalid session id")
+	}
+	data, err := os.ReadFile(filepath.Join(s.projectDir(slug), "sessions", sessionID+".json"))
+	if err != nil {
+		return Session{}, err
+	}
+	var sess Session
+	if err := json.Unmarshal(data, &sess); err != nil {
+		return Session{}, err
+	}
+	return sess, nil
+}
+
+// saveSession writes session JSON.
+func (s *Store) saveSession(slug string, sess Session) error {
+	dir := filepath.Join(s.projectDir(slug), "sessions")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, sess.ID+".json"), append(data, '\n'), 0o600)
+}
+
+// AppendTurns appends turns to a session (creates session file if needed via CreateSession first).
+func (s *Store) AppendTurns(slug, sessionID string, turns ...Turn) (Session, error) {
+	sess, err := s.GetSession(slug, sessionID)
+	if err != nil {
+		return Session{}, err
+	}
+	now := time.Now().UTC()
+	for i := range turns {
+		if turns[i].At.IsZero() {
+			turns[i].At = now
+		}
+		sess.Turns = append(sess.Turns, turns[i])
+	}
+	sess.UpdatedAt = now
+	// Auto-title from first user turn if still default-ish
+	if len(sess.Turns) > 0 && (sess.Title == "" || strings.HasPrefix(sess.Title, "会话 ")) {
+		for _, t := range sess.Turns {
+			if t.Role == "user" && strings.TrimSpace(t.Text) != "" {
+				title := strings.TrimSpace(t.Text)
+				if len([]rune(title)) > 40 {
+					title = string([]rune(title)[:40]) + "…"
+				}
+				sess.Title = title
+				break
+			}
+		}
+	}
+	if err := s.saveSession(slug, sess); err != nil {
+		return Session{}, err
+	}
+	if p, err := s.Get(slug); err == nil {
+		p.ActiveSession = sessionID
+		p.UpdatedAt = now
+		_ = s.save(p)
+	}
+	return sess, nil
+}
+
+// EnsureSession returns existing session or creates one.
+func (s *Store) EnsureSession(slug, sessionID, title string) (Session, error) {
+	if sessionID != "" {
+		if sess, err := s.GetSession(slug, sessionID); err == nil {
+			return sess, nil
+		}
+	}
+	return s.CreateSession(slug, title)
+}
+
+// EnabledSkillsPath returns path to per-project enabled skills list.
+func (s *Store) EnabledSkillsPath(slug string) (string, error) {
+	dir, err := s.ProjectDir(slug)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, ".lumen", "skills-enabled.json"), nil
+}
+
+// LoadEnabledSkills returns enabled skill names for a project (nil = all allowed / none filtered).
+func (s *Store) LoadEnabledSkills(slug string) ([]string, error) {
+	path, err := s.EnabledSkillsPath(slug)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var body struct {
+		Enabled []string `json:"enabled"`
+	}
+	if err := json.Unmarshal(data, &body); err != nil {
+		return nil, err
+	}
+	return body.Enabled, nil
+}
+
+// SaveEnabledSkills writes enabled skill names.
+func (s *Store) SaveEnabledSkills(slug string, enabled []string) error {
+	path, err := s.EnabledSkillsPath(slug)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(map[string]any{"enabled": enabled}, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o600)
 }
