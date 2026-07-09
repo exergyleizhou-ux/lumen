@@ -184,6 +184,41 @@ func TestProjectRenameAPI(t *testing.T) {
 	}
 }
 
+func TestFileStatsAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Stats")
+	// write a couple files
+	for _, pair := range []struct{ p, c string }{
+		{"data/a.txt", "hello"},
+		{"reports/b.md", "# hi"},
+	} {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+			bytes.NewReader([]byte(`{"path":"`+pair.p+`","content":`+mustJSON(pair.c)+`}`)))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+	}
+	get, err := http.Get(ts.URL + "/api/lab/files/stats?project_id=" + slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	if get.StatusCode != 200 {
+		t.Fatalf("stats %d", get.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	if body["files"].(float64) < 2 {
+		t.Fatalf("files %v", body)
+	}
+	if body["bytes"].(float64) < 1 {
+		t.Fatalf("bytes %v", body)
+	}
+}
+
 func TestNotebooksAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "NB")

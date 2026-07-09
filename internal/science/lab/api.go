@@ -1013,9 +1013,65 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileRename(w, r, g)
 	case sub == "copy":
 		a.handleFileCopy(w, r, g)
+	case sub == "stats":
+		a.handleFileStats(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleFileStats returns lightweight workspace counts for the status pane.
+func (a *API) handleFileStats(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root, err := g.Resolve(".")
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	var files, dirs int
+	var bytes int64
+	var newest time.Time
+	const maxWalk = 5000
+	n := 0
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if n >= maxWalk {
+			return filepath.SkipAll
+		}
+		base := info.Name()
+		if base == ".git" || base == "node_modules" || base == ".lumen" {
+			if info.IsDir() && path != root {
+				return filepath.SkipDir
+			}
+		}
+		if path == root {
+			return nil
+		}
+		n++
+		if info.IsDir() {
+			dirs++
+			return nil
+		}
+		files++
+		bytes += info.Size()
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+		return nil
+	})
+	out := map[string]any{
+		"files": files, "dirs": dirs, "bytes": bytes,
+		"truncated": n >= maxWalk,
+	}
+	if !newest.IsZero() {
+		out["newest"] = newest.UTC().Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // handleFileWrite writes text content into a workspace path.

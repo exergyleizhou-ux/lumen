@@ -509,6 +509,10 @@ html.dark .think-body { color: #b6adbf; border-top-color: rgba(255, 255, 255, 0.
 }
 .jump-bottom:hover { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
 #projectList .proj-ren { flex-shrink: 0; width: auto; height: 28px; }
+.compute-history { display: flex; flex-wrap: wrap; gap: 4px; max-height: 88px; overflow: auto; }
+.fav-chip-row { display: flex; align-items: center; gap: 2px; }
+.fav-chip-row .chip { flex: 1; min-width: 0; }
+.fav-chip-row .fav-del { flex-shrink: 0; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

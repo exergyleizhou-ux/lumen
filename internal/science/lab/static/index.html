@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=38">
+  <link rel="stylesheet" href="app.css?v=39">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -47,13 +47,16 @@
           </div>
           <div id="sessionSearchHits" class="file-hits" hidden></div>
           <div id="sessionList" class="sess-list hint">选择课题后加载…</div>
-          <div class="set-k soft">快捷任务</div>
-          <div class="chip-col">
+          <div class="set-k soft">快捷任务
+            <button type="button" class="btn sm" id="saveFavPrompt" title="把当前输入保存为快捷任务">＋收藏</button>
+          </div>
+          <div class="chip-col" id="chipCol">
             <button class="chip" type="button" data-brief="aspirin">生成 Brief · aspirin</button>
             <button class="chip" type="button" data-prompt="用 pubmed 检索阿司匹林近三年高被引文献，列 5 条并给中文摘要。">PubMed 文献检索</button>
             <button class="chip" type="button" data-prompt="列出当前工作区文件结构，指出缺什么实验产物，并建议下一步。">检查工作区</button>
             <button class="chip" type="button" data-prompt="列出可用的 C2D 算法与如何在绿洲上架。">C2D 算法</button>
           </div>
+          <div id="favChips" class="chip-col" style="margin-top:4px"></div>
         </div>
         <div class="side-ft">
           <span class="hint">⌘K · @文件 · Enter 发送 · Shift+Enter 换行</span>
@@ -190,6 +193,8 @@
             </div>
             <div class="set-k soft" style="margin-top:8px">命令</div>
             <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="echo ok > result.txt  或  sbatch run.sh"></textarea>
+            <div class="set-k soft" style="margin-top:6px">历史命令</div>
+            <div id="computeHistory" class="compute-history hint">—</div>
             <div class="set-k soft" style="margin-top:8px">产物 glob（可选，逗号分隔）</div>
             <input type="text" id="computeGlobs" class="file-search" placeholder="*.txt, *.csv, results/*" />
             <div class="btn-row" style="margin-top:8px">
@@ -285,6 +290,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=38"></script>
+  <script src="app.js?v=39"></script>
 </body>
 </html>

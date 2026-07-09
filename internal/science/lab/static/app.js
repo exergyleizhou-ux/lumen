@@ -323,22 +323,41 @@ async function refreshHealth() {
     $("modeHint").textContent = h.science_mode || "hybrid";
     var ib = $("inspectorBody");
     if (ib) {
-      ib.innerHTML = [
+      var rows = [
         '<div class="sr"><span class="sr k">状态</span><span class="sr v ok">● 在线</span></div>',
-        '<div class="sr"><span class="sr k">版本</span><span class="sr v">' + escHtml(h.version || "dev") + "</span></div>",
-        '<div class="sr"><span class="sr k">模式</span><span class="sr v">' + escHtml(h.science_mode || "hybrid") + "</span></div>",
+        '<div class="sr"><span class="sr k">版本</span><span class="sr v">' + escHtml(h.version || "dev") + "</span></div>',
+        '<div class="sr"><span class="sr k">模式</span><span class="sr v">' + escHtml(h.science_mode || "hybrid") + "</span></div>',
         '<div class="sr-div"></div>',
-        '<div class="sr"><span class="sr k">Research</span><span class="sr v ' + (pack.healthy ? "ok" : "") + '">' + (pack.healthy ? "✓" : "✗") + " " + (pack.domain_tools || 0) + " tools</span></div>",
-        '<div class="sr"><span class="sr k">CS fleet</span><span class="sr v">' + (f.cs_connected || 0) + "/" + (f.cs_domains || 0) + "</span></div>",
-        '<div class="sr"><span class="sr k">原生 fleet</span><span class="sr v">' + (f.lumen_native || 0) + "</span></div>",
+        '<div class="sr"><span class="sr k">Research</span><span class="sr v ' + (pack.healthy ? "ok" : "") + '">' + (pack.healthy ? "✓" : "✗") + " " + (pack.domain_tools || 0) + " tools</span></div>',
+        '<div class="sr"><span class="sr k">CS fleet</span><span class="sr v">' + (f.cs_connected || 0) + "/" + (f.cs_domains || 0) + "</span></div>',
+        '<div class="sr"><span class="sr k">原生 fleet</span><span class="sr v">' + (f.lumen_native || 0) + "</span></div>',
         '<div class="sr-div"></div>',
-        '<div class="sr"><span class="sr k">模型</span><span class="sr v">' + escHtml((h.provider && h.provider.masked) || "—") + "</span></div>",
-      ].join("");
+        '<div class="sr"><span class="sr k">模型</span><span class="sr v">' + escHtml((h.provider && h.provider.masked) || "—") + "</span></div>',
+      ];
+      if (activeProject) {
+        rows.push('<div class="sr-div"></div>');
+        rows.push('<div class="sr"><span class="sr k">课题</span><span class="sr v">' + escHtml(activeProject.title || activeProject.slug) + "</span></div>');
+        rows.push('<div class="sr" id="wsStatsRow"><span class="sr k">工作区</span><span class="sr v" id="wsStatsVal">加载中…</span></div>');
+      }
+      ib.innerHTML = rows.join("");
+      if (activeProject) loadWorkspaceStats();
     }
     return h;
   } catch (e) {
     var ib2 = $("inspectorBody");
     if (ib2) ib2.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function loadWorkspaceStats() {
+  var el = $("wsStatsVal");
+  if (!el || !activeProject) return;
+  try {
+    var s = await api("/api/lab/files/stats?project_id=" + activeProject.slug);
+    el.textContent = (s.files || 0) + " 文件 · " + (s.dirs || 0) + " 目录 · " + fmtSize(s.bytes || 0) +
+      (s.truncated ? " …" : "");
+  } catch (e) {
+    el.textContent = "—";
   }
 }
 
@@ -1722,6 +1741,8 @@ async function previewFile(path, previewKind) {
       (canEdit ? '<button type="button" class="btn sm" id="fpEdit">编辑</button> ' +
         '<button type="button" class="btn sm primary" id="fpSave" hidden>保存</button> ' +
         '<button type="button" class="btn sm" id="fpCancelEdit" hidden>取消</button> ' : "") +
+      '<button type="button" class="btn sm" id="fpCopyPath" title="复制路径">路径</button> ' +
+      '<button type="button" class="btn sm" id="fpAtPath" title="插入到输入框">@引用</button> ' +
       '<button type="button" class="btn sm" id="fpExpand">全屏</button> ' +
       '<span class="hint" id="fpEditHint"></span></div>' +
       bodyHtml +
@@ -1730,6 +1751,19 @@ async function previewFile(path, previewKind) {
     bindCodeCopy(preview);
     var exp = $("fpExpand");
     if (exp) exp.addEventListener("click", function () { openPreviewModal(path); });
+    var cp = $("fpCopyPath");
+    if (cp) cp.addEventListener("click", function () {
+      copyTextToClipboard(path, cp);
+    });
+    var atp = $("fpAtPath");
+    if (atp) atp.addEventListener("click", function () {
+      var inp = $("promptInput");
+      if (!inp) return;
+      var tag = "@" + path + " ";
+      inp.value = (inp.value ? inp.value + (/\s$/.test(inp.value) ? "" : " ") : "") + tag;
+      inp.focus();
+      saveComposerDraft();
+    });
     var molBtn = $("fpOpenMol");
     if (molBtn) {
       molBtn.addEventListener("click", function () {
@@ -2158,7 +2192,7 @@ $("fileUpload") && $("fileUpload").addEventListener("change", async function () 
 })();
 
 // Chips
-document.querySelectorAll(".chip").forEach(function (btn) {
+function bindChipButton(btn) {
   btn.addEventListener("click", async function () {
     if (btn.dataset.brief) {
       try {
@@ -2184,7 +2218,69 @@ document.querySelectorAll(".chip").forEach(function (btn) {
       addErrorBubble($("chatScroll"), e.message);
     });
   });
+}
+document.querySelectorAll(".chip").forEach(bindChipButton);
+
+function loadFavPrompts() {
+  try {
+    return JSON.parse(localStorage.getItem("lumen-fav-prompts") || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+
+function saveFavPrompts(list) {
+  try { localStorage.setItem("lumen-fav-prompts", JSON.stringify(list.slice(0, 20))); } catch (_) {}
+}
+
+function renderFavChips() {
+  var el = $("favChips");
+  if (!el) return;
+  var list = loadFavPrompts();
+  if (!list.length) {
+    el.innerHTML = "";
+    return;
+  }
+  el.innerHTML = list.map(function (f, i) {
+    var label = f.label || (f.prompt || "").slice(0, 18) || "收藏";
+    return '<div class="fav-chip-row">' +
+      '<button type="button" class="chip fav-run" data-i="' + i + '">' + escHtml(label) + "</button>" +
+      '<button type="button" class="btn sm fav-del" data-i="' + i + '" title="删除">×</button></div>';
+  }).join("");
+  el.querySelectorAll(".fav-run").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var item = loadFavPrompts()[parseInt(btn.getAttribute("data-i"), 10)];
+      if (item && item.prompt) streamChat(item.prompt).catch(function (e) {
+        addErrorBubble($("chatScroll"), e.message);
+      });
+    });
+  });
+  el.querySelectorAll(".fav-del").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var list = loadFavPrompts();
+      list.splice(parseInt(btn.getAttribute("data-i"), 10), 1);
+      saveFavPrompts(list);
+      renderFavChips();
+    });
+  });
+}
+
+$("saveFavPrompt") && $("saveFavPrompt").addEventListener("click", function () {
+  var inp = $("promptInput");
+  var prompt = (inp && inp.value.trim()) || lastPrompt || "";
+  if (!prompt) {
+    alert("请先在输入框写一段话，或先发送一条消息");
+    return;
+  }
+  var label = prompt("快捷任务名称", prompt.slice(0, 16));
+  if (label == null) return;
+  var list = loadFavPrompts().filter(function (f) { return f.prompt !== prompt; });
+  list.unshift({ label: (label || "收藏").slice(0, 40), prompt: prompt });
+  saveFavPrompts(list);
+  renderFavChips();
 });
+renderFavChips();
 
 // Bridge link
 $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
@@ -2213,7 +2309,8 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
       }
     });
     if (pane === "skills") loadSkills();
-    if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); }
+    if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); renderComputeHistory(); }
+    if (pane === "status") refreshHealth();
     if (pane === "tasks") renderTasksPane();
     if (pane === "files") { refreshFiles(); loadFileRecent(); loadFileTree(); }
     if (pane === "artifacts") loadArtifacts();
@@ -2952,6 +3049,45 @@ async function runSessionSearch() {
   }
 }
 
+function loadComputeHistory() {
+  try {
+    return JSON.parse(localStorage.getItem("lumen-compute-history") || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+
+function pushComputeHistory(cmd, host) {
+  if (!cmd) return;
+  var list = loadComputeHistory().filter(function (x) { return x.cmd !== cmd; });
+  list.unshift({ cmd: cmd, host: host || "", at: Date.now() });
+  list = list.slice(0, 12);
+  try { localStorage.setItem("lumen-compute-history", JSON.stringify(list)); } catch (_) {}
+  renderComputeHistory();
+}
+
+function renderComputeHistory() {
+  var el = $("computeHistory");
+  if (!el) return;
+  var list = loadComputeHistory();
+  if (!list.length) {
+    el.innerHTML = '<div class="hint">暂无历史命令</div>';
+    return;
+  }
+  el.innerHTML = list.map(function (h, i) {
+    return '<button type="button" class="btn sm hist-cmd" data-i="' + i + '" title="' + escHtml(h.cmd) + '">' +
+      escHtml((h.cmd || "").slice(0, 48)) + (h.cmd.length > 48 ? "…" : "") + "</button>";
+  }).join(" ");
+  el.querySelectorAll(".hist-cmd").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var item = list[parseInt(btn.getAttribute("data-i"), 10)];
+      if (!item) return;
+      if ($("computeCmd")) $("computeCmd").value = item.cmd;
+      if (item.host && $("computeHost")) $("computeHost").value = item.host;
+    });
+  });
+}
+
 async function submitComputeJob() {
   if (!activeProject) return;
   var host = $("computeHost") && $("computeHost").value;
@@ -2967,6 +3103,7 @@ async function submitComputeJob() {
       method: "POST",
       body: JSON.stringify({ host: host, command: cmd, timeout_sec: 600, output_globs: globs }),
     });
+    pushComputeHistory(cmd, host);
     loadComputeJobs();
     // Poll a few times
     var n = 0;
@@ -3132,20 +3269,42 @@ var params = new URLSearchParams(location.search);
 if (params.get("embed") || params.get("oasis")) document.body.classList.add("embed-oasis");
 
 (function () {
-  function makeResizable(handle, panel, isRight) {
+  function restorePanelWidth(panel, key) {
+    if (!panel) return;
+    try {
+      var w = parseInt(localStorage.getItem(key) || "", 10);
+      if (w >= 180 && w <= 520) panel.style.width = w + "px";
+    } catch (_) {}
+  }
+  function makeResizable(handle, panel, isRight, key) {
     if (!handle || !panel) return;
+    restorePanelWidth(panel, key);
     var startX, startW;
     handle.addEventListener("mousedown", function (e) {
       startX = e.clientX; startW = panel.getBoundingClientRect().width;
       document.body.style.cursor = "col-resize"; document.body.style.userSelect = "none";
       handle.classList.add("active");
-      function onMove(e) { var delta = isRight ? startX - e.clientX : e.clientX - startX; panel.style.width = Math.max(180, Math.min(480, startW + delta)) + "px"; }
-      function onUp() { document.body.style.cursor = ""; document.body.style.userSelect = ""; handle.classList.remove("active"); document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); }
-      document.addEventListener("mousemove", onMove); document.addEventListener("mouseup", onUp);
+      function onMove(e) {
+        var delta = isRight ? startX - e.clientX : e.clientX - startX;
+        var w = Math.max(180, Math.min(520, startW + delta));
+        panel.style.width = w + "px";
+      }
+      function onUp() {
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        handle.classList.remove("active");
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        try {
+          localStorage.setItem(key, String(Math.round(panel.getBoundingClientRect().width)));
+        } catch (_) {}
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
   }
-  makeResizable($("resizeLeft"), $("sidebarPanel"), false);
-  makeResizable($("resizeRight"), $("inspectorPanel"), true);
+  makeResizable($("resizeLeft"), $("sidebarPanel"), false, "lumen-side-w");
+  makeResizable($("resizeRight"), $("inspectorPanel"), true, "lumen-insp-w");
 })();
 
 // Productivity wiring
@@ -3380,6 +3539,8 @@ document.addEventListener("click", function (e) {
   // periodic health refresh
   setInterval(function () { refreshHealth().catch(function () {}); }, 45000);
   bindChatScrollJump();
+  renderComputeHistory();
+  renderFavChips();
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");
