@@ -288,23 +288,84 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "count": len(hits), "q": q})
 			return
 		}
-		// /api/lab/projects/:slug/sessions/:id
-		if len(parts) == 3 {
+		// /api/lab/projects/:slug/sessions/:id[/export]
+		if len(parts) >= 3 {
 			sid := parts[2]
-			if r.Method != http.MethodGet {
-				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			if len(parts) == 4 && parts[3] == "export" && r.Method == http.MethodGet {
+				a.handleSessionExport(w, r, slug, sid)
 				return
 			}
-			sess, err := a.projects.GetSession(slug, sid)
-			if err != nil {
-				writeErr(w, http.StatusNotFound, err)
+			if len(parts) == 3 {
+				if r.Method != http.MethodGet {
+					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+					return
+				}
+				sess, err := a.projects.GetSession(slug, sid)
+				if err != nil {
+					writeErr(w, http.StatusNotFound, err)
+					return
+				}
+				writeJSON(w, http.StatusOK, sess)
 				return
 			}
-			writeJSON(w, http.StatusOK, sess)
-			return
 		}
 	}
 	http.NotFound(w, r)
+}
+
+// handleSessionExport returns session as markdown or json (?format=md|json).
+func (a *API) handleSessionExport(w http.ResponseWriter, r *http.Request, slug, sid string) {
+	sess, err := a.projects.GetSession(slug, sid)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	format := strings.ToLower(r.URL.Query().Get("format"))
+	if format == "" {
+		format = "md"
+	}
+	switch format {
+	case "json":
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.json"`, sid))
+		_ = json.NewEncoder(w).Encode(sess)
+	default:
+		var b strings.Builder
+		b.WriteString("# ")
+		b.WriteString(sess.Title)
+		b.WriteString("\n\n")
+		b.WriteString(fmt.Sprintf("- session_id: `%s`\n- project: `%s`\n- updated: %s\n\n---\n\n",
+			sess.ID, slug, sess.UpdatedAt.Format(time.RFC3339)))
+		for i, t := range sess.Turns {
+			role := t.Role
+			if role == "" {
+				role = "message"
+			}
+			b.WriteString(fmt.Sprintf("## %d. %s\n\n", i+1, role))
+			if t.Mode != "" {
+				b.WriteString(fmt.Sprintf("_mode: %s_\n\n", t.Mode))
+			}
+			if t.Text != "" {
+				b.WriteString(t.Text)
+				b.WriteString("\n\n")
+			}
+			for _, tool := range t.Tools {
+				b.WriteString(fmt.Sprintf("### tool `%s` (%s)\n\n", tool.Name, tool.Status))
+				if tool.Args != "" {
+					b.WriteString("```\n" + tool.Args + "\n```\n\n")
+				}
+				if tool.Output != "" {
+					b.WriteString("```\n" + tool.Output + "\n```\n\n")
+				}
+				if tool.Err != "" {
+					b.WriteString("**error:** " + tool.Err + "\n\n")
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, sid))
+		_, _ = w.Write([]byte(b.String()))
+	}
 }
 
 func (a *API) handleSkills(w http.ResponseWriter, r *http.Request) {
@@ -1080,7 +1141,7 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	// POST .../jobs/:id/import — copy harvested output into workspace
+	// POST .../jobs/:id/import — copy harvested output(s) into workspace
 	if len(parts) == 2 && parts[1] == "import" && r.Method == http.MethodPost {
 		a.handleComputeImport(w, r, slug, projectDir, store, id)
 		return
@@ -1097,24 +1158,79 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, j)
 }
 
-// handleComputeImport copies a job output into workspace/imports/<jobid>/.
+// handleComputeImport copies one or all job outputs into workspace/imports/<jobid>/.
+// Body: { "path": "out.dat" } or { "all": true }
 func (a *API) handleComputeImport(w http.ResponseWriter, r *http.Request, slug, projectDir string, store *compute.Store, jobID string) {
 	var body struct {
-		Path string `json:"path"` // JobOutput.Path
+		Path string `json:"path"`
+		All  bool   `json:"all"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("path required (job output path)"))
-		return
-	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	j, err := store.Get(jobID)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
+	if !body.All && strings.TrimSpace(body.Path) == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("path required or all=true"))
+		return
+	}
+	var paths []string
+	if body.All {
+		for _, o := range j.Outputs {
+			if o.Path != "" && o.Error == "" {
+				paths = append(paths, o.Path)
+			}
+		}
+		if len(paths) == 0 && j.WorkDir != "" {
+			// nothing harvested metadata — nothing to do
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "imported": []any{}, "count": 0, "job_id": jobID})
+			return
+		}
+	} else {
+		paths = []string{body.Path}
+	}
+	var imported []map[string]any
+	var lastErr error
+	for _, p := range paths {
+		rel, size, err := a.copyJobOutputToWorkspace(slug, projectDir, j, jobID, p)
+		if err != nil {
+			lastErr = err
+			imported = append(imported, map[string]any{"path": p, "error": err.Error()})
+			continue
+		}
+		imported = append(imported, map[string]any{
+			"path":           p,
+			"workspace_path": rel,
+			"size":           size,
+			"previewKind":    previewKind(rel),
+		})
+	}
+	if len(imported) == 0 && lastErr != nil {
+		writeErr(w, http.StatusNotFound, lastErr)
+		return
+	}
+	// single-path response shape for backward compat
+	resp := map[string]any{
+		"ok":       true,
+		"imported": imported,
+		"count":    len(imported),
+		"job_id":   jobID,
+	}
+	if !body.All && len(imported) == 1 {
+		if wp, ok := imported[0]["workspace_path"].(string); ok {
+			resp["workspace_path"] = wp
+			resp["size"] = imported[0]["size"]
+			resp["previewKind"] = imported[0]["previewKind"]
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, jobID, outPath string) (rel string, size int64, err error) {
 	var src string
-	var size int64
 	for _, o := range j.Outputs {
-		if o.Path == body.Path || filepath.Base(o.Path) == filepath.Base(body.Path) {
+		if o.Path == outPath || filepath.Base(o.Path) == filepath.Base(outPath) {
 			if o.LocalPath != "" {
 				src = o.LocalPath
 			}
@@ -1122,68 +1238,51 @@ func (a *API) handleComputeImport(w http.ResponseWriter, r *http.Request, slug, 
 			break
 		}
 	}
-	// Fallback: work_dir + path for local jobs
 	if src == "" && j.WorkDir != "" {
-		cand := filepath.Join(j.WorkDir, body.Path)
-		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+		cand := filepath.Join(j.WorkDir, outPath)
+		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
 			src = cand
 			size = st.Size()
 		}
 	}
 	if src == "" {
-		writeErr(w, http.StatusNotFound, fmt.Errorf("output not found or not harvested: %s", body.Path))
-		return
+		return "", 0, fmt.Errorf("output not found or not harvested: %s", outPath)
 	}
-	// Security: src must be under projectDir or workDir
 	srcAbs, _ := filepath.Abs(src)
 	projAbs, _ := filepath.Abs(projectDir)
 	if !strings.HasPrefix(srcAbs, projAbs+string(os.PathSeparator)) &&
 		!(j.WorkDir != "" && strings.HasPrefix(srcAbs, filepath.Clean(j.WorkDir)+string(os.PathSeparator))) {
-		// also allow harvest under project .lumen
 		if !strings.HasPrefix(srcAbs, projAbs) {
-			writeErr(w, http.StatusForbidden, fmt.Errorf("source outside project"))
-			return
+			return "", 0, fmt.Errorf("source outside project")
 		}
 	}
 	ws, err := a.projects.WorkspacePath(slug)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
+		return "", 0, err
 	}
 	g, err := workspace.NewGuard(ws)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return "", 0, err
 	}
-	rel := filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
+	rel = filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
 	dst, err := g.Resolve(rel)
 	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
+		return "", 0, err
 	}
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return "", 0, err
 	}
 	data, err := os.ReadFile(src)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return "", 0, err
 	}
 	if err := os.WriteFile(dst, data, 0o600); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
+		return "", 0, err
 	}
 	if size == 0 {
 		size = int64(len(data))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":           true,
-		"workspace_path": rel,
-		"size":         size,
-		"previewKind":  previewKind(rel),
-		"job_id":       jobID,
-	})
+	return rel, size, nil
 }
 
 // ── C2D + Bridge endpoints ──

@@ -547,12 +547,14 @@ html.dark .appr-sum { color: #d1d5db; }
   background: var(--ocs-surface-soft);
 }
 .skill-en { font-size: 11px; color: var(--ocs-muted); display: flex; align-items: center; gap: 6px; }
+.skill-actions { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 .skill-name {
-  display: block; width: 100%; text-align: left; margin-top: 4px;
+  flex: 1; text-align: left;
   border: none; background: transparent; font: inherit; font-weight: 650;
   color: var(--ocs-accent); cursor: pointer; padding: 0;
 }
 .skill-name:hover { text-decoration: underline; }
+.skill-run { flex-shrink: 0; }
 .skill-desc { margin-top: 2px; }
 .skill-src { font-size: 10px; }
 

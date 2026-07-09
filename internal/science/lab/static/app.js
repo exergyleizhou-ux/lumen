@@ -301,26 +301,40 @@ async function loadSkills() {
       var en = sk.enabled !== false;
       return '<div class="skill-row">' +
         '<label class="skill-en"><input type="checkbox" data-skill="' + escHtml(name) + '"' + (en ? " checked" : "") + " /> 启用</label>" +
+        '<div class="skill-actions">' +
         '<button type="button" class="skill-name" data-inject="' + escHtml(name) + '">📋 ' + escHtml(name) + "</button>" +
+        '<button type="button" class="btn sm skill-run" data-run="' + escHtml(name) + '">运行</button>' +
+        "</div>" +
         '<div class="skill-desc hint">' + escHtml(sk.description || "") + "</div>" +
         '<div class="skill-src hint">' + escHtml(sk.scope || sk.source || "") + "</div></div>";
     }).join("");
     el.querySelectorAll("[data-inject]").forEach(function (btn) {
-      btn.addEventListener("click", function () { injectSkill(btn.getAttribute("data-inject")); });
+      btn.addEventListener("click", function () { injectSkill(btn.getAttribute("data-inject"), false); });
+    });
+    el.querySelectorAll("[data-run]").forEach(function (btn) {
+      btn.addEventListener("click", function () { injectSkill(btn.getAttribute("data-run"), true); });
     });
   } catch (e) {
     el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
 }
 
-function injectSkill(name) {
+function injectSkill(name, andSend) {
   var inp = $("promptInput");
   if (!inp) return;
-  var prefix = "请使用技能「" + name + "」：";
-  if (inp.value.indexOf(prefix) !== 0) inp.value = prefix + (inp.value || "");
+  var sk = null;
+  for (var i = 0; i < skillsCache.length; i++) {
+    if ((skillsCache[i].name || skillsCache[i]) === name) { sk = skillsCache[i]; break; }
+  }
+  var desc = (sk && sk.description) ? sk.description : "按该技能的标准流程执行";
+  var prompt = "请使用技能「" + name + "」：" + desc + "\n请开始执行，并说明你将调用的工具。";
+  inp.value = prompt;
   inp.focus();
   var hint = $("skillsHint");
-  if (hint) hint.textContent = "已注入 " + name;
+  if (hint) hint.textContent = andSend ? ("运行 " + name + "…") : ("已注入 " + name);
+  if (andSend) {
+    submitPrompt();
+  }
 }
 
 async function saveSkillsEnabled() {
@@ -1274,15 +1288,20 @@ async function loadComputeJobs() {
       return;
     }
     el.innerHTML = jobs.map(function (j) {
-      var outsHtml = (j.outputs || []).map(function (o, oi) {
+      var outs = j.outputs || [];
+      var outsHtml = outs.map(function (o) {
         return '<div class="job-out-row">' +
           '<span class="mono">' + escHtml(o.path) + (o.error ? " ⚠ " + escHtml(o.error) : "") + "</span>" +
           '<span class="job-out-actions">' +
-          '<button type="button" class="btn sm job-import" data-job="' + escHtml(j.id) + '" data-path="' + escHtml(o.path) + '">入库工作区</button>' +
+          '<button type="button" class="btn sm job-import" data-job="' + escHtml(j.id) + '" data-path="' + escHtml(o.path) + '">入库</button>' +
           "</span></div>";
       }).join("");
+      var batchBtn = outs.length > 1
+        ? '<button type="button" class="btn sm job-import-all" data-job="' + escHtml(j.id) + '">全部入库</button>'
+        : "";
       return '<div class="job-card status-' + escHtml(j.status || "") + '">' +
-        '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) + "</div>" +
+        '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
+        (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
         (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(0, 500)) + "</pre>" : "") +
         (outsHtml ? '<div class="job-outs">' + outsHtml + "</div>" : "") +
@@ -1290,7 +1309,12 @@ async function loadComputeJobs() {
     }).join("");
     el.querySelectorAll(".job-import").forEach(function (btn) {
       btn.addEventListener("click", function () {
-        importComputeOutput(btn.getAttribute("data-job"), btn.getAttribute("data-path"));
+        importComputeOutput(btn.getAttribute("data-job"), btn.getAttribute("data-path"), false);
+      });
+    });
+    el.querySelectorAll(".job-import-all").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        importComputeOutput(btn.getAttribute("data-job"), "", true);
       });
     });
   } catch (e) {
@@ -1298,30 +1322,46 @@ async function loadComputeJobs() {
   }
 }
 
-async function importComputeOutput(jobId, path) {
-  if (!activeProject || !jobId || !path) return;
+async function importComputeOutput(jobId, path, all) {
+  if (!activeProject || !jobId) return;
   try {
+    var body = all ? { all: true } : { path: path };
     var res = await api("/api/lab/compute/jobs/" + encodeURIComponent(jobId) + "/import?project_id=" + activeProject.slug, {
       method: "POST",
-      body: JSON.stringify({ path: path }),
+      body: JSON.stringify(body),
     });
-    var wp = res.workspace_path;
-    // inject path into composer
+    var paths = [];
+    if (res.workspace_path) paths.push(res.workspace_path);
+    (res.imported || []).forEach(function (it) {
+      if (it.workspace_path) paths.push(it.workspace_path);
+    });
     var inp = $("promptInput");
-    if (inp && wp) {
-      var tag = "\n[产物] " + wp + "\n";
-      if (inp.value.indexOf(wp) < 0) inp.value = (inp.value || "") + tag;
+    if (inp && paths.length) {
+      paths.forEach(function (wp) {
+        var tag = "\n[产物] " + wp;
+        if (inp.value.indexOf(wp) < 0) inp.value = (inp.value || "") + tag;
+      });
+      if (paths.length) inp.value += "\n";
     }
     await refreshFiles();
-    // open files pane and preview
     var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
     if (filesTab) filesTab.click();
-    if (wp) previewFile(wp, res.previewKind || "");
+    if (paths[0]) previewFile(paths[0], res.previewKind || "");
     var hint = $("composerHint");
-    if (hint) hint.textContent = "已入库 " + wp;
+    if (hint) hint.textContent = "已入库 " + paths.length + " 个产物";
   } catch (e) {
     alert("入库失败: " + e.message);
   }
+}
+
+function exportActiveSession(format) {
+  if (!activeProject || !activeThread) {
+    alert("请先选择会话");
+    return;
+  }
+  format = format || "md";
+  var url = labPath("/api/lab/projects/" + activeProject.slug + "/sessions/" + encodeURIComponent(activeThread) + "/export?format=" + format);
+  window.open(url, "_blank");
 }
 
 async function runSessionSearch() {
@@ -1488,6 +1528,8 @@ $("sessionSearchBtn") && $("sessionSearchBtn").addEventListener("click", runSess
 $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e) {
   if (e.key === "Enter") { e.preventDefault(); runSessionSearch(); }
 });
+$("exportMdBtn") && $("exportMdBtn").addEventListener("click", function () { exportActiveSession("md"); });
+$("exportJsonBtn") && $("exportJsonBtn").addEventListener("click", function () { exportActiveSession("json"); });
 
 /* ── 15. Init ── */
 

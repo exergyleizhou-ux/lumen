@@ -254,6 +254,88 @@ func TestComputeImportToWorkspace(t *testing.T) {
 	_ = slug
 }
 
+func TestSessionExportMarkdown(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Export Sess")
+	store := project.NewStore(sci)
+	sess, err := store.CreateSession(slug, "export-me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = store.AppendTurns(slug, sess.ID,
+		project.Turn{Role: "user", Text: "hello export"},
+		project.Turn{Role: "assistant", Text: "world **md**"},
+	)
+	res, err := http.Get(ts.URL + "/api/lab/projects/" + slug + "/sessions/" + sess.ID + "/export?format=md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(res.Body)
+	body := buf.String()
+	if !strings.Contains(body, "hello export") || !strings.Contains(body, "export-me") {
+		t.Fatalf("md body %q", body)
+	}
+	jres, err := http.Get(ts.URL + "/api/lab/projects/" + slug + "/sessions/" + sess.ID + "/export?format=json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer jres.Body.Close()
+	var sessOut project.Session
+	if err := json.NewDecoder(jres.Body).Decode(&sessOut); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessOut.Turns) != 2 {
+		t.Fatalf("turns %d", len(sessOut.Turns))
+	}
+}
+
+func TestComputeImportAll(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Import All")
+	body := `{"host":"local","command":"echo a > a.txt && echo b > b.txt","timeout_sec":10,"output_globs":["*.txt"]}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs?project_id="+slug, bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&job)
+	res.Body.Close()
+	jobID, _ := job["id"].(string)
+	var last map[string]any
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		gr, _ := http.Get(ts.URL + "/api/lab/compute/jobs/" + jobID + "?project_id=" + slug)
+		_ = json.NewDecoder(gr.Body).Decode(&last)
+		gr.Body.Close()
+		if last["status"] == "done" || last["status"] == "failed" {
+			break
+		}
+	}
+	if last["status"] != "done" {
+		t.Fatalf("%v", last)
+	}
+	ireq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs/"+jobID+"/import?project_id="+slug,
+		bytes.NewReader([]byte(`{"all":true}`)))
+	ireq.Header.Set("Content-Type", "application/json")
+	ires, err := http.DefaultClient.Do(ireq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ires.Body.Close()
+	var imp map[string]any
+	_ = json.NewDecoder(ires.Body).Decode(&imp)
+	if imp["count"].(float64) < 1 {
+		t.Fatalf("import all %v", imp)
+	}
+}
+
 func TestComputeJobGlobsInBody(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "Compute Proj")
