@@ -554,6 +554,19 @@ html.compact .tool-card-hd { padding: 4px 8px; }
 html.compact .composer textarea { min-height: 40px; }
 html.compact .tb { height: 42px; }
 html.compact .side-inner { gap: 6px; }
+.chat-find-bar {
+  position: absolute; top: 48px; right: 12px; z-index: 25;
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 8px; border-radius: 12px;
+  background: var(--ocs-surface-strong); border: 1px solid var(--ocs-line);
+  box-shadow: var(--ocs-shadow);
+}
+.chat-find-bar .file-search { width: 180px; }
+.chat-find-hit { outline: 1px solid rgba(168, 85, 247, 0.35); border-radius: 4px; }
+.chat-find-cur {
+  outline: 2px solid var(--ocs-accent);
+  background: var(--ocs-accent-soft);
+}
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=41">
+  <link rel="stylesheet" href="app.css?v=42">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -79,6 +79,7 @@
             <input type="file" id="importSessFile" accept=".json,application/json" hidden />
           </label>
           <button class="btn sm hide-sm" type="button" id="forkSessBtn" title="分支当前会话">分支</button>
+          <button class="btn sm hide-sm" type="button" id="chatFindBtn" title="在对话中查找 ⌘F">查找</button>
           <button class="btn sm hide-sm" type="button" id="deleteSessBtn" title="删除当前会话">删除会话</button>
         </div>
         <div id="chatScroll">
@@ -202,6 +203,10 @@
             <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="echo ok > result.txt  或  sbatch run.sh"></textarea>
             <div class="set-k soft" style="margin-top:6px">历史命令</div>
             <div id="computeHistory" class="compute-history hint">—</div>
+            <div class="set-k soft" style="margin-top:6px">命令模板
+              <button type="button" class="btn sm" id="computeSaveTmpl">保存模板</button>
+            </div>
+            <div id="computeTemplates" class="compute-history hint">—</div>
             <div class="set-k soft" style="margin-top:8px">产物 glob（可选，逗号分隔）</div>
             <input type="text" id="computeGlobs" class="file-search" placeholder="*.txt, *.csv, results/*" />
             <div class="btn-row" style="margin-top:8px">
@@ -304,7 +309,8 @@
         <button type="button" class="btn sm" id="shortcutsClose">关闭</button>
       </div>
       <div class="preview-modal-body shortcuts-body">
-        <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>K</kbd><span>命令面板</span></div>
+        <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>K</kbd><span>命令面板（含文件/会话搜索）</span></div>
+        <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>F</kbd><span>在当前对话中查找</span></div>
         <div class="sc-row"><kbd>⌘/Ctrl</kbd>+<kbd>/</kbd><span>快捷键帮助</span></div>
         <div class="sc-row"><kbd>Enter</kbd><span>发送消息</span></div>
         <div class="sc-row"><kbd>Shift</kbd>+<kbd>Enter</kbd><span>换行</span></div>
@@ -318,6 +324,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=41"></script>
+  <script src="app.js?v=42"></script>
 </body>
 </html>

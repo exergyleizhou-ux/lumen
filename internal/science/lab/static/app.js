@@ -2221,14 +2221,32 @@ $("refreshAllBtn") && $("refreshAllBtn").addEventListener("click", function () {
   loadComputeJobs();
 });
 
-// New project
+// New project (optional seed template)
+var seedExamplesCache = [];
 $("newProjectBtn") && $("newProjectBtn").addEventListener("click", async function () {
   var title = prompt("课题名称");
   if (!title) return;
+  var template = "";
   try {
-    activeProject = await api("/api/lab/projects", { method: "POST", body: JSON.stringify({ title: title }) });
+    if (!seedExamplesCache.length) {
+      var h = await api("/api/lab/health");
+      seedExamplesCache = (h.research_pack && h.research_pack.seed_examples) || [];
+    }
+  } catch (_) {}
+  if (seedExamplesCache.length) {
+    var list = seedExamplesCache.slice(0, 20).join(", ");
+    var pick = prompt("可选 seed 模板（留空跳过）\n可用: " + list, "");
+    if (pick != null) template = pick.trim();
+  }
+  try {
+    activeProject = await api("/api/lab/projects", {
+      method: "POST",
+      body: JSON.stringify({ title: title, template: template || undefined }),
+    });
     await loadProjects();
     refreshFiles();
+    loadSessions();
+    showLabToast("课题已创建", template ? ("模板: " + template) : activeProject.slug);
   } catch (e) { alert(e.message); }
 });
 
@@ -3288,20 +3306,78 @@ function renderComputeHistory() {
   var list = loadComputeHistory();
   if (!list.length) {
     el.innerHTML = '<div class="hint">暂无历史命令</div>';
+  } else {
+    el.innerHTML = list.map(function (h, i) {
+      return '<button type="button" class="btn sm hist-cmd" data-i="' + i + '" title="' + escHtml(h.cmd) + '">' +
+        escHtml((h.cmd || "").slice(0, 48)) + (h.cmd.length > 48 ? "…" : "") + "</button>";
+    }).join(" ");
+    el.querySelectorAll(".hist-cmd").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var item = list[parseInt(btn.getAttribute("data-i"), 10)];
+        if (!item) return;
+        if ($("computeCmd")) $("computeCmd").value = item.cmd;
+        if (item.host && $("computeHost")) $("computeHost").value = item.host;
+      });
+    });
+  }
+  renderComputeTemplates();
+}
+
+function loadComputeTemplates() {
+  try {
+    return JSON.parse(localStorage.getItem("lumen-compute-templates") || "[]");
+  } catch (_) {
+    return [];
+  }
+}
+function saveComputeTemplates(list) {
+  try { localStorage.setItem("lumen-compute-templates", JSON.stringify(list.slice(0, 20))); } catch (_) {}
+}
+function renderComputeTemplates() {
+  var el = $("computeTemplates");
+  if (!el) return;
+  var list = loadComputeTemplates();
+  if (!list.length) {
+    el.innerHTML = '<div class="hint">暂无模板 — 下方可保存当前命令</div>';
     return;
   }
-  el.innerHTML = list.map(function (h, i) {
-    return '<button type="button" class="btn sm hist-cmd" data-i="' + i + '" title="' + escHtml(h.cmd) + '">' +
-      escHtml((h.cmd || "").slice(0, 48)) + (h.cmd.length > 48 ? "…" : "") + "</button>";
-  }).join(" ");
-  el.querySelectorAll(".hist-cmd").forEach(function (btn) {
+  el.innerHTML = list.map(function (t, i) {
+    return '<div class="fav-chip-row">' +
+      '<button type="button" class="btn sm tmpl-run" data-i="' + i + '" title="' + escHtml(t.cmd || "") + '">' +
+      escHtml(t.name || "模板") + "</button>" +
+      '<button type="button" class="btn sm tmpl-del" data-i="' + i + '">×</button></div>';
+  }).join("");
+  el.querySelectorAll(".tmpl-run").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var item = list[parseInt(btn.getAttribute("data-i"), 10)];
+      var item = loadComputeTemplates()[parseInt(btn.getAttribute("data-i"), 10)];
       if (!item) return;
-      if ($("computeCmd")) $("computeCmd").value = item.cmd;
+      if ($("computeCmd")) $("computeCmd").value = item.cmd || "";
       if (item.host && $("computeHost")) $("computeHost").value = item.host;
+      if (item.globs != null && $("computeGlobs")) $("computeGlobs").value = item.globs;
     });
   });
+  el.querySelectorAll(".tmpl-del").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var list = loadComputeTemplates();
+      list.splice(parseInt(btn.getAttribute("data-i"), 10), 1);
+      saveComputeTemplates(list);
+      renderComputeTemplates();
+    });
+  });
+}
+function saveCurrentComputeTemplate() {
+  var cmd = ($("computeCmd") && $("computeCmd").value.trim()) || "";
+  if (!cmd) { alert("请先填写命令"); return; }
+  var name = prompt("模板名称", cmd.slice(0, 24));
+  if (name == null) return;
+  var host = ($("computeHost") && $("computeHost").value) || "local";
+  var globs = ($("computeGlobs") && $("computeGlobs").value) || "";
+  var list = loadComputeTemplates().filter(function (t) { return t.name !== name; });
+  list.unshift({ name: (name || "模板").slice(0, 40), cmd: cmd, host: host, globs: globs });
+  saveComputeTemplates(list);
+  renderComputeTemplates();
+  showLabToast("已保存模板", name);
 }
 
 async function submitComputeJob() {
@@ -3444,7 +3520,11 @@ var paletteCmds = [
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
   { label: "重跑上一条消息", action: function () { rerunLastPrompt(); } },
   { label: "新建工作区文件", action: function () { var t = document.querySelector('.insp-tab[data-pane="files"]'); if (t) t.click(); fileNewPrompt(); } },
+  { label: "在对话中查找", action: function () { openChatFind(); }, hotkey: "⌘F" },
 ];
+
+var paletteDynamic = []; // {label, kind, action, hotkey}
+var paletteTimer = null;
 
 function openPalette() {
   var el = $("cmdPalette");
@@ -3452,28 +3532,107 @@ function openPalette() {
   el.style.display = "flex";
   var inp = $("paletteInput");
   inp.value = "";
+  inp.placeholder = "命令 · 文件 · 会话…";
   inp.focus();
+  paletteDynamic = [];
   renderPaletteItems("");
 }
 function closePalette() {
   var el = $("cmdPalette");
   if (el) el.style.display = "none";
+  paletteDynamic = [];
+}
+function allPaletteItems(filter) {
+  var q = (filter || "").toLowerCase();
+  var cmds = paletteCmds.filter(function (c) {
+    return !q || c.label.toLowerCase().indexOf(q) !== -1;
+  }).map(function (c) {
+    return { label: c.label, hotkey: c.hotkey || "", kind: "cmd", action: c.action };
+  });
+  var dyn = paletteDynamic.filter(function (c) {
+    return !q || (c.label || "").toLowerCase().indexOf(q) !== -1;
+  });
+  return cmds.concat(dyn).slice(0, 40);
 }
 function renderPaletteItems(filter) {
   var res = $("paletteResults");
   if (!res) return;
-  var q = (filter || "").toLowerCase();
-  var items = paletteCmds.filter(function (c) { return c.label.toLowerCase().indexOf(q) !== -1; });
-  res.innerHTML = items.map(function (c, i) { return '<div class="item" data-idx="' + i + '"><span>' + c.label + '</span><span class="hotkey">' + (c.hotkey || "") + "</span></div>"; }).join("");
+  var items = allPaletteItems(filter);
+  if (!items.length) {
+    res.innerHTML = '<div class="item hint">无匹配 — 试试文件名或会话关键词</div>';
+    return;
+  }
+  res.innerHTML = items.map(function (c, i) {
+    var badge = c.kind === "file" ? "📄" : (c.kind === "sess" ? "💬" : "⚡");
+    return '<div class="item" data-idx="' + i + '"><span>' + badge + " " + escHtml(c.label) +
+      '</span><span class="hotkey">' + escHtml(c.hotkey || (c.kind === "file" ? "file" : c.kind === "sess" ? "sess" : "")) + "</span></div>";
+  }).join("");
   res.querySelectorAll(".item").forEach(function (el) {
     el.addEventListener("click", function () {
-      var cmd = paletteCmds[parseInt(el.dataset.idx)];
-      if (cmd) { closePalette(); cmd.action(); }
+      var q = ($("paletteInput") && $("paletteInput").value) || filter || "";
+      var items2 = allPaletteItems(q);
+      var cmd = items2[parseInt(el.dataset.idx)];
+      if (cmd && cmd.action) { closePalette(); cmd.action(); }
     });
   });
 }
 
-$("paletteInput") && $("paletteInput").addEventListener("input", function (e) { renderPaletteItems(e.target.value); });
+async function enrichPalette(q) {
+  paletteDynamic = [];
+  if (!q || q.length < 1 || !activeProject) {
+    renderPaletteItems(q);
+    return;
+  }
+  try {
+    // files
+    var files = await api("/api/lab/files/search?project_id=" + activeProject.slug +
+      "&q=" + encodeURIComponent(q) + "&limit=8");
+    (files.hits || []).forEach(function (h) {
+      if (h.isDir) return;
+      var path = h.path || h.name;
+      paletteDynamic.push({
+        label: path,
+        kind: "file",
+        action: function () {
+          var tab = document.querySelector('.insp-tab[data-pane="files"]');
+          if (tab) tab.click();
+          previewFile(path, h.previewKind || "");
+        },
+      });
+    });
+  } catch (_) {}
+  try {
+    var sess = await api("/api/lab/projects/" + activeProject.slug + "/sessions?q=" + encodeURIComponent(q));
+    var seen = {};
+    (sess.hits || []).forEach(function (h) {
+      if (!h.session_id || seen[h.session_id]) return;
+      seen[h.session_id] = true;
+      paletteDynamic.push({
+        label: (h.session_title || h.session_id) + " · " + (h.snippet || "").slice(0, 40),
+        kind: "sess",
+        action: function () { openSession(h.session_id); },
+      });
+    });
+  } catch (_) {}
+  // also match thread titles locally
+  threads.forEach(function (t) {
+    if ((t.title || "").toLowerCase().indexOf(q.toLowerCase()) >= 0) {
+      paletteDynamic.push({
+        label: t.title || t.id,
+        kind: "sess",
+        action: function () { openSession(t.id); },
+      });
+    }
+  });
+  renderPaletteItems(q);
+}
+
+$("paletteInput") && $("paletteInput").addEventListener("input", function (e) {
+  var q = e.target.value || "";
+  renderPaletteItems(q);
+  clearTimeout(paletteTimer);
+  paletteTimer = setTimeout(function () { enrichPalette(q); }, 180);
+});
 $("paletteInput") && $("paletteInput").addEventListener("keydown", function (e) {
   if (e.key === "Escape") closePalette();
   if (e.key === "Enter") {
@@ -3485,10 +3644,19 @@ $("cmdPalette") && $("cmdPalette").addEventListener("click", function (e) { if (
 document.addEventListener("keydown", function (e) {
   if ((e.metaKey || e.ctrlKey) && e.key === "k") { e.preventDefault(); openPalette(); }
   if ((e.metaKey || e.ctrlKey) && e.key === "/") { e.preventDefault(); openShortcuts(); }
+  if ((e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F")) {
+    // find in chat when focus is in center
+    var t = e.target;
+    var tag = (t && t.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    e.preventDefault();
+    openChatFind();
+  }
   if (e.key === "Escape") {
     closeShortcuts();
     closePalette();
     hideAtMenu();
+    closeChatFind();
   }
 });
 
@@ -3544,6 +3712,8 @@ $("fileSearch") && $("fileSearch").addEventListener("keydown", function (e) {
 });
 $("computeSubmit") && $("computeSubmit").addEventListener("click", submitComputeJob);
 $("computeRefresh") && $("computeRefresh").addEventListener("click", loadComputeJobs);
+$("computeSaveTmpl") && $("computeSaveTmpl").addEventListener("click", saveCurrentComputeTemplate);
+$("chatFindBtn") && $("chatFindBtn").addEventListener("click", openChatFind);
 $("sessionSearchBtn") && $("sessionSearchBtn").addEventListener("click", runSessionSearch);
 $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e) {
   if (e.key === "Enter") { e.preventDefault(); runSessionSearch(); }
@@ -3675,6 +3845,89 @@ function bindChatScrollJump() {
     var dist = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight;
     btn.hidden = dist < 120;
   });
+}
+
+/* ── Find in chat ── */
+var chatFindMatches = [];
+var chatFindIdx = -1;
+
+function openChatFind() {
+  var bar = $("chatFindBar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "chatFindBar";
+    bar.className = "chat-find-bar";
+    bar.innerHTML =
+      '<input type="search" id="chatFindInput" class="file-search" placeholder="在当前对话中查找…" />' +
+      '<span class="hint" id="chatFindCount">0</span>' +
+      '<button type="button" class="btn sm" id="chatFindPrev">↑</button>' +
+      '<button type="button" class="btn sm" id="chatFindNext">↓</button>' +
+      '<button type="button" class="btn sm" id="chatFindClose">×</button>';
+    var ctr = ($("chatScroll") && $("chatScroll").parentElement) || document.body;
+    ctr.appendChild(bar);
+    $("chatFindClose").addEventListener("click", closeChatFind);
+    $("chatFindPrev").addEventListener("click", function () { stepChatFind(-1); });
+    $("chatFindNext").addEventListener("click", function () { stepChatFind(1); });
+    $("chatFindInput").addEventListener("input", function () { runChatFind(this.value); });
+    $("chatFindInput").addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); stepChatFind(e.shiftKey ? -1 : 1); }
+      if (e.key === "Escape") closeChatFind();
+    });
+  }
+  bar.hidden = false;
+  var inp = $("chatFindInput");
+  if (inp) { inp.focus(); inp.select(); runChatFind(inp.value); }
+}
+
+function closeChatFind() {
+  var bar = $("chatFindBar");
+  if (bar) bar.hidden = true;
+  clearChatFindMarks();
+  chatFindMatches = [];
+  chatFindIdx = -1;
+}
+
+function clearChatFindMarks() {
+  document.querySelectorAll(".chat-find-hit").forEach(function (el) {
+    el.classList.remove("chat-find-hit", "chat-find-cur");
+  });
+}
+
+function runChatFind(q) {
+  clearChatFindMarks();
+  chatFindMatches = [];
+  chatFindIdx = -1;
+  var countEl = $("chatFindCount");
+  q = (q || "").trim().toLowerCase();
+  if (!q) {
+    if (countEl) countEl.textContent = "0";
+    return;
+  }
+  var scroll = $("chatScroll");
+  if (!scroll) return;
+  var nodes = scroll.querySelectorAll(".msg-user-text, .agent-text, .tool-card-name, .tool-card-output, .tool-card-args");
+  nodes.forEach(function (n) {
+    var text = (n.innerText || n.textContent || "").toLowerCase();
+    if (text.indexOf(q) >= 0) {
+      n.classList.add("chat-find-hit");
+      chatFindMatches.push(n);
+    }
+  });
+  if (countEl) countEl.textContent = String(chatFindMatches.length);
+  if (chatFindMatches.length) stepChatFind(1);
+}
+
+function stepChatFind(dir) {
+  if (!chatFindMatches.length) return;
+  chatFindMatches.forEach(function (n) { n.classList.remove("chat-find-cur"); });
+  chatFindIdx = (chatFindIdx + dir + chatFindMatches.length) % chatFindMatches.length;
+  var el = chatFindMatches[chatFindIdx];
+  if (el) {
+    el.classList.add("chat-find-cur");
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+  var countEl = $("chatFindCount");
+  if (countEl) countEl.textContent = (chatFindIdx + 1) + "/" + chatFindMatches.length;
 }
 
 /* ── @path autocomplete ── */

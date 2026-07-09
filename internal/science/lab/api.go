@@ -130,11 +130,12 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"science_mode": sciCfg.ScienceMode,
 		"uptime_sec":   int(time.Since(a.startedAt).Seconds()),
 		"research_pack": map[string]any{
-			"healthy":      rep.Healthy(),
-			"bio_clients":  rep.BioLibPackages,
-			"domain_tools": rep.TotalDomainTools,
-			"skills":       len(rep.Skills),
-			"domains":      len(rep.Domains),
+			"healthy":       rep.Healthy(),
+			"bio_clients":   rep.BioLibPackages,
+			"domain_tools":  rep.TotalDomainTools,
+			"skills":        len(rep.Skills),
+			"domains":       len(rep.Domains),
+			"seed_examples": rep.SeedExamples,
 		},
 		"fleet": fleetSt,
 		"provider": map[string]any{

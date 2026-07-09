@@ -39,6 +39,14 @@ func TestHealthEndpoint(t *testing.T) {
 	if port, ok := body["port"].(float64); !ok || int(port) != 19999 {
 		t.Fatalf("port want 19999 got %v", body["port"])
 	}
+	pack, _ := body["research_pack"].(map[string]any)
+	if pack == nil {
+		t.Fatalf("missing research_pack: %v", body)
+	}
+	// seed_examples may be empty when pack not installed, but key must exist
+	if _, ok := pack["seed_examples"]; !ok {
+		t.Fatalf("research_pack.seed_examples missing: %v", pack)
+	}
 }
 
 func TestArtifactsAPI(t *testing.T) {
