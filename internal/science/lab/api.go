@@ -296,17 +296,30 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if len(parts) == 3 {
-				if r.Method != http.MethodGet {
+				switch r.Method {
+				case http.MethodGet:
+					sess, err := a.projects.GetSession(slug, sid)
+					if err != nil {
+						writeErr(w, http.StatusNotFound, err)
+						return
+					}
+					writeJSON(w, http.StatusOK, sess)
+					return
+				case http.MethodDelete:
+					if err := a.projects.DeleteSession(slug, sid); err != nil {
+						if os.IsNotExist(err) {
+							writeErr(w, http.StatusNotFound, err)
+							return
+						}
+						writeErr(w, http.StatusInternalServerError, err)
+						return
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted": sid})
+					return
+				default:
 					http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 					return
 				}
-				sess, err := a.projects.GetSession(slug, sid)
-				if err != nil {
-					writeErr(w, http.StatusNotFound, err)
-					return
-				}
-				writeJSON(w, http.StatusOK, sess)
-				return
 			}
 		}
 	}
@@ -514,7 +527,7 @@ func (a *API) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var artifacts []map[string]any
-	for _, sub := range []string{"reports", "figures", "data", "notebooks"} {
+	for _, sub := range []string{"reports", "figures", "data", "notebooks", "imports"} {
 		dir, err := g.Resolve(sub)
 		if err != nil {
 			continue
@@ -527,13 +540,29 @@ func (a *API) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return nil
 			}
+			rel = filepath.ToSlash(rel)
 			artifacts = append(artifacts, map[string]any{
-				"path":  rel,
-				"size":  info.Size(),
-				"mtime": info.ModTime().UTC().Format(time.RFC3339),
+				"path":        rel,
+				"name":        filepath.Base(rel),
+				"size":        info.Size(),
+				"mtime":       info.ModTime().UTC().Format(time.RFC3339),
+				"previewKind": previewKind(rel),
+				"bucket":      sub,
 			})
 			return nil
 		})
+	}
+	// newest first
+	for i := 1; i < len(artifacts); i++ {
+		for j := i; j > 0; j-- {
+			mj, _ := artifacts[j]["mtime"].(string)
+			mi, _ := artifacts[j-1]["mtime"].(string)
+			if mj > mi {
+				artifacts[j], artifacts[j-1] = artifacts[j-1], artifacts[j]
+			} else {
+				break
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"artifacts": artifacts, "count": len(artifacts)})
 }
@@ -747,9 +776,81 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileUpload(w, r, g)
 	case sub == "search":
 		a.handleFileSearch(w, r, g)
+	case sub == "recent":
+		a.handleFileRecent(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleFileRecent returns files under workspace sorted by mtime desc.
+func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	root, err := g.Resolve(".")
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	limit := 40
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit <= 0 {
+		limit = 40
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	type entry struct {
+		Name        string    `json:"name"`
+		Path        string    `json:"path"`
+		Size        int64     `json:"size"`
+		Mtime       time.Time `json:"mtime"`
+		PreviewKind string    `json:"previewKind"`
+	}
+	var all []entry
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			if info != nil && info.IsDir() {
+				base := info.Name()
+				if base == ".git" || base == "node_modules" || base == ".lumen" {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return nil
+		}
+		rel = filepath.ToSlash(rel)
+		all = append(all, entry{
+			Name: filepath.Base(rel), Path: rel, Size: info.Size(),
+			Mtime: info.ModTime().UTC(), PreviewKind: previewKind(rel),
+		})
+		return nil
+	})
+	// sort by mtime desc
+	for i := 1; i < len(all); i++ {
+		for j := i; j > 0 && all[j].Mtime.After(all[j-1].Mtime); j-- {
+			all[j], all[j-1] = all[j-1], all[j]
+		}
+	}
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	// JSON-friendly mtime strings
+	out := make([]map[string]any, 0, len(all))
+	for _, e := range all {
+		out = append(out, map[string]any{
+			"name": e.Name, "path": e.Path, "size": e.Size,
+			"mtime": e.Mtime.Format(time.RFC3339), "previewKind": e.PreviewKind,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": out, "count": len(out)})
 }
 
 func (a *API) handleFileSearch(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {

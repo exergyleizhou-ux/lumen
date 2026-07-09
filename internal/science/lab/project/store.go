@@ -303,6 +303,27 @@ func (s *Store) ListSessions(slug string) ([]Session, error) {
 	return out, nil
 }
 
+// DeleteSession removes a session JSON file.
+func (s *Store) DeleteSession(slug, sessionID string) error {
+	if !slugRe.MatchString(slug) {
+		return fmt.Errorf("invalid slug %q", slug)
+	}
+	if sessionID == "" || strings.Contains(sessionID, "/") || strings.Contains(sessionID, "..") {
+		return fmt.Errorf("invalid session id")
+	}
+	path := filepath.Join(s.projectDir(slug), "sessions", sessionID+".json")
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	// clear active if needed
+	if p, err := s.Get(slug); err == nil && p.ActiveSession == sessionID {
+		p.ActiveSession = ""
+		p.UpdatedAt = time.Now().UTC()
+		_ = s.save(p)
+	}
+	return nil
+}
+
 // GetSession loads one session including turns.
 func (s *Store) GetSession(slug, sessionID string) (Session, error) {
 	if !slugRe.MatchString(slug) {

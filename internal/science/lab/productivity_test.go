@@ -336,6 +336,47 @@ func TestComputeImportAll(t *testing.T) {
 	}
 }
 
+func TestDeleteSessionAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Del Sess")
+	store := project.NewStore(sci)
+	sess, err := store.CreateSession(slug, "to-delete")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequest(http.MethodDelete, ts.URL+"/api/lab/projects/"+slug+"/sessions/"+sess.ID, nil)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	_, err = store.GetSession(slug, sess.ID)
+	if err == nil {
+		t.Fatal("expected deleted")
+	}
+}
+
+func TestFileRecentAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Recent")
+	store := project.NewStore(sci)
+	ws, _ := store.WorkspacePath(slug)
+	_ = os.WriteFile(filepath.Join(ws, "fresh.md"), []byte("# fresh\n"), 0o600)
+	res, err := http.Get(ts.URL + "/api/lab/files/recent?project_id=" + slug + "&limit=10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	if body["count"].(float64) < 1 {
+		t.Fatalf("%v", body)
+	}
+}
+
 func TestComputeJobGlobsInBody(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "Compute Proj")

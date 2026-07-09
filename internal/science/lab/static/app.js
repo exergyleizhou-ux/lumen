@@ -390,13 +390,40 @@ function renderSessionListSide() {
     return;
   }
   el.innerHTML = threads.map(function (t) {
-    return '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
+    return '<div class="sess-item-row">' +
+      '<button type="button" class="sess-item' + (t.id === activeThread ? " active" : "") + '" data-id="' + escHtml(t.id) + '">' +
       '<span class="sess-title">' + escHtml(t.title || t.id) + "</span>" +
-      '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>";
+      '<span class="sess-meta">' + (t.turn_count || 0) + " 轮</span></button>" +
+      '<button type="button" class="btn sm sess-del" data-del="' + escHtml(t.id) + '" title="删除">×</button></div>';
   }).join("");
   el.querySelectorAll(".sess-item").forEach(function (btn) {
     btn.addEventListener("click", function () { openSession(btn.dataset.id); });
   });
+  el.querySelectorAll(".sess-del").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      deleteSession(btn.getAttribute("data-del"));
+    });
+  });
+}
+
+async function deleteSession(id) {
+  if (!activeProject || !id) return;
+  if (!confirm("删除会话 " + id + "？不可恢复。")) return;
+  try {
+    await api("/api/lab/projects/" + activeProject.slug + "/sessions/" + encodeURIComponent(id), {
+      method: "DELETE",
+    });
+    if (activeThread === id) {
+      activeThread = "";
+      clearChatScroll('<section class="hero" id="welcome"><h2>会话已删除</h2><p>新建或选择其它会话</p></section>');
+    }
+    await loadSessions();
+    if (activeThread) openSession(activeThread);
+    else if (threads.length) openSession(threads[0].id);
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 async function loadSessions() {
@@ -890,6 +917,7 @@ async function refreshFiles() {
   if (!tree || !activeProject) return;
 
   if (cwdEl) cwdEl.textContent = fileCwd || ".";
+  loadFileRecent();
 
   try {
     var data = await api("/api/lab/files?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(fileCwd || "."));
@@ -1186,7 +1214,7 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "skills", "compute", "ketcher", "molecule"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule"];
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
@@ -1194,12 +1222,13 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     var pane = t.dataset.pane;
     PANE_IDS.forEach(function (id) {
       var el = $(id + "Pane");
-      if (el) el.style.display = pane === id ? (id === "ketcher" || id === "molecule" ? "block" : "block") : "none";
+      if (el) el.style.display = pane === id ? "block" : "none";
     });
     if (pane === "skills") loadSkills();
     if (pane === "compute") { loadComputeHosts(); loadComputeJobs(); }
     if (pane === "tasks") renderTasksPane();
-    if (pane === "files") refreshFiles();
+    if (pane === "files") { refreshFiles(); loadFileRecent(); }
+    if (pane === "artifacts") loadArtifacts();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       var frame = $("ketcherFrame");
@@ -1211,6 +1240,59 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     }
   });
 });
+
+async function loadFileRecent() {
+  var el = $("fileRecent");
+  if (!el || !activeProject) return;
+  try {
+    var data = await api("/api/lab/files/recent?project_id=" + activeProject.slug + "&limit=12");
+    var files = data.files || [];
+    if (!files.length) {
+      el.innerHTML = '<div class="hint">暂无文件</div>';
+      return;
+    }
+    el.innerHTML = files.map(function (f) {
+      return '<div class="ft-row recent" data-path="' + escHtml(f.path) + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
+        '<span class="ft-name">' + escHtml(f.path) + "</span>" +
+        '<span class="ft-size">' + escHtml((f.mtime || "").slice(0, 16).replace("T", " ")) + "</span></div>";
+    }).join("");
+    el.querySelectorAll(".ft-row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        previewFile(row.dataset.path, row.dataset.preview);
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function loadArtifacts() {
+  var el = $("artifactsBody");
+  if (!el || !activeProject) return;
+  try {
+    var data = await api("/api/lab/artifacts?project_id=" + activeProject.slug);
+    var arts = data.artifacts || [];
+    if (!arts.length) {
+      el.innerHTML = '<div class="hint">暂无产物 — brief / 工具 / 入库后会出现在此</div>';
+      return;
+    }
+    el.innerHTML = arts.map(function (a) {
+      return '<div class="art-row" data-path="' + escHtml(a.path) + '" data-preview="' + escHtml(a.previewKind || "") + '">' +
+        '<span class="art-bucket">' + escHtml(a.bucket || "") + "</span>" +
+        '<span class="ft-name">' + escHtml(a.path) + "</span>" +
+        '<span class="ft-size">' + fmtSize(a.size) + " · " + escHtml((a.mtime || "").slice(0, 16).replace("T", " ")) + "</span></div>";
+    }).join("");
+    el.querySelectorAll(".art-row").forEach(function (row) {
+      row.addEventListener("click", function () {
+        var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+        if (filesTab) filesTab.click();
+        previewFile(row.dataset.path, row.dataset.preview);
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
 
 /* ── File search ── */
 async function runFileSearch() {
@@ -1452,6 +1534,9 @@ var paletteCmds = [
   { label: "文献检索: PubMed", action: function () { streamChat("用 pubmed 域检索最新文献").catch(function (e) { addErrorBubble($("chatScroll"), e.message); }); } },
   { label: "打开 Bridge", action: function () { window.open(API_BASE ? "/lumen-science/?embed=1&oasis=1" : "http://127.0.0.1:18990/", "_blank"); } },
   { label: "刷新状态", action: function () { refreshHealth(); } },
+  { label: "导出当前会话 Markdown", action: function () { exportActiveSession("md"); } },
+  { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
+  { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
 ];
 
 function openPalette() {
@@ -1530,6 +1615,11 @@ $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e
 });
 $("exportMdBtn") && $("exportMdBtn").addEventListener("click", function () { exportActiveSession("md"); });
 $("exportJsonBtn") && $("exportJsonBtn").addEventListener("click", function () { exportActiveSession("json"); });
+$("deleteSessBtn") && $("deleteSessBtn").addEventListener("click", function () {
+  if (activeThread) deleteSession(activeThread);
+  else alert("请先选择会话");
+});
+$("artifactsRefresh") && $("artifactsRefresh").addEventListener("click", loadArtifacts);
 
 /* ── 15. Init ── */
 

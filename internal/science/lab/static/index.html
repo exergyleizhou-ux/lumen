@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=26">
+  <link rel="stylesheet" href="app.css?v=27">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -68,6 +68,7 @@
           <button class="ctr-tab-add" type="button" id="newConvBtn" title="新对话">＋</button>
           <button class="btn sm hide-sm" type="button" id="exportMdBtn" title="导出 Markdown">导出 MD</button>
           <button class="btn sm hide-sm" type="button" id="exportJsonBtn" title="导出 JSON">导出 JSON</button>
+          <button class="btn sm hide-sm" type="button" id="deleteSessBtn" title="删除当前会话">删除会话</button>
         </div>
         <div id="chatScroll">
           <section id="welcome" class="hero">
@@ -109,6 +110,7 @@
           <button class="insp-tab active" type="button" data-pane="status">状态</button>
           <button class="insp-tab" type="button" data-pane="tasks">本回合</button>
           <button class="insp-tab" type="button" data-pane="files">文件</button>
+          <button class="insp-tab" type="button" data-pane="artifacts">产物</button>
           <button class="insp-tab" type="button" data-pane="skills">技能</button>
           <button class="insp-tab" type="button" data-pane="compute">算力</button>
           <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
@@ -131,8 +133,18 @@
               <button type="button" class="btn sm" id="fileSearchBtn">搜</button>
             </div>
             <div id="fileSearchHits" class="file-hits" hidden></div>
+            <div class="set-k soft">最近修改</div>
+            <div id="fileRecent" class="file-recent hint">—</div>
+            <div class="set-k soft" style="margin-top:8px">当前目录</div>
             <div id="fileTree"></div>
             <div id="filePreview" class="fp"></div>
+          </div>
+          <div id="artifactsPane" class="insp-scroll" style="display:none">
+            <div class="btn-row" style="margin-bottom:8px">
+              <button type="button" class="btn sm" id="artifactsRefresh">刷新产物</button>
+              <span class="hint">reports / figures / data / imports</span>
+            </div>
+            <div id="artifactsBody" class="hint">加载实验产物…</div>
           </div>
           <div id="skillsPane" class="insp-scroll" style="display:none">
             <div class="btn-row" style="margin-bottom:8px">
@@ -175,6 +187,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=26"></script>
+  <script src="app.js?v=27"></script>
 </body>
 </html>
