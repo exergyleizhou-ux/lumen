@@ -72,8 +72,8 @@ function renderMarkdown(src) {
   // Ordered list items
   html = html.replace(/^\d+\. (.+)$/gm, "<li>$1</li>");
 
-  // Links [text](url) — only http/https
-  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  // Links [text](url) — http/https or site-relative /
+  html = html.replace(/\[([^\]]+)\]\(((?:https?:\/\/|\/)[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
 
   // Horizontal rules
   html = html.replace(/^---$/gm, "<hr>");
@@ -128,12 +128,18 @@ function reduceSSE(state, ev) {
       }
       break;
     case "tool_result":
+      // Backend emits full Output once (agent.go) — replace, don't append
+      // (progress may have streamed partial text into output already).
       if (ev.tool && ev.tool.id) {
         var existing = state.tools[ev.tool.id];
         if (existing) {
-          if (ev.tool.output !== undefined) existing.output = (existing.output || "") + ev.tool.output;
-          if (ev.tool.err) existing.err = (existing.err || "") + ev.tool.err;
+          if (ev.tool.name) existing.name = ev.tool.name;
+          if (ev.tool.args) existing.args = ev.tool.args;
+          // Full snapshot from agent — overwrite progress-streamed partials
+          if (Object.prototype.hasOwnProperty.call(ev.tool, "output")) existing.output = ev.tool.output || "";
+          existing.err = ev.tool.err || "";
           existing.status = ev.tool.err ? "error" : "done";
+          if (ev.tool.truncated) existing.truncated = true;
         } else {
           state.tools[ev.tool.id] = {
             id: ev.tool.id,
@@ -143,6 +149,7 @@ function reduceSSE(state, ev) {
             err: ev.tool.err || "",
             status: ev.tool.err ? "error" : "done",
             readOnly: ev.tool.read_only || false,
+            truncated: !!ev.tool.truncated,
           };
         }
       }
@@ -352,18 +359,33 @@ function createAgentBubble() {
   return { wrap: wrap, think: think, thinkBody: think.querySelector(".think-body"), textDiv: textDiv, toolLog: toolLog };
 }
 
+function findToolCard(toolLog, id) {
+  if (!toolLog || id == null) return null;
+  var cards = toolLog.querySelectorAll(".tool-card");
+  for (var i = 0; i < cards.length; i++) {
+    if (cards[i].getAttribute("data-tool-id") === String(id)) return cards[i];
+  }
+  return null;
+}
+
+function setToolCardOpen(card, open) {
+  if (!card) return;
+  var body = card.querySelector(".tool-card-body");
+  if (body) body.style.display = open ? "block" : "none";
+  card.classList.toggle("is-open", !!open);
+}
+
 function upsertToolCard(toolLog, tool) {
   var id = tool.id;
-  var existing = toolLog.querySelector('.tool-card[data-tool-id="' + id + '"]');
+  var existing = findToolCard(toolLog, id);
   if (existing) {
-    // Update existing card
     updateToolCardDOM(existing, tool);
     return existing;
   }
   // Create new card
   var card = document.createElement("div");
   card.className = "tool-card status-" + (tool.status || "running");
-  card.setAttribute("data-tool-id", id);
+  card.setAttribute("data-tool-id", String(id));
   card.innerHTML =
     '<div class="tool-card-hd">' +
     '<span class="tool-card-arrow">▸</span>' +
@@ -372,7 +394,7 @@ function upsertToolCard(toolLog, tool) {
     '<span class="tool-card-status">' + statusLabel(tool.status) + "</span>" +
     "</div>" +
     '<div class="tool-card-body" style="display:none">' +
-    (tool.args ? '<div class="tool-card-section"><div class="tool-card-label">参数</div><pre>' + escHtml(tool.args) + "</pre></div>" : "") +
+    '<div class="tool-card-section tool-card-args-section" style="' + (tool.args ? "" : "display:none") + '"><div class="tool-card-label">参数</div><pre class="tool-card-args">' + escHtml(tool.args || "") + "</pre></div>" +
     (tool.description ? '<div class="tool-card-section"><div class="tool-card-label">说明</div><div>' + escHtml(tool.description) + "</div></div>" : "") +
     '<div class="tool-card-section tool-card-output-section" style="display:none"><div class="tool-card-label">输出</div><pre class="tool-card-output"></pre></div>' +
     '<div class="tool-card-section tool-card-err-section" style="display:none"><div class="tool-card-label">错误</div><pre class="tool-card-err"></pre></div>' +
@@ -380,10 +402,7 @@ function upsertToolCard(toolLog, tool) {
 
   // Click header to toggle
   card.querySelector(".tool-card-hd").addEventListener("click", function () {
-    var body = card.querySelector(".tool-card-body");
-    var open = body.style.display !== "none";
-    body.style.display = open ? "none" : "block";
-    card.classList.toggle("is-open", !open);
+    setToolCardOpen(card, !card.classList.contains("is-open"));
   });
 
   toolLog.appendChild(card);
@@ -392,10 +411,19 @@ function upsertToolCard(toolLog, tool) {
 }
 
 function updateToolCardDOM(card, tool) {
-  card.className = "tool-card status-" + (tool.status || "running") + (card.classList.contains("is-open") ? " is-open" : "");
+  var open = card.classList.contains("is-open");
+  card.className = "tool-card status-" + (tool.status || "running") + (open ? " is-open" : "");
   var statusEl = card.querySelector(".tool-card-status");
   if (statusEl) statusEl.textContent = statusLabel(tool.status);
+  var nameEl = card.querySelector(".tool-card-name");
+  if (nameEl && tool.name) nameEl.textContent = tool.name;
 
+  if (tool.args) {
+    var argsSec = card.querySelector(".tool-card-args-section");
+    var argsPre = card.querySelector(".tool-card-args");
+    if (argsSec) argsSec.style.display = "block";
+    if (argsPre) argsPre.textContent = tool.args;
+  }
   if (tool.output) {
     var outSec = card.querySelector(".tool-card-output-section");
     var outPre = card.querySelector(".tool-card-output");
@@ -407,6 +435,10 @@ function updateToolCardDOM(card, tool) {
     var errPre = card.querySelector(".tool-card-err");
     if (errSec) errSec.style.display = "block";
     if (errPre) errPre.textContent = tool.err;
+  }
+  // Auto-expand when finished with content or on error
+  if (tool.status === "error" || (tool.status === "done" && (tool.output || tool.err))) {
+    setToolCardOpen(card, true);
   }
 }
 
@@ -424,14 +456,17 @@ function setRunStatus(running) {
   var label = $("runStatus");
   var stopBtn = $("btnStop");
   var sendBtn = $("btnSend");
+  var hint = $("composerHint");
   if (running) {
     if (dot) dot.style.background = "#f59e0b";
     if (label) label.textContent = "运行中";
+    if (hint) hint.textContent = "生成中… Enter 发送 · Shift+Enter 换行";
     if (stopBtn) stopBtn.disabled = false;
     if (sendBtn) sendBtn.disabled = true;
   } else {
     if (dot) dot.style.background = "";
     if (label) label.textContent = "就绪";
+    if (hint) hint.textContent = "就绪 · Enter 发送 · Shift+Enter 换行";
     if (stopBtn) stopBtn.disabled = true;
     if (sendBtn) sendBtn.disabled = false;
   }
@@ -472,7 +507,7 @@ function handleSSEEvent(ev, state, bubble) {
 
   // Tool result
   if (kind === "tool_result" && ev.tool && ev.tool.id) {
-    var card = bubble.toolLog.querySelector('.tool-card[data-tool-id="' + ev.tool.id + '"]');
+    var card = findToolCard(bubble.toolLog, ev.tool.id);
     if (card) {
       updateToolCardDOM(card, state.tools[ev.tool.id]);
     } else {
@@ -482,7 +517,7 @@ function handleSSEEvent(ev, state, bubble) {
 
   // Tool progress
   if (kind === "tool_progress" && ev.tool && ev.tool.id) {
-    var tcard = bubble.toolLog.querySelector('.tool-card[data-tool-id="' + ev.tool.id + '"]');
+    var tcard = findToolCard(bubble.toolLog, ev.tool.id);
     if (tcard) updateToolCardDOM(tcard, state.tools[ev.tool.id]);
   }
 
