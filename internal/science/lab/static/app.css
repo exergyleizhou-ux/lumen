@@ -163,16 +163,17 @@ body::before {
 
 /* Project list */
 #projectList { display: flex; flex-direction: column; gap: 2px; }
-#projectList button {
-  display: block; width: 100%; text-align: left; height: 34px;
+#projectList .proj-pick {
+  display: block; flex: 1; min-width: 0; text-align: left; height: 34px;
   padding: 0 12px; font-size: 12px; font-weight: 650;
   border: none; border-radius: 9px; background: transparent;
   color: var(--ocs-ink); font-family: inherit; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   transition: background var(--transition);
 }
-#projectList button:hover { background: var(--ocs-accent-light); }
-#projectList button.active { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
+#projectList .proj-pick:hover { background: var(--ocs-accent-light); }
+#projectList .proj-pick.active { background: var(--ocs-accent-soft); color: var(--ocs-accent); }
+#projectList .proj-del { flex-shrink: 0; width: auto; height: 28px; }
 
 .hint { font-size: 11px; color: var(--ocs-muted); }
 .mono { font-family: var(--mono); font-size: 11px; }
