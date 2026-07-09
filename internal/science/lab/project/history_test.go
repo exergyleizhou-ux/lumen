@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -70,4 +71,21 @@ func TestSessionTurnsPersist(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = filepath.Dir(path)
+
+	hits, err := store.SearchSessions(p.Slug, "research", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) < 1 {
+		t.Fatalf("expected search hits for research, got %+v", hits)
+	}
+	found := false
+	for _, h := range hits {
+		if h.SessionID == sess.ID && (strings.Contains(strings.ToLower(h.Snippet), "research") || h.Role == "user") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("hits %+v", hits)
+	}
 }

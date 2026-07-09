@@ -373,6 +373,114 @@ func (s *Store) AppendTurns(slug, sessionID string, turns ...Turn) (Session, err
 	return sess, nil
 }
 
+// SessionSearchHit is one turn matching a full-text query.
+type SessionSearchHit struct {
+	SessionID    string `json:"session_id"`
+	SessionTitle string `json:"session_title"`
+	TurnIndex    int    `json:"turn_index"`
+	Role         string `json:"role"`
+	Snippet      string `json:"snippet"`
+	At           time.Time `json:"at,omitempty"`
+}
+
+// SearchSessions scans all session turns for query (case-insensitive substring).
+func (s *Store) SearchSessions(slug, query string, limit int) ([]SessionSearchHit, error) {
+	q := strings.TrimSpace(strings.ToLower(query))
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	// Load full sessions (with turns) from disk
+	dir := filepath.Join(s.projectDir(slug), "sessions")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var hits []SessionSearchHit
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var sess Session
+		if json.Unmarshal(data, &sess) != nil {
+			continue
+		}
+		// title match
+		if strings.Contains(strings.ToLower(sess.Title), q) {
+			hits = append(hits, SessionSearchHit{
+				SessionID: sess.ID, SessionTitle: sess.Title,
+				TurnIndex: -1, Role: "meta", Snippet: "标题匹配: " + sess.Title, At: sess.UpdatedAt,
+			})
+			if len(hits) >= limit {
+				return hits, nil
+			}
+		}
+		for i, t := range sess.Turns {
+			if !strings.Contains(strings.ToLower(t.Text), q) {
+				// also search tool names/outputs
+				foundTool := false
+				for _, tool := range t.Tools {
+					blob := strings.ToLower(tool.Name + " " + tool.Args + " " + tool.Output + " " + tool.Err)
+					if strings.Contains(blob, q) {
+						foundTool = true
+						break
+					}
+				}
+				if !foundTool {
+					continue
+				}
+			}
+			snip := t.Text
+			if snip == "" && len(t.Tools) > 0 {
+				snip = "tool:" + t.Tools[0].Name
+			}
+			// clip snippet around match
+			low := strings.ToLower(snip)
+			idx := strings.Index(low, q)
+			if idx >= 0 {
+				start := idx - 40
+				if start < 0 {
+					start = 0
+				}
+				end := idx + len(q) + 40
+				if end > len(snip) {
+					end = len(snip)
+				}
+				snip = snip[start:end]
+				if start > 0 {
+					snip = "…" + snip
+				}
+				if end < len([]rune(t.Text)) || end < len(t.Text) {
+					snip = snip + "…"
+				}
+			}
+			if len([]rune(snip)) > 160 {
+				snip = string([]rune(snip)[:160]) + "…"
+			}
+			hits = append(hits, SessionSearchHit{
+				SessionID: sess.ID, SessionTitle: sess.Title,
+				TurnIndex: i, Role: t.Role, Snippet: snip, At: t.At,
+			})
+			if len(hits) >= limit {
+				return hits, nil
+			}
+		}
+	}
+	return hits, nil
+}
+
 // EnsureSession returns existing session or creates one.
 func (s *Store) EnsureSession(slug, sessionID, title string) (Session, error) {
 	if sessionID != "" {

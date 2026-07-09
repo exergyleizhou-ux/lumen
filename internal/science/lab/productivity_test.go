@@ -7,7 +7,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"lumen/internal/science/lab/project"
 )
@@ -164,6 +166,92 @@ func TestSkillsEnableAPI(t *testing.T) {
 	if body["enabled_filter"] != true {
 		t.Fatalf("filter %v", body["enabled_filter"])
 	}
+}
+
+func TestSessionSearchAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Search Sess")
+	store := project.NewStore(sci)
+	sess, err := store.CreateSession(slug, "alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = store.AppendTurns(slug, sess.ID,
+		project.Turn{Role: "user", Text: "unique-token-zyx literature"},
+		project.Turn{Role: "assistant", Text: "found papers"},
+	)
+	res, err := http.Get(ts.URL + "/api/lab/projects/" + slug + "/sessions?q=unique-token-zyx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&body)
+	if body["count"].(float64) < 1 {
+		t.Fatalf("search %v", body)
+	}
+}
+
+func TestComputeImportToWorkspace(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Import Job")
+	// run local job with harvest
+	body := `{"host":"local","command":"echo harvest-me > out.dat && echo ok","timeout_sec":10,"output_globs":["*.dat"]}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs?project_id="+slug, bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&job)
+	res.Body.Close()
+	jobID, _ := job["id"].(string)
+	if jobID == "" {
+		t.Fatalf("job %v", job)
+	}
+	// wait done
+	var last map[string]any
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		gr, err := http.Get(ts.URL + "/api/lab/compute/jobs/" + jobID + "?project_id=" + slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewDecoder(gr.Body).Decode(&last)
+		gr.Body.Close()
+		if st, _ := last["status"].(string); st == "done" || st == "failed" || st == "timeout" {
+			break
+		}
+	}
+	if last["status"] != "done" {
+		t.Fatalf("status %v", last)
+	}
+	// import
+	impBody := `{"path":"out.dat"}`
+	ireq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs/"+jobID+"/import?project_id="+slug, bytes.NewReader([]byte(impBody)))
+	ireq.Header.Set("Content-Type", "application/json")
+	ires, err := http.DefaultClient.Do(ireq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ires.Body.Close()
+	if ires.StatusCode != 200 {
+		t.Fatalf("import status %d", ires.StatusCode)
+	}
+	var imp map[string]any
+	_ = json.NewDecoder(ires.Body).Decode(&imp)
+	wp, _ := imp["workspace_path"].(string)
+	if wp == "" || !strings.Contains(wp, "imports/") {
+		t.Fatalf("workspace_path %v", imp)
+	}
+	// file exists on disk
+	store := project.NewStore(sci)
+	ws, _ := store.WorkspacePath(slug)
+	if _, err := os.Stat(filepath.Join(ws, filepath.FromSlash(wp))); err != nil {
+		t.Fatal(err)
+	}
+	_ = slug
 }
 
 func TestComputeJobGlobsInBody(t *testing.T) {

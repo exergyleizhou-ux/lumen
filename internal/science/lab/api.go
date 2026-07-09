@@ -237,6 +237,19 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 		if len(parts) == 2 {
 			switch r.Method {
 			case http.MethodGet:
+				// ?q= full-text search across turns
+				if q := strings.TrimSpace(r.URL.Query().Get("q")); q != "" {
+					hits, err := a.projects.SearchSessions(slug, q, 50)
+					if err != nil {
+						writeErr(w, http.StatusInternalServerError, err)
+						return
+					}
+					if hits == nil {
+						hits = []project.SessionSearchHit{}
+					}
+					writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "count": len(hits), "q": q})
+					return
+				}
 				sessions, err := a.projects.ListSessions(slug)
 				if err != nil {
 					writeErr(w, http.StatusInternalServerError, err)
@@ -260,6 +273,20 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
+		}
+		// /api/lab/projects/:slug/sessions/search?q= (alias)
+		if len(parts) == 3 && parts[2] == "search" && r.Method == http.MethodGet {
+			q := r.URL.Query().Get("q")
+			hits, err := a.projects.SearchSessions(slug, q, 50)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, err)
+				return
+			}
+			if hits == nil {
+				hits = []project.SessionSearchHit{}
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "count": len(hits), "q": q})
+			return
 		}
 		// /api/lab/projects/:slug/sessions/:id
 		if len(parts) == 3 {
@@ -1030,12 +1057,14 @@ func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	rest := strings.TrimPrefix(r.URL.Path, "/api/lab/compute/jobs/")
+	rest = strings.Trim(rest, "/")
+	parts := strings.Split(rest, "/")
+	if len(parts) == 0 || parts[0] == "" {
+		http.NotFound(w, r)
 		return
 	}
-	id := strings.TrimPrefix(r.URL.Path, "/api/lab/compute/jobs/")
-	id = strings.Trim(id, "/")
+	id := parts[0]
 	slug := r.URL.Query().Get("project_id")
 	if slug == "" || id == "" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id and job id required"))
@@ -1051,12 +1080,110 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	// POST .../jobs/:id/import — copy harvested output into workspace
+	if len(parts) == 2 && parts[1] == "import" && r.Method == http.MethodPost {
+		a.handleComputeImport(w, r, slug, projectDir, store, id)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	j, err := store.Get(id)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, j)
+}
+
+// handleComputeImport copies a job output into workspace/imports/<jobid>/.
+func (a *API) handleComputeImport(w http.ResponseWriter, r *http.Request, slug, projectDir string, store *compute.Store, jobID string) {
+	var body struct {
+		Path string `json:"path"` // JobOutput.Path
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("path required (job output path)"))
+		return
+	}
+	j, err := store.Get(jobID)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, err)
+		return
+	}
+	var src string
+	var size int64
+	for _, o := range j.Outputs {
+		if o.Path == body.Path || filepath.Base(o.Path) == filepath.Base(body.Path) {
+			if o.LocalPath != "" {
+				src = o.LocalPath
+			}
+			size = o.Size
+			break
+		}
+	}
+	// Fallback: work_dir + path for local jobs
+	if src == "" && j.WorkDir != "" {
+		cand := filepath.Join(j.WorkDir, body.Path)
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			src = cand
+			size = st.Size()
+		}
+	}
+	if src == "" {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("output not found or not harvested: %s", body.Path))
+		return
+	}
+	// Security: src must be under projectDir or workDir
+	srcAbs, _ := filepath.Abs(src)
+	projAbs, _ := filepath.Abs(projectDir)
+	if !strings.HasPrefix(srcAbs, projAbs+string(os.PathSeparator)) &&
+		!(j.WorkDir != "" && strings.HasPrefix(srcAbs, filepath.Clean(j.WorkDir)+string(os.PathSeparator))) {
+		// also allow harvest under project .lumen
+		if !strings.HasPrefix(srcAbs, projAbs) {
+			writeErr(w, http.StatusForbidden, fmt.Errorf("source outside project"))
+			return
+		}
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	rel := filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
+	dst, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if size == 0 {
+		size = int64(len(data))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"workspace_path": rel,
+		"size":         size,
+		"previewKind":  previewKind(rel),
+		"job_id":       jobID,
+	})
 }
 
 // ── C2D + Bridge endpoints ──

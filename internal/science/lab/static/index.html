@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=24">
+  <link rel="stylesheet" href="app.css?v=25">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -41,6 +41,11 @@
           <div class="set-k soft">课题列表</div>
           <div id="projectList" class="proj-list"></div>
           <div class="set-k soft">会话（持久化）</div>
+          <div class="file-search-row" style="margin:4px 0 6px">
+            <input type="search" id="sessionSearch" class="file-search" placeholder="搜索会话内容…" autocomplete="off" />
+            <button type="button" class="btn sm" id="sessionSearchBtn">搜</button>
+          </div>
+          <div id="sessionSearchHits" class="file-hits" hidden></div>
           <div id="sessionList" class="sess-list hint">选择课题后加载…</div>
           <div class="set-k soft">快捷任务</div>
           <div class="chip-col">
@@ -168,6 +173,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=24"></script>
+  <script src="app.js?v=25"></script>
 </body>
 </html>

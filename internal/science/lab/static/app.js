@@ -1090,11 +1090,12 @@ $("btnStop") && $("btnStop").addEventListener("click", function () {
   }
 });
 
-// File upload
+// File upload — inject path into composer for agent context
 $("fileUpload") && $("fileUpload").addEventListener("change", async function () {
   var file = this.files && this.files[0];
-  if (!file || !activeProject) return;
+  if (!file) return;
   try {
+    if (!activeProject) await ensureProject();
     var fd = new FormData();
     fd.append("file", file);
     var res = await fetch(labPath("/api/lab/files/upload?project_id=" + activeProject.slug), {
@@ -1105,7 +1106,28 @@ $("fileUpload") && $("fileUpload").addEventListener("change", async function () 
       var txt = await res.text();
       throw new Error(txt);
     }
+    var uploaded = file.name;
+    try {
+      var body = await res.json();
+      if (body.uploaded) uploaded = body.uploaded;
+      else if (body.path) uploaded = body.path;
+    } catch (_) {}
+    // Inject attachment tag into prompt for the agent
+    var inp = $("promptInput");
+    if (inp) {
+      var tag = "[附件] " + uploaded + "\n";
+      if (inp.value.indexOf(uploaded) < 0) {
+        inp.value = tag + (inp.value || "");
+      }
+      inp.focus();
+    }
+    var hint = $("composerHint");
+    if (hint) hint.textContent = "已上传 " + uploaded + "（路径已写入输入框）";
     await refreshFiles();
+    // switch to files pane and preview if possible
+    var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+    if (filesTab) filesTab.click();
+    previewFile(uploaded, "");
   } catch (e) {
     alert("上传失败: " + e.message);
   }
@@ -1248,22 +1270,92 @@ async function loadComputeJobs() {
     var data = await api("/api/lab/compute/jobs?project_id=" + activeProject.slug);
     var jobs = data.jobs || [];
     if (!jobs.length) {
-      el.innerHTML = '<div class="hint">暂无任务</div>';
+      el.innerHTML = '<div class="hint">暂无任务 — 用 local 主机试：echo hi &gt; result.txt</div>';
       return;
     }
     el.innerHTML = jobs.map(function (j) {
-      var outs = (j.outputs || []).map(function (o) {
-        return escHtml(o.path) + (o.local_path ? " → " + escHtml(o.local_path) : "") + (o.error ? " (" + escHtml(o.error) + ")" : "");
-      }).join("; ");
+      var outsHtml = (j.outputs || []).map(function (o, oi) {
+        return '<div class="job-out-row">' +
+          '<span class="mono">' + escHtml(o.path) + (o.error ? " ⚠ " + escHtml(o.error) : "") + "</span>" +
+          '<span class="job-out-actions">' +
+          '<button type="button" class="btn sm job-import" data-job="' + escHtml(j.id) + '" data-path="' + escHtml(o.path) + '">入库工作区</button>' +
+          "</span></div>";
+      }).join("");
       return '<div class="job-card status-' + escHtml(j.status || "") + '">' +
         '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
         (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(0, 500)) + "</pre>" : "") +
-        (outs ? '<div class="hint">产物: ' + outs + "</div>" : "") +
+        (outsHtml ? '<div class="job-outs">' + outsHtml + "</div>" : "") +
         "</div>";
     }).join("");
+    el.querySelectorAll(".job-import").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        importComputeOutput(btn.getAttribute("data-job"), btn.getAttribute("data-path"));
+      });
+    });
   } catch (e) {
     el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function importComputeOutput(jobId, path) {
+  if (!activeProject || !jobId || !path) return;
+  try {
+    var res = await api("/api/lab/compute/jobs/" + encodeURIComponent(jobId) + "/import?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: JSON.stringify({ path: path }),
+    });
+    var wp = res.workspace_path;
+    // inject path into composer
+    var inp = $("promptInput");
+    if (inp && wp) {
+      var tag = "\n[产物] " + wp + "\n";
+      if (inp.value.indexOf(wp) < 0) inp.value = (inp.value || "") + tag;
+    }
+    await refreshFiles();
+    // open files pane and preview
+    var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+    if (filesTab) filesTab.click();
+    if (wp) previewFile(wp, res.previewKind || "");
+    var hint = $("composerHint");
+    if (hint) hint.textContent = "已入库 " + wp;
+  } catch (e) {
+    alert("入库失败: " + e.message);
+  }
+}
+
+async function runSessionSearch() {
+  var qEl = $("sessionSearch");
+  var hitsEl = $("sessionSearchHits");
+  if (!qEl || !hitsEl || !activeProject) return;
+  var q = qEl.value.trim();
+  if (!q) {
+    hitsEl.hidden = true;
+    hitsEl.innerHTML = "";
+    return;
+  }
+  try {
+    var data = await api("/api/lab/projects/" + activeProject.slug + "/sessions?q=" + encodeURIComponent(q));
+    var hits = data.hits || [];
+    hitsEl.hidden = false;
+    if (!hits.length) {
+      hitsEl.innerHTML = '<div class="hint">无匹配会话</div>';
+      return;
+    }
+    hitsEl.innerHTML = hits.map(function (h) {
+      return '<div class="ft-row hit sess-hit" data-sid="' + escHtml(h.session_id) + '">' +
+        '<span class="ft-name">' + escHtml(h.session_title || h.session_id) +
+        (h.role && h.role !== "meta" ? " · " + escHtml(h.role) : "") + "</span>" +
+        '<div class="hit-snip">' + escHtml(h.snippet || "") + "</div></div>";
+    }).join("");
+    hitsEl.querySelectorAll(".sess-hit").forEach(function (row) {
+      row.addEventListener("click", function () {
+        openSession(row.getAttribute("data-sid"));
+      });
+    });
+  } catch (e) {
+    hitsEl.hidden = false;
+    hitsEl.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
 }
 
@@ -1392,6 +1484,10 @@ $("fileSearch") && $("fileSearch").addEventListener("keydown", function (e) {
 });
 $("computeSubmit") && $("computeSubmit").addEventListener("click", submitComputeJob);
 $("computeRefresh") && $("computeRefresh").addEventListener("click", loadComputeJobs);
+$("sessionSearchBtn") && $("sessionSearchBtn").addEventListener("click", runSessionSearch);
+$("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") { e.preventDefault(); runSessionSearch(); }
+});
 
 /* ── 15. Init ── */
 
