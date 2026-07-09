@@ -80,13 +80,26 @@ func (f *FleetManager) Status() map[string]any {
 	if f.native != nil {
 		nativeOK = len(native.ShippedFleet())
 	}
-	return map[string]any{
+	// Soften discover noise: missing CS pack is expected on lean VPS deploys.
+	errs := map[string]string{}
+	for k, v := range f.errors {
+		if k == "discover" && nativeOK > 0 {
+			continue // native fleet is enough for production lab core
+		}
+		errs[k] = v
+	}
+	out := map[string]any{
 		"cs_domains":      total,
 		"cs_connected":    connected,
 		"lumen_native":    nativeOK,
 		"connected_total": connected + boolNative(f.native),
-		"errors":          f.errors,
+		"errors":          errs,
+		"degraded":        nativeOK > 0 && total == 0,
 	}
+	if total == 0 && nativeOK > 0 {
+		out["note"] = "CS research pack not installed; Lumen native 5-ship fleet operational"
+	}
+	return out
 }
 
 func boolNative(m *native.Manager) int {
