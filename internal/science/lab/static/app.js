@@ -927,21 +927,29 @@ async function previewFile(path, previewKind) {
     var kind = previewKind || data.previewKind || "text";
 
     var bodyHtml = "";
+    var dl = labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
     switch (kind) {
       case "markdown":
         bodyHtml = '<div class="fp-md">' + renderMarkdown(data.content || "") + "</div>";
         break;
       case "image":
-        bodyHtml = '<img src="' + labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path)) + '" alt="' + escHtml(path) + '" style="max-width:100%;border-radius:8px" loading="lazy" />';
+        bodyHtml = '<img src="' + dl + '" alt="' + escHtml(path) + '" style="max-width:100%;border-radius:8px" loading="lazy" />';
         break;
       case "pdf":
-        bodyHtml = '<div class="hint">📕 PDF 文件 (' + fmtSize(data.size) + ') — <a href="' + labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path)) + '" target="_blank">下载查看</a></div>';
+        bodyHtml = '<div class="hint">📕 PDF (' + fmtSize(data.size) + ') — <a href="' + dl + '" target="_blank">下载 / 新窗口打开</a></div>' +
+          '<iframe class="fp-pdf" src="' + dl + '" title="pdf"></iframe>';
+        break;
+      case "office":
+        bodyHtml = '<div class="hint">📄 Office 文本抽取 (' + escHtml(data.officeKind || "office") + ") · " + fmtSize(data.size) +
+          ' — <a href="' + dl + '" target="_blank">下载原文件</a></div>' +
+          (data.hint ? '<div class="hint">' + escHtml(data.hint) + "</div>" : "") +
+          '<pre class="fp-body">' + escHtml(data.content || "(无文本)") + "</pre>";
         break;
       case "molecule":
         bodyHtml = '<pre class="fp-body">' + escHtml(data.content || "") + "</pre>";
         break;
       case "binary":
-        bodyHtml = '<div class="hint">不支持预览 (' + fmtSize(data.size) + ")</div>";
+        bodyHtml = '<div class="hint">不支持内联预览 (' + fmtSize(data.size) + ') — <a href="' + dl + '" target="_blank">下载</a></div>';
         break;
       default:
         bodyHtml = '<pre class="fp-body">' + escHtml(data.content || "") + "</pre>";
@@ -1217,14 +1225,19 @@ async function loadComputeHosts() {
   try {
     var data = await api("/api/lab/compute/ssh-hosts");
     var hosts = data.hosts || [];
-    sel.innerHTML = hosts.length
-      ? hosts.map(function (h) {
-          var name = typeof h === "string" ? h : (h.Host || h.host || h.name || JSON.stringify(h));
-          return '<option value="' + escHtml(name) + '">' + escHtml(name) + "</option>";
-        }).join("")
-      : '<option value="">（无 ~/.ssh/config 主机）</option>';
+    // Always ensure local option for zero-SSH productivity
+    var hasLocal = hosts.some(function (h) {
+      var a = typeof h === "string" ? h : (h.alias || h.Alias || "");
+      return a === "local" || a === "localhost";
+    });
+    if (!hasLocal) hosts = [{ alias: "local" }].concat(hosts);
+    sel.innerHTML = hosts.map(function (h) {
+      var name = typeof h === "string" ? h : (h.alias || h.Alias || h.Host || h.host || h.name || "local");
+      var label = name === "local" ? "local（本机 shell，无需 SSH）" : name;
+      return '<option value="' + escHtml(name) + '">' + escHtml(label) + "</option>";
+    }).join("");
   } catch (e) {
-    sel.innerHTML = '<option value="">加载失败</option>';
+    sel.innerHTML = '<option value="local">local（本机 shell）</option>';
   }
 }
 

@@ -129,6 +129,12 @@ func (s *Store) SubmitOpts(host, command, workDir string, opts SubmitOpts) (*Job
 	return j, nil
 }
 
+// IsLocalHost reports hosts that run on this machine without SSH.
+func IsLocalHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	return h == "local" || h == "localhost" || h == "127.0.0.1" || h == "." || h == "local-shell"
+}
+
 func (s *Store) run(id, host, command, workDir string, timeout time.Duration, globs []string, localDir string) {
 	s.patch(id, func(j *Job) {
 		j.Status = "running"
@@ -137,13 +143,29 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	remote := command
-	if workDir != "" {
-		remote = "cd " + shellQuote(workDir) + " && " + command
+	var out []byte
+	var err error
+	if IsLocalHost(host) {
+		// Local shell: no SSH required — productivity path for harvest demos & CI.
+		shell := "sh"
+		if _, lookErr := exec.LookPath("bash"); lookErr == nil {
+			shell = "bash"
+		}
+		cmd := exec.CommandContext(ctx, shell, "-lc", command)
+		if workDir != "" {
+			cmd.Dir = workDir
+		}
+		cmd.Stdin = nil
+		out, err = cmd.CombinedOutput()
+	} else {
+		remote := command
+		if workDir != "" {
+			remote = "cd " + shellQuote(workDir) + " && " + command
+		}
+		cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote)
+		cmd.Stdin = nil
+		out, err = cmd.CombinedOutput()
 	}
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", host, remote)
-	cmd.Stdin = nil
-	out, err := cmd.CombinedOutput()
 	outStr, truncated := truncateOutput(string(out), MaxOutputBytes)
 
 	status := "done"
@@ -165,7 +187,11 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 
 	var outputs []JobOutput
 	if status == "done" && len(globs) > 0 {
-		outputs = harvestOutputs(host, workDir, globs, localDir, id)
+		if IsLocalHost(host) {
+			outputs = harvestLocal(workDir, globs, localDir, id)
+		} else {
+			outputs = harvestOutputs(host, workDir, globs, localDir, id)
+		}
 	}
 
 	s.patch(id, func(j *Job) {
@@ -181,11 +207,72 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 	})
 }
 
+// harvestLocal matches globs under workDir and copies into localDir/jobID/.
+func harvestLocal(workDir string, globs []string, localDir, jobID string) []JobOutput {
+	if len(globs) == 0 {
+		return nil
+	}
+	base := workDir
+	if base == "" {
+		base, _ = os.Getwd()
+	}
+	var outs []JobOutput
+	var destRoot string
+	if localDir != "" {
+		destRoot = filepath.Join(localDir, jobID)
+		_ = os.MkdirAll(destRoot, 0o700)
+	}
+	seen := map[string]bool{}
+	for _, g := range globs {
+		pattern := g
+		if !filepath.IsAbs(pattern) {
+			pattern = filepath.Join(base, g)
+		}
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			outs = append(outs, JobOutput{Path: g, Error: err.Error()})
+			continue
+		}
+		for _, m := range matches {
+			st, err := os.Stat(m)
+			if err != nil || st.IsDir() {
+				continue
+			}
+			rel, err := filepath.Rel(base, m)
+			if err != nil {
+				rel = filepath.Base(m)
+			}
+			rel = filepath.ToSlash(rel)
+			if seen[rel] {
+				continue
+			}
+			seen[rel] = true
+			jo := JobOutput{Path: rel, Size: st.Size()}
+			if destRoot != "" {
+				dst := filepath.Join(destRoot, filepath.Base(m))
+				if data, err := os.ReadFile(m); err != nil {
+					jo.Error = err.Error()
+				} else if err := os.WriteFile(dst, data, 0o600); err != nil {
+					jo.Error = err.Error()
+				} else {
+					jo.LocalPath = dst
+					jo.Size = int64(len(data))
+				}
+			}
+			outs = append(outs, jo)
+		}
+	}
+	return outs
+}
+
 // harvestOutputs lists remote files matching globs and optionally scp into localDir/jobID/.
 // Pure-ish helper used by run; unit-tested with empty host for path logic via BuildHarvestList.
 func harvestOutputs(host, workDir string, globs []string, localDir, jobID string) []JobOutput {
 	if host == "" || len(globs) == 0 {
 		return nil
+	}
+	if IsLocalHost(host) {
+		return harvestLocal(workDir, globs, localDir, jobID)
 	}
 	// Remote: printf each match with size via stat when possible.
 	// shell: cd workdir && for g in globs; do ls -1 $g 2>/dev/null; done

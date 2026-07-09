@@ -721,17 +721,51 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
+	pk := previewKind(rel)
+	// Office Open XML → plain-text extract (not WYSIWYG; download still available)
+	if pk == "office" {
+		text, okind, oerr := ExtractOfficeText(rel, data, 20000)
+		if oerr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"path":        rel,
+				"content":     "",
+				"size":        st.Size(),
+				"truncated":   false,
+				"previewKind": "binary",
+				"isDir":       false,
+				"error":       oerr.Error(),
+				"hint":        "Office 预览失败，请下载查看",
+			})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"path":        rel,
+			"content":     text,
+			"size":        st.Size(),
+			"truncated":   false,
+			"previewKind": "office",
+			"officeKind":  okind,
+			"isDir":       false,
+			"hint":        "Office 文本抽取预览（非排版还原）；完整文件请下载",
+		})
+		return
+	}
 	maxSize := 512 * 1024
 	trunc := len(data) > maxSize
 	if trunc {
 		data = data[:maxSize]
 	}
+	// Avoid dumping binary garbage into the chat preview pane
+	content := string(data)
+	if pk == "binary" || pk == "pdf" {
+		content = ""
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"path":        rel,
-		"content":     string(data),
+		"content":     content,
 		"size":        st.Size(),
 		"truncated":   trunc,
-		"previewKind": previewKind(rel),
+		"previewKind": pk,
 		"isDir":       false,
 	})
 }
@@ -781,6 +815,10 @@ func previewKind(name string) string {
 		return "image"
 	case ".pdf":
 		return "pdf"
+	case ".docx", ".pptx", ".xlsx":
+		return "office"
+	case ".doc", ".ppt", ".xls":
+		return "binary" // legacy OLE — download only
 	case ".pdb", ".cif", ".sdf", ".mol":
 		return "molecule"
 	default:
@@ -909,12 +947,22 @@ func (a *API) handleComputeSSHHosts(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Always expose local shell first — works without SSH for harvest/dev.
+	local := compute.SSHHost{Alias: "local", Hostname: "local-shell", User: "local"}
 	hosts, err := compute.ParseSSHConfig()
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"hosts": []any{}, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"hosts": []compute.SSHHost{local},
+			"count": 1,
+			"error": err.Error(),
+			"hint":  "无 ~/.ssh/config 时仍可用 local 本机执行",
+		})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hosts": hosts, "count": len(hosts)})
+	out := make([]compute.SSHHost, 0, len(hosts)+1)
+	out = append(out, local)
+	out = append(out, hosts...)
+	writeJSON(w, http.StatusOK, map[string]any{"hosts": out, "count": len(out)})
 }
 
 func (a *API) handleComputeJobs(w http.ResponseWriter, r *http.Request) {

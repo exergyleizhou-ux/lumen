@@ -584,6 +584,10 @@ html.dark .appr-sum { color: #d1d5db; }
   margin-top: 6px; padding: 6px; border-radius: 6px; background: var(--ocs-surface-strong);
   white-space: pre-wrap;
 }
+.fp-pdf {
+  width: 100%; height: 280px; border: 1px solid var(--ocs-line);
+  border-radius: 8px; margin-top: 8px; background: #fff;
+}
 
 /* File tree */
 .ft-row {

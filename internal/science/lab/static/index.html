@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=23">
+  <link rel="stylesheet" href="app.css?v=24">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -135,12 +135,13 @@
             <div id="skillsBody" class="hint">加载技能目录…</div>
           </div>
           <div id="computePane" class="insp-scroll" style="display:none">
-            <div class="set-k soft">SSH 主机</div>
+            <div class="set-k soft">执行主机</div>
             <select id="computeHost" class="mode-sel fill-sel"></select>
+            <div class="hint" style="margin-top:4px">默认 local=本机 shell（无需 SSH）；远程主机来自 ~/.ssh/config</div>
             <div class="set-k soft" style="margin-top:8px">命令</div>
-            <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="sbatch run.sh 或 python train.py"></textarea>
+            <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="echo ok > result.txt  或  sbatch run.sh"></textarea>
             <div class="set-k soft" style="margin-top:8px">产物 glob（可选，逗号分隔）</div>
-            <input type="text" id="computeGlobs" class="file-search" placeholder="*.csv, results/*" />
+            <input type="text" id="computeGlobs" class="file-search" placeholder="*.txt, *.csv, results/*" />
             <div class="btn-row" style="margin-top:8px">
               <button type="button" class="btn primary sm" id="computeSubmit">提交任务</button>
               <button type="button" class="btn sm" id="computeRefresh">刷新列表</button>
@@ -167,6 +168,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

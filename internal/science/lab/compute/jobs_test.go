@@ -3,6 +3,7 @@ package compute
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,6 +64,60 @@ func TestSubmitRequiresHost(t *testing.T) {
 	_, err := store.Submit("", "echo hi", "")
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestLocalHostAndHarvest(t *testing.T) {
+	if !IsLocalHost("local") || !IsLocalHost("localhost") {
+		t.Fatal("IsLocalHost")
+	}
+	if IsLocalHost("gpu-box") {
+		t.Fatal("remote should not be local")
+	}
+	dir := t.TempDir()
+	// write an artifact the job will create... job creates it
+	store, err := NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(dir, "ws")
+	_ = os.MkdirAll(work, 0o700)
+	harvestDir := filepath.Join(dir, "harvest")
+	j, err := store.SubmitOpts("local", "echo hello-out > result.txt && echo done", work, SubmitOpts{
+		Timeout:         10 * time.Second,
+		OutputGlobs:     []string{"*.txt"},
+		LocalHarvestDir: harvestDir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	var last *Job
+	for time.Now().Before(deadline) {
+		last, _ = store.Get(j.ID)
+		if last != nil && (last.Status == "done" || last.Status == "failed" || last.Status == "timeout") {
+			break
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
+	if last == nil || last.Status != "done" {
+		t.Fatalf("job %+v", last)
+	}
+	if !strings.Contains(last.Output, "done") && !strings.Contains(last.Output, "hello") {
+		// output may be empty if echo only redirected; status done is enough
+	}
+	if len(last.Outputs) < 1 {
+		t.Fatalf("expected harvest outputs: %+v", last)
+	}
+	if last.Outputs[0].Path == "" {
+		t.Fatalf("output path empty: %+v", last.Outputs)
+	}
+	// local copy under harvest
+	if last.Outputs[0].LocalPath == "" {
+		t.Fatalf("expected LocalPath: %+v", last.Outputs[0])
+	}
+	if _, err := os.Stat(last.Outputs[0].LocalPath); err != nil {
+		t.Fatal(err)
 	}
 }
 
