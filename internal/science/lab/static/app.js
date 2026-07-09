@@ -178,6 +178,7 @@ function reduceSSE(state, ev) {
           err: "",
           status: "running",
           readOnly: ev.tool.read_only || false,
+          parentId: ev.tool.parent_id || "",
         };
       }
       break;
@@ -194,6 +195,7 @@ function reduceSSE(state, ev) {
           existing.err = ev.tool.err || "";
           existing.status = ev.tool.err ? "error" : "done";
           if (ev.tool.truncated) existing.truncated = true;
+          if (ev.tool.parent_id) existing.parentId = ev.tool.parent_id;
         } else {
           state.tools[ev.tool.id] = {
             id: ev.tool.id,
@@ -204,6 +206,7 @@ function reduceSSE(state, ev) {
             status: ev.tool.err ? "error" : "done",
             readOnly: ev.tool.read_only || false,
             truncated: !!ev.tool.truncated,
+            parentId: ev.tool.parent_id || "",
           };
         }
       }
@@ -646,15 +649,21 @@ function upsertToolCard(toolLog, tool) {
     updateToolCardDOM(existing, tool);
     return existing;
   }
-  // Create new card
+  // Create new card (nested if parent_id)
   var card = document.createElement("div");
-  card.className = "tool-card status-" + (tool.status || "running");
+  var nested = !!(tool.parentId || tool.parent_id);
+  card.className = "tool-card status-" + (tool.status || "running") + (nested ? " nested" : "");
   card.setAttribute("data-tool-id", String(id));
+  if (nested) card.setAttribute("data-parent-id", String(tool.parentId || tool.parent_id));
+  var isSub = nested || /^(task|run_skill|subagent)/i.test(tool.name || "");
   card.innerHTML =
     '<div class="tool-card-hd">' +
     '<span class="tool-card-arrow">▸</span>' +
-    '<span class="tool-card-icon">⚙</span>' +
-    '<span class="tool-card-name">' + escHtml(tool.name || "tool") + "</span>" +
+    '<span class="tool-card-icon">' + (isSub ? "🧩" : "⚙") + "</span>" +
+    '<span class="tool-card-name">' + escHtml(tool.name || "tool") +
+    (nested ? ' <span class="hint">子调用</span>' : "") +
+    (isSub && !nested ? ' <span class="hint">子代理/技能</span>' : "") +
+    "</span>" +
     '<span class="tool-card-status">' + statusLabel(tool.status) + "</span>" +
     "</div>" +
     '<div class="tool-card-body" style="display:none">' +
@@ -662,14 +671,29 @@ function upsertToolCard(toolLog, tool) {
     (tool.description ? '<div class="tool-card-section"><div class="tool-card-label">说明</div><div>' + escHtml(tool.description) + "</div></div>" : "") +
     '<div class="tool-card-section tool-card-output-section" style="display:none"><div class="tool-card-label">输出</div><pre class="tool-card-output"></pre></div>' +
     '<div class="tool-card-section tool-card-err-section" style="display:none"><div class="tool-card-label">错误</div><pre class="tool-card-err"></pre></div>' +
+    '<div class="tool-card-children"></div>' +
     "</div>";
 
-  // Click header to toggle
   card.querySelector(".tool-card-hd").addEventListener("click", function () {
     setToolCardOpen(card, !card.classList.contains("is-open"));
   });
 
-  toolLog.appendChild(card);
+  var parentId = tool.parentId || tool.parent_id;
+  var parent = parentId ? findToolCard(toolLog, parentId) : null;
+  if (parent) {
+    var kids = parent.querySelector(".tool-card-children");
+    if (!kids) {
+      kids = document.createElement("div");
+      kids.className = "tool-card-children";
+      parent.querySelector(".tool-card-body").appendChild(kids);
+    }
+    setToolCardOpen(parent, true);
+    kids.appendChild(card);
+  } else {
+    toolLog.appendChild(card);
+  }
+  // Subagent spawns often interesting — auto expand
+  if (isSub) setToolCardOpen(card, true);
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
   return card;
 }
@@ -1616,9 +1640,13 @@ async function loadComputeJobs() {
         ? '<button type="button" class="btn sm job-import-all" data-job="' + escHtml(j.id) + '">全部入库</button>'
         : "";
       var live = j.status === "running" || j.status === "pending";
+      var cancelBtn = live
+        ? '<button type="button" class="btn sm job-cancel" data-job="' + escHtml(j.id) + '">取消</button>'
+        : "";
       return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) + '">' +
         '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
         (live ? ' <span class="hint">日志实时刷新…</span>' : "") +
+        (cancelBtn ? " " + cancelBtn : "") +
         (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
         (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(-4000)) + "</pre>" : '<pre class="job-out hint">(尚无输出)</pre>') +
@@ -1635,8 +1663,47 @@ async function loadComputeJobs() {
         importComputeOutput(btn.getAttribute("data-job"), "", true);
       });
     });
+    el.querySelectorAll(".job-cancel").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        cancelComputeJob(btn.getAttribute("data-job"));
+      });
+    });
   } catch (e) {
     el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+async function cancelComputeJob(jobId) {
+  if (!activeProject || !jobId) return;
+  try {
+    await api("/api/lab/compute/jobs/" + encodeURIComponent(jobId) + "/cancel?project_id=" + activeProject.slug, {
+      method: "POST",
+      body: "{}",
+    });
+    loadComputeJobs();
+  } catch (e) {
+    alert("取消失败: " + e.message);
+  }
+}
+
+async function importWorkspaceZip(file) {
+  if (!activeProject || !file) return;
+  try {
+    var fd = new FormData();
+    fd.append("file", file);
+    var res = await fetch(labPath("/api/lab/files/import?project_id=" + activeProject.slug), {
+      method: "POST",
+      body: fd,
+    });
+    if (!res.ok) throw new Error(await res.text());
+    var body = await res.json();
+    var hint = $("composerHint");
+    if (hint) hint.textContent = "ZIP 导入 " + (body.count || 0) + " 个文件 → " + (body.dest || "");
+    await refreshFiles();
+    loadFileTree();
+    loadArtifacts();
+  } catch (e) {
+    alert("导入失败: " + e.message);
   }
 }
 
@@ -1859,6 +1926,11 @@ $("artifactsRefresh") && $("artifactsRefresh").addEventListener("click", loadArt
 $("workspaceExportBtn") && $("workspaceExportBtn").addEventListener("click", function () {
   if (!activeProject) { alert("请先选择课题"); return; }
   window.open(labPath("/api/lab/files/export?project_id=" + encodeURIComponent(activeProject.slug)), "_blank");
+});
+$("workspaceImport") && $("workspaceImport").addEventListener("change", function () {
+  var f = this.files && this.files[0];
+  if (f) importWorkspaceZip(f);
+  this.value = "";
 });
 $("hostRegisterBtn") && $("hostRegisterBtn").addEventListener("click", registerHost);
 $("fileTreeRefresh") && $("fileTreeRefresh").addEventListener("click", loadFileTree);

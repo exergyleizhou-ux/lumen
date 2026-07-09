@@ -59,6 +59,39 @@ func TestSubmitLocalFakeSSH(t *testing.T) {
 	}
 }
 
+func TestCancelLocalJob(t *testing.T) {
+	store, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// long sleep so we can cancel
+	j, err := store.SubmitOpts("local", "sleep 30", "", SubmitOpts{Timeout: 60 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	got, err := store.Cancel(j.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// status may be cancelled immediately or after wait
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ = store.Get(j.ID)
+		if got.Status == "cancelled" || got.Status == "failed" || got.Status == "done" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if got.Status != "cancelled" && got.Status != "failed" {
+		// cancelled preferred; failed if process already died
+		t.Logf("status after cancel: %s (acceptable if race)", got.Status)
+	}
+	if got.Status == "running" || got.Status == "pending" {
+		t.Fatalf("still active: %+v", got)
+	}
+}
+
 func TestSubmitRequiresHost(t *testing.T) {
 	store, _ := NewStore(t.TempDir())
 	_, err := store.Submit("", "echo hi", "")

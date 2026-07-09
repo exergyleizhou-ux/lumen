@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=29">
+  <link rel="stylesheet" href="app.css?v=30">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -148,6 +148,9 @@
             <div class="btn-row" style="margin-bottom:8px">
               <button type="button" class="btn sm" id="artifactsRefresh">刷新产物</button>
               <button type="button" class="btn sm" id="workspaceExportBtn">导出 ZIP</button>
+              <label class="btn sm">导入 ZIP
+                <input type="file" id="workspaceImport" accept=".zip,application/zip" hidden />
+              </label>
               <span class="hint">reports / figures / data / imports</span>
             </div>
             <div id="artifactsBody" class="hint">加载实验产物…</div>
@@ -212,6 +215,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=29"></script>
+  <script src="app.js?v=30"></script>
 </body>
 </html>

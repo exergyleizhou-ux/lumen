@@ -37,7 +37,7 @@ type Job struct {
 	Host            string      `json:"host"`
 	Command         string      `json:"command"`
 	WorkDir         string      `json:"work_dir"`
-	Status          string      `json:"status"` // pending, running, done, failed, timeout
+	Status          string      `json:"status"` // pending, running, done, failed, timeout, cancelled
 	CreatedAt       time.Time   `json:"created_at"`
 	UpdatedAt       time.Time   `json:"updated_at"`
 	PID             int         `json:"pid,omitempty"`
@@ -61,8 +61,9 @@ type SubmitOpts struct {
 
 // Store manages job state on disk.
 type Store struct {
-	mu   sync.Mutex
-	root string
+	mu      sync.Mutex
+	root    string
+	cancels map[string]context.CancelFunc
 }
 
 // NewStore creates a job store under the project .lumen/compute directory.
@@ -71,7 +72,7 @@ func NewStore(projectDir string) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{root: root}, nil
+	return &Store{root: root, cancels: make(map[string]context.CancelFunc)}, nil
 }
 
 func (s *Store) jobPath(id string) string {
@@ -129,6 +130,28 @@ func (s *Store) SubmitOpts(host, command, workDir string, opts SubmitOpts) (*Job
 	return j, nil
 }
 
+// Cancel aborts a running job (if still active on this process).
+func (s *Store) Cancel(id string) (*Job, error) {
+	s.mu.Lock()
+	cancel, ok := s.cancels[id]
+	if ok {
+		delete(s.cancels, id)
+	}
+	s.mu.Unlock()
+	if ok && cancel != nil {
+		cancel()
+	}
+	// Mark cancelled if still pending/running
+	s.patch(id, func(j *Job) {
+		if j.Status == "pending" || j.Status == "running" {
+			j.Status = "cancelled"
+			j.Error = "cancelled by user"
+			j.ExitCode = -1
+		}
+	})
+	return s.Get(id)
+}
+
 // IsLocalHost reports hosts that run on this machine without SSH.
 func IsLocalHost(host string) bool {
 	h := strings.ToLower(strings.TrimSpace(host))
@@ -142,7 +165,18 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
+	s.mu.Lock()
+	if s.cancels == nil {
+		s.cancels = make(map[string]context.CancelFunc)
+	}
+	s.cancels[id] = cancel
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.cancels, id)
+		s.mu.Unlock()
+	}()
 
 	var cmd *exec.Cmd
 	if IsLocalHost(host) {
@@ -195,7 +229,6 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 				j.OutputTruncated = trunc
 			})
 			if trunc {
-				// stop growing buffer
 				break
 			}
 		}
@@ -206,10 +239,24 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 	err = cmd.Wait()
 	outStr, truncated := truncateOutput(acc.String(), MaxOutputBytes)
 
+	// If user cancelled, preserve cancelled status
+	if cur, gerr := s.Get(id); gerr == nil && cur.Status == "cancelled" {
+		s.patch(id, func(j *Job) {
+			j.Output = outStr
+			j.OutputTruncated = truncated
+			j.UpdatedAt = time.Now().UTC()
+		})
+		return
+	}
+
 	status := "done"
 	exitCode := 0
 	errMsg := ""
-	if ctx.Err() == context.DeadlineExceeded {
+	if ctx.Err() == context.Canceled {
+		status = "cancelled"
+		exitCode = -1
+		errMsg = "cancelled by user"
+	} else if ctx.Err() == context.DeadlineExceeded {
 		status = "timeout"
 		exitCode = -1
 		errMsg = fmt.Sprintf("exceeded timeout %s", timeout)
@@ -233,6 +280,12 @@ func (s *Store) run(id, host, command, workDir string, timeout time.Duration, gl
 	}
 
 	s.patch(id, func(j *Job) {
+		// don't overwrite explicit cancelled from Cancel()
+		if j.Status == "cancelled" {
+			j.Output = outStr
+			j.OutputTruncated = truncated
+			return
+		}
 		j.Output = outStr
 		j.OutputTruncated = truncated
 		j.UpdatedAt = time.Now().UTC()

@@ -2,6 +2,7 @@ package lab
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -784,9 +785,98 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFileTree(w, r, g)
 	case sub == "export":
 		a.handleWorkspaceExport(w, r, g)
+	case sub == "import":
+		a.handleWorkspaceImport(w, r, g)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// handleWorkspaceImport unpacks a zip into the workspace (multipart field "file").
+func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("zip 过大或格式错误: %w", err))
+		return
+	}
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("需要 multipart 字段 file（zip）"))
+		return
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid zip: %w", err))
+		return
+	}
+	// optional dest prefix
+	destPrefix := strings.TrimSpace(r.FormValue("dest"))
+	if destPrefix == "" {
+		destPrefix = "imports/upload-" + time.Now().UTC().Format("20060102-150405")
+	}
+	destPrefix = filepath.ToSlash(filepath.Clean(destPrefix))
+	if strings.HasPrefix(destPrefix, "..") || filepath.IsAbs(destPrefix) {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid dest"))
+		return
+	}
+	const maxFiles = 2000
+	const maxTotal = 64 << 20
+	var n int
+	var total int64
+	var written []string
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		name := filepath.ToSlash(filepath.Clean(f.Name))
+		if strings.HasPrefix(name, "..") || strings.Contains(name, "..") {
+			continue
+		}
+		if n >= maxFiles || total >= maxTotal {
+			break
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		body, err := io.ReadAll(io.LimitReader(rc, 8<<20))
+		_ = rc.Close()
+		if err != nil {
+			continue
+		}
+		rel := filepath.ToSlash(filepath.Join(destPrefix, name))
+		abs, err := g.Resolve(rel)
+		if err != nil {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+			continue
+		}
+		if err := os.WriteFile(abs, body, 0o600); err != nil {
+			continue
+		}
+		written = append(written, rel)
+		n++
+		total += int64(len(body))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"files":   written,
+		"count":   len(written),
+		"dest":    destPrefix,
+		"zip":     header.Filename,
+		"bytes":   total,
+	})
 }
 
 // handleWorkspaceExport zips the project workspace (path-filtered) as application/zip.
@@ -1445,6 +1535,16 @@ func (a *API) handleComputeJob(w http.ResponseWriter, r *http.Request) {
 	// POST .../jobs/:id/import — copy harvested output(s) into workspace
 	if len(parts) == 2 && parts[1] == "import" && r.Method == http.MethodPost {
 		a.handleComputeImport(w, r, slug, projectDir, store, id)
+		return
+	}
+	// POST .../jobs/:id/cancel
+	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
+		j, err := store.Cancel(id)
+		if err != nil {
+			writeErr(w, http.StatusNotFound, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, j)
 		return
 	}
 	if r.Method != http.MethodGet {

@@ -3,6 +3,8 @@ package lab
 import (
 	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -333,6 +335,76 @@ func TestComputeImportAll(t *testing.T) {
 	_ = json.NewDecoder(ires.Body).Decode(&imp)
 	if imp["count"].(float64) < 1 {
 		t.Fatalf("import all %v", imp)
+	}
+}
+
+func TestWorkspaceZipImportExport(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Zip IO")
+	store := project.NewStore(sci)
+	ws, _ := store.WorkspacePath(slug)
+	_ = os.WriteFile(filepath.Join(ws, "hello.txt"), []byte("hi"), 0o600)
+
+	// export
+	res, err := http.Get(ts.URL + "/api/lab/files/export?project_id=" + slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipData, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || len(zipData) < 20 {
+		t.Fatalf("export status=%d len=%d", res.StatusCode, len(zipData))
+	}
+	if zipData[0] != 'P' || zipData[1] != 'K' {
+		t.Fatal("not a zip")
+	}
+
+	// import back
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	part, _ := w.CreateFormFile("file", "pack.zip")
+	_, _ = part.Write(zipData)
+	_ = w.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/import?project_id="+slug, &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	ires, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ires.Body.Close()
+	if ires.StatusCode != 200 {
+		t.Fatalf("import %d", ires.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(ires.Body).Decode(&body)
+	if body["count"].(float64) < 1 {
+		t.Fatalf("%v", body)
+	}
+}
+
+func TestComputeCancelAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Cancel Job")
+	body := `{"host":"local","command":"sleep 60","timeout_sec":120}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs?project_id="+slug, bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var job map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&job)
+	res.Body.Close()
+	id, _ := job["id"].(string)
+	time.Sleep(80 * time.Millisecond)
+	creq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs/"+id+"/cancel?project_id="+slug, bytes.NewReader([]byte("{}")))
+	cres, err := http.DefaultClient.Do(creq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cres.Body.Close()
+	if cres.StatusCode != 200 {
+		t.Fatalf("cancel %d", cres.StatusCode)
 	}
 }
 
