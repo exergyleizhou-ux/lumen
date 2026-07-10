@@ -3719,7 +3719,12 @@ async function exportLangGraphHistory() {
       method: "POST",
       body: JSON.stringify({ path: mdPath, content: md }),
     });
-    showLabToast("已导出", list.length + " 条 · JSON + Markdown");
+    // Soft-attach export paths into the chat composer for the main agent.
+    var attached = attachPathsToComposer([mdPath, jsonPath], "LangGraph 历史导出");
+    showLabToast(
+      "已导出",
+      list.length + " 条 · JSON + MD" + (attached ? " · 已引用到对话" : "")
+    );
     try {
       var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
       if (filesTab) filesTab.click();
@@ -3729,6 +3734,23 @@ async function exportLangGraphHistory() {
   } catch (e) {
     showLabToast("导出失败", (e && e.message) || String(e));
   }
+}
+
+/**
+ * Append @path refs (and a short label) to the main composer.
+ * Returns true if the textarea was updated.
+ */
+function attachPathsToComposer(paths, label) {
+  var ta = $("promptInput") || document.querySelector(".composer textarea");
+  if (!ta) return false;
+  paths = (paths || []).map(function (p) { return String(p || "").trim(); }).filter(Boolean);
+  if (!paths.length) return false;
+  var block = paths.map(function (p) { return "@" + p; }).join(" ");
+  if (label) block = "[" + label + "] " + block;
+  var cur = ta.value || "";
+  ta.value = cur && cur.trim() ? cur.replace(/\s*$/, "") + "\n\n" + block : block;
+  try { ta.dispatchEvent(new Event("input", { bubbles: true })); } catch (_) {}
+  return true;
 }
 
 async function importLangGraphHistory() {
