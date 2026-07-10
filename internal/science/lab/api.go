@@ -2280,7 +2280,24 @@ func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
 	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
 		records[i], records[j] = records[j], records[i]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"records": records, "count": len(records)})
+	limit := 200
+	if v := r.URL.Query().Get("limit"); v != "" {
+		fmt.Sscanf(v, "%d", &limit)
+	}
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	truncated := false
+	if len(records) > limit {
+		records = records[:limit]
+		truncated = true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"records": records, "count": len(records), "truncated": truncated,
+	})
 }
 
 // ── Compute endpoints ──

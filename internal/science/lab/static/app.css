@@ -567,6 +567,24 @@ html.compact .side-inner { gap: 6px; }
   outline: 2px solid var(--ocs-accent);
   background: var(--ocs-accent-soft);
 }
+.diff-body.colored {
+  font-family: var(--mono); font-size: 11px; line-height: 1.4;
+  white-space: pre; overflow: auto; max-height: 55vh;
+  border: 1px solid var(--ocs-line); border-radius: 10px; padding: 6px;
+}
+.diff-line { padding: 0 4px; }
+.diff-add { background: rgba(34, 197, 94, 0.12); color: #15803d; }
+.diff-del { background: rgba(239, 68, 68, 0.1); color: #b91c1c; }
+html.dark .diff-add { color: #86efac; }
+html.dark .diff-del { color: #fca5a5; }
+.diff-meta { color: var(--ocs-muted); font-weight: 650; }
+.diff-ctx { color: var(--ocs-ink); }
+.prov-card {
+  border: 1px solid var(--ocs-line); border-radius: 10px;
+  padding: 8px 10px; margin-bottom: 6px; cursor: pointer;
+}
+.prov-card:hover { background: var(--ocs-accent-light); }
+.prov-hd { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;

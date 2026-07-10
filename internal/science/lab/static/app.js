@@ -344,9 +344,13 @@ async function refreshHealth() {
         '<div class="sr-div"></div>',
         '<div class="sr"><span class="sr k">模型</span><span class="sr v">' + escHtml((h.provider && h.provider.masked) || "—") + "</span></div>',
       ];
+      var cap = h.capacity || {};
+      rows.push('<div class="sr-div"></div>');
+      rows.push('<div class="sr"><span class="sr k">并发回合</span><span class="sr v">' + (cap.turns_active || 0) + "/" + (cap.turns_capacity || "—") + "</span></div>");
+      rows.push('<div class="sr"><span class="sr k">审批累计</span><span class="sr v">' + (cap.approvals_total || 0) + "</span></div>");
       if (activeProject) {
         rows.push('<div class="sr-div"></div>');
-        rows.push('<div class="sr"><span class="sr k">课题</span><span class="sr v">' + escHtml(activeProject.title || activeProject.slug) + "</span></div>');
+        rows.push('<div class="sr"><span class="sr k">课题</span><span class="sr v">' + escHtml(activeProject.title || activeProject.slug) + "</span></div>");
         rows.push('<div class="sr" id="wsStatsRow"><span class="sr k">工作区</span><span class="sr v" id="wsStatsVal">加载中…</span></div>');
       }
       ib.innerHTML = rows.join("");
@@ -1599,6 +1603,21 @@ function renderApprovalCard(toolLog, ev) {
 
 /* ── 9. File panel ── */
 
+var fileSortMode = "name";
+try { fileSortMode = localStorage.getItem("lumen-file-sort") || "name"; } catch (_) {}
+
+function sortFileEntries(files, mode) {
+  mode = mode || "name";
+  var list = (files || []).slice();
+  list.sort(function (a, b) {
+    if (!!a.isDir !== !!b.isDir) return a.isDir ? -1 : 1;
+    if (mode === "size") return (b.size || 0) - (a.size || 0);
+    if (mode === "mtime") return String(b.mtime || "").localeCompare(String(a.mtime || ""));
+    return String(a.name || a.path || "").localeCompare(String(b.name || b.path || ""), "zh");
+  });
+  return list;
+}
+
 async function refreshFiles() {
   var tree = $("fileTree");
   var cwdEl = $("fileCwd");
@@ -1610,10 +1629,16 @@ async function refreshFiles() {
   try {
     var data = await api("/api/lab/files?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(fileCwd || "."));
     var files = data.files || [];
+    files = sortFileEntries(files, fileSortMode);
     tree.innerHTML =
       '<div class="file-sel-bar">' +
       '<button type="button" class="btn sm" id="fileSelAll">全选</button> ' +
       '<button type="button" class="btn sm" id="fileSelNone">清除</button> ' +
+      '<select id="fileSort" class="mode-sel" title="排序" style="height:28px;font-size:11px">' +
+      '<option value="name"' + (fileSortMode === "name" ? " selected" : "") + ">名</option>" +
+      '<option value="mtime"' + (fileSortMode === "mtime" ? " selected" : "") + ">时</option>" +
+      '<option value="size"' + (fileSortMode === "size" ? " selected" : "") + ">大小</option>" +
+      "</select> " +
       '<button type="button" class="btn sm" id="fileMkdir">新建目录</button> ' +
       '<button type="button" class="btn sm" id="fileNew">新建文件</button> ' +
       '<button type="button" class="btn sm" id="fileSelRename">重命名</button> ' +
@@ -1626,13 +1651,23 @@ async function refreshFiles() {
       files.map(function (f) {
         var icon = f.isDir ? "📁" : fileIcon(f.name || f.path);
         var path = f.path || f.name;
+        var meta = f.isDir ? "" : fmtSize(f.size);
+        if (!f.isDir && f.mtime) meta += " · " + String(f.mtime).slice(0, 16).replace("T", " ");
         return '<div class="ft-row' + (f.isDir ? " dir" : "") + '" data-path="' + escHtml(path) + '" data-isdir="' + (f.isDir ? "1" : "0") + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
           '<input type="checkbox" class="ft-check" data-path="' + escHtml(path) + '" />' +
           '<span style="flex-shrink:0;font-size:.9rem">' + icon + "</span>" +
           '<span class="ft-name">' + escHtml(f.name || f.path) + "</span>" +
-          (f.isDir ? "" : '<span class="ft-size">' + fmtSize(f.size) + "</span>") +
+          (meta ? '<span class="ft-size">' + escHtml(meta) + "</span>" : "") +
           "</div>";
       }).join("");
+    var sortEl = $("fileSort");
+    if (sortEl) {
+      sortEl.addEventListener("change", function () {
+        fileSortMode = sortEl.value || "name";
+        try { localStorage.setItem("lumen-file-sort", fileSortMode); } catch (_) {}
+        refreshFiles();
+      });
+    }
 
     function updateSelCount() {
       var n = tree.querySelectorAll(".ft-check:checked").length;
@@ -2525,7 +2560,7 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "config"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "provenance", "config"];
 var activeNotebook = "";
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
@@ -2550,6 +2585,7 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "artifacts") loadArtifacts();
     if (pane === "config") loadLabConfig();
     if (pane === "notebooks") loadNotebooks();
+    if (pane === "provenance") loadProvenanceBrowser();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       var frame = $("ketcherFrame");
@@ -2749,6 +2785,18 @@ async function saveLabConfig() {
   }
 }
 
+function renderColoredDiff(text) {
+  if (!text) return '<span class="hint">(empty)</span>';
+  return text.split("\n").map(function (line) {
+    var cls = "diff-line";
+    if (line.indexOf("+++") === 0 || line.indexOf("---") === 0) cls += " diff-meta";
+    else if (line.charAt(0) === "+") cls += " diff-add";
+    else if (line.charAt(0) === "-") cls += " diff-del";
+    else if (line.charAt(0) === " ") cls += " diff-ctx";
+    return '<div class="' + cls + '">' + escHtml(line) + "</div>";
+  }).join("");
+}
+
 async function runFileDiff() {
   if (!activeProject) return;
   var a = ($("diffPathA") && $("diffPathA").value.trim()) || "";
@@ -2759,11 +2807,53 @@ async function runFileDiff() {
       "&a=" + encodeURIComponent(a) + "&b=" + encodeURIComponent(b));
     var el = $("diffBody");
     if (!el) return;
-    el.className = "diff-body";
-    el.textContent = d.diff || "(empty)";
-    if (d.identical) el.textContent = "文件内容相同\n\n" + (d.diff || "");
+    el.className = "diff-body colored";
+    var text = d.diff || "(empty)";
+    if (d.identical) text = "文件内容相同\n\n" + text;
+    el.innerHTML = renderColoredDiff(text);
   } catch (e) {
     if ($("diffBody")) $("diffBody").textContent = e.message;
+  }
+}
+
+async function loadProvenanceBrowser() {
+  var el = $("provBody");
+  if (!el || !activeProject) return;
+  el.innerHTML = '<div class="hint">加载溯源…</div>';
+  var q = ($("provFilter") && $("provFilter").value.trim()) || "";
+  try {
+    var url = "/api/lab/provenance?project_id=" + activeProject.slug + "&limit=100";
+    if (q) url += "&path=" + encodeURIComponent(q);
+    var data = await api(url);
+    var recs = data.records || [];
+    if (!recs.length) {
+      el.innerHTML = '<div class="hint">暂无溯源记录' + (q ? "（路径过滤）" : "") + "</div>";
+      return;
+    }
+    el.innerHTML = recs.map(function (r) {
+      var path = r.path || r.artifact || "";
+      var mcp = (r.mcp_calls || []).map(function (m) {
+        return (m.tool || "") + (m.query ? '("' + m.query + '")' : "");
+      }).join(", ");
+      return '<div class="prov-card" data-path="' + escHtml(path) + '">' +
+        '<div class="prov-hd"><span class="mono">' + escHtml(path || "(no path)") + "</span>" +
+        ' <span class="hint">' + escHtml((r.ts || "").slice(0, 19).replace("T", " ")) + "</span></div>" +
+        '<div class="hint">' + escHtml(r.kind || "artifact") + " · " + escHtml(r.model || "—") +
+        (r.content_hash ? " · #" + escHtml(String(r.content_hash).slice(0, 12)) : "") + "</div>" +
+        (mcp ? '<div class="hint">🔗 ' + escHtml(mcp) + "</div>" : "") +
+        "</div>";
+    }).join("");
+    el.querySelectorAll(".prov-card").forEach(function (card) {
+      card.addEventListener("click", function () {
+        var path = card.getAttribute("data-path");
+        if (!path) return;
+        var tab = document.querySelector('.insp-tab[data-pane="files"]');
+        if (tab) tab.click();
+        previewFile(path, "");
+      });
+    });
+  } catch (e) {
+    el.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
   }
 }
 
@@ -3136,11 +3226,19 @@ async function loadComputeJobs() {
         ? '<button type="button" class="btn sm job-cancel" data-job="' + escHtml(j.id) + '">取消</button>'
         : "";
       var logBtn = '<button type="button" class="btn sm job-log" data-job="' + escHtml(j.id) + '">SSE 日志</button>';
-      return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) + '">' +
+      var rerunBtn = !live
+        ? '<button type="button" class="btn sm job-rerun" data-job="' + escHtml(j.id) + '">重跑</button>'
+        : "";
+      var copyBtn = '<button type="button" class="btn sm job-copy" data-job="' + escHtml(j.id) + '">复制命令</button>';
+      return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) +
+        '" data-host="' + escHtml(j.host || "") + '" data-cmd="' + escHtml(j.command || "") +
+        '" data-globs="' + escHtml((j.output_globs || j.globs || []).join ? (j.output_globs || j.globs || []).join(", ") : "") + '">' +
         '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
         (live ? ' <span class="hint">日志实时刷新…</span>' : "") +
         " " + logBtn +
         (cancelBtn ? " " + cancelBtn : "") +
+        (rerunBtn ? " " + rerunBtn : "") +
+        " " + copyBtn +
         (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
         (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(-4000)) + "</pre>" : '<pre class="job-out hint">(尚无输出)</pre>') +
@@ -3165,6 +3263,24 @@ async function loadComputeJobs() {
     el.querySelectorAll(".job-log").forEach(function (btn) {
       btn.addEventListener("click", function () {
         watchJobLog(btn.getAttribute("data-job"));
+      });
+    });
+    el.querySelectorAll(".job-copy").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var card = btn.closest(".job-card");
+        var cmd = card && card.getAttribute("data-cmd");
+        if (cmd) copyTextToClipboard(cmd, btn);
+      });
+    });
+    el.querySelectorAll(".job-rerun").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var card = btn.closest(".job-card");
+        if (!card) return;
+        if ($("computeHost")) $("computeHost").value = card.getAttribute("data-host") || "local";
+        if ($("computeCmd")) $("computeCmd").value = card.getAttribute("data-cmd") || "";
+        var g = card.getAttribute("data-globs") || "";
+        if (g && $("computeGlobs")) $("computeGlobs").value = g;
+        submitComputeJob();
       });
     });
   } catch (e) {
@@ -3802,6 +3918,10 @@ $("workspaceImport") && $("workspaceImport").addEventListener("change", function
 });
 $("cfgSaveBtn") && $("cfgSaveBtn").addEventListener("click", saveLabConfig);
 $("diffRunBtn") && $("diffRunBtn").addEventListener("click", runFileDiff);
+$("provRefreshBtn") && $("provRefreshBtn").addEventListener("click", loadProvenanceBrowser);
+$("provFilter") && $("provFilter").addEventListener("keydown", function (e) {
+  if (e.key === "Enter") { e.preventDefault(); loadProvenanceBrowser(); }
+});
 $("molSaveBtn") && $("molSaveBtn").addEventListener("click", saveMolToWorkspace);
 $("molLoadBtn") && $("molLoadBtn").addEventListener("click", loadMolFromWorkspace);
 $("molTo3dBtn") && $("molTo3dBtn").addEventListener("click", function () {
