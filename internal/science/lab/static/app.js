@@ -3398,19 +3398,24 @@ async function openOfficePath() {
   // Prefer OnlyOffice if configured
   if (onlyOfficeURL) {
     var dsUrl = onlyOfficeURL.replace(/\/+$/, "");
-    // Docker Desktop on macOS: container can reach host via host.docker.internal
-    // When DS URL is localhost/127.0.0.1, replace fileUrl host for container accessibility
-    var containerFileUrl = fileUrl;
+    var mode = ($("officeMode") && $("officeMode").value) || "view";
+    // Docker: replace host for container accessibility
+    var containerHost = location.origin;
     if (/(localhost|127\.0\.0\.1)/.test(dsUrl)) {
-      containerFileUrl = fileUrl.replace(/\/\/(localhost|127\.0\.0\.1)(:\d+)?\//, "//host.docker.internal$2/");
+      containerHost = location.origin.replace(/\/\/(localhost|127\.0\.0\.1)(:\d+)?/, "//host.docker.internal$2");
     }
-    // Use standalone office-editor.html page (avoids srcdoc script breakage)
+    var fileUrlBase = containerHost + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+    var callbackUrl = "";
+    if (mode === "edit") {
+      callbackUrl = containerHost + labPath("/api/lab/onlyoffice/callback?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+    }
     var editorPage = labPath("/office-editor.html") +
       "?ds=" + encodeURIComponent(dsUrl) +
-      "&url=" + encodeURIComponent(containerFileUrl) +
+      "&url=" + encodeURIComponent(fileUrlBase) +
       "&title=" + encodeURIComponent(fileName) +
       "&ext=" + encodeURIComponent(ext) +
-      "&mode=view";
+      "&mode=" + encodeURIComponent(mode) +
+      "&cb=" + encodeURIComponent(callbackUrl);
     host.innerHTML = '<iframe style="width:100%;height:520px;border:0;border-radius:8px" src="' + editorPage + '" allow="fullscreen"></iframe>';
     return;
   }

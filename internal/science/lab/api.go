@@ -22,6 +22,7 @@ import (
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/langgraph"
+	"lumen/internal/science/lab/onlyoffice"
 	"lumen/internal/science/lab/project"
 	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
@@ -106,6 +107,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
+	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -171,10 +173,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"jupyter": map[string]any{
 			"available": jupyterOK,
 		},
-		"onlyoffice": map[string]any{
-			"url": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")),
-			"configured": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")) != "",
-		},
+		"onlyoffice": onlyoffice.Health(strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL"))),
 		"langgraph": langgraph.Health(),
 	})
 }
@@ -3008,4 +3007,26 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := langgraph.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── OnlyOffice callback ──
+
+func (a *API) handleOnlyOfficeCallback(w http.ResponseWriter, r *http.Request) {
+	slug := r.URL.Query().Get("project_id")
+	relPath := onlyoffice.CallbackPath(r.URL.Query().Get("path"))
+	if slug == "" || relPath == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": 1, "detail": "project_id and path required"})
+		return
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": 1, "detail": "invalid project"})
+		return
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": 1})
+		return
+	}
+	onlyoffice.HandleCallback(w, r, g, relPath)
 }

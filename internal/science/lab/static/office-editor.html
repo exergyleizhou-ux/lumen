@@ -39,6 +39,7 @@
   var fileName = params.get("title") || "document.docx";
   var fileExt = params.get("ext") || "docx";
   var mode = params.get("mode") || "view";       // view | edit
+  var callbackUrl = params.get("cb") || "";       // callback URL for edit saves
 
   if (!dsUrl || !fileUrl) {
     showError("缺少参数：ds（Document Server URL）和 url（文件下载 URL）均为必填。");
@@ -70,6 +71,10 @@
         showError("DocsAPI 未定义 — Document Server URL 可能不正确: " + dsUrl);
         return;
       }
+      var editorConfig = { mode: mode };
+      if (mode === "edit" && callbackUrl) {
+        editorConfig.callbackUrl = callbackUrl;
+      }
       new DocsAPI.DocEditor("editor-placeholder", {
         document: {
           fileType: docFileType,
@@ -78,10 +83,7 @@
           url: fileUrl
         },
         documentType: docType,
-        editorConfig: {
-          mode: mode,
-          callbackUrl: "" // no callback for view-only; add for edit
-        },
+        editorConfig: editorConfig,
         height: "100%",
         width: "100%"
       });

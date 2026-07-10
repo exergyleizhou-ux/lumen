@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=58">
+  <link rel="stylesheet" href="app.css?v=59">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -289,6 +289,7 @@
             <div class="set-k soft">OnlyOffice / 文档</div>
             <div class="hint" id="officeHint" style="margin-bottom:8px">配置环境变量 LUMEN_ONLYOFFICE_URL 后可在此打开文档编辑器；未配置时用文本抽取 + 下载。</div>
             <input type="text" id="officePath" class="file-search" placeholder="工作区路径 e.g. reports/note.docx" />
+            <select id="officeMode" class="mode-sel" style="margin-top:4px"><option value="view">查看</option><option value="edit">编辑</option></select>
             <div class="btn-row" style="margin-top:6px">
               <button type="button" class="btn sm primary" id="officeOpenBtn">打开/预览</button>
               <button type="button" class="btn sm" id="officeDownloadBtn">下载原文件</button>
@@ -384,6 +385,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=58"></script>
+  <script src="app.js?v=59"></script>
 </body>
 </html>
