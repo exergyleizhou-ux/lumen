@@ -2916,10 +2916,16 @@ async function openNotebook(name) {
     cellsEl.innerHTML = cells.map(function (c, i) {
       var src = Array.isArray(c.source) ? c.source.join("") : (c.source || "");
       var outs = (c.outputs || []).map(function (o) {
-        return escHtml(o.text || o.Text || "");
+        var t = o.text || o.Text || "";
+        if (!t && o.data) {
+          try { t = typeof o.data === "string" ? o.data : JSON.stringify(o.data); } catch (_) {}
+        }
+        if (Array.isArray(t)) t = t.join("");
+        return escHtml(String(t || ""));
       }).filter(Boolean).join("\n");
+      var st = c.execution_count != null ? " [" + c.execution_count + "]" : "";
       return '<div class="nb-cell">' +
-        '<div class="nb-cell-hd">' + escHtml(c.cell_type || "code") + " #" + (i + 1) + "</div>" +
+        '<div class="nb-cell-hd">' + escHtml(c.cell_type || "code") + " #" + (i + 1) + st + "</div>" +
         '<pre class="nb-src">' + escHtml(src) + "</pre>" +
         (outs ? '<pre class="nb-out">' + outs + "</pre>" : "") +
         "</div>";
@@ -2979,16 +2985,25 @@ async function execNotebook() {
     alert("请先选择笔记本");
     return;
   }
+  var hint = $("nbJupyterHint");
+  if (hint) hint.textContent = "执行中…";
   try {
     var res = await api("/api/lab/notebooks/execute/" + encodeURIComponent(activeNotebook) + "?project_id=" + activeProject.slug, {
       method: "POST",
       body: JSON.stringify({}),
     });
     if (res.ok === false) {
-      alert("执行失败: " + (res.error || "unknown"));
+      var err = res.error || "unknown";
+      if (hint) hint.textContent = "执行失败";
+      alert("执行失败: " + err);
+      await openNotebook(activeNotebook);
+      return;
     }
+    if (hint) hint.textContent = "Jupyter ✓ 执行完成";
+    showLabToast("Notebook 执行完成", activeNotebook);
     await openNotebook(activeNotebook);
   } catch (e) {
+    if (hint) hint.textContent = "执行失败";
     alert("执行失败: " + e.message);
   }
 }

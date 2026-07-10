@@ -483,6 +483,39 @@ func TestNotebooksAPI(t *testing.T) {
 	if get.StatusCode != 200 {
 		t.Fatalf("get cells %d", get.StatusCode)
 	}
+	// Execute path: when jupyter is available, expect ok + output; otherwise ok:false with non-empty error
+	ereq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/notebooks/execute/demo.ipynb?project_id="+slug,
+		bytes.NewReader([]byte(`{}`)))
+	ereq.Header.Set("Content-Type", "application/json")
+	eres, err := http.DefaultClient.Do(ereq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eres.Body.Close()
+	if eres.StatusCode != 200 {
+		t.Fatalf("execute status %d", eres.StatusCode)
+	}
+	var ebody map[string]any
+	if err := json.NewDecoder(eres.Body).Decode(&ebody); err != nil {
+		t.Fatal(err)
+	}
+	ok, _ := ebody["ok"].(bool)
+	if ok {
+		// jupyter available — look for "2" in outputs or markdown
+		found := false
+		raw, _ := json.Marshal(ebody["cells"])
+		if strings.Contains(string(raw), "2") {
+			found = true
+		}
+		if !found {
+			t.Fatalf("execute ok but missing output 2: %v", ebody)
+		}
+	} else {
+		errStr, _ := ebody["error"].(string)
+		if strings.TrimSpace(errStr) == "" {
+			t.Fatalf("execute failed with empty error: %v", ebody)
+		}
+	}
 }
 
 func TestFileSearchAPI(t *testing.T) {

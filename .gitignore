@@ -12,4 +12,5 @@
 bin/
 openai.test
 third_party/ketcher-standalone/
+.acceptance-logs/
 Thumbs.db
