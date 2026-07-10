@@ -112,6 +112,21 @@ function runOnce(runLabel) {
   assert(jb2.timeout_sec === 7200, "timeout capped at 7200");
   console.log("OK buildComputeJobBody");
 
+  // LangGraph body + result formatters
+  if (typeof L.buildLangGraphBody === "function") {
+    const lg = L.buildLangGraphBody("  proj  ", "  hello  ");
+    assert(lg.project_id === "proj" && lg.prompt === "hello", "langgraph body trim: " + JSON.stringify(lg));
+    const empty = L.buildLangGraphBody("", "   ");
+    assert(empty.prompt === "", "empty prompt stays empty");
+    console.log("OK buildLangGraphBody");
+  }
+  if (typeof L.formatLangGraphResult === "function") {
+    assert(L.formatLangGraphResult({ ok: true, result: "done" }) === "done", "lg result ok");
+    assert(L.formatLangGraphResult({ ok: false, error: "nope" }) === "nope", "lg result err");
+    assert(L.formatLangGraphResult({ ok: false }).indexOf("失败") >= 0, "lg result default err");
+    console.log("OK formatLangGraphResult");
+  }
+
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
   assert(!xss.includes("<img"), "md no raw img tag after escape: " + xss);

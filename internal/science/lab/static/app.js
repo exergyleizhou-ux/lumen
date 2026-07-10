@@ -375,6 +375,24 @@ function buildComputeJobBody(fields) {
   return body;
 }
 
+/** Pure helper: JSON body for POST /api/lab/langgraph/run */
+function buildLangGraphBody(projectId, prompt) {
+  return {
+    project_id: String(projectId || "").trim(),
+    prompt: String(prompt || "").trim(),
+  };
+}
+
+/** Pure helper: format langgraph API response for the inspector pane. */
+function formatLangGraphResult(resp) {
+  resp = resp || {};
+  if (resp.ok) {
+    return String(resp.result != null ? resp.result : "");
+  }
+  var err = String(resp.error || "LangGraph 运行失败").trim();
+  return err || "LangGraph 运行失败";
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -384,6 +402,8 @@ window.LabUI = {
   normalizeMolPath: normalizeMolPath,
   validateMolContent: validateMolContent,
   buildComputeJobBody: buildComputeJobBody,
+  buildLangGraphBody: buildLangGraphBody,
+  formatLangGraphResult: formatLangGraphResult,
 };
 
 /* ── 3. Global state ── */
@@ -465,6 +485,7 @@ function buildReadinessChecks(h, pack, f) {
   var ket = (h && h.ketcher) || {};
   var jup = (h && h.jupyter) || {};
   var oo = (h && h.onlyoffice) || {};
+  var lg = (h && h.langgraph) || {};
   return [
     { label: "Lab 在线", ok: true, detail: "v" + ((h && h.version) || "dev") },
     { label: "模型", ok: !!prov.set, detail: prov.set ? (prov.masked || "已配置") : "未配置" },
@@ -473,6 +494,7 @@ function buildReadinessChecks(h, pack, f) {
     { label: "同域 Ketcher", ok: !!ket.same_origin, detail: ket.same_origin ? "✓ /ketcher/" : "未部署（可用 MOL 路径）" },
     { label: "Jupyter", ok: !!jup.available, detail: jup.available ? "可用" : "未安装" },
     { label: "OnlyOffice", ok: !!oo.configured, detail: oo.configured ? (oo.url || "已配置") : "设 LUMEN_ONLYOFFICE_URL" },
+    { label: "LangGraph", ok: !!lg.available, detail: lg.available ? (lg.hint || "可用") : (lg.hint || "未启用") },
     { label: "课题", ok: !!activeProject, detail: activeProject ? (activeProject.title || activeProject.slug) : "未选择" },
     { label: "会话", ok: !!activeThread, detail: activeThread ? "已打开" : "未打开" },
   ];
@@ -2824,8 +2846,9 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "provenance", "office", "config"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "provenance", "office", "langgraph", "config"];
 var activeNotebook = "";
+var lastLangGraphResult = "";
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
@@ -2852,6 +2875,7 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "notebooks") loadNotebooks();
     if (pane === "provenance") loadProvenanceBrowser();
     if (pane === "office") loadOfficePane();
+    if (pane === "langgraph") loadLangGraphPane();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
       bootKetcherFrame();
@@ -3181,6 +3205,110 @@ $("officeDownloadBtn") && $("officeDownloadBtn").addEventListener("click", funct
   if (!path) return;
   window.open(labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path)), "_blank");
 });
+
+/* ── LangGraph inspector pane ── */
+
+async function loadLangGraphPane() {
+  var status = $("langgraphStatus");
+  var hint = $("langgraphHint");
+  var runBtn = $("langgraphRunBtn");
+  try {
+    var h = await api("/api/lab/health");
+    var lg = (h && h.langgraph) || {};
+    if (status) {
+      status.textContent = lg.available ? "可用" : "不可用";
+      status.className = "v" + (lg.available ? " ok" : "");
+    }
+    if (hint) {
+      hint.textContent = lg.available
+        ? (lg.hint || "LangGraph 旁路可用。输入提示词后运行；结果可写入对话输入框。")
+        : (lg.hint || "未启用：设置 LUMEN_LANGGRAPH=1 并安装 venv（见 docs/lab/LANGGRAPH.md）");
+    }
+    if (runBtn) runBtn.disabled = !lg.available;
+  } catch (e) {
+    if (status) status.textContent = "检查失败";
+    if (hint) hint.textContent = e.message || String(e);
+    if (runBtn) runBtn.disabled = true;
+  }
+}
+
+async function runLangGraphPane() {
+  var promptEl = $("langgraphPrompt");
+  var out = $("langgraphResult");
+  var runBtn = $("langgraphRunBtn");
+  var prompt = promptEl ? promptEl.value : "";
+  var body = buildLangGraphBody(activeProject && activeProject.slug, prompt);
+  if (!body.prompt) {
+    if (out) out.textContent = "请填写提示词";
+    return;
+  }
+  if (runBtn) {
+    runBtn.disabled = true;
+    runBtn.textContent = "运行中…";
+  }
+  if (out) out.textContent = "运行中…";
+  try {
+    var resp = await api("/api/lab/langgraph/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    var text = formatLangGraphResult(resp);
+    lastLangGraphResult = text;
+    if (out) out.textContent = text;
+    if (resp && resp.ok) {
+      showLabToast("LangGraph 完成", text.slice(0, 80));
+    } else {
+      showLabToast("LangGraph 失败", text.slice(0, 80));
+    }
+  } catch (e) {
+    var msg = e && e.message ? e.message : String(e);
+    lastLangGraphResult = msg;
+    if (out) out.textContent = msg;
+    showLabToast("LangGraph 错误", msg.slice(0, 80));
+  } finally {
+    if (runBtn) {
+      runBtn.textContent = "运行";
+      // re-check availability for button state
+      loadLangGraphPane();
+    }
+  }
+}
+
+function langGraphResultToComposer() {
+  var text = lastLangGraphResult || ($("langgraphResult") && $("langgraphResult").textContent) || "";
+  text = String(text || "").trim();
+  if (!text || text === "尚未运行" || text === "运行中…") {
+    showLabToast("无结果", "先运行 LangGraph");
+    return;
+  }
+  var ta = $("promptInput") || $("composer") || $("chatInput") ||
+    document.querySelector("textarea.composer-input, #promptInput, #chatInput, .composer textarea");
+  if (!ta) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        showLabToast("已复制", "未找到输入框，结果已复制到剪贴板");
+        return;
+      }
+    } catch (_) {}
+    alert(text);
+    return;
+  }
+  var prefix = ta.value && ta.value.trim() ? ta.value.replace(/\s*$/, "") + "\n\n" : "";
+  ta.value = prefix + "[LangGraph]\n" + text;
+  ta.focus();
+  try { ta.dispatchEvent(new Event("input", { bubbles: true })); } catch (_) {}
+  showLabToast("已写入对话", "可编辑后发送");
+}
+
+$("langgraphRunBtn") && $("langgraphRunBtn").addEventListener("click", runLangGraphPane);
+$("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", function () {
+  lastLangGraphResult = "";
+  if ($("langgraphPrompt")) $("langgraphPrompt").value = "";
+  if ($("langgraphResult")) $("langgraphResult").textContent = "尚未运行";
+});
+$("langgraphToChatBtn") && $("langgraphToChatBtn").addEventListener("click", langGraphResultToComposer);
 
 async function loadProvenanceBrowser() {
   var el = $("provBody");
@@ -4145,6 +4273,7 @@ var paletteCmds = [
   { label: "删除当前会话", action: function () { if (activeThread) deleteSession(activeThread); } },
   { label: "打开产物面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="artifacts"]'); if (t) t.click(); } },
   { label: "打开 Notebook 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="notebooks"]'); if (t) t.click(); } },
+  { label: "打开 LangGraph 面板", action: function () { var t = document.querySelector('.insp-tab[data-pane="langgraph"]'); if (t) t.click(); } },
   { label: "重跑上一条消息", action: function () { rerunLastPrompt(); } },
   { label: "新建工作区文件", action: function () { var t = document.querySelector('.insp-tab[data-pane="files"]'); if (t) t.click(); fileNewPrompt(); } },
   { label: "在对话中查找", action: function () { openChatFind(); }, hotkey: "⌘F" },
