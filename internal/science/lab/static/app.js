@@ -148,6 +148,31 @@ function linkifyWorkspacePaths(html) {
   return html;
 }
 
+/**
+ * Linkify relative file paths inside simple text nodes of already-safe HTML
+ * (e.g. LangGraph inventory lines / headings after renderMarkdown).
+ * Only matches common text extensions; skips attributes/existing tags.
+ */
+function linkifyPathTokens(text) {
+  text = String(text || "");
+  return text.replace(
+    /\b([\w][\w./\-]*\.(?:md|txt|py|ipynb|csv|json|ya?ml|go|js|ts|tsx|r|sh|toml|ini|log|tex|bib|html|css|rst|jl|pdf))\b/g,
+    function (path) {
+      return '<a href="#" class="ws-ref" data-path="' + path + '">' + path + "</a>";
+    }
+  );
+}
+
+function linkifyLangGraphPaths(html) {
+  html = String(html || "");
+  // Only rewrite plain text inside common block tags produced by renderMarkdown.
+  html = html.replace(/<(li|h[1-3]|p|code)(\s[^>]*)?>([^<]*)<\/\1>/g, function (_, tag, attrs, content) {
+    attrs = attrs || "";
+    return "<" + tag + attrs + ">" + linkifyPathTokens(content) + "</" + tag + ">";
+  });
+  return html;
+}
+
 function bindWorkspaceRefs(root) {
   if (!root) return;
   root.querySelectorAll("a.ws-ref").forEach(function (a) {
@@ -404,6 +429,8 @@ window.LabUI = {
   buildComputeJobBody: buildComputeJobBody,
   buildLangGraphBody: buildLangGraphBody,
   formatLangGraphResult: formatLangGraphResult,
+  linkifyPathTokens: linkifyPathTokens,
+  linkifyLangGraphPaths: linkifyLangGraphPaths,
 };
 
 /* ── 3. Global state ── */
@@ -3237,8 +3264,10 @@ function setLangGraphResultView(text, asMarkdown) {
   if (!out) return;
   var t = String(text == null ? "" : text);
   if (asMarkdown && t && t !== "尚未运行" && t !== "运行中…" && t !== "请填写提示词") {
-    out.innerHTML = renderMarkdown(t);
+    // Markdown first (escapes raw HTML), then path linkify, then click bindings.
+    out.innerHTML = linkifyLangGraphPaths(renderMarkdown(t));
     bindCodeCopy(out);
+    bindWorkspaceRefs(out);
   } else {
     out.textContent = t;
   }

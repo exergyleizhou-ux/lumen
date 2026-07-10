@@ -126,6 +126,19 @@ function runOnce(runLabel) {
     assert(L.formatLangGraphResult({ ok: false }).indexOf("失败") >= 0, "lg result default err");
     console.log("OK formatLangGraphResult");
   }
+  if (typeof L.linkifyPathTokens === "function") {
+    const linked = L.linkifyPathTokens("see reports/notes.md and script.py");
+    assert(linked.includes('data-path="reports/notes.md"'), "path token notes: " + linked);
+    assert(linked.includes('data-path="script.py"'), "path token py: " + linked);
+    assert(!linked.includes("<script"), "no raw script");
+    console.log("OK linkifyPathTokens");
+  }
+  if (typeof L.linkifyLangGraphPaths === "function") {
+    const block = L.linkifyLangGraphPaths("<li>reports/notes.md</li><h3>script.py</h3>");
+    assert(block.includes('class="ws-ref"') && block.includes("reports/notes.md"), "lg li path: " + block);
+    assert(block.includes("<h3>") && block.includes('data-path="script.py"'), "lg h3 path");
+    console.log("OK linkifyLangGraphPaths");
+  }
 
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
