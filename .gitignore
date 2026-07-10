@@ -1,15 +1,15 @@
-bin/
-*.log
-.env
-# Build artifacts
-openai.test
-*.test
 
-# Session data
-.lumen/
-
-# OS
 .DS_Store
-Thumbs.db
+.env
 .gstack/
+.lumen/
 .science-rm-scratch/
+*.log
+*.test
+# Build artifacts
+# OS
+# Session data
+bin/
+openai.test
+third_party/ketcher-standalone/
+Thumbs.db

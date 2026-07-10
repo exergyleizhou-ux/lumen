@@ -2818,7 +2818,7 @@ $("bridgeLink") && $("bridgeLink").addEventListener("click", function (e) {
 /* ── 12. Inspector tabs ── */
 
 var ketcherLoaded = false, molLoaded = false;
-var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "provenance", "config"];
+var PANE_IDS = ["status", "tasks", "files", "artifacts", "skills", "compute", "ketcher", "molecule", "notebooks", "diff", "provenance", "office", "config"];
 var activeNotebook = "";
 document.querySelectorAll(".insp-tab").forEach(function (t) {
   t.addEventListener("click", function () {
@@ -2845,10 +2845,10 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     if (pane === "config") loadLabConfig();
     if (pane === "notebooks") loadNotebooks();
     if (pane === "provenance") loadProvenanceBrowser();
+    if (pane === "office") loadOfficePane();
     if (pane === "ketcher" && !ketcherLoaded) {
       ketcherLoaded = true;
-      var frame = $("ketcherFrame");
-      if (frame) frame.src = "https://lifescience.opensource.epam.com/ketcher/standalone/index.html";
+      bootKetcherFrame();
     }
     if (pane === "molecule") {
       if (!molLoaded) {
@@ -3075,6 +3075,75 @@ async function runFileDiff() {
   }
 }
 
+var onlyOfficeURL = "";
+
+async function loadOfficePane() {
+  var hint = $("officeHint");
+  var host = $("officeHost");
+  try {
+    var h = await api("/api/lab/health");
+    onlyOfficeURL = (h.onlyoffice && h.onlyoffice.url) || "";
+    if (hint) {
+      if (onlyOfficeURL) {
+        hint.textContent = "OnlyOffice Document Server: " + onlyOfficeURL + " — 填写路径后打开。";
+      } else {
+        hint.textContent = "未配置 LUMEN_ONLYOFFICE_URL。将使用 Lab 文本抽取预览 + 下载。可在 VPS 安装 Document Server 后设置该环境变量。";
+      }
+    }
+  } catch (e) {
+    if (hint) hint.textContent = e.message;
+  }
+  if (host && !host._wired) {
+    host._wired = true;
+  }
+}
+
+async function openOfficePath() {
+  if (!activeProject) { alert("请先选择课题"); return; }
+  var path = ($("officePath") && $("officePath").value.trim()) || "";
+  if (!path) { alert("填写工作区文件路径"); return; }
+  var host = $("officeHost");
+  if (!host) return;
+  // Prefer OnlyOffice if configured
+  if (onlyOfficeURL) {
+    // Document Server expects a publicly reachable file URL — we provide download URL via lab API
+    var fileUrl = location.origin + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+    // Simplified editor embed page (view mode if no JWT)
+    var editorHtml =
+      "<!DOCTYPE html><html><head><meta charset=utf-8><script src=\"" + onlyOfficeURL.replace(/\/$/, "") +
+      "/web-apps/apps/api/documents/api.js\"></script></head><body style=\"margin:0\">" +
+      "<div id=\"placeholder\"></div><script>" +
+      "new DocsAPI.DocEditor(\"placeholder\",{document:{fileType:\"" + (path.split(".").pop() || "docx") +
+      "\",key:\"" + Date.now() + "\",title:" + JSON.stringify(path.split("/").pop()) +
+      ",url:" + JSON.stringify(fileUrl) + "},documentType:\"word\",editorConfig:{mode:\"view\"}});</script></body></html>";
+    host.innerHTML = '<iframe style="width:100%;height:480px;border:0" srcdoc="' +
+      editorHtml.replace(/"/g, "&quot;") + '"></iframe>';
+    return;
+  }
+  // Fallback: open file preview path
+  try {
+    var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
+    var kind = data.previewKind || "";
+    if (kind === "office" || kind === "text" || kind === "markdown") {
+      host.innerHTML = '<div class="hint">文本抽取预览（非 WYSIWYG）· ' + escHtml(kind) + "</div>" +
+        '<pre class="fp-body" style="max-height:420px;overflow:auto">' + escHtml(data.content || "") + "</pre>";
+    } else {
+      var dl = labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
+      host.innerHTML = '<div class="hint">无法内联预览 — <a href="' + dl + '" target="_blank">下载</a></div>';
+    }
+  } catch (e) {
+    host.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+  }
+}
+
+$("officeOpenBtn") && $("officeOpenBtn").addEventListener("click", openOfficePath);
+$("officeDownloadBtn") && $("officeDownloadBtn").addEventListener("click", function () {
+  if (!activeProject) return;
+  var path = ($("officePath") && $("officePath").value.trim()) || "";
+  if (!path) return;
+  window.open(labPath("/api/lab/files/download?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path)), "_blank");
+});
+
 async function loadProvenanceBrowser() {
   var el = $("provBody");
   if (!el || !activeProject) return;
@@ -3121,6 +3190,86 @@ function setMolStatus(msg, ok) {
   if (!el) return;
   el.textContent = msg || "";
   el.style.color = ok === false ? "var(--ocs-danger)" : (ok ? "var(--ocs-success)" : "var(--ocs-muted)");
+}
+
+var ketcherSameOrigin = false;
+var ketcherBootPromise = null;
+
+async function detectKetcherOrigin() {
+  try {
+    var h = await api("/api/lab/health");
+    ketcherSameOrigin = !!(h.ketcher && h.ketcher.same_origin);
+    return ketcherSameOrigin;
+  } catch (_) {
+    ketcherSameOrigin = false;
+    return false;
+  }
+}
+
+function bootKetcherFrame() {
+  var frame = $("ketcherFrame");
+  if (!frame) return;
+  detectKetcherOrigin().then(function (same) {
+    if (same) {
+      frame.src = labPath("/ketcher/index.html");
+      setMolStatus("同域 Ketcher 已加载 — 可用「从 Ketcher 导入 / 推送到 Ketcher」", true);
+    } else {
+      // fallback CDN (may be blocked) — MOL path remains reliable
+      frame.src = "https://lifescience.opensource.epam.com/ketcher/standalone/index.html";
+      setMolStatus("未部署同域 Ketcher，使用外链（可能失败）；请用 MOL 粘贴路径", false);
+    }
+  });
+}
+
+function getKetcherAPI() {
+  var frame = $("ketcherFrame");
+  if (!frame || !frame.contentWindow) return null;
+  try {
+    return frame.contentWindow.ketcher || null;
+  } catch (e) {
+    // cross-origin
+    return null;
+  }
+}
+
+async function importFromKetcher() {
+  var k = getKetcherAPI();
+  if (!k || typeof k.getMolfile !== "function") {
+    setMolStatus("无法访问 Ketcher API（需要同域托管）。请手动 File→Save as MOL 粘贴。", false);
+    alert("需要同域 Ketcher。请部署 third_party/ketcher-standalone 到服务器，或手动粘贴 MOL。");
+    return;
+  }
+  try {
+    var mol = await k.getMolfile();
+    if ($("molEditor")) $("molEditor").value = mol || "";
+    var v = validateMolContent(mol || "");
+    setMolStatus(v.ok ? "已从 Ketcher 导入 (" + v.reason + ")" : "导入内容可能无效", v.ok);
+  } catch (e) {
+    setMolStatus("从 Ketcher 导入失败: " + e.message, false);
+    alert(e.message);
+  }
+}
+
+async function pushToKetcher() {
+  var content = ($("molEditor") && $("molEditor").value) || "";
+  var v = validateMolContent(content);
+  if (!v.ok) {
+    setMolStatus("推送失败：内容无效 (" + v.reason + ")", false);
+    return;
+  }
+  var k = getKetcherAPI();
+  if (!k || typeof k.setMolecule !== "function") {
+    setMolStatus("无法访问 Ketcher API（需要同域托管）", false);
+    alert("需要同域 Ketcher 才能推送结构。");
+    return;
+  }
+  try {
+    await k.setMolecule(content);
+    setMolStatus("已推送到 Ketcher", true);
+  } catch (e) {
+    setMolStatus("推送失败: " + e.message, false);
+    alert(e.message);
+  }
 }
 
 async function saveMolToWorkspace() {
@@ -4254,6 +4403,8 @@ $("provFilter") && $("provFilter").addEventListener("keydown", function (e) {
 });
 $("molSaveBtn") && $("molSaveBtn").addEventListener("click", saveMolToWorkspace);
 $("molLoadBtn") && $("molLoadBtn").addEventListener("click", loadMolFromWorkspace);
+$("molFromKetcher") && $("molFromKetcher").addEventListener("click", importFromKetcher);
+$("molToKetcher") && $("molToKetcher").addEventListener("click", pushToKetcher);
 $("molTo3dBtn") && $("molTo3dBtn").addEventListener("click", function () {
   var path = normalizeMolPath(($("molSavePath") && $("molSavePath").value) || "structure.mol");
   var content = ($("molEditor") && $("molEditor").value) || "";

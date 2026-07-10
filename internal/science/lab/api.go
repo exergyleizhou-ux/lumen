@@ -122,6 +122,9 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		fleetSt = a.fleet.Status()
 	}
 	ctrlTotal, ctrlBusy := a.ctrls.stats()
+	ketcherDir := resolveKetcherDir(a.sciDir)
+	ketcherOK := ketcherDir != ""
+	jupyterOK := jupyter.IsAvailable()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":       "ok",
 		"port":         a.listenPort,
@@ -157,6 +160,18 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"max_concurrent_turns": MaxConcurrentTurns,
 			"approval_timeout_sec": int(ApprovalTimeout.Seconds()),
 			"turn_timeout_sec":     int(DefaultTurnTimeout.Seconds()),
+		},
+		"ketcher": map[string]any{
+			"same_origin": ketcherOK,
+			"path":        "/ketcher/",
+			"dir":         ketcherDir,
+		},
+		"jupyter": map[string]any{
+			"available": jupyterOK,
+		},
+		"onlyoffice": map[string]any{
+			"url": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")),
+			"configured": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")) != "",
 		},
 	})
 }

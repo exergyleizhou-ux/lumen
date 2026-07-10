@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -67,6 +69,7 @@ func (s *Server) routes() {
 		fileServer.ServeHTTP(w, r)
 	}))
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Ketcher same-origin assets are registered separately under /ketcher/
 		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
 			fileServer.ServeHTTP(w, r)
 			return
@@ -81,7 +84,52 @@ func (s *Server) routes() {
 		_, _ = w.Write(data)
 	})
 	s.mux.Handle("/assets/", assetHandler)
+	// Same-origin Ketcher: serve from disk (not go:embed — ~90MB).
+	if dir := resolveKetcherDir(s.cfg.SciDir); dir != "" {
+		s.mux.Handle("/ketcher/", http.StripPrefix("/ketcher/", http.FileServer(http.Dir(dir))))
+	} else {
+		s.mux.HandleFunc("/ketcher/", func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "ketcher not installed on this host (deploy third_party/ketcher-standalone)", http.StatusServiceUnavailable)
+		})
+	}
 	s.api.Register(s.mux)
+}
+
+// resolveKetcherDir finds a same-origin Ketcher standalone install.
+// Order: $LUMEN_KETCHER_DIR, sciDir/lab/ketcher, /var/lib/lumen/ketcher, repo third_party.
+func resolveKetcherDir(sciDir string) string {
+	candidates := []string{}
+	if v := strings.TrimSpace(os.Getenv("LUMEN_KETCHER_DIR")); v != "" {
+		candidates = append(candidates, v)
+	}
+	if sciDir != "" {
+		candidates = append(candidates, filepath.Join(sciDir, "lab", "ketcher"))
+	}
+	candidates = append(candidates,
+		"/var/lib/lumen/ketcher",
+		"/usr/local/share/lumen/ketcher",
+	)
+	// Dev: walk up from cwd for third_party/ketcher-standalone
+	if wd, err := os.Getwd(); err == nil {
+		dir := wd
+		for i := 0; i < 6; i++ {
+			candidates = append(candidates, filepath.Join(dir, "third_party", "ketcher-standalone"))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+			dir = parent
+		}
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if st, err := os.Stat(filepath.Join(c, "index.html")); err == nil && !st.IsDir() {
+			return c
+		}
+	}
+	return ""
 }
 
 // Handler returns the HTTP handler with middleware.

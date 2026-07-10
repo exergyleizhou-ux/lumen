@@ -87,10 +87,49 @@ func (nb *Notebook) AddMarkdown(source string) {
 	nb.Cells = append(nb.Cells, Cell{CellType: "markdown", Source: []string{source}})
 }
 
-// IsAvailable checks if jupyter is on PATH.
+// IsAvailable checks if jupyter is on PATH or via common science conda envs.
 func IsAvailable() bool {
-	_, err := exec.LookPath("jupyter")
-	return err == nil
+	if _, err := exec.LookPath("jupyter"); err == nil {
+		return true
+	}
+	// common Lumen science conda env
+	candidates := []string{
+		os.Getenv("LUMEN_JUPYTER"),
+		filepath.Join(os.Getenv("HOME"), ".lumen/science/sandbox/home/.claude-science/conda/envs/operon-mcp/bin/jupyter"),
+		"/root/.lumen/science/sandbox/home/.claude-science/conda/envs/operon-mcp/bin/jupyter",
+		"/usr/local/bin/jupyter",
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// JupyterBin returns the jupyter executable path if available.
+func JupyterBin() string {
+	if p, err := exec.LookPath("jupyter"); err == nil {
+		return p
+	}
+	candidates := []string{
+		os.Getenv("LUMEN_JUPYTER"),
+		filepath.Join(os.Getenv("HOME"), ".lumen/science/sandbox/home/.claude-science/conda/envs/operon-mcp/bin/jupyter"),
+		"/root/.lumen/science/sandbox/home/.claude-science/conda/envs/operon-mcp/bin/jupyter",
+		"/usr/local/bin/jupyter",
+	}
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return c
+		}
+	}
+	return ""
 }
 
 // Execute runs all code cells using jupyter nbconvert --execute.
@@ -102,8 +141,15 @@ func (nb *Notebook) Execute(path, python string) error {
 	if err := nb.Save(path); err != nil {
 		return err
 	}
-	cmd := exec.Command(python, "-m", "jupyter", "nbconvert", "--to", "notebook",
-		"--execute", "--inplace", "--ExecutePreprocessor.timeout=120", path)
+	var cmd *exec.Cmd
+	if jbin := JupyterBin(); jbin != "" {
+		// Prefer explicit jupyter binary (conda env)
+		cmd = exec.Command(jbin, "nbconvert", "--to", "notebook",
+			"--execute", "--inplace", "--ExecutePreprocessor.timeout=120", path)
+	} else {
+		cmd = exec.Command(python, "-m", "jupyter", "nbconvert", "--to", "notebook",
+			"--execute", "--inplace", "--ExecutePreprocessor.timeout=120", path)
+	}
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {

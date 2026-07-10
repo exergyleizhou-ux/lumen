@@ -47,6 +47,26 @@ func TestHealthEndpoint(t *testing.T) {
 	if _, ok := pack["seed_examples"]; !ok {
 		t.Fatalf("research_pack.seed_examples missing: %v", pack)
 	}
+	if _, ok := body["ketcher"]; !ok {
+		t.Fatalf("ketcher status missing: %v", body)
+	}
+	if _, ok := body["jupyter"]; !ok {
+		t.Fatalf("jupyter status missing: %v", body)
+	}
+	if _, ok := body["onlyoffice"]; !ok {
+		t.Fatalf("onlyoffice status missing: %v", body)
+	}
+}
+
+func TestResolveKetcherDir(t *testing.T) {
+	// Without install, may be empty; with third_party present from cwd, should find.
+	dir := resolveKetcherDir(t.TempDir())
+	// If developer tree has third_party/ketcher-standalone, dir is non-empty.
+	if dir != "" {
+		if _, err := os.Stat(filepath.Join(dir, "index.html")); err != nil {
+			t.Fatalf("ketcher index missing: %v", err)
+		}
+	}
 }
 
 func TestArtifactsAPI(t *testing.T) {
