@@ -496,6 +496,62 @@ function buildLangGraphHistoryExport(list, meta) {
 }
 
 /**
+ * Pure: human-readable Markdown summary of history for workspace notes.
+ * meta: { project_id, scope, exported_at?, json_path? }
+ */
+function buildLangGraphHistoryMarkdown(list, meta) {
+  meta = meta || {};
+  list = Array.isArray(list) ? list : [];
+  var lines = [];
+  lines.push("# LangGraph 运行历史");
+  lines.push("");
+  lines.push("- 导出时间: " + String(meta.exported_at || new Date().toISOString()));
+  lines.push("- 课题: " + (meta.project_id ? String(meta.project_id) : "（未指定）"));
+  lines.push("- 范围: " + String(meta.scope || "all"));
+  lines.push("- 条数: " + list.length);
+  if (meta.json_path) {
+    lines.push("- JSON: `" + String(meta.json_path) + "`");
+  }
+  lines.push("");
+  if (!list.length) {
+    lines.push("_（无记录）_");
+    lines.push("");
+    return lines.join("\n");
+  }
+  list.forEach(function (item, i) {
+    item = item || {};
+    var when = "";
+    try {
+      when = item.ts ? new Date(Number(item.ts)).toISOString() : "";
+    } catch (_) {
+      when = String(item.ts || "");
+    }
+    var status = item.ok ? "成功" : "失败";
+    lines.push("## " + (i + 1) + ". " + status + (item.project_id ? " · `" + item.project_id + "`" : ""));
+    lines.push("");
+    if (when) lines.push("- 时间: " + when);
+    if (item.id) lines.push("- id: `" + item.id + "`");
+    lines.push("");
+    lines.push("### 提示词");
+    lines.push("");
+    lines.push(String(item.prompt || "_(空)_"));
+    lines.push("");
+    lines.push("### 结果");
+    lines.push("");
+    var result = String(item.result || "_(无)_");
+    // Cap very long results in MD export for readability
+    if (result.length > 6000) {
+      result = result.slice(0, 6000) + "\n\n…(Markdown 导出截断)";
+    }
+    lines.push(result);
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  });
+  return lines.join("\n");
+}
+
+/**
  * Pure: merge imported export document into existing history list.
  * Returns { list, added } or { error }. Dedupes by id; newest ts first.
  */
@@ -550,6 +606,7 @@ window.LabUI = {
   reduceLangGraphHistory: reduceLangGraphHistory,
   filterLangGraphHistory: filterLangGraphHistory,
   buildLangGraphHistoryExport: buildLangGraphHistoryExport,
+  buildLangGraphHistoryMarkdown: buildLangGraphHistoryMarkdown,
   mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
 };
 
@@ -3637,23 +3694,37 @@ async function exportLangGraphHistory() {
     showLabToast("无可导出", "当前范围没有历史记录");
     return;
   }
-  var doc = buildLangGraphHistoryExport(list, {
+  var exportedAt = new Date().toISOString();
+  var meta = {
     project_id: currentLangGraphProjectId(),
     scope: langGraphHistoryScope,
-    exported_at: new Date().toISOString(),
+    exported_at: exportedAt,
+  };
+  var doc = buildLangGraphHistoryExport(list, meta);
+  var stamp = exportedAt.replace(/[:.]/g, "-").slice(0, 19);
+  var jsonPath = "artifacts/langgraph-history-" + stamp + ".json";
+  var mdPath = "artifacts/langgraph-history-" + stamp + ".md";
+  var md = buildLangGraphHistoryMarkdown(list, {
+    project_id: meta.project_id,
+    scope: meta.scope,
+    exported_at: exportedAt,
+    json_path: jsonPath,
   });
-  var stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  var path = "artifacts/langgraph-history-" + stamp + ".json";
   try {
     await api("/api/lab/files/write?project_id=" + encodeURIComponent(activeProject.slug), {
       method: "POST",
-      body: JSON.stringify({ path: path, content: JSON.stringify(doc, null, 2) + "\n" }),
+      body: JSON.stringify({ path: jsonPath, content: JSON.stringify(doc, null, 2) + "\n" }),
     });
-    showLabToast("已导出", path + " · " + list.length + " 条");
+    await api("/api/lab/files/write?project_id=" + encodeURIComponent(activeProject.slug), {
+      method: "POST",
+      body: JSON.stringify({ path: mdPath, content: md }),
+    });
+    showLabToast("已导出", list.length + " 条 · JSON + Markdown");
     try {
       var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
       if (filesTab) filesTab.click();
-      previewFile(path, "text");
+      // Prefer readable Markdown preview after export
+      previewFile(mdPath, "markdown");
     } catch (_) {}
   } catch (e) {
     showLabToast("导出失败", (e && e.message) || String(e));

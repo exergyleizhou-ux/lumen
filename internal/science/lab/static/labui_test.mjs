@@ -179,6 +179,17 @@ function runOnce(runLabel) {
     assert(doc.scope === "project" && doc.project_id === "p", "export meta");
     console.log("OK buildLangGraphHistoryExport");
   }
+  if (typeof L.buildLangGraphHistoryMarkdown === "function") {
+    const md = L.buildLangGraphHistoryMarkdown(
+      [{ id: "x", ts: 1700000000000, project_id: "p", prompt: "hello prompt", ok: true, result: "## LangGraph\nok" }],
+      { project_id: "p", scope: "project", exported_at: "2026-01-01T00:00:00Z", json_path: "artifacts/x.json" }
+    );
+    assert(md.includes("# LangGraph 运行历史"), "md title");
+    assert(md.includes("hello prompt") && md.includes("## LangGraph"), "md body");
+    assert(md.includes("artifacts/x.json"), "md json path ref");
+    assert(md.includes("成功"), "md status");
+    console.log("OK buildLangGraphHistoryMarkdown");
+  }
   if (typeof L.mergeLangGraphHistoryImport === "function") {
     const bad = L.mergeLangGraphHistoryImport([], { kind: "nope" }, 10);
     assert(bad.error, "import rejects bad kind");
