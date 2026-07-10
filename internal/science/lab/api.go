@@ -21,6 +21,7 @@ import (
 	"lumen/internal/permission"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
+	"lumen/internal/science/lab/langgraph"
 	"lumen/internal/science/lab/project"
 	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
@@ -104,6 +105,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/bridge/open", a.handleBridgeOpen)
 	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
+	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +175,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"url": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")),
 			"configured": strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")) != "",
 		},
+		"langgraph": langgraph.Health(),
 	})
 }
 
@@ -2981,4 +2984,20 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// ── LangGraph sidecar ──
+
+func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req langgraph.RunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
+		return
+	}
+	resp := langgraph.Run(r.Context(), req)
+	writeJSON(w, http.StatusOK, resp)
 }

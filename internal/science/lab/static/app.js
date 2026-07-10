@@ -3098,6 +3098,14 @@ async function runFileDiff() {
 
 var onlyOfficeURL = "";
 
+function docTypeFromExt(ext) {
+  switch ((ext || "").toLowerCase()) {
+    case "xlsx": return "cell";
+    case "pptx": return "slide";
+    default:    return "word";
+  }
+}
+
 async function loadOfficePane() {
   var hint = $("officeHint");
   var host = $("officeHost");
@@ -3125,23 +3133,32 @@ async function openOfficePath() {
   if (!path) { alert("填写工作区文件路径"); return; }
   var host = $("officeHost");
   if (!host) return;
+
+  var ext = path.split(".").pop() || "docx";
+  var fileName = path.split("/").pop() || path;
+  var fileUrl = location.origin + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+
   // Prefer OnlyOffice if configured
   if (onlyOfficeURL) {
-    // Document Server expects a publicly reachable file URL — we provide download URL via lab API
-    var fileUrl = location.origin + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
-    // Simplified editor embed page (view mode if no JWT)
-    var editorHtml =
-      "<!DOCTYPE html><html><head><meta charset=utf-8><script src=\"" + onlyOfficeURL.replace(/\/$/, "") +
-      "/web-apps/apps/api/documents/api.js\"></script></head><body style=\"margin:0\">" +
-      "<div id=\"placeholder\"></div><script>" +
-      "new DocsAPI.DocEditor(\"placeholder\",{document:{fileType:\"" + (path.split(".").pop() || "docx") +
-      "\",key:\"" + Date.now() + "\",title:" + JSON.stringify(path.split("/").pop()) +
-      ",url:" + JSON.stringify(fileUrl) + "},documentType:\"word\",editorConfig:{mode:\"view\"}});</script></body></html>";
-    host.innerHTML = '<iframe style="width:100%;height:480px;border:0" srcdoc="' +
-      editorHtml.replace(/"/g, "&quot;") + '"></iframe>';
+    var dsUrl = onlyOfficeURL.replace(/\/+$/, "");
+    // Docker Desktop on macOS: container can reach host via host.docker.internal
+    // When DS URL is localhost/127.0.0.1, replace fileUrl host for container accessibility
+    var containerFileUrl = fileUrl;
+    if (/(localhost|127\.0\.0\.1)/.test(dsUrl)) {
+      containerFileUrl = fileUrl.replace(/\/\/(localhost|127\.0\.0\.1)(:\d+)?\//, "//host.docker.internal$2/");
+    }
+    // Use standalone office-editor.html page (avoids srcdoc script breakage)
+    var editorPage = labPath("/office-editor.html") +
+      "?ds=" + encodeURIComponent(dsUrl) +
+      "&url=" + encodeURIComponent(containerFileUrl) +
+      "&title=" + encodeURIComponent(fileName) +
+      "&ext=" + encodeURIComponent(ext) +
+      "&mode=view";
+    host.innerHTML = '<iframe style="width:100%;height:520px;border:0;border-radius:8px" src="' + editorPage + '" allow="fullscreen"></iframe>';
     return;
   }
-  // Fallback: open file preview path
+
+  // Fallback: text extraction + download
   try {
     var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
     var kind = data.previewKind || "";
