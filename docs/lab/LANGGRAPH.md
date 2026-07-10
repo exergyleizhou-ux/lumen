@@ -75,6 +75,12 @@ Error is never an empty string.
 
 # Start Lab with sidecars auto-detected (LangGraph if ready, OnlyOffice if :8088 up)
 ./scripts/science/lab-local-with-sidecars.sh
+
+# Or: health-check only (no long-running server)
+SMOKE=1 ./scripts/science/lab-local-with-sidecars.sh
+
+# Persist env for other terminals / IDE:
+#   source ~/.lumen/lab-sidecars.env
 ```
 
 ### Manual
