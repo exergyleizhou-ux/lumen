@@ -34,3 +34,15 @@ Bundle ID: `com.lumen.science.acceptance`
 ```bash
 SCRATCH=/tmp/lumen-scratch bash ../../scripts/science/verify-desktop-health.sh
 ```
+## Lab workbench URL
+
+Default window loads `http://127.0.0.1:18992/` (Lumen Science Lab).
+
+```bash
+# run lab API first
+lumen science lab --addr 127.0.0.1:18992
+# then open desktop shell
+npm run tauri dev
+```
+
+Optional env: `LUMEN_LAB_URL` (future), `LUMEN_KETCHER_DIR`, `LUMEN_ONLYOFFICE_URL`.

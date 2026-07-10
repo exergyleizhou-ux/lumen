@@ -462,11 +462,17 @@ function buildReadinessChecks(h, pack, f) {
   pack = pack || {};
   f = f || {};
   var prov = (h && h.provider) || {};
+  var ket = (h && h.ketcher) || {};
+  var jup = (h && h.jupyter) || {};
+  var oo = (h && h.onlyoffice) || {};
   return [
     { label: "Lab 在线", ok: true, detail: "v" + ((h && h.version) || "dev") },
     { label: "模型", ok: !!prov.set, detail: prov.set ? (prov.masked || "已配置") : "未配置" },
     { label: "Research Pack", ok: !!pack.healthy, detail: pack.healthy ? ((pack.domain_tools || 0) + " tools") : "未安装/不完整" },
     { label: "Fleet", ok: (f.connected_total || 0) > 0 || (f.lumen_native || 0) > 0, detail: (f.connected_total || 0) + " 连接 · native " + (f.lumen_native || 0) },
+    { label: "同域 Ketcher", ok: !!ket.same_origin, detail: ket.same_origin ? "✓ /ketcher/" : "未部署（可用 MOL 路径）" },
+    { label: "Jupyter", ok: !!jup.available, detail: jup.available ? "可用" : "未安装" },
+    { label: "OnlyOffice", ok: !!oo.configured, detail: oo.configured ? (oo.url || "已配置") : "设 LUMEN_ONLYOFFICE_URL" },
     { label: "课题", ok: !!activeProject, detail: activeProject ? (activeProject.title || activeProject.slug) : "未选择" },
     { label: "会话", ok: !!activeThread, detail: activeThread ? "已打开" : "未打开" },
   ];
