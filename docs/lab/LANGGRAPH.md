@@ -118,6 +118,27 @@ Go tests (integration auto-skips if venv missing):
 go test ./internal/science/lab/langgraph/ -count=1 -v
 ```
 
+## VPS (optional, small RAM OK)
+
+OnlyOffice is **not** recommended on ≤4GiB hosts. LangGraph venv is lightweight and can be enabled on the demo VPS:
+
+```bash
+# On the Lab host (as root):
+python3 -m venv /root/.lumen/langgraph-venv
+/root/.lumen/langgraph-venv/bin/pip install langgraph langchain-core
+# copy scripts/science/langgraph_runner.py → /root/.lumen/langgraph_runner.py
+
+mkdir -p /etc/systemd/system/lumen-lab.service.d
+cat > /etc/systemd/system/lumen-lab.service.d/langgraph.conf <<'EOF'
+[Service]
+Environment=LUMEN_LANGGRAPH=1
+Environment=LUMEN_LANGGRAPH_VENV=/root/.lumen/langgraph-venv
+Environment=LUMEN_LANGGRAPH_SCRIPT=/root/.lumen/langgraph_runner.py
+EOF
+systemctl daemon-reload && systemctl restart lumen-lab
+curl -sS http://127.0.0.1:18992/api/lab/health | python3 -m json.tool | grep -A3 langgraph
+```
+
 ## Constraints
 
 - Does NOT replace the Go agent/SSE/approval pipeline
@@ -125,3 +146,4 @@ go test ./internal/science/lab/langgraph/ -count=1 -v
 - Call returns a clear error when unavailable (never empty string)
 - 120s timeout for subprocess execution
 - Lab does not crash when LangGraph is missing
+- Do **not** install OnlyOffice Document Server on the 3.4GiB demo VPS
