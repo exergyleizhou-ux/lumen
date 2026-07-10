@@ -418,8 +418,10 @@ function formatLangGraphResult(resp) {
   return err || "LangGraph 运行失败";
 }
 
-var LG_HISTORY_MAX = 20;
+var LG_HISTORY_MAX = 40;
 var LG_HISTORY_RESULT_MAX = 8000;
+// "project" = only active project; "all" = every slug
+var langGraphHistoryScope = "project";
 
 /** Pure: truncate stored result to keep localStorage small. */
 function truncateLangGraphHistoryResult(result, maxChars) {
@@ -449,6 +451,21 @@ function reduceLangGraphHistory(list, entry, max) {
   return out.slice(0, max);
 }
 
+/**
+ * Pure: filter history by project slug.
+ * scope: "all" | "project"
+ * When scope is project and projectId is empty, returns entries with empty project_id only.
+ */
+function filterLangGraphHistory(list, projectId, scope) {
+  list = Array.isArray(list) ? list : [];
+  if (scope === "all") return list.slice();
+  var pid = String(projectId || "").trim();
+  return list.filter(function (item) {
+    var ip = String((item && item.project_id) || "").trim();
+    return ip === pid;
+  });
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -464,6 +481,7 @@ window.LabUI = {
   linkifyLangGraphPaths: linkifyLangGraphPaths,
   truncateLangGraphHistoryResult: truncateLangGraphHistoryResult,
   reduceLangGraphHistory: reduceLangGraphHistory,
+  filterLangGraphHistory: filterLangGraphHistory,
 };
 
 /* ── 3. Global state ── */
@@ -634,6 +652,7 @@ async function loadProjects() {
         loadSkills();
         loadComputeHosts();
         loadComputeJobs();
+        renderLangGraphHistory();
         var nm = $("activeProjectName");
         var mt = $("activeProjectMeta");
         if (nm) nm.textContent = p.title;
@@ -3294,17 +3313,37 @@ function pushLangGraphHistory(entry) {
   return next;
 }
 
+function currentLangGraphProjectId() {
+  return (activeProject && activeProject.slug) || "";
+}
+
 function renderLangGraphHistory() {
   var el = $("langgraphHistory");
   if (!el) return;
-  var list = readLangGraphHistory();
-  if (!list.length) {
+  // sync scope toggle UI
+  var scopeBtn = $("langgraphHistScopeBtn");
+  if (scopeBtn) {
+    scopeBtn.textContent = langGraphHistoryScope === "all" ? "全部课题" : "本课题";
+    scopeBtn.title = langGraphHistoryScope === "all"
+      ? "当前显示全部课题；点击改为仅本课题"
+      : "当前仅本课题；点击改为全部课题";
+  }
+  var all = readLangGraphHistory();
+  var list = filterLangGraphHistory(all, currentLangGraphProjectId(), langGraphHistoryScope);
+  if (!all.length) {
     el.className = "hint";
     el.textContent = "暂无历史（本机浏览器保存，最多 " + LG_HISTORY_MAX + " 条）";
     return;
   }
+  if (!list.length) {
+    el.className = "hint";
+    el.textContent = langGraphHistoryScope === "all"
+      ? "暂无历史"
+      : "本课题暂无记录（可点「全部课题」查看其它 slug）";
+    return;
+  }
   el.className = "";
-  el.innerHTML = list.map(function (item, idx) {
+  el.innerHTML = list.map(function (item) {
     var when = "";
     try {
       when = new Date(item.ts || 0).toLocaleString();
@@ -3314,15 +3353,20 @@ function renderLangGraphHistory() {
     var prompt = String(item.prompt || "").replace(/\s+/g, " ").slice(0, 48);
     var proj = item.project_id ? escHtml(item.project_id) : "—";
     var badge = item.ok ? "ok" : "err";
-    return '<button type="button" class="btn sm lg-hist-item" data-idx="' + idx + '" style="display:block;width:100%;text-align:left;margin:0 0 4px">' +
+    var id = escHtml(item.id || "");
+    return '<button type="button" class="btn sm lg-hist-item" data-id="' + id + '" style="display:block;width:100%;text-align:left;margin:0 0 4px">' +
       '<span class="' + badge + '">' + (item.ok ? "✓" : "×") + "</span> " +
       escHtml(prompt || "(空提示)") +
       ' <span class="hint">· ' + proj + " · " + escHtml(when) + "</span></button>";
   }).join("");
   el.querySelectorAll(".lg-hist-item").forEach(function (btn) {
     btn.addEventListener("click", function () {
-      var idx = parseInt(btn.getAttribute("data-idx"), 10);
-      var item = readLangGraphHistory()[idx];
+      var id = btn.getAttribute("data-id") || "";
+      var item = null;
+      readLangGraphHistory().some(function (h) {
+        if (String(h.id) === id) { item = h; return true; }
+        return false;
+      });
       if (!item) return;
       if ($("langgraphPrompt")) $("langgraphPrompt").value = item.prompt || "";
       lastLangGraphResult = item.result || "";
@@ -3482,10 +3526,36 @@ $("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", funct
 $("langgraphToChatBtn") && $("langgraphToChatBtn").addEventListener("click", langGraphResultToComposer);
 $("langgraphCopyBtn") && $("langgraphCopyBtn").addEventListener("click", copyLangGraphResult);
 $("langgraphHistClearBtn") && $("langgraphHistClearBtn").addEventListener("click", function () {
-  writeLangGraphHistory([]);
+  var all = readLangGraphHistory();
+  if (langGraphHistoryScope === "all") {
+    if (!confirm("清空全部课题的 LangGraph 历史？")) return;
+    writeLangGraphHistory([]);
+    showLabToast("历史已清空", "全部课题");
+  } else {
+    var pid = currentLangGraphProjectId();
+    var kept = all.filter(function (h) {
+      return String(h.project_id || "").trim() !== pid;
+    });
+    if (kept.length === all.length) {
+      showLabToast("无需清空", "本课题没有历史");
+      renderLangGraphHistory();
+      return;
+    }
+    if (!confirm("仅清空当前课题（" + (pid || "未选") + "）的历史？")) return;
+    writeLangGraphHistory(kept);
+    showLabToast("历史已清空", "仅本课题");
+  }
   renderLangGraphHistory();
-  showLabToast("历史已清空", "仅清除本机浏览器记录");
 });
+$("langgraphHistScopeBtn") && $("langgraphHistScopeBtn").addEventListener("click", function () {
+  langGraphHistoryScope = langGraphHistoryScope === "all" ? "project" : "all";
+  try { localStorage.setItem("lumen-langgraph-hist-scope", langGraphHistoryScope); } catch (_) {}
+  renderLangGraphHistory();
+});
+try {
+  var sc = localStorage.getItem("lumen-langgraph-hist-scope");
+  if (sc === "all" || sc === "project") langGraphHistoryScope = sc;
+} catch (_) {}
 
 async function loadProvenanceBrowser() {
   var el = $("provBody");

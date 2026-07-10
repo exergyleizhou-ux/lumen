@@ -154,6 +154,21 @@ function runOnce(runLabel) {
     assert(t.length < long.length && t.includes("截断"), "hist truncate: " + t.length);
     console.log("OK truncateLangGraphHistoryResult");
   }
+  if (typeof L.filterLangGraphHistory === "function") {
+    const src = [
+      { id: "1", project_id: "a", prompt: "p1" },
+      { id: "2", project_id: "b", prompt: "p2" },
+      { id: "3", project_id: "a", prompt: "p3" },
+      { id: "4", project_id: "", prompt: "p4" },
+    ];
+    const fa = L.filterLangGraphHistory(src, "a", "project");
+    assert(fa.length === 2 && fa[0].id === "1" && fa[1].id === "3", "filter a: " + JSON.stringify(fa));
+    const fall = L.filterLangGraphHistory(src, "a", "all");
+    assert(fall.length === 4, "filter all");
+    const empty = L.filterLangGraphHistory(src, "", "project");
+    assert(empty.length === 1 && empty[0].id === "4", "filter empty slug");
+    console.log("OK filterLangGraphHistory");
+  }
 
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
