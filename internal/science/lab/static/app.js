@@ -3232,21 +3232,33 @@ async function loadLangGraphPane() {
   }
 }
 
+function setLangGraphResultView(text, asMarkdown) {
+  var out = $("langgraphResult");
+  if (!out) return;
+  var t = String(text == null ? "" : text);
+  if (asMarkdown && t && t !== "尚未运行" && t !== "运行中…" && t !== "请填写提示词") {
+    out.innerHTML = renderMarkdown(t);
+    bindCodeCopy(out);
+  } else {
+    out.textContent = t;
+  }
+}
+
 async function runLangGraphPane() {
   var promptEl = $("langgraphPrompt");
-  var out = $("langgraphResult");
   var runBtn = $("langgraphRunBtn");
   var prompt = promptEl ? promptEl.value : "";
   var body = buildLangGraphBody(activeProject && activeProject.slug, prompt);
   if (!body.prompt) {
-    if (out) out.textContent = "请填写提示词";
+    lastLangGraphResult = "";
+    setLangGraphResultView("请填写提示词", false);
     return;
   }
   if (runBtn) {
     runBtn.disabled = true;
     runBtn.textContent = "运行中…";
   }
-  if (out) out.textContent = "运行中…";
+  setLangGraphResultView("运行中…", false);
   try {
     var resp = await api("/api/lab/langgraph/run", {
       method: "POST",
@@ -3255,7 +3267,7 @@ async function runLangGraphPane() {
     });
     var text = formatLangGraphResult(resp);
     lastLangGraphResult = text;
-    if (out) out.textContent = text;
+    setLangGraphResultView(text, !!(resp && resp.ok));
     if (resp && resp.ok) {
       showLabToast("LangGraph 完成", text.slice(0, 80));
     } else {
@@ -3264,7 +3276,7 @@ async function runLangGraphPane() {
   } catch (e) {
     var msg = e && e.message ? e.message : String(e);
     lastLangGraphResult = msg;
-    if (out) out.textContent = msg;
+    setLangGraphResultView(msg, false);
     showLabToast("LangGraph 错误", msg.slice(0, 80));
   } finally {
     if (runBtn) {
@@ -3276,8 +3288,7 @@ async function runLangGraphPane() {
 }
 
 function langGraphResultToComposer() {
-  var text = lastLangGraphResult || ($("langgraphResult") && $("langgraphResult").textContent) || "";
-  text = String(text || "").trim();
+  var text = String(lastLangGraphResult || "").trim();
   if (!text || text === "尚未运行" || text === "运行中…") {
     showLabToast("无结果", "先运行 LangGraph");
     return;
@@ -3302,13 +3313,31 @@ function langGraphResultToComposer() {
   showLabToast("已写入对话", "可编辑后发送");
 }
 
+function copyLangGraphResult() {
+  var text = String(lastLangGraphResult || "").trim();
+  if (!text) {
+    showLabToast("无结果", "先运行 LangGraph");
+    return;
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () {
+      showLabToast("已复制", "LangGraph 结果");
+    }).catch(function () {
+      showLabToast("复制失败", "请手动选择文本");
+    });
+    return;
+  }
+  showLabToast("复制失败", "剪贴板不可用");
+}
+
 $("langgraphRunBtn") && $("langgraphRunBtn").addEventListener("click", runLangGraphPane);
 $("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", function () {
   lastLangGraphResult = "";
   if ($("langgraphPrompt")) $("langgraphPrompt").value = "";
-  if ($("langgraphResult")) $("langgraphResult").textContent = "尚未运行";
+  setLangGraphResultView("尚未运行", false);
 });
 $("langgraphToChatBtn") && $("langgraphToChatBtn").addEventListener("click", langGraphResultToComposer);
+$("langgraphCopyBtn") && $("langgraphCopyBtn").addEventListener("click", copyLangGraphResult);
 
 async function loadProvenanceBrowser() {
   var el = $("provBody");

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=50">
+  <link rel="stylesheet" href="app.css?v=51">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -306,10 +306,11 @@
             <div class="btn-row" style="margin-top:8px">
               <button type="button" class="btn sm primary" id="langgraphRunBtn">运行</button>
               <button type="button" class="btn sm" id="langgraphToChatBtn" title="把结果写入输入框">写入对话</button>
+              <button type="button" class="btn sm" id="langgraphCopyBtn" title="复制纯文本结果">复制</button>
               <button type="button" class="btn sm" id="langgraphClearBtn">清空</button>
             </div>
             <div class="set-k soft" style="margin-top:12px">结果</div>
-            <pre id="langgraphResult" class="fp-body" style="min-height:80px;max-height:320px;overflow:auto;white-space:pre-wrap">尚未运行</pre>
+            <div id="langgraphResult" class="fp-body agent-md" style="min-height:80px;max-height:360px;overflow:auto">尚未运行</div>
           </div>
           <div id="configPane" class="insp-scroll" style="display:none">
             <div class="set-k soft">Lab 配置</div>
@@ -375,6 +376,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=50"></script>
+  <script src="app.js?v=51"></script>
 </body>
 </html>

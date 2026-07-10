@@ -518,6 +518,101 @@ func TestNotebooksAPI(t *testing.T) {
 	}
 }
 
+// TestLangGraphAPI verifies health.langgraph shape and that /langgraph/run
+// injects workspace from project slug when the sidecar is enabled locally.
+func TestLangGraphAPI(t *testing.T) {
+	ts, sci := testLabServer(t)
+
+	// Health always exposes langgraph (available true/false).
+	hres, err := http.Get(ts.URL + "/api/lab/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer hres.Body.Close()
+	var health map[string]any
+	if err := json.NewDecoder(hres.Body).Decode(&health); err != nil {
+		t.Fatal(err)
+	}
+	lg, _ := health["langgraph"].(map[string]any)
+	if lg == nil {
+		t.Fatalf("health missing langgraph: %v", health)
+	}
+	if _, ok := lg["available"]; !ok {
+		t.Fatalf("langgraph.available missing: %v", lg)
+	}
+	if hint, _ := lg["hint"].(string); strings.TrimSpace(hint) == "" {
+		t.Fatalf("langgraph.hint empty: %v", lg)
+	}
+
+	// Sidecar integration only when local venv is ready.
+	home := os.Getenv("HOME")
+	venv := filepath.Join(home, ".lumen", "langgraph-venv")
+	if _, err := os.Stat(filepath.Join(venv, "bin", "python3")); err != nil {
+		t.Skip("no local langgraph venv")
+	}
+	// productivity_test.go lives in internal/science/lab → repo root ../../../
+	wd, _ := os.Getwd()
+	script := filepath.Clean(filepath.Join(wd, "..", "..", "..", "scripts", "science", "langgraph_runner.py"))
+	if st, err := os.Stat(script); err != nil || st.IsDir() {
+		script = filepath.Join(home, ".lumen", "langgraph_runner.py")
+		if _, err := os.Stat(script); err != nil {
+			t.Skip("no langgraph_runner.py")
+		}
+	}
+
+	t.Setenv("LUMEN_LANGGRAPH", "1")
+	t.Setenv("LUMEN_LANGGRAPH_VENV", venv)
+	t.Setenv("LUMEN_LANGGRAPH_SCRIPT", script)
+
+	slug := createProject(t, ts, "LG API")
+	store := project.NewStore(sci)
+	ws, err := store.WorkspacePath(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(ws, "reports"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(ws, "reports", "notes.md"), []byte("# api note\nhello graph\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"project_id": slug,
+		"prompt":     "总结工作区",
+	})
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/langgraph/run", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	var out map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	ok, _ := out["ok"].(bool)
+	if !ok {
+		// Sidecar may still be unavailable if import fails in this env.
+		errStr, _ := out["error"].(string)
+		if strings.TrimSpace(errStr) == "" {
+			t.Fatalf("ok=false with empty error: %v", out)
+		}
+		t.Skipf("langgraph run unavailable: %s", errStr)
+	}
+	result, _ := out["result"].(string)
+	if !strings.Contains(result, "notes.md") {
+		t.Fatalf("expected workspace file in result (API should inject path): %s", result[:min(len(result), 400)])
+	}
+	if !strings.Contains(result, "LangGraph") && !strings.Contains(result, "建议") {
+		t.Fatalf("unexpected result shape: %s", result[:min(len(result), 400)])
+	}
+}
+
 func TestFileSearchAPI(t *testing.T) {
 	ts, sci := testLabServer(t)
 	slug := createProject(t, ts, "Search Proj")
