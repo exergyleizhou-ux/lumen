@@ -4,73 +4,107 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
 
-func TestHealthUnavailableByDefault(t *testing.T) {
-	h := Health()
-	if h["available"].(bool) {
-		t.Log("langgraph available on this host (LUMEN_LANGGRAPH=1 set)")
+// enableLocalSidecar sets LUMEN_LANGGRAPH env for this test only.
+// Prefers repo scripts/science/langgraph_runner.py, then ~/.lumen copy.
+// Returns false (and skips via caller) when venv cannot import langgraph.
+func enableLocalSidecar(t *testing.T) bool {
+	t.Helper()
+	home := os.Getenv("HOME")
+	if home == "" {
+		return false
 	}
-	if h["hint"].(string) == "" {
-		t.Error("health hint is empty")
+	venv := filepath.Join(home, ".lumen", "langgraph-venv")
+	python := filepath.Join(venv, "bin", "python3")
+	if st, err := os.Stat(python); err != nil || st.IsDir() {
+		return false
+	}
+
+	script := ""
+	if _, thisFile, _, ok := runtime.Caller(0); ok {
+		// .../internal/science/lab/langgraph/langgraph_test.go → repo root
+		repo := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", ".."))
+		cand := filepath.Join(repo, "scripts", "science", "langgraph_runner.py")
+		if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+			script = cand
+		}
+	}
+	if script == "" {
+		script = filepath.Join(home, ".lumen", "langgraph_runner.py")
+		if st, err := os.Stat(script); err != nil || st.IsDir() {
+			return false
+		}
+	}
+
+	t.Setenv("LUMEN_LANGGRAPH", "1")
+	t.Setenv("LUMEN_LANGGRAPH_VENV", venv)
+	t.Setenv("LUMEN_LANGGRAPH_SCRIPT", script)
+	return IsAvailable()
+}
+
+func TestHealthHintNonEmpty(t *testing.T) {
+	t.Setenv("LUMEN_LANGGRAPH", "")
+	h := Health()
+	if h["available"] != false {
+		t.Fatalf("expected available=false without LUMEN_LANGGRAPH=1: %v", h)
+	}
+	hint, _ := h["hint"].(string)
+	if strings.TrimSpace(hint) == "" {
+		t.Fatal("health hint must be non-empty")
 	}
 }
 
-func TestRunUnavailable(t *testing.T) {
-	if IsAvailable() {
-		t.Skip("langgraph venv available; skipping unavailable test")
-	}
-	ctx := context.Background()
-	resp := Run(ctx, RunRequest{ProjectID: "t", Prompt: "hi"})
+func TestRunUnavailableClearError(t *testing.T) {
+	t.Setenv("LUMEN_LANGGRAPH", "0")
+	resp := Run(context.Background(), RunRequest{ProjectID: "t", Prompt: "hi"})
 	if resp.OK {
-		t.Error("expected ok=false when langgraph unavailable")
+		t.Fatal("expected ok=false when langgraph disabled")
 	}
-	if resp.Error == "" {
-		t.Error("expected non-empty error when langgraph unavailable")
+	if strings.TrimSpace(resp.Error) == "" {
+		t.Fatal("expected non-empty error when unavailable")
 	}
 }
 
 func TestRunEmptyPrompt(t *testing.T) {
-	if !IsAvailable() {
+	if !enableLocalSidecar(t) {
 		t.Skip("langgraph venv not available")
 	}
-	ctx := context.Background()
-	resp := Run(ctx, RunRequest{ProjectID: "t", Prompt: ""})
-	if resp.OK {
-		t.Error("expected ok=false for empty prompt")
-	}
-	if resp.Error == "" {
-		t.Error("expected error message for empty prompt")
+	resp := Run(context.Background(), RunRequest{ProjectID: "t", Prompt: "   "})
+	if resp.OK || !strings.Contains(resp.Error, "prompt") {
+		t.Fatalf("expected empty-prompt error, got %+v", resp)
 	}
 }
 
 func TestRunIntegration(t *testing.T) {
-	if !IsAvailable() {
+	if !enableLocalSidecar(t) {
 		t.Skip("langgraph venv not available")
 	}
-	ctx := context.Background()
-	resp := Run(ctx, RunRequest{
+	resp := Run(context.Background(), RunRequest{
 		ProjectID: "test-integration",
 		Prompt:    "总结工作区内容",
 	})
 	if !resp.OK {
 		t.Fatalf("expected ok=true, got error: %s", resp.Error)
 	}
-	// Result should contain LangGraph or workspace or suggestions
 	r := resp.Result
-	hasMarker := strings.Contains(r, "LangGraph") ||
-		strings.Contains(r, "工作区") ||
-		strings.Contains(r, "建议")
-	if !hasMarker {
+	if !strings.Contains(r, "LangGraph") &&
+		!strings.Contains(r, "工作区") &&
+		!strings.Contains(r, "建议") {
 		t.Errorf("result missing expected markers: %s", r[:min(len(r), 200)])
+	}
+	h := Health()
+	if h["available"] != true {
+		t.Fatalf("health should be available under test env: %v", h)
 	}
 }
 
 func TestRunWithWorkspace(t *testing.T) {
-	if !IsAvailable() {
+	if !enableLocalSidecar(t) {
 		t.Skip("langgraph venv not available")
 	}
 	dir := t.TempDir()
@@ -104,37 +138,34 @@ func TestRunWithWorkspace(t *testing.T) {
 }
 
 func TestRunNoWorkspace(t *testing.T) {
-	if !IsAvailable() {
+	if !enableLocalSidecar(t) {
 		t.Skip("langgraph venv not available")
 	}
-	ctx := context.Background()
-	resp := Run(ctx, RunRequest{
+	resp := Run(context.Background(), RunRequest{
 		ProjectID: "no-ws",
 		Prompt:    "分析",
 	})
 	if !resp.OK {
 		t.Fatalf("expected ok=true even without workspace, got error: %s", resp.Error)
 	}
-	// Should report no workspace gracefully
 	if !strings.Contains(resp.Result, "无") && !strings.Contains(resp.Result, "空") {
-		t.Logf("result (no ws): %s", resp.Result[:min(len(resp.Result), 200)])
+		t.Errorf("expected graceful no-workspace wording: %s", resp.Result[:min(len(resp.Result), 300)])
 	}
 }
 
 func TestRunBadWorkspace(t *testing.T) {
-	if !IsAvailable() {
+	if !enableLocalSidecar(t) {
 		t.Skip("langgraph venv not available")
 	}
-	ctx := context.Background()
-	resp := Run(ctx, RunRequest{
+	resp := Run(context.Background(), RunRequest{
 		ProjectID: "bad-ws",
 		Prompt:    "分析",
 		Workspace: "/nonexistent/path/xyz",
 	})
 	if !resp.OK {
-		t.Fatalf("expected ok=true (runner handles bad path gracefully), got error: %s", resp.Error)
+		t.Fatalf("expected ok=true (runner handles bad path), got error: %s", resp.Error)
 	}
 	if !strings.Contains(resp.Result, "不存在") && !strings.Contains(resp.Result, "无") {
-		t.Logf("result (bad ws): %s", resp.Result[:min(len(resp.Result), 200)])
+		t.Errorf("expected missing-path wording: %s", resp.Result[:min(len(resp.Result), 300)])
 	}
 }
