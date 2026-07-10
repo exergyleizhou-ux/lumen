@@ -6,19 +6,34 @@ It does NOT replace `POST /api/lab/chat`, SSE streaming, or the approval pipelin
 ## Architecture
 
 ```
-Browser/MCP → POST /api/lab/langgraph/run → Go handler → Python subprocess
-                                                           ↓
-                                                    langgraph graph
-                                                           ↓
-                                                     JSON result
+Browser LangGraph pane
+  POST { project_id, prompt }
+       ↓
+handleLangGraphRun (api.go)
+  · Resolves WorkspacePath(slug) → fills req.Workspace
+       ↓
+langgraph.Run(ctx, req)
+  python runner.py --project-id … --prompt … --workspace <abs|空>
+       ↓
+StateGraph: inventory → read_context → synthesize (3 nodes, no external LLM)
+       ↓
+stdout JSON: {"ok":true,"result":"…"}
 ```
+
+## Runner Graph (3 nodes)
+
+| Node | Description |
+|------|-------------|
+| **inventory** | Walks workspace directory (max 80 files, depth ≤5), skips binary/media/package dirs. Produces file list + summary. |
+| **read_context** | Reads up to 8 highest-scored text files (prioritizes .md, .py, .ipynb, and prompt-matching names). Max 4000 chars/file. Extracts cells from .ipynb. |
+| **synthesize** | Heuristic summary (no external LLM): project info, file inventory, code snippets, response to prompt, ≥2 actionable next steps. |
 
 ## Env
 
 ```bash
 LUMEN_LANGGRAPH=1                          # enable
-LUMEN_LANGGRAPH_VENV=$HOME/.lumen/langgraph-venv  # Python venv path (optional)
-LUMEN_LANGGRAPH_SCRIPT=$HOME/.lumen/langgraph_runner.py  # runner script (optional)
+LUMEN_LANGGRAPH_VENV=$HOME/.lumen/langgraph-venv  # Python venv path
+LUMEN_LANGGRAPH_SCRIPT=$HOME/.lumen/langgraph_runner.py  # runner script path
 ```
 
 ## Health
@@ -27,13 +42,11 @@ LUMEN_LANGGRAPH_SCRIPT=$HOME/.lumen/langgraph_runner.py  # runner script (option
 ```json
 {
   "langgraph": {
-    "available": false,
-    "hint": "设置 LUMEN_LANGGRAPH=1 并安装 langgraph (pip install langgraph langchain-core)"
+    "available": true,
+    "hint": "LangGraph 旁路可用"
   }
 }
 ```
-
-When available: `"available": true, "hint": "LangGraph 旁路可用"`.
 
 ## API
 
@@ -47,103 +60,93 @@ Request:
 }
 ```
 
+The API automatically resolves the workspace path from `project_id` (slug).
+Clients do not need to pass `workspace` — the Go handler fills it.
+
 Response (success):
 ```json
 {
   "ok": true,
-  "result": "analysis output..."
+  "result": "## LangGraph 旁路分析\n- 课题: default\n- 工作区: /root/.lumen/...\n- 文件数: 5\n\n## 工作区摘要\n共 5 个文件\n- notes.md\n- script.py\n...\n\n## 建议下一步\n1. ...\n2. ..."
 }
 ```
 
-Response (not available):
-```json
-{
-  "ok": false,
-  "error": "LangGraph 不可用：设置 LUMEN_LANGGRAPH=1 并安装 langgraph..."
-}
+Example curl:
+```bash
+curl -sS -X POST http://127.0.0.1:18992/api/lab/langgraph/run \
+  -H "Content-Type: application/json" \
+  -d '{"project_id":"default","prompt":"分析工作区"}' | python3 -m json.tool
 ```
 
-Error is never an empty string.
+Expected: result contains file names from the workspace, and ≥2 suggestions.
 
 ## Setup (local dev)
 
-### One-shot (recommended)
-
-```bash
-# From repo root — installs venv + runner under ~/.lumen
-./scripts/science/setup-langgraph.sh
-
-# Start Lab with sidecars auto-detected (LangGraph if ready, OnlyOffice if :8088 up)
-./scripts/science/lab-local-with-sidecars.sh
-
-# Or: health-check only (no long-running server)
-SMOKE=1 ./scripts/science/lab-local-with-sidecars.sh
-
-# Persist env for other terminals / IDE:
-#   source ~/.lumen/lab-sidecars.env
-```
-
-### Manual
+### 1. Create venv and install
 
 ```bash
 python3 -m venv ~/.lumen/langgraph-venv
-~/.lumen/langgraph-venv/bin/pip install langgraph langchain-core
+source ~/.lumen/langgraph-venv/bin/activate
+pip install langgraph langchain-core
+```
+
+### 2. Runner script
+
+The canonical runner is at `scripts/science/langgraph_runner.py` in the repo.
+Copy it to the expected location:
+
+```bash
 cp scripts/science/langgraph_runner.py ~/.lumen/langgraph_runner.py
 chmod +x ~/.lumen/langgraph_runner.py
+```
 
+### 3. Start Lab
+
+```bash
 export LUMEN_LANGGRAPH=1
-export LUMEN_LANGGRAPH_VENV=$HOME/.lumen/langgraph-venv
-export LUMEN_LANGGRAPH_SCRIPT=$HOME/.lumen/langgraph_runner.py
 lumen science lab --addr 127.0.0.1:18992 --no-browser
 ```
 
-Runner source of truth: `scripts/science/langgraph_runner.py` (modern `START`/`END` StateGraph API).
-
-### Test
+### 4. Direct test (no Lab)
 
 ```bash
-# Direct runner (no Lab)
+mkdir -p /tmp/lg-ws && echo "# demo" > /tmp/lg-ws/notes.md
 ~/.lumen/langgraph-venv/bin/python3 ~/.lumen/langgraph_runner.py \
-  --project-id demo --prompt 'hello' | python3 -m json.tool
-
-# Via Lab API
-curl -sS -X POST http://127.0.0.1:18992/api/lab/langgraph/run \
-  -H "Content-Type: application/json" \
-  -d '{"project_id":"default","prompt":"hello"}' | python3 -m json.tool
+  --project-id demo --prompt '总结并给建议' --workspace /tmp/lg-ws | python3 -m json.tool
 ```
 
-Go tests (integration auto-skips if venv missing):
+Expected output includes `notes.md` in the result and ≥2 suggestions.
 
+## VPS Deployment
+
+### Sync runner only (no Go rebuild)
 ```bash
-go test ./internal/science/lab/langgraph/ -count=1 -v
+scp -i ~/.ssh/oasis_deploy scripts/science/langgraph_runner.py \
+  root@118.31.47.129:/root/.lumen/langgraph_runner.py
 ```
 
-## VPS (optional, small RAM OK)
-
-OnlyOffice is **not** recommended on ≤4GiB hosts. LangGraph venv is lightweight and can be enabled on the demo VPS:
-
+### If Go code changed
 ```bash
-# On the Lab host (as root):
-python3 -m venv /root/.lumen/langgraph-venv
-/root/.lumen/langgraph-venv/bin/pip install langgraph langchain-core
-# copy scripts/science/langgraph_runner.py → /root/.lumen/langgraph_runner.py
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /tmp/lumen-linux-amd64 ./cmd/lumen
+scp -i ~/.ssh/oasis_deploy /tmp/lumen-linux-amd64 root@118.31.47.129:/tmp/lumen.new
+ssh -i ~/.ssh/oasis_deploy root@118.31.47.129 \
+  'install -m 755 /tmp/lumen.new /usr/local/bin/lumen && systemctl restart lumen-lab'
+```
 
-mkdir -p /etc/systemd/system/lumen-lab.service.d
-cat > /etc/systemd/system/lumen-lab.service.d/langgraph.conf <<'EOF'
-[Service]
-Environment=LUMEN_LANGGRAPH=1
-Environment=LUMEN_LANGGRAPH_VENV=/root/.lumen/langgraph-venv
-Environment=LUMEN_LANGGRAPH_SCRIPT=/root/.lumen/langgraph_runner.py
-EOF
-systemctl daemon-reload && systemctl restart lumen-lab
-curl -sS http://127.0.0.1:18992/api/lab/health | python3 -m json.tool | grep -A3 langgraph
+### VPS smoke
+```bash
+ssh -i ~/.ssh/oasis_deploy root@118.31.47.129 '
+  SLUG=$(curl -sS http://127.0.0.1:18992/api/lab/projects | python3 -c "import sys,json;d=json.load(sys.stdin);print(d[0][\"slug\"] if d else \"\")")
+  curl -sS -X POST http://127.0.0.1:18992/api/lab/langgraph/run \
+    -H "Content-Type: application/json" \
+    -d "{\"project_id\":\"$SLUG\",\"prompt\":\"分析工作区\"}" | python3 -m json.tool | head -30
+'
 ```
 
 ## Constraints
 
 - Does NOT replace the Go agent/SSE/approval pipeline
-- Only runs when `LUMEN_LANGGRAPH=1` and the Python venv is set up
-- Call returns a clear error when unavailable (never empty string)
+- No external LLM calls — purely heuristic analysis
 - 120s timeout for subprocess execution
 - Lab does not crash when LangGraph is missing
-- Do **not** install OnlyOffice Document Server on the 3.4GiB demo VPS
+- Runner must be synced to `~/.lumen/langgraph_runner.py` (local) and `/root/.lumen/langgraph_runner.py` (VPS) after changes

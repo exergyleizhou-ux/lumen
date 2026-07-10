@@ -63,6 +63,9 @@ func PythonBin() string {
 type RunRequest struct {
 	ProjectID string `json:"project_id"`
 	Prompt    string `json:"prompt"`
+	// Workspace is an absolute path to the project workspace directory.
+	// Usually filled by the lab API from project slug; clients may omit it.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // RunResponse is the output from the LangGraph run endpoint.
@@ -96,11 +99,17 @@ func Run(ctx context.Context, req RunRequest) RunResponse {
 	ctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, python, script,
+	args := []string{
+		script,
 		"--project-id", req.ProjectID,
 		"--prompt", req.Prompt,
-	)
+	}
+	if ws := strings.TrimSpace(req.Workspace); ws != "" {
+		args = append(args, "--workspace", ws)
+	}
+
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, python, args...)
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
 	cmd.Stderr = &stderr
 

@@ -2998,6 +2998,14 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
 		return
 	}
+	// Resolve workspace from project slug when client did not supply an absolute path.
+	// project_id is the project slug (frontend activeProject.slug), not proj_* id.
+	if strings.TrimSpace(req.Workspace) == "" && strings.TrimSpace(req.ProjectID) != "" && a.projects != nil {
+		if ws, err := a.projects.WorkspacePath(req.ProjectID); err == nil {
+			req.Workspace = ws
+		}
+		// invalid slug: leave Workspace empty; runner reports no workspace
+	}
 	resp := langgraph.Run(r.Context(), req)
 	writeJSON(w, http.StatusOK, resp)
 }
