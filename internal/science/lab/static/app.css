@@ -788,6 +788,8 @@ html.dark .appr-sum { color: #d1d5db; }
   background: var(--ocs-accent-soft); padding: 1px 6px; border-radius: 4px;
 }
 .ws-ref { color: var(--ocs-accent); font-weight: 650; text-decoration: underline; cursor: pointer; }
+.lg-hist-item .ok { color: var(--ocs-ok, #1a7f37); font-weight: 650; }
+.lg-hist-item .err { color: var(--ocs-danger, #b42318); font-weight: 650; }
 .appr-args-label { font-size: 10px; color: var(--ocs-muted); margin: 8px 0 4px; font-weight: 650; }
 .appr-args {
   width: 100%; font-family: var(--mono); font-size: 11px;

@@ -418,6 +418,37 @@ function formatLangGraphResult(resp) {
   return err || "LangGraph 运行失败";
 }
 
+var LG_HISTORY_MAX = 20;
+var LG_HISTORY_RESULT_MAX = 8000;
+
+/** Pure: truncate stored result to keep localStorage small. */
+function truncateLangGraphHistoryResult(result, maxChars) {
+  maxChars = maxChars || LG_HISTORY_RESULT_MAX;
+  var s = String(result == null ? "" : result);
+  if (s.length <= maxChars) return s;
+  return s.slice(0, maxChars) + "\n…(历史截断)";
+}
+
+/**
+ * Pure: prepend a history entry and cap list length.
+ * entry: { id, ts, project_id, prompt, ok, result }
+ */
+function reduceLangGraphHistory(list, entry, max) {
+  max = max || LG_HISTORY_MAX;
+  var out = Array.isArray(list) ? list.slice() : [];
+  if (entry && typeof entry === "object") {
+    out.unshift({
+      id: String(entry.id || ("lg_" + Date.now())),
+      ts: Number(entry.ts) || Date.now(),
+      project_id: String(entry.project_id || ""),
+      prompt: String(entry.prompt || "").slice(0, 500),
+      ok: !!entry.ok,
+      result: truncateLangGraphHistoryResult(entry.result, LG_HISTORY_RESULT_MAX),
+    });
+  }
+  return out.slice(0, max);
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -431,6 +462,8 @@ window.LabUI = {
   formatLangGraphResult: formatLangGraphResult,
   linkifyPathTokens: linkifyPathTokens,
   linkifyLangGraphPaths: linkifyLangGraphPaths,
+  truncateLangGraphHistoryResult: truncateLangGraphHistoryResult,
+  reduceLangGraphHistory: reduceLangGraphHistory,
 };
 
 /* ── 3. Global state ── */
@@ -3235,10 +3268,75 @@ $("officeDownloadBtn") && $("officeDownloadBtn").addEventListener("click", funct
 
 /* ── LangGraph inspector pane ── */
 
+function langGraphHistoryKey() {
+  return "lumen-langgraph-history";
+}
+
+function readLangGraphHistory() {
+  try {
+    var list = JSON.parse(localStorage.getItem(langGraphHistoryKey()) || "[]");
+    return Array.isArray(list) ? list : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeLangGraphHistory(list) {
+  try {
+    localStorage.setItem(langGraphHistoryKey(), JSON.stringify(list || []));
+  } catch (_) {}
+}
+
+function pushLangGraphHistory(entry) {
+  var next = reduceLangGraphHistory(readLangGraphHistory(), entry, LG_HISTORY_MAX);
+  writeLangGraphHistory(next);
+  renderLangGraphHistory();
+  return next;
+}
+
+function renderLangGraphHistory() {
+  var el = $("langgraphHistory");
+  if (!el) return;
+  var list = readLangGraphHistory();
+  if (!list.length) {
+    el.className = "hint";
+    el.textContent = "暂无历史（本机浏览器保存，最多 " + LG_HISTORY_MAX + " 条）";
+    return;
+  }
+  el.className = "";
+  el.innerHTML = list.map(function (item, idx) {
+    var when = "";
+    try {
+      when = new Date(item.ts || 0).toLocaleString();
+    } catch (_) {
+      when = String(item.ts || "");
+    }
+    var prompt = String(item.prompt || "").replace(/\s+/g, " ").slice(0, 48);
+    var proj = item.project_id ? escHtml(item.project_id) : "—";
+    var badge = item.ok ? "ok" : "err";
+    return '<button type="button" class="btn sm lg-hist-item" data-idx="' + idx + '" style="display:block;width:100%;text-align:left;margin:0 0 4px">' +
+      '<span class="' + badge + '">' + (item.ok ? "✓" : "×") + "</span> " +
+      escHtml(prompt || "(空提示)") +
+      ' <span class="hint">· ' + proj + " · " + escHtml(when) + "</span></button>";
+  }).join("");
+  el.querySelectorAll(".lg-hist-item").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var idx = parseInt(btn.getAttribute("data-idx"), 10);
+      var item = readLangGraphHistory()[idx];
+      if (!item) return;
+      if ($("langgraphPrompt")) $("langgraphPrompt").value = item.prompt || "";
+      lastLangGraphResult = item.result || "";
+      setLangGraphResultView(item.result || "(无结果)", !!item.ok);
+      showLabToast("已载入历史", (item.prompt || "").slice(0, 40));
+    });
+  });
+}
+
 async function loadLangGraphPane() {
   var status = $("langgraphStatus");
   var hint = $("langgraphHint");
   var runBtn = $("langgraphRunBtn");
+  renderLangGraphHistory();
   try {
     var h = await api("/api/lab/health");
     var lg = (h && h.langgraph) || {};
@@ -3248,7 +3346,7 @@ async function loadLangGraphPane() {
     }
     if (hint) {
       hint.textContent = lg.available
-        ? (lg.hint || "LangGraph 旁路可用。输入提示词后运行；结果可写入对话输入框。")
+        ? (lg.hint || "LangGraph 旁路可用。输入提示词后运行；结果可写入对话输入框。历史保存在本机浏览器。")
         : (lg.hint || "未启用：设置 LUMEN_LANGGRAPH=1 并安装 venv（见 docs/lab/LANGGRAPH.md）");
     }
     if (runBtn) runBtn.disabled = !lg.available;
@@ -3297,6 +3395,14 @@ async function runLangGraphPane() {
     var text = formatLangGraphResult(resp);
     lastLangGraphResult = text;
     setLangGraphResultView(text, !!(resp && resp.ok));
+    pushLangGraphHistory({
+      id: "lg_" + Date.now(),
+      ts: Date.now(),
+      project_id: body.project_id || "",
+      prompt: body.prompt,
+      ok: !!(resp && resp.ok),
+      result: text,
+    });
     if (resp && resp.ok) {
       showLabToast("LangGraph 完成", text.slice(0, 80));
     } else {
@@ -3306,6 +3412,14 @@ async function runLangGraphPane() {
     var msg = e && e.message ? e.message : String(e);
     lastLangGraphResult = msg;
     setLangGraphResultView(msg, false);
+    pushLangGraphHistory({
+      id: "lg_" + Date.now(),
+      ts: Date.now(),
+      project_id: body.project_id || "",
+      prompt: body.prompt,
+      ok: false,
+      result: msg,
+    });
     showLabToast("LangGraph 错误", msg.slice(0, 80));
   } finally {
     if (runBtn) {
@@ -3367,6 +3481,11 @@ $("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", funct
 });
 $("langgraphToChatBtn") && $("langgraphToChatBtn").addEventListener("click", langGraphResultToComposer);
 $("langgraphCopyBtn") && $("langgraphCopyBtn").addEventListener("click", copyLangGraphResult);
+$("langgraphHistClearBtn") && $("langgraphHistClearBtn").addEventListener("click", function () {
+  writeLangGraphHistory([]);
+  renderLangGraphHistory();
+  showLabToast("历史已清空", "仅清除本机浏览器记录");
+});
 
 async function loadProvenanceBrowser() {
   var el = $("provBody");

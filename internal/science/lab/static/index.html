@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=52">
+  <link rel="stylesheet" href="app.css?v=53">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -309,7 +309,9 @@
               <button type="button" class="btn sm" id="langgraphCopyBtn" title="复制纯文本结果">复制</button>
               <button type="button" class="btn sm" id="langgraphClearBtn">清空</button>
             </div>
-            <div class="set-k soft" style="margin-top:12px">结果</div>
+            <div class="set-k soft" style="margin-top:12px">最近运行 <button type="button" class="btn sm" id="langgraphHistClearBtn" style="margin-left:6px">清历史</button></div>
+            <div id="langgraphHistory" class="hint" style="margin-bottom:8px">暂无历史（本机浏览器保存）</div>
+            <div class="set-k soft" style="margin-top:8px">结果</div>
             <div id="langgraphResult" class="fp-body agent-md" style="min-height:80px;max-height:360px;overflow:auto">尚未运行</div>
           </div>
           <div id="configPane" class="insp-scroll" style="display:none">
@@ -376,6 +378,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=52"></script>
+  <script src="app.js?v=53"></script>
 </body>
 </html>

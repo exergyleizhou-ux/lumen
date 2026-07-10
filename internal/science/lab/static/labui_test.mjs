@@ -139,6 +139,21 @@ function runOnce(runLabel) {
     assert(block.includes("<h3>") && block.includes('data-path="script.py"'), "lg h3 path");
     console.log("OK linkifyLangGraphPaths");
   }
+  if (typeof L.reduceLangGraphHistory === "function") {
+    const a = L.reduceLangGraphHistory([], { id: "1", ts: 1, prompt: "p1", ok: true, result: "r1" }, 2);
+    assert(a.length === 1 && a[0].prompt === "p1", "hist first: " + JSON.stringify(a));
+    const b = L.reduceLangGraphHistory(a, { id: "2", ts: 2, prompt: "p2", ok: false, result: "r2" }, 2);
+    assert(b.length === 2 && b[0].id === "2" && b[1].id === "1", "hist prepend");
+    const c = L.reduceLangGraphHistory(b, { id: "3", ts: 3, prompt: "p3", ok: true, result: "r3" }, 2);
+    assert(c.length === 2 && c[0].id === "3" && c[1].id === "2", "hist cap 2");
+    console.log("OK reduceLangGraphHistory");
+  }
+  if (typeof L.truncateLangGraphHistoryResult === "function") {
+    const long = "x".repeat(100);
+    const t = L.truncateLangGraphHistoryResult(long, 20);
+    assert(t.length < long.length && t.includes("截断"), "hist truncate: " + t.length);
+    console.log("OK truncateLangGraphHistoryResult");
+  }
 
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
