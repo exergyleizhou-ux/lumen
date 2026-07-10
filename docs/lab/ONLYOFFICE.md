@@ -46,7 +46,16 @@ When the Document Server runs in Docker on the same machine:
 
 ## Local Development (macOS with Docker Desktop)
 
-### 1. Start OnlyOffice Document Server
+### One-shot (recommended)
+```bash
+# Pulls ~3GB image + starts container on :8088 (may fail on bad CDN/network)
+./scripts/science/setup-onlyoffice.sh
+
+# Lab picks up LUMEN_ONLYOFFICE_URL when :8088 answers
+./scripts/science/lab-local-with-sidecars.sh
+```
+
+### Manual: Start OnlyOffice Document Server
 ```bash
 docker rm -f onlyoffice 2>/dev/null || true
 docker run -d \
@@ -66,7 +75,7 @@ done
 curl -sS -o /dev/null -w "final:%{http_code}\n" http://127.0.0.1:8088/
 ```
 
-### 2. Start Lab
+### Start Lab
 ```bash
 export LUMEN_ONLYOFFICE_URL=http://127.0.0.1:8088
 cd /path/to/lumen

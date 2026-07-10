@@ -67,68 +67,49 @@ Error is never an empty string.
 
 ## Setup (local dev)
 
-### 1. Create venv and install dependencies
+### One-shot (recommended)
+
+```bash
+# From repo root — installs venv + runner under ~/.lumen
+./scripts/science/setup-langgraph.sh
+
+# Start Lab with sidecars auto-detected (LangGraph if ready, OnlyOffice if :8088 up)
+./scripts/science/lab-local-with-sidecars.sh
+```
+
+### Manual
 
 ```bash
 python3 -m venv ~/.lumen/langgraph-venv
-source ~/.lumen/langgraph-venv/bin/activate
-pip install langgraph langchain-core
-```
+~/.lumen/langgraph-venv/bin/pip install langgraph langchain-core
+cp scripts/science/langgraph_runner.py ~/.lumen/langgraph_runner.py
+chmod +x ~/.lumen/langgraph_runner.py
 
-### 2. Create the runner script
-
-Save as `~/.lumen/langgraph_runner.py`:
-
-```python
-#!/usr/bin/env python3
-"""Minimal LangGraph runner for Lumen Lab sidecar."""
-import argparse, json, sys
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--project-id", default="")
-    parser.add_argument("--prompt", default="")
-    args = parser.parse_args()
-
-    try:
-        from langgraph.graph import StateGraph
-        from typing import TypedDict
-
-        class State(TypedDict):
-            prompt: str
-            result: str
-
-        def process_node(state: State) -> State:
-            return {"result": f"Processed: {state['prompt'][:200]}"}
-
-        graph = StateGraph(State)
-        graph.add_node("process", process_node)
-        graph.set_entry_point("process")
-        graph.set_finish_point("process")
-        app = graph.compile()
-
-        result = app.invoke({"prompt": args.prompt})
-        print(json.dumps({"ok": True, "result": result.get("result", "")}))
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}))
-
-if __name__ == "__main__":
-    main()
-```
-
-### 3. Start Lab with LangGraph enabled
-
-```bash
 export LUMEN_LANGGRAPH=1
+export LUMEN_LANGGRAPH_VENV=$HOME/.lumen/langgraph-venv
+export LUMEN_LANGGRAPH_SCRIPT=$HOME/.lumen/langgraph_runner.py
 lumen science lab --addr 127.0.0.1:18992 --no-browser
 ```
 
-### 4. Test
+Runner source of truth: `scripts/science/langgraph_runner.py` (modern `START`/`END` StateGraph API).
+
+### Test
 
 ```bash
+# Direct runner (no Lab)
+~/.lumen/langgraph-venv/bin/python3 ~/.lumen/langgraph_runner.py \
+  --project-id demo --prompt 'hello' | python3 -m json.tool
+
+# Via Lab API
 curl -sS -X POST http://127.0.0.1:18992/api/lab/langgraph/run \
   -H "Content-Type: application/json" \
   -d '{"project_id":"default","prompt":"hello"}' | python3 -m json.tool
+```
+
+Go tests (integration auto-skips if venv missing):
+
+```bash
+go test ./internal/science/lab/langgraph/ -count=1 -v
 ```
 
 ## Constraints
