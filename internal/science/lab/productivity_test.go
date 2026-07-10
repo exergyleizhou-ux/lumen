@@ -238,6 +238,97 @@ func TestSessionImportAndExportAll(t *testing.T) {
 	}
 }
 
+func TestComputeJobWorkDirAndTimeout(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "JobOpts")
+	// Submit local job with custom timeout and work_dir empty (defaults to workspace)
+	body := `{"host":"local","command":"echo jobopts-ok","timeout_sec":30,"output_globs":["*.txt"]}`
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/compute/jobs?project_id="+slug,
+		bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		raw, _ := io.ReadAll(res.Body)
+		t.Fatalf("submit %d %s", res.StatusCode, raw)
+	}
+	var j map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&j)
+	if j["id"] == nil || j["id"] == "" {
+		t.Fatalf("no id %v", j)
+	}
+	if int(j["timeout_sec"].(float64)) != 30 {
+		t.Fatalf("timeout_sec want 30 got %v", j["timeout_sec"])
+	}
+	// work_dir should be set (workspace path)
+	if wd, _ := j["work_dir"].(string); wd == "" {
+		t.Fatalf("work_dir empty %v", j)
+	}
+	// wait for local job to finish
+	id := j["id"].(string)
+	deadline := time.Now().Add(8 * time.Second)
+	var last map[string]any
+	for time.Now().Before(deadline) {
+		get, err := http.Get(ts.URL + "/api/lab/compute/jobs/" + id + "?project_id=" + slug)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = json.NewDecoder(get.Body).Decode(&last)
+		get.Body.Close()
+		st, _ := last["status"].(string)
+		if st == "done" || st == "failed" || st == "timeout" || st == "cancelled" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if last["status"] != "done" {
+		// local shell should succeed for echo
+		t.Fatalf("job status %v", last)
+	}
+	out, _ := last["output"].(string)
+	if !strings.Contains(out, "jobopts-ok") {
+		t.Fatalf("output %q", out)
+	}
+}
+
+func TestMolFileWriteRoundTrip(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Mol")
+	mol := "\n\n\n  0  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n"
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+		bytes.NewReader([]byte(`{"path":"molecules/structure.mol","content":`+mustJSON(mol)+`}`)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("write %d", res.StatusCode)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/files/content?project_id=" + slug + "&path=molecules/structure.mol")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	if get.StatusCode != 200 {
+		t.Fatalf("content %d", get.StatusCode)
+	}
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	if body["content"] != mol {
+		t.Fatalf("content mismatch %v", body["content"])
+	}
+	pk, _ := body["previewKind"].(string)
+	if pk != "molecule" && pk != "text" {
+		// molecule preferred; text acceptable for .mol depending on previewKind
+		t.Logf("previewKind=%s", pk)
+	}
+}
+
 func TestFileAppendAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "Append")

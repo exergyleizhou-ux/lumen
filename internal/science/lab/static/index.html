@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=45">
+  <link rel="stylesheet" href="app.css?v=46">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -203,6 +203,10 @@
               <input type="text" id="hostNotes" class="file-search" placeholder="备注" />
               <button type="button" class="btn sm primary" id="hostRegisterBtn">保存主机</button>
             </div>
+            <div class="set-k soft" style="margin-top:8px">工作目录（可选，默认课题 workspace）</div>
+            <input type="text" id="computeWorkDir" class="file-search" placeholder="留空=本机 workspace；SSH 上可用 /data/run" />
+            <div class="set-k soft" style="margin-top:8px">超时秒数</div>
+            <input type="number" id="computeTimeout" class="file-search" min="10" max="7200" value="600" />
             <div class="set-k soft" style="margin-top:8px">命令</div>
             <textarea id="computeCmd" rows="2" class="compute-cmd" placeholder="echo ok > result.txt  或  sbatch run.sh"></textarea>
             <div class="set-k soft" style="margin-top:6px">历史命令</div>
@@ -222,14 +226,20 @@
             <pre id="jobLogLive" class="job-out" hidden style="max-height:220px"></pre>
           </div>
           <div id="ketcherPane" style="display:none;height:100%;flex-direction:column">
+            <div class="hint" style="padding:6px 8px;flex-shrink:0;border-bottom:1px solid var(--ocs-line)">
+              <strong>可靠路径：</strong>跨域 Ketcher 无法自动读回结构。请在 Ketcher 中
+              <em>File → Save as MOL/SDF</em>，粘贴到下方文本框，再「保存到工作区」。
+              也可从分子文件浏览器点选 .mol/.sdf/.pdb 加载。
+            </div>
             <div class="btn-row" style="padding:6px 8px;flex-shrink:0">
               <input type="text" id="molSavePath" class="file-search" style="flex:1" placeholder="molecules/structure.mol" value="molecules/structure.mol" />
               <button type="button" class="btn sm primary" id="molSaveBtn">保存到工作区</button>
               <button type="button" class="btn sm" id="molLoadBtn">加载路径</button>
               <button type="button" class="btn sm" id="molTo3dBtn">→ 3Dmol</button>
             </div>
+            <div id="molStatus" class="hint" style="padding:0 8px 4px;flex-shrink:0">就绪</div>
             <div id="molBrowser" class="mol-browser hint" style="padding:4px 8px;flex-shrink:0">分子文件…</div>
-            <textarea id="molEditor" class="mol-editor" placeholder="MOL/SDF 文本（从 Ketcher 导出后粘贴，或点上方分子文件）"></textarea>
+            <textarea id="molEditor" class="mol-editor" placeholder="MOL/SDF/PDB 文本（从 Ketcher 导出后粘贴，或点上方分子文件）"></textarea>
             <iframe id="ketcherFrame" title="Ketcher" style="width:100%;flex:1;min-height:200px;border:none;border-top:1px solid var(--ocs-line)"></iframe>
           </div>
           <div id="moleculePane" class="mol-pane" style="display:none">
@@ -336,6 +346,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=45"></script>
+  <script src="app.js?v=46"></script>
 </body>
 </html>

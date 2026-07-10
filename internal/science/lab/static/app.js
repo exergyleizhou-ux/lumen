@@ -327,12 +327,63 @@ function fileTemplateContent(path) {
   return "";
 }
 
+/** Normalize workspace path for MOL/SDF saves (pure). */
+function normalizeMolPath(path) {
+  var p = String(path || "").trim().replace(/^\/+/, "").replace(/\.\./g, "");
+  if (!p) p = "molecules/structure.mol";
+  if (!/\.(mol|sdf|pdb|cif)$/i.test(p)) p = p + ".mol";
+  return p;
+}
+
+/**
+ * Validate MOL/SDF-ish content before save. Returns {ok, reason}.
+ * Accepts: V2000/V3000 molfile, M  END, or multi-line atom block heuristic.
+ */
+function validateMolContent(content) {
+  var t = String(content || "").trim();
+  if (!t) return { ok: false, reason: "empty" };
+  if (t.length > 8 * 1024 * 1024) return { ok: false, reason: "too_large" };
+  if (/M\s+END/i.test(t) || /V2000|V3000/i.test(t) || /\$\$\$\$/.test(t)) {
+    return { ok: true, reason: "molfile" };
+  }
+  // PDB heuristic
+  if (/^(ATOM|HETATM|HEADER)\s/m.test(t)) return { ok: true, reason: "pdb" };
+  // CIF heuristic
+  if (/^data_/m.test(t) || /_atom_site\./.test(t)) return { ok: true, reason: "cif" };
+  // Soft accept multi-line structure text (user pasted fragment)
+  var lines = t.split(/\r?\n/).filter(function (l) { return l.trim(); });
+  if (lines.length >= 3) return { ok: true, reason: "text_block" };
+  return { ok: false, reason: "not_structure" };
+}
+
+/** Build compute job POST body from form fields (pure). */
+function buildComputeJobBody(fields) {
+  fields = fields || {};
+  var host = String(fields.host || "").trim();
+  var command = String(fields.command || "").trim();
+  var workDir = String(fields.work_dir || fields.workDir || "").trim();
+  var timeoutSec = parseInt(fields.timeout_sec != null ? fields.timeout_sec : fields.timeoutSec, 10);
+  if (!timeoutSec || timeoutSec < 1) timeoutSec = 600;
+  if (timeoutSec > 7200) timeoutSec = 7200;
+  var globs = fields.output_globs || fields.globs || [];
+  if (typeof globs === "string") {
+    globs = globs.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+  }
+  if (!Array.isArray(globs)) globs = [];
+  var body = { host: host, command: command, timeout_sec: timeoutSec, output_globs: globs };
+  if (workDir) body.work_dir = workDir;
+  return body;
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
   reduceSSE: reduceSSE,
   parseAttachmentPaths: parseAttachmentPaths,
   fileTemplateContent: fileTemplateContent,
+  normalizeMolPath: normalizeMolPath,
+  validateMolContent: validateMolContent,
+  buildComputeJobBody: buildComputeJobBody,
 };
 
 /* ── 3. Global state ── */
@@ -3065,33 +3116,65 @@ async function loadProvenanceBrowser() {
   }
 }
 
+function setMolStatus(msg, ok) {
+  var el = $("molStatus");
+  if (!el) return;
+  el.textContent = msg || "";
+  el.style.color = ok === false ? "var(--ocs-danger)" : (ok ? "var(--ocs-success)" : "var(--ocs-muted)");
+}
+
 async function saveMolToWorkspace() {
   if (!activeProject) { alert("请先选择课题"); return; }
-  var path = ($("molSavePath") && $("molSavePath").value.trim()) || "molecules/structure.mol";
+  var rawPath = ($("molSavePath") && $("molSavePath").value.trim()) || "";
+  var path = normalizeMolPath(rawPath);
+  if ($("molSavePath")) $("molSavePath").value = path;
   var content = ($("molEditor") && $("molEditor").value) || "";
-  if (!content.trim()) { alert("编辑器为空 — 从 Ketcher 导出 MOL 后粘贴，或加载工作区文件"); return; }
+  var v = validateMolContent(content);
+  if (!v.ok) {
+    var msg = v.reason === "empty"
+      ? "编辑器为空 — 请从 Ketcher 导出 MOL/SDF 粘贴到下方，或点「加载路径」"
+      : "内容不像分子结构（需要 MOL/SDF/PDB 文本）";
+    setMolStatus(msg, false);
+    alert(msg);
+    return;
+  }
+  setMolStatus("保存中…", null);
   try {
     var res = await api("/api/lab/files/write?project_id=" + activeProject.slug, {
       method: "POST",
       body: JSON.stringify({ path: path, content: content }),
     });
-    if ($("composerHint")) $("composerHint").textContent = "已保存 " + (res.path || path);
+    var saved = res.path || path;
+    setMolStatus("已保存 " + saved + " (" + v.reason + ")", true);
+    if ($("composerHint")) $("composerHint").textContent = "分子已保存 " + saved;
+    showLabToast("分子已保存", saved);
     refreshFiles();
     loadFileTree();
     loadArtifacts();
+    loadMoleculeBrowser();
   } catch (e) {
+    setMolStatus("保存失败: " + e.message, false);
     alert(e.message);
   }
 }
 
 async function loadMolFromWorkspace() {
   if (!activeProject) return;
-  var path = ($("molSavePath") && $("molSavePath").value.trim()) || "";
-  if (!path) { alert("填写路径"); return; }
+  var path = normalizeMolPath(($("molSavePath") && $("molSavePath").value.trim()) || "");
+  if ($("molSavePath")) $("molSavePath").value = path;
+  setMolStatus("加载中…", null);
   try {
     var data = await api("/api/lab/files/content?project_id=" + activeProject.slug + "&path=" + encodeURIComponent(path));
-    if ($("molEditor")) $("molEditor").value = data.content || "";
+    var content = data.content || "";
+    var v = validateMolContent(content);
+    if ($("molEditor")) $("molEditor").value = content;
+    if (!v.ok) {
+      setMolStatus("已加载但内容可能不是结构文件: " + path, false);
+    } else {
+      setMolStatus("已加载 " + path + " (" + v.reason + ")", true);
+    }
   } catch (e) {
+    setMolStatus("加载失败: " + e.message, false);
     alert(e.message);
   }
 }
@@ -3439,10 +3522,19 @@ async function loadComputeJobs() {
         ? '<button type="button" class="btn sm job-rerun" data-job="' + escHtml(j.id) + '">重跑</button>'
         : "";
       var copyBtn = '<button type="button" class="btn sm job-copy" data-job="' + escHtml(j.id) + '">复制命令</button>';
+      var globsList = j.output_globs || j.globs || [];
+      var globsStr = Array.isArray(globsList) ? globsList.join(", ") : String(globsList || "");
+      var remoteHint = (j.host && j.host !== "local" && j.host !== "localhost") ? " · SSH" : " · local";
+      var meta = "cwd=" + (j.work_dir || "workspace") +
+        (j.timeout_sec ? " · timeout=" + j.timeout_sec + "s" : "") +
+        (globsStr ? " · globs=" + globsStr : "") +
+        (outs.length ? " · harvested=" + outs.length : "");
       return '<div class="job-card status-' + escHtml(j.status || "") + '" data-jid="' + escHtml(j.id) +
         '" data-host="' + escHtml(j.host || "") + '" data-cmd="' + escHtml(j.command || "") +
-        '" data-globs="' + escHtml((j.output_globs || j.globs || []).join ? (j.output_globs || j.globs || []).join(", ") : "") + '">' +
-        '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) +
+        '" data-workdir="' + escHtml(j.work_dir || "") +
+        '" data-timeout="' + escHtml(String(j.timeout_sec || 600)) +
+        '" data-globs="' + escHtml(globsStr) + '">' +
+        '<div class="job-hd"><strong>' + escHtml(j.id) + "</strong> · " + escHtml(j.status) + remoteHint +
         (live ? ' <span class="hint">日志实时刷新…</span>' : "") +
         " " + logBtn +
         (cancelBtn ? " " + cancelBtn : "") +
@@ -3450,6 +3542,8 @@ async function loadComputeJobs() {
         " " + copyBtn +
         (batchBtn ? " " + batchBtn : "") + "</div>" +
         '<div class="hint mono">' + escHtml(j.host) + " · " + escHtml(j.command) + "</div>" +
+        '<div class="hint">' + escHtml(meta) + "</div>" +
+        (j.error ? '<div class="ft-err">' + escHtml(j.error) + "</div>" : "") +
         (j.output ? '<pre class="job-out">' + escHtml((j.output || "").slice(-4000)) + "</pre>" : '<pre class="job-out hint">(尚无输出)</pre>') +
         (outsHtml ? '<div class="job-outs">' + outsHtml + "</div>" : "") +
         "</div>";
@@ -3487,8 +3581,10 @@ async function loadComputeJobs() {
         if (!card) return;
         if ($("computeHost")) $("computeHost").value = card.getAttribute("data-host") || "local";
         if ($("computeCmd")) $("computeCmd").value = card.getAttribute("data-cmd") || "";
+        if ($("computeWorkDir")) $("computeWorkDir").value = card.getAttribute("data-workdir") || "";
+        if ($("computeTimeout")) $("computeTimeout").value = card.getAttribute("data-timeout") || "600";
         var g = card.getAttribute("data-globs") || "";
-        if (g && $("computeGlobs")) $("computeGlobs").value = g;
+        if ($("computeGlobs")) $("computeGlobs").value = g;
         submitComputeJob();
       });
     });
@@ -3679,6 +3775,8 @@ function renderComputeTemplates() {
       if ($("computeCmd")) $("computeCmd").value = item.cmd || "";
       if (item.host && $("computeHost")) $("computeHost").value = item.host;
       if (item.globs != null && $("computeGlobs")) $("computeGlobs").value = item.globs;
+      if ($("computeWorkDir")) $("computeWorkDir").value = item.work_dir || "";
+      if ($("computeTimeout") && item.timeout_sec) $("computeTimeout").value = String(item.timeout_sec);
     });
   });
   el.querySelectorAll(".tmpl-del").forEach(function (btn) {
@@ -3698,8 +3796,14 @@ function saveCurrentComputeTemplate() {
   if (name == null) return;
   var host = ($("computeHost") && $("computeHost").value) || "local";
   var globs = ($("computeGlobs") && $("computeGlobs").value) || "";
+  var workDir = ($("computeWorkDir") && $("computeWorkDir").value) || "";
+  var timeoutSec = ($("computeTimeout") && parseInt($("computeTimeout").value, 10)) || 600;
   var list = loadComputeTemplates().filter(function (t) { return t.name !== name; });
-  list.unshift({ name: (name || "模板").slice(0, 40), cmd: cmd, host: host, globs: globs });
+  list.unshift({
+    name: (name || "模板").slice(0, 40),
+    cmd: cmd, host: host, globs: globs,
+    work_dir: workDir, timeout_sec: timeoutSec,
+  });
   saveComputeTemplates(list);
   renderComputeTemplates();
   showLabToast("已保存模板", name);
@@ -3709,19 +3813,29 @@ async function submitComputeJob() {
   if (!activeProject) return;
   var host = $("computeHost") && $("computeHost").value;
   var cmd = $("computeCmd") && $("computeCmd").value.trim();
-  var globsRaw = $("computeGlobs") && $("computeGlobs").value.trim();
-  if (!host || !cmd) {
+  var globsRaw = ($("computeGlobs") && $("computeGlobs").value.trim()) || "";
+  var workDir = ($("computeWorkDir") && $("computeWorkDir").value.trim()) || "";
+  var timeoutSec = ($("computeTimeout") && parseInt($("computeTimeout").value, 10)) || 600;
+  var body = buildComputeJobBody({
+    host: host,
+    command: cmd,
+    work_dir: workDir,
+    timeout_sec: timeoutSec,
+    output_globs: globsRaw,
+  });
+  if (!body.host || !body.command) {
     alert("需要主机和命令");
     return;
   }
-  var globs = globsRaw ? globsRaw.split(",").map(function (s) { return s.trim(); }).filter(Boolean) : [];
   try {
-    await api("/api/lab/compute/jobs?project_id=" + activeProject.slug, {
+    var j = await api("/api/lab/compute/jobs?project_id=" + activeProject.slug, {
       method: "POST",
-      body: JSON.stringify({ host: host, command: cmd, timeout_sec: 600, output_globs: globs }),
+      body: JSON.stringify(body),
     });
     pushComputeHistory(cmd, host);
+    showLabToast("任务已提交", (j && j.id) || host);
     loadComputeJobs();
+    if (j && j.id) watchJobLog(j.id);
     // Poll a few times
     var n = 0;
     var timer = setInterval(function () {
@@ -4141,10 +4255,16 @@ $("provFilter") && $("provFilter").addEventListener("keydown", function (e) {
 $("molSaveBtn") && $("molSaveBtn").addEventListener("click", saveMolToWorkspace);
 $("molLoadBtn") && $("molLoadBtn").addEventListener("click", loadMolFromWorkspace);
 $("molTo3dBtn") && $("molTo3dBtn").addEventListener("click", function () {
-  var path = ($("molSavePath") && $("molSavePath").value) || "structure.mol";
+  var path = normalizeMolPath(($("molSavePath") && $("molSavePath").value) || "structure.mol");
   var content = ($("molEditor") && $("molEditor").value) || "";
-  if (!content.trim()) { alert("编辑器为空"); return; }
+  var v = validateMolContent(content);
+  if (!v.ok) {
+    setMolStatus("无法打开 3D：内容无效 (" + v.reason + ")", false);
+    alert("编辑器为空或不是分子结构文本");
+    return;
+  }
   openMoleculeFromContent(path, content, "molecule");
+  setMolStatus("已送入 3Dmol (" + v.reason + ")", true);
 });
 $("skillsImport") && $("skillsImport").addEventListener("change", function () {
   var f = this.files && this.files[0];

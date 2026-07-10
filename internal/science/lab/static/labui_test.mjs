@@ -82,6 +82,36 @@ function runOnce(runLabel) {
     console.log("OK fileTemplateContent");
   }
 
+  // mol path + content validation (shipped helpers)
+  assert(typeof L.normalizeMolPath === "function", "normalizeMolPath");
+  assert(L.normalizeMolPath("") === "molecules/structure.mol", "default mol path");
+  assert(L.normalizeMolPath("foo").endsWith(".mol"), "adds .mol: " + L.normalizeMolPath("foo"));
+  assert(L.normalizeMolPath("../x.sdf") === "x.sdf" || !L.normalizeMolPath("../x.sdf").includes(".."), "no ..");
+  assert(typeof L.validateMolContent === "function", "validateMolContent");
+  assert(L.validateMolContent("").ok === false, "empty mol invalid");
+  assert(L.validateMolContent("  \n  ").ok === false, "whitespace invalid");
+  const sampleMol = "\n\n\n  0  0  0  0  0  0  0  0  0  0999 V2000\nM  END\n";
+  assert(L.validateMolContent(sampleMol).ok === true, "V2000 mol ok");
+  assert(L.validateMolContent("ATOM      1  N   MET A   1").ok === true, "pdb heuristic");
+  console.log("OK normalizeMolPath + validateMolContent");
+
+  // compute job body builder
+  assert(typeof L.buildComputeJobBody === "function", "buildComputeJobBody");
+  const jb = L.buildComputeJobBody({
+    host: "local",
+    command: "echo hi",
+    work_dir: "/tmp/x",
+    timeout_sec: 120,
+    output_globs: "a.txt, b.csv",
+  });
+  assert(jb.host === "local" && jb.command === "echo hi", "job host/cmd");
+  assert(jb.work_dir === "/tmp/x", "job work_dir");
+  assert(jb.timeout_sec === 120, "job timeout");
+  assert(Array.isArray(jb.output_globs) && jb.output_globs.length === 2, "job globs: " + JSON.stringify(jb.output_globs));
+  const jb2 = L.buildComputeJobBody({ host: "gpu1", command: "ls", timeout_sec: 99999 });
+  assert(jb2.timeout_sec === 7200, "timeout capped at 7200");
+  console.log("OK buildComputeJobBody");
+
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
   assert(!xss.includes("<img"), "md no raw img tag after escape: " + xss);
