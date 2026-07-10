@@ -190,6 +190,16 @@ function runOnce(runLabel) {
     assert(md.includes("成功"), "md status");
     console.log("OK buildLangGraphHistoryMarkdown");
   }
+  if (typeof L.buildLangGraphRunNote === "function") {
+    const note = L.buildLangGraphRunNote("my prompt", "result body here", {
+      project_id: "slug-1",
+      saved_at: "2026-01-02T00:00:00Z",
+    });
+    assert(note.includes("# LangGraph 运行笔记"), "run note title");
+    assert(note.includes("my prompt") && note.includes("result body here"), "run note body");
+    assert(note.includes("slug-1"), "run note project");
+    console.log("OK buildLangGraphRunNote");
+  }
   if (typeof L.mergeLangGraphHistoryImport === "function") {
     const bad = L.mergeLangGraphHistoryImport([], { kind: "nope" }, 10);
     assert(bad.error, "import rejects bad kind");

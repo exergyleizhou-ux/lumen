@@ -496,6 +496,33 @@ function buildLangGraphHistoryExport(list, meta) {
 }
 
 /**
+ * Pure: single-run note Markdown (current result → workspace file).
+ * meta: { project_id, saved_at?, prompt? }
+ */
+function buildLangGraphRunNote(prompt, result, meta) {
+  meta = meta || {};
+  var lines = [];
+  lines.push("# LangGraph 运行笔记");
+  lines.push("");
+  lines.push("- 保存时间: " + String(meta.saved_at || new Date().toISOString()));
+  lines.push("- 课题: " + (meta.project_id ? String(meta.project_id) : "（未指定）"));
+  lines.push("");
+  lines.push("## 提示词");
+  lines.push("");
+  lines.push(String(prompt || "_(空)_").trim() || "_(空)_");
+  lines.push("");
+  lines.push("## 结果");
+  lines.push("");
+  var body = String(result || "_(无)_");
+  if (body.length > 12000) {
+    body = body.slice(0, 12000) + "\n\n…(笔记截断)";
+  }
+  lines.push(body);
+  lines.push("");
+  return lines.join("\n");
+}
+
+/**
  * Pure: human-readable Markdown summary of history for workspace notes.
  * meta: { project_id, scope, exported_at?, json_path? }
  */
@@ -607,6 +634,7 @@ window.LabUI = {
   filterLangGraphHistory: filterLangGraphHistory,
   buildLangGraphHistoryExport: buildLangGraphHistoryExport,
   buildLangGraphHistoryMarkdown: buildLangGraphHistoryMarkdown,
+  buildLangGraphRunNote: buildLangGraphRunNote,
   mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
 };
 
@@ -3643,6 +3671,41 @@ function copyLangGraphResult() {
   showLabToast("复制失败", "剪贴板不可用");
 }
 
+async function saveLangGraphResultNote() {
+  if (!activeProject) {
+    showLabToast("请先选择课题", "");
+    return;
+  }
+  var text = String(lastLangGraphResult || "").trim();
+  if (!text || text === "尚未运行" || text === "运行中…") {
+    showLabToast("无结果", "先运行 LangGraph");
+    return;
+  }
+  var prompt = ($("langgraphPrompt") && $("langgraphPrompt").value) || "";
+  var savedAt = new Date().toISOString();
+  var stamp = savedAt.replace(/[:.]/g, "-").slice(0, 19);
+  var path = "artifacts/langgraph-run-" + stamp + ".md";
+  var md = buildLangGraphRunNote(prompt, text, {
+    project_id: currentLangGraphProjectId(),
+    saved_at: savedAt,
+  });
+  try {
+    await api("/api/lab/files/write?project_id=" + encodeURIComponent(activeProject.slug), {
+      method: "POST",
+      body: JSON.stringify({ path: path, content: md }),
+    });
+    var attached = attachPathsToComposer([path], "LangGraph 运行笔记");
+    showLabToast("已存笔记", path + (attached ? " · 已引用到对话" : ""));
+    try {
+      var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+      if (filesTab) filesTab.click();
+      previewFile(path, "markdown");
+    } catch (_) {}
+  } catch (e) {
+    showLabToast("保存失败", (e && e.message) || String(e));
+  }
+}
+
 $("langgraphRunBtn") && $("langgraphRunBtn").addEventListener("click", runLangGraphPane);
 $("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", function () {
   lastLangGraphResult = "";
@@ -3651,6 +3714,7 @@ $("langgraphClearBtn") && $("langgraphClearBtn").addEventListener("click", funct
 });
 $("langgraphToChatBtn") && $("langgraphToChatBtn").addEventListener("click", langGraphResultToComposer);
 $("langgraphCopyBtn") && $("langgraphCopyBtn").addEventListener("click", copyLangGraphResult);
+$("langgraphSaveNoteBtn") && $("langgraphSaveNoteBtn").addEventListener("click", saveLangGraphResultNote);
 $("langgraphHistClearBtn") && $("langgraphHistClearBtn").addEventListener("click", function () {
   var all = readLangGraphHistory();
   if (langGraphHistoryScope === "all") {
