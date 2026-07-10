@@ -303,11 +303,36 @@ function parseAttachmentPaths(text) {
   return paths;
 }
 
+function fileTemplateContent(path) {
+  var lower = (path || "").toLowerCase();
+  var base = (path || "").split("/").pop() || path || "file";
+  if (lower.endsWith(".md") || lower.endsWith(".markdown")) {
+    return "# " + base.replace(/\.md$/i, "") + "\n\n> 草稿\n\n## 目标\n\n- \n\n## 笔记\n\n";
+  }
+  if (lower.endsWith(".py")) {
+    return '#!/usr/bin/env python3\n"""' + base + '"""\n\ndef main():\n    print("ok")\n\n\nif __name__ == "__main__":\n    main()\n';
+  }
+  if (lower.endsWith(".r")) {
+    return "# " + base + "\nmessage(\"ok\")\n";
+  }
+  if (lower.endsWith(".sh")) {
+    return "#!/usr/bin/env bash\nset -euo pipefail\necho ok\n";
+  }
+  if (lower.endsWith(".csv")) {
+    return "id,name,value\n1,sample,0\n";
+  }
+  if (lower.endsWith(".json")) {
+    return "{\n  \"title\": \"" + base.replace(/\.json$/i, "") + "\",\n  \"items\": []\n}\n";
+  }
+  return "";
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
   reduceSSE: reduceSSE,
   parseAttachmentPaths: parseAttachmentPaths,
+  fileTemplateContent: fileTemplateContent,
 };
 
 /* ── 3. Global state ── */
@@ -1047,7 +1072,7 @@ function upsertToolCard(toolLog, tool) {
     '<div class="tool-card-body" style="display:none">' +
     '<div class="tool-card-section tool-card-args-section" style="' + (tool.args ? "" : "display:none") + '"><div class="tool-card-label">参数</div><pre class="tool-card-args">' + escHtml(tool.args || "") + "</pre></div>" +
     (tool.description ? '<div class="tool-card-section"><div class="tool-card-label">说明</div><div>' + escHtml(tool.description) + "</div></div>" : "") +
-    '<div class="tool-card-section tool-card-output-section" style="display:none"><div class="tool-card-label">输出</div><pre class="tool-card-output"></pre></div>' +
+    '<div class="tool-card-section tool-card-output-section" style="display:none"><div class="tool-card-label">输出 <button type="button" class="btn sm tool-copy-out">复制</button></div><pre class="tool-card-output"></pre></div>' +
     '<div class="tool-card-section tool-card-err-section" style="display:none"><div class="tool-card-label">错误</div><pre class="tool-card-err"></pre></div>' +
     '<div class="tool-card-children"></div>' +
     "</div>";
@@ -1055,6 +1080,14 @@ function upsertToolCard(toolLog, tool) {
   card.querySelector(".tool-card-hd").addEventListener("click", function () {
     setToolCardOpen(card, !card.classList.contains("is-open"));
   });
+  var copyOut = card.querySelector(".tool-copy-out");
+  if (copyOut) {
+    copyOut.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var pre = card.querySelector(".tool-card-output");
+      copyTextToClipboard((pre && pre.textContent) || "", copyOut);
+    });
+  }
 
   var parentId = tool.parentId || tool.parent_id;
   var parent = parentId ? findToolCard(toolLog, parentId) : null;
@@ -1647,16 +1680,19 @@ async function refreshFiles() {
       '<button type="button" class="btn sm" id="fileSelZip">打包 ZIP</button> ' +
       '<button type="button" class="btn sm" id="fileSelDelete">删除所选</button> ' +
       '<button type="button" class="btn sm" id="fileSelDiff">对比所选</button> ' +
+      '<button type="button" class="btn sm" id="fileSelAttach">引用到对话</button> ' +
+      '<button type="button" class="btn sm" id="fileSelStar">☆ 收藏</button> ' +
       '<span class="hint" id="fileSelCount">0 选中</span></div>' +
       files.map(function (f) {
         var icon = f.isDir ? "📁" : fileIcon(f.name || f.path);
         var path = f.path || f.name;
         var meta = f.isDir ? "" : fmtSize(f.size);
         if (!f.isDir && f.mtime) meta += " · " + String(f.mtime).slice(0, 16).replace("T", " ");
-        return '<div class="ft-row' + (f.isDir ? " dir" : "") + '" data-path="' + escHtml(path) + '" data-isdir="' + (f.isDir ? "1" : "0") + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
+        var starred = isStarredFile(path);
+        return '<div class="ft-row' + (f.isDir ? " dir" : "") + (starred ? " starred" : "") + '" data-path="' + escHtml(path) + '" data-isdir="' + (f.isDir ? "1" : "0") + '" data-preview="' + escHtml(f.previewKind || "") + '">' +
           '<input type="checkbox" class="ft-check" data-path="' + escHtml(path) + '" />' +
           '<span style="flex-shrink:0;font-size:.9rem">' + icon + "</span>" +
-          '<span class="ft-name">' + escHtml(f.name || f.path) + "</span>" +
+          '<span class="ft-name">' + (starred ? "★ " : "") + escHtml(f.name || f.path) + "</span>" +
           (meta ? '<span class="ft-size">' + escHtml(meta) + "</span>" : "") +
           "</div>";
       }).join("");
@@ -1701,6 +1737,10 @@ async function refreshFiles() {
     if (dlBtn) dlBtn.addEventListener("click", function () { fileDownloadSelected(); });
     var zipBtn = $("fileSelZip");
     if (zipBtn) zipBtn.addEventListener("click", function () { fileZipSelected(); });
+    var attachBtn = $("fileSelAttach");
+    if (attachBtn) attachBtn.addEventListener("click", function () { attachSelectedToComposer(); });
+    var starBtn = $("fileSelStar");
+    if (starBtn) starBtn.addEventListener("click", function () { starSelectedFiles(); });
     var selDiff = $("fileSelDiff");
     if (selDiff) selDiff.addEventListener("click", function () {
       var paths = [];
@@ -2065,21 +2105,93 @@ async function previewFile(path, previewKind) {
 
 async function fileNewPrompt() {
   if (!activeProject) return;
-  var name = prompt("新建文件名（相对当前目录 " + (fileCwd || ".") + "）", "notes/draft.md");
+  var name = prompt("新建文件名（相对当前目录 " + (fileCwd || ".") + "）\n扩展名自动套模板: .md .py .r .sh .csv .json", "notes/draft.md");
   if (!name) return;
   name = name.replace(/^\/+/, "").replace(/\.\./g, "");
   var path = (fileCwd && fileCwd !== "." && name.indexOf("/") < 0) ? (fileCwd + "/" + name) : name;
+  var content = fileTemplateContent(path);
   try {
     await api("/api/lab/files/write?project_id=" + activeProject.slug, {
       method: "POST",
-      body: JSON.stringify({ path: path, content: "" }),
+      body: JSON.stringify({ path: path, content: content }),
     });
     refreshFiles();
     loadFileTree();
     previewFile(path, "");
+    showLabToast("已创建", path + (content ? "（含模板）" : ""));
   } catch (e) {
     alert("新建失败: " + e.message);
   }
+}
+
+function starKey() {
+  return "lumen-stars:" + ((activeProject && activeProject.slug) || "none");
+}
+function loadStarredFiles() {
+  try { return JSON.parse(localStorage.getItem(starKey()) || "[]"); } catch (_) { return []; }
+}
+function saveStarredFiles(list) {
+  try { localStorage.setItem(starKey(), JSON.stringify(list.slice(0, 80))); } catch (_) {}
+}
+function isStarredFile(path) {
+  return loadStarredFiles().indexOf(path) >= 0;
+}
+function starSelectedFiles() {
+  var paths = selectedFilePaths().filter(function (p) { return p && p !== "."; });
+  if (!paths.length) { alert("请先勾选文件"); return; }
+  var list = loadStarredFiles();
+  paths.forEach(function (p) {
+    if (list.indexOf(p) < 0) list.unshift(p);
+  });
+  saveStarredFiles(list);
+  renderStarredFiles();
+  refreshFiles();
+  showLabToast("已收藏", paths.length + " 项");
+}
+function renderStarredFiles() {
+  var el = $("fileStars");
+  if (!el || !activeProject) return;
+  var list = loadStarredFiles();
+  if (!list.length) {
+    el.innerHTML = '<div class="hint">暂无收藏 — 勾选后点 ☆ 收藏</div>';
+    return;
+  }
+  el.innerHTML = list.map(function (p, i) {
+    return '<div class="star-row">' +
+      '<button type="button" class="btn sm star-open" data-path="' + escHtml(p) + '">★ ' + escHtml(p) + "</button>" +
+      '<button type="button" class="btn sm star-del" data-i="' + i + '">×</button></div>';
+  }).join("");
+  el.querySelectorAll(".star-open").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      previewFile(btn.getAttribute("data-path"), "");
+    });
+  });
+  el.querySelectorAll(".star-del").forEach(function (btn) {
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var list = loadStarredFiles();
+      list.splice(parseInt(btn.getAttribute("data-i"), 10), 1);
+      saveStarredFiles(list);
+      renderStarredFiles();
+      refreshFiles();
+    });
+  });
+}
+function attachSelectedToComposer() {
+  var paths = selectedFilePaths().filter(function (p) { return p && p !== "."; });
+  if (!paths.length) { alert("请先勾选文件"); return; }
+  paths.forEach(function (p) {
+    if (pendingAttachments.indexOf(p) < 0) pendingAttachments.push(p);
+  });
+  renderAttachmentChips();
+  var inp = $("promptInput");
+  if (inp) {
+    var tags = paths.map(function (p) { return "@" + p; }).join(" ") + " ";
+    inp.value = (inp.value ? inp.value.replace(/\s*$/, " ") : "") + tags;
+    inp.focus();
+    saveComposerDraft();
+  }
+  showLabToast("已引用到对话", paths.length + " 个路径");
 }
 
 var molViewerInstance = null;
@@ -2567,6 +2679,7 @@ document.querySelectorAll(".insp-tab").forEach(function (t) {
     document.querySelectorAll(".insp-tab").forEach(function (b) { b.classList.remove("active"); });
     t.classList.add("active");
     var pane = t.dataset.pane;
+    try { localStorage.setItem("lumen-last-pane", pane); } catch (_) {}
     PANE_IDS.forEach(function (id) {
       var el = $(id + "Pane");
       if (!el) return;
@@ -2909,6 +3022,7 @@ async function importSkillFile(file) {
 async function loadFileRecent() {
   var el = $("fileRecent");
   if (!el || !activeProject) return;
+  renderStarredFiles();
   try {
     var data = await api("/api/lab/files/recent?project_id=" + activeProject.slug + "&limit=12");
     var files = data.files || [];
@@ -3637,6 +3751,11 @@ var paletteCmds = [
   { label: "重跑上一条消息", action: function () { rerunLastPrompt(); } },
   { label: "新建工作区文件", action: function () { var t = document.querySelector('.insp-tab[data-pane="files"]'); if (t) t.click(); fileNewPrompt(); } },
   { label: "在对话中查找", action: function () { openChatFind(); }, hotkey: "⌘F" },
+  { label: "引用所选文件到对话", action: function () {
+    var t = document.querySelector('.insp-tab[data-pane="files"]');
+    if (t) t.click();
+    attachSelectedToComposer();
+  } },
 ];
 
 var paletteDynamic = []; // {label, kind, action, hotkey}
@@ -4205,6 +4324,14 @@ document.addEventListener("click", function (e) {
   bindChatScrollJump();
   renderComputeHistory();
   renderFavChips();
+  // restore last inspector pane
+  try {
+    var lastPane = localStorage.getItem("lumen-last-pane");
+    if (lastPane && lastPane !== "status") {
+      var tab = document.querySelector('.insp-tab[data-pane="' + lastPane + '"]');
+      if (tab) tab.click();
+    }
+  } catch (_) {}
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");

@@ -73,6 +73,15 @@ function runOnce(runLabel) {
     console.log("OK parseAttachmentPaths");
   }
 
+  // file templates if exported
+  if (typeof L.fileTemplateContent === "function") {
+    const py = L.fileTemplateContent("scripts/run.py");
+    assert(py.includes("def main"), "py template: " + py.slice(0, 80));
+    const md = L.fileTemplateContent("notes/x.md");
+    assert(md.includes("#"), "md template");
+    console.log("OK fileTemplateContent");
+  }
+
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
   assert(!xss.includes("<img"), "md no raw img tag after escape: " + xss);
