@@ -466,6 +466,73 @@ function filterLangGraphHistory(list, projectId, scope) {
   });
 }
 
+/**
+ * Pure: build workspace export document for LangGraph history.
+ * meta: { project_id, scope, exported_at? }
+ */
+function buildLangGraphHistoryExport(list, meta) {
+  meta = meta || {};
+  list = Array.isArray(list) ? list : [];
+  var entries = list.map(function (item) {
+    item = item || {};
+    return {
+      id: String(item.id || ""),
+      ts: Number(item.ts) || 0,
+      project_id: String(item.project_id || ""),
+      prompt: String(item.prompt || ""),
+      ok: !!item.ok,
+      result: String(item.result || ""),
+    };
+  });
+  return {
+    kind: "lumen.langgraph.history",
+    version: 1,
+    exported_at: meta.exported_at || new Date().toISOString(),
+    project_id: String(meta.project_id || ""),
+    scope: String(meta.scope || "all"),
+    count: entries.length,
+    entries: entries,
+  };
+}
+
+/**
+ * Pure: merge imported export document into existing history list.
+ * Returns { list, added } or { error }. Dedupes by id; newest ts first.
+ */
+function mergeLangGraphHistoryImport(existing, doc, max) {
+  max = max || LG_HISTORY_MAX;
+  if (!doc || doc.kind !== "lumen.langgraph.history" || !Array.isArray(doc.entries)) {
+    return { error: "无效的历史导出文件（需要 kind=lumen.langgraph.history）" };
+  }
+  var byId = {};
+  (Array.isArray(existing) ? existing : []).forEach(function (e) {
+    if (!e) return;
+    var id = String(e.id || "");
+    if (!id) return;
+    byId[id] = e;
+  });
+  var added = 0;
+  doc.entries.forEach(function (item) {
+    if (!item) return;
+    var id = String(item.id || ("imp_" + (item.ts || Date.now()) + "_" + Math.random().toString(36).slice(2, 7)));
+    if (byId[id]) return;
+    byId[id] = {
+      id: id,
+      ts: Number(item.ts) || Date.now(),
+      project_id: String(item.project_id || ""),
+      prompt: String(item.prompt || "").slice(0, 500),
+      ok: !!item.ok,
+      result: truncateLangGraphHistoryResult(item.result, LG_HISTORY_RESULT_MAX),
+    };
+    added++;
+  });
+  var list = Object.keys(byId).map(function (k) { return byId[k]; });
+  list.sort(function (a, b) {
+    return (Number(b.ts) || 0) - (Number(a.ts) || 0);
+  });
+  return { list: list.slice(0, max), added: added };
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -482,6 +549,8 @@ window.LabUI = {
   truncateLangGraphHistoryResult: truncateLangGraphHistoryResult,
   reduceLangGraphHistory: reduceLangGraphHistory,
   filterLangGraphHistory: filterLangGraphHistory,
+  buildLangGraphHistoryExport: buildLangGraphHistoryExport,
+  mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
 };
 
 /* ── 3. Global state ── */
@@ -3556,6 +3625,80 @@ try {
   var sc = localStorage.getItem("lumen-langgraph-hist-scope");
   if (sc === "all" || sc === "project") langGraphHistoryScope = sc;
 } catch (_) {}
+
+async function exportLangGraphHistory() {
+  if (!activeProject) {
+    showLabToast("请先选择课题", "");
+    return;
+  }
+  var all = readLangGraphHistory();
+  var list = filterLangGraphHistory(all, currentLangGraphProjectId(), langGraphHistoryScope);
+  if (!list.length) {
+    showLabToast("无可导出", "当前范围没有历史记录");
+    return;
+  }
+  var doc = buildLangGraphHistoryExport(list, {
+    project_id: currentLangGraphProjectId(),
+    scope: langGraphHistoryScope,
+    exported_at: new Date().toISOString(),
+  });
+  var stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  var path = "artifacts/langgraph-history-" + stamp + ".json";
+  try {
+    await api("/api/lab/files/write?project_id=" + encodeURIComponent(activeProject.slug), {
+      method: "POST",
+      body: JSON.stringify({ path: path, content: JSON.stringify(doc, null, 2) + "\n" }),
+    });
+    showLabToast("已导出", path + " · " + list.length + " 条");
+    try {
+      var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+      if (filesTab) filesTab.click();
+      previewFile(path, "text");
+    } catch (_) {}
+  } catch (e) {
+    showLabToast("导出失败", (e && e.message) || String(e));
+  }
+}
+
+async function importLangGraphHistory() {
+  if (!activeProject) {
+    showLabToast("请先选择课题", "");
+    return;
+  }
+  var path = prompt(
+    "从工作区导入 LangGraph 历史 JSON\n路径（相对课题 workspace）",
+    "artifacts/langgraph-history.json"
+  );
+  if (!path) return;
+  path = String(path).replace(/^\/+/, "").replace(/\.\./g, "");
+  try {
+    var data = await api(
+      "/api/lab/files/content?project_id=" + encodeURIComponent(activeProject.slug) +
+      "&path=" + encodeURIComponent(path)
+    );
+    var raw = data.content || data.raw || "";
+    var doc;
+    try {
+      doc = JSON.parse(raw);
+    } catch (pe) {
+      showLabToast("导入失败", "JSON 解析错误");
+      return;
+    }
+    var merged = mergeLangGraphHistoryImport(readLangGraphHistory(), doc, LG_HISTORY_MAX);
+    if (merged.error) {
+      showLabToast("导入失败", merged.error);
+      return;
+    }
+    writeLangGraphHistory(merged.list);
+    renderLangGraphHistory();
+    showLabToast("导入完成", "新增 " + (merged.added || 0) + " 条（总计 " + merged.list.length + "）");
+  } catch (e) {
+    showLabToast("导入失败", (e && e.message) || String(e));
+  }
+}
+
+$("langgraphHistExportBtn") && $("langgraphHistExportBtn").addEventListener("click", exportLangGraphHistory);
+$("langgraphHistImportBtn") && $("langgraphHistImportBtn").addEventListener("click", importLangGraphHistory);
 
 async function loadProvenanceBrowser() {
   var el = $("provBody");

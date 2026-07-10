@@ -169,6 +169,34 @@ function runOnce(runLabel) {
     assert(empty.length === 1 && empty[0].id === "4", "filter empty slug");
     console.log("OK filterLangGraphHistory");
   }
+  if (typeof L.buildLangGraphHistoryExport === "function") {
+    const doc = L.buildLangGraphHistoryExport(
+      [{ id: "x", ts: 1, project_id: "p", prompt: "hi", ok: true, result: "out" }],
+      { project_id: "p", scope: "project", exported_at: "2026-01-01T00:00:00Z" }
+    );
+    assert(doc.kind === "lumen.langgraph.history" && doc.version === 1, "export kind");
+    assert(doc.count === 1 && doc.entries[0].prompt === "hi", "export entries");
+    assert(doc.scope === "project" && doc.project_id === "p", "export meta");
+    console.log("OK buildLangGraphHistoryExport");
+  }
+  if (typeof L.mergeLangGraphHistoryImport === "function") {
+    const bad = L.mergeLangGraphHistoryImport([], { kind: "nope" }, 10);
+    assert(bad.error, "import rejects bad kind");
+    const good = L.mergeLangGraphHistoryImport(
+      [{ id: "1", prompt: "old", ok: true, result: "a" }],
+      {
+        kind: "lumen.langgraph.history",
+        entries: [
+          { id: "1", prompt: "dup", ok: true, result: "a" },
+          { id: "2", prompt: "new", ok: true, result: "b", ts: 9 },
+        ],
+      },
+      10
+    );
+    assert(!good.error && good.added === 1, "import added: " + JSON.stringify(good));
+    assert(good.list.some((e) => e.id === "2"), "import has id 2");
+    console.log("OK mergeLangGraphHistoryImport");
+  }
 
   // XSS: raw HTML must be escaped, not executed as tags
   const xss = L.renderMarkdown("<img onerror=alert(1) src=x> **ok**");
