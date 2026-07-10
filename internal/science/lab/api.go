@@ -1105,6 +1105,8 @@ func (a *API) handleFiles(w http.ResponseWriter, r *http.Request) {
 		a.handleFilesDelete(w, r, g)
 	case sub == "write":
 		a.handleFileWrite(w, r, g)
+	case sub == "append":
+		a.handleFileAppend(w, r, g)
 	case sub == "diff":
 		a.handleFileDiff(w, r, g)
 	case sub == "mkdir":
@@ -1327,6 +1329,69 @@ func (a *API) handleFileWrite(w http.ResponseWriter, r *http.Request, g *workspa
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": rel, "size": size, "previewKind": previewKind(rel),
+	})
+}
+
+// handleFileAppend appends text to an existing (or new) workspace file.
+// POST {path, content}
+func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Path) == "" {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("path required"))
+		return
+	}
+	rel := filepath.ToSlash(filepath.Clean(body.Path))
+	if rel == "." || strings.HasPrefix(rel, "..") {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
+		return
+	}
+	abs, err := g.Resolve(rel)
+	if err != nil {
+		writeErr(w, http.StatusForbidden, err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(body.Content) > 8<<20 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
+		return
+	}
+	// existing size + append must stay under 16 MiB
+	var existing int64
+	if st, err := os.Stat(abs); err == nil {
+		existing = st.Size()
+	}
+	if existing+int64(len(body.Content)) > 16<<20 {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("file would exceed 16MB after append"))
+		return
+	}
+	f, err := os.OpenFile(abs, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	n, err := f.Write([]byte(body.Content))
+	_ = f.Close()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	st, _ := os.Stat(abs)
+	size := existing + int64(n)
+	if st != nil {
+		size = st.Size()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "path": rel, "size": size, "appended": n, "previewKind": previewKind(rel),
 	})
 }
 

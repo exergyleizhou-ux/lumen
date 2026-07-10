@@ -373,6 +373,12 @@ async function refreshHealth() {
       rows.push('<div class="sr-div"></div>');
       rows.push('<div class="sr"><span class="sr k">并发回合</span><span class="sr v">' + (cap.turns_active || 0) + "/" + (cap.turns_capacity || "—") + "</span></div>");
       rows.push('<div class="sr"><span class="sr k">审批累计</span><span class="sr v">' + (cap.approvals_total || 0) + "</span></div>");
+      rows.push('<div class="sr-div"></div>');
+      rows.push('<div class="set-k soft" style="margin:6px 0 4px">自检清单</div>');
+      var checks = buildReadinessChecks(h, pack, f);
+      checks.forEach(function (c) {
+        rows.push('<div class="sr ready-row"><span class="sr k">' + escHtml(c.label) + '</span><span class="sr v ' + (c.ok ? "ok" : "") + '">' + (c.ok ? "✓" : "·") + " " + escHtml(c.detail) + "</span></div>");
+      });
       if (activeProject) {
         rows.push('<div class="sr-div"></div>');
         rows.push('<div class="sr"><span class="sr k">课题</span><span class="sr v">' + escHtml(activeProject.title || activeProject.slug) + "</span></div>");
@@ -400,9 +406,67 @@ async function loadWorkspaceStats() {
   }
 }
 
+
+function buildReadinessChecks(h, pack, f) {
+  pack = pack || {};
+  f = f || {};
+  var prov = (h && h.provider) || {};
+  return [
+    { label: "Lab 在线", ok: true, detail: "v" + ((h && h.version) || "dev") },
+    { label: "模型", ok: !!prov.set, detail: prov.set ? (prov.masked || "已配置") : "未配置" },
+    { label: "Research Pack", ok: !!pack.healthy, detail: pack.healthy ? ((pack.domain_tools || 0) + " tools") : "未安装/不完整" },
+    { label: "Fleet", ok: (f.connected_total || 0) > 0 || (f.lumen_native || 0) > 0, detail: (f.connected_total || 0) + " 连接 · native " + (f.lumen_native || 0) },
+    { label: "课题", ok: !!activeProject, detail: activeProject ? (activeProject.title || activeProject.slug) : "未选择" },
+    { label: "会话", ok: !!activeThread, detail: activeThread ? "已打开" : "未打开" },
+  ];
+}
+
+function copyConversationMarkdown() {
+  var scroll = $("chatScroll");
+  if (!scroll) return;
+  var parts = [];
+  scroll.querySelectorAll(".chat-msg.user, .chat-msg.agent-wrap").forEach(function (node) {
+    if (node.classList.contains("user")) {
+      var t = node._rawPrompt || (node.querySelector(".msg-user-text") && node.querySelector(".msg-user-text").innerText) || node.innerText || "";
+      parts.push("## User\n\n" + t.trim() + "\n");
+    } else {
+      var at = node.querySelector(".agent-text");
+      var text = at ? (at.innerText || at.textContent || "") : "";
+      parts.push("## Assistant\n\n" + text.trim() + "\n");
+    }
+  });
+  var md = parts.join("\n") || "(空对话)";
+  copyTextToClipboard(md, $("copyConvBtn"));
+  showLabToast("已复制对话", parts.length + " 段");
+}
+
+function touchProjectRecent(slug) {
+  if (!slug) return;
+  try {
+    var key = "lumen-project-recent";
+    var list = JSON.parse(localStorage.getItem(key) || "[]");
+    list = list.filter(function (s) { return s !== slug; });
+    list.unshift(slug);
+    localStorage.setItem(key, JSON.stringify(list.slice(0, 40)));
+  } catch (_) {}
+}
+function sortProjectsByRecent(list) {
+  var order = [];
+  try { order = JSON.parse(localStorage.getItem("lumen-project-recent") || "[]"); } catch (_) {}
+  return (list || []).slice().sort(function (a, b) {
+    var ai = order.indexOf(a.slug);
+    var bi = order.indexOf(b.slug);
+    if (ai < 0) ai = 9999;
+    if (bi < 0) bi = 9999;
+    if (ai !== bi) return ai - bi;
+    return String(b.updated_at || "").localeCompare(String(a.updated_at || ""));
+  });
+}
+
 async function loadProjects() {
   try {
     var list = await api("/api/lab/projects");
+    list = sortProjectsByRecent(list);
     var nav = $("projectList");
     if (!nav) return;
     nav.innerHTML = "";
@@ -416,6 +480,7 @@ async function loadProjects() {
       btn.addEventListener("click", function () {
         saveComposerDraft();
         activeProject = p;
+        touchProjectRecent(p.slug);
         activeThread = "";
         loadProjects();
         refreshFiles();
@@ -460,6 +525,7 @@ async function loadProjects() {
     });
     if (!activeProject && list.length) {
       activeProject = list[0];
+      touchProjectRecent(list[0].slug);
       refreshFiles();
       loadSessions().then(function () {
         if (activeThread) openSession(activeThread);
@@ -2020,6 +2086,7 @@ async function previewFile(path, previewKind) {
       '<div class="fp-hd">📄 ' + escHtml(data.path || path) + " (" + fmtSize(data.size) + ") " +
       (canEdit ? '<button type="button" class="btn sm" id="fpEdit">编辑</button> ' +
         '<button type="button" class="btn sm primary" id="fpSave" hidden>保存</button> ' +
+        '<button type="button" class="btn sm" id="fpAppend" hidden>追加保存</button> ' +
         '<button type="button" class="btn sm" id="fpCancelEdit" hidden>取消</button> ' : "") +
       '<button type="button" class="btn sm" id="fpCopyPath" title="复制路径">路径</button> ' +
       '<button type="button" class="btn sm" id="fpAtPath" title="插入到输入框">@引用</button> ' +
@@ -2052,6 +2119,7 @@ async function previewFile(path, previewKind) {
     }
     var editBtn = $("fpEdit");
     var saveBtn = $("fpSave");
+    var appendBtn = $("fpAppend");
     var cancelBtn = $("fpCancelEdit");
     var editor = $("fpEditor");
     var view = $("fpView");
@@ -2063,8 +2131,9 @@ async function previewFile(path, previewKind) {
         if (view) view.hidden = true;
         editBtn.hidden = true;
         if (saveBtn) saveBtn.hidden = false;
+        if (appendBtn) appendBtn.hidden = false;
         if (cancelBtn) cancelBtn.hidden = false;
-        if (hint) hint.textContent = "编辑中…";
+        if (hint) hint.textContent = "编辑中…（保存=覆盖 · 追加保存=只追加新增段）";
         editor.focus();
       });
     }
@@ -2074,6 +2143,7 @@ async function previewFile(path, previewKind) {
         if (view) view.hidden = false;
         if (editBtn) editBtn.hidden = false;
         if (saveBtn) saveBtn.hidden = true;
+        if (appendBtn) appendBtn.hidden = true;
         cancelBtn.hidden = true;
         if (hint) hint.textContent = "";
       });
@@ -2091,6 +2161,31 @@ async function previewFile(path, previewKind) {
         } catch (e) {
           if (hint) hint.textContent = "保存失败";
           alert("保存失败: " + e.message);
+        }
+      });
+    }
+    if (appendBtn && editor) {
+      appendBtn.addEventListener("click", async function () {
+        // append only the suffix beyond original snapshot
+        var full = editor.value || "";
+        var orig = previewEditOriginal || "";
+        var chunk = full;
+        if (full.indexOf(orig) === 0) chunk = full.slice(orig.length);
+        if (!chunk) {
+          alert("没有相对原文的新增内容可追加（请在文末继续写，或用「保存」覆盖）");
+          return;
+        }
+        try {
+          await api("/api/lab/files/append?project_id=" + activeProject.slug, {
+            method: "POST",
+            body: JSON.stringify({ path: path, content: chunk }),
+          });
+          if (hint) hint.textContent = "已追加 " + chunk.length + " 字符";
+          await previewFile(path, kind);
+          loadFileRecent();
+        } catch (e) {
+          if (hint) hint.textContent = "追加失败";
+          alert("追加失败: " + e.message);
         }
       });
     }
@@ -3735,6 +3830,7 @@ var paletteCmds = [
   { label: "文献检索: PubMed", action: function () { streamChat("用 pubmed 域检索最新文献").catch(function (e) { addErrorBubble($("chatScroll"), e.message); }); } },
   { label: "打开 Bridge", action: function () { window.open(API_BASE ? "/lumen-science/?embed=1&oasis=1" : "http://127.0.0.1:18990/", "_blank"); } },
   { label: "刷新状态", action: function () { refreshHealth(); } },
+  { label: "复制当前对话 Markdown", action: function () { copyConversationMarkdown(); } },
   { label: "导出当前会话 Markdown", action: function () { exportActiveSession("md"); } },
   { label: "重命名当前会话", action: function () { if (activeThread) renameSession(activeThread); } },
   { label: "分支当前会话", action: function () { if (activeThread) forkSession(activeThread); } },
@@ -3953,6 +4049,7 @@ $("sessionSearchBtn") && $("sessionSearchBtn").addEventListener("click", runSess
 $("sessionSearch") && $("sessionSearch").addEventListener("keydown", function (e) {
   if (e.key === "Enter") { e.preventDefault(); runSessionSearch(); }
 });
+$("copyConvBtn") && $("copyConvBtn").addEventListener("click", copyConversationMarkdown);
 $("exportMdBtn") && $("exportMdBtn").addEventListener("click", function () { exportActiveSession("md"); });
 $("exportJsonBtn") && $("exportJsonBtn").addEventListener("click", function () { exportActiveSession("json"); });
 $("exportAllSessBtn") && $("exportAllSessBtn").addEventListener("click", function () {

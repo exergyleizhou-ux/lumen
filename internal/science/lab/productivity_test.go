@@ -238,6 +238,40 @@ func TestSessionImportAndExportAll(t *testing.T) {
 	}
 }
 
+func TestFileAppendAPI(t *testing.T) {
+	ts, _ := testLabServer(t)
+	slug := createProject(t, ts, "Append")
+	wreq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/write?project_id="+slug,
+		bytes.NewReader([]byte(`{"path":"log.txt","content":"line1\n"}`)))
+	wreq.Header.Set("Content-Type", "application/json")
+	wres, err := http.DefaultClient.Do(wreq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wres.Body.Close()
+	areq, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/files/append?project_id="+slug,
+		bytes.NewReader([]byte(`{"path":"log.txt","content":"line2\n"}`)))
+	areq.Header.Set("Content-Type", "application/json")
+	ares, err := http.DefaultClient.Do(areq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ares.Body.Close()
+	if ares.StatusCode != 200 {
+		t.Fatalf("append %d", ares.StatusCode)
+	}
+	get, err := http.Get(ts.URL + "/api/lab/files/content?project_id=" + slug + "&path=log.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer get.Body.Close()
+	var body map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&body)
+	if body["content"] != "line1\nline2\n" {
+		t.Fatalf("content %q", body["content"])
+	}
+}
+
 func TestFilesZipAPI(t *testing.T) {
 	ts, _ := testLabServer(t)
 	slug := createProject(t, ts, "ZipSel")

@@ -592,6 +592,8 @@ html.dark .diff-del { color: #fca5a5; }
 .insp-tabs { flex-wrap: nowrap; scrollbar-width: thin; }
 .insp-tabs::-webkit-scrollbar { height: 4px; }
 .tool-card-label { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.ready-row .sr.v { font-size: 11px; }
+.ready-row .sr.v.ok { color: var(--ocs-success, #7c3aed); }
 
 .tool-card-hd {
   display: flex; align-items: center; gap: 8px;
