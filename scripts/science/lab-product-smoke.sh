@@ -34,13 +34,13 @@ code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/office-editor.html" || ech
 code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/" || echo 000)
 [[ "$code" == "200" ]] && pass "index" || fail "index"
 
-# --- app.js?v= cache-bust consistency ---
-APPVER=$(curl -sS "$BASE/" 2>/dev/null | grep -oP 'app\.js\?v=\K\d+' | head -1 || true)
+# --- app.js?v= cache-bust consistency (portable: no GNU grep -P) ---
+APPVER=$(curl -sS "$BASE/" 2>/dev/null | sed -n 's/.*app\.js?v=\([0-9][0-9]*\).*/\1/p' | head -1 || true)
 if [[ -n "$APPVER" ]]; then
   code=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/app.js?v=$APPVER" || echo 000)
-  [[ "$code" == "200" ]] && pass "app.js cache-bust" || fail "app.js cache-bust"
+  [[ "$code" == "200" ]] && pass "app.js cache-bust v=$APPVER" || fail "app.js cache-bust v=$APPVER"
 else
-  pass "app.js cache-bust (inline)"
+  fail "app.js cache-bust (could not parse v= from index)"
 fi
 
 # --- routes exist ---
