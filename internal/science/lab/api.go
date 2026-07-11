@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +108,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
+	mux.HandleFunc("/api/lab/langgraph/history", a.handleLangGraphHistory)
 	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
 	mux.HandleFunc("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
 }
@@ -2993,6 +2995,10 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	// Ensure science provider keys are in env for optional LLM synthesize.
+	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
+		_, _, _ = ApplyScienceProfile(sciCfg)
+	}
 	var req langgraph.RunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
@@ -3007,7 +3013,59 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		// invalid slug: leave Workspace empty; runner reports no workspace
 	}
 	resp := langgraph.Run(r.Context(), req)
+	// Infer mode from result text if runner did not set it
+	if resp.Mode == "" {
+		if strings.Contains(resp.Result, "模式: llm") || strings.Contains(resp.Result, "（LLM）") {
+			resp.Mode = "llm"
+		} else if resp.OK {
+			resp.Mode = "heuristic"
+		}
+	}
+	// Persist server-side history per project (best-effort).
+	if a.projects != nil && strings.TrimSpace(req.ProjectID) != "" {
+		if pdir, err := a.projects.ProjectDir(req.ProjectID); err == nil {
+			_ = langgraph.AppendHistory(pdir, langgraph.HistoryEntry{
+				ProjectID: req.ProjectID,
+				Prompt:    req.Prompt,
+				OK:        resp.OK,
+				Result:    resp.Result,
+				Error:     resp.Error,
+				Mode:      resp.Mode,
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleLangGraphHistory lists server-persisted sidecar runs for a project.
+// GET ?project_id=&limit=40
+func (a *API) handleLangGraphHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	if slug == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "project_id required"})
+		return
+	}
+	limit := 40
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	pdir, err := a.projects.ProjectDir(slug)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "invalid project"})
+		return
+	}
+	list, err := langgraph.ListHistory(pdir, limit)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "count": len(list), "entries": list})
 }
 
 // ── OnlyOffice callback + session ──

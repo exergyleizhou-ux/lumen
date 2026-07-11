@@ -3569,21 +3569,55 @@ function renderLangGraphHistory() {
   });
 }
 
+async function loadServerLangGraphHistory() {
+  if (!activeProject) return;
+  try {
+    var data = await api(
+      "/api/lab/langgraph/history?project_id=" + encodeURIComponent(activeProject.slug) + "&limit=40"
+    );
+    if (!data || !data.ok || !Array.isArray(data.entries)) return;
+    // Merge server entries into localStorage by id (server is source of truth for this project).
+    var local = readLangGraphHistory();
+    var byId = {};
+    local.forEach(function (e) {
+      if (e && e.id) byId[String(e.id)] = e;
+    });
+    data.entries.forEach(function (e) {
+      if (!e) return;
+      var id = String(e.id || ("srv_" + (e.ts || "") + "_" + Math.random().toString(36).slice(2, 6)));
+      byId[id] = {
+        id: id,
+        ts: e.ts || Date.now(),
+        project_id: e.project_id || activeProject.slug,
+        prompt: e.prompt || "",
+        ok: !!e.ok,
+        result: e.result || e.error || "",
+        mode: e.mode || "",
+      };
+    });
+    var merged = Object.keys(byId).map(function (k) { return byId[k]; });
+    merged.sort(function (a, b) { return (b.ts || 0) - (a.ts || 0); });
+    writeLangGraphHistory(merged.slice(0, LG_HISTORY_MAX));
+  } catch (_) {}
+}
+
 async function loadLangGraphPane() {
   var status = $("langgraphStatus");
   var hint = $("langgraphHint");
   var runBtn = $("langgraphRunBtn");
+  await loadServerLangGraphHistory();
   renderLangGraphHistory();
   try {
     var h = await api("/api/lab/health");
     var lg = (h && h.langgraph) || {};
     if (status) {
-      status.textContent = lg.available ? "可用" : "不可用";
+      var st = lg.available ? (lg.llm ? "可用 · LLM" : "可用 · 启发式") : "不可用";
+      status.textContent = st;
       status.className = "v" + (lg.available ? " ok" : "");
     }
     if (hint) {
       hint.textContent = lg.available
-        ? (lg.hint || "LangGraph 旁路可用。输入提示词后运行；结果可写入对话输入框。历史保存在本机浏览器。")
+        ? (lg.hint || "LangGraph 旁路可用。历史：本机浏览器 + 服务端课题持久化。")
         : (lg.hint || "未启用：设置 LUMEN_LANGGRAPH=1 并安装 venv（见 docs/lab/LANGGRAPH.md）");
     }
     if (runBtn) runBtn.disabled = !lg.available;

@@ -73,6 +73,7 @@ type RunResponse struct {
 	OK     bool   `json:"ok"`
 	Result string `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
+	Mode   string `json:"mode,omitempty"` // heuristic | llm
 }
 
 // Run executes a LangGraph prompt against the Python sidecar.
@@ -130,15 +131,33 @@ func Run(ctx context.Context, req RunRequest) RunResponse {
 	return resp
 }
 
+// LLMReady reports whether an API key is present for optional LLM synthesize.
+func LLMReady() bool {
+	if os.Getenv("LUMEN_LANGGRAPH_LLM") == "0" {
+		return false
+	}
+	for _, k := range []string{"DEEPSEEK_API_KEY", "OPENAI_API_KEY", "MOONSHOT_API_KEY", "DASHSCOPE_API_KEY"} {
+		if strings.TrimSpace(os.Getenv(k)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // Health returns the langgraph section for the lab health endpoint.
 func Health() map[string]any {
 	available := IsAvailable()
 	hint := "设置 LUMEN_LANGGRAPH=1 并安装 langgraph (pip install langgraph langchain-core)"
 	if available {
-		hint = "LangGraph 旁路可用"
+		if LLMReady() {
+			hint = "LangGraph 旁路可用（LLM 合成已就绪）"
+		} else {
+			hint = "LangGraph 旁路可用（启发式；配置科学模型密钥可启用 LLM）"
+		}
 	}
 	return map[string]any{
 		"available": available,
+		"llm":       available && LLMReady(),
 		"hint":      hint,
 	}
 }

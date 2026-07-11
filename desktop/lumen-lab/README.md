@@ -46,3 +46,11 @@ npm run tauri dev
 ```
 
 Optional env: `LUMEN_LAB_URL` (future), `LUMEN_KETCHER_DIR`, `LUMEN_ONLYOFFICE_URL`.
+
+
+## Product release notes
+
+- Lab version: see repo \`VERSION\` / health \`version\`
+- Prefer Lab workbench on \`:18992\` (\`lumen science lab\`)
+- Deploy server: \`../../scripts/science/deploy-lab.sh\`
+- Product smoke: \`../../scripts/science/lab-product-smoke.sh\`
