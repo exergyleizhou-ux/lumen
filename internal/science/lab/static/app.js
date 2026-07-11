@@ -663,14 +663,14 @@ async function refreshHealth() {
     if (ib) {
       var rows = [
         '<div class="sr"><span class="sr k">状态</span><span class="sr v ok">● 在线</span></div>',
-        '<div class="sr"><span class="sr k">版本</span><span class="sr v">' + escHtml(h.version || "dev") + "</span></div>',
-        '<div class="sr"><span class="sr k">模式</span><span class="sr v">' + escHtml(h.science_mode || "hybrid") + "</span></div>',
+        '<div class="sr"><span class="sr k">版本</span><span class="sr v">' + escHtml(h.version || "dev") + '</span></div>',
+        '<div class="sr"><span class="sr k">模式</span><span class="sr v">' + escHtml(h.science_mode || "hybrid") + '</span></div>',
         '<div class="sr-div"></div>',
-        '<div class="sr"><span class="sr k">Research</span><span class="sr v ' + (pack.healthy ? "ok" : "") + '">' + (pack.healthy ? "✓" : "✗") + " " + (pack.domain_tools || 0) + " tools</span></div>',
-        '<div class="sr"><span class="sr k">CS fleet</span><span class="sr v">' + (f.cs_connected || 0) + "/" + (f.cs_domains || 0) + "</span></div>',
-        '<div class="sr"><span class="sr k">原生 fleet</span><span class="sr v">' + (f.lumen_native || 0) + "</span></div>',
+        '<div class="sr"><span class="sr k">Research</span><span class="sr v ' + (pack.healthy ? "ok" : "") + '">' + (pack.healthy ? "✓" : "✗") + " " + (pack.domain_tools || 0) + ' tools</span></div>',
+        '<div class="sr"><span class="sr k">CS fleet</span><span class="sr v">' + (f.cs_connected || 0) + "/" + (f.cs_domains || 0) + '</span></div>',
+        '<div class="sr"><span class="sr k">原生 fleet</span><span class="sr v">' + (f.lumen_native || 0) + '</span></div>',
         '<div class="sr-div"></div>',
-        '<div class="sr"><span class="sr k">模型</span><span class="sr v">' + escHtml((h.provider && h.provider.masked) || "—") + "</span></div>',
+        '<div class="sr"><span class="sr k">模型</span><span class="sr v">' + escHtml((h.provider && h.provider.masked) || "—") + '</span></div>',
       ];
       var cap = h.capacity || {};
       rows.push('<div class="sr-div"></div>');
@@ -5473,6 +5473,13 @@ document.addEventListener("click", function (e) {
   } catch (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
+    try { showLabToast("初始化失败", e.message || String(e)); } catch (_) {}
+  } finally {
+    // Always dismiss splash so users are never stuck on "正在加载"
+    try {
+      var s0 = $("splash");
+      if (s0) s0.classList.add("hide");
+    } catch (_) {}
   }
   // periodic health refresh
   setInterval(function () { refreshHealth().catch(function () {}); }, 45000);
@@ -5490,5 +5497,5 @@ document.addEventListener("click", function (e) {
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");
-  }, 800);
+  }, 400);
 })();
