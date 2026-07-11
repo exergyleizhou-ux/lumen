@@ -1,7 +1,9 @@
 # Lumen Science Lab — Product Status
 
 **Version**: see repo `VERSION` / `GET /api/lab/health` → `version`  
-**Demo**: https://demo.oasisdata2026.xyz/lumen-lab/
+**Demo**: https://demo.oasisdata2026.xyz/lumen-lab/  
+**5-minute script**: [DEMO.md](./DEMO.md)  
+**Positioning vs InternAgentS/OCS**: [POSITIONING.md](./POSITIONING.md)
 
 ## Product definition (100% software surface)
 

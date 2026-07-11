@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=61">
+  <link rel="stylesheet" href="app.css?v=62">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -85,12 +85,14 @@
         </div>
         <div id="chatScroll">
           <section id="welcome" class="hero">
-            <h2>科研对话工作台</h2>
-            <p>OCS 级生产力：工具卡 · 审批 · 会话历史 · 工作区搜索 · 远程算力 · 技能</p>
+            <h2>Lumen Science Lab</h2>
+            <p>Lumen 科研工作台：Go Agent · 审批 · 工作区 · Jupyter · 同域化学 · Pack/舰队 · 可选 LangGraph 旁路</p>
             <div class="chips">
+              <button class="chip" type="button" data-prompt="用一句话介绍当前 Lab 能做什么（Agent、文件、Notebook、Ketcher、LangGraph），并建议我从哪一步开始。">产品导览</button>
               <button class="chip" type="button" data-brief="aspirin">生成 Brief</button>
               <button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献，给出 3 条要点。">文献检索</button>
               <button class="chip" type="button" data-prompt="解释当前课题工作区里有哪些文件，并建议下一步实验。">检查工作区</button>
+              <button class="chip" type="button" data-prompt="请列出如何在本 Lab 运行一个 print(1+1) 的 notebook cell，以及如何打开 Ketcher。">演示路径</button>
             </div>
           </section>
         </div>
@@ -385,6 +387,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=61"></script>
+  <script src="app.js?v=62"></script>
 </body>
 </html>
