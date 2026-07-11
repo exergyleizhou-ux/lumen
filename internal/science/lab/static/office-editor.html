@@ -39,7 +39,8 @@
   var fileName = params.get("title") || "document.docx";
   var fileExt = params.get("ext") || "docx";
   var mode = params.get("mode") || "view";       // view | edit
-  var callbackUrl = params.get("cb") || "";       // callback URL for edit saves
+  var callbackUrl = params.get("cb") || "";       // callback URL for edit saves (server-minted preferred)
+  var docKeyParam = params.get("key") || "";      // stable key from Lab (path+mtime)
 
   if (!dsUrl || !fileUrl) {
     showError("缺少参数：ds（Document Server URL）和 url（文件下载 URL）均为必填。");
@@ -58,8 +59,18 @@
     case "docx": default: docType = "word"; break;
   }
 
-  // Generate a stable document key
-  var docKey = btoa(fileUrl).replace(/[+/=]/g, "").slice(0, 20) + Date.now().toString(36);
+  // Prefer server-provided key (stable until file mtime/size changes after save).
+  // Fallback: hash of file URL only (no Date.now — avoids needless re-cache misses).
+  var docKey = docKeyParam;
+  if (!docKey) {
+    try {
+      docKey = btoa(unescape(encodeURIComponent(fileUrl))).replace(/[+/=]/g, "").slice(0, 32);
+    } catch (e) {
+      docKey = String(fileUrl.length) + "x" + String(fileName.length);
+    }
+  }
+  // OnlyOffice key charset: 0-9 a-z A-Z . _ - =
+  docKey = String(docKey).replace(/[^0-9a-zA-Z._=-]/g, "").slice(0, 128) || "doc1";
 
   // Load OnlyOffice API script
   var apiScript = dsUrl + "/web-apps/apps/api/documents/api.js";

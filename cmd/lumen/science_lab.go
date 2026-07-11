@@ -49,7 +49,7 @@ func runScienceLab(args []string) {
 		SciDir:    scienceDir(),
 		LumenCfg:  lumenCfg(),
 		Addr:      addr,
-		Version:   version,
+		Version:   resolveVersion(),
 		OpenPanel: openPanel,
 	})
 	if err != nil {

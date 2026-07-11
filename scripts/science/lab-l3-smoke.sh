@@ -44,6 +44,15 @@ else
   FAIL=$((FAIL+1))
 fi
 
+# 3b. Session endpoint exists (400 without project is ok; must not 404/500)
+SESS=$(curl -sS -o /dev/null -w '%{http_code}' "$BASE/api/lab/onlyoffice/session?project_id=&path=a.docx" 2>/dev/null || echo "000")
+if [ "$SESS" = "400" ] || [ "$SESS" = "200" ]; then
+  echo "  PASS session route ($SESS)"
+  PASS=$((PASS+1))
+else
+  echo "  FAIL session route ($SESS)"
+  FAIL=$((FAIL+1))
+fi
 # 4. Notebook
 NBRESP=$(curl -sS -X POST "$BASE/api/lab/notebooks?project_id=default" -H 'Content-Type: application/json' -d '{"name":"smoke-l3.ipynb"}' 2>/dev/null || echo "{}")
 check "notebook create" python3 -c "import json,sys; d=json.load(sys.stdin); assert 'name' in d" <<< "$NBRESP"

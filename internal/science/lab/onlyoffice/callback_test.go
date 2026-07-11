@@ -243,5 +243,80 @@ func TestEditEnabled(t *testing.T) {
 	}
 }
 
+func TestBuildCallbackURLIncludesToken(t *testing.T) {
+	t.Setenv("LUMEN_ONLYOFFICE_CALLBACK_TOKEN", "tok123")
+	u, err := BuildCallbackURL("http://127.0.0.1:18992", "proj", "reports/a.docx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(u, "token=tok123") {
+		t.Errorf("token missing: %s", u)
+	}
+	if !strings.Contains(u, "project_id=proj") || !strings.Contains(u, "path=reports") {
+		t.Errorf("query incomplete: %s", u)
+	}
+	// path traversal rejected
+	if _, err := BuildCallbackURL("http://x", "p", "../etc/passwd"); err == nil {
+		t.Error("expected error for bad path")
+	}
+}
+
+func TestDocumentKeyStableThenChanges(t *testing.T) {
+	k1 := DocumentKey("p", "a.docx", 10, 100)
+	k2 := DocumentKey("p", "a.docx", 10, 100)
+	if k1 != k2 {
+		t.Error("same inputs must produce same key")
+	}
+	k3 := DocumentKey("p", "a.docx", 11, 100)
+	if k1 == k3 {
+		t.Error("size change must change key")
+	}
+	if len(k1) != 32 {
+		t.Errorf("key length %d", len(k1))
+	}
+}
+
+func TestValidateDownloadURL(t *testing.T) {
+	t.Setenv("LUMEN_ONLYOFFICE_URL", "http://127.0.0.1:8088")
+	if err := ValidateDownloadURL("http://127.0.0.1:8088/cache/files/x"); err != nil {
+		t.Errorf("ds host should allow: %v", err)
+	}
+	if err := ValidateDownloadURL("http://host.docker.internal:8088/x"); err != nil {
+		t.Errorf("docker host should allow: %v", err)
+	}
+	if err := ValidateDownloadURL("http://169.254.169.254/latest"); err == nil {
+		t.Error("link-local must reject")
+	}
+	if err := ValidateDownloadURL("http://evil.example/x"); err == nil {
+		t.Error("random host must reject")
+	}
+	if err := ValidateDownloadURL("file:///etc/passwd"); err == nil {
+		t.Error("file scheme must reject")
+	}
+}
+
+func TestBuildSessionEdit(t *testing.T) {
+	t.Setenv("LUMEN_ONLYOFFICE_URL", "http://127.0.0.1:8088")
+	t.Setenv("LUMEN_ONLYOFFICE_CALLBACK_TOKEN", "s3cret")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.docx")
+	if err := os.WriteFile(path, []byte("pk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := BuildSession("http://127.0.0.1:18992", "demo", "notes.docx", "edit", dir)
+	if !s.OK {
+		t.Fatalf("session not ok: %s", s.Error)
+	}
+	if s.CallbackURL == "" || !strings.Contains(s.CallbackURL, "token=s3cret") {
+		t.Errorf("callback missing token: %s", s.CallbackURL)
+	}
+	if s.DocumentKey == "" {
+		t.Error("document key empty")
+	}
+	if s.Mode != "edit" {
+		t.Errorf("mode %q", s.Mode)
+	}
+}
+
 // Ensure io import used
 var _ = io.ReadAll

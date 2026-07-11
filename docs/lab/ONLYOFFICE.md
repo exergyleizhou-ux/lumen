@@ -79,7 +79,17 @@ When Document Server runs in Docker on the same Mac:
   ```bash
   export LUMEN_ONLYOFFICE_CALLBACK_TOKEN=$(openssl rand -hex 16)
   ```
-  The token is passed as `?token=...` in the callback URL.
+  **Do not put the token in frontend code.** Lab mints the callback URL via:
+  ```http
+  GET /api/lab/onlyoffice/session?project_id=<slug>&path=<rel>&mode=edit
+  ```
+  Response includes `callback_url` (with `?token=...` when env is set) and a stable
+  `document_key` (hash of project+path+size+mtime; changes after save so the editor reloads).
+- Download SSRF guard: callback only fetches hosts matching `LUMEN_ONLYOFFICE_URL`,
+  localhost / `127.0.0.1`, or `host.docker.internal` (extend with
+  `LUMEN_ONLYOFFICE_DOWNLOAD_HOSTS=host1,host2`).
+- Reverse proxy: set `X-Forwarded-Proto` / `X-Forwarded-Host` / `X-Forwarded-Prefix`
+  or `LUMEN_PUBLIC_PATH_PREFIX=/lumen-lab` so minted callback URLs use the public base.
 - JWT: set `JWT_ENABLED=false` on the DS container for simple setups.
 
 ## Install (self-host, needs ~4GB+ RAM)
@@ -105,7 +115,7 @@ done
 | api.js 404 | DS not running or wrong URL | Check `LUMEN_ONLYOFFICE_URL`, curl DS root |
 | White iframe | DS can't reach download URL | Ensure Lab listens on `0.0.0.0`, check host.docker.internal rewrite |
 | Save doesn't persist | callback URL unreachable from DS | Check container networking, callback token |
-| key conflict | Same document opened twice with same key | Document key includes timestamp for uniqueness |
+| key conflict | Stale key after external rewrite | Re-open tab; key is size+mtime based and refreshes after save |
 | JWT error | DS requires JWT | Set `JWT_ENABLED=false` on container, or configure JWT secret |
 
 ## VPS constraints

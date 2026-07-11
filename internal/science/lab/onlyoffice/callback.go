@@ -78,6 +78,13 @@ func HandleCallback(w http.ResponseWriter, r *http.Request, g *workspace.Guard, 
 		return
 	}
 
+	// SSRF guard: only fetch URLs that look like the configured Document Server
+	// (or common Docker Desktop host aliases).
+	if err := ValidateDownloadURL(cb.URL); err != nil {
+		writeCB(w, 1)
+		return
+	}
+
 	// Download the modified file from the Document Server
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Get(cb.URL)
@@ -121,8 +128,16 @@ func HandleCallback(w http.ResponseWriter, r *http.Request, g *workspace.Guard, 
 }
 
 func writeCB(w http.ResponseWriter, code int) {
+	// OnlyOffice expects HTTP 200 + {"error":N} even on logical failures.
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(CallbackResponse{Error: code})
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(CallbackResponse{Error: code})
+}
+
+// WriteCB is the exported form of writeCB for API handlers that need the same
+// response shape without going through HandleCallback.
+func WriteCB(w http.ResponseWriter, code int) {
+	writeCB(w, code)
 }
 
 // CallbackPath helper to parse and validate the workspace path from the request.

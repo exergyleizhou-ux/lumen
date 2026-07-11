@@ -3393,21 +3393,54 @@ async function openOfficePath() {
 
   var ext = path.split(".").pop() || "docx";
   var fileName = path.split("/").pop() || path;
-  var fileUrl = location.origin + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
 
   // Prefer OnlyOffice if configured
   if (onlyOfficeURL) {
     var dsUrl = onlyOfficeURL.replace(/\/+$/, "");
     var mode = ($("officeMode") && $("officeMode").value) || "view";
-    // Docker: replace host for container accessibility
-    var containerHost = location.origin;
-    if (/(localhost|127\.0\.0\.1)/.test(dsUrl)) {
-      containerHost = location.origin.replace(/\/\/(localhost|127\.0\.0\.1)(:\d+)?/, "//host.docker.internal$2");
+    // Docker: replace host for container accessibility (file + callback)
+    var useDockerHost = /(localhost|127\.0\.0\.1)/.test(dsUrl);
+    var containerOrigin = location.origin;
+    if (useDockerHost) {
+      containerOrigin = location.origin.replace(/\/\/(localhost|127\.0\.0\.1)(:\d+)?/, "//host.docker.internal$2");
     }
-    var fileUrlBase = containerHost + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+    var fileUrlBase = containerOrigin + labPath("/api/lab/files/download?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
     var callbackUrl = "";
-    if (mode === "edit") {
-      callbackUrl = containerHost + labPath("/api/lab/onlyoffice/callback?project_id=" + encodeURIComponent(activeProject.slug) + "&path=" + encodeURIComponent(path));
+    var docKey = "";
+    try {
+      // Server mints callback URL (embeds token when LUMEN_ONLYOFFICE_CALLBACK_TOKEN set)
+      var sess = await api(
+        "/api/lab/onlyoffice/session?project_id=" + encodeURIComponent(activeProject.slug) +
+        "&path=" + encodeURIComponent(path) +
+        "&mode=" + encodeURIComponent(mode)
+      );
+      if (sess && sess.ok) {
+        if (sess.ds_url) dsUrl = String(sess.ds_url).replace(/\/+$/, "");
+        if (sess.document_key) docKey = sess.document_key;
+        if (sess.file_type) ext = sess.file_type;
+        if (sess.title) fileName = sess.title;
+        if (mode === "edit" && sess.callback_url) {
+          callbackUrl = sess.callback_url;
+          // Rewrite callback host for Docker Desktop if DS is local
+          if (useDockerHost) {
+            callbackUrl = callbackUrl.replace(
+              /\/\/(localhost|127\.0\.0\.1)(:\d+)?/,
+              "//host.docker.internal$2"
+            );
+          }
+        }
+        if (sess.download_path) {
+          fileUrlBase = containerOrigin + labPath(sess.download_path);
+        }
+      }
+    } catch (e) {
+      // Fall back to client-built URLs (without token) if session endpoint fails
+      if (mode === "edit") {
+        callbackUrl = containerOrigin + labPath(
+          "/api/lab/onlyoffice/callback?project_id=" + encodeURIComponent(activeProject.slug) +
+          "&path=" + encodeURIComponent(path)
+        );
+      }
     }
     var editorPage = labPath("/office-editor.html") +
       "?ds=" + encodeURIComponent(dsUrl) +
@@ -3415,7 +3448,8 @@ async function openOfficePath() {
       "&title=" + encodeURIComponent(fileName) +
       "&ext=" + encodeURIComponent(ext) +
       "&mode=" + encodeURIComponent(mode) +
-      "&cb=" + encodeURIComponent(callbackUrl);
+      "&cb=" + encodeURIComponent(callbackUrl) +
+      (docKey ? "&key=" + encodeURIComponent(docKey) : "");
     host.innerHTML = '<iframe style="width:100%;height:520px;border:0;border-radius:8px" src="' + editorPage + '" allow="fullscreen"></iframe>';
     return;
   }

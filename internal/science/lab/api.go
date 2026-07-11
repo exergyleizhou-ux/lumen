@@ -108,6 +108,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
 	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
 	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
+	mux.HandleFunc("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -3009,24 +3010,58 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ── OnlyOffice callback ──
+// ── OnlyOffice callback + session ──
 
 func (a *API) handleOnlyOfficeCallback(w http.ResponseWriter, r *http.Request) {
 	slug := r.URL.Query().Get("project_id")
 	relPath := onlyoffice.CallbackPath(r.URL.Query().Get("path"))
 	if slug == "" || relPath == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": 1, "detail": "project_id and path required"})
+		// OnlyOffice expects HTTP 200 + {"error":N}
+		onlyoffice.WriteCB(w, 1)
 		return
 	}
 	ws, err := a.projects.WorkspacePath(slug)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": 1, "detail": "invalid project"})
+		onlyoffice.WriteCB(w, 1)
 		return
 	}
 	g, err := workspace.NewGuard(ws)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": 1})
+		onlyoffice.WriteCB(w, 1)
 		return
 	}
 	onlyoffice.HandleCallback(w, r, g, relPath)
+}
+
+// handleOnlyOfficeSession returns editor parameters including a server-minted
+// callback URL that embeds LUMEN_ONLYOFFICE_CALLBACK_TOKEN when set.
+// GET ?project_id=&path=&mode=view|edit
+func (a *API) handleOnlyOfficeSession(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	slug := strings.TrimSpace(r.URL.Query().Get("project_id"))
+	path := r.URL.Query().Get("path")
+	mode := r.URL.Query().Get("mode")
+	if slug == "" {
+		writeJSON(w, http.StatusBadRequest, onlyoffice.Session{OK: false, Error: "project_id required"})
+		return
+	}
+	ws, err := a.projects.WorkspacePath(slug)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, onlyoffice.Session{OK: false, Error: "invalid project"})
+		return
+	}
+	base := onlyoffice.PublicBaseFromRequest(r)
+	if base == "" {
+		// Fall back to local listen address
+		base = fmt.Sprintf("http://127.0.0.1:%d", a.listenPort)
+	}
+	sess := onlyoffice.BuildSession(base, slug, path, mode, ws)
+	if !sess.OK {
+		writeJSON(w, http.StatusBadRequest, sess)
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
 }
