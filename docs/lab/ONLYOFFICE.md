@@ -120,3 +120,49 @@ done
 
 ## VPS constraints
 This VPS (~3.4GiB RAM) cannot run Document Server stably. Keep `LUMEN_ONLYOFFICE_URL` unset on VPS (health reports `configured: false` honestly). Use an external DS host if needed.
+
+## Production topology (external DS)
+
+When a dedicated Document Server host (≥4GB RAM) is available, connect Lab to it:
+
+```
+┌─────────────────────┐     ┌──────────────────────┐     ┌─────────────────────┐
+│   User Browser      │────▶│   Lab (VPS/any)      │◀────│   Document Server   │
+│                     │     │   :18992 or :443     │     │   :8088 (≥4GB RAM)  │
+│ loads office-       │     │                      │     │                      │
+│ editor.html         │     │ GET /files/download   │◀────│ GET document.url     │
+│                     │     │ POST /onlyoffice/     │────▶│ POST callbackUrl     │
+│                     │     │   callback            │     │                      │
+└─────────────────────┘     └──────────────────────┘     └──────────────────────┘
+```
+
+### Setup checklist
+
+1. **Document Server host** (separate from Lab VPS, ≥4GB RAM):
+   ```bash
+   docker run -d --name onlyoffice -p 8088:80 \
+     -e JWT_ENABLED=false \
+     --restart unless-stopped \
+     onlyoffice/documentserver
+   ```
+
+2. **Lab config** (on the Lab host, NOT the Document Server):
+   ```bash
+   export LUMEN_ONLYOFFICE_URL=http://<ds-host-ip>:8088
+   export LUMEN_ONLYOFFICE_CALLBACK_TOKEN=$(openssl rand -hex 16)
+   ```
+
+3. **Network**: DS must be able to reach Lab's download and callback URLs.
+   - Same network: use internal IPs
+   - Public Lab: DS accesses `https://demo.oasisdata2026.xyz/lumen-lab/api/lab/...`
+
+4. **Verify**:
+   ```bash
+   # DS API reachable
+   curl -sS -o /dev/null -w '%{http_code}\n' http://<ds-host>:8088/web-apps/apps/api/documents/api.js
+   # Lab health
+   curl -sS http://127.0.0.1:18992/api/lab/health | python3 -c "import json,sys; print(json.load(sys.stdin)['onlyoffice'])"
+   # Expected: configured:true, edit:true
+   ```
+
+5. **Open in browser**: Lab → Office tab → enter `.docx` path → view/edit

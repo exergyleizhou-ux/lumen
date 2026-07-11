@@ -48,5 +48,6 @@ rm -f "$OUT"
 echo "[deploy-lab] done"
 # Optional public smoke
 if [[ -x "$REPO_ROOT/scripts/science/lab-product-smoke.sh" ]]; then
-  "$REPO_ROOT/scripts/science/lab-product-smoke.sh" "https://demo.oasisdata2026.xyz/lumen-lab" || true
+  echo "[deploy-lab] running product smoke..."
+  "$REPO_ROOT/scripts/science/lab-product-smoke.sh" "https://demo.oasisdata2026.xyz/lumen-lab"
 fi

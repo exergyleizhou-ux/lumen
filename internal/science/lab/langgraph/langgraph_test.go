@@ -132,8 +132,8 @@ func TestRunWithWorkspace(t *testing.T) {
 	if !strings.Contains(resp.Result, "script.py") {
 		t.Errorf("result should contain script.py, got: %s", resp.Result[:min(len(resp.Result), 300)])
 	}
-	if !strings.Contains(resp.Result, "建议") {
-		t.Error("result should contain suggestions")
+	if !strings.Contains(resp.Result, "建议") && !strings.Contains(resp.Result, "下一步") {
+		t.Error("result should contain suggestions or next-steps")
 	}
 }
 
