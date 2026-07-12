@@ -23,11 +23,12 @@ const DefaultPort = 18992
 
 // Config for the science lab workbench.
 type Config struct {
-	SciDir    string
-	LumenCfg  *config.File
-	Addr      string
-	Version   string
-	OpenPanel bool
+	SciDir                  string
+	LumenCfg                *config.File
+	Addr                    string
+	Version                 string
+	OpenPanel               bool
+	DisableFleetAutoConnect bool // tests and offline embedding can connect lazily
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -52,7 +53,10 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	// Start all domain connections (CS bio-tools + 5-ship native); failures are non-blocking.
-	go fleet.ConnectAll() // async fleet — server ready immediately
+	// API-only tests disable this so TempDir cleanup cannot race background fleet setup.
+	if !cfg.DisableFleetAutoConnect {
+		go fleet.ConnectAll() // async fleet — server ready immediately
+	}
 	// Seed embedded elevation skills on first launch.
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
@@ -238,12 +242,19 @@ func openPanel(url string) error {
 
 func (s *Server) serveHTTPS() {
 	host, portStr, _ := net.SplitHostPort(s.cfg.Addr)
-	if host == "" { host = "127.0.0.1" }
-	port, _ := strconv.Atoi(portStr); if port == 0 { port = DefaultPort }
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port, _ := strconv.Atoi(portStr)
+	if port == 0 {
+		port = DefaultPort
+	}
 	httpsAddr := fmt.Sprintf("%s:%d", host, port+3)
 
 	tlsCfg, err := tlsutil.EnsureCert(s.cfg.SciDir)
-	if err != nil { return }
+	if err != nil {
+		return
+	}
 	srv := &http.Server{
 		Addr:              httpsAddr,
 		Handler:           s.srv.Handler,

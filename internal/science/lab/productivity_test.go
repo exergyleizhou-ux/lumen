@@ -23,7 +23,7 @@ func testLabServer(t *testing.T) (*httptest.Server, string) {
 	if err := os.MkdirAll(sci, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := New(Config{SciDir: sci, Version: "test"})
+	srv, err := New(Config{SciDir: sci, Version: "test", DisableFleetAutoConnect: true})
 	if err != nil {
 		t.Fatal(err)
 	}
