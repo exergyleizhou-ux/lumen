@@ -45,3 +45,12 @@ The Go test output was served from the build cache.
 - Hosted Lab uses a bounded tenant registry. Each tenant receives a guarded `<HOSTED_WORKSPACE_ROOT>/<user>/<workspace>/science` root, project store, controller pool, session, and artifact namespace; idle entries are LRU-evicted.
 - Tenant identifiers are strict safe path components, and workspace resolution rejects traversal and symlink escapes.
 - Phase 2 gates passed: targeted race suite, uncached full test suite, `go vet ./...`, and `git diff --check`.
+
+## Phase 3 request isolation and usage capture (2026-07-12)
+
+- Code and Lab provider credentials are immutable controller inputs. Browser API keys never pass through `os.Setenv`, and hosted controller configuration does not load `.env` during a request.
+- Hosted Code rejects body `api_key` with stable code `provider_key_forbidden`; provider/model selection is limited to the startup-resolved allowlist and remains immutable for a session.
+- Hosted `/model` switching is disabled because it would bypass that allowlist. Local temporary keys remain supported as per-run `ProviderConfig` values without changing process environment.
+- Concurrent controllers receive defensive copies of distinct provider configurations; workspace root, PATH overrides, tool profile, and permission mode stay controller/workspace scoped.
+- Code and Lab capture stamped `event.Usage` into the `usage.Store` boundary with owner, workspace, run/event identity, provider/model, input/output/cache tokens, and integer estimated cost. The Phase 3 memory store enforces `(run_id,event_id)` idempotency; Phase 4 can replace it with Postgres.
+- Phase 3 gates passed: the required targeted race suite (plus `internal/usage` and Lab integration), uncached `go test ./...`, and `git diff --check`.
