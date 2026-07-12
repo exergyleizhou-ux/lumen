@@ -91,6 +91,42 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"events": events, "run_id": parts[0], "after": after})
 		return
 	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "artifacts" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, err := s.runs.GetOwned(owner, parts[0]); err != nil {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		items, err := s.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		jsonOK(w, map[string]any{"artifacts": items})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "evidence" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		bundle, err := s.evidence.Build(r.Context(), owner, parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			jsonErr(w, "run not found", 404)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+parts[0]+`-evidence.zip"`)
+		w.Write(bundle)
+		return
+	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {
 		if r.Method != http.MethodPost {
 			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)

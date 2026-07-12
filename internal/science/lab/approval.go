@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"lumen/internal/approvalstate"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
 )
@@ -26,6 +27,7 @@ type approvalHub struct {
 	waiters       map[string]*approvalWaiter
 	modeFunc      func() permission.Mode
 	ownerModeFunc func(runstate.Owner) permission.Mode
+	store         approvalstate.Store
 }
 
 type approvalWaiter struct {
@@ -58,7 +60,18 @@ func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, too
 		return false, nil, nil
 	}
 
-	id := fmt.Sprintf("appr-%d", h.seq.Add(1))
+	id := fmt.Sprintf("appr-%d-%d", time.Now().UnixNano(), h.seq.Add(1))
+	hash, err := approvalstate.HashArgs(args)
+	if err != nil {
+		return false, nil, err
+	}
+	now := time.Now().UTC()
+	runID := runstate.RunIDFromContext(ctx)
+	if h.store != nil && runID != "" {
+		if err = h.store.Create(approvalstate.Approval{ID: id, RunID: runID, ToolCallID: id, Owner: owner, RiskLevel: "high", Reason: permission.SummarizeArgs(toolName, args), ArgsHash: hash, EditableArgs: args, CreatedAt: now, ExpiresAt: now.Add(ApprovalTimeout), Version: 1}); err != nil {
+			return false, nil, err
+		}
+	}
 	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner}
 	h.mu.Lock()
 	h.waiters[id] = wt
@@ -87,6 +100,15 @@ func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, too
 	case dec := <-wt.ch:
 		if !dec.Allow {
 			return false, nil, nil
+		}
+		actual := args
+		if len(dec.Args) > 0 {
+			actual = dec.Args
+		}
+		if h.store != nil && runID != "" {
+			if err := approvalstate.ValidateExecution(h.store, owner, id, actual, time.Now().UTC()); err != nil {
+				return false, nil, fmt.Errorf("approval parameters changed or expired: %w", err)
+			}
 		}
 		// Optional user-edited args (must be valid JSON object/array)
 		if len(dec.Args) > 0 {
@@ -139,7 +161,22 @@ func (a *API) handleApprove(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("id required"))
 		return
 	}
-	if a.approvals == nil || !a.approvals.resolveOwned(labOwner(r), req.ID, req.Allow, req.Args) {
+	owner := labOwner(r)
+	if a.approvals == nil {
+		writeErr(w, http.StatusNotFound, fmt.Errorf("approval expired or unknown"))
+		return
+	}
+	if _, err := a.approvalStore.Get(owner, req.ID); err == nil {
+		d := approvalstate.DecisionRejected
+		if req.Allow {
+			d = approvalstate.DecisionApproved
+		}
+		if _, err = a.approvalStore.Decide(owner, req.ID, d, owner.UserID, time.Now().UTC()); err != nil {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("approval expired or unknown"))
+			return
+		}
+	}
+	if !a.approvals.resolveOwned(owner, req.ID, req.Allow, req.Args) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("approval expired or unknown"))
 		return
 	}

@@ -19,12 +19,16 @@ import (
 
 	"sync/atomic"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/event"
 	"lumen/internal/hostedauth"
 	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
+	"lumen/internal/runstate/pgstore"
+	"lumen/internal/runtimeevidence"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/langgraph"
@@ -53,6 +57,9 @@ type API struct {
 	approvals        *approvalHub
 	runs             *runstate.Manager
 	usage            usage.Store
+	approvalStore    approvalstate.Store
+	artifactStore    artifact.Store
+	evidence         runtimeevidence.Service
 	platformProvider *config.ProviderConfig
 	activeRuns       *sync.Map // run_id -> labActiveRun
 	auth             *hostedauth.Verifier
@@ -85,29 +92,52 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 	if listenPort == 0 {
 		listenPort = DefaultPort
 	}
+	var hostedPG *pgstore.Store
 	if runs == nil {
-		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+		if raw := os.Getenv("WORKBENCH_DATABASE_URL"); raw != "" {
+			var err error
+			hostedPG, err = pgstore.Open(raw)
+			if err != nil {
+				panic("open workbench postgres: " + err.Error())
+			}
+			runs = runstate.NewManager(hostedPG)
+		} else {
+			runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+		}
+	}
+	var usageStore usage.Store = usage.NewMemoryStore()
+	var approvalStore approvalstate.Store = approvalstate.NewMemoryStore()
+	var artifactStore artifact.Store = artifact.NewMemoryStore()
+	if hostedPG != nil {
+		usageStore = usage.PostgresStore{DB: hostedPG.DB()}
+		approvalStore = approvalstate.PostgresStore{DB: hostedPG.DB()}
+		artifactStore = artifact.PostgresStore{DB: hostedPG.DB()}
 	}
 	store := project.NewStore(sciDir)
 	api := &API{
-		sciDir:       sciDir,
-		version:      version,
-		listenPort:   listenPort,
-		projects:     store,
-		fleet:        fleet,
-		local:        loadLocalConfig(sciDir),
-		turns:        newTurnPool(MaxConcurrentTurns),
-		ctrls:        newControllerPool(sciDir, fleet, store, MaxControllers),
-		runs:         runs,
-		usage:        usage.NewMemoryStore(),
-		activeRuns:   new(sync.Map),
-		activeMode:   permission.ModeDefault,
-		modeMu:       new(sync.Mutex),
-		ownerModes:   make(map[runstate.Owner]permission.Mode),
-		startedAt:    time.Now(),
-		turnsTotal:   new(atomic.Uint64),
-		turnsFailed:  new(atomic.Uint64),
-		approvalsTot: new(atomic.Uint64),
+		sciDir:        sciDir,
+		version:       version,
+		listenPort:    listenPort,
+		projects:      store,
+		fleet:         fleet,
+		local:         loadLocalConfig(sciDir),
+		turns:         newTurnPool(MaxConcurrentTurns),
+		ctrls:         newControllerPool(sciDir, fleet, store, MaxControllers),
+		runs:          runs,
+		usage:         usageStore,
+		approvalStore: approvalStore,
+		artifactStore: artifactStore,
+		activeRuns:    new(sync.Map),
+		activeMode:    permission.ModeDefault,
+		modeMu:        new(sync.Mutex),
+		ownerModes:    make(map[runstate.Owner]permission.Mode),
+		startedAt:     time.Now(),
+		turnsTotal:    new(atomic.Uint64),
+		turnsFailed:   new(atomic.Uint64),
+		approvalsTot:  new(atomic.Uint64),
+	}
+	if ur, ok := api.usage.(runtimeevidence.UsageReader); ok {
+		api.evidence = runtimeevidence.Service{Runs: runs, Approvals: api.approvalStore, Artifacts: api.artifactStore, Usage: ur}
 	}
 	api.approvals = newApprovalHub(func() permission.Mode {
 		api.modeMu.Lock()
@@ -115,6 +145,7 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 		return api.activeMode
 	})
 	api.approvals.ownerModeFunc = api.ownerMode
+	api.approvals.store = api.approvalStore
 	return api
 }
 
@@ -206,6 +237,7 @@ func labPermission(r *http.Request) string {
 
 func (a *API) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	ctx = runstate.WithRunID(ctx, runID)
 	a.activeRuns.Store(runID, labActiveRun{Owner: owner, Cancel: cancel})
 	var once sync.Once
 	cleanup := func() {
@@ -280,6 +312,42 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"events": events, "run_id": parts[0], "after": after})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "artifacts" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"artifacts": items})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "evidence" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		bundle, err := a.evidence.Build(r.Context(), owner, parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+parts[0]+`-evidence.zip"`)
+		w.Write(bundle)
 		return
 	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {

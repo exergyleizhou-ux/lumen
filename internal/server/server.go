@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
@@ -32,6 +34,8 @@ import (
 	"lumen/internal/memory"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
+	"lumen/internal/runstate/pgstore"
+	"lumen/internal/runtimeevidence"
 	"lumen/internal/usage"
 )
 
@@ -47,6 +51,9 @@ type Config struct {
 	// are never accepted from requests.
 	HostedProviders     []config.ProviderConfig
 	Usage               usage.Store
+	Approvals           approvalstate.Store
+	Artifacts           artifact.Store
+	ArtifactObjects     artifact.ObjectBackend
 	HostedWorkspaceRoot string
 }
 
@@ -72,6 +79,9 @@ type Server struct {
 	hostedProviders map[string]config.ProviderConfig
 	hostedDefault   *config.ProviderConfig
 	usage           usage.Store
+	approvalStore   approvalstate.Store
+	artifactStore   artifact.Store
+	evidence        runtimeevidence.Service
 }
 
 type activeRun struct {
@@ -192,7 +202,24 @@ func New(cfg Config) (*Server, error) {
 	}
 	runs := cfg.Runs
 	if runs == nil {
-		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+		if raw := os.Getenv("WORKBENCH_DATABASE_URL"); cfg.Hosted && raw != "" {
+			store, err := pgstore.Open(raw)
+			if err != nil {
+				return nil, err
+			}
+			runs = runstate.NewManager(store)
+			if cfg.Usage == nil {
+				cfg.Usage = usage.PostgresStore{DB: store.DB()}
+			}
+			if cfg.Approvals == nil {
+				cfg.Approvals = approvalstate.PostgresStore{DB: store.DB()}
+			}
+			if cfg.Artifacts == nil {
+				cfg.Artifacts = artifact.PostgresStore{DB: store.DB(), Objects: cfg.ArtifactObjects}
+			}
+		} else {
+			runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+		}
 	}
 	allowed := make(map[string]config.ProviderConfig)
 	var hostedDefault *config.ProviderConfig
@@ -213,7 +240,18 @@ func New(cfg Config) (*Server, error) {
 	if usageStore == nil {
 		usageStore = usage.NewMemoryStore()
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore}
+	approvalStore := cfg.Approvals
+	if approvalStore == nil {
+		approvalStore = approvalstate.NewMemoryStore()
+	}
+	artifactStore := cfg.Artifacts
+	if artifactStore == nil {
+		artifactStore = artifact.NewMemoryStore()
+	}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore, approvalStore: approvalStore, artifactStore: artifactStore}
+	if ur, ok := usageStore.(runtimeevidence.UsageReader); ok {
+		s.evidence = runtimeevidence.Service{Runs: runs, Approvals: approvalStore, Artifacts: artifactStore, Usage: ur}
+	}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
@@ -388,10 +426,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctrl.SetApprover(s.webApprover(owner, func(kind string, payload map[string]any) {
-		sink.emitPayload(kind, payload)
-	}))
-
 	if req.Mode != "" {
 		ctrl.SetPermissionMode(parseUIMode(req.Mode))
 	}
@@ -406,6 +440,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sink.done("", err)
 		return
 	}
+	ctrl.SetApprover(s.webApprover(owner, run.ID, func(kind string, payload map[string]any) { sink.emitPayload(kind, payload) }))
 	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, 5*time.Minute)
 	defer cleanupRun()
 	pricing := usage.Pricing{}

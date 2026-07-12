@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
+	"lumen/internal/approvalstate"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
 )
@@ -18,6 +20,8 @@ type approvalDecision struct {
 type approvalWaiter struct {
 	ch    chan approvalDecision
 	owner runstate.Owner
+	runID string
+	args  json.RawMessage
 }
 
 func (s *Server) routesApproval() {
@@ -48,6 +52,16 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "approval expired or unknown", http.StatusNotFound)
 		return
 	}
+	decision := approvalstate.DecisionRejected
+	if req.Allow {
+		decision = approvalstate.DecisionApproved
+	}
+	if _, getErr := s.approvalStore.Get(wt.owner, req.ID); getErr == nil {
+		if _, err := s.approvalStore.Decide(wt.owner, req.ID, decision, wt.owner.UserID, time.Now().UTC()); err != nil {
+			jsonErr(w, "approval expired or unknown", http.StatusNotFound)
+			return
+		}
+	}
 	select {
 	case wt.ch <- approvalDecision{Allow: req.Allow, Args: req.Args}:
 	default:
@@ -55,7 +69,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"id": req.ID, "allowed": req.Allow, "args_edited": len(req.Args) > 0})
 }
 
-func (s *Server) webApprover(owner runstate.Owner, emit func(kind string, payload map[string]any)) permission.Asker {
+func (s *Server) webApprover(owner runstate.Owner, runID string, emit func(kind string, payload map[string]any)) permission.Asker {
 	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		mode := s.cfg.Ctrl.PermissionMode()
 		if mode == permission.ModeBypass {
@@ -65,8 +79,16 @@ func (s *Server) webApprover(owner runstate.Owner, emit func(kind string, payloa
 			return false, nil, nil
 		}
 
-		id := fmt.Sprintf("appr-%d", s.approvalSeq.Add(1))
-		wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner}
+		id := fmt.Sprintf("appr-%d-%d", time.Now().UnixNano(), s.approvalSeq.Add(1))
+		hash, err := approvalstate.HashArgs(args)
+		if err != nil {
+			return false, nil, err
+		}
+		now := time.Now().UTC()
+		if err = s.approvalStore.Create(approvalstate.Approval{ID: id, RunID: runID, ToolCallID: id, Owner: owner, RiskLevel: "high", Reason: permission.SummarizeArgs(toolName, args), ArgsHash: hash, EditableArgs: args, CreatedAt: now, ExpiresAt: now.Add(5 * time.Minute), Version: 1}); err != nil {
+			return false, nil, err
+		}
+		wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner, runID: runID, args: args}
 		s.approvals.Store(id, wt)
 		defer s.approvals.Delete(id)
 
@@ -85,6 +107,13 @@ func (s *Server) webApprover(owner runstate.Owner, emit func(kind string, payloa
 		case dec := <-wt.ch:
 			if !dec.Allow {
 				return false, nil, nil
+			}
+			actual := args
+			if len(dec.Args) > 0 {
+				actual = dec.Args
+			}
+			if err := approvalstate.ValidateExecution(s.approvalStore, owner, id, actual, time.Now().UTC()); err != nil {
+				return false, nil, fmt.Errorf("approval parameters changed or expired: %w", err)
 			}
 			return true, dec.Args, nil
 		case <-ctx.Done():
