@@ -45,8 +45,23 @@ func (g *Guard) Resolve(rel string) (string, error) {
 	if !strings.HasPrefix(abs, g.root+string(os.PathSeparator)) && abs != g.root {
 		return "", fmt.Errorf("path escapes workspace")
 	}
-	if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("symlinks not allowed")
+	// Reject a symlink in any existing component, not only at the leaf. A
+	// writable endpoint may target a missing leaf below a symlinked directory.
+	current := g.root
+	if relFromRoot, err := filepath.Rel(g.root, abs); err == nil && relFromRoot != "." {
+		for _, component := range strings.Split(relFromRoot, string(os.PathSeparator)) {
+			current = filepath.Join(current, component)
+			fi, err := os.Lstat(current)
+			if err != nil {
+				if os.IsNotExist(err) {
+					break
+				}
+				return "", err
+			}
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("symlinks not allowed")
+			}
+		}
 	}
 	return abs, nil
 }

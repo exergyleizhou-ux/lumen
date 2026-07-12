@@ -50,18 +50,18 @@ type API struct {
 	ctrls      *controllerPool
 	approvals  *approvalHub
 	runs       *runstate.Manager
-	activeRuns sync.Map // run_id -> labActiveRun
+	activeRuns *sync.Map // run_id -> labActiveRun
 	auth       *hostedauth.Verifier
 	tenants    *tenantRegistry
 	// activeMode is read by approval hub during a turn.
-	modeMu     sync.Mutex
+	modeMu     *sync.Mutex
 	activeMode permission.Mode
 	ownerModes map[runstate.Owner]permission.Mode
 	startedAt  time.Time
 	// metrics
-	turnsTotal   atomic.Uint64
-	turnsFailed  atomic.Uint64
-	approvalsTot atomic.Uint64
+	turnsTotal   *atomic.Uint64
+	turnsFailed  *atomic.Uint64
+	approvalsTot *atomic.Uint64
 }
 
 type labActiveRun struct {
@@ -86,18 +86,23 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 	}
 	store := project.NewStore(sciDir)
 	api := &API{
-		sciDir:     sciDir,
-		version:    version,
-		listenPort: listenPort,
-		projects:   store,
-		fleet:      fleet,
-		local:      loadLocalConfig(sciDir),
-		turns:      newTurnPool(MaxConcurrentTurns),
-		ctrls:      newControllerPool(sciDir, fleet, store, MaxControllers),
-		runs:       runs,
-		activeMode: permission.ModeDefault,
-		ownerModes: make(map[runstate.Owner]permission.Mode),
-		startedAt:  time.Now(),
+		sciDir:       sciDir,
+		version:      version,
+		listenPort:   listenPort,
+		projects:     store,
+		fleet:        fleet,
+		local:        loadLocalConfig(sciDir),
+		turns:        newTurnPool(MaxConcurrentTurns),
+		ctrls:        newControllerPool(sciDir, fleet, store, MaxControllers),
+		runs:         runs,
+		activeRuns:   new(sync.Map),
+		activeMode:   permission.ModeDefault,
+		modeMu:       new(sync.Mutex),
+		ownerModes:   make(map[runstate.Owner]permission.Mode),
+		startedAt:    time.Now(),
+		turnsTotal:   new(atomic.Uint64),
+		turnsFailed:  new(atomic.Uint64),
+		approvalsTot: new(atomic.Uint64),
 	}
 	api.approvals = newApprovalHub(func() permission.Mode {
 		api.modeMu.Lock()
@@ -112,7 +117,7 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/health", a.handleHealth)
 	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
-	register := func(pattern string, handler http.HandlerFunc) {
+	register := func(pattern string, handler func(*API, http.ResponseWriter, *http.Request)) {
 		if a.auth != nil {
 			wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				owner := labOwner(r)
@@ -123,40 +128,49 @@ func (a *API) Register(mux *http.ServeMux) {
 					return
 				}
 				defer a.tenants.release(owner)
-				handler(w, r.WithContext(context.WithValue(r.Context(), tenantContextKey{}, tenant)))
+				r = r.WithContext(context.WithValue(r.Context(), tenantContextKey{}, tenant))
+				// Keep the mature Lab handlers unchanged while binding every mutable
+				// resource they use to this request's authenticated tenant. The copy
+				// is request-local; shared concurrency/run coordination stays shared.
+				scoped := *a
+				scoped.sciDir = tenant.Root
+				scoped.projects = tenant.Projects
+				scoped.ctrls = tenant.Controllers
+				scoped.local = loadLocalConfig(tenant.Root)
+				handler(&scoped, w, r)
 			})
 			mux.Handle(pattern, a.auth.RequireFor(labPermission)(wrapped))
 			return
 		}
-		mux.HandleFunc(pattern, handler)
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { handler(a, w, r) })
 	}
-	register("/api/lab/projects", a.handleProjects)
-	register("/api/lab/projects/", a.handleProjectSub)
-	register("/api/lab/skills", a.handleSkills)
-	register("/api/lab/skills/", a.handleSkillsSub)
-	register("/api/lab/config", a.handleConfig)
-	register("/api/lab/chat", a.handleChat)
-	register("/api/lab/runs/", a.handleRuns)
-	register("/api/lab/approve", a.handleApprove)
-	register("/api/lab/brief", a.handleBrief)
-	register("/api/lab/artifacts", a.handleArtifacts)
-	register("/api/lab/files", a.handleFiles)
-	register("/api/lab/files/", a.handleFiles)
-	register("/api/lab/provenance", a.handleProvenance)
-	register("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
-	register("/api/lab/compute/ssh-hosts/", a.handleComputeSSHHosts)
-	register("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
-	register("/api/lab/compute/hosts/", a.handleComputeSSHHosts)
-	register("/api/lab/compute/jobs", a.handleComputeJobs)
-	register("/api/lab/compute/jobs/", a.handleComputeJob)
-	register("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
-	register("/api/lab/bridge/open", a.handleBridgeOpen)
-	register("/api/lab/notebooks", a.handleNotebooks)
-	register("/api/lab/notebooks/", a.handleNotebooks)
-	register("/api/lab/langgraph/run", a.handleLangGraphRun)
-	register("/api/lab/langgraph/history", a.handleLangGraphHistory)
-	register("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
-	register("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
+	register("/api/lab/projects", (*API).handleProjects)
+	register("/api/lab/projects/", (*API).handleProjectSub)
+	register("/api/lab/skills", (*API).handleSkills)
+	register("/api/lab/skills/", (*API).handleSkillsSub)
+	register("/api/lab/config", (*API).handleConfig)
+	register("/api/lab/chat", (*API).handleChat)
+	register("/api/lab/runs/", (*API).handleRuns)
+	register("/api/lab/approve", (*API).handleApprove)
+	register("/api/lab/brief", (*API).handleBrief)
+	register("/api/lab/artifacts", (*API).handleArtifacts)
+	register("/api/lab/files", (*API).handleFiles)
+	register("/api/lab/files/", (*API).handleFiles)
+	register("/api/lab/provenance", (*API).handleProvenance)
+	register("/api/lab/compute/ssh-hosts", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/ssh-hosts/", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/hosts", (*API).handleComputeSSHHosts) // alias
+	register("/api/lab/compute/hosts/", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/jobs", (*API).handleComputeJobs)
+	register("/api/lab/compute/jobs/", (*API).handleComputeJob)
+	register("/api/lab/c2d/algorithms", (*API).handleC2DAlgorithms)
+	register("/api/lab/bridge/open", (*API).handleBridgeOpen)
+	register("/api/lab/notebooks", (*API).handleNotebooks)
+	register("/api/lab/notebooks/", (*API).handleNotebooks)
+	register("/api/lab/langgraph/run", (*API).handleLangGraphRun)
+	register("/api/lab/langgraph/history", (*API).handleLangGraphHistory)
+	register("/api/lab/onlyoffice/callback", (*API).handleOnlyOfficeCallback)
+	register("/api/lab/onlyoffice/session", (*API).handleOnlyOfficeSession)
 }
 
 type tenantContextKey struct{}
@@ -408,6 +422,14 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 	slug := parts[0]
 	if len(parts) == 1 {
 		if r.Method == http.MethodDelete {
+			if _, err := a.projects.Get(slug); err != nil {
+				if os.IsNotExist(err) {
+					writeErr(w, http.StatusNotFound, fmt.Errorf("project not found"))
+					return
+				}
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
 			if err := a.projects.Delete(slug); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return

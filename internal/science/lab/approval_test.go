@@ -3,6 +3,7 @@ package lab
 import (
 	"context"
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -73,7 +74,7 @@ func TestApprovalHubRejectsCrossOwnerDecision(t *testing.T) {
 }
 
 func TestApprovalModesAreOwnerScoped(t *testing.T) {
-	api := &API{ownerModes: make(map[runstate.Owner]permission.Mode)}
+	api := &API{modeMu: new(sync.Mutex), ownerModes: make(map[runstate.Owner]permission.Mode)}
 	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
 	b := runstate.Owner{UserID: "b", WorkspaceID: "w"}
 	api.setOwnerMode(a, "bypass")
