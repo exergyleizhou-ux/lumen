@@ -111,10 +111,32 @@ func New(cfg Config) (*Server, error) {
 
 func (s *Server) handleBusiness(pattern string, handler http.HandlerFunc) {
 	if s.auth != nil {
-		s.mux.Handle(pattern, s.auth.Middleware(handler))
+		s.mux.Handle(pattern, s.auth.RequireFor(codePermission)(handler))
 		return
 	}
 	s.mux.HandleFunc(pattern, handler)
+}
+
+func codePermission(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/v1/runs/") {
+		if strings.HasSuffix(r.URL.Path, "/cancel") {
+			return "run:cancel"
+		}
+		return "run:read"
+	}
+	if r.URL.Path == "/v1/approve" {
+		return "approval:decide"
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/files") {
+		if r.Method == http.MethodGet {
+			return "artifact:read"
+		}
+		return "code:run"
+	}
+	if r.URL.Path == "/v1/chat" || r.URL.Path == "/v1/command" || r.URL.Path == "/v1/mode" || r.URL.Path == "/v1/rewind" || r.URL.Path == "/v1/workflow" {
+		return "code:run"
+	}
+	return "run:read"
 }
 
 // ListenAndServe starts the HTTP server. Blocks until error.

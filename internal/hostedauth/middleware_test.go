@@ -33,3 +33,15 @@ func TestMiddlewareAuthenticatesAndDoesNotLeakToken(t *testing.T) {
 		t.Fatalf("unsafe response: %d %q", rec.Code, rec.Body.String())
 	}
 }
+
+func TestMiddlewareEnforcesPermission(t *testing.T) {
+	v, _ := NewVerifier("secret")
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", nil)
+	req.Header.Set("Authorization", "Bearer "+signed(t, "secret", jwt.SigningMethodHS256, nil))
+	rec := httptest.NewRecorder()
+	v.Require("lab:run")(next).ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "workbench_forbidden") {
+		t.Fatalf("got %d %q", rec.Code, rec.Body.String())
+	}
+}

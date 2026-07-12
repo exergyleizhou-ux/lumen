@@ -29,8 +29,8 @@ func (v *Verifier) Verify(raw string) (Identity, error) {
 			return nil, ErrUnauthorized
 		}
 		return v.secret, nil
-	}, jwt.WithIssuer(Issuer), jwt.WithAudience(Audience), jwt.WithExpirationRequired(), jwt.WithValidMethods([]string{"HS256"}), jwt.WithTimeFunc(v.now))
-	if err != nil || !token.Valid || claims.Subject == "" || claims.ID == "" || claims.UserID == "" || claims.UserID != claims.Subject || claims.WorkspaceID == "" {
+	}, jwt.WithIssuer(Issuer), jwt.WithAudience(Audience), jwt.WithExpirationRequired(), jwt.WithIssuedAt(), jwt.WithValidMethods([]string{"HS256"}), jwt.WithTimeFunc(v.now))
+	if err != nil || !token.Valid || claims.Subject == "" || claims.ID == "" || claims.UserID == "" || claims.UserID != claims.Subject || claims.WorkspaceID == "" || claims.IssuedAt == nil || claims.NotBefore == nil || len(claims.Permissions) == 0 {
 		return Identity{}, ErrUnauthorized
 	}
 	return Identity{UserID: claims.UserID, WorkspaceID: claims.WorkspaceID, SessionID: claims.ID, Permissions: append([]string(nil), claims.Permissions...)}, nil

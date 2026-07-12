@@ -29,3 +29,19 @@ func TestHostedLabFailsClosedAndKeepsOnlyProbesPublic(t *testing.T) {
 		}
 	}
 }
+
+func TestLabPermissionByOperation(t *testing.T) {
+	cases := []struct{ method, path, want string }{
+		{http.MethodPost, "/api/lab/chat", "lab:run"},
+		{http.MethodGet, "/api/lab/runs/run-1", "run:read"},
+		{http.MethodPost, "/api/lab/runs/run-1/cancel", "run:cancel"},
+		{http.MethodPost, "/api/lab/approve", "approval:decide"},
+		{http.MethodGet, "/api/lab/artifacts", "artifact:read"},
+	}
+	for _, tc := range cases {
+		r := httptest.NewRequest(tc.method, tc.path, nil)
+		if got := labPermission(r); got != tc.want {
+			t.Errorf("%s %s: got %s want %s", tc.method, tc.path, got, tc.want)
+		}
+	}
+}

@@ -98,7 +98,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
 	register := func(pattern string, handler http.HandlerFunc) {
 		if a.auth != nil {
-			mux.Handle(pattern, a.auth.Middleware(handler))
+			mux.Handle(pattern, a.auth.RequireFor(labPermission)(handler))
 			return
 		}
 		mux.HandleFunc(pattern, handler)
@@ -130,6 +130,25 @@ func (a *API) Register(mux *http.ServeMux) {
 	register("/api/lab/langgraph/history", a.handleLangGraphHistory)
 	register("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
 	register("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
+}
+
+func labPermission(r *http.Request) string {
+	path := r.URL.Path
+	if strings.HasPrefix(path, "/api/lab/runs/") {
+		if strings.HasSuffix(path, "/cancel") {
+			return "run:cancel"
+		}
+		return "run:read"
+	}
+	if path == "/api/lab/approve" {
+		return "approval:decide"
+	}
+	if strings.HasPrefix(path, "/api/lab/artifacts") || strings.HasPrefix(path, "/api/lab/files") || strings.HasPrefix(path, "/api/lab/provenance") {
+		if r.Method == http.MethodGet {
+			return "artifact:read"
+		}
+	}
+	return "lab:run"
 }
 
 func (a *API) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {

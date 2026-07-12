@@ -23,11 +23,24 @@ func signed(t *testing.T, secret string, method jwt.SigningMethod, mutate func(*
 func TestVerifierRejectsInvalidTokensWithoutLeakage(t *testing.T) {
 	v, _ := NewVerifier("correct-secret")
 	cases := map[string]string{
-		"bad signature": signed(t, "wrong-secret", jwt.SigningMethodHS256, nil),
-		"bad algorithm": signed(t, "correct-secret", jwt.SigningMethodHS384, nil),
-		"bad audience":  signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Audience = jwt.ClaimStrings{"other"} }),
-		"expired":       signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute)) }),
-		"future nbf":    signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.NotBefore = jwt.NewNumericDate(time.Now().Add(time.Minute)) }),
+		"bad signature":       signed(t, "wrong-secret", jwt.SigningMethodHS256, nil),
+		"bad algorithm":       signed(t, "correct-secret", jwt.SigningMethodHS384, nil),
+		"bad audience":        signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Audience = jwt.ClaimStrings{"other"} }),
+		"expired":             signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-time.Minute)) }),
+		"future nbf":          signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.NotBefore = jwt.NewNumericDate(time.Now().Add(time.Minute)) }),
+		"missing issuer":      signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Issuer = "" }),
+		"wrong issuer":        signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Issuer = "other" }),
+		"missing audience":    signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Audience = nil }),
+		"missing expiry":      signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.ExpiresAt = nil }),
+		"missing subject":     signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Subject = "" }),
+		"missing jti":         signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.ID = "" }),
+		"missing uid":         signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.UserID = "" }),
+		"mismatched uid":      signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.UserID = "other" }),
+		"missing workspace":   signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.WorkspaceID = "" }),
+		"missing iat":         signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.IssuedAt = nil }),
+		"future iat":          signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.IssuedAt = jwt.NewNumericDate(time.Now().Add(time.Minute)) }),
+		"missing nbf":         signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.NotBefore = nil }),
+		"missing permissions": signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Permissions = nil }),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {
