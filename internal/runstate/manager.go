@@ -32,6 +32,10 @@ type managedRun struct {
 	run    Run
 	seq    uint64
 	events []event.Event
+	// persistErr is sticky for the lifetime of a run. Event sinks cannot return
+	// errors, so Finish consults this field to ensure an event-store outage can
+	// never be turned into a successful terminal state.
+	persistErr error
 }
 
 // Manager owns independent run state machines and per-run event sequences.
@@ -132,6 +136,9 @@ func (m *Manager) Finish(runID string, runErr error) (Run, error) {
 	}
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
+	if runErr == nil && mr.persistErr != nil {
+		runErr = fmt.Errorf("run event persistence failed: %w", mr.persistErr)
+	}
 	status, reason := ClassifyTerminal(runErr)
 	if !CanTransition(mr.run.Status, status) {
 		return Run{}, fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, mr.run.Status, status)
@@ -210,9 +217,9 @@ func (m *Manager) stamp(runID string, ev event.Event) (event.Event, error) {
 	}
 	mr.mu.Lock()
 	defer mr.mu.Unlock()
-	mr.seq++
+	nextSeq := mr.seq + 1
 	ev.SchemaVersion = 1
-	ev.Seq = mr.seq
+	ev.Seq = nextSeq
 	ev.RunID = runID
 	ev.EventID = fmt.Sprintf("%s:%d", runID, ev.Seq)
 	if ev.ToolCallID == "" {
@@ -223,9 +230,13 @@ func (m *Manager) stamp(runID string, ev event.Event) (event.Event, error) {
 	}
 	if m.store != nil {
 		if err := m.store.AppendEvent(ev); err != nil {
+			if mr.persistErr == nil {
+				mr.persistErr = err
+			}
 			return event.Event{}, err
 		}
 	}
+	mr.seq = nextSeq
 	mr.events = append(mr.events, ev)
 	return ev, nil
 }

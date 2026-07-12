@@ -389,6 +389,21 @@ func cfgWorkbenchOrigin(value string) string {
 	return u.String()
 }
 
+// setSSECORS keeps legacy local clients permissive while hosted mode only
+// reflects the exact configured Oasis parent. Tokens must never be exposed to
+// an arbitrary web origin via a wildcard response.
+func (s *Server) setSSECORS(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		return
+	}
+	allowed := cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin)
+	if allowed != "" && r.Header.Get("Origin") == allowed {
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Vary", "Origin")
+	}
+}
+
 // ── SSE Chat ────────────────────────────────────────────────
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -427,7 +442,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	s.setSSECORS(w, r)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)

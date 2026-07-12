@@ -316,19 +316,15 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+		workbenchOrigin := labWorkbenchOrigin(s.cfg.WorkbenchOrigin)
 		allowed := origin == "http://"+s.cfg.Addr ||
 			origin == "https://"+s.cfg.Addr ||
-			origin == "https://demo.oasisdata2026.xyz" ||
+			(origin != "" && origin == workbenchOrigin) ||
 			origin == "http://localhost:3100" ||
-			origin == "http://127.0.0.1:3000" ||
-			strings.HasSuffix(origin, ".oasisdata2026.xyz")
+			origin == "http://127.0.0.1:3000"
 		if allowed && origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
-		} else if origin == "" {
-			// same-origin / embed without Origin
-		} else {
-			w.Header().Set("Access-Control-Allow-Origin", "http://"+s.cfg.Addr)
 		}
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")

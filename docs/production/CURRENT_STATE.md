@@ -103,3 +103,13 @@ The Go test output was served from the build cache.
 - Active Runs heartbeat a 120-second durable Oasis lease at most every 60 seconds. Completion retries transient failures; if the process dies or completion remains unreachable, Oasis transactionally reaps the expired lease during reconciliation so concurrency slots cannot leak permanently.
 - Artifact bytes reserve single-file and total storage quota before object I/O, then explicitly commit only after object bytes and canonical metadata are durable. Persistence or commit failure removes metadata/bytes and releases the reservation; retries use the same Artifact identity.
 - Local desktop mode retains permissive in-process limits and does not require Oasis. Hosted CLI startup requires `WORKBENCH_CONTROL_PLANE_URL` and a distinct `WORKBENCH_RUNTIME_INGEST_SECRET` of at least 32 bytes.
+
+## Phase 7 reliability and security hardening (2026-07-13)
+
+- Event persistence is fail-closed. A transient Postgres append failure is sticky for the Run and prevents a later successful terminal transition; a rejected append no longer consumes its sequence number, so reconnect replay remains contiguous.
+- Atomic approval consumption is explicitly fault-tested across a simulated crash before completion. A consumed dangerous tool call cannot execute again after retry or restart, and expiry plus canonical argument binding are rechecked immediately before execution.
+- Artifact persistence remains non-ready when object or metadata storage fails and compensates newly written objects. Owner/path/symlink guards, event count/size limits, malformed JWT rejection, and a 100-Run concurrent tenant isolation/race test cover hostile and load boundaries.
+- Cancel and tool-completion races permit exactly one terminal transition. SSE replay returns only events after the caller's last sequence, with durable monotonic event identities.
+- Hosted Code SSE reflects only the exact configured Workbench origin; Lab CORS likewise removed broad production-domain matching and attacker fallback headers. The legacy Lab embed relay now requires both the exact child frame window and an exact Lab/GUI origin before forwarding a message.
+- The security audit found parameterized hosted SQL and no prompt, provider key, Workbench token, or authorization value in runtime logs. The only credential-pattern source hits were a deliberately invalid compatibility probe, a generated configuration placeholder, and the platform provider's explicit child-process environment handoff.
+- Phase 7 gates passed: `go test -race ./...`, `go vet ./...`, `go build ./...`, uncached `go test ./...`, and `git diff --check`.

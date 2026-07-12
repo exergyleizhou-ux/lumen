@@ -139,3 +139,26 @@ func TestCodePermissionByOperation(t *testing.T) {
 		}
 	}
 }
+
+func TestHostedSSECORSOnlyAllowsConfiguredWorkbenchOrigin(t *testing.T) {
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret", WorkbenchOrigin: "https://oasis.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		origin string
+		want   string
+	}{
+		{origin: "https://oasis.example", want: "https://oasis.example"},
+		{origin: "https://evil.example", want: ""},
+		{origin: "", want: ""},
+	} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Origin", tc.origin)
+		rec := httptest.NewRecorder()
+		s.setSSECORS(rec, req)
+		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
+			t.Errorf("origin %q: got %q want %q", tc.origin, got, tc.want)
+		}
+	}
+}
