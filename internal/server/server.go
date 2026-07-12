@@ -57,6 +57,32 @@ type Server struct {
 	approvals   sync.Map
 	approvalSeq atomic.Uint64
 	runs        *runstate.Manager
+	activeRuns  sync.Map // run_id -> context.CancelFunc
+}
+
+func (s *Server) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	s.activeRuns.Store(runID, context.CancelFunc(cancel))
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			s.activeRuns.Delete(runID)
+			cancel()
+		})
+	}
+	return ctx, cleanup
+}
+
+func (s *Server) cancelActiveRun(runID string) bool {
+	value, ok := s.activeRuns.LoadAndDelete(runID)
+	if !ok {
+		return false
+	}
+	cancel, ok := value.(context.CancelFunc)
+	if ok {
+		cancel()
+	}
+	return ok
 }
 
 // New creates a new Server.
