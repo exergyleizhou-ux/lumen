@@ -38,7 +38,10 @@ func NewManagerFromDir(sciDir string) (*Manager, error) {
 func (m *Manager) ConnectAll() ([]FleetMember, error) {
 	members := ShippedFleet()
 	for _, mem := range members {
-		if err := m.connectOne(mem); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+		err := m.connectOne(ctx, mem)
+		cancel()
+		if err != nil {
 			return members, fmt.Errorf("%s: %w", mem.ID, err)
 		}
 	}
@@ -47,15 +50,22 @@ func (m *Manager) ConnectAll() ([]FleetMember, error) {
 
 // Connect connects one fleet member by id.
 func (m *Manager) Connect(id string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
+	defer cancel()
+	return m.ConnectContext(ctx, id)
+}
+
+// ConnectContext connects one fleet member and honors the caller's deadline.
+func (m *Manager) ConnectContext(ctx context.Context, id string) error {
 	for _, mem := range ShippedFleet() {
 		if mem.ID == id {
-			return m.connectOne(mem)
+			return m.connectOne(ctx, mem)
 		}
 	}
 	return fmt.Errorf("unknown or unshipped fleet member %q", id)
 }
 
-func (m *Manager) connectOne(mem FleetMember) error {
+func (m *Manager) connectOne(ctx context.Context, mem FleetMember) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if old := m.clients[mem.ID]; old != nil {
@@ -74,9 +84,9 @@ func (m *Manager) connectOne(mem FleetMember) error {
 			_ = c.Close()
 			return err
 		}
-	case <-time.After(connectTimeout):
+	case <-ctx.Done():
 		_ = c.Close()
-		return fmt.Errorf("connect timeout after %s", connectTimeout)
+		return fmt.Errorf("connect %s: %w", mem.ID, ctx.Err())
 	}
 	m.clients[mem.ID] = c
 	return nil

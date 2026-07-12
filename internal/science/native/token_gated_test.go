@@ -53,9 +53,12 @@ func TestC2DListAlgorithmsFleetWithToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	if err := mgr.Connect("c2d"); err != nil {
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := mgr.ConnectContext(connectCtx, "c2d"); err != nil {
+		connectCancel()
 		t.Fatal(err)
 	}
+	connectCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -118,9 +121,12 @@ func TestOasisPreviewSchemaFleetWithToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	if err := mgr.Connect("oasis"); err != nil {
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := mgr.ConnectContext(connectCtx, "oasis"); err != nil {
+		connectCancel()
 		t.Fatal(err)
 	}
+	connectCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
