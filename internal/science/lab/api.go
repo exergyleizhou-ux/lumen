@@ -1582,29 +1582,16 @@ func (a *API) handleFileWrite(w http.ResponseWriter, r *http.Request, g *workspa
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
 		return
 	}
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
 	// cap 8 MiB text writes
 	if len(body.Content) > 8<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
 		return
 	}
-	if err := os.WriteFile(abs, []byte(body.Content), 0o600); err != nil {
+	if err := g.WriteFile(rel, []byte(body.Content), 0o600); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	st, _ := os.Stat(abs)
 	size := int64(len(body.Content))
-	if st != nil {
-		size = st.Size()
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": rel, "size": size, "previewKind": previewKind(rel),
 	})
@@ -1630,29 +1617,22 @@ func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
 		return
 	}
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
 	if len(body.Content) > 8<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
 		return
 	}
 	// existing size + append must stay under 16 MiB
 	var existing int64
-	if st, err := os.Stat(abs); err == nil {
-		existing = st.Size()
+	if abs, err := g.Resolve(rel); err == nil {
+		if st, err := os.Stat(abs); err == nil {
+			existing = st.Size()
+		}
 	}
 	if existing+int64(len(body.Content)) > 16<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("file would exceed 16MB after append"))
 		return
 	}
-	f, err := os.OpenFile(abs, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := g.OpenFile(rel, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -1663,11 +1643,7 @@ func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	st, _ := os.Stat(abs)
 	size := existing + int64(n)
-	if st != nil {
-		size = st.Size()
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": rel, "size": size, "appended": n, "previewKind": previewKind(rel),
 	})
