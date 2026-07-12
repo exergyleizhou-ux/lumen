@@ -737,7 +737,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	result, err := t.Execute(ctx, execArgs)
 	// Record evidence receipt for host-observable validation
 	if a.evidence != nil {
-		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly())
+		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly(), effects)
 		a.evidence.Record(rec)
 	}
 	// Audit trail: one disk-backed line per tool call so `audit_query` can later

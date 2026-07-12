@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+
+	"lumen/internal/tool"
 )
 
 // ctxKey is the context key for the active evidence ledger.
@@ -35,14 +37,18 @@ type Ledger struct {
 // Receipt is one tool call's host-observable outcome, recorded immediately
 // after executeOne returns.
 type Receipt struct {
-	ToolName string     `json:"tool"`
-	Success  bool       `json:"success"`
-	ReadOnly bool       `json:"read_only"`
-	Step     string     `json:"step,omitempty"`    // complete_step: which step
-	Todos    []TodoItem `json:"todos,omitempty"`   // todo_write: task list snapshot
-	Result   string     `json:"result,omitempty"`  // complete_step: result claim
-	Command  string     `json:"command,omitempty"` // bash: the command string
-	Paths    []string   `json:"paths,omitempty"`   // write_file/edit_file: target paths
+	ToolName      string     `json:"tool"`
+	Success       bool       `json:"success"`
+	ReadOnly      bool       `json:"read_only"`
+	WritesFiles   bool       `json:"writes_files,omitempty"`
+	RunsCommands  bool       `json:"runs_commands,omitempty"`
+	UsesNetwork   bool       `json:"uses_network,omitempty"`
+	StartsCompute bool       `json:"starts_compute,omitempty"`
+	Step          string     `json:"step,omitempty"`    // complete_step: which step
+	Todos         []TodoItem `json:"todos,omitempty"`   // todo_write: task list snapshot
+	Result        string     `json:"result,omitempty"`  // complete_step: result claim
+	Command       string     `json:"command,omitempty"` // bash: the command string
+	Paths         []string   `json:"paths,omitempty"`   // write_file/edit_file: target paths
 }
 
 // TodoItem mirrors the agent's canonical task representation.
@@ -103,11 +109,15 @@ func (l *Ledger) Receipts() []Receipt {
 
 // ReceiptFromToolCall constructs a Receipt from a tool call's outcome,
 // extracting step/todo/command/path metadata from the raw args.
-func ReceiptFromToolCall(name string, args json.RawMessage, success, readOnly bool) Receipt {
+func ReceiptFromToolCall(name string, args json.RawMessage, success, readOnly bool, effects tool.Effects) Receipt {
 	r := Receipt{
-		ToolName: name,
-		Success:  success,
-		ReadOnly: readOnly,
+		ToolName:      name,
+		Success:       success,
+		ReadOnly:      readOnly,
+		WritesFiles:   effects.WritesFiles,
+		RunsCommands:  effects.RunsCommands,
+		UsesNetwork:   effects.UsesNetwork,
+		StartsCompute: effects.StartsCompute,
 	}
 	switch name {
 	case "complete_step":
@@ -175,17 +185,17 @@ func (l *Ledger) VerifyEvidence(step, result string, evidence []EvidenceItem) (b
 		return false, "at least one evidence item is required"
 	}
 
-	// Must have at least one successful writer-tool receipt this turn
-	hasWriter := false
+	// Must have at least one successful material side effect this turn.
+	hasMaterialEffect := false
 	for _, r := range l.receipts {
-		if r.Success && !r.ReadOnly && r.ToolName != "complete_step" && r.ToolName != "todo_write" {
-			hasWriter = true
+		if r.Success && (r.WritesFiles || r.RunsCommands || r.StartsCompute) && r.ToolName != "complete_step" && r.ToolName != "todo_write" {
+			hasMaterialEffect = true
 			break
 		}
 	}
-	if !hasWriter {
-		return false, fmt.Sprintf("no successful writer-tool receipts this turn") +
-			" — complete_step requires at least one non-read-only tool call as evidence of work done"
+	if !hasMaterialEffect {
+		return false, fmt.Sprintf("no successful material-effect receipts this turn") +
+			" — complete_step requires a file write, command, or compute call as evidence of work done"
 	}
 
 	// Cross-reference each cited evidence item against receipts
@@ -216,7 +226,7 @@ func (l *Ledger) hasBashReceipt(command string) bool {
 		return false
 	}
 	for _, r := range l.receipts {
-		if r.ToolName == "bash" && r.Success && r.Command == command {
+		if r.ToolName == "bash" && r.Success && r.RunsCommands && r.Command == command {
 			return true
 		}
 	}
@@ -228,7 +238,7 @@ func (l *Ledger) hasFileReceipt(path string) bool {
 		return false
 	}
 	for _, r := range l.receipts {
-		if !r.Success {
+		if !r.Success || !r.WritesFiles {
 			continue
 		}
 		for _, p := range r.Paths {
