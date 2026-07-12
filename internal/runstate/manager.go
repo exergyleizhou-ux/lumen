@@ -45,13 +45,20 @@ func NewManager(store Store) *Manager {
 }
 
 func (m *Manager) Start(sessionID, profile, title, parentID string) (Run, error) {
+	return m.StartOwned(LocalOwner, sessionID, profile, title, parentID)
+}
+
+func (m *Manager) StartOwned(owner Owner, sessionID, profile, title, parentID string) (Run, error) {
+	if !owner.Valid() {
+		return Run{}, errors.New("run owner required")
+	}
 	id, err := newRunID()
 	if err != nil {
 		return Run{}, err
 	}
 	now := time.Now().UTC()
 	run := Run{
-		ID: id, SessionID: sessionID, ParentID: parentID,
+		ID: id, UserID: owner.UserID, WorkspaceID: owner.WorkspaceID, SessionID: sessionID, ParentID: parentID,
 		Profile: profile, Title: title, Status: StatusRunning,
 		CreatedAt: now, UpdatedAt: now, StartedAt: timePtr(now), Version: 1,
 	}
@@ -64,6 +71,21 @@ func (m *Manager) Start(sessionID, profile, title, parentID string) (Run, error)
 	m.runs[id] = &managedRun{run: run}
 	m.mu.Unlock()
 	return run, nil
+}
+
+func (m *Manager) GetOwned(owner Owner, runID string) (Run, error) {
+	run, err := m.Get(runID)
+	if err != nil || run.UserID != owner.UserID || run.WorkspaceID != owner.WorkspaceID {
+		return Run{}, fmt.Errorf("%w: %s", ErrRunNotFound, runID)
+	}
+	return run, nil
+}
+
+func (m *Manager) EventsOwned(owner Owner, runID string, afterSeq uint64) ([]event.Event, error) {
+	if _, err := m.GetOwned(owner, runID); err != nil {
+		return nil, err
+	}
+	return m.Events(runID, afterSeq)
 }
 
 func (m *Manager) WrapSink(runID string, inner event.Sink) event.Sink {

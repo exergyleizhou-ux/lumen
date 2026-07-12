@@ -39,6 +39,7 @@ func (s *Server) routesAPI() {
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	owner := ownerFromRequest(r)
 	rel := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
 	if rel == "" || strings.Contains(rel, "..") {
 		jsonErr(w, "invalid run path", http.StatusBadRequest)
@@ -50,7 +51,7 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		run, err := s.runs.Get(parts[0])
+		run, err := s.runs.GetOwned(owner, parts[0])
 		if errors.Is(err, runstate.ErrRunNotFound) {
 			jsonErr(w, "run not found", http.StatusNotFound)
 			return
@@ -76,7 +77,7 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			}
 			after = value
 		}
-		events, err := s.runs.Events(parts[0], after)
+		events, err := s.runs.EventsOwned(owner, parts[0], after)
 		if errors.Is(err, runstate.ErrRunNotFound) {
 			jsonErr(w, "run not found", http.StatusNotFound)
 			return
@@ -93,14 +94,14 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if _, err := s.runs.Get(parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
+		if _, err := s.runs.GetOwned(owner, parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
 			jsonErr(w, "run not found", http.StatusNotFound)
 			return
 		} else if err != nil {
 			jsonErr(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if !s.cancelActiveRun(parts[0]) {
+		if !s.cancelActiveRun(owner, parts[0]) {
 			jsonErr(w, "run is not active", http.StatusConflict)
 			return
 		}

@@ -17,19 +17,21 @@ var (
 // RunRecord is the storage-only representation of a run. Domain conversion
 // belongs to runstate so this package remains independent of runtime policy.
 type RunRecord struct {
-	ID         string
-	SessionID  string
-	ParentID   string
-	Profile    string
-	Title      string
-	Status     string
-	StopReason string
-	Error      string
-	CreatedAt  string
-	UpdatedAt  string
-	StartedAt  string
-	FinishedAt string
-	Version    uint64
+	ID          string
+	UserID      string
+	WorkspaceID string
+	SessionID   string
+	ParentID    string
+	Profile     string
+	Title       string
+	Status      string
+	StopReason  string
+	Error       string
+	CreatedAt   string
+	UpdatedAt   string
+	StartedAt   string
+	FinishedAt  string
+	Version     uint64
 }
 
 type RunEventRecord struct {
@@ -48,10 +50,10 @@ func (s *Store) CreateRun(rec RunRecord) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO runs (
-		id, session_id, parent_run_id, profile, title, status, stop_reason, error,
+		id, user_id, workspace_id, session_id, parent_run_id, profile, title, status, stop_reason, error,
 		created_at, updated_at, started_at, finished_at, version
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.ID, rec.SessionID, rec.ParentID, rec.Profile, rec.Title, rec.Status,
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ID, rec.UserID, rec.WorkspaceID, rec.SessionID, rec.ParentID, rec.Profile, rec.Title, rec.Status,
 		rec.StopReason, rec.Error, rec.CreatedAt, rec.UpdatedAt, rec.StartedAt,
 		rec.FinishedAt, rec.Version,
 	)
@@ -68,10 +70,10 @@ func (s *Store) UpdateRun(rec RunRecord, expectedVersion uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result, err := s.db.Exec(`UPDATE runs SET
-		session_id=?, parent_run_id=?, profile=?, title=?, status=?, stop_reason=?, error=?,
+		user_id=?, workspace_id=?, session_id=?, parent_run_id=?, profile=?, title=?, status=?, stop_reason=?, error=?,
 		created_at=?, updated_at=?, started_at=?, finished_at=?, version=?
 		WHERE id=? AND version=?`,
-		rec.SessionID, rec.ParentID, rec.Profile, rec.Title, rec.Status, rec.StopReason,
+		rec.UserID, rec.WorkspaceID, rec.SessionID, rec.ParentID, rec.Profile, rec.Title, rec.Status, rec.StopReason,
 		rec.Error, rec.CreatedAt, rec.UpdatedAt, rec.StartedAt, rec.FinishedAt,
 		rec.Version, rec.ID, expectedVersion,
 	)
@@ -95,10 +97,10 @@ func (s *Store) GetRun(id string) (RunRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var rec RunRecord
-	err := s.db.QueryRow(`SELECT id, session_id, parent_run_id, profile, title, status,
+	err := s.db.QueryRow(`SELECT id, user_id, workspace_id, session_id, parent_run_id, profile, title, status,
 		stop_reason, error, created_at, updated_at, started_at, finished_at, version
 		FROM runs WHERE id=?`, id).Scan(
-		&rec.ID, &rec.SessionID, &rec.ParentID, &rec.Profile, &rec.Title, &rec.Status,
+		&rec.ID, &rec.UserID, &rec.WorkspaceID, &rec.SessionID, &rec.ParentID, &rec.Profile, &rec.Title, &rec.Status,
 		&rec.StopReason, &rec.Error, &rec.CreatedAt, &rec.UpdatedAt, &rec.StartedAt,
 		&rec.FinishedAt, &rec.Version,
 	)

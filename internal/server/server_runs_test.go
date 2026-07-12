@@ -89,7 +89,7 @@ func TestRunCancelAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runCtx, cleanup := s.beginActiveRun(context.Background(), run.ID, time.Minute)
+	runCtx, cleanup := s.beginActiveRun(context.Background(), runstate.LocalOwner, run.ID, time.Minute)
 	defer cleanup()
 
 	rec := httptest.NewRecorder()

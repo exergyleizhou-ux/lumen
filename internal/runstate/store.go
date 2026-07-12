@@ -92,7 +92,7 @@ func (s *SQLiteStore) Events(runID string, afterSeq uint64) ([]event.Event, erro
 
 func toRecord(run Run) lumenstore.RunRecord {
 	return lumenstore.RunRecord{
-		ID: run.ID, SessionID: run.SessionID, ParentID: run.ParentID,
+		ID: run.ID, UserID: run.UserID, WorkspaceID: run.WorkspaceID, SessionID: run.SessionID, ParentID: run.ParentID,
 		Profile: run.Profile, Title: run.Title, Status: string(run.Status),
 		StopReason: run.StopReason, Error: run.Error,
 		CreatedAt: formatTime(run.CreatedAt), UpdatedAt: formatTime(run.UpdatedAt),
@@ -119,7 +119,7 @@ func fromRecord(rec lumenstore.RunRecord) (Run, error) {
 		return Run{}, err
 	}
 	return Run{
-		ID: rec.ID, SessionID: rec.SessionID, ParentID: rec.ParentID,
+		ID: rec.ID, UserID: rec.UserID, WorkspaceID: rec.WorkspaceID, SessionID: rec.SessionID, ParentID: rec.ParentID,
 		Profile: rec.Profile, Title: rec.Title, Status: Status(rec.Status),
 		StopReason: rec.StopReason, Error: rec.Error,
 		CreatedAt: createdAt, UpdatedAt: updatedAt, StartedAt: startedAt,

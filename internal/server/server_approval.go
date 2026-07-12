@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 )
 
 type approvalDecision struct {
@@ -15,7 +16,8 @@ type approvalDecision struct {
 }
 
 type approvalWaiter struct {
-	ch chan approvalDecision
+	ch    chan approvalDecision
+	owner runstate.Owner
 }
 
 func (s *Server) routesApproval() {
@@ -42,6 +44,10 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	wt := raw.(*approvalWaiter)
+	if wt.owner != ownerFromRequest(r) {
+		jsonErr(w, "approval expired or unknown", http.StatusNotFound)
+		return
+	}
 	select {
 	case wt.ch <- approvalDecision{Allow: req.Allow, Args: req.Args}:
 	default:
@@ -49,7 +55,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"id": req.ID, "allowed": req.Allow, "args_edited": len(req.Args) > 0})
 }
 
-func (s *Server) webApprover(emit func(kind string, payload map[string]any)) permission.Asker {
+func (s *Server) webApprover(owner runstate.Owner, emit func(kind string, payload map[string]any)) permission.Asker {
 	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		mode := s.cfg.Ctrl.PermissionMode()
 		if mode == permission.ModeBypass {
@@ -60,7 +66,7 @@ func (s *Server) webApprover(emit func(kind string, payload map[string]any)) per
 		}
 
 		id := fmt.Sprintf("appr-%d", s.approvalSeq.Add(1))
-		wt := &approvalWaiter{ch: make(chan approvalDecision, 1)}
+		wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner}
 		s.approvals.Store(id, wt)
 		defer s.approvals.Delete(id)
 

@@ -88,6 +88,8 @@ func (s *Store) migrate() error {
 		)`,
 		`CREATE TABLE IF NOT EXISTS runs (
 			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL DEFAULT 'local',
+			workspace_id TEXT NOT NULL DEFAULT 'local',
 			session_id TEXT,
 			parent_run_id TEXT,
 			profile TEXT NOT NULL,
@@ -117,6 +119,21 @@ func (s *Store) migrate() error {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	// Upgrade databases created before tenant ownership was persisted.
+	for _, col := range []struct{ name, ddl string }{{"user_id", "ALTER TABLE runs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'"}, {"workspace_id", "ALTER TABLE runs ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'local'"}} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('runs') WHERE name=?`, col.name).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("migrate %s: %w", col.name, err)
+			}
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_owner_id ON runs(user_id, workspace_id, id)`); err != nil {
+		return err
 	}
 	return nil
 }

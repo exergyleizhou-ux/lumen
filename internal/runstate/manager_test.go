@@ -170,3 +170,24 @@ func TestManagerReplaysPersistedRunAfterRestart(t *testing.T) {
 		t.Fatalf("event payloads were not restored: %#v", replayed)
 	}
 }
+
+func TestOwnedRunIsNotEnumerableAcrossOwnersAfterRestart(t *testing.T) {
+	db, err := lumenstore.Open(filepath.Join(t.TempDir(), "owners.db"))
+	if err != nil { t.Fatal(err) }
+	defer db.Close()
+	store := NewSQLiteStore(db)
+	ownerA := Owner{UserID: "alice", WorkspaceID: "research"}
+	ownerB := Owner{UserID: "bob", WorkspaceID: "research"}
+	mgr := NewManager(store)
+	run, err := mgr.StartOwned(ownerA, "session", "code", "private", "")
+	if err != nil { t.Fatal(err) }
+	mgr.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+
+	restarted := NewManager(store)
+	got, err := restarted.GetOwned(ownerA, run.ID)
+	if err != nil || got.UserID != "alice" || got.WorkspaceID != "research" { t.Fatalf("owner lost after restart: %#v %v", got, err) }
+	if _, err := restarted.GetOwned(ownerB, run.ID); !errors.Is(err, ErrRunNotFound) { t.Fatalf("cross-owner get leaked: %v", err) }
+	if _, err := restarted.EventsOwned(ownerB, run.ID, 0); !errors.Is(err, ErrRunNotFound) { t.Fatalf("cross-owner events leaked: %v", err) }
+	events, err := restarted.EventsOwned(ownerA, run.ID, 0)
+	if err != nil || len(events) != 1 || events[0].Text != "secret" { t.Fatalf("owner events unavailable: %#v %v", events, err) }
+}

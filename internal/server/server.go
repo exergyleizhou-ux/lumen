@@ -61,12 +61,24 @@ type Server struct {
 	approvalSeq atomic.Uint64
 	runs        *runstate.Manager
 	auth        *hostedauth.Verifier
-	activeRuns  sync.Map // run_id -> context.CancelFunc
+	activeRuns  sync.Map // run_id -> activeRun
 }
 
-func (s *Server) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {
+type activeRun struct {
+	Owner  runstate.Owner
+	Cancel context.CancelFunc
+}
+
+func ownerFromRequest(r *http.Request) runstate.Owner {
+	if id, ok := hostedauth.FromContext(r.Context()); ok {
+		return runstate.Owner{UserID: id.UserID, WorkspaceID: id.WorkspaceID}
+	}
+	return runstate.LocalOwner
+}
+
+func (s *Server) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
-	s.activeRuns.Store(runID, context.CancelFunc(cancel))
+	s.activeRuns.Store(runID, activeRun{Owner: owner, Cancel: cancel})
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
@@ -77,16 +89,18 @@ func (s *Server) beginActiveRun(parent context.Context, runID string, timeout ti
 	return ctx, cleanup
 }
 
-func (s *Server) cancelActiveRun(runID string) bool {
-	value, ok := s.activeRuns.LoadAndDelete(runID)
+func (s *Server) cancelActiveRun(owner runstate.Owner, runID string) bool {
+	value, ok := s.activeRuns.Load(runID)
 	if !ok {
 		return false
 	}
-	cancel, ok := value.(context.CancelFunc)
-	if ok {
-		cancel()
+	active, ok := value.(activeRun)
+	if !ok || active.Owner != owner {
+		return false
 	}
-	return ok
+	s.activeRuns.Delete(runID)
+	active.Cancel()
+	return true
 }
 
 // New creates a new Server.
@@ -269,7 +283,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.cfg.Ctrl.SetApprover(s.webApprover(func(kind string, payload map[string]any) {
+	owner := ownerFromRequest(r)
+	s.cfg.Ctrl.SetApprover(s.webApprover(owner, func(kind string, payload map[string]any) {
 		sink.emitPayload(kind, payload)
 	}))
 
@@ -281,13 +296,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if sess := s.cfg.Ctrl.Session(); sess != nil && sess.Path != "" {
 		sessionID = lumenstore.SessionIDFromPath(sess.Path)
 	}
-	run, err := s.runs.Start(sessionID, "code", summarizeRunTitle(req.Prompt), "")
+	run, err := s.runs.StartOwned(owner, sessionID, "code", summarizeRunTitle(req.Prompt), "")
 	if err != nil {
 		sink.emit("error", err.Error())
 		sink.done("", err)
 		return
 	}
-	ctx, cleanupRun := s.beginActiveRun(r.Context(), run.ID, 5*time.Minute)
+	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, 5*time.Minute)
 	defer cleanupRun()
 	s.cfg.Ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
 

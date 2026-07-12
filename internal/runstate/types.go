@@ -27,20 +27,29 @@ const (
 
 // Run is the durable summary of one task execution.
 type Run struct {
-	ID         string     `json:"id"`
-	SessionID  string     `json:"session_id,omitempty"`
-	ParentID   string     `json:"parent_run_id,omitempty"`
-	Profile    string     `json:"profile"`
-	Title      string     `json:"title"`
-	Status     Status     `json:"status"`
-	StopReason string     `json:"stop_reason,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Version    uint64     `json:"version"`
+	ID          string     `json:"id"`
+	UserID      string     `json:"user_id,omitempty"`
+	WorkspaceID string     `json:"workspace_id,omitempty"`
+	SessionID   string     `json:"session_id,omitempty"`
+	ParentID    string     `json:"parent_run_id,omitempty"`
+	Profile     string     `json:"profile"`
+	Title       string     `json:"title"`
+	Status      Status     `json:"status"`
+	StopReason  string     `json:"stop_reason,omitempty"`
+	Error       string     `json:"error,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	FinishedAt  *time.Time `json:"finished_at,omitempty"`
+	Version     uint64     `json:"version"`
 }
+
+// Owner is the immutable tenant boundary for a run.
+type Owner struct{ UserID, WorkspaceID string }
+
+var LocalOwner = Owner{UserID: "local", WorkspaceID: "local"}
+
+func (o Owner) Valid() bool { return o.UserID != "" && o.WorkspaceID != "" }
 
 // Terminal reports whether no further state transitions are legal.
 func (s Status) Terminal() bool {

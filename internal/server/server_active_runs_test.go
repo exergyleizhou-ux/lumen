@@ -4,12 +4,14 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"lumen/internal/runstate"
 )
 
 func TestDetachedRunSurvivesRequestCancellation(t *testing.T) {
 	s := &Server{}
 	requestCtx, cancelRequest := context.WithCancel(context.Background())
-	runCtx, cleanup := s.beginActiveRun(requestCtx, "run_detached", time.Minute)
+	runCtx, cleanup := s.beginActiveRun(requestCtx, runstate.LocalOwner, "run_detached", time.Minute)
 	defer cleanup()
 
 	cancelRequest()
@@ -19,7 +21,7 @@ func TestDetachedRunSurvivesRequestCancellation(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 
-	if !s.cancelActiveRun("run_detached") {
+	if !s.cancelActiveRun(runstate.LocalOwner, "run_detached") {
 		t.Fatal("active run was not canceled")
 	}
 	select {
@@ -34,10 +36,10 @@ func TestDetachedRunSurvivesRequestCancellation(t *testing.T) {
 
 func TestActiveRunCleanupRemovesCancellationEntry(t *testing.T) {
 	s := &Server{}
-	_, cleanup := s.beginActiveRun(context.Background(), "run_cleanup", time.Minute)
+	_, cleanup := s.beginActiveRun(context.Background(), runstate.LocalOwner, "run_cleanup", time.Minute)
 	cleanup()
 	cleanup()
-	if s.cancelActiveRun("run_cleanup") {
+	if s.cancelActiveRun(runstate.LocalOwner, "run_cleanup") {
 		t.Fatal("cleaned run remained active")
 	}
 }
