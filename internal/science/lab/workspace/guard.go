@@ -6,7 +6,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
+
+var atomicWriteSeq atomic.Uint64
+
+// AtomicWriteFile replaces rel without ever following a caller-controlled
+// symlink. Both the temporary creation and rename are rooted at directory fds.
+func (g *Guard) AtomicWriteFile(rel string, data []byte, perm os.FileMode) error {
+	tmp := fmt.Sprintf("%s.lumen-tmp-%d", rel, atomicWriteSeq.Add(1))
+	if err := g.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := g.Replace(tmp, rel); err != nil {
+		_ = g.RemoveAll(tmp)
+		return err
+	}
+	return nil
+}
 
 // Walk traverses without exposing host absolute paths. Platform primitives
 // re-open every component with no-follow semantics on Unix.

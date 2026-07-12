@@ -178,6 +178,31 @@ func (g *Guard) Rename(oldRel, newRel string) error {
 	}
 	return unix.Renameat(of, on, nf, nn)
 }
+
+// Replace atomically renames oldRel over newRel while rejecting symlink leaves.
+func (g *Guard) Replace(oldRel, newRel string) error {
+	of, on, e := g.parent(oldRel, false)
+	if e != nil {
+		return e
+	}
+	defer unix.Close(of)
+	nf, nn, e := g.parent(newRel, true)
+	if e != nil {
+		return e
+	}
+	defer unix.Close(nf)
+	var st unix.Stat_t
+	if e = unix.Fstatat(of, on, &st, unix.AT_SYMLINK_NOFOLLOW); e != nil {
+		return e
+	}
+	if st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return fmt.Errorf("symlink not allowed")
+	}
+	if e = unix.Fstatat(nf, nn, &st, unix.AT_SYMLINK_NOFOLLOW); e == nil && st.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return fmt.Errorf("symlink not allowed")
+	}
+	return unix.Renameat(of, on, nf, nn)
+}
 func (g *Guard) Copy(src, dst string) error {
 	st, e := g.Stat(src)
 	if e != nil {

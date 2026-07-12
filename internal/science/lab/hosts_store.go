@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	labworkspace "lumen/internal/science/lab/workspace"
 )
 
 // RegisteredHost is a Lab-managed SSH/local host (beyond ~/.ssh/config).
@@ -33,7 +35,14 @@ func hostsPath(sciDir string) string {
 func LoadRegisteredHosts(sciDir string) ([]RegisteredHost, error) {
 	hostsMu.Lock()
 	defer hostsMu.Unlock()
-	data, err := os.ReadFile(hostsPath(sciDir))
+	g, err := labworkspace.NewGuard(sciDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.MkdirAll("lab", 0o700); err != nil {
+		return nil, err
+	}
+	data, err := g.ReadFile(filepath.Join("lab", "hosts.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -51,8 +60,11 @@ func LoadRegisteredHosts(sciDir string) ([]RegisteredHost, error) {
 func SaveRegisteredHosts(sciDir string, hosts []RegisteredHost) error {
 	hostsMu.Lock()
 	defer hostsMu.Unlock()
-	path := hostsPath(sciDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	g, err := labworkspace.NewGuard(sciDir)
+	if err != nil {
+		return err
+	}
+	if err := g.MkdirAll("lab", 0o700); err != nil {
 		return err
 	}
 	// normalize aliases
@@ -77,7 +89,7 @@ func SaveRegisteredHosts(sciDir string, hosts []RegisteredHost) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return g.AtomicWriteFile(filepath.Join("lab", "hosts.json"), append(data, '\n'), 0o600)
 }
 
 // UpsertRegisteredHost adds or updates one host.

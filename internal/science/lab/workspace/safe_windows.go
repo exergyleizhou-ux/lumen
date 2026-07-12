@@ -62,6 +62,19 @@ func (g *Guard) Rename(a, b string) error {
 	}
 	return os.Rename(x, y)
 }
+
+func (g *Guard) Replace(a, b string) error {
+	x, e := g.Resolve(a)
+	if e != nil {
+		return e
+	}
+	y, e := g.Resolve(b)
+	if e != nil {
+		return e
+	}
+	_ = os.Remove(y)
+	return os.Rename(x, y)
+}
 func (g *Guard) Copy(a, b string) error {
 	data, e := g.ReadFile(a)
 	if e != nil {
