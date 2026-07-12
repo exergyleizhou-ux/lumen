@@ -119,3 +119,11 @@ The Go test output was served from the build cache.
 - Hosted Code caps JSON requests, including image-bearing chat payloads, at 2 MiB and multipart uploads at 64 MiB before business handlers. Oversize JSON receives HTTP 413 with stable code `request_too_large`; chunked bodies cannot bypass the limit.
 - HS256 Workbench secrets shorter than 32 bytes now fail server startup. Hosted Code CSP contains only `'self'` and the exact configured Workbench origin; demo and wildcard ancestors remain local-mode compatibility only.
 - The real-Postgres integration fault consumes a dangerous approval, closes the event-store connection before ToolResult persistence, and verifies after restart that the grant remains consumed, cannot execute twice, and the durable Run did not become successful. Local object compensation is also verified through a newly opened backend instance.
+
+## Phase 9 deploy candidate (2026-07-13)
+
+- The production Compose candidate pins runtime and migrator images, runs migrations as an explicit one-shot deploy step, keeps Code/Lab on an internal network, and exposes only a loopback Caddy listener.
+- Caddy routes Code and Lab by exact host, preserves Host/Origin/Cookie/request identity, disables response buffering and permits long-lived SSE responses.
+- Hosted configuration is documented fail-closed: dedicated JWT/control-plane secrets, Postgres, object/workspace storage, exact parent origin, provider credential, quotas, and private ports are mandatory.
+- `scripts/deploy-lumen-vps.sh` supplies non-interactive config validation, migration, deploy, smoke, application rollback and teardown entry points. Production execution remains intentionally unauthorized.
+- Deployment, rollback and operations runbooks define immutable image tags, snapshot and forward-fix policy, health/readiness gates, Code/Lab real-token smoke, logging redaction, metrics/alerts, SSE diagnosis and DB/object/control-plane incidents.
