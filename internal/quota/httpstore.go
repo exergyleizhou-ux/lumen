@@ -29,6 +29,10 @@ func NewHTTPStore(baseURL, secret string, client *http.Client) (*HTTPStore, erro
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return nil, errors.New("valid WORKBENCH_CONTROL_PLANE_URL required")
 	}
+	// This setting identifies an origin. Historical deployments sometimes
+	// included the runtime API prefix; retaining it duplicates the fixed path
+	// below and silently turns every quota operation into a 404.
+	u.Path, u.RawPath, u.RawQuery, u.Fragment = "", "", "", ""
 	if len(secret) < 32 {
 		return nil, errors.New("WORKBENCH_RUNTIME_INGEST_SECRET must be at least 32 bytes")
 	}

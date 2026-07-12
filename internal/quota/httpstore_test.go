@@ -81,6 +81,27 @@ func TestHTTPStoreContractAndMachineAuthentication(t *testing.T) {
 	}
 }
 
+func TestHTTPStoreTreatsConfiguredURLAsControlPlaneOrigin(t *testing.T) {
+	secret := "01234567890123456789012345678901"
+	var path string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":{"quota":{"user_concurrent_runs":2,"workspace_concurrent_runs":2,"monthly_tokens":100,"monthly_compute_millis":100,"storage_bytes":100,"artifact_total_bytes":100,"artifact_single_bytes":50,"run_wall_millis":60000,"run_max_steps":10,"run_max_events":20,"event_max_bytes":4096},"lease_expires_at":"2099-01-01T00:00:00Z"}}`))
+	}))
+	defer srv.Close()
+	store, err := NewHTTPStore(srv.URL+"/api/v1/workbench/runtime?legacy=1#fragment", secret, srv.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Admit(context.Background(), Admission{RunID: "run", Owner: runstate.Owner{UserID: "u", WorkspaceID: "w"}, StartedAt: time.Now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/v1/workbench/runtime/quota/runs/run/admit" {
+		t.Fatalf("path=%q", path)
+	}
+}
+
 func TestHTTPStoreRetriesTransientCompletion(t *testing.T) {
 	calls := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
