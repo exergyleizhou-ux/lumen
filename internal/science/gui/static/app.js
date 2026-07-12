@@ -5,6 +5,38 @@ const API = (typeof location !== "undefined" && location.pathname.startsWith("/l
   ? "/lumen-science"
   : "";
 const FETCH_TIMEOUT_MS = 30000;
+
+/** True when served on public Oasis (no local Claude Science.app). */
+function isOasisPublicHost() {
+  if (typeof location === "undefined") return false;
+  if (location.pathname.startsWith("/lumen-science")) return true;
+  return /oasisdata2026\.xyz$/i.test(location.hostname || "");
+}
+
+/** Lab workbench base URL — same-origin on Oasis, loopback on desktop. */
+function labBaseURL() {
+  if (isOasisPublicHost()) {
+    return (location.origin || "") + "/lumen-lab/";
+  }
+  if (typeof location !== "undefined" && location.protocol === "https:") {
+    return "https://127.0.0.1:18995/";
+  }
+  return "http://127.0.0.1:18992/";
+}
+
+function labHealthURL() {
+  if (isOasisPublicHost()) return "/lumen-lab/api/lab/health";
+  return "http://127.0.0.1:18992/api/lab/health";
+}
+
+function openLabWorkbench(extraQuery) {
+  let u = labBaseURL();
+  if (extraQuery) {
+    u += (u.indexOf("?") >= 0 ? "&" : "?") + String(extraQuery).replace(/^\?/, "");
+  }
+  window.open(u, "_blank");
+  return u;
+}
 let mode = "proxy";
 let busy = false;
 let keys = {};
@@ -175,8 +207,12 @@ function applyMode(m) {
     labEl.style.display = isLab ? "block" : "none";
     if (isLab) {
       const frame = $("labFrame");
-      if (frame && frame.src === "about:blank") {
-        frame.src = (location.protocol === "https:" ? "https://127.0.0.1:18995" : "http://127.0.0.1:18992") + "/?embed=1";
+      // Always refresh to public /lumen-lab/ when on Oasis (never 127.0.0.1).
+      if (frame) {
+        const want = labBaseURL() + "?embed=1";
+        if (frame.src === "about:blank" || frame.src.indexOf("127.0.0.1") >= 0 || isOasisPublicHost()) {
+          frame.src = want;
+        }
       }
     }
   }
@@ -190,7 +226,10 @@ function applyMode(m) {
   });
   const heroLabel = $("heroBtn")?.querySelector(".hero-label");
   if (heroLabel) {
-    heroLabel.textContent = m === "official" ? "打开官方 Claude Science" : m === "lab" ? "打开实验室" : "一键开始";
+    if (m === "official") heroLabel.textContent = "打开官方 Claude Science";
+    else if (m === "lab") heroLabel.textContent = "打开实验室";
+    else if (isOasisPublicHost()) heroLabel.textContent = "打开实验室（网页）";
+    else heroLabel.textContent = "一键开始";
   }
   updateTelemetry({ mode: m });
 }
@@ -599,6 +638,18 @@ async function saveKey() {
 }
 
 async function oneClick() {
+  // Oasis public demo: no Claude Science.app on the VPS — open Lab instead.
+  if (isOasisPublicHost()) {
+    const u = openLabWorkbench("embed=1");
+    setMsg(
+      "绿洲网页端没有 Claude Science 桌面程序，已为你打开「实验室」工作台。\n" +
+        "桥接配置可在本页管理；完整桌面 Science 请在 Mac 安装 Lumen Science.app + Claude Science。\n" +
+        u,
+      "ok"
+    );
+    applyMode("lab");
+    return;
+  }
   setBusy(true);
   setMsg("正在启动代理与沙箱…");
   try {
@@ -620,19 +671,52 @@ async function oneClick() {
       applyStatus({ proxy: "green", sandbox: "green", upstream: "green", url: r.url });
       // Show prominent sandbox link (works without popup permission)
       var bar = $("urlBar");
-      if (bar) { bar.href = r.url; bar.hidden = false; bar.querySelector(".cert-id").textContent = r.url; }
+      if (bar) {
+        bar.href = r.url;
+        bar.hidden = false;
+        const cert = bar.querySelector(".cert-id") || bar.querySelector(".url-text");
+        if (cert) cert.textContent = r.url;
+      }
       // 一键跳转到沙箱 Science 会话
       window.open(r.url, "_blank");
     }
   } catch (e) {
-    setMsg(String(e.message || e), "err");
+    const msg = String(e.message || e);
+    if (/Science binary not found|claude-science/i.test(msg)) {
+      setMsg(
+        "未找到 Claude Science 桌面程序，无法启动沙箱。\n" +
+          "• Mac 桌面：安装 Claude Science.app 后再点「一键开始」\n" +
+          "• 绿洲网页：请改用「实验室」标签做科研对话\n" +
+          "实验室：" +
+          labBaseURL(),
+        "err"
+      );
+      try {
+        openLabWorkbench("embed=1");
+        applyMode("lab");
+      } catch (_) {}
+    } else {
+      setMsg(msg, "err");
+    }
   } finally {
     setBusy(false);
   }
 }
 
 async function heroClick() {
+  if (mode === "lab") {
+    openLabWorkbench("embed=1");
+    setMsg("已打开实验室：" + labBaseURL(), "ok");
+    return;
+  }
   if (mode === "official") {
+    if (isOasisPublicHost()) {
+      setMsg(
+        "官方 Claude Science 只能在本机桌面启动。网页端请用「实验室」，或在 Mac 安装 Claude Science 后用 Lumen Science.app。",
+        "err"
+      );
+      return;
+    }
     setBusy(true);
     try {
       await api("/api/official", { method: "POST", body: "{}" });
@@ -999,9 +1083,20 @@ $("quitBtn")?.addEventListener("click", async () => {
   try { await api("/api/quit-proxy", { method: "POST", body: "{}" }); } catch (_) {}
   window.close();
 });
-$("openBrowserBtn")?.addEventListener("click", () =>
-  api("/api/open-browser", { method: "POST", body: "{}" }).catch((e) => setMsg(e.message, "err"))
-);
+$("openBrowserBtn")?.addEventListener("click", async () => {
+  if (isOasisPublicHost()) {
+    const u = openLabWorkbench("embed=1");
+    setMsg("网页端已打开实验室（Claude Science 桌面仅本机可用）：" + u, "ok");
+    applyMode("lab");
+    return;
+  }
+  try {
+    const r = await api("/api/open-browser", { method: "POST", body: "{}" });
+    setMsg("已在浏览器打开 " + (r.url || ""), "ok");
+  } catch (e) {
+    setMsg(String(e.message || e), "err");
+  }
+});
 $("doctorBtn")?.addEventListener("click", runDoctor);
 $("logsBtn")?.addEventListener("click", showLogs);
 $("researchBtn")?.addEventListener("click", showResearch);
@@ -1045,8 +1140,12 @@ async function probeLabHealth() {
   const dot = $("labDot");
   const link = $("labLink");
   const tab = $("labTab");
+  if (link) {
+    link.href = labBaseURL();
+    if (isOasisPublicHost()) link.removeAttribute("target");
+  }
   try {
-    const r = await fetch("http://127.0.0.1:18992/api/lab/health", { signal: AbortSignal.timeout(800) });
+    const r = await fetch(labHealthURL(), { signal: AbortSignal.timeout(2500) });
     if (!r.ok) throw new Error("lab down");
     const h = await r.json();
     const healthy = h.research_pack?.healthy;
@@ -1059,11 +1158,19 @@ async function probeLabHealth() {
       tab.textContent = "实验室 (" + (f.connected_total || 0) + ")";
       tab.title = (f.cs_connected || 0) + " CS + " + (f.lumen_native || 0) + " 原生 · " + (h.research_pack?.domain_tools || 0) + " tools";
     }
-    const mode = h.science_mode || "hybrid";
-    if (link && mode === "bridge") link.style.opacity = "0.55";
+    const smode = h.science_mode || "hybrid";
+    if (link && smode === "bridge") link.style.opacity = "0.55";
   } catch (_) {
-    if (dot) { dot.textContent = "—"; dot.title = "实验室未启动 (lumen science lab)"; }
-    if (tab) { tab.textContent = "实验室"; tab.title = "实验室未启动"; }
+    if (dot) {
+      dot.textContent = "—";
+      dot.title = isOasisPublicHost()
+        ? "实验室探测失败（可点「实验室」标签直接打开）"
+        : "实验室未启动 (lumen science lab)";
+    }
+    if (tab) {
+      tab.textContent = "实验室";
+      tab.title = isOasisPublicHost() ? "打开网页实验室" : "实验室未启动";
+    }
   }
 }
 

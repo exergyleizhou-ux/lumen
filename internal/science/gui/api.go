@@ -310,6 +310,13 @@ func (a *API) handleStart(w http.ResponseWriter, r *http.Request) {
 		return map[string]any{"url": url, "action": action, "msg": msg}, nil
 	})
 	if err != nil {
+		// Friendlier copy when Claude Science desktop is absent (common on Linux/VPS/Oasis web).
+		msg := err.Error()
+		if strings.Contains(msg, "Science binary not found") || strings.Contains(msg, "claude-science") {
+			writeErr(w, http.StatusBadRequest, fmt.Errorf(
+				"未找到 Claude Science 桌面程序，无法启动沙箱。绿洲网页请用「实验室」(/lumen-lab/)；Mac 请安装 Claude Science.app 后再试"))
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
