@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/doctor"
@@ -33,7 +35,9 @@ func workbenchVerification(events []event.Event, run runstate.Run) string {
 		case event.VerifyStarted:
 			state = "running"
 		case event.VerifyResult:
-			if ev.Level == event.LevelInfo && !strings.Contains(ev.Text, "skipped") {
+			if strings.Contains(ev.Text, "skipped") {
+				state = "not_run"
+			} else if ev.Level == event.LevelInfo {
 				state = "passed"
 			} else {
 				state = "failed"
@@ -133,6 +137,68 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		jsonOK(w, map[string]any{"artifacts": items})
 		return
 	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "approvals" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, err := s.runs.GetOwned(owner, parts[0]); err != nil {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		items, err := s.approvalStore.ListRun(owner, parts[0])
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		safe := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			safe = append(safe, safeApprovalReview(item))
+		}
+		jsonOK(w, map[string]any{"approvals": safe})
+		return
+	}
+	if len(parts) == 4 && parts[0] != "" && parts[1] == "artifacts" && parts[2] != "" && parts[3] == "download" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, err := s.runs.GetOwned(owner, parts[0]); err != nil {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		items, err := s.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		var found *artifact.Record
+		for i := range items {
+			if items[i].ID == parts[2] {
+				found = &items[i]
+				break
+			}
+		}
+		if found == nil {
+			jsonErr(w, "artifact not found", http.StatusNotFound)
+			return
+		}
+		body, err := s.artifactStore.Open(r.Context(), owner, *found)
+		if err != nil {
+			jsonErr(w, "artifact not found", http.StatusNotFound)
+			return
+		}
+		defer body.Close()
+		name := artifact.SafeName(found.Name)
+		if name == "" {
+			name = "artifact"
+		}
+		w.Header().Set("Content-Type", found.MIME)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.Copy(w, body)
+		return
+	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {
 		if r.Method != http.MethodGet {
 			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -212,6 +278,10 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonErr(w, "invalid run path", http.StatusBadRequest)
+}
+
+func safeApprovalReview(item approvalstate.Approval) map[string]any {
+	return map[string]any{"id": item.ID, "run_id": item.RunID, "step_id": item.StepID, "tool_call_id": item.ToolCallID, "risk_level": item.RiskLevel, "effects": item.Effects, "estimated_cost_micros": item.EstimatedCostMicros, "created_at": item.CreatedAt, "expires_at": item.ExpiresAt, "decision": item.Decision, "execution_state": item.ExecutionState}
 }
 
 func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {

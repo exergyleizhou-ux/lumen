@@ -704,6 +704,16 @@ function buildWorkbenchSnapshotV2(project, state) {
   };
 }
 
+function workbenchTargetOrigin() {
+  var configured = typeof window.__LUMEN_WORKBENCH_ORIGIN__ === "string" ? window.__LUMEN_WORKBENCH_ORIGIN__.trim() : "";
+  if (!configured) return window.location.origin;
+  try {
+    var parsed = new URL(configured);
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.origin === configured.replace(/\/$/, "")) return parsed.origin;
+  } catch (_) {}
+  return window.location.origin;
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -727,6 +737,7 @@ window.LabUI = {
   mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
   buildWorkbenchSnapshot: buildWorkbenchSnapshot,
   buildWorkbenchSnapshotV2: buildWorkbenchSnapshotV2,
+  workbenchTargetOrigin: workbenchTargetOrigin,
 };
 
 /* ── 3. Global state ── */
@@ -755,8 +766,9 @@ function postWorkbenchSnapshot() {
     !!(sseState && sseState.terminal),
     pending,
   );
-  window.parent.postMessage(snapshot, window.location.origin);
-  window.parent.postMessage(buildWorkbenchSnapshotV2(activeProject, workbenchRuntime), window.location.origin);
+  var targetOrigin = workbenchTargetOrigin();
+  window.parent.postMessage(snapshot, targetOrigin);
+  window.parent.postMessage(buildWorkbenchSnapshotV2(activeProject, workbenchRuntime), targetOrigin);
 }
 
 async function refreshWorkbenchRuntime() {

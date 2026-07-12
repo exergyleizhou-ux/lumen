@@ -315,6 +315,27 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"artifacts": items})
 		return
 	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "approvals" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.approvalStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		safe := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			safe = append(safe, safeLabApprovalReview(item))
+		}
+		writeJSON(w, 200, map[string]any{"approvals": safe})
+		return
+	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {
 		if r.Method != http.MethodGet {
 			writeErr(w, 405, fmt.Errorf("method not allowed"))
@@ -394,6 +415,10 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
 }
 
+func safeLabApprovalReview(item approvalstate.Approval) map[string]any {
+	return map[string]any{"id": item.ID, "run_id": item.RunID, "step_id": item.StepID, "tool_call_id": item.ToolCallID, "risk_level": item.RiskLevel, "effects": item.Effects, "estimated_cost_micros": item.EstimatedCostMicros, "created_at": item.CreatedAt, "expires_at": item.ExpiresAt, "decision": item.Decision, "execution_state": item.ExecutionState}
+}
+
 func labWorkbenchVerification(events []event.Event, run runstate.Run) string {
 	state := "idle"
 	for _, ev := range events {
@@ -401,7 +426,9 @@ func labWorkbenchVerification(events []event.Event, run runstate.Run) string {
 		case event.VerifyStarted:
 			state = "running"
 		case event.VerifyResult:
-			if ev.Level == event.LevelInfo && !strings.Contains(ev.Text, "skipped") {
+			if strings.Contains(ev.Text, "skipped") {
+				state = "not_run"
+			} else if ev.Level == event.LevelInfo {
 				state = "passed"
 			} else {
 				state = "failed"

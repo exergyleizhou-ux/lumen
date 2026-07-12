@@ -20,10 +20,11 @@ if (cut < 0) {
 
 function loadLabUI() {
   const sandbox = {
-    window: {},
+    window: { location: { origin: "https://lab.test" } },
     document: { getElementById: () => null },
     location: { pathname: "/" },
     console,
+    URL,
   };
   vm.createContext(sandbox);
   vm.runInContext(src.slice(0, cut), sandbox);
@@ -45,6 +46,7 @@ function runOnce(runLabel) {
   assert(typeof L.reduceSSE === "function", "reduceSSE is function");
   assert(typeof L.buildWorkbenchSnapshot === "function", "buildWorkbenchSnapshot is function");
   assert(typeof L.buildWorkbenchSnapshotV2 === "function", "buildWorkbenchSnapshotV2 is function");
+  assert(typeof L.workbenchTargetOrigin === "function", "workbenchTargetOrigin is function");
 
   const workbenchSnapshot = L.buildWorkbenchSnapshot(
     { slug: "project-a", title: "Project A" },
@@ -87,6 +89,7 @@ function runOnce(runLabel) {
   }), "v2 strict shape: " + JSON.stringify(v2));
   ["prompt", "reasoning", "args", "key", "content"].forEach((secret) => assert(!JSON.stringify(v2).includes(secret), "v2 excludes " + secret));
   console.log("OK workbench v2 strict whitelist");
+  assert(L.workbenchTargetOrigin() === "https://lab.test", "same-origin target fallback");
 
   // escHtml
   const esc = L.escHtml('<script>alert(1)</script> & "x"');

@@ -1,11 +1,14 @@
 package lab
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -43,6 +46,7 @@ type Config struct {
 	HostedProviders         []config.ProviderConfig
 	HostedWorkspaceRoot     string
 	RuntimePATH             string
+	WorkbenchOrigin         string // exact http(s) Oasis parent origin; empty means same-origin
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -56,6 +60,9 @@ type Server struct {
 
 // New builds the lab server.
 func New(cfg Config) (*Server, error) {
+	if cfg.WorkbenchOrigin == "" {
+		cfg.WorkbenchOrigin = os.Getenv("WORKBENCH_PARENT_ORIGIN")
+	}
 	if cfg.Hosted && cfg.Runs == nil && os.Getenv("WORKBENCH_DATABASE_URL") == "" {
 		return nil, fmt.Errorf("lab: WORKBENCH_DATABASE_URL required in hosted mode")
 	}
@@ -172,8 +179,16 @@ func (s *Server) routes() {
 			http.Error(w, "panel missing", 500)
 			return
 		}
+		if raw, marshalErr := json.Marshal(labWorkbenchOrigin(s.cfg.WorkbenchOrigin)); marshalErr == nil {
+			data = bytes.Replace(data, []byte("</head>"), append(append([]byte(`<script>window.__LUMEN_WORKBENCH_ORIGIN__=`), raw...), []byte(`;</script></head>`)...), 1)
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
+		ancestors := "frame-ancestors 'self'"
+		if origin := labWorkbenchOrigin(s.cfg.WorkbenchOrigin); origin != "" {
+			ancestors += " " + origin
+		}
+		w.Header().Set("Content-Security-Policy", ancestors)
 		_, _ = w.Write(data)
 	})
 	s.mux.Handle("/assets/", assetHandler)
@@ -186,6 +201,18 @@ func (s *Server) routes() {
 		})
 	}
 	s.api.Register(s.mux)
+}
+
+func labWorkbenchOrigin(value string) string {
+	value = strings.TrimSuffix(strings.TrimSpace(value), "/")
+	if value == "" {
+		return ""
+	}
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	return u.String()
 }
 
 // resolveKetcherDir finds a same-origin Ketcher standalone install.

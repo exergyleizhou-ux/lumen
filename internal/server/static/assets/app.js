@@ -98,7 +98,17 @@ function postWorkbenchSnapshotV2() {
     pending_approvals: workbenchPendingApprovals,
     verification: workbenchVerification,
     artifact_count: workbenchArtifactCount,
-  }), window.location.origin);
+  }), workbenchTargetOrigin());
+}
+
+function workbenchTargetOrigin() {
+  const configured = typeof window.__LUMEN_WORKBENCH_ORIGIN__ === "string" ? window.__LUMEN_WORKBENCH_ORIGIN__.trim() : "";
+  if (!configured) return window.location.origin;
+  try {
+    const parsed = new URL(configured);
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.origin === configured.replace(/\/$/, "")) return parsed.origin;
+  } catch (_) {}
+  return window.location.origin;
 }
 
 async function refreshWorkbenchRuntime() {
@@ -118,7 +128,7 @@ async function refreshWorkbenchRuntime() {
   } catch (_) {}
 }
 
-window.CodeUI = { buildWorkbenchSnapshotV2 };
+window.CodeUI = { buildWorkbenchSnapshotV2, workbenchTargetOrigin };
 
 async function respondApproval(allow) {
   if (!pendingApprovalId) return;

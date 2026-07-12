@@ -7,8 +7,35 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestLabWorkbenchParentOriginIsExact(t *testing.T) {
+	if got := labWorkbenchOrigin("https://oasis.example/"); got != "https://oasis.example" {
+		t.Fatalf("got %q", got)
+	}
+	for _, bad := range []string{"*", "javascript:alert(1)", "https://oasis.example/path", "https://oasis.example?q=x"} {
+		if got := labWorkbenchOrigin(bad); got != "" {
+			t.Fatalf("accepted %q as %q", bad, got)
+		}
+	}
+}
+
+func TestLabIndexInjectsWorkbenchParentOrigin(t *testing.T) {
+	srv, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", DisableFleetAutoConnect: true, WorkbenchOrigin: "https://oasis.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `window.__LUMEN_WORKBENCH_ORIGIN__="https://oasis.example"`) {
+		t.Fatalf("index injection: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Header().Get("Content-Security-Policy"), "https://oasis.example") {
+		t.Fatalf("frame ancestor missing: %s", rec.Header().Get("Content-Security-Policy"))
+	}
+}
 
 func TestHealthEndpoint(t *testing.T) {
 	sci := filepath.Join(t.TempDir(), "science")

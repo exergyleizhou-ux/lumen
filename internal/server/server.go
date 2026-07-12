@@ -10,6 +10,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,6 +58,7 @@ type Config struct {
 	Artifacts           artifact.Store
 	ArtifactObjects     artifact.ObjectBackend
 	HostedWorkspaceRoot string
+	WorkbenchOrigin     string // exact http(s) Oasis parent origin; empty means same-origin
 }
 
 // Server wraps the HTTP server.
@@ -190,6 +193,9 @@ func (s *Server) cancelActiveRun(owner runstate.Owner, runID string) bool {
 
 // New creates a new Server.
 func New(cfg Config) (*Server, error) {
+	if cfg.WorkbenchOrigin == "" {
+		cfg.WorkbenchOrigin = os.Getenv("WORKBENCH_PARENT_ORIGIN")
+	}
 	if cfg.Hosted && cfg.Runs == nil && os.Getenv("WORKBENCH_DATABASE_URL") == "" {
 		return nil, errors.New("WORKBENCH_DATABASE_URL required in hosted mode")
 	}
@@ -285,6 +291,9 @@ func codePermission(r *http.Request) string {
 		if strings.HasSuffix(r.URL.Path, "/cancel") {
 			return "run:cancel"
 		}
+		if strings.Contains(r.URL.Path, "/artifacts/") && strings.HasSuffix(r.URL.Path, "/download") {
+			return "artifact:read"
+		}
 		return "run:read"
 	}
 	if r.URL.Path == "/v1/approve" {
@@ -349,10 +358,29 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ui missing", http.StatusInternalServerError)
 		return
 	}
+	if raw, marshalErr := json.Marshal(cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin)); marshalErr == nil {
+		data = bytes.Replace(data, []byte("</head>"), append(append([]byte(`<script>window.__LUMEN_WORKBENCH_ORIGIN__=`), raw...), []byte(`;</script></head>`)...), 1)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz")
+	ancestors := "frame-ancestors 'self' https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz"
+	if origin := cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin); origin != "" {
+		ancestors += " " + origin
+	}
+	w.Header().Set("Content-Security-Policy", ancestors)
 	w.Write(data)
+}
+
+func cfgWorkbenchOrigin(value string) string {
+	value = strings.TrimSuffix(strings.TrimSpace(value), "/")
+	if value == "" {
+		return ""
+	}
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	return u.String()
 }
 
 // ── SSE Chat ────────────────────────────────────────────────

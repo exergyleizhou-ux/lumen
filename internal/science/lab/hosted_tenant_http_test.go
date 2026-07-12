@@ -58,7 +58,7 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyStarted})
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyResult, Level: event.LevelInfo, Text: "passed"})
 	hash, _ := approvalstate.HashArgs([]byte(`{}`))
-	if err := s.api.approvalStore.Create(approvalstate.Approval{ID: "snapshot-approval", RunID: run.ID, Owner: a, ArgsHash: hash, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+	if err := s.api.approvalStore.Create(approvalstate.Approval{ID: "snapshot-approval", RunID: run.ID, Owner: a, RiskLevel: "high", Reason: "SECRET", Command: "SECRET", EditableArgs: []byte(`{"key":"SECRET"}`), ArgsHash: hash, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.api.artifactStore.Create(artifact.Record{ID: "snapshot-artifact", RunID: run.ID, Owner: a, ObjectKey: "object", SHA256: "sha"}); err != nil {
@@ -66,7 +66,7 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	}
 	ctx, cleanup := s.api.beginActiveRun(context.Background(), a, run.ID, time.Minute)
 	defer cleanup()
-	for _, path := range []string{"/api/lab/runs/" + run.ID, "/api/lab/runs/" + run.ID + "/events", "/api/lab/runs/" + run.ID + "/workbench-snapshot"} {
+	for _, path := range []string{"/api/lab/runs/" + run.ID, "/api/lab/runs/" + run.ID + "/events", "/api/lab/runs/" + run.ID + "/workbench-snapshot", "/api/lab/runs/" + run.ID + "/approvals"} {
 		if rec := labRequest(t, s, bt, http.MethodGet, path, nil); rec.Code != http.StatusNotFound {
 			t.Fatalf("B %s: %d %s", path, rec.Code, rec.Body.String())
 		}
@@ -85,6 +85,9 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/workbench-snapshot", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "secret") {
 		t.Fatalf("A snapshot must be owner scoped and sanitized: %d %s", rec.Code, rec.Body.String())
 	}
+	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/approvals", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"risk_level":"high"`) || strings.Contains(rec.Body.String(), "SECRET") || strings.Contains(rec.Body.String(), "editable_args") {
+		t.Fatalf("unsafe Lab approval review: %d %s", rec.Code, rec.Body.String())
+	}
 	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: a}
 	s.api.approvals.mu.Lock()
 	s.api.approvals.waiters["appr-x"] = wt
@@ -99,6 +102,14 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	}
 	if rec := labRequest(t, s, at, http.MethodPost, "/api/lab/approve", map[string]any{"id": "appr-x", "allow": false}); rec.Code != http.StatusOK {
 		t.Fatalf("A approve: %d", rec.Code)
+	}
+}
+
+func TestLabWorkbenchVerificationSkippedIsNotRun(t *testing.T) {
+	run := runstate.Run{Status: runstate.StatusSucceeded}
+	got := labWorkbenchVerification([]event.Event{{Kind: event.VerifyStarted}, {Kind: event.VerifyResult, Level: event.LevelInfo, Text: "verify skipped — no build/test toolchain ran"}}, run)
+	if got != "not_run" {
+		t.Fatalf("got %q", got)
 	}
 }
 
