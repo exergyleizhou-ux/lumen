@@ -55,4 +55,5 @@ We win on **Lumen-native control plane + heavier science integrations + public d
 ## UI feel (2026-07)
 
 Default chrome leans **OCS-like workbench** (files-first right pane, quiet topbar, research welcome, smoke/acceptance projects hidden in the sidebar).  
+Conversation stream shows **tool cards + real approval cards** (Agent mode: write/bash ask; Bypass skips; Plan blocks writes). Sticky banner above composer while pending.  
 Agent core remains **Go Lumen** — we do not switch to Next/LangGraph as the main path.

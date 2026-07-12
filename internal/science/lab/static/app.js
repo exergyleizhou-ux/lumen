@@ -280,7 +280,12 @@ function reduceSSE(state, ev) {
       }
       break;
     case "approval_request":
-      state.approvals.push({ id: ev.id, tool: ev.tool, summary: ev.summary });
+      state.approvals.push({
+        id: ev.id,
+        tool: ev.tool,
+        summary: ev.summary,
+        args: ev.args || "",
+      });
       break;
     case "error":
       state.errors.push(ev.text || "未知错误");
@@ -616,10 +621,41 @@ function mergeLangGraphHistoryImport(existing, doc, max) {
   return { list: list.slice(0, max), added: added };
 }
 
+/** One-line tool args for OCS-style tool card headers. */
+function formatToolArgsPreview(args, maxLen) {
+  maxLen = maxLen || 72;
+  if (args == null || args === "") return "";
+  var s = typeof args === "string" ? args : "";
+  if (!s && typeof args === "object") {
+    try { s = JSON.stringify(args); } catch (_) { s = String(args); }
+  }
+  s = String(s).replace(/\s+/g, " ").trim();
+  if (!s) return "";
+  try {
+    var o = JSON.parse(s);
+    if (o && typeof o === "object") {
+      if (o.command) s = String(o.command);
+      else if (o.path) s = String(o.path) + (o.content != null ? " (write)" : "");
+      else if (o.query) s = String(o.query);
+      else if (o.pattern) s = String(o.pattern);
+      else if (o.url) s = String(o.url);
+      else {
+        var keys = Object.keys(o);
+        if (keys.length === 1) s = keys[0] + "=" + String(o[keys[0]]).slice(0, 40);
+        else s = keys.slice(0, 3).join(", ") + (keys.length > 3 ? "…" : "");
+      }
+    }
+  } catch (_) {}
+  s = String(s).replace(/\s+/g, " ").trim();
+  if (s.length > maxLen) s = s.slice(0, maxLen - 1) + "…";
+  return s;
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
   reduceSSE: reduceSSE,
+  formatToolArgsPreview: formatToolArgsPreview,
   parseAttachmentPaths: parseAttachmentPaths,
   fileTemplateContent: fileTemplateContent,
   normalizeMolPath: normalizeMolPath,
@@ -1347,15 +1383,15 @@ function createAgentBubble() {
   think.innerHTML = '<summary class="think-summary"><span class="think-dot"></span>思考中…</summary><div class="think-body"></div>';
   wrap.appendChild(think);
 
+  // Tool log first (OCS: tools appear in-stream before final answer text)
+  var toolLog = document.createElement("div");
+  toolLog.className = "tool-log";
+  wrap.appendChild(toolLog);
+
   // Agent text
   var textDiv = document.createElement("div");
   textDiv.className = "agent-text agent-md";
   wrap.appendChild(textDiv);
-
-  // Tool log
-  var toolLog = document.createElement("div");
-  toolLog.className = "tool-log";
-  wrap.appendChild(toolLog);
 
   // Footer actions
   var actions = document.createElement("div");
@@ -1489,22 +1525,27 @@ function upsertToolCard(toolLog, tool) {
   // Create new card (nested if parent_id)
   var card = document.createElement("div");
   var nested = !!(tool.parentId || tool.parent_id);
-  card.className = "tool-card status-" + (tool.status || "running") + (nested ? " nested" : "");
+  var status = tool.status || "running";
+  card.className = "tool-card status-" + status + (nested ? " nested" : "");
   card.setAttribute("data-tool-id", String(id));
   if (nested) card.setAttribute("data-parent-id", String(tool.parentId || tool.parent_id));
   var isSub = nested || /^(task|run_skill|subagent)/i.test(tool.name || "");
+  var preview = formatToolArgsPreview(tool.args);
   card.innerHTML =
     '<div class="tool-card-hd">' +
     '<span class="tool-card-arrow">▸</span>' +
     '<span class="tool-card-icon">' + (isSub ? "🧩" : "⚙") + "</span>" +
+    '<span class="tool-card-title">' +
     '<span class="tool-card-name">' + escHtml(tool.name || "tool") +
     (nested ? ' <span class="hint">子调用</span>' : "") +
     (isSub && !nested ? ' <span class="hint">子代理/技能</span>' : "") +
     "</span>" +
-    '<span class="tool-card-status">' + statusLabel(tool.status) + "</span>" +
+    (preview ? '<span class="tool-card-preview" title="' + escHtml(preview) + '">' + escHtml(preview) + "</span>" : '<span class="tool-card-preview" hidden></span>') +
+    "</span>" +
+    '<span class="tool-card-status">' + statusLabel(status) + "</span>" +
     "</div>" +
     '<div class="tool-card-body" style="display:none">' +
-    '<div class="tool-card-section tool-card-args-section" style="' + (tool.args ? "" : "display:none") + '"><div class="tool-card-label">参数</div><pre class="tool-card-args">' + escHtml(tool.args || "") + "</pre></div>" +
+    '<div class="tool-card-section tool-card-args-section" style="' + (tool.args ? "" : "display:none") + '"><div class="tool-card-label">参数</div><pre class="tool-card-args">' + escHtml(typeof tool.args === "string" ? tool.args : (tool.args ? JSON.stringify(tool.args, null, 2) : "")) + "</pre></div>" +
     (tool.description ? '<div class="tool-card-section"><div class="tool-card-label">说明</div><div>' + escHtml(tool.description) + "</div></div>" : "") +
     '<div class="tool-card-section tool-card-output-section" style="display:none"><div class="tool-card-label">输出 <button type="button" class="btn sm tool-copy-out">复制</button></div><pre class="tool-card-output"></pre></div>' +
     '<div class="tool-card-section tool-card-err-section" style="display:none"><div class="tool-card-label">错误</div><pre class="tool-card-err"></pre></div>' +
@@ -1537,36 +1578,62 @@ function upsertToolCard(toolLog, tool) {
   } else {
     toolLog.appendChild(card);
   }
-  // Subagent spawns often interesting — auto expand
-  if (isSub) setToolCardOpen(card, true);
+  // Auto-expand running tools and subagents (OCS-like visibility)
+  if (status === "running" || isSub || tool.err) setToolCardOpen(card, true);
+  if (tool.output || tool.err) {
+    updateToolCardDOM(card, tool);
+  }
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
   return card;
 }
 
 function updateToolCardDOM(card, tool) {
   var open = card.classList.contains("is-open");
-  card.className = "tool-card status-" + (tool.status || "running") + (open ? " is-open" : "");
+  var status = tool.status || "running";
+  card.className = "tool-card status-" + status + (open ? " is-open" : "") +
+    (card.classList.contains("nested") ? " nested" : "");
   var statusEl = card.querySelector(".tool-card-status");
-  if (statusEl) statusEl.textContent = statusLabel(tool.status);
+  if (statusEl) statusEl.textContent = statusLabel(status);
   var nameEl = card.querySelector(".tool-card-name");
-  if (nameEl && tool.name) nameEl.textContent = tool.name;
+  if (nameEl && tool.name) {
+    // keep nested/subagent hints if present
+    var hints = nameEl.querySelectorAll(".hint");
+    var hintHtml = "";
+    for (var hi = 0; hi < hints.length; hi++) hintHtml += " " + hints[hi].outerHTML;
+    nameEl.innerHTML = escHtml(tool.name) + hintHtml;
+  }
+  var prevEl = card.querySelector(".tool-card-preview");
+  if (prevEl && tool.args) {
+    var preview = formatToolArgsPreview(tool.args);
+    if (preview) {
+      prevEl.hidden = false;
+      prevEl.textContent = preview;
+      prevEl.title = preview;
+    }
+  }
 
   if (tool.args) {
     var argsSec = card.querySelector(".tool-card-args-section");
     var argsPre = card.querySelector(".tool-card-args");
     if (argsSec) argsSec.style.display = "block";
-    if (argsPre) argsPre.textContent = tool.args;
+    if (argsPre) {
+      argsPre.textContent = typeof tool.args === "string"
+        ? tool.args
+        : JSON.stringify(tool.args, null, 2);
+    }
   }
   if (tool.output) {
     var outSec = card.querySelector(".tool-card-output-section");
     var outPre = card.querySelector(".tool-card-output");
     if (outSec) outSec.style.display = "block";
     if (outPre) outPre.textContent = tool.output;
+    if (status === "error" || tool.err) setToolCardOpen(card, true);
   }
   if (tool.err) {
     var errSec = card.querySelector(".tool-card-err-section");
     var errPre = card.querySelector(".tool-card-err");
     if (errSec) errSec.style.display = "block";
+    setToolCardOpen(card, true);
     if (errPre) errPre.textContent = tool.err;
   }
   // Auto-expand when finished with content or on error
@@ -1725,6 +1792,7 @@ function handleSSEEvent(ev, state, bubble) {
   if (kind === "tool_dispatch" && ev.tool && ev.tool.id) {
     upsertToolCard(bubble.toolLog, state.tools[ev.tool.id]);
     syncTurnTask(state.tools[ev.tool.id]);
+    focusActivityPane("tasks");
   }
 
   // Tool result
@@ -1747,6 +1815,15 @@ function handleSSEEvent(ev, state, bubble) {
   // Approval
   if (kind === "approval_request") {
     renderApprovalCard(bubble.toolLog, ev);
+    focusActivityPane("tasks");
+    updateApprovalBanner();
+    try {
+      if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+        new Notification("Lumen Lab · 需要批准工具", {
+          body: (ev.tool || "tool") + (ev.summary ? ": " + ev.summary : ""),
+        });
+      }
+    } catch (_) {}
   }
 
   // Error
@@ -1975,9 +2052,58 @@ async function streamChat(prompt, mode) {
 
 /* ── 8. Approval card (editable args applied on allow) ── */
 
+function focusActivityPane(pane) {
+  try {
+    var tab = document.querySelector('.insp-tab[data-pane="' + (pane || "tasks") + '"]');
+    if (tab && !tab.classList.contains("active")) tab.click();
+  } catch (_) {}
+}
+
+function pendingApprovalCards() {
+  return Array.prototype.slice.call(document.querySelectorAll(".approval-card.pending"));
+}
+
+function updateApprovalBanner() {
+  var banner = $("approvalBanner");
+  var text = $("approvalBannerText");
+  var hint = $("composerHint");
+  var pending = pendingApprovalCards();
+  if (!banner) return;
+  if (!pending.length) {
+    banner.hidden = true;
+    document.body.classList.remove("awaiting-approval");
+    if (hint && /批准|等待工具/.test(hint.textContent || "")) {
+      hint.textContent = "就绪 · Agent 模式写文件/bash 需批准";
+    }
+    return;
+  }
+  banner.hidden = false;
+  document.body.classList.add("awaiting-approval");
+  var first = pending[0];
+  var tool = (first && first.getAttribute("data-tool")) || "tool";
+  var sum = (first && first.getAttribute("data-summary")) || "";
+  if (text) {
+    text.textContent = pending.length > 1
+      ? (pending.length + " 个工具等待确认 · 当前: " + tool)
+      : ("需要确认: " + tool + (sum ? " — " + sum : ""));
+  }
+  if (hint) hint.textContent = "等待工具批准… 允许后 Agent 继续";
+}
+
+function replyLatestPendingApproval(allow) {
+  var pending = pendingApprovalCards();
+  if (!pending.length) return;
+  var card = pending[0];
+  var btn = card.querySelector(allow ? ".appr-yes" : ".appr-no");
+  if (btn && !btn.disabled) btn.click();
+}
+
 function renderApprovalCard(toolLog, ev) {
   var card = document.createElement("div");
-  card.className = "approval-card";
+  card.className = "approval-card pending";
+  card.setAttribute("data-appr-id", String(ev.id || ""));
+  card.setAttribute("data-tool", String(ev.tool || "tool"));
+  card.setAttribute("data-summary", String(ev.summary || "").slice(0, 200));
   var argsText = ev.args || "";
   if (typeof argsText !== "string") {
     try { argsText = JSON.stringify(argsText, null, 2); } catch (_) { argsText = String(argsText); }
@@ -1989,15 +2115,17 @@ function renderApprovalCard(toolLog, ev) {
     originalArgs = argsText;
   } catch (_) {}
   card.innerHTML =
-    '<div class="appr-title">需要确认工具</div>' +
+    '<div class="appr-hd">' +
+    '<div class="appr-title">⚠ 需要你确认工具</div>' +
     '<div class="appr-tool">' + escHtml(ev.tool || "tool") + "</div>" +
-    '<div class="appr-sum">' + escHtml(ev.summary || "") + "</div>" +
+    "</div>" +
+    '<div class="appr-sum">' + escHtml(ev.summary || "Agent 请求执行此工具") + "</div>" +
     (argsText
       ? '<div class="appr-args-label">参数（可编辑 JSON；允许时按编辑后内容执行）</div>' +
-        '<textarea class="appr-args" rows="6">' + escHtml(argsText) + "</textarea>"
+        '<textarea class="appr-args" rows="5" spellcheck="false">' + escHtml(argsText) + "</textarea>"
       : "") +
     '<div class="appr-actions">' +
-    '<button type="button" class="btn primary sm appr-yes">允许</button>' +
+    '<button type="button" class="btn primary sm appr-yes">允许执行</button>' +
     '<button type="button" class="btn sm appr-no">拒绝</button>' +
     '<button type="button" class="btn sm appr-copy">复制参数</button>' +
     '<button type="button" class="btn sm appr-reset">重置</button>' +
@@ -2023,42 +2151,43 @@ function renderApprovalCard(toolLog, ev) {
       var edited = ta.value.trim();
       if (edited && edited !== originalArgs) {
         try {
-          JSON.parse(edited); // validate
-          body.args = JSON.parse(edited); // send as object; backend re-marshals? 
-          // Actually handleApprove expects json.RawMessage for args - if we send object in body, Decode puts it as RawMessage if type is RawMessage... 
-          // In Go json.RawMessage unmarshals from JSON value correctly when field is RawMessage.
-          // But JSON.stringify whole body with object works: "args": {...}
           body.args = JSON.parse(edited);
         } catch (e) {
-          card.querySelector(".appr-actions").textContent = "参数 JSON 无效: " + e.message;
           done = false;
           yesBtn.disabled = false;
           noBtn.disabled = false;
+          if (copyBtn) copyBtn.disabled = false;
+          if (resetBtn) resetBtn.disabled = false;
           if (ta) ta.readOnly = false;
+          showLabToast("参数 JSON 无效", e.message || String(e));
+          updateApprovalBanner();
           return;
         }
       }
     }
     try {
-      // api() stringifies body - if args is object OK
       await api("/api/lab/approve", {
         method: "POST",
         body: JSON.stringify(body),
       });
+      card.classList.remove("pending");
       card.classList.add(allow ? "ok" : "deny");
-      var note = allow ? "已允许" : "已拒绝";
+      var note = allow ? "✓ 已允许，Agent 继续" : "✕ 已拒绝";
       if (allow && body.args) note += "（参数已改）";
       card.querySelector(".appr-actions").textContent = note;
     } catch (e) {
-      card.querySelector(".appr-actions").textContent = "提交失败: " + e.message;
+      card.classList.remove("pending");
+      card.querySelector(".appr-actions").innerHTML =
+        '<span class="ft-err">提交失败: ' + escHtml(e.message) + "</span>";
     }
+    updateApprovalBanner();
   }
 
   yesBtn.addEventListener("click", function () { reply(true); });
   noBtn.addEventListener("click", function () { reply(false); });
   if (copyBtn) {
     copyBtn.addEventListener("click", function () {
-      if (ta && navigator.clipboard) navigator.clipboard.writeText(ta.value);
+      if (ta) copyTextToClipboard(ta.value, copyBtn);
     });
   }
   if (resetBtn && ta) {
@@ -2066,6 +2195,8 @@ function renderApprovalCard(toolLog, ev) {
   }
   toolLog.appendChild(card);
   card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  updateApprovalBanner();
+  try { yesBtn.focus(); } catch (_) {}
 }
 
 /* ── 9. File panel ── */
@@ -3079,6 +3210,22 @@ document.querySelectorAll(".chip").forEach(bindChipButton);
     ops.hidden = !ops.hidden;
     try { localStorage.setItem("lumen-show-ops", ops.hidden ? "0" : "1"); } catch (_) {}
   });
+})();
+
+// Approval banner actions
+(function () {
+  var jump = $("approvalBannerJump");
+  var allow = $("approvalBannerAllowAll");
+  var deny = $("approvalBannerDeny");
+  if (jump) {
+    jump.addEventListener("click", function () {
+      var pending = pendingApprovalCards();
+      if (pending[0]) pending[0].scrollIntoView({ behavior: "smooth", block: "center" });
+      focusActivityPane("tasks");
+    });
+  }
+  if (allow) allow.addEventListener("click", function () { replyLatestPendingApproval(true); });
+  if (deny) deny.addEventListener("click", function () { replyLatestPendingApproval(false); });
 })();
 
 // Center "⋯ more" menu for export/import/session ops

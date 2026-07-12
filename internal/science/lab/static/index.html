@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=64">
+  <link rel="stylesheet" href="app.css?v=65">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
@@ -104,12 +104,23 @@
           </section>
         </div>
         <form id="composer" class="composer">
+          <div id="approvalBanner" class="approval-banner" hidden>
+            <div class="appr-banner-main">
+              <span class="appr-banner-pulse" aria-hidden="true"></span>
+              <span id="approvalBannerText">有工具等待你确认</span>
+            </div>
+            <div class="appr-banner-actions">
+              <button type="button" class="btn primary sm" id="approvalBannerJump">查看并批准</button>
+              <button type="button" class="btn sm" id="approvalBannerAllowAll" title="批准当前卡片（不改参数）">允许</button>
+              <button type="button" class="btn sm" id="approvalBannerDeny" title="拒绝当前卡片">拒绝</button>
+            </div>
+          </div>
           <div class="composer-top">
-            <select id="chatMode" class="mode-sel" title="权限模式">
+            <select id="chatMode" class="mode-sel" title="权限模式：Agent 会在写文件/执行命令前请求批准">
               <option value="agent" selected>Agent · 工具+审批</option>
               <option value="plan">Plan · 只规划</option>
               <option value="bypass">Bypass · 全自动</option>
-              <option value="default">Default</option>
+              <option value="default">Default · 同 Agent</option>
             </select>
             <button type="button" class="btn sm" id="btnStop" disabled title="中止当前回合">停止</button>
             <button type="button" class="btn sm" id="btnRerun" disabled title="重跑上一条">重跑</button>
@@ -124,7 +135,7 @@
             <div id="dropOverlay" class="drop-overlay" hidden>松开以上传附件</div>
           </div>
           <div class="composer-bot">
-            <span class="hint" id="composerHint">就绪</span>
+            <span class="hint" id="composerHint">就绪 · Agent 模式写文件/bash 需批准</span>
             <button class="btn primary" type="submit" id="btnSend">发送</button>
           </div>
         </form>
@@ -394,6 +405,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=64"></script>
+  <script src="app.js?v=65"></script>
 </body>
 </html>

@@ -257,13 +257,24 @@ function runOnce(runLabel) {
     id: "appr-7",
     tool: "shell",
     summary: "run rm -rf /tmp/x",
+    args: '{"command":"rm -rf /tmp/x"}',
   });
   assert(Array.isArray(s.approvals) && s.approvals.length >= 1, "approvals array");
   const ap = s.approvals[s.approvals.length - 1];
   assert(ap.id === "appr-7", "approval id");
   assert(ap.tool === "shell", "approval tool");
   assert(ap.summary && ap.summary.indexOf("rm") >= 0, "approval summary");
-  console.log("OK approval_request shape {id,tool,summary}: " + JSON.stringify(ap));
+  assert(ap.args && ap.args.indexOf("command") >= 0, "approval args retained");
+  console.log("OK approval_request shape {id,tool,summary,args}: " + JSON.stringify(ap));
+
+  // tool args preview for OCS-style cards
+  if (typeof L.formatToolArgsPreview === "function") {
+    const bashPrev = L.formatToolArgsPreview('{"command":"ls -la /tmp"}');
+    assert(bashPrev.indexOf("ls") >= 0, "preview bash command: " + bashPrev);
+    const pathPrev = L.formatToolArgsPreview('{"path":"notes/a.md","content":"x"}');
+    assert(pathPrev.indexOf("notes/a.md") >= 0, "preview write path: " + pathPrev);
+    console.log("OK formatToolArgsPreview");
+  }
 
   // text + reasoning accumulate
   s = L.reduceSSE(s, { kind: "text", text: "Hello " });
