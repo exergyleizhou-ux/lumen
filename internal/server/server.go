@@ -27,8 +27,10 @@ import (
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/lumenstore"
 	"lumen/internal/memory"
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 )
 
 // Config holds the server configuration.
@@ -36,6 +38,7 @@ type Config struct {
 	Addr   string // listen address, e.g. ":8080"
 	Ctrl   *control.Controller
 	Static string // path to static files (empty = use embedded)
+	Runs   *runstate.Manager
 }
 
 // Server wraps the HTTP server.
@@ -53,11 +56,16 @@ type Server struct {
 
 	approvals   sync.Map
 	approvalSeq atomic.Uint64
+	runs        *runstate.Manager
 }
 
 // New creates a new Server.
 func New(cfg Config) (*Server, error) {
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	runs := cfg.Runs
+	if runs == nil {
+		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+	}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
@@ -181,7 +189,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sink.emit("text", " (with "+strconv.Itoa(len(req.Images))+" image(s))")
 		}
 		sink.emit("turn_done", "")
-		sink.done(nil)
+		sink.done("", nil)
 		return
 	}
 
@@ -189,7 +197,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sink.emit("turn_started", "")
 		sink.emit("error", err.Error())
 		sink.emit("turn_done", "")
-		sink.done(err)
+		sink.done("", err)
 		return
 	}
 
@@ -204,7 +212,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	sink.emit("turn_started", "")
+	sessionID := ""
+	if sess := s.cfg.Ctrl.Session(); sess != nil && sess.Path != "" {
+		sessionID = lumenstore.SessionIDFromPath(sess.Path)
+	}
+	run, err := s.runs.Start(sessionID, "code", summarizeRunTitle(req.Prompt), "")
+	if err != nil {
+		sink.emit("error", err.Error())
+		sink.done("", err)
+		return
+	}
+	s.cfg.Ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
+
 	var runErr error
 	if s.cfg.Ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
 		runErr = s.cfg.Ctrl.Plan(ctx, req.Prompt)
@@ -217,7 +236,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sink.emit("error", runErr.Error())
 		}
 	}
-	sink.done(runErr)
+	if _, err := s.runs.Finish(run.ID, runErr); err != nil {
+		sink.emit("error", "finish run: "+err.Error())
+		if runErr == nil {
+			runErr = err
+		}
+	}
+	sink.done(run.ID, runErr)
 }
 
 type sseSink struct {
@@ -235,14 +260,25 @@ func (s sseSink) Emit(e event.Event) {
 	s.flusher.Flush()
 }
 
-func (s sseSink) done(err error) {
+func (s sseSink) done(runID string, err error) {
 	terminal := map[string]any{"kind": "stream_done", "ok": err == nil}
+	if runID != "" {
+		terminal["run_id"] = runID
+	}
 	if err != nil {
 		terminal["error"] = err.Error()
 	}
 	data, _ := json.Marshal(terminal)
 	fmt.Fprintf(s.w, "event: done\ndata: %s\n\n", data)
 	s.flusher.Flush()
+}
+
+func summarizeRunTitle(prompt string) string {
+	runes := []rune(strings.TrimSpace(prompt))
+	if len(runes) > 120 {
+		runes = runes[:120]
+	}
+	return string(runes)
 }
 
 func (s sseSink) emit(kind, text string) {
