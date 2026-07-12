@@ -50,6 +50,7 @@ type Writer interface {
 type ObjectBackend interface {
 	Put(context.Context, string, io.Reader, int64, string) error
 	Get(context.Context, string) (io.ReadCloser, error)
+	Delete(context.Context, string) error
 }
 type MemoryStore struct {
 	mu      sync.Mutex
@@ -64,6 +65,14 @@ func (s *MemoryStore) Create(r Record) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, existing := range s.records {
+		if existing.ID == r.ID {
+			if existing.ObjectKey == r.ObjectKey && existing.SHA256 == r.SHA256 {
+				return nil
+			}
+			return errors.New("artifact id conflict")
+		}
+	}
 	s.records = append(s.records, r)
 	return nil
 }
@@ -138,5 +147,9 @@ func Persist(ctx context.Context, store Store, backend ObjectBackend, r Record, 
 	if err := backend.Put(ctx, r.ObjectKey, bytes.NewReader(data), r.Size, r.MIME); err != nil {
 		return err
 	}
-	return store.Create(r)
+	if err := store.Create(r); err != nil {
+		_ = backend.Delete(ctx, r.ObjectKey)
+		return err
+	}
+	return nil
 }

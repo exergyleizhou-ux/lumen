@@ -30,6 +30,7 @@ type Effects struct {
 type Approval struct {
 	ID                  string          `json:"approval_id"`
 	RunID               string          `json:"run_id"`
+	StepID              string          `json:"step_id"`
 	ToolCallID          string          `json:"tool_call_id"`
 	Owner               runstate.Owner  `json:"owner"`
 	RiskLevel           string          `json:"risk_level"`
@@ -49,6 +50,9 @@ type Approval struct {
 	DecidedBy           string          `json:"decided_by,omitempty"`
 	Decision            *Decision       `json:"decision,omitempty"`
 	Version             uint64          `json:"version"`
+	ExecutionID         string          `json:"execution_id,omitempty"`
+	ExecutionState      string          `json:"execution_state"`
+	ExecutedAt          *time.Time      `json:"executed_at,omitempty"`
 }
 
 func HashArgs(args json.RawMessage) (string, error) {
@@ -72,6 +76,8 @@ type Store interface {
 	Get(runstate.Owner, string) (Approval, error)
 	Decide(runstate.Owner, string, Decision, string, time.Time) (Approval, error)
 	ListRun(runstate.Owner, string) ([]Approval, error)
+	Consume(runstate.Owner, string, string, time.Time) (Approval, error)
+	Complete(runstate.Owner, string, string, bool, time.Time) error
 }
 type MemoryStore struct {
 	mu     sync.Mutex
@@ -93,6 +99,9 @@ func (s *MemoryStore) Create(a Approval) error {
 	}
 	if a.Version == 0 {
 		a.Version = 1
+	}
+	if a.ExecutionState == "" {
+		a.ExecutionState = "pending"
 	}
 	s.values[a.ID] = a
 	return nil
@@ -133,6 +142,41 @@ func (s *MemoryStore) ListRun(o runstate.Owner, run string) ([]Approval, error) 
 		}
 	}
 	return out, nil
+}
+func (s *MemoryStore) Consume(o runstate.Owner, id, executionID string, now time.Time) (Approval, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.values[id]
+	if !ok || a.Owner != o {
+		return Approval{}, ErrNotFound
+	}
+	if a.Decision == nil || *a.Decision != DecisionApproved || a.ExecutionState != "pending" || !now.Before(a.ExpiresAt) {
+		return Approval{}, ErrNotExecutable
+	}
+	a.ExecutionID = executionID
+	a.ExecutionState = "consumed"
+	a.Version++
+	s.values[id] = a
+	return a, nil
+}
+func (s *MemoryStore) Complete(o runstate.Owner, id, executionID string, success bool, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a, ok := s.values[id]
+	if !ok || a.Owner != o {
+		return ErrNotFound
+	}
+	if a.ExecutionState != "consumed" || a.ExecutionID != executionID {
+		return ErrNotExecutable
+	}
+	a.ExecutionState = "failed"
+	if success {
+		a.ExecutionState = "executed"
+	}
+	a.ExecutedAt = &now
+	a.Version++
+	s.values[id] = a
+	return nil
 }
 
 // ValidateExecution fails closed. A parameter change invalidates the old grant;

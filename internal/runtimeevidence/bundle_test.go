@@ -24,10 +24,13 @@ func TestBundleContractRedactionAndOwner(t *testing.T) {
 	sink := runs.WrapSink(r.ID, event.Discard)
 	sink.Emit(event.Event{Kind: event.Notice, Text: "ok", Tool: event.Tool{Args: `{"reasoning":"private","api_key":"secret"}`}})
 	arts := artifact.NewMemoryStore()
+	approvals := approvalstate.NewMemoryStore()
+	hash, _ := approvalstate.HashArgs([]byte(`{"command":"private command"}`))
+	approvals.Create(approvalstate.Approval{ID: "ap", RunID: r.ID, ToolCallID: "tc", Owner: o, Reason: "private reason", ArgsHash: hash, EditableArgs: []byte(`{"command":"private command"}`), ExpiresAt: time.Now().Add(time.Minute)})
 	if err = arts.Put(artifact.Record{ID: "a", RunID: r.ID, Owner: o, Name: "../bad name.txt", ObjectKey: "system/key", MIME: "text/plain", CreatedAt: time.Now()}, []byte("result")); err != nil {
 		t.Fatal(err)
 	}
-	svc := Service{Runs: runs, Approvals: approvalstate.NewMemoryStore(), Artifacts: arts, Usage: usage.NewMemoryStore()}
+	svc := Service{Runs: runs, Approvals: approvals, Artifacts: arts, Usage: usage.NewMemoryStore()}
 	b, err := svc.Build(context.Background(), o, r.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +47,13 @@ func TestBundleContractRedactionAndOwner(t *testing.T) {
 			raw, _ := io.ReadAll(rc)
 			if bytes.Contains(raw, []byte("private")) || bytes.Contains(raw, []byte("secret")) {
 				t.Fatal("secret leaked")
+			}
+		}
+		if f.Name == "approvals.json" {
+			rc, _ := f.Open()
+			raw, _ := io.ReadAll(rc)
+			if bytes.Contains(raw, []byte("private")) {
+				t.Fatal("approval secret leaked")
 			}
 		}
 	}
@@ -63,5 +73,14 @@ func TestBundleRejectsOversize(t *testing.T) {
 	_, err := (Service{Runs: runs, Artifacts: arts, MaxBytes: 2}).Build(context.Background(), o, r.ID)
 	if err == nil {
 		t.Fatal("oversize accepted")
+	}
+}
+func TestBundleHonorsTimeoutAcrossSerialization(t *testing.T) {
+	o := runstate.LocalOwner
+	runs := runstate.NewManager(nil)
+	r, _ := runs.Start("", "code", "", "")
+	_, err := (Service{Runs: runs, Timeout: time.Nanosecond}).Build(context.Background(), o, r.ID)
+	if err == nil {
+		t.Fatal("expired bundle succeeded")
 	}
 }

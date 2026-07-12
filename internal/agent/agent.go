@@ -25,6 +25,7 @@ import (
 	"lumen/internal/guard"
 	"lumen/internal/jobs"
 	"lumen/internal/perf"
+	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/render"
 	"lumen/internal/tool"
@@ -696,6 +697,8 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 		}
 	}
 	effects := tool.EffectsOf(t)
+	execution := &permission.Execution{}
+	ctx = permission.WithReview(ctx, permission.Review{StepID: call.ID, ToolCallID: call.ID, Effects: effects, Execution: execution})
 
 	// Plan mode gate: refuse writer tools without changing the prompt
 	if a.planMode.Load() && !t.ReadOnly() {
@@ -757,6 +760,11 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 
 	result, err := t.Execute(ctx, execArgs)
+	if execution.Complete != nil {
+		if completeErr := execution.Complete(err == nil); completeErr != nil && err == nil {
+			err = fmt.Errorf("persist tool execution outcome: %w", completeErr)
+		}
+	}
 	// Record evidence receipt for host-observable validation
 	if a.evidence != nil {
 		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly(), effects)

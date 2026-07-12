@@ -2,10 +2,16 @@ package artifact
 
 import (
 	"context"
+	"errors"
 	"io"
 	"lumen/internal/runstate"
+	"os"
 	"testing"
 )
+
+type failCreateStore struct{ Store }
+
+func (f failCreateStore) Create(Record) error { return errors.New("metadata outage") }
 
 func TestLocalBackendSurvivesRestartAndRejectsTraversal(t *testing.T) {
 	dir := t.TempDir()
@@ -28,5 +34,18 @@ func TestLocalBackendSurvivesRestartAndRejectsTraversal(t *testing.T) {
 	}
 	if err = restarted.Put(context.Background(), "../escape", nil, 0, ""); err == nil {
 		t.Fatal("traversal accepted")
+	}
+}
+func TestPersistCompensatesObjectOnMetadataFailure(t *testing.T) {
+	dir := t.TempDir()
+	b, _ := NewLocalBackend(dir)
+	data := []byte("x")
+	r, _ := NewRecord(runstate.LocalOwner, "run", "x", "text/plain", data)
+	err := Persist(context.Background(), failCreateStore{}, b, r, data)
+	if err == nil {
+		t.Fatal("outage accepted")
+	}
+	if _, err = b.Get(context.Background(), r.ObjectKey); !os.IsNotExist(err) {
+		t.Fatalf("orphan object remains: %v", err)
 	}
 }

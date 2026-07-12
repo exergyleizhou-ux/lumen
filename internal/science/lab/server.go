@@ -137,6 +137,7 @@ func New(cfg Config) (*Server, error) {
 		s.api.evidence = runtimeevidence.Service{Runs: s.api.runs, Approvals: s.api.approvalStore, Artifacts: s.api.artifactStore, Usage: ur}
 	}
 	s.api.auth = verifier
+	s.api.approvals.hosted = cfg.Hosted
 	if cfg.Hosted {
 		root := cfg.HostedWorkspaceRoot
 		if root == "" {

@@ -36,6 +36,10 @@ func TestActualOasisMigrationFullContract(t *testing.T) {
 	if !strings.Contains(string(raw), "estimated_cost bigint") {
 		t.Fatal("test is not using current Oasis 000036 migration")
 	}
+	raw37, err := os.ReadFile("/Users/lei/Documents/Codex/2026-07-12/new-chat-2/work/oasis-shared-runtime/backend/migrations/000037_workbench_runtime_execution.up.sql")
+	if err != nil || !strings.Contains(string(raw37), "execution_state") || !strings.Contains(string(raw37), "ADD COLUMN step_id text") {
+		t.Fatal("current Oasis 000037 execution migration required")
+	}
 	db, err := sql.Open("pgx", url)
 	if err != nil {
 		t.Fatal(err)
@@ -76,10 +80,19 @@ func TestActualOasisMigrationFullContract(t *testing.T) {
 	}
 	h, _ := approvalstate.HashArgs(json.RawMessage(`{"x":1}`))
 	aps := approvalstate.PostgresStore{DB: db}
-	if err = aps.Create(approvalstate.Approval{ID: "ap_" + uid, RunID: r.ID, ToolCallID: "tc", Owner: runstate.Owner{UserID: uid, WorkspaceID: wid}, RiskLevel: "high", Reason: "test", ArgsHash: h, EditableArgs: json.RawMessage(`{"x":1}`), EstimatedCostMicros: 7, CreatedAt: now, ExpiresAt: now.Add(time.Minute), Version: 1}); err != nil {
+	if err = aps.Create(approvalstate.Approval{ID: "ap_" + uid, RunID: r.ID, StepID: "step", ToolCallID: "tc", Owner: runstate.Owner{UserID: uid, WorkspaceID: wid}, RiskLevel: "high", Reason: "test", ArgsHash: h, EditableArgs: json.RawMessage(`{"x":1}`), EstimatedCostMicros: 7, CreatedAt: now, ExpiresAt: now.Add(time.Minute), Version: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = aps.Decide(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, approvalstate.DecisionApproved, uid, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = aps.Consume(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, "exec_"+uid, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = aps.Consume(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, "exec2_"+uid, now); !errors.Is(err, approvalstate.ErrNotExecutable) {
+		t.Fatalf("consume replay=%v", err)
+	}
+	if err = aps.Complete(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, "exec_"+uid, true, now); err != nil {
 		t.Fatal(err)
 	}
 	us := usage.PostgresStore{DB: db}

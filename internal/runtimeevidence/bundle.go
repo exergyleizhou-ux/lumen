@@ -45,42 +45,51 @@ func (s Service) Build(parent context.Context, o runstate.Owner, id string) ([]b
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
-	run, err := s.Runs.GetOwned(o, id)
+	run, err := bounded(ctx, func() (runstate.Run, error) { return s.Runs.GetOwned(o, id) })
 	if err != nil {
 		return nil, err
 	}
-	events, err := s.Runs.EventsOwned(o, id, 0)
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
+	events, err := bounded(ctx, func() ([]event.Event, error) { return s.Runs.EventsOwned(o, id, 0) })
 	if err != nil {
 		return nil, err
 	}
 	var approvals []approvalstate.Approval
 	if s.Approvals != nil {
-		approvals, err = s.Approvals.ListRun(o, id)
+		approvals, err = bounded(ctx, func() ([]approvalstate.Approval, error) { return s.Approvals.ListRun(o, id) })
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
 	}
 	var arts []artifact.Record
 	if s.Artifacts != nil {
-		arts, err = s.Artifacts.ListRun(o, id)
+		arts, err = bounded(ctx, func() ([]artifact.Record, error) { return s.Artifacts.ListRun(o, id) })
 		if err != nil {
 			return nil, err
 		}
 	}
+	if err = ctx.Err(); err != nil {
+		return nil, err
+	}
 	var uses []usage.Record
 	if s.Usage != nil {
-		uses, err = s.Usage.ListRun(o, id)
+		uses, err = bounded(ctx, func() ([]usage.Record, error) { return s.Usage.ListRun(o, id) })
 		if err != nil {
 			return nil, err
 		}
 	}
 	files := map[string][]byte{}
-	files["run.json"] = pretty(run)
+	files["run.json"] = pretty(redactJSON(run))
 	files["events.jsonl"] = jsonLines(redactEvents(events))
-	files["approvals.json"] = pretty(approvals)
-	files["verification.json"] = pretty(extract(events, "verification"))
-	files["provenance.jsonl"] = jsonLines(extract(events, "provenance"))
-	files["usage.json"] = pretty(uses)
+	files["approvals.json"] = pretty(redactJSON(approvals))
+	files["verification.json"] = pretty(structuredVerification(events))
+	files["provenance.jsonl"] = jsonLines(structuredProvenance(arts))
+	files["usage.json"] = pretty(redactJSON(uses))
 	manifestArts := make([]artifact.Record, 0, len(arts))
 	max := s.MaxBytes
 	if max <= 0 {
@@ -117,7 +126,7 @@ func (s Service) Build(parent context.Context, o runstate.Owner, id string) ([]b
 		files[name] = b
 		manifestArts = append(manifestArts, a)
 	}
-	files["manifest.json"] = pretty(map[string]any{"schema_version": 1, "run_id": id, "owner": o, "artifacts": manifestArts, "generated_at": time.Now().UTC()})
+	files["manifest.json"] = pretty(redactJSON(map[string]any{"schema_version": 1, "run_id": id, "owner": o, "artifacts": manifestArts, "generated_at": time.Now().UTC()}))
 	names := make([]string, 0, len(files))
 	for n := range files {
 		names = append(names, n)
@@ -125,6 +134,9 @@ func (s Service) Build(parent context.Context, o runstate.Owner, id string) ([]b
 	sort.Strings(names)
 	var sums strings.Builder
 	for _, n := range names {
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
 		h := sha256.Sum256(files[n])
 		fmt.Fprintf(&sums, "%x  %s\n", h, n)
 	}
@@ -133,6 +145,9 @@ func (s Service) Build(parent context.Context, o runstate.Owner, id string) ([]b
 	var out bytes.Buffer
 	zw := zip.NewWriter(&out)
 	for _, n := range names {
+		if err = ctx.Err(); err != nil {
+			return nil, err
+		}
 		w, e := zw.Create(n)
 		if e != nil {
 			return nil, e
@@ -179,7 +194,7 @@ func redact(v any) any {
 	case map[string]any:
 		for k, val := range x {
 			lk := strings.ToLower(k)
-			if strings.Contains(lk, "reasoning") || strings.Contains(lk, "api_key") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") {
+			if strings.Contains(lk, "reason") || strings.Contains(lk, "args") || strings.Contains(lk, "command") || strings.Contains(lk, "reasoning") || strings.Contains(lk, "api_key") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") {
 				x[k] = "[REDACTED]"
 			} else {
 				x[k] = redact(val)
@@ -199,12 +214,51 @@ func redact(v any) any {
 	}
 	return v
 }
+func redactJSON(v any) any {
+	raw, _ := json.Marshal(v)
+	var out any
+	_ = json.Unmarshal(raw, &out)
+	return redact(out)
+}
+
+type boundedResult[T any] struct {
+	v   T
+	err error
+}
+
+func bounded[T any](ctx context.Context, fn func() (T, error)) (T, error) {
+	ch := make(chan boundedResult[T], 1)
+	go func() { v, e := fn(); ch <- boundedResult[T]{v, e} }()
+	select {
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	case r := <-ch:
+		return r.v, r.err
+	}
+}
 func extract(events []event.Event, kind string) []any {
 	var out []any
 	for _, e := range events {
 		if strings.Contains(strings.ToLower(string(e.Kind)), kind) || strings.Contains(strings.ToLower(e.Text), kind) {
 			out = append(out, redactEvents([]event.Event{e})[0])
 		}
+	}
+	return out
+}
+func structuredVerification(events []event.Event) []any {
+	var out []any
+	for _, e := range events {
+		if e.Kind == event.VerifyStarted || e.Kind == event.VerifyResult {
+			out = append(out, redactEvents([]event.Event{e})[0])
+		}
+	}
+	return out
+}
+func structuredProvenance(arts []artifact.Record) []any {
+	out := make([]any, 0, len(arts))
+	for _, a := range arts {
+		out = append(out, redactJSON(map[string]any{"artifact_id": a.ID, "run_id": a.RunID, "step_id": a.StepID, "tool_call_id": a.ToolCallID, "sha256": a.SHA256, "input_refs": a.InputRefs, "provenance": a.Provenance}))
 	}
 	return out
 }

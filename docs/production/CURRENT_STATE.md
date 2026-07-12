@@ -74,3 +74,11 @@ The Go test output was served from the build cache.
 - The local object adapter uses the same `objects/<object_key>` layout and traversal rules as Oasis local storage. Object keys are generated from authenticated workspace, Run, and random Artifact IDs, never request paths. The adapter is replaceable by an Oasis-compatible S3 implementation through `artifact.ObjectBackend`.
 - Successful Code and Lab runs persist files created or modified during the Run with bytes, SHA-256, size, MIME/path/model metadata, and owner-scoped Postgres records before transitioning to success. Object, metadata, or usage persistence failure fails and cancels the Run.
 - The final correction gates passed against the live temporary Oasis Postgres migration: full-schema integration, focused race suite, `go vet ./...`, `go build ./...`, full `go test ./...`, and diff checks.
+
+### Phase 4 atomic execution and evidence reacceptance
+
+- Oasis migration `000037_workbench_runtime_execution` adds approval step identity and an atomic pending/consumed/executed/failed lifecycle, plus first-class Artifact step/tool/model/input references. Lumen's integration test asserts and exercises both `000036` and `000037` against the real temporary Postgres.
+- Permission review context binds the actual Run, Step, ToolCall, typed effects and parsed command/file/remote/network/output scope. An approved grant is atomically consumed before tool invocation and completed afterward; a crash leaves it consumed, so replay cannot execute the dangerous call again.
+- Edited arguments invalidate the prior approval and create a new pending approval. The original waiter is not released and the API explicitly returns `reapproval_required` with the replacement ID.
+- Artifact capture is driven by matching ToolDispatch/ToolResult events, not file mtimes. IDs and object keys are deterministic per Run/ToolCall, metadata is idempotent, and a metadata failure compensates by deleting the newly written object.
+- Evidence export redacts arguments, reasons, commands, reasoning, tokens and secrets throughout every member; verification and provenance are structured records. Deadline and size limits cover store queries, serialization, checksums, Artifact reads and ZIP generation.

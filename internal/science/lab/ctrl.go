@@ -71,6 +71,12 @@ func (c *Controller) Close() {
 		c.ctrl.Close()
 	}
 }
+func (c *Controller) WorkspaceContext() runworkspace.Context {
+	if c == nil || c.ctrl == nil {
+		return runworkspace.Context{}
+	}
+	return c.ctrl.WorkspaceContext()
+}
 
 func (c *Controller) ProviderConfig() *config.ProviderConfig {
 	c.mu.Lock()

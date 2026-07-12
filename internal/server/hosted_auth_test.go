@@ -96,8 +96,10 @@ func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t
 }
 
 func TestHostedServerFailsClosedAndProtectsBusinessRoutes(t *testing.T) {
-	t.Setenv("WORKBENCH_DATABASE_URL","")
-	if _,err:=New(Config{Ctrl:control.New(),Hosted:true,WorkbenchJWTSecret:"secret"});err==nil{t.Fatal("hosted server accepted missing durable database")}
+	t.Setenv("WORKBENCH_DATABASE_URL", "")
+	if _, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"}); err == nil {
+		t.Fatal("hosted server accepted missing durable database")
+	}
 	if _, err := New(Config{Ctrl: control.New(), Hosted: true}); err == nil {
 		t.Fatal("hosted server accepted missing secret")
 	}

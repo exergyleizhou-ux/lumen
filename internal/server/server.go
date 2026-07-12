@@ -38,7 +38,6 @@ import (
 	"lumen/internal/runstate/pgstore"
 	"lumen/internal/runtimeevidence"
 	"lumen/internal/usage"
-	"lumen/internal/workspace"
 )
 
 // Config holds the server configuration.
@@ -463,7 +462,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if active := ctrl.ProviderConfig(); active != nil && active.Pricing != nil {
 		pricing = usage.Pricing{Input: active.Pricing.Input, Output: active.Pricing.Output, CacheHit: active.Pricing.CacheHit}
 	}
-	capture := usage.CapturingSink{Store: s.usage, Owner: owner, Provider: ctrl.ProviderName(), Model: ctrl.ModelName(), Pricing: pricing, Next: sink, Failure: func(e error) {
+	artifactCapture := &artifact.CapturingSink{Context: ctx, Store: s.artifactStore, Owner: owner, RunID: run.ID, Model: ctrl.ModelName(), Workspace: rt.ws, Next: sink, Failure: func(e error) {
+		_, _ = s.runs.Finish(run.ID, fmt.Errorf("artifact persistence failed: %w", e))
+		s.cancelActiveRun(owner, run.ID)
+	}}
+	capture := usage.CapturingSink{Store: s.usage, Owner: owner, Provider: ctrl.ProviderName(), Model: ctrl.ModelName(), Pricing: pricing, Next: artifactCapture, Failure: func(e error) {
 		_, _ = s.runs.Finish(run.ID, fmt.Errorf("usage persistence failed: %w", e))
 		s.cancelActiveRun(owner, run.ID)
 	}}
@@ -481,11 +484,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sink.emit("error", runErr.Error())
 		}
 	}
-	if runErr == nil && ctrl.PermissionMode() != permission.ModePlan {
-		if err := s.persistCodeArtifacts(ctx, owner, run.ID, rt.ws, run.StartedAt); err != nil {
-			runErr = fmt.Errorf("artifact persistence failed: %w", err)
-		}
-	}
 	if _, err := s.runs.Finish(run.ID, runErr); err != nil {
 		sink.emit("error", "finish run: "+err.Error())
 		if runErr == nil {
@@ -493,55 +491,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sink.done(run.ID, runErr)
-}
-
-func (s *Server) persistCodeArtifacts(ctx context.Context, owner runstate.Owner, runID string, ws workspace.Context, started *time.Time) error {
-	writer, ok := s.artifactStore.(artifact.Writer)
-	if !ok {
-		return fmt.Errorf("durable artifact writer unavailable")
-	}
-	return filepath.Walk(ws.Root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if info.IsDir() {
-			if path != ws.Root && (info.Name() == ".git" || info.Name() == ".lumen" || info.Name() == "node_modules") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !info.Mode().IsRegular() || (started != nil && info.ModTime().Before(started.Add(-time.Second))) {
-			return nil
-		}
-		if info.Size() > 25<<20 {
-			return fmt.Errorf("artifact %s exceeds 25 MiB", path)
-		}
-		rel, e := filepath.Rel(ws.Root, path)
-		if e != nil {
-			return e
-		}
-		resolved, e := ws.Backend.Resolve(rel, false)
-		if e != nil || resolved != path {
-			return e
-		}
-		b, e := os.ReadFile(resolved)
-		if e != nil {
-			return e
-		}
-		rec, e := artifact.NewRecord(owner, runID, filepath.Base(rel), "application/octet-stream", b)
-		if e != nil {
-			return e
-		}
-		rec.Path = filepath.ToSlash(rel)
-		rec.Model = s.controllersModel(owner)
-		return writer.Persist(ctx, rec, b)
-	})
-}
-func (s *Server) controllersModel(owner runstate.Owner) string {
-	if s.hostedDefault != nil {
-		return s.hostedDefault.Model
-	}
-	return ""
 }
 
 type sseSink struct {

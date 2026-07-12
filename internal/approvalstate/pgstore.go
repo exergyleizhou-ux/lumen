@@ -15,7 +15,7 @@ func (s PostgresStore) Create(a Approval) error {
 	scope, _ := json.Marshal(a.FileScope)
 	nets, _ := json.Marshal(a.NetworkTargets)
 	outs, _ := json.Marshal(a.ExpectedOutputs)
-	_, err := s.DB.Exec(`INSERT INTO workbench_approvals(approval_id,run_id,tool_call_id,account_id,workspace_id,owner,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, a.ID, a.RunID, a.ToolCallID, a.Owner.UserID, a.Owner.WorkspaceID, a.Owner.UserID+":"+a.Owner.WorkspaceID, a.RiskLevel, a.Reason, effects, null(a.Command), scope, null(a.RemoteTarget), nets, a.EstimatedCostMicros, outs, a.ArgsHash, a.EditableArgs, a.Version, a.CreatedAt, a.ExpiresAt)
+	_, err := s.DB.Exec(`INSERT INTO workbench_approvals(approval_id,run_id,step_id,tool_call_id,account_id,workspace_id,owner,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at,execution_state)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,'pending')`, a.ID, a.RunID, null(a.StepID), a.ToolCallID, a.Owner.UserID, a.Owner.WorkspaceID, a.Owner.UserID+":"+a.Owner.WorkspaceID, a.RiskLevel, a.Reason, effects, null(a.Command), scope, null(a.RemoteTarget), nets, a.EstimatedCostMicros, outs, a.ArgsHash, a.EditableArgs, a.Version, a.CreatedAt, a.ExpiresAt)
 	return err
 }
 func (s PostgresStore) Get(o runstate.Owner, id string) (Approval, error) {
@@ -23,7 +23,7 @@ func (s PostgresStore) Get(o runstate.Owner, id string) (Approval, error) {
 	var effects, scope, nets, outs, editable []byte
 	var command, remote, by sql.NullString
 	var decision sql.NullString
-	err := s.DB.QueryRow(`SELECT approval_id,run_id,tool_call_id,account_id::text,workspace_id::text,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at,decided_at,decided_by::text,decision FROM workbench_approvals WHERE approval_id=$1 AND account_id=$2 AND workspace_id=$3`, id, o.UserID, o.WorkspaceID).Scan(&a.ID, &a.RunID, &a.ToolCallID, &a.Owner.UserID, &a.Owner.WorkspaceID, &a.RiskLevel, &a.Reason, &effects, &command, &scope, &remote, &nets, &a.EstimatedCostMicros, &outs, &a.ArgsHash, &editable, &a.Version, &a.CreatedAt, &a.ExpiresAt, &a.DecidedAt, &by, &decision)
+	err := s.DB.QueryRow(`SELECT approval_id,run_id,COALESCE(step_id,''),tool_call_id,account_id::text,workspace_id::text,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at,decided_at,decided_by::text,decision,COALESCE(execution_id,''),execution_state,executed_at FROM workbench_approvals WHERE approval_id=$1 AND account_id=$2 AND workspace_id=$3`, id, o.UserID, o.WorkspaceID).Scan(&a.ID, &a.RunID, &a.StepID, &a.ToolCallID, &a.Owner.UserID, &a.Owner.WorkspaceID, &a.RiskLevel, &a.Reason, &effects, &command, &scope, &remote, &nets, &a.EstimatedCostMicros, &outs, &a.ArgsHash, &editable, &a.Version, &a.CreatedAt, &a.ExpiresAt, &a.DecidedAt, &by, &decision, &a.ExecutionID, &a.ExecutionState, &a.ExecutedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}
@@ -43,6 +43,32 @@ func (s PostgresStore) Get(o runstate.Owner, id string) (Approval, error) {
 		a.Decision = &d
 	}
 	return a, nil
+}
+func (s PostgresStore) Consume(o runstate.Owner, id, executionID string, now time.Time) (Approval, error) {
+	res, err := s.DB.Exec(`UPDATE workbench_approvals SET execution_state='consumed',execution_id=$1,version=version+1 WHERE approval_id=$2 AND account_id=$3 AND workspace_id=$4 AND decision='approved' AND execution_state='pending' AND expires_at>$5`, executionID, id, o.UserID, o.WorkspaceID, now)
+	if err != nil {
+		return Approval{}, err
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return Approval{}, ErrNotExecutable
+	}
+	return s.Get(o, id)
+}
+func (s PostgresStore) Complete(o runstate.Owner, id, executionID string, success bool, now time.Time) error {
+	state := "failed"
+	if success {
+		state = "executed"
+	}
+	res, err := s.DB.Exec(`UPDATE workbench_approvals SET execution_state=$1,executed_at=$2,version=version+1 WHERE approval_id=$3 AND account_id=$4 AND workspace_id=$5 AND execution_state='consumed' AND execution_id=$6`, state, now, id, o.UserID, o.WorkspaceID, executionID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n != 1 {
+		return ErrNotExecutable
+	}
+	return nil
 }
 func (s PostgresStore) Decide(o runstate.Owner, id string, d Decision, by string, now time.Time) (Approval, error) {
 	res, err := s.DB.Exec(`UPDATE workbench_approvals SET decision=$1,decided_at=$2,decided_by=$3,version=version+1 WHERE approval_id=$4 AND account_id=$5 AND workspace_id=$6 AND decision IS NULL AND expires_at>$2`, d, now, by, id, o.UserID, o.WorkspaceID)

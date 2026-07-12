@@ -48,3 +48,28 @@ func TestDecisionIsCASAndNonEnumerating(t *testing.T) {
 		t.Fatalf("cross-owner leaked: %v", err)
 	}
 }
+func TestConsumeIsAtomicAcrossCrashAndRetry(t *testing.T) {
+	s := NewMemoryStore()
+	o := runstate.Owner{UserID: "u", WorkspaceID: "w"}
+	h, _ := HashArgs(json.RawMessage(`{}`))
+	now := time.Now()
+	d := DecisionApproved
+	s.Create(Approval{ID: "a", RunID: "r", ToolCallID: "tc", Owner: o, ArgsHash: h, Decision: &d, ExpiresAt: now.Add(time.Minute)})
+	if _, err := s.Consume(o, "a", "exec-r-tc", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Consume(o, "a", "exec-r-tc", now); !errors.Is(err, ErrNotExecutable) {
+		t.Fatalf("replayed dangerous execution: %v", err)
+	}
+	restarted := s
+	if _, err := restarted.Consume(o, "a", "different", now); !errors.Is(err, ErrNotExecutable) {
+		t.Fatalf("restart repeated execution: %v", err)
+	}
+	if err := s.Complete(o, "a", "exec-r-tc", true, now); err != nil {
+		t.Fatal(err)
+	}
+	a, _ := s.Get(o, "a")
+	if a.ExecutionState != "executed" || a.ExecutedAt == nil {
+		t.Fatalf("state=%+v", a)
+	}
+}

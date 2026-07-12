@@ -66,6 +66,16 @@ func (l *LocalBackend) Get(_ context.Context, key string) (io.ReadCloser, error)
 	}
 	return os.Open(p)
 }
+func (l *LocalBackend) Delete(_ context.Context, key string) error {
+	p, err := l.path(key)
+	if err != nil {
+		return err
+	}
+	if err = os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
 
 type contextReader struct {
 	ctx context.Context
