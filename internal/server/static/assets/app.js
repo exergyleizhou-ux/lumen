@@ -52,6 +52,8 @@ function syncModeSelect() {
 }
 
 let pendingApprovalId = null;
+let currentRunId = "";
+let currentRunSeq = 0;
 
 async function respondApproval(allow) {
   if (!pendingApprovalId) return;
@@ -406,6 +408,80 @@ async function send() {
   let thinkEl = null;
 	let terminalOK = null;
 	let terminalError = "";
+	let lastTool = null;
+	currentRunId = "";
+	currentRunSeq = 0;
+
+	const applyRunEvent = (ev) => {
+	  if (ev.run_id) currentRunId = ev.run_id;
+	  if (Number.isInteger(ev.seq) && ev.seq > currentRunSeq) currentRunSeq = ev.seq;
+	  if (currentRunId) {
+	    sessionStorage.setItem("lumen_active_run", JSON.stringify({ runId: currentRunId, lastSeq: currentRunSeq }));
+	  }
+	  switch (ev.kind) {
+	    case "text":
+	      assistantText += ev.text || "";
+	      bubble.innerHTML = renderMarkdown(assistantText) + '<span class="cursor-blink"></span>';
+	      scrollChat();
+	      break;
+	    case "reasoning":
+	      if (!thinkEl) {
+	        thinkEl = document.createElement("div");
+	        thinkEl.className = "think-block";
+	        el.querySelector(".msg-body").insertBefore(thinkEl, bubble);
+	      }
+	      thinkEl.textContent = (thinkEl.textContent || "思考中… ") + (ev.text || "");
+	      break;
+	    case "tool_dispatch":
+	      if (ev.tool) lastTool = addToolCard(el, ev.tool.name || "tool", "running");
+	      break;
+	    case "tool_result":
+	      if (lastTool && ev.tool) {
+	        lastTool.className = `tool-hd ${ev.tool.err ? "done-err" : "done-ok"}`;
+	        lastTool.querySelector(".tool-spin")?.remove();
+	      }
+	      break;
+	    case "usage":
+	      if (ev.usage) {
+	        tokensIn += ev.usage.prompt_tokens || ev.usage.cache_miss_tokens || 0;
+	        tokensOut += ev.usage.completion_tokens || 0;
+	        const hit = ev.usage.cache_hit_tokens || 0;
+	        const miss = ev.usage.cache_miss_tokens || ev.usage.prompt_tokens || 0;
+	        const out = ev.usage.completion_tokens || 0;
+	        cost += (miss * 0.14 + hit * 0.014 + out * 0.28) / 1e6;
+	      }
+	      break;
+	    case "notice":
+	    case "error":
+	      if (ev.text) {
+	        const err = document.createElement("div");
+	        err.className = "msg-error";
+	        err.textContent = ev.text;
+	        el.querySelector(".msg-body").appendChild(err);
+	      }
+	      break;
+	    case "approval_request":
+	      pendingApprovalId = ev.id;
+	      $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
+	      $("approvalModal")?.showModal();
+	      break;
+	    case "turn_done":
+	      turn++;
+	      if (ev.stop_reason === "finished") terminalOK = true;
+	      if (ev.stop_reason && ev.stop_reason !== "finished") {
+	        terminalOK = false;
+	        terminalError = `任务未完成：${ev.stop_reason}`;
+	      }
+	      break;
+	    case "stream_done":
+	      terminalOK = ev.ok === true;
+	      terminalError = ev.error || "";
+	      break;
+	    case "plan_start": onPlanStart(); break;
+	    case "plan_step": onPlanStep(ev.step || ev); break;
+	    case "plan_done": onPlanDone(); break;
+	  }
+	};
 
   const imgs = pendingImages;
   pendingImages = [];
@@ -442,8 +518,6 @@ async function send() {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
-    let lastTool = null;
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -455,69 +529,7 @@ async function send() {
         if (!line.startsWith("data: ")) continue;
         try {
           const ev = JSON.parse(line.slice(6));
-          switch (ev.kind) {
-            case "text":
-              assistantText += ev.text || "";
-              bubble.innerHTML = renderMarkdown(assistantText) + '<span class="cursor-blink"></span>';
-              scrollChat();
-              break;
-            case "reasoning":
-              if (!thinkEl) {
-                thinkEl = document.createElement("div");
-                thinkEl.className = "think-block";
-                el.querySelector(".msg-body").insertBefore(thinkEl, bubble);
-              }
-              thinkEl.textContent = (thinkEl.textContent || "思考中… ") + (ev.text || "");
-              break;
-            case "tool_dispatch":
-              if (ev.tool) {
-                lastTool = addToolCard(el, ev.tool.name || "tool", "running");
-              }
-              break;
-            case "tool_result":
-              if (lastTool && ev.tool) {
-                lastTool.className = `tool-hd ${ev.tool.err ? "done-err" : "done-ok"}`;
-                lastTool.querySelector(".tool-spin")?.remove();
-              }
-              break;
-            case "usage":
-              if (ev.usage) {
-                tokensIn += ev.usage.prompt_tokens || ev.usage.cache_miss_tokens || 0;
-                tokensOut += ev.usage.completion_tokens || 0;
-                const hit = ev.usage.cache_hit_tokens || 0;
-                const miss = ev.usage.cache_miss_tokens || ev.usage.prompt_tokens || 0;
-                const out = ev.usage.completion_tokens || 0;
-                cost += (miss * 0.14 + hit * 0.014 + out * 0.28) / 1e6;
-              }
-              break;
-            case "notice":
-            case "error":
-              if (ev.text) {
-                const err = document.createElement("div");
-                err.className = "msg-error";
-                err.textContent = ev.text;
-                el.querySelector(".msg-body").appendChild(err);
-              }
-              break;
-            case "approval_request":
-              pendingApprovalId = ev.id;
-              $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
-              $("approvalModal")?.showModal();
-              break;
-            case "turn_done":
-              turn++;
-              break;
-			case "stream_done":
-			  terminalOK = ev.ok === true;
-			  terminalError = ev.error || "";
-			  break;
-            case "plan_start":
-              onPlanStart(); break;
-            case "plan_step":
-              onPlanStep(ev.step || ev); break;
-            case "plan_done":
-              onPlanDone(); break;
-          }
+		  applyRunEvent(ev);
         } catch (_) {}
       }
     }
@@ -542,10 +554,13 @@ async function send() {
     if (e.name === "AbortError") {
       bubble.innerHTML = renderMarkdown(assistantText || "（已停止）");
     } else {
-      const err = document.createElement("div");
-      err.className = "msg-error";
-      err.textContent = "连接中断，请重试";
-      el.querySelector(".msg-body").appendChild(err);
+	  const replayed = await replayMissedRunEvents(applyRunEvent);
+	  if (!replayed) {
+	    const err = document.createElement("div");
+	    err.className = "msg-error";
+	    err.textContent = currentRunId ? `连接中断，可重试 Run ${currentRunId}` : "连接中断，请重试";
+	    el.querySelector(".msg-body").appendChild(err);
+	  }
     }
   }
 
@@ -558,6 +573,23 @@ async function send() {
   loadSessions();
   input.focus();
   scrollChat();
+}
+
+async function replayMissedRunEvents(applyRunEvent) {
+  if (!currentRunId) return false;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/events?after=${currentRunSeq}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    if (!events.length) return false;
+    events.forEach(applyRunEvent);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function stopGeneration() {
