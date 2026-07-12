@@ -2,7 +2,9 @@ package langgraph
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -45,6 +47,39 @@ func enableLocalSidecar(t *testing.T) bool {
 	t.Setenv("LUMEN_LANGGRAPH_VENV", venv)
 	t.Setenv("LUMEN_LANGGRAPH_SCRIPT", script)
 	return IsAvailable()
+}
+
+func TestProviderOnlyChildAndRunnerIgnoreInheritedDeepSeek(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "forbidden-deepseek")
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("caller")
+	}
+	script := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "..", "scripts", "science", "langgraph_runner.py"))
+	pc := &ProviderConfig{Adapter: "openai", APIKey: "platform-openai-key", BaseURL: "https://platform.openai.invalid/v1", Model: "platform-model"}
+	cmd := exec.Command(PythonBin(), script, "--provider-debug")
+	cmd.Env = sanitizedEnv(pc)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("runner: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["provider"] != "openai" || got["key"] != "platform-openai-key" || got["model"] != "platform-model" || got["deepseek_present"] != false || got["provider_only"] != true {
+		t.Fatalf("runner env=%v", got)
+	}
+}
+
+func TestHostedReadinessUsesExplicitPlatformProvider(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "unrelated")
+	if LLMReadyWithProvider(nil) {
+		t.Fatal("unrelated process key made hosted provider ready")
+	}
+	if !LLMReadyWithProvider(&ProviderConfig{APIKey: "platform"}) {
+		t.Fatal("platform provider not ready")
+	}
 }
 
 func TestHealthHintNonEmpty(t *testing.T) {

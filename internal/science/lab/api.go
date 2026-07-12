@@ -363,7 +363,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"available": jupyterOK,
 		},
 		"onlyoffice": onlyoffice.Health(strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL"))),
-		"langgraph":  langgraph.Health(),
+		"langgraph":  a.langGraphHealth(),
 	})
 }
 
@@ -3170,6 +3170,13 @@ func (a *API) langGraphProvider() *langgraph.ProviderConfig {
 		}
 	}
 	return nil
+}
+
+func (a *API) langGraphHealth() map[string]any {
+	if a.auth != nil {
+		return langgraph.HealthWithProvider(a.langGraphProvider())
+	}
+	return langgraph.Health()
 }
 
 // handleLangGraphHistory lists server-persisted sidecar runs for a project.

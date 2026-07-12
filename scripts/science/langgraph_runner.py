@@ -260,7 +260,10 @@ def _llm_available() -> bool:
     """True when an OpenAI-compatible key is present and LLM mode not disabled."""
     if os.environ.get("LUMEN_LANGGRAPH_LLM", "1").strip() == "0":
         return False
-    return bool(
+    selected = os.environ.get("LUMEN_LANGGRAPH_SELECTED_API_KEY", "").strip()
+    if os.environ.get("LUMEN_LANGGRAPH_PROVIDER_ONLY") == "1":
+        return bool(selected)
+    return bool(selected or
         os.environ.get("DEEPSEEK_API_KEY")
         or os.environ.get("OPENAI_API_KEY")
         or os.environ.get("MOONSHOT_API_KEY")
@@ -274,21 +277,20 @@ def _llm_chat(system: str, user: str) -> str:
     import urllib.error
     import urllib.request
 
-    key = (
-        os.environ.get("DEEPSEEK_API_KEY")
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("MOONSHOT_API_KEY")
-        or os.environ.get("DASHSCOPE_API_KEY")
-        or ""
-    ).strip()
+    selected_key = os.environ.get("LUMEN_LANGGRAPH_SELECTED_API_KEY", "").strip()
+    provider_only = os.environ.get("LUMEN_LANGGRAPH_PROVIDER_ONLY") == "1"
+    key = selected_key
+    if not key and not provider_only:
+        key = (os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+               or os.environ.get("MOONSHOT_API_KEY") or os.environ.get("DASHSCOPE_API_KEY") or "")
+    key = key.strip()
     if not key:
         raise RuntimeError("no API key")
 
-    base = (
-        os.environ.get("OPENAI_BASE_URL")
-        or os.environ.get("LUMEN_LANGGRAPH_BASE_URL")
-        or ""
-    ).strip().rstrip("/")
+    base = os.environ.get("LUMEN_LANGGRAPH_SELECTED_BASE_URL", "")
+    if not base and not provider_only:
+        base = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LUMEN_LANGGRAPH_BASE_URL") or ""
+    base = base.strip().rstrip("/")
     if not base:
         if os.environ.get("DEEPSEEK_API_KEY"):
             base = "https://api.deepseek.com/v1"
@@ -299,12 +301,11 @@ def _llm_chat(system: str, user: str) -> str:
         else:
             base = "https://api.openai.com/v1"
 
-    model = (
-        os.environ.get("LUMEN_SCIENCE_MODEL")
-        or os.environ.get("LUMEN_LANGGRAPH_MODEL")
-        or os.environ.get("DEEPSEEK_MODEL")
-        or "deepseek-chat"
-    )
+    model = os.environ.get("LUMEN_LANGGRAPH_SELECTED_MODEL", "")
+    if not model and not provider_only:
+        model = os.environ.get("LUMEN_SCIENCE_MODEL") or os.environ.get("LUMEN_LANGGRAPH_MODEL") or os.environ.get("DEEPSEEK_MODEL") or "deepseek-chat"
+    if not model:
+        raise RuntimeError("selected provider model is empty")
     payload = _json.dumps(
         {
             "model": model,
@@ -449,7 +450,19 @@ def main() -> None:
     parser.add_argument("--project-id", default="")
     parser.add_argument("--prompt", default="")
     parser.add_argument("--workspace", default="")
+    parser.add_argument("--provider-debug", action="store_true")
     args = parser.parse_args()
+
+    if args.provider_debug:
+        print(json.dumps({
+            "provider": os.environ.get("LUMEN_LANGGRAPH_SELECTED_PROVIDER", ""),
+            "key": os.environ.get("LUMEN_LANGGRAPH_SELECTED_API_KEY", ""),
+            "base_url": os.environ.get("LUMEN_LANGGRAPH_SELECTED_BASE_URL", ""),
+            "model": os.environ.get("LUMEN_LANGGRAPH_SELECTED_MODEL", ""),
+            "deepseek_present": bool(os.environ.get("DEEPSEEK_API_KEY")),
+            "provider_only": os.environ.get("LUMEN_LANGGRAPH_PROVIDER_ONLY") == "1",
+        }))
+        return
 
     try:
         from langgraph.graph import END, START, StateGraph
