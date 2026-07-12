@@ -194,7 +194,7 @@ func redact(v any) any {
 	case map[string]any:
 		for k, val := range x {
 			lk := strings.ToLower(k)
-			if strings.Contains(lk, "reason") || strings.Contains(lk, "args") || strings.Contains(lk, "command") || strings.Contains(lk, "reasoning") || strings.Contains(lk, "api_key") || strings.Contains(lk, "secret") || strings.Contains(lk, "token") {
+			if strings.Contains(lk, "reason") || strings.Contains(lk, "args") || strings.Contains(lk, "command") || strings.Contains(lk, "reasoning") || strings.Contains(lk, "api_key") || strings.Contains(lk, "secret") || credentialTokenKey(lk) {
 				x[k] = "[REDACTED]"
 			} else {
 				x[k] = redact(val)
@@ -213,6 +213,13 @@ func redact(v any) any {
 		}
 	}
 	return v
+}
+func credentialTokenKey(k string) bool {
+	switch k {
+	case "token", "access_token", "refresh_token", "auth_token", "bearer_token", "api_token", "authorization":
+		return true
+	}
+	return strings.HasSuffix(k, "_credential")
 }
 func redactJSON(v any) any {
 	raw, _ := json.Marshal(v)

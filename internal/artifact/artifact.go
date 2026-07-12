@@ -18,6 +18,8 @@ import (
 )
 
 var ErrNotFound = errors.New("artifact not found")
+var ErrDuplicate = errors.New("artifact already persisted")
+var ErrConflict = errors.New("artifact identity conflict")
 
 type Record struct {
 	ID         string         `json:"id"`

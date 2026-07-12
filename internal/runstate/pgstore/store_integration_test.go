@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"io"
 	"lumen/internal/approvalstate"
 	"lumen/internal/artifact"
 	"lumen/internal/event"
@@ -106,6 +107,8 @@ func TestActualOasisMigrationFullContract(t *testing.T) {
 	as := artifact.PostgresStore{DB: db, Objects: backend}
 	data := []byte("result")
 	ar, _ := artifact.NewRecord(runstate.Owner{UserID: uid, WorkspaceID: wid}, r.ID, "result.txt", "text/plain", data)
+	ar.StepID = "step-art"
+	ar.ToolCallID = "tc-art"
 	if err = artifact.Persist(context.Background(), as, backend, ar, data); err != nil {
 		t.Fatal(err)
 	}
@@ -118,4 +121,34 @@ func TestActualOasisMigrationFullContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	rc.Close()
+	changed := ar
+	changed.SHA256 = strings.Repeat("f", 64)
+	changed.Size = 7
+	if err = as.Persist(context.Background(), changed, []byte("changed")); !errors.Is(err, artifact.ErrConflict) {
+		t.Fatalf("changed identity=%v", err)
+	}
+	rc, err = as.Open(context.Background(), ar.Owner, listed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	preserved, _ := io.ReadAll(rc)
+	rc.Close()
+	if string(preserved) != "result" {
+		t.Fatalf("preexisting object overwritten: %q", preserved)
+	}
+	uniqueConflict := ar
+	uniqueConflict.ID = "different_" + uid
+	uniqueConflict.ObjectKey += "-different"
+	if err = as.Persist(context.Background(), uniqueConflict, data); !errors.Is(err, artifact.ErrConflict) {
+		t.Fatalf("run/tool conflict=%v", err)
+	}
+	errs := make(chan error, 2)
+	for i := 0; i < 2; i++ {
+		go func() { errs <- as.Persist(context.Background(), ar, data) }()
+	}
+	for i := 0; i < 2; i++ {
+		if e := <-errs; e != nil {
+			t.Fatalf("concurrent replay=%v", e)
+		}
+	}
 }

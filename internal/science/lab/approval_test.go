@@ -1,14 +1,19 @@
 package lab
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"lumen/internal/approvalstate"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
+	"net/http"
+	"net/http/httptest"
 )
 
 func TestApprovalHubBlocksUntilResolve(t *testing.T) {
@@ -50,6 +55,48 @@ func TestApprovalHubBlocksUntilResolve(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting decide")
+	}
+}
+func TestLabReplacementApprovalExecutesNewGrant(t *testing.T) {
+	store := approvalstate.NewMemoryStore()
+	h := newApprovalHub(func() permission.Mode { return permission.ModeDefault })
+	h.store = store
+	api := &API{approvals: h, approvalStore: store, approvalsTot: new(atomic.Uint64)}
+	execution := &permission.Execution{}
+	ctx := permission.WithReview(runstate.WithRunID(context.Background(), "run"), permission.Review{StepID: "step", ToolCallID: "tc", Execution: execution})
+	ids := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		ok, _, err := h.decideOwned(ctx, runstate.LocalOwner, "bash", json.RawMessage(`{"command":"old"}`), func(_ string, p map[string]any) { ids <- p["id"].(string) })
+		if err == nil && !ok {
+			err = approvalstate.ErrNotExecutable
+		}
+		done <- err
+	}()
+	oldID := <-ids
+	call := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/lab/approve", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		api.handleApprove(w, r)
+		return w
+	}
+	first := call(`{"id":"` + oldID + `","allow":true,"args":{"command":"new"}}`)
+	var body map[string]any
+	json.Unmarshal(first.Body.Bytes(), &body)
+	newID := body["id"].(string)
+	if w := call(`{"id":"` + newID + `","allow":true}`); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	old, _ := store.Get(runstate.LocalOwner, oldID)
+	replacement, _ := store.Get(runstate.LocalOwner, newID)
+	if old.Decision == nil || *old.Decision != approvalstate.DecisionInvalidated || replacement.ExecutionState != "consumed" {
+		t.Fatalf("old=%+v new=%+v", old, replacement)
+	}
+	if execution.Complete == nil {
+		t.Fatal("completion missing")
 	}
 }
 

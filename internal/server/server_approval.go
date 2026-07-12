@@ -22,6 +22,7 @@ type approvalWaiter struct {
 	owner runstate.Owner
 	runID string
 	args  json.RawMessage
+	id    string
 }
 
 func (s *Server) routesApproval() {
@@ -84,6 +85,7 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			wt.args = req.Args
+			wt.id = newID
 			s.approvals.Store(newID, wt)
 			s.approvals.Delete(req.ID)
 			jsonOK(w, map[string]any{"id": newID, "allowed": false, "reapproval_required": true})
@@ -134,7 +136,7 @@ func (s *Server) webApprover(owner runstate.Owner, runID string, emit func(kind 
 		if err = s.approvalStore.Create(approvalstate.Approval{ID: id, RunID: runID, StepID: review.StepID, ToolCallID: review.ToolCallID, Owner: owner, RiskLevel: "high", Reason: permission.SummarizeArgs(toolName, args), Effects: effects, Command: command, FileScope: scope, RemoteTarget: remote, NetworkTargets: networks, ExpectedOutputs: outputs, ArgsHash: hash, EditableArgs: args, CreatedAt: now, ExpiresAt: now.Add(5 * time.Minute), Version: 1}); err != nil {
 			return false, nil, err
 		}
-		wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner, runID: runID, args: args}
+		wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner, runID: runID, args: args, id: id}
 		s.approvals.Store(id, wt)
 		defer s.approvals.Delete(id)
 
@@ -158,16 +160,17 @@ func (s *Server) webApprover(owner runstate.Owner, runID string, emit func(kind 
 			if len(dec.Args) > 0 {
 				actual = dec.Args
 			}
-			if err := approvalstate.ValidateExecution(s.approvalStore, owner, id, actual, time.Now().UTC()); err != nil {
+			approvedID := wt.id
+			if err := approvalstate.ValidateExecution(s.approvalStore, owner, approvedID, actual, time.Now().UTC()); err != nil {
 				return false, nil, fmt.Errorf("approval parameters changed or expired: %w", err)
 			}
 			executionID := runID + ":" + review.ToolCallID + ":" + hash
-			if _, err := s.approvalStore.Consume(owner, id, executionID, time.Now().UTC()); err != nil {
+			if _, err := s.approvalStore.Consume(owner, approvedID, executionID, time.Now().UTC()); err != nil {
 				return false, nil, fmt.Errorf("approval already consumed: %w", err)
 			}
 			if review.Execution != nil {
 				review.Execution.Complete = func(success bool) error {
-					return s.approvalStore.Complete(owner, id, executionID, success, time.Now().UTC())
+					return s.approvalStore.Complete(owner, approvedID, executionID, success, time.Now().UTC())
 				}
 			}
 			return true, dec.Args, nil

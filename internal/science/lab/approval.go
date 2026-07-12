@@ -35,6 +35,7 @@ type approvalWaiter struct {
 	ch    chan approvalDecision
 	owner runstate.Owner
 	args  json.RawMessage
+	id    string
 }
 
 func newApprovalHub(modeFunc func() permission.Mode) *approvalHub {
@@ -81,7 +82,7 @@ func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, too
 			return false, nil, err
 		}
 	}
-	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner, args: args}
+	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner, args: args, id: id}
 	h.mu.Lock()
 	h.waiters[id] = wt
 	h.mu.Unlock()
@@ -115,15 +116,18 @@ func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, too
 			actual = dec.Args
 		}
 		if h.store != nil && runID != "" {
-			if err := approvalstate.ValidateExecution(h.store, owner, id, actual, time.Now().UTC()); err != nil {
+			approvedID := wt.id
+			if err := approvalstate.ValidateExecution(h.store, owner, approvedID, actual, time.Now().UTC()); err != nil {
 				return false, nil, fmt.Errorf("approval parameters changed or expired: %w", err)
 			}
 			executionID := runID + ":" + reviewCtx.ToolCallID + ":" + hash
-			if _, err := h.store.Consume(owner, id, executionID, time.Now().UTC()); err != nil {
+			if _, err := h.store.Consume(owner, approvedID, executionID, time.Now().UTC()); err != nil {
 				return false, nil, fmt.Errorf("approval already consumed: %w", err)
 			}
 			if reviewCtx.Execution != nil {
-				reviewCtx.Execution.Complete = func(success bool) error { return h.store.Complete(owner, id, executionID, success, time.Now().UTC()) }
+				reviewCtx.Execution.Complete = func(success bool) error {
+					return h.store.Complete(owner, approvedID, executionID, success, time.Now().UTC())
+				}
 			}
 		}
 		// Optional user-edited args (must be valid JSON object/array)
@@ -180,7 +184,12 @@ func (h *approvalHub) resolveOwned(owner runstate.Owner, id string, allow bool, 
 		return false
 	}
 	select {
-	case wt.ch <- approvalDecision{Allow: allow, Args: args}:
+	case wt.ch <- approvalDecision{Allow: allow, Args: func() json.RawMessage {
+		if len(args) > 0 {
+			return args
+		}
+		return wt.args
+	}()}:
 		h.mu.Lock()
 		delete(h.waiters, id)
 		h.mu.Unlock()
@@ -197,6 +206,7 @@ func (h *approvalHub) replaceEdited(owner runstate.Owner, id, newID string, args
 	}
 	delete(h.waiters, id)
 	wt.args = args
+	wt.id = newID
 	h.waiters[newID] = wt
 	return true
 }

@@ -30,7 +30,9 @@ func TestBundleContractRedactionAndOwner(t *testing.T) {
 	if err = arts.Put(artifact.Record{ID: "a", RunID: r.ID, Owner: o, Name: "../bad name.txt", ObjectKey: "system/key", MIME: "text/plain", CreatedAt: time.Now()}, []byte("result")); err != nil {
 		t.Fatal(err)
 	}
-	svc := Service{Runs: runs, Approvals: approvals, Artifacts: arts, Usage: usage.NewMemoryStore()}
+	usageStore := usage.NewMemoryStore()
+	usageStore.CreateUsage(usage.Record{RunID: r.ID, EventID: "usage", UserID: o.UserID, WorkspaceID: o.WorkspaceID, InputTokens: 11, OutputTokens: 7, CacheHitTokens: 3, CreatedAt: time.Now()})
+	svc := Service{Runs: runs, Approvals: approvals, Artifacts: arts, Usage: usageStore}
 	b, err := svc.Build(context.Background(), o, r.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -54,6 +56,13 @@ func TestBundleContractRedactionAndOwner(t *testing.T) {
 			raw, _ := io.ReadAll(rc)
 			if bytes.Contains(raw, []byte("private")) {
 				t.Fatal("approval secret leaked")
+			}
+		}
+		if f.Name == "usage.json" {
+			rc, _ := f.Open()
+			raw, _ := io.ReadAll(rc)
+			if !bytes.Contains(raw, []byte(`"input_tokens": 11`)) || !bytes.Contains(raw, []byte(`"output_tokens": 7`)) {
+				t.Fatalf("usage counters redacted: %s", raw)
 			}
 		}
 	}

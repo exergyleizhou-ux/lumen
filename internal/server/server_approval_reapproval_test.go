@@ -2,9 +2,11 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"lumen/internal/approvalstate"
 	"lumen/internal/control"
+	"lumen/internal/permission"
 	"lumen/internal/runstate"
 	"net/http"
 	"net/http/httptest"
@@ -47,5 +49,49 @@ func TestEditedArgsInvalidateAndCreatePendingReplacement(t *testing.T) {
 	case <-wt.ch:
 		t.Fatal("edited args faked approval")
 	default:
+	}
+}
+func TestReplacementApprovalExecutesNewGrantEndToEnd(t *testing.T) {
+	store := approvalstate.NewMemoryStore()
+	s, _ := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Approvals: store})
+	emitted := make(chan string, 1)
+	execution := &permission.Execution{}
+	ctx := permission.WithReview(runstate.WithRunID(context.Background(), "run"), permission.Review{StepID: "step", ToolCallID: "tc", Execution: execution})
+	done := make(chan error, 1)
+	go func() {
+		ok, _, err := s.webApprover(runstate.LocalOwner, "run", func(_ string, p map[string]any) { emitted <- p["id"].(string) })(ctx, "bash", json.RawMessage(`{"command":"old"}`))
+		if err == nil && !ok {
+			err = approvalstate.ErrNotExecutable
+		}
+		done <- err
+	}()
+	oldID := <-emitted
+	call := func(body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/v1/approve", bytes.NewBufferString(body))
+		w := httptest.NewRecorder()
+		s.mux.ServeHTTP(w, r)
+		return w
+	}
+	first := call(`{"id":"` + oldID + `","allow":true,"args":{"command":"new"}}`)
+	var payload map[string]any
+	json.Unmarshal(first.Body.Bytes(), &payload)
+	newID := payload["id"].(string)
+	second := call(`{"id":"` + newID + `","allow":true}`)
+	if second.Code != 200 {
+		t.Fatalf("replacement approve %d %s", second.Code, second.Body.String())
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	old, _ := store.Get(runstate.LocalOwner, oldID)
+	replacement, _ := store.Get(runstate.LocalOwner, newID)
+	if old.Decision == nil || *old.Decision != approvalstate.DecisionInvalidated || replacement.ExecutionState != "consumed" {
+		t.Fatalf("old=%+v new=%+v", old, replacement)
+	}
+	if execution.Complete == nil {
+		t.Fatal("replacement completion missing")
+	}
+	if err := execution.Complete(true); err != nil {
+		t.Fatal(err)
 	}
 }
