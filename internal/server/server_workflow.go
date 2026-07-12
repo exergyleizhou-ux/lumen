@@ -183,6 +183,9 @@ func (s *Server) runWorkflowAction(rt *requestRuntime, ctx context.Context, acti
 	collector := &textCollector{}
 	sink := workflowEventSink(collector, emit)
 	if err := s.configureRuntime(rt, sink, cfgPath); err != nil {
+		if rt.entry != nil {
+			s.controllers.discard(rt.owner, rt.session, rt.ctrl)
+		}
 		emit("error", err.Error())
 		return "", nil, err
 	}

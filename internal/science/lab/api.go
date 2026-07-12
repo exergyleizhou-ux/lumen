@@ -1188,6 +1188,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	select {
 	case err := <-done:
 		if err != nil {
+			ctrls.discard(slug, ctrl)
 			a.turnsFailed.Add(1)
 			sse.emit("error", err.Error())
 			fmt.Fprintf(w, "event: done\ndata: {}\n\n")

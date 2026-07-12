@@ -14,14 +14,23 @@ import (
 )
 
 type requestRuntime struct {
-	owner   runstate.Owner
-	session string
-	ctrl    *control.Controller
-	ws      workspace.Context
-	entry   *serverController
+	owner         runstate.Owner
+	session       string
+	ctrl          *control.Controller
+	ws            workspace.Context
+	entry         *serverController
+	configureTest func()
 }
 
-func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath string) error {
+func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath string) (err error) {
+	defer func() {
+		if v := recover(); v != nil {
+			err = fmt.Errorf("configure panic: %v", v)
+		}
+	}()
+	if rt.configureTest != nil {
+		rt.configureTest()
+	}
 	if rt.entry == nil {
 		return rt.ctrl.Configure(sink, nil, cfgPath)
 	}
@@ -29,7 +38,7 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 		rt.ctrl.SetSink(sink)
 		return nil
 	}
-	err := rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen")})
+	err = rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen")})
 	if err == nil {
 		rt.entry.configured = true
 	}
