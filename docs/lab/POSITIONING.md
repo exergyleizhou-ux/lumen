@@ -51,3 +51,8 @@ We win on **Lumen-native control plane + heavier science integrations + public d
 
 > **InternAgentS** = open Claude-Science-style workbench on DeepAgents/LangGraph + Next.  
 > **Lumen Lab** = Lumen’s research workbench on Go agent + science runtimes, already on our demo host.
+
+## UI feel (2026-07)
+
+Default chrome leans **OCS-like workbench** (files-first right pane, quiet topbar, research welcome, smoke/acceptance projects hidden in the sidebar).  
+Agent core remains **Go Lumen** — we do not switch to Next/LangGraph as the main path.

@@ -4,25 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Lumen Science · 实验室</title>
-  <link rel="stylesheet" href="app.css?v=63">
+  <link rel="stylesheet" href="app.css?v=64">
 </head>
 <body>
   <div id="splash" class="splash"><span class="spinner"></span>正在加载实验室…</div>
 
   <div class="shell">
     <header class="tb">
-      <button type="button" class="tb-btn mobile-only" id="btnSide" title="课题">☰</button>
+      <button type="button" class="tb-btn mobile-only" id="btnSide" title="项目">☰</button>
       <div class="tb-logo">
         <span class="tb-lumen">Lumen</span>
         <span class="tb-label">Science Lab</span>
       </div>
       <span class="tb-spacer"></span>
       <span class="tb-stat"><span class="tb-dot" id="liveDot"></span><span id="runStatus">就绪</span></span>
-      <span class="tb-stat hide-sm" id="usageBadge" title="Token 用量">—</span>
-      <span class="tb-stat" id="packBadge">—</span>
-      <span class="tb-stat" id="fleetBadge">—</span>
-      <span class="tb-stat hide-sm" id="modeHint">hybrid</span>
-      <a class="tb-link hide-sm" id="bridgeLink" href="/lumen-science/?embed=1&oasis=1">Bridge</a>
+      <span class="tb-ops" id="tbOps" hidden>
+        <span class="tb-stat hide-sm" id="usageBadge" title="Token 用量">—</span>
+        <span class="tb-stat" id="packBadge">—</span>
+        <span class="tb-stat" id="fleetBadge">—</span>
+        <span class="tb-stat hide-sm" id="modeHint">hybrid</span>
+        <a class="tb-link hide-sm" id="bridgeLink" href="/lumen-science/?embed=1&oasis=1">Bridge</a>
+      </span>
+      <button class="tb-btn hide-sm" id="btnTbOps" type="button" title="显示/隐藏系统状态">系统</button>
       <button class="tb-btn" id="btnShortcuts" type="button" title="快捷键 ⌘/">?</button>
       <button class="tb-btn" id="btnCompact" type="button" title="紧凑布局">紧凑</button>
       <button class="tb-btn" id="dmToggle" type="button" title="主题">🌙</button>
@@ -33,7 +36,7 @@
       <aside class="side" id="sidebarPanel">
         <div class="side-inner">
           <div class="set-card">
-            <div class="set-k">当前课题</div>
+            <div class="set-k">当前项目</div>
             <div class="set-v" id="activeProjectName">未选择</div>
             <div class="hint mono" id="activeProjectMeta"></div>
             <div class="btn-row">
@@ -41,9 +44,9 @@
               <button class="btn sm" id="refreshAllBtn" type="button">刷新</button>
             </div>
           </div>
-          <div class="set-k soft">课题列表</div>
+          <div class="set-k soft">项目</div>
           <div id="projectList" class="proj-list"></div>
-          <div class="set-k soft">会话（持久化）</div>
+          <div class="set-k soft">会话</div>
           <div class="file-search-row" style="margin:4px 0 6px">
             <input type="search" id="sessionSearch" class="file-search" placeholder="搜索会话内容…" autocomplete="off" />
             <button type="button" class="btn sm" id="sessionSearchBtn">搜</button>
@@ -72,27 +75,31 @@
         <div class="ctr-top">
           <div class="ctr-tabs" id="convTabs"></div>
           <button class="ctr-tab-add" type="button" id="newConvBtn" title="新对话">＋</button>
-          <button class="btn sm hide-sm" type="button" id="copyConvBtn" title="复制当前对话为 Markdown">复制对话</button>
-          <button class="btn sm hide-sm" type="button" id="exportMdBtn" title="导出 Markdown">导出 MD</button>
-          <button class="btn sm hide-sm" type="button" id="exportJsonBtn" title="导出 JSON">导出 JSON</button>
-          <button class="btn sm hide-sm" type="button" id="exportAllSessBtn" title="导出课题全部会话">导出全部</button>
-          <label class="btn sm hide-sm" title="导入会话 JSON">导入
-            <input type="file" id="importSessFile" accept=".json,application/json" hidden />
-          </label>
-          <button class="btn sm hide-sm" type="button" id="forkSessBtn" title="分支当前会话">分支</button>
-          <button class="btn sm hide-sm" type="button" id="chatFindBtn" title="在对话中查找 ⌘F">查找</button>
-          <button class="btn sm hide-sm" type="button" id="deleteSessBtn" title="删除当前会话">删除会话</button>
+          <div class="ctr-more-wrap hide-sm">
+            <button class="btn sm" type="button" id="ctrMoreBtn" title="更多操作" aria-expanded="false">⋯</button>
+            <div class="ctr-more-menu" id="ctrMoreMenu" hidden>
+              <button class="ctr-more-item" type="button" id="copyConvBtn">复制对话</button>
+              <button class="ctr-more-item" type="button" id="exportMdBtn">导出 Markdown</button>
+              <button class="ctr-more-item" type="button" id="exportJsonBtn">导出 JSON</button>
+              <button class="ctr-more-item" type="button" id="exportAllSessBtn">导出全部会话</button>
+              <label class="ctr-more-item" title="导入会话 JSON">导入会话
+                <input type="file" id="importSessFile" accept=".json,application/json" hidden />
+              </label>
+              <button class="ctr-more-item" type="button" id="forkSessBtn">分支会话</button>
+              <button class="ctr-more-item" type="button" id="chatFindBtn">查找 ⌘F</button>
+              <button class="ctr-more-item danger" type="button" id="deleteSessBtn">删除会话</button>
+            </div>
+          </div>
         </div>
         <div id="chatScroll">
           <section id="welcome" class="hero">
             <h2>Lumen Science Lab</h2>
-            <p>Lumen 科研工作台：Go Agent · 审批 · 工作区 · Jupyter · 同域化学 · Pack/舰队 · 可选 LangGraph 旁路</p>
+            <p>面向科研的本地工作台：阅读与总结文献、分析实验产物、迭代代码与工作区文件。右侧可浏览项目文件，下方描述任务即可开始。</p>
             <div class="chips">
-              <button class="chip" type="button" data-prompt="用一句话介绍当前 Lab 能做什么（Agent、文件、Notebook、Ketcher、LangGraph），并建议我从哪一步开始。">产品导览</button>
+              <button class="chip" type="button" data-prompt="用通俗中文介绍你自己：你能帮研究者做哪些事（文献、分析、代码、工作区），并问我今天想先做什么。">介绍你自己</button>
+              <button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献，给出 3 条要点与中文摘要。">文献检索</button>
+              <button class="chip" type="button" data-prompt="浏览当前项目工作区文件结构，说明有什么、缺什么，并建议下一步实验或分析。">检查工作区</button>
               <button class="chip" type="button" data-brief="aspirin">生成 Brief</button>
-              <button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献，给出 3 条要点。">文献检索</button>
-              <button class="chip" type="button" data-prompt="解释当前课题工作区里有哪些文件，并建议下一步实验。">检查工作区</button>
-              <button class="chip" type="button" data-prompt="请列出如何在本 Lab 运行一个 print(1+1) 的 notebook cell，以及如何打开 Ketcher。">演示路径</button>
             </div>
           </section>
         </div>
@@ -113,7 +120,7 @@
           </div>
           <div id="attachChips" class="attach-chips" hidden></div>
           <div id="composerDrop" class="composer-drop-wrap">
-            <textarea id="promptInput" rows="2" placeholder="描述科研任务… 拖拽/粘贴文件 · @path · Enter 发送" autocomplete="off"></textarea>
+            <textarea id="promptInput" rows="2" placeholder="问任何问题 — @ 文件 · 拖拽附件 · Enter 发送" autocomplete="off"></textarea>
             <div id="dropOverlay" class="drop-overlay" hidden>松开以上传附件</div>
           </div>
           <div class="composer-bot">
@@ -127,15 +134,15 @@
 
       <aside class="insp" id="inspectorPanel">
         <div class="insp-tabs">
-          <button class="insp-tab active" type="button" data-pane="status">状态</button>
+          <button class="insp-tab active" type="button" data-pane="files">文件</button>
           <button class="insp-tab" type="button" data-pane="tasks">本回合</button>
-          <button class="insp-tab" type="button" data-pane="files">文件</button>
           <button class="insp-tab" type="button" data-pane="artifacts">产物</button>
           <button class="insp-tab" type="button" data-pane="skills">技能</button>
+          <button class="insp-tab" type="button" data-pane="notebooks">Notebook</button>
+          <button class="insp-tab" type="button" data-pane="status">状态</button>
           <button class="insp-tab" type="button" data-pane="compute">算力</button>
           <button class="insp-tab" type="button" data-pane="ketcher">化学</button>
           <button class="insp-tab" type="button" data-pane="molecule">分子</button>
-          <button class="insp-tab" type="button" data-pane="notebooks">Notebook</button>
           <button class="insp-tab" type="button" data-pane="diff">Diff</button>
           <button class="insp-tab" type="button" data-pane="provenance">溯源</button>
           <button class="insp-tab" type="button" data-pane="office">Office</button>
@@ -143,14 +150,7 @@
           <button class="insp-tab" type="button" data-pane="config">配置</button>
         </div>
         <div class="insp-body">
-          <div id="statusPane"><div id="inspectorBody" class="insp-scroll"></div></div>
-          <div id="tasksPane" class="insp-scroll" style="display:none">
-            <div class="set-k soft">本回合工具 / 任务</div>
-            <div id="tasksBody" class="hint">发送消息后，工具调用会出现在这里</div>
-            <div class="set-k soft" style="margin-top:12px">子代理时间线</div>
-            <div id="subagentTimeline" class="hint">本回合无子代理 / 嵌套工具</div>
-          </div>
-          <div id="filesPane" class="insp-scroll" style="display:none">
+          <div id="filesPane" class="insp-scroll">
             <div class="file-bar">
               <button type="button" class="btn sm" id="fileUp" title="上级">↑</button>
               <span class="mono file-cwd" id="fileCwd">.</span>
@@ -173,6 +173,13 @@
             <div id="fileTree"></div>
             <div id="filePreview" class="fp"></div>
           </div>
+          <div id="tasksPane" class="insp-scroll" style="display:none">
+            <div class="set-k soft">本回合工具 / 任务</div>
+            <div id="tasksBody" class="hint">发送消息后，工具调用会出现在这里</div>
+            <div class="set-k soft" style="margin-top:12px">子代理时间线</div>
+            <div id="subagentTimeline" class="hint">本回合无子代理 / 嵌套工具</div>
+          </div>
+          <div id="statusPane" style="display:none"><div id="inspectorBody" class="insp-scroll"></div></div>
           <div id="artifactsPane" class="insp-scroll" style="display:none">
             <div class="btn-row" style="margin-bottom:8px">
               <button type="button" class="btn sm" id="artifactsRefresh">刷新产物</button>
@@ -387,6 +394,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=63"></script>
+  <script src="app.js?v=64"></script>
 </body>
 </html>

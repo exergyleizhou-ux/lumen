@@ -774,14 +774,60 @@ function sortProjectsByRecent(list) {
   });
 }
 
+/** Hide engineering/smoke/acceptance projects from the sidebar (data kept on server). */
+function isSmokeLikeProject(p) {
+  if (!p) return false;
+  var blob = (String(p.title || "") + " " + String(p.slug || "")).toLowerCase();
+  if (/product-smoke|live-smoke|\bsmoke\b/.test(blob)) return true;
+  if (/accept|验收/.test(blob)) return true;
+  return false;
+}
+
+function emptySessionHeroHtml(kind) {
+  if (kind === "new") {
+    return '<section class="hero" id="welcome">' +
+      "<h2>新对话</h2>" +
+      "<p>描述你的科研任务 — 阅读文献、分析数据、检查工作区，或迭代代码。会话会保存在当前项目中。</p>" +
+      '<div class="chips">' +
+      '<button class="chip" type="button" data-prompt="用通俗中文介绍你自己：你能帮研究者做哪些事，并问我今天想先做什么。">介绍你自己</button>' +
+      '<button class="chip" type="button" data-prompt="浏览当前项目工作区，说明有什么文件并建议下一步。">检查工作区</button>' +
+      "</div></section>";
+  }
+  if (kind === "deleted-project") {
+    return '<section class="hero" id="welcome"><h2>项目已删除</h2><p>新建或选择其它项目继续研究。</p></section>';
+  }
+  if (kind === "deleted-session") {
+    return '<section class="hero" id="welcome"><h2>会话已删除</h2><p>新建或选择其它会话继续。</p></section>';
+  }
+  return '<section class="hero" id="welcome">' +
+    "<h2>开始一段研究对话</h2>" +
+    "<p>发送消息开始；右侧可浏览项目文件。历史会持久化，刷新后可恢复。</p>" +
+    '<div class="chips">' +
+    '<button class="chip" type="button" data-prompt="用通俗中文介绍你自己：你能帮研究者做哪些事，并问我今天想先做什么。">介绍你自己</button>' +
+    '<button class="chip" type="button" data-prompt="检索 PubMed 上阿司匹林相关最新文献，给出 3 条要点与中文摘要。">文献检索</button>' +
+    "</div></section>";
+}
+
+function bindWelcomeChips(root) {
+  var host = root || document;
+  if (!host || !host.querySelectorAll) return;
+  host.querySelectorAll(".chip[data-prompt], .chip[data-brief]").forEach(function (chip) {
+    if (typeof bindChipButton === "function") bindChipButton(chip);
+  });
+}
+
 async function loadProjects() {
   try {
     var list = await api("/api/lab/projects");
     list = sortProjectsByRecent(list);
+    var visible = list.filter(function (p) { return !isSmokeLikeProject(p); });
     var nav = $("projectList");
     if (!nav) return;
     nav.innerHTML = "";
-    list.forEach(function (p) {
+    if (!visible.length) {
+      nav.innerHTML = '<div class="hint" style="padding:8px 4px">暂无项目 — 点「新建」开始一段研究</div>';
+    }
+    visible.forEach(function (p) {
       var row = document.createElement("div");
       row.className = "proj-row";
       var btn = document.createElement("button");
@@ -815,7 +861,7 @@ async function loadProjects() {
       var ren = document.createElement("button");
       ren.type = "button";
       ren.className = "btn sm proj-ren";
-      ren.title = "重命名课题";
+      ren.title = "重命名项目";
       ren.textContent = "✎";
       ren.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -824,7 +870,7 @@ async function loadProjects() {
       var del = document.createElement("button");
       del.type = "button";
       del.className = "btn sm proj-del";
-      del.title = "删除课题";
+      del.title = "删除项目";
       del.textContent = "×";
       del.addEventListener("click", function (e) {
         e.stopPropagation();
@@ -835,9 +881,14 @@ async function loadProjects() {
       row.appendChild(del);
       nav.appendChild(row);
     });
-    if (!activeProject && list.length) {
-      activeProject = list[0];
-      touchProjectRecent(list[0].slug);
+    // Drop smoke projects from the active selection so UI stays research-first.
+    if (activeProject && isSmokeLikeProject(activeProject)) {
+      activeProject = null;
+      activeThread = "";
+    }
+    if (!activeProject && visible.length) {
+      activeProject = visible[0];
+      touchProjectRecent(visible[0].slug);
       refreshFiles();
       loadSessions().then(function () {
         if (activeThread) openSession(activeThread);
@@ -847,8 +898,13 @@ async function loadProjects() {
       loadComputeJobs();
       var nm = $("activeProjectName");
       var mt = $("activeProjectMeta");
-      if (nm) nm.textContent = list[0].title;
-      if (mt) mt.textContent = list[0].slug;
+      if (nm) nm.textContent = visible[0].title;
+      if (mt) mt.textContent = visible[0].slug;
+    } else if (!activeProject) {
+      var nm0 = $("activeProjectName");
+      var mt0 = $("activeProjectMeta");
+      if (nm0) nm0.textContent = "未选择";
+      if (mt0) mt0.textContent = "";
     }
   } catch (e) {
     var nav = $("projectList");
@@ -858,7 +914,7 @@ async function loadProjects() {
 
 async function renameProject(slug, curTitle) {
   if (!slug) return;
-  var title = prompt("课题名称", curTitle || "");
+  var title = prompt("项目名称", curTitle || "");
   if (title == null) return;
   title = title.trim();
   if (!title) return;
@@ -880,13 +936,14 @@ async function renameProject(slug, curTitle) {
 
 async function deleteProject(slug, title) {
   if (!slug) return;
-  if (!confirm("删除课题「" + (title || slug) + "」？工作区与会话不可恢复。")) return;
+  if (!confirm("删除项目「" + (title || slug) + "」？工作区与会话不可恢复。")) return;
   try {
     await api("/api/lab/projects/" + encodeURIComponent(slug), { method: "DELETE" });
     if (activeProject && activeProject.slug === slug) {
       activeProject = null;
       activeThread = "";
-      clearChatScroll('<section class="hero" id="welcome"><h2>课题已删除</h2><p>新建或选择其它课题</p></section>');
+      clearChatScroll(emptySessionHeroHtml("deleted-project"));
+      bindWelcomeChips($("chatScroll"));
       var nm = $("activeProjectName");
       var mt = $("activeProjectMeta");
       if (nm) nm.textContent = "未选择";
@@ -902,7 +959,7 @@ async function deleteProject(slug, title) {
 
 async function ensureProject() {
   if (activeProject) return activeProject;
-  var p = await api("/api/lab/projects", { method: "POST", body: JSON.stringify({ title: "默认课题" }) });
+  var p = await api("/api/lab/projects", { method: "POST", body: JSON.stringify({ title: "默认项目" }) });
   activeProject = p;
   await loadProjects();
   return p;
@@ -1146,7 +1203,8 @@ async function deleteSession(id) {
     });
     if (activeThread === id) {
       activeThread = "";
-      clearChatScroll('<section class="hero" id="welcome"><h2>会话已删除</h2><p>新建或选择其它会话</p></section>');
+      clearChatScroll(emptySessionHeroHtml("deleted-session"));
+      bindWelcomeChips($("chatScroll"));
     }
     await loadSessions();
     if (activeThread) openSession(activeThread);
@@ -1208,9 +1266,8 @@ function clearChatScroll(html) {
 function renderHistory(turns) {
   clearChatScroll("");
   if (!turns || !turns.length) {
-    clearChatScroll(
-      '<section class="hero" id="welcome"><h2>空会话</h2><p>发送消息开始；历史会持久化，刷新后可恢复。</p></section>'
-    );
+    clearChatScroll(emptySessionHeroHtml("empty"));
+    bindWelcomeChips($("chatScroll"));
     return;
   }
   turns.forEach(function (t) {
@@ -1252,9 +1309,8 @@ async function newConv() {
     threads.unshift({ id: sess.id, title: sess.title, turn_count: 0 });
     activeThread = sess.id;
     renderThreadTabs();
-    clearChatScroll(
-      '<section class="hero" id="welcome"><h2>新对话</h2><p>描述你的科研任务 — 此会话会保存到服务器</p></section>'
-    );
+    clearChatScroll(emptySessionHeroHtml("new"));
+    bindWelcomeChips($("chatScroll"));
   } catch (e) {
     alert(e.message);
   }
@@ -2778,7 +2834,7 @@ $("refreshAllBtn") && $("refreshAllBtn").addEventListener("click", function () {
 // New project (optional seed template)
 var seedExamplesCache = [];
 $("newProjectBtn") && $("newProjectBtn").addEventListener("click", async function () {
-  var title = prompt("课题名称");
+  var title = prompt("项目名称");
   if (!title) return;
   var template = "";
   try {
@@ -2981,6 +3037,8 @@ $("fileUpload") && $("fileUpload").addEventListener("change", async function () 
 
 // Chips
 function bindChipButton(btn) {
+  if (!btn || btn._labChipBound) return;
+  btn._labChipBound = true;
   btn.addEventListener("click", async function () {
     if (btn.dataset.brief) {
       try {
@@ -3008,6 +3066,46 @@ function bindChipButton(btn) {
   });
 }
 document.querySelectorAll(".chip").forEach(bindChipButton);
+
+// Topbar system stats (hidden by default — OCS-quiet chrome)
+(function () {
+  var btn = $("btnTbOps");
+  var ops = $("tbOps");
+  if (!btn || !ops) return;
+  try {
+    if (localStorage.getItem("lumen-show-ops") === "1") ops.hidden = false;
+  } catch (_) {}
+  btn.addEventListener("click", function () {
+    ops.hidden = !ops.hidden;
+    try { localStorage.setItem("lumen-show-ops", ops.hidden ? "0" : "1"); } catch (_) {}
+  });
+})();
+
+// Center "⋯ more" menu for export/import/session ops
+(function () {
+  var btn = $("ctrMoreBtn");
+  var menu = $("ctrMoreMenu");
+  if (!btn || !menu) return;
+  function close() {
+    menu.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+  }
+  function open() {
+    menu.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+  }
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    if (menu.hidden) open(); else close();
+  });
+  menu.addEventListener("click", function () {
+    // close after any action (file input opens picker first)
+    setTimeout(close, 50);
+  });
+  document.addEventListener("click", function (e) {
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
+  });
+})();
 
 function loadFavPrompts() {
   try {
@@ -5486,14 +5584,22 @@ document.addEventListener("click", function (e) {
   bindChatScrollJump();
   renderComputeHistory();
   renderFavChips();
-  // restore last inspector pane
+  // Default right pane = files (OCS-style workspace). Restore last pane if user chose one.
   try {
-    var lastPane = localStorage.getItem("lumen-last-pane");
-    if (lastPane && lastPane !== "status") {
-      var tab = document.querySelector('.insp-tab[data-pane="' + lastPane + '"]');
-      if (tab) tab.click();
+    var lastPane = localStorage.getItem("lumen-last-pane") || "files";
+    var tab = document.querySelector('.insp-tab[data-pane="' + lastPane + '"]');
+    if (tab) tab.click();
+    else {
+      var filesTab = document.querySelector('.insp-tab[data-pane="files"]');
+      if (filesTab) filesTab.click();
     }
-  } catch (_) {}
+  } catch (_) {
+    try {
+      var ft = document.querySelector('.insp-tab[data-pane="files"]');
+      if (ft) ft.click();
+    } catch (__) {}
+  }
+  bindWelcomeChips(document);
   setTimeout(function () {
     var s = $("splash");
     if (s) s.classList.add("hide");

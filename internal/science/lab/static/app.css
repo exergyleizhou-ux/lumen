@@ -123,6 +123,35 @@ body::before {
   transition: background var(--transition), color var(--transition);
 }
 .tb-btn:hover { background: var(--ocs-accent-light); color: var(--ocs-ink); }
+.tb-ops {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 2px 4px 2px 8px;
+  border-left: 1px solid var(--ocs-line);
+  margin-left: 2px;
+}
+#btnTbOps {
+  width: auto; min-width: 30px; padding: 0 8px;
+  font-size: 11px; font-weight: 650;
+}
+
+/* Center conversation toolbar overflow */
+.ctr-more-wrap { position: relative; margin-left: auto; flex-shrink: 0; }
+.ctr-more-menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 40;
+  min-width: 168px; padding: 6px;
+  border: 1px solid var(--ocs-line); border-radius: 12px;
+  background: var(--ocs-surface-strong);
+  box-shadow: var(--ocs-shadow);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ctr-more-item {
+  display: block; width: 100%; text-align: left;
+  border: none; background: transparent; color: var(--ocs-ink);
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+}
+.ctr-more-item:hover { background: var(--ocs-accent-light); }
+.ctr-more-item.danger { color: var(--ocs-danger); }
 
 /* ── Main layout ── */
 .main { display: flex; flex: 1; min-height: 0; overflow: hidden; }
@@ -182,7 +211,7 @@ body::before {
 .chip-col { display: flex; flex-direction: column; gap: 4px; }
 
 /* ── Center: tabs ── */
-.ctr-top { display: flex; align-items: flex-end; flex-shrink: 0; border-bottom: 1px solid var(--ocs-line); }
+.ctr-top { position: relative; display: flex; align-items: flex-end; flex-shrink: 0; border-bottom: 1px solid var(--ocs-line); gap: 4px; padding: 0 8px 0 4px; }
 .ctr-tabs {
   display: flex; align-items: flex-end; gap: 4px; min-height: 42px; flex: 1;
   padding: 6px 10px 0; overflow-x: auto; overflow-y: hidden;
