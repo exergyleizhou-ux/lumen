@@ -543,12 +543,13 @@ async function send() {
     } else {
       bubble.remove();
     }
-	if (terminalOK === false) {
+  if (terminalOK === false) {
 	  const err = document.createElement("div");
 	  err.className = "msg-error";
 	  err.textContent = terminalError || "任务未完成";
 	  el.querySelector(".msg-body").appendChild(err);
 	}
+    if (terminalOK !== null) sessionStorage.removeItem("lumen_active_run");
     if (thinkEl) thinkEl.textContent = thinkEl.textContent || "（推理完成）";
   } catch (e) {
     if (e.name === "AbortError") {
@@ -599,7 +600,90 @@ async function replayMissedRunEvents(applyRunEvent) {
   }
 }
 
-function stopGeneration() {
+function runIsTerminal(status) {
+  return ["succeeded", "failed", "canceled", "timed_out", "exhausted"].includes(status);
+}
+
+async function restoreStoredRun() {
+  const raw = sessionStorage.getItem("lumen_active_run");
+  if (!raw || running) return;
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch (_) {
+    sessionStorage.removeItem("lumen_active_run");
+    return;
+  }
+  const runId = saved?.runId;
+  if (!runId) {
+    sessionStorage.removeItem("lumen_active_run");
+    return;
+  }
+
+  currentRunId = runId;
+  currentRunSeq = 0;
+  running = true;
+  $("sendBtn").disabled = true;
+  $("stopBtn").hidden = false;
+  setStatus("恢复任务中…", true);
+  const { el, bubble } = appendMsg("assistant", "");
+  let restoredText = "";
+  const notices = [];
+
+  const renderRestoredEvent = (ev) => {
+    if (ev.run_id) currentRunId = ev.run_id;
+    if (Number.isInteger(ev.seq) && ev.seq > currentRunSeq) currentRunSeq = ev.seq;
+    if (ev.kind === "text") restoredText += ev.text || "";
+    if ((ev.kind === "notice" || ev.kind === "error" || ev.kind === "verify_result") && ev.text) notices.push(ev.text);
+    const noteText = notices.length ? `\n\n> ${notices.join("\n> ")}` : "";
+    bubble.innerHTML = renderMarkdown((restoredText || `正在恢复 Run ${runId}…`) + noteText);
+    sessionStorage.setItem("lumen_active_run", JSON.stringify({ runId, lastSeq: currentRunSeq }));
+    scrollChat();
+  };
+
+  try {
+    while (true) {
+      const eventsResponse = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(runId)}/events?after=${currentRunSeq}`, { cache: "no-store" });
+      if (!eventsResponse.ok) throw new Error("无法读取 Run 事件");
+      const eventsPayload = await eventsResponse.json();
+      for (const ev of Array.isArray(eventsPayload.events) ? eventsPayload.events : []) renderRestoredEvent(ev);
+
+      const runResponse = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+      if (!runResponse.ok) throw new Error("无法读取 Run 状态");
+      const runPayload = await runResponse.json();
+      const run = runPayload.run || {};
+      if (runIsTerminal(run.status)) {
+        if (!restoredText) bubble.innerHTML = renderMarkdown(`Run ${runId}：${run.status}`);
+        if (run.status !== "succeeded") {
+          const err = document.createElement("div");
+          err.className = "msg-error";
+          err.textContent = terminalFailureMessage(run.error || "", run.stop_reason || run.status);
+          el.querySelector(".msg-body").appendChild(err);
+        }
+        sessionStorage.removeItem("lumen_active_run");
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  } catch (error) {
+    const err = document.createElement("div");
+    err.className = "msg-error";
+    err.textContent = `${error.message || "恢复失败"}，稍后可再次恢复 Run ${runId}`;
+    el.querySelector(".msg-body").appendChild(err);
+  } finally {
+    running = false;
+    $("sendBtn").disabled = false;
+    $("stopBtn").hidden = true;
+    setStatus("就绪", false);
+  }
+}
+
+async function stopGeneration() {
+  if (currentRunId) {
+    try {
+      await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/cancel`, { method: "POST" });
+    } catch (_) {}
+  }
   abortCtrl?.abort();
 }
 
@@ -970,6 +1054,7 @@ async function init() {
   await setServerMode(permissionMode);
   loadSessions();
   loadMemories();
+  await restoreStoredRun();
 
   if (!currentKey) {
     setTimeout(openSetup, 400);
