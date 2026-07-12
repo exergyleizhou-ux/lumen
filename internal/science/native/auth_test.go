@@ -21,3 +21,18 @@ func TestRequiredAuthCombo(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckAuthTokenGated(t *testing.T) {
+	if err := CheckAuth("preview_schema", ""); err == nil {
+		t.Fatal("preview_schema should require token")
+	}
+	if err := CheckAuth("list_algorithms", ""); err == nil {
+		t.Fatal("list_algorithms should require token")
+	}
+	if err := CheckAuth("search_datasets", ""); err != nil {
+		t.Fatalf("search_datasets should be anonymous: %v", err)
+	}
+	if err := CheckAuth("preview_schema", "tok"); err != nil {
+		t.Fatalf("preview_schema with token: %v", err)
+	}
+}
