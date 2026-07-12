@@ -2,7 +2,6 @@ package lab
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"lumen/internal/runstate"
 	"lumen/internal/science/lab/project"
 	labruntime "lumen/internal/science/lab/runtime"
+	labworkspace "lumen/internal/science/lab/workspace"
 	coreworkspace "lumen/internal/workspace"
 )
 
@@ -31,6 +31,7 @@ type tenantResources struct {
 type tenantRegistry struct {
 	mu      sync.Mutex
 	root    coreworkspace.Context
+	guard   *labworkspace.Guard
 	fleet   *labruntime.FleetManager
 	max     int
 	idleTTL time.Duration
@@ -46,14 +47,15 @@ func newTenantRegistry(root string, fleet *labruntime.FleetManager, max int, idl
 	if idleTTL <= 0 {
 		idleTTL = 30 * time.Minute
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	fsGuard, err := labworkspace.NewGuard(root)
+	if err != nil {
 		return nil, err
 	}
 	guard, err := coreworkspace.NewLocal("hosted", root, "host", nil)
 	if err != nil {
 		return nil, err
 	}
-	return &tenantRegistry{root: guard, fleet: fleet, max: max, idleTTL: idleTTL, now: time.Now, items: make(map[runstate.Owner]*tenantResources)}, nil
+	return &tenantRegistry{root: guard, guard: fsGuard, fleet: fleet, max: max, idleTTL: idleTTL, now: time.Now, items: make(map[runstate.Owner]*tenantResources)}, nil
 }
 
 func (r *tenantRegistry) acquire(owner runstate.Owner) (*tenantResources, error) {
@@ -77,7 +79,7 @@ func (r *tenantRegistry) acquire(owner runstate.Owner) (*tenantResources, error)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	if err := r.guard.MkdirAll(rel, 0o700); err != nil {
 		return nil, err
 	}
 	ws, err := coreworkspace.NewLocal(owner.WorkspaceID, root, owner.UserID, nil)

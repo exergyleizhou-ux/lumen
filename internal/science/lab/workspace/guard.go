@@ -74,6 +74,16 @@ func NewGuard(root string) (*Guard, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, err
+	}
+	fi, err := os.Lstat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return nil, fmt.Errorf("guard root must be a real directory")
+	}
 	return &Guard{root: abs}, nil
 }
 
