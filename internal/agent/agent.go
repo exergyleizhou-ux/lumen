@@ -471,7 +471,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			case provider.ChunkToolCallStart:
 				// Dispatch the start of a tool call (ID + Name, no args yet)
 				a.Sink().Emit(event.Event{
-					Kind: event.ToolDispatch,
+					Kind: event.ToolDispatch, StepID: chunk.ToolCall.ID, ToolCallID: chunk.ToolCall.ID,
 					Tool: event.Tool{
 						ID:       chunk.ToolCall.ID,
 						Name:     chunk.ToolCall.Name,
@@ -574,6 +574,18 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			return nil
 		}
 
+		// Publish the finalized call before execution. Streaming providers first
+		// announce a call with only its ID and name, then deliver its complete
+		// arguments at EOF. Event-bound consumers (artifact/provenance capture,
+		// approvals and durable timelines) must see that authoritative shape.
+		for _, tc := range toolCalls {
+			a.Sink().Emit(event.Event{
+				Kind: event.ToolDispatch, StepID: tc.ID, ToolCallID: tc.ID,
+				Tool:      event.Tool{ID: tc.ID, Name: tc.Name, Args: tc.Arguments, ReadOnly: a.toolReadOnly(tc.Name)},
+				Timestamp: time.Now(),
+			})
+		}
+
 		// 6. Record assistant message with tool calls
 		a.session.Add(provider.Message{
 			Role:             provider.RoleAssistant,
@@ -616,7 +628,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 					}
 				}
 				ev := event.Event{
-					Kind: event.ToolResult,
+					Kind: event.ToolResult, StepID: tc.ID, ToolCallID: tc.ID,
 					Tool: event.Tool{
 						ID:        tc.ID,
 						Name:      tc.Name,

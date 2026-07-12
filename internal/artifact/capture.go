@@ -28,6 +28,13 @@ type CapturingSink struct {
 }
 type captureCall struct{ step, path, argsHash string }
 
+func captureToolCallID(e event.Event) string {
+	if e.ToolCallID != "" {
+		return e.ToolCallID
+	}
+	return e.Tool.ID
+}
+
 func (s *CapturingSink) Emit(e event.Event) {
 	s.mu.Lock()
 	if s.pending == nil {
@@ -38,8 +45,12 @@ func (s *CapturingSink) Emit(e event.Event) {
 	case event.ToolDispatch:
 		if p := artifactPath(e.Tool.Name, e.Tool.Args); p != "" {
 			h := sha256.Sum256([]byte(e.Tool.Args))
+			id := captureToolCallID(e)
+			if id == "" {
+				break
+			}
 			s.mu.Lock()
-			s.pending[e.Tool.ID] = captureCall{step: e.StepID, path: p, argsHash: hex.EncodeToString(h[:])}
+			s.pending[id] = captureCall{step: e.StepID, path: p, argsHash: hex.EncodeToString(h[:])}
 			s.mu.Unlock()
 		}
 	case event.ToolResult:
@@ -55,9 +66,10 @@ func (s *CapturingSink) Emit(e event.Event) {
 	}
 }
 func (s *CapturingSink) persist(e event.Event) error {
+	id := captureToolCallID(e)
 	s.mu.Lock()
-	c, ok := s.pending[e.Tool.ID]
-	delete(s.pending, e.Tool.ID)
+	c, ok := s.pending[id]
+	delete(s.pending, id)
 	s.mu.Unlock()
 	if !ok {
 		return nil
@@ -76,10 +88,10 @@ func (s *CapturingSink) persist(e event.Event) error {
 	if len(b) > 25<<20 {
 		return fmt.Errorf("artifact exceeds 25 MiB")
 	}
-	identity := sha256.Sum256([]byte(s.RunID + "\x00" + e.Tool.ID + "\x00" + c.path))
-	id := "art_" + hex.EncodeToString(identity[:16])
+	identity := sha256.Sum256([]byte(s.RunID + "\x00" + id + "\x00" + c.path))
+	artifactID := "art_" + hex.EncodeToString(identity[:16])
 	content := sha256.Sum256(b)
-	r := Record{ID: id, RunID: s.RunID, StepID: c.step, ToolCallID: e.Tool.ID, Owner: s.Owner, Name: SafeName(filepath.Base(c.path)), Path: filepath.ToSlash(c.path), ObjectKey: "workbench/" + s.Owner.WorkspaceID + "/" + s.RunID + "/" + id, SHA256: hex.EncodeToString(content[:]), MIME: mime(c.path), Size: int64(len(b)), Model: s.Model, InputRefs: []string{"args-sha256:" + c.argsHash}, Provenance: map[string]any{"event_id": e.EventID, "tool": e.Tool.Name, "captured_at": time.Now().UTC()}, CreatedAt: time.Now().UTC()}
+	r := Record{ID: artifactID, RunID: s.RunID, StepID: c.step, ToolCallID: id, Owner: s.Owner, Name: SafeName(filepath.Base(c.path)), Path: filepath.ToSlash(c.path), ObjectKey: "workbench/" + s.Owner.WorkspaceID + "/" + s.RunID + "/" + artifactID, SHA256: hex.EncodeToString(content[:]), MIME: mime(c.path), Size: int64(len(b)), Model: s.Model, InputRefs: []string{"args-sha256:" + c.argsHash}, Provenance: map[string]any{"event_id": e.EventID, "tool": e.Tool.Name, "captured_at": time.Now().UTC()}, CreatedAt: time.Now().UTC()}
 	w, ok := s.Store.(Writer)
 	if !ok {
 		return fmt.Errorf("artifact writer unavailable")
