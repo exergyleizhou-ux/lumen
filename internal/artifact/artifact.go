@@ -2,7 +2,9 @@
 package artifact
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -39,6 +41,9 @@ type Store interface {
 	ListRun(runstate.Owner, string) ([]Record, error)
 	Open(context.Context, runstate.Owner, Record) (io.ReadCloser, error)
 }
+type Writer interface {
+	Persist(context.Context, Record, []byte) error
+}
 
 // ObjectBackend mirrors the established Oasis local/S3 semantics without
 // importing a second storage client into Lumen.
@@ -74,6 +79,7 @@ func (s *MemoryStore) Put(r Record, b []byte) error {
 	s.mu.Unlock()
 	return nil
 }
+func (s *MemoryStore) Persist(_ context.Context, r Record, b []byte) error { return s.Put(r, b) }
 func (s *MemoryStore) ListRun(o runstate.Owner, id string) ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -111,4 +117,26 @@ func SafeName(v string) string {
 		v = v[:120]
 	}
 	return v
+}
+
+func NewRecord(owner runstate.Owner, runID, name, mime string, data []byte) (Record, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return Record{}, err
+	}
+	id := "art_" + hex.EncodeToString(raw[:])
+	h := sha256.Sum256(data)
+	return Record{ID: id, RunID: runID, Owner: owner, Name: SafeName(name), ObjectKey: "workbench/" + owner.WorkspaceID + "/" + runID + "/" + id, SHA256: hex.EncodeToString(h[:]), MIME: mime, Size: int64(len(data)), CreatedAt: time.Now().UTC()}, nil
+}
+func Persist(ctx context.Context, store Store, backend ObjectBackend, r Record, data []byte) error {
+	if backend == nil {
+		return errors.New("artifact object backend unavailable")
+	}
+	if int64(len(data)) != r.Size {
+		return errors.New("artifact size mismatch")
+	}
+	if err := backend.Put(ctx, r.ObjectKey, bytes.NewReader(data), r.Size, r.MIME); err != nil {
+		return err
+	}
+	return store.Create(r)
 }

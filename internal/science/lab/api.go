@@ -27,7 +27,6 @@ import (
 	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
-	"lumen/internal/runstate/pgstore"
 	"lumen/internal/runtimeevidence"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
@@ -92,27 +91,12 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 	if listenPort == 0 {
 		listenPort = DefaultPort
 	}
-	var hostedPG *pgstore.Store
 	if runs == nil {
-		if raw := os.Getenv("WORKBENCH_DATABASE_URL"); raw != "" {
-			var err error
-			hostedPG, err = pgstore.Open(raw)
-			if err != nil {
-				panic("open workbench postgres: " + err.Error())
-			}
-			runs = runstate.NewManager(hostedPG)
-		} else {
-			runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
-		}
+		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
 	}
 	var usageStore usage.Store = usage.NewMemoryStore()
 	var approvalStore approvalstate.Store = approvalstate.NewMemoryStore()
 	var artifactStore artifact.Store = artifact.NewMemoryStore()
-	if hostedPG != nil {
-		usageStore = usage.PostgresStore{DB: hostedPG.DB()}
-		approvalStore = approvalstate.PostgresStore{DB: hostedPG.DB()}
-		artifactStore = artifact.PostgresStore{DB: hostedPG.DB()}
-	}
 	store := project.NewStore(sciDir)
 	api := &API{
 		sciDir:        sciDir,
@@ -1294,7 +1278,10 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			pricing = usage.Pricing{Input: pc.Pricing.Input, Output: pc.Pricing.Output, CacheHit: pc.Pricing.CacheHit}
 		}
 	}
-	capture := usage.CapturingSink{Store: a.usage, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: hist}
+	capture := usage.CapturingSink{Store: a.usage, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: hist, Failure: func(e error) {
+		_, _ = a.runs.Finish(run.ID, fmt.Errorf("usage persistence failed: %w", e))
+		a.cancelActiveRun(owner, run.ID)
+	}}
 	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, capture))
 	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, DefaultTurnTimeout)
 	defer cleanupRun()
@@ -1308,6 +1295,11 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		return ctrl.Run(ctx, req.Prompt, mode)
 	}()
+	if runErr == nil {
+		if err := a.persistRunArtifacts(ctx, owner, run.ID, projects, slug, run.StartedAt); err != nil {
+			runErr = fmt.Errorf("artifact persistence failed: %w", err)
+		}
+	}
 	if _, finishErr := a.runs.Finish(run.ID, runErr); finishErr != nil {
 		if runErr == nil {
 			runErr = finishErr
@@ -1336,6 +1328,66 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	sse.emitPayload("stream_done", terminal)
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
+}
+
+func (a *API) persistRunArtifacts(ctx context.Context, owner runstate.Owner, runID string, projects *project.Store, slug string, started *time.Time) error {
+	writer, ok := a.artifactStore.(artifact.Writer)
+	if !ok {
+		return fmt.Errorf("durable artifact writer unavailable")
+	}
+	ws, err := projects.WorkspacePath(slug)
+	if err != nil {
+		return err
+	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		return err
+	}
+	for _, sub := range []string{"reports", "figures", "data", "notebooks"} {
+		err = g.Walk(sub, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil || info.IsDir() {
+				return walkErr
+			}
+			if started != nil && info.ModTime().Before(started.Add(-time.Second)) {
+				return nil
+			}
+			if info.Size() > 25<<20 {
+				return fmt.Errorf("artifact %s exceeds 25 MiB", path)
+			}
+			rel := filepath.ToSlash(path)
+			b, e := g.ReadFile(rel)
+			if e != nil {
+				return e
+			}
+			rec, e := artifact.NewRecord(owner, runID, filepath.Base(rel), mimeForArtifact(rel), b)
+			if e != nil {
+				return e
+			}
+			rec.Path = rel
+			rec.Model = os.Getenv("LUMEN_SCIENCE_MODEL")
+			return writer.Persist(ctx, rec, b)
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
+}
+func mimeForArtifact(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		return "application/json"
+	case ".csv":
+		return "text/csv"
+	case ".md":
+		return "text/markdown"
+	case ".png":
+		return "image/png"
+	case ".pdf":
+		return "application/pdf"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func summarizeScienceRunTitle(prompt string) string {

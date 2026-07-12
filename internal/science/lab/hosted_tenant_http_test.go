@@ -110,7 +110,7 @@ func labRequest(t *testing.T, s *Server, token, method, path string, body any) *
 func TestHostedLabTenantHTTPMatrix(t *testing.T) {
 	root, secret := t.TempDir(), "tenant-test-secret"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
-	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true})
+	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, Runs: runstate.NewManager(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}

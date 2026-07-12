@@ -1,17 +1,20 @@
 package lab
 
 import (
+	"lumen/internal/runstate"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
 
 func TestHostedLabFailsClosedAndKeepsOnlyProbesPublic(t *testing.T) {
+	t.Setenv("WORKBENCH_DATABASE_URL","")
+	if _,err:=New(Config{SciDir:t.TempDir(),Hosted:true,WorkbenchJWTSecret:"secret",DisableFleetAutoConnect:true});err==nil{t.Fatal("hosted lab accepted missing durable database")}
 	t.Setenv(EnvHostedWorkspaceRoot, t.TempDir())
 	if _, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, DisableFleetAutoConnect: true}); err == nil {
 		t.Fatal("hosted lab accepted missing secret")
 	}
-	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: "secret", DisableFleetAutoConnect: true})
+	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: "secret", DisableFleetAutoConnect: true, Runs: runstate.NewManager(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}

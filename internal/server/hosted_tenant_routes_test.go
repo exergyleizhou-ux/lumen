@@ -14,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"lumen/internal/control"
 	"lumen/internal/hostedauth"
+	"lumen/internal/runstate"
 )
 
 func tenantToken(t *testing.T, user, workspaceID, session string) string {
@@ -30,7 +31,7 @@ func tenantToken(t *testing.T, user, workspaceID, session string) string {
 func TestHostedSignedPathIdentityCannotCreateSibling(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
-	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, _ := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	for _, pair := range [][2]string{{"user", "../victim/ws"}, {"../victim", "ws"}, {"user", "victim/ws"}, {"user", "."}, {"user", "%2e%2e%2fvictim"}} {
 		tok := tenantToken(t, pair[0], pair[1], "s")
 		if rec := hostedCall(t, s, tok, http.MethodGet, "/v1/status", nil); rec.Code != http.StatusUnauthorized {
@@ -86,7 +87,7 @@ func TestHostedCodeRoutesIsolateTenantFilesStateAndMetadata(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
 	t.Setenv("LUMEN_DEMO", "1")
-	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +129,7 @@ func TestHostedCodeRoutesIsolateTenantFilesStateAndMetadata(t *testing.T) {
 func TestHostedFilesRejectTraversalAndSymlinkEscape(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
-	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, _ := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	tok := tenantToken(t, "alice", "ws", "s")
 	if rec := hostedCall(t, s, tok, http.MethodGet, "/api/files/content?path=../../outside", nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("traversal status %d: %s", rec.Code, rec.Body.String())
@@ -152,7 +153,7 @@ func TestHostedFilesRejectTraversalAndSymlinkEscape(t *testing.T) {
 func TestHostedSessionsUseTenantHistory(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
-	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, _ := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	a, b := tenantToken(t, "a", "w", "s"), tenantToken(t, "b", "w", "s")
 	for user, text := range map[string]string{"a": "alpha", "b": "beta"} {
 		dir := filepath.Join(root, user, "w", ".lumen", "history")
@@ -175,7 +176,7 @@ func TestHostedSessionsUseTenantHistory(t *testing.T) {
 func TestHostedSessionContentRejectsSymlinkSwap(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
-	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, _ := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	tok := tenantToken(t, "a", "w", "s")
 	history := filepath.Join(root, "a", "w", ".lumen", "history")
 	if err := os.MkdirAll(filepath.Dir(history), 0700); err != nil {

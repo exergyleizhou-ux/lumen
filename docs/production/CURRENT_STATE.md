@@ -66,3 +66,11 @@ The Go test output was served from the build cache.
 - Usage has a Postgres implementation with the migration's `(run_id, event_id)` replay boundary. Artifact metadata uses an adapter-compatible object backend so Lumen can consume the Oasis local/S3 semantics without embedding another object-storage client.
 - Code and Lab expose owner-gated per-Run Artifact and Evidence endpoints. Bundles contain `manifest.json`, `run.json`, redacted `events.jsonl`, `approvals.json`, `verification.json`, `provenance.jsonl`, `usage.json`, artifact bytes, and `SHA256SUMS`; generation verifies artifact hashes and enforces safe names, a 100 MiB default limit, and a 30-second default timeout.
 - Phase 4 gates passed: real-Postgres CAS/idempotency integration, targeted race suite, `go vet ./...`, `go build ./...`, uncached full `go test ./...`, and `git diff --check`.
+
+### Phase 4 production verification corrections
+
+- Integration now loads and asserts the current Oasis `000036_workbench_runtime.up.sql` contract and exercises all five real migrated tables, including their owner foreign keys. This caught and corrected the approval `estimated_cost` column name.
+- Non-injected hosted Code and Lab startup requires both `WORKBENCH_DATABASE_URL` and `WORKBENCH_OBJECT_DIR`; neither surface can silently use SQLite or memory stores in hosted production.
+- The local object adapter uses the same `objects/<object_key>` layout and traversal rules as Oasis local storage. Object keys are generated from authenticated workspace, Run, and random Artifact IDs, never request paths. The adapter is replaceable by an Oasis-compatible S3 implementation through `artifact.ObjectBackend`.
+- Successful Code and Lab runs persist files created or modified during the Run with bytes, SHA-256, size, MIME/path/model metadata, and owner-scoped Postgres records before transitioning to success. Object, metadata, or usage persistence failure fails and cancels the Run.
+- The final correction gates passed against the live temporary Oasis Postgres migration: full-schema integration, focused race suite, `go vet ./...`, `go build ./...`, full `go test ./...`, and diff checks.

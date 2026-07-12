@@ -14,6 +14,10 @@ type PostgresStore struct {
 	Objects ObjectBackend
 }
 
+func (s PostgresStore) Persist(ctx context.Context, r Record, b []byte) error {
+	return Persist(ctx, s, s.Objects, r, b)
+}
+
 func (s PostgresStore) Create(r Record) error {
 	p, _ := json.Marshal(r.Provenance)
 	m, _ := json.Marshal(map[string]any{"step_id": r.StepID, "tool_call_id": r.ToolCallID, "path": r.Path, "model": r.Model, "input_refs": r.InputRefs})

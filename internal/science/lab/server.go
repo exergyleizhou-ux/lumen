@@ -14,9 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/hostedauth"
 	"lumen/internal/runstate"
+	"lumen/internal/runstate/pgstore"
+	"lumen/internal/runtimeevidence"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/tlsutil"
 	"lumen/internal/usage"
@@ -52,6 +56,18 @@ type Server struct {
 
 // New builds the lab server.
 func New(cfg Config) (*Server, error) {
+	if cfg.Hosted && cfg.Runs == nil && os.Getenv("WORKBENCH_DATABASE_URL") == "" {
+		return nil, fmt.Errorf("lab: WORKBENCH_DATABASE_URL required in hosted mode")
+	}
+	var hostedPG *pgstore.Store
+	if cfg.Hosted && cfg.Runs == nil {
+		var err error
+		hostedPG, err = pgstore.Open(os.Getenv("WORKBENCH_DATABASE_URL"))
+		if err != nil {
+			return nil, err
+		}
+		cfg.Runs = runstate.NewManager(hostedPG)
+	}
 	if cfg.SciDir == "" {
 		return nil, fmt.Errorf("lab: sciDir required")
 	}
@@ -93,6 +109,22 @@ func New(cfg Config) (*Server, error) {
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
+	if hostedPG != nil {
+		s.api.usage = usage.PostgresStore{DB: hostedPG.DB()}
+		s.api.approvalStore = approvalstate.PostgresStore{DB: hostedPG.DB()}
+		s.api.approvals.store = s.api.approvalStore
+	}
+	if hostedPG != nil {
+		root := os.Getenv("WORKBENCH_OBJECT_DIR")
+		if root == "" {
+			return nil, fmt.Errorf("lab: WORKBENCH_OBJECT_DIR required in hosted mode")
+		}
+		backend, err := artifact.NewLocalBackend(root)
+		if err != nil {
+			return nil, err
+		}
+		s.api.artifactStore = artifact.PostgresStore{DB: hostedPG.DB(), Objects: backend}
+	}
 	s.api.ctrls.setPlatformProvider(platformProvider, cfg.RuntimePATH)
 	if platformProvider != nil {
 		copy := *platformProvider
@@ -100,6 +132,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Usage != nil {
 		s.api.usage = cfg.Usage
+	}
+	if ur, ok := s.api.usage.(runtimeevidence.UsageReader); ok {
+		s.api.evidence = runtimeevidence.Service{Runs: s.api.runs, Approvals: s.api.approvalStore, Artifacts: s.api.artifactStore, Usage: ur}
 	}
 	s.api.auth = verifier
 	if cfg.Hosted {

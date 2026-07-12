@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"lumen/internal/config"
 	"lumen/internal/event"
+	"lumen/internal/runstate"
 	"lumen/internal/science/lab/project"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ import (
 func TestHostedLabRejectsTenantProviderConfiguration(t *testing.T) {
 	root, secret := t.TempDir(), "secret"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
-	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{{Name: "platform", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "allowed", APIKey: "platform-key"}}})
+	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{{Name: "platform", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "allowed", APIKey: "platform-key"}}, Runs: runstate.NewManager(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +89,7 @@ func TestHostedLangGraphExclusivelyUsesStartupPlatformProvider(t *testing.T) {
 		t.Fatal(err)
 	}
 	platform := config.ProviderConfig{Name: "platform", Kind: "openai", BaseURL: "https://platform.invalid/v1", Model: "allowed-model", APIKey: "platform-key"}
-	s, err := New(Config{SciDir: root, Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{platform}})
+	s, err := New(Config{SciDir: root, Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{platform}, Runs: runstate.NewManager(nil)})
 	if err != nil {
 		t.Fatal(err)
 	}

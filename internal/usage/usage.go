@@ -90,6 +90,7 @@ type CapturingSink struct {
 	Provider, Model string
 	Pricing         Pricing
 	Next            event.Sink
+	Failure         func(error)
 }
 
 func (s CapturingSink) Emit(e event.Event) {
@@ -100,8 +101,11 @@ func (s CapturingSink) Emit(e event.Event) {
 		}
 		cost := (float64(input)*s.Pricing.Input + float64(e.Usage.CompletionTokens)*s.Pricing.Output + float64(e.Usage.CacheHitTokens)*s.Pricing.CacheHit)
 		r := Record{EventID: e.EventID, RunID: e.RunID, UserID: s.Owner.UserID, WorkspaceID: s.Owner.WorkspaceID, Provider: s.Provider, Model: s.Model, InputTokens: e.Usage.PromptTokens, OutputTokens: e.Usage.CompletionTokens, CacheHitTokens: e.Usage.CacheHitTokens, CacheMissTokens: e.Usage.CacheMissTokens, EstimatedCostMicros: int64(math.Round(cost)), CreatedAt: e.Timestamp}
-		if err := s.Store.CreateUsage(r); err != nil && !errors.Is(err, ErrDuplicate) && s.Next != nil {
-			s.Next.Emit(event.Event{SchemaVersion: e.SchemaVersion, RunID: e.RunID, EventID: e.EventID + ":usage_error", Kind: event.Notice, Level: event.LevelErr, Text: "usage persistence failed: " + err.Error(), Timestamp: time.Now().UTC()})
+		if err := s.Store.CreateUsage(r); err != nil && !errors.Is(err, ErrDuplicate) {
+			if s.Failure != nil {
+				s.Failure(err)
+			}
+			return
 		}
 	}
 	if s.Next != nil {

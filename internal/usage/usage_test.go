@@ -37,9 +37,21 @@ func TestCapturingSinkReplayIsIdempotent(t *testing.T) {
 
 func TestCapturingSinkSurfacesStoreOutage(t *testing.T) {
 	next := &collectSink{}
-	sink := CapturingSink{Store: failingStore{}, Owner: runstate.LocalOwner, Next: next}
+	var failed error
+	sink := CapturingSink{Store: failingStore{}, Owner: runstate.LocalOwner, Next: next, Failure: func(err error) { failed = err }}
 	sink.Emit(event.Event{Kind: event.UsageKind, RunID: "r", EventID: "r:1", Usage: &event.Usage{PromptTokens: 1}})
-	if len(next.events) != 2 || next.events[0].Kind != event.Notice || next.events[0].Level != event.LevelErr {
-		t.Fatalf("events=%+v", next.events)
+	if failed == nil || len(next.events) != 0 {
+		t.Fatalf("failure=%v events=%+v", failed, next.events)
+	}
+}
+
+func TestStoreOutageMakesRunFailed(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	r, _ := runs.Start("", "code", "", "")
+	sink := CapturingSink{Store: failingStore{}, Owner: runstate.LocalOwner, Failure: func(err error) { _, _ = runs.Finish(r.ID, err) }}
+	sink.Emit(event.Event{Kind: event.UsageKind, RunID: r.ID, EventID: "u", Usage: &event.Usage{PromptTokens: 1}})
+	got, _ := runs.Get(r.ID)
+	if got.Status != runstate.StatusFailed {
+		t.Fatalf("status=%s", got.Status)
 	}
 }

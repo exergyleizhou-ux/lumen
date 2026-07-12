@@ -14,6 +14,7 @@ import (
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/hostedauth"
+	"lumen/internal/runstate"
 )
 
 func serverToken(t *testing.T, secret string) string {
@@ -34,7 +35,7 @@ func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret", HostedProviders: []config.ProviderConfig{{Name: "approved", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "approved-model", APIKey: "platform-startup-key"}}})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret", HostedProviders: []config.ProviderConfig{{Name: "approved", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "approved-model", APIKey: "platform-startup-key"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +69,7 @@ func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
 func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t *testing.T) {
 	t.Setenv("HOSTED_WORKSPACE_ROOT", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "sentinel")
-	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,10 +96,12 @@ func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t
 }
 
 func TestHostedServerFailsClosedAndProtectsBusinessRoutes(t *testing.T) {
+	t.Setenv("WORKBENCH_DATABASE_URL","")
+	if _,err:=New(Config{Ctrl:control.New(),Hosted:true,WorkbenchJWTSecret:"secret"});err==nil{t.Fatal("hosted server accepted missing durable database")}
 	if _, err := New(Config{Ctrl: control.New(), Hosted: true}); err == nil {
 		t.Fatal("hosted server accepted missing secret")
 	}
-	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
 	if err != nil {
 		t.Fatal(err)
 	}

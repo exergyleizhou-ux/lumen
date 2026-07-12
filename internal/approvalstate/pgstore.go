@@ -15,7 +15,7 @@ func (s PostgresStore) Create(a Approval) error {
 	scope, _ := json.Marshal(a.FileScope)
 	nets, _ := json.Marshal(a.NetworkTargets)
 	outs, _ := json.Marshal(a.ExpectedOutputs)
-	_, err := s.DB.Exec(`INSERT INTO workbench_approvals(approval_id,run_id,tool_call_id,account_id,workspace_id,owner,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost_microunits,expected_outputs,args_hash,editable_args,version,created_at,expires_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, a.ID, a.RunID, a.ToolCallID, a.Owner.UserID, a.Owner.WorkspaceID, a.Owner.UserID+":"+a.Owner.WorkspaceID, a.RiskLevel, a.Reason, effects, null(a.Command), scope, null(a.RemoteTarget), nets, a.EstimatedCostMicros, outs, a.ArgsHash, a.EditableArgs, a.Version, a.CreatedAt, a.ExpiresAt)
+	_, err := s.DB.Exec(`INSERT INTO workbench_approvals(approval_id,run_id,tool_call_id,account_id,workspace_id,owner,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at)VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`, a.ID, a.RunID, a.ToolCallID, a.Owner.UserID, a.Owner.WorkspaceID, a.Owner.UserID+":"+a.Owner.WorkspaceID, a.RiskLevel, a.Reason, effects, null(a.Command), scope, null(a.RemoteTarget), nets, a.EstimatedCostMicros, outs, a.ArgsHash, a.EditableArgs, a.Version, a.CreatedAt, a.ExpiresAt)
 	return err
 }
 func (s PostgresStore) Get(o runstate.Owner, id string) (Approval, error) {
@@ -23,7 +23,7 @@ func (s PostgresStore) Get(o runstate.Owner, id string) (Approval, error) {
 	var effects, scope, nets, outs, editable []byte
 	var command, remote, by sql.NullString
 	var decision sql.NullString
-	err := s.DB.QueryRow(`SELECT approval_id,run_id,tool_call_id,account_id::text,workspace_id::text,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost_microunits,expected_outputs,args_hash,editable_args,version,created_at,expires_at,decided_at,decided_by::text,decision FROM workbench_approvals WHERE approval_id=$1 AND account_id=$2 AND workspace_id=$3`, id, o.UserID, o.WorkspaceID).Scan(&a.ID, &a.RunID, &a.ToolCallID, &a.Owner.UserID, &a.Owner.WorkspaceID, &a.RiskLevel, &a.Reason, &effects, &command, &scope, &remote, &nets, &a.EstimatedCostMicros, &outs, &a.ArgsHash, &editable, &a.Version, &a.CreatedAt, &a.ExpiresAt, &a.DecidedAt, &by, &decision)
+	err := s.DB.QueryRow(`SELECT approval_id,run_id,tool_call_id,account_id::text,workspace_id::text,risk_level,reason,effects,command,file_scope,remote_target,network_targets,estimated_cost,expected_outputs,args_hash,editable_args,version,created_at,expires_at,decided_at,decided_by::text,decision FROM workbench_approvals WHERE approval_id=$1 AND account_id=$2 AND workspace_id=$3`, id, o.UserID, o.WorkspaceID).Scan(&a.ID, &a.RunID, &a.ToolCallID, &a.Owner.UserID, &a.Owner.WorkspaceID, &a.RiskLevel, &a.Reason, &effects, &command, &scope, &remote, &nets, &a.EstimatedCostMicros, &outs, &a.ArgsHash, &editable, &a.Version, &a.CreatedAt, &a.ExpiresAt, &a.DecidedAt, &by, &decision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a, ErrNotFound
 	}

@@ -3,34 +3,59 @@
 package pgstore
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/event"
 	"lumen/internal/runstate"
+	"lumen/internal/usage"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestPostgresCASAndIdempotentEvents(t *testing.T) {
+func TestActualOasisMigrationFullContract(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
 	if url == "" {
 		t.Skip("TEST_DATABASE_URL required")
+	}
+	migration := os.Getenv("OASIS_000036_MIGRATION")
+	if migration == "" {
+		migration = "/Users/lei/Documents/Codex/2026-07-12/new-chat-2/work/oasis-shared-runtime/backend/migrations/000036_workbench_runtime.up.sql"
+	}
+	raw, err := os.ReadFile(migration)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "estimated_cost bigint") {
+		t.Fatal("test is not using current Oasis 000036 migration")
 	}
 	db, err := sql.Open("pgx", url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(1)
-	// Isolated schema mirrors the migration contract and requires no production rows.
-	if _, err = db.Exec(`CREATE TEMP TABLE workbench_runs(id text primary key,account_id uuid not null,workspace_id uuid not null,profile text,status text,version bigint,title text,request jsonb,error_message text,created_at timestamptz,started_at timestamptz,finished_at timestamptz,updated_at timestamptz);CREATE TEMP TABLE workbench_events(id text,run_id text,account_id uuid,workspace_id uuid,seq bigint,type text,payload jsonb,created_at timestamptz,primary key(run_id,seq))`); err != nil {
+	uid := "10000000-0000-4000-8000-" + time.Now().Format("150405.000000")
+	uid = strings.ReplaceAll(uid, ".", "")
+	uid = uid[:36]
+	wid := "20000000-0000-4000-8000-" + uid[24:]
+	_, err = db.Exec(`INSERT INTO users(id,account,account_type,password_hash)VALUES($1,$2,'email','x')`, uid, "lumen-"+uid+"@test.invalid")
+	if err == nil {
+		_, err = db.Exec(`INSERT INTO workbench_workspaces(id,account_id,slug)VALUES($1,$2,$3)`, wid, uid, "lumen-"+uid[24:])
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
+	defer db.Exec(`DELETE FROM users WHERE id=$1`, uid)
 	s := New(db)
 	now := time.Now().UTC()
-	r := runstate.Run{ID: "run_test", UserID: "00000000-0000-0000-0000-000000000001", WorkspaceID: "00000000-0000-0000-0000-000000000002", Profile: "code", Status: runstate.StatusRunning, Version: 1, CreatedAt: now, UpdatedAt: now}
+	r := runstate.Run{ID: "run_" + uid, UserID: uid, WorkspaceID: wid, Profile: "code", Status: runstate.StatusRunning, Version: 1, CreatedAt: now, UpdatedAt: now}
 	if err = s.CreateRun(r); err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +64,8 @@ func TestPostgresCASAndIdempotentEvents(t *testing.T) {
 	if err = s.UpdateRun(r, 1); err != nil {
 		t.Fatal(err)
 	}
-	if err = s.UpdateRun(r, 1); !errors.Is(err, ErrVersionConflict) {
-		t.Fatalf("CAS got %v", err)
+	if err = s.UpdateRun(r, 1); !errors.Is(err, runstate.ErrVersionConflict) {
+		t.Fatalf("CAS=%v", err)
 	}
 	e := event.Event{RunID: r.ID, EventID: "e", Seq: 1, Kind: event.Notice, Timestamp: now}
 	if err = s.AppendEvent(e); err != nil {
@@ -49,8 +74,35 @@ func TestPostgresCASAndIdempotentEvents(t *testing.T) {
 	if err = s.AppendEvent(e); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.Events(r.ID, 0)
-	if err != nil || len(got) != 1 {
-		t.Fatalf("events=%v err=%v", got, err)
+	h, _ := approvalstate.HashArgs(json.RawMessage(`{"x":1}`))
+	aps := approvalstate.PostgresStore{DB: db}
+	if err = aps.Create(approvalstate.Approval{ID: "ap_" + uid, RunID: r.ID, ToolCallID: "tc", Owner: runstate.Owner{UserID: uid, WorkspaceID: wid}, RiskLevel: "high", Reason: "test", ArgsHash: h, EditableArgs: json.RawMessage(`{"x":1}`), EstimatedCostMicros: 7, CreatedAt: now, ExpiresAt: now.Add(time.Minute), Version: 1}); err != nil {
+		t.Fatal(err)
 	}
+	if _, err = aps.Decide(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, approvalstate.DecisionApproved, uid, now); err != nil {
+		t.Fatal(err)
+	}
+	us := usage.PostgresStore{DB: db}
+	if err = us.CreateUsage(usage.Record{RunID: r.ID, EventID: "usage", UserID: uid, WorkspaceID: wid, Provider: "p", Model: "m", InputTokens: 1, CreatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	if err = us.CreateUsage(usage.Record{RunID: r.ID, EventID: "usage", UserID: uid, WorkspaceID: wid, Provider: "p", Model: "m", CreatedAt: now}); !errors.Is(err, usage.ErrDuplicate) {
+		t.Fatalf("usage replay=%v", err)
+	}
+	backend, _ := artifact.NewLocalBackend(filepath.Join(t.TempDir(), "objects"))
+	as := artifact.PostgresStore{DB: db, Objects: backend}
+	data := []byte("result")
+	ar, _ := artifact.NewRecord(runstate.Owner{UserID: uid, WorkspaceID: wid}, r.ID, "result.txt", "text/plain", data)
+	if err = artifact.Persist(context.Background(), as, backend, ar, data); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := as.ListRun(ar.Owner, r.ID)
+	if err != nil || len(listed) != 1 {
+		t.Fatalf("artifacts=%v %v", listed, err)
+	}
+	rc, err := as.Open(context.Background(), ar.Owner, listed[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc.Close()
 }
