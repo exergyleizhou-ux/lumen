@@ -46,6 +46,15 @@ type Run struct {
 
 // Owner is the immutable tenant boundary for a run.
 type Owner struct{ UserID, WorkspaceID string }
+type contextRunIDKey struct{}
+
+func WithRunID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, contextRunIDKey{}, id)
+}
+func RunIDFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(contextRunIDKey{}).(string)
+	return v
+}
 
 var LocalOwner = Owner{UserID: "local", WorkspaceID: "local"}
 

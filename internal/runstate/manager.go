@@ -14,6 +14,7 @@ import (
 var (
 	ErrRunNotFound       = errors.New("run not found")
 	ErrInvalidTransition = errors.New("invalid run transition")
+	ErrVersionConflict   = errors.New("run version conflict")
 )
 
 // Store is the durable persistence boundary for runs and their ordered events.
@@ -118,6 +119,12 @@ func (m *Manager) Finish(runID string, runErr error) (Run, error) {
 	}
 	if m.store != nil {
 		if err := m.store.UpdateRun(next, mr.run.Version); err != nil {
+			if errors.Is(err, ErrVersionConflict) {
+				fresh, readErr := m.store.GetRun(runID)
+				if readErr == nil {
+					mr.run = fresh
+				}
+			}
 			return Run{}, err
 		}
 	}

@@ -34,6 +34,9 @@ type Record struct {
 // Store inserts one usage event. Implementations must enforce uniqueness by
 // (run_id,event_id), returning ErrDuplicate for a replay.
 type Store interface{ CreateUsage(Record) error }
+type Reader interface {
+	ListRun(runstate.Owner, string) ([]Record, error)
+}
 
 // MemoryStore is the Phase 3 implementation and a useful deterministic test
 // double. Phase 4 supplies the Postgres implementation behind the same API.
@@ -64,6 +67,17 @@ func (s *MemoryStore) Records() []Record {
 		out = append(out, r)
 	}
 	return out
+}
+func (s *MemoryStore) ListRun(owner runstate.Owner, runID string) ([]Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Record
+	for _, r := range s.records {
+		if r.RunID == runID && r.UserID == owner.UserID && r.WorkspaceID == owner.WorkspaceID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // Pricing is expressed per million tokens.
