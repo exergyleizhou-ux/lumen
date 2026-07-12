@@ -162,18 +162,18 @@ type changeVerifier interface {
 
 // Options configures a new Agent.
 type Options struct {
-	MaxSteps          int
-	Temperature       float64
-	Pricing           *provider.Pricing
-	ContextWindow     int
-	SoftCompactRatio  float64
-	CompactRatio      float64
-	RecentKeep        int
-	Sink              event.Sink
-	Gate              Gate
-	Asker             Asker
-	MemoryPrompt      string        // injected after system prompt (persistent user memories)
-	TurnTimeout       time.Duration // per-turn wall; zero = 5m default
+	MaxSteps         int
+	Temperature      float64
+	Pricing          *provider.Pricing
+	ContextWindow    int
+	SoftCompactRatio float64
+	CompactRatio     float64
+	RecentKeep       int
+	Sink             event.Sink
+	Gate             Gate
+	Asker            Asker
+	MemoryPrompt     string        // injected after system prompt (persistent user memories)
+	TurnTimeout      time.Duration // per-turn wall; zero = 5m default
 }
 
 // New creates an Agent.
@@ -194,21 +194,21 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		opts.TurnTimeout = 5 * time.Minute
 	}
 	a := &Agent{
-		prov:              prov,
-		tools:             tools,
-		session:           session,
-		maxSteps:          opts.MaxSteps,
-		temperature:       opts.Temperature,
-		pricing:           opts.Pricing,
-		gate:              opts.Gate,
-		asker:             opts.Asker,
-		memoryPrompt:      opts.MemoryPrompt,
-		contextWindow:     opts.ContextWindow,
-		softCompactRatio:  opts.SoftCompactRatio,
-		compactRatio:      opts.CompactRatio,
-		turnTimeout:       opts.TurnTimeout,
-		recentKeep:        opts.RecentKeep,
-		cache:             newCacheTracker(),
+		prov:             prov,
+		tools:            tools,
+		session:          session,
+		maxSteps:         opts.MaxSteps,
+		temperature:      opts.Temperature,
+		pricing:          opts.Pricing,
+		gate:             opts.Gate,
+		asker:            opts.Asker,
+		memoryPrompt:     opts.MemoryPrompt,
+		contextWindow:    opts.ContextWindow,
+		softCompactRatio: opts.SoftCompactRatio,
+		compactRatio:     opts.CompactRatio,
+		turnTimeout:      opts.TurnTimeout,
+		recentKeep:       opts.RecentKeep,
+		cache:            newCacheTracker(),
 	}
 	a.SetSink(opts.Sink)
 	return a
@@ -629,7 +629,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		Timestamp: time.Now(),
 	})
 	a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "max_steps", Timestamp: time.Now()})
-	return nil
+	return &MaxStepsError{Limit: a.maxSteps}
 }
 
 // ── Tool execution ────────────────────────────────────────
