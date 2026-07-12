@@ -86,6 +86,32 @@ func (s *Store) migrate() error {
 			updated_at TEXT NOT NULL,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS runs (
+			id TEXT PRIMARY KEY,
+			session_id TEXT,
+			parent_run_id TEXT,
+			profile TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL,
+			stop_reason TEXT,
+			error TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			version INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_session_updated ON runs(session_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS run_events (
+			run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+			seq INTEGER NOT NULL,
+			event_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			PRIMARY KEY(run_id, seq),
+			UNIQUE(event_id)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
