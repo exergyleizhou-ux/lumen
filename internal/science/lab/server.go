@@ -85,6 +85,7 @@ func New(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("lab tenant registry: %w", err)
 		}
 		s.api.tenants = registry
+		registry.onEvict = s.api.forgetOwnerMode
 	}
 	s.routes()
 	return s, nil

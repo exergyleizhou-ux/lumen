@@ -51,6 +51,14 @@ func NewController(sciDir string, fleet *labruntime.FleetManager, projects *proj
 	}
 }
 
+func (c *Controller) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctrl != nil {
+		c.ctrl.Close()
+	}
+}
+
 // Configure prepares the agent for a project workspace.
 func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver permission.Asker) error {
 	c.mu.Lock()

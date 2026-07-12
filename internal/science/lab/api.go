@@ -1296,6 +1296,12 @@ func (a *API) ownerMode(owner runstate.Owner) permission.Mode {
 	return permission.ModeDefault
 }
 
+func (a *API) forgetOwnerMode(owner runstate.Owner) {
+	a.modeMu.Lock()
+	delete(a.ownerModes, owner)
+	a.modeMu.Unlock()
+}
+
 func parseLabMode(mode string) permission.Mode {
 	switch mode {
 	case "bypass", "accept-edits":

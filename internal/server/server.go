@@ -286,6 +286,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	configureErr := s.configureRuntime(rt, sink, "")
 	if configureErr != nil {
+		if rt.entry != nil {
+			s.controllers.discard(owner, rt.session, ctrl)
+		}
 		sink.emit("turn_started", "")
 		sink.emit("error", configureErr.Error())
 		sink.emit("turn_done", "")

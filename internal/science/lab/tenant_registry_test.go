@@ -89,3 +89,31 @@ func TestTenantRegistryExistingOwnerSurvivesCapacityCleanup(t *testing.T) {
 		t.Fatal("existing tenant was evicted before lookup")
 	}
 }
+
+func TestTenantRegistryEvictionNotifiesOwnerCleanup(t *testing.T) {
+	now := time.Now()
+	r, err := newTenantRegistry(t.TempDir(), nil, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.now = func() time.Time { return now }
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	evicted := make(chan runstate.Owner, 1)
+	r.onEvict = func(owner runstate.Owner) { evicted <- owner }
+	if _, err := r.acquire(a); err != nil {
+		t.Fatal(err)
+	}
+	r.release(a)
+	now = now.Add(2 * time.Minute)
+	if _, err := r.acquire(runstate.Owner{UserID: "b", WorkspaceID: "w"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case got := <-evicted:
+		if got != a {
+			t.Fatalf("evicted %v", got)
+		}
+	default:
+		t.Fatal("owner cleanup not notified")
+	}
+}

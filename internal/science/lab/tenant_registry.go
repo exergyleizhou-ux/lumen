@@ -36,6 +36,7 @@ type tenantRegistry struct {
 	idleTTL time.Duration
 	now     func() time.Time
 	items   map[runstate.Owner]*tenantResources
+	onEvict func(runstate.Owner)
 }
 
 func newTenantRegistry(root string, fleet *labruntime.FleetManager, max int, idleTTL time.Duration) (*tenantRegistry, error) {
@@ -103,7 +104,7 @@ func (r *tenantRegistry) release(owner runstate.Owner) {
 func (r *tenantRegistry) cleanupLocked(now time.Time) {
 	for owner, t := range r.items {
 		if t.busy == 0 && now.Sub(t.lastUsed) >= r.idleTTL {
-			delete(r.items, owner)
+			r.evictLocked(owner, t)
 		}
 	}
 	for len(r.items) >= r.max {
@@ -117,6 +118,16 @@ func (r *tenantRegistry) cleanupLocked(now time.Time) {
 		if oldest.IsZero() {
 			return
 		}
-		delete(r.items, victim)
+		r.evictLocked(victim, r.items[victim])
+	}
+}
+
+func (r *tenantRegistry) evictLocked(owner runstate.Owner, t *tenantResources) {
+	if t != nil && t.Controllers != nil {
+		t.Controllers.close()
+	}
+	delete(r.items, owner)
+	if r.onEvict != nil {
+		r.onEvict(owner)
 	}
 }

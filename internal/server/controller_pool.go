@@ -90,3 +90,13 @@ func (p *serverControllerPool) release(owner runstate.Owner, sessionID string) {
 		e.lastUsed = p.now()
 	}
 }
+
+func (p *serverControllerPool) discard(owner runstate.Owner, sessionID string, ctrl *control.Controller) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	key := controllerKey{Owner: owner, SessionID: sessionID}
+	if e := p.entries[key]; e != nil && e.Controller == ctrl {
+		e.Controller.Close()
+		delete(p.entries, key)
+	}
+}

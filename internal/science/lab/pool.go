@@ -102,6 +102,7 @@ func (p *controllerPool) acquire(slug string) (*Controller, error) {
 		if oldestKey == "" {
 			return nil, fmt.Errorf("controller pool full (%d busy)", p.max)
 		}
+		p.items[oldestKey].ctrl.Close()
 		delete(p.items, oldestKey)
 	}
 	c := NewController(p.sciDir, p.fleet, p.projects)
@@ -126,6 +127,16 @@ func (p *controllerPool) discard(slug string, ctrl *Controller) {
 	defer p.mu.Unlock()
 	if e := p.items[slug]; e != nil && e.ctrl == ctrl {
 		delete(p.items, slug)
+		go e.ctrl.Close()
+	}
+}
+
+func (p *controllerPool) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, e := range p.items {
+		e.ctrl.Close()
+		delete(p.items, key)
 	}
 }
 
