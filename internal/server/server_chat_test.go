@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"lumen/internal/agent"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/runstate"
 )
 
 func TestSSESinkPreservesStopReason(t *testing.T) {
@@ -22,6 +24,30 @@ func TestSSESinkPreservesStopReason(t *testing.T) {
 	out := rec.Body.String()
 	if !strings.Contains(out, `"stop_reason":"max_steps"`) {
 		t.Fatalf("missing max_steps terminal reason:\n%s", out)
+	}
+}
+
+func TestVerificationFailurePropagatesToRunAndSSE(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	run, err := runs.Start("session", "code", "verification", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runErr := &agent.VerificationFailedError{Step: "test"}
+	finished, err := runs.Finish(run.ID, runErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != runstate.StatusFailed || finished.StopReason != "verification_failed" {
+		t.Fatalf("terminal run=%#v", finished)
+	}
+
+	rec := httptest.NewRecorder()
+	sink := sseSink{w: rec, flusher: rec}
+	sink.done(run.ID, runErr)
+	out := rec.Body.String()
+	if !strings.Contains(out, `"ok":false`) || !strings.Contains(out, `"run_id":"`+run.ID+`"`) || !strings.Contains(out, "engineering verification failed") {
+		t.Fatalf("verification SSE=%s", out)
 	}
 }
 

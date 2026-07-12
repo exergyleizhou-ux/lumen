@@ -79,6 +79,10 @@ func ClassifyTerminal(err error) (Status, string) {
 		return StatusSucceeded, "finished"
 	case errors.Is(err, agent.ErrMaxStepsExhausted):
 		return StatusExhausted, "max_steps"
+	case errors.Is(err, agent.ErrVerificationIncomplete):
+		return StatusFailed, "verification_incomplete"
+	case errors.Is(err, agent.ErrVerificationFailed):
+		return StatusFailed, "verification_failed"
 	case errors.Is(err, context.Canceled):
 		return StatusCanceled, "canceled"
 	case errors.Is(err, context.DeadlineExceeded):

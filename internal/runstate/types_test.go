@@ -74,3 +74,19 @@ func TestTerminalStatusesRejectEveryTransition(t *testing.T) {
 		}
 	}
 }
+
+func TestVerificationTerminalClassification(t *testing.T) {
+	cases := []struct {
+		err    error
+		reason string
+	}{
+		{&agent.VerificationIncompleteError{Reason: "no tests"}, "verification_incomplete"},
+		{&agent.VerificationFailedError{Step: "test"}, "verification_failed"},
+	}
+	for _, tc := range cases {
+		status, reason := ClassifyTerminal(tc.err)
+		if status != StatusFailed || reason != tc.reason {
+			t.Fatalf("ClassifyTerminal(%v)=(%s,%s)", tc.err, status, reason)
+		}
+	}
+}

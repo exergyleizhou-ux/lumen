@@ -465,17 +465,17 @@ async function send() {
 	      $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
 	      $("approvalModal")?.showModal();
 	      break;
-	    case "turn_done":
-	      turn++;
-	      if (ev.stop_reason === "finished") terminalOK = true;
-	      if (ev.stop_reason && ev.stop_reason !== "finished") {
-	        terminalOK = false;
-	        terminalError = `任务未完成：${ev.stop_reason}`;
-	      }
-	      break;
-	    case "stream_done":
-	      terminalOK = ev.ok === true;
-	      terminalError = ev.error || "";
+      case "turn_done":
+        turn++;
+        if (ev.stop_reason === "finished") terminalOK = true;
+        if (ev.stop_reason && ev.stop_reason !== "finished") {
+          terminalOK = false;
+          terminalError = terminalFailureMessage("", ev.stop_reason);
+        }
+        break;
+      case "stream_done":
+        terminalOK = ev.ok === true;
+        terminalError = terminalFailureMessage(ev.error || "", "");
 	      break;
 	    case "plan_start": onPlanStart(); break;
 	    case "plan_step": onPlanStep(ev.step || ev); break;
@@ -573,6 +573,13 @@ async function send() {
   loadSessions();
   input.focus();
   scrollChat();
+}
+
+function terminalFailureMessage(error, stopReason) {
+  if (stopReason === "verification_failed" || stopReason === "verification_incomplete" || error.includes("engineering verification")) {
+    return `修改未通过工程验证${error ? `：${error}` : ""}`;
+  }
+  return error || (stopReason ? `任务未完成：${stopReason}` : "");
 }
 
 async function replayMissedRunEvents(applyRunEvent) {
