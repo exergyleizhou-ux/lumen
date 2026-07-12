@@ -63,6 +63,8 @@ func main() {
 		runStats()
 	case "eval":
 		runEval(os.Args[2:])
+	case "model-eval":
+		runModelEval(os.Args[2:])
 	case "reliability":
 		runReliability()
 	case "version", "--version", "-v":
@@ -101,6 +103,7 @@ Usage:
   lumen config
   lumen stats
   lumen eval [--tasks DIR] [--list]   Coding-quality benchmark (pass-rate)
+  lumen model-eval [--live]           Production Code/Lab model capability gate
   lumen setup
   lumen version
   lumen science start|gui|migrate|status|doctor    Claude Science third-party bridge
