@@ -2,6 +2,7 @@
 .DS_Store
 .env
 .gstack/
+.worktrees/
 .lumen/
 .science-rm-scratch/
 *.log
