@@ -39,10 +39,6 @@ func (s *Server) routesAPI() {
 }
 
 func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 	rel := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
 	if rel == "" || strings.Contains(rel, "..") {
 		jsonErr(w, "invalid run path", http.StatusBadRequest)
@@ -50,6 +46,10 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	parts := strings.Split(rel, "/")
 	if len(parts) == 1 && parts[0] != "" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		run, err := s.runs.Get(parts[0])
 		if errors.Is(err, runstate.ErrRunNotFound) {
 			jsonErr(w, "run not found", http.StatusNotFound)
@@ -63,6 +63,10 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		var after uint64
 		if raw := r.URL.Query().Get("after"); raw != "" {
 			value, err := strconv.ParseUint(raw, 10, 64)
@@ -82,6 +86,27 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, map[string]any{"events": events, "run_id": parts[0], "after": after})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {
+		if r.Method != http.MethodPost {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if _, err := s.runs.Get(parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		} else if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if !s.cancelActiveRun(parts[0]) {
+			jsonErr(w, "run is not active", http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "run_id": parts[0]})
 		return
 	}
 	jsonErr(w, "invalid run path", http.StatusBadRequest)

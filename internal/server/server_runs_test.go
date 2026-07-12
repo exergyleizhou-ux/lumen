@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"lumen/internal/control"
 	"lumen/internal/event"
@@ -74,6 +76,43 @@ func TestChatRunLifecycleIncludesRunIDAndSucceeds(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"kind":"stream_done"`) ||
 		!strings.Contains(rec.Body.String(), `"run_id":"`+runID+`"`) {
 		t.Fatalf("stream_done missing run id: %s", rec.Body.String())
+	}
+}
+
+func TestRunCancelAPI(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := runs.Start("session", "code", "cancel", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cleanup := s.beginActiveRun(context.Background(), run.ID, time.Minute)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/"+run.ID+"/cancel", nil))
+	if rec.Code != http.StatusAccepted || !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("cancel status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-runCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("cancel API did not cancel run context")
+	}
+
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/"+run.ID+"/cancel", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("repeat cancel status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/v1/runs/run_missing/cancel", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing cancel status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

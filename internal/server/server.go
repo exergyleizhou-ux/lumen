@@ -235,9 +235,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Ctrl.SetPermissionMode(parseUIMode(req.Mode))
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-
 	sessionID := ""
 	if sess := s.cfg.Ctrl.Session(); sess != nil && sess.Path != "" {
 		sessionID = lumenstore.SessionIDFromPath(sess.Path)
@@ -248,6 +245,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sink.done("", err)
 		return
 	}
+	ctx, cleanupRun := s.beginActiveRun(r.Context(), run.ID, 5*time.Minute)
+	defer cleanupRun()
 	s.cfg.Ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
 
 	var runErr error
