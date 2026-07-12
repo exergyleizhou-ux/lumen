@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +20,9 @@ import (
 	"sync/atomic"
 
 	"lumen/internal/event"
+	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/langgraph"
@@ -45,6 +48,8 @@ type API struct {
 	turns      *turnPool
 	ctrls      *controllerPool
 	approvals  *approvalHub
+	runs       *runstate.Manager
+	activeRuns sync.Map // run_id -> context.CancelFunc
 	// activeMode is read by approval hub during a turn.
 	modeMu     sync.Mutex
 	activeMode permission.Mode
@@ -56,20 +61,24 @@ type API struct {
 }
 
 // NewAPI builds the lab API.
-func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort int) *API {
+func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort int, runs *runstate.Manager) *API {
 	if listenPort == 0 {
 		listenPort = DefaultPort
 	}
+	if runs == nil {
+		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+	}
 	store := project.NewStore(sciDir)
 	api := &API{
-		sciDir:      sciDir,
-		version:     version,
-		listenPort:  listenPort,
-		projects:    store,
-		fleet:       fleet,
-		local:       loadLocalConfig(sciDir),
+		sciDir:     sciDir,
+		version:    version,
+		listenPort: listenPort,
+		projects:   store,
+		fleet:      fleet,
+		local:      loadLocalConfig(sciDir),
 		turns:      newTurnPool(MaxConcurrentTurns),
 		ctrls:      newControllerPool(sciDir, fleet, store, MaxControllers),
+		runs:       runs,
 		activeMode: permission.ModeDefault,
 		startedAt:  time.Now(),
 	}
@@ -91,6 +100,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/skills/", a.handleSkillsSub)
 	mux.HandleFunc("/api/lab/config", a.handleConfig)
 	mux.HandleFunc("/api/lab/chat", a.handleChat)
+	mux.HandleFunc("/api/lab/runs/", a.handleRuns)
 	mux.HandleFunc("/api/lab/approve", a.handleApprove)
 	mux.HandleFunc("/api/lab/brief", a.handleBrief)
 	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
@@ -111,6 +121,103 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/langgraph/history", a.handleLangGraphHistory)
 	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
 	mux.HandleFunc("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
+}
+
+func (a *API) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	a.activeRuns.Store(runID, context.CancelFunc(cancel))
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			a.activeRuns.Delete(runID)
+			cancel()
+		})
+	}
+	return ctx, cleanup
+}
+
+func (a *API) cancelActiveRun(runID string) bool {
+	value, ok := a.activeRuns.LoadAndDelete(runID)
+	if !ok {
+		return false
+	}
+	cancel, ok := value.(context.CancelFunc)
+	if ok {
+		cancel()
+	}
+	return ok
+}
+
+func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/api/lab/runs/")
+	if rel == "" || strings.Contains(rel, "..") {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
+		return
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 1 && parts[0] != "" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		run, err := a.runs.Get(parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"run": run})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		var after uint64
+		if raw := r.URL.Query().Get("after"); raw != "" {
+			value, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("after must be a non-negative integer"))
+				return
+			}
+			after = value
+		}
+		events, err := a.runs.Events(parts[0], after)
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events, "run_id": parts[0], "after": after})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.Get(parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if !a.cancelActiveRun(parts[0]) {
+			writeErr(w, http.StatusConflict, fmt.Errorf("run is not active"))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "run_id": parts[0]})
+		return
+	}
+	writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -154,14 +261,14 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"adapter": adapter,
 		},
 		"capacity": map[string]any{
-			"turns_active":    a.turns.active(),
-			"turns_capacity":  a.turns.capacity(),
-			"controllers":     ctrlTotal,
+			"turns_active":     a.turns.active(),
+			"turns_capacity":   a.turns.capacity(),
+			"controllers":      ctrlTotal,
 			"controllers_busy": ctrlBusy,
-			"max_controllers": MaxControllers,
-			"turns_total":     a.turnsTotal.Load(),
-			"turns_failed":    a.turnsFailed.Load(),
-			"approvals_total": a.approvalsTot.Load(),
+			"max_controllers":  MaxControllers,
+			"turns_total":      a.turnsTotal.Load(),
+			"turns_failed":     a.turnsFailed.Load(),
+			"approvals_total":  a.approvalsTot.Load(),
 		},
 		"limits": map[string]any{
 			"max_concurrent_turns": MaxConcurrentTurns,
@@ -177,7 +284,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"available": jupyterOK,
 		},
 		"onlyoffice": onlyoffice.Health(strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL"))),
-		"langgraph": langgraph.Health(),
+		"langgraph":  langgraph.Health(),
 	})
 }
 
@@ -584,12 +691,12 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 			model = m
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"default_mode":  cfg.DefaultMode,
-			"tool_profile":  cfg.ToolProfile,
-			"default_port":  cfg.DefaultPort,
-			"model_hint":    model,
-			"version":       a.version,
-			"modes":         []string{"agent", "plan", "bypass", "default"},
+			"default_mode": cfg.DefaultMode,
+			"tool_profile": cfg.ToolProfile,
+			"default_port": cfg.DefaultPort,
+			"model_hint":   model,
+			"version":      a.version,
+			"modes":        []string{"agent", "plan", "bypass", "default"},
 		})
 	case http.MethodPut, http.MethodPost:
 		var body struct {
@@ -1462,8 +1569,8 @@ func (a *API) handleFileDiff(w http.ResponseWriter, r *http.Request, g *workspac
 	diffText := simpleLineDiff(pa, pb, string(dataA), string(dataB))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"a": pa, "b": pb,
-		"diff":     diffText,
-		"identical": string(dataA) == string(dataB),
+		"diff":        diffText,
+		"identical":   string(dataA) == string(dataB),
 		"truncated_a": truncA,
 		"truncated_b": truncB,
 	})
@@ -1859,12 +1966,12 @@ func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *w
 		total += int64(len(body))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"files":   written,
-		"count":   len(written),
-		"dest":    destPrefix,
-		"zip":     header.Filename,
-		"bytes":   total,
+		"ok":    true,
+		"files": written,
+		"count": len(written),
+		"dest":  destPrefix,
+		"zip":   header.Filename,
+		"bytes": total,
 	})
 }
 
@@ -2895,8 +3002,8 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"notebooks":       notebooks,
-				"count":           len(notebooks),
+				"notebooks":         notebooks,
+				"count":             len(notebooks),
 				"jupyter_available": jupyter.IsAvailable(),
 			})
 			return
@@ -2910,9 +3017,9 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"name":  name,
-			"cells": nb.Cells,
-			"count": len(nb.Cells),
+			"name":     name,
+			"cells":    nb.Cells,
+			"count":    len(nb.Cells),
 			"markdown": nb.ToMarkdown(),
 		})
 	case http.MethodPost:

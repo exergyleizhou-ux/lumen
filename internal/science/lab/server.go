@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lumen/internal/config"
+	"lumen/internal/runstate"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/tlsutil"
 )
@@ -29,6 +30,7 @@ type Config struct {
 	Version                 string
 	OpenPanel               bool
 	DisableFleetAutoConnect bool // tests and offline embedding can connect lazily
+	Runs                    *runstate.Manager
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -60,7 +62,7 @@ func New(cfg Config) (*Server, error) {
 	// Seed embedded elevation skills on first launch.
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
-	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr))
+	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
 	s.routes()
 	return s, nil
 }
