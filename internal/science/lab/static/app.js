@@ -660,6 +660,23 @@ function formatToolArgsPreview(args, maxLen) {
   return s;
 }
 
+function buildWorkbenchSnapshot(project, runID, lastSeq, terminal, pendingApprovals) {
+  var projectID = project && typeof project.slug === "string" ? project.slug.trim() : "";
+  var run = typeof runID === "string" ? runID.trim() : "";
+  var seq = Number.isFinite(lastSeq) && lastSeq > 0 ? Math.floor(lastSeq) : 0;
+  var approvals = Number.isFinite(pendingApprovals) && pendingApprovals > 0
+    ? Math.floor(pendingApprovals)
+    : 0;
+  return {
+    kind: "lumen.workbench.snapshot",
+    version: 1,
+    surface: "lab",
+    project: projectID ? { id: projectID, title: String(project.title || projectID) } : null,
+    run: run ? { id: run, last_seq: seq, terminal: terminal === true } : null,
+    pending_approvals: approvals,
+  };
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -681,6 +698,7 @@ window.LabUI = {
   buildLangGraphHistoryMarkdown: buildLangGraphHistoryMarkdown,
   buildLangGraphRunNote: buildLangGraphRunNote,
   mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
+  buildWorkbenchSnapshot: buildWorkbenchSnapshot,
 };
 
 /* ── 3. Global state ── */
@@ -695,6 +713,20 @@ var sseState = null; // per-turn SSE accumulator
 var turnTasks = []; // this-turn tools for tasks pane
 var skillsCache = [];
 var atMenuState = { active: false, start: -1, items: [], idx: 0 };
+
+function postWorkbenchSnapshot() {
+  if (!window.parent || window.parent === window) return;
+  var pending = 0;
+  try { pending = pendingApprovalCards().length; } catch (_) {}
+  var snapshot = buildWorkbenchSnapshot(
+    activeProject,
+    currentRunId,
+    currentRunSeq,
+    !!(sseState && sseState.terminal),
+    pending,
+  );
+  window.parent.postMessage(snapshot, window.location.origin);
+}
 
 /* ── 4. API functions ── */
 
@@ -884,6 +916,7 @@ async function loadProjects() {
       btn.addEventListener("click", function () {
         saveComposerDraft();
         activeProject = p;
+        postWorkbenchSnapshot();
         touchProjectRecent(p.slug);
         activeThread = "";
         loadProjects();
@@ -953,6 +986,7 @@ async function loadProjects() {
       if (nm0) nm0.textContent = "未选择";
       if (mt0) mt0.textContent = "";
     }
+    postWorkbenchSnapshot();
   } catch (e) {
     var nav = $("projectList");
     if (nav) nav.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
@@ -1873,6 +1907,7 @@ function handleSSEEvent(ev, state, bubble) {
     }
   }
 
+  postWorkbenchSnapshot();
   return state;
 }
 
@@ -2001,6 +2036,7 @@ async function streamChat(prompt, mode) {
   sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null, lastSeq: 0 };
   currentRunId = "";
   currentRunSeq = 0;
+  postWorkbenchSnapshot();
   turnTasks = [];
   renderTasksPane();
   setRunStatus(true);
@@ -2068,6 +2104,7 @@ async function streamChat(prompt, mode) {
     }
     currentAbort = null;
     try { await refreshFiles(); } catch (_) {}
+    postWorkbenchSnapshot();
   }
 
   $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
@@ -2109,11 +2146,13 @@ async function restoreStoredLabRun() {
       var runBody = await runRes.json();
       var run = runBody.run || {};
       if (labRunTerminal(run.status)) {
+        sseState.terminal = { ok: run.status === "succeeded", error: run.error || run.stop_reason || "" };
         if (!sseState.text && bubble.textDiv) bubble.textDiv.innerHTML = renderMarkdown("Run " + currentRunId + "：" + run.status);
         if (run.status !== "succeeded" && bubble.textDiv) {
           bubble.textDiv.innerHTML += '<div class="stop-notice">' + escHtml(run.error || run.stop_reason || run.status) + "</div>";
         }
         try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (_) {}
+        postWorkbenchSnapshot();
         break;
       }
       await new Promise(function (resolve) { setTimeout(resolve, 1000); });
@@ -2151,6 +2190,7 @@ function updateApprovalBanner() {
     if (hint && /批准|等待工具/.test(hint.textContent || "")) {
       hint.textContent = "就绪 · Agent 模式写文件/bash 需批准";
     }
+    postWorkbenchSnapshot();
     return;
   }
   banner.hidden = false;
@@ -2164,6 +2204,7 @@ function updateApprovalBanner() {
       : ("需要确认: " + tool + (sum ? " — " + sum : ""));
   }
   if (hint) hint.textContent = "等待工具批准… 允许后 Agent 继续";
+  postWorkbenchSnapshot();
 }
 
 function replyLatestPendingApproval(allow) {
@@ -5797,6 +5838,7 @@ document.addEventListener("click", function (e) {
       renderThreadTabs();
     }
     await restoreStoredLabRun();
+    postWorkbenchSnapshot();
   } catch (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";

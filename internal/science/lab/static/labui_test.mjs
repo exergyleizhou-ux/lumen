@@ -43,6 +43,31 @@ function runOnce(runLabel) {
   assert(typeof L.escHtml === "function", "escHtml is function");
   assert(typeof L.renderMarkdown === "function", "renderMarkdown is function");
   assert(typeof L.reduceSSE === "function", "reduceSSE is function");
+  assert(typeof L.buildWorkbenchSnapshot === "function", "buildWorkbenchSnapshot is function");
+
+  const workbenchSnapshot = L.buildWorkbenchSnapshot(
+    { slug: "project-a", title: "Project A" },
+    "run_1",
+    7,
+    false,
+    2,
+  );
+  assert(
+    JSON.stringify(workbenchSnapshot) === JSON.stringify({
+      kind: "lumen.workbench.snapshot",
+      version: 1,
+      surface: "lab",
+      project: { id: "project-a", title: "Project A" },
+      run: { id: "run_1", last_seq: 7, terminal: false },
+      pending_approvals: 2,
+    }),
+    "workbench snapshot shape: " + JSON.stringify(workbenchSnapshot),
+  );
+  const emptyWorkbenchSnapshot = L.buildWorkbenchSnapshot(null, "", -1, true, -4);
+  assert(emptyWorkbenchSnapshot.project === null, "empty snapshot project null");
+  assert(emptyWorkbenchSnapshot.run === null, "empty snapshot run null");
+  assert(emptyWorkbenchSnapshot.pending_approvals === 0, "empty snapshot approvals clamped");
+  console.log("OK workbench snapshot is versioned and minimal");
 
   // escHtml
   const esc = L.escHtml('<script>alert(1)</script> & "x"');

@@ -57,6 +57,7 @@ func TestLabUIPureHelpersJS(t *testing.T) {
 			"OK tool_result merges by id",
 			"OK approval_request shape",
 			"OK run replay deduplicates seq",
+			"OK workbench snapshot is versioned and minimal",
 			"PASS labui_test.mjs",
 		}
 		for _, n := range needles {
@@ -77,6 +78,7 @@ func TestLabUIRunReplayContract(t *testing.T) {
 	for _, required := range []string{
 		"/api/lab/runs/", "/events?after=", "/cancel", "restoreStoredLabRun",
 		`sessionStorage.getItem("lumen_lab_active_run")`, "currentRunSeq",
+		`kind: "lumen.workbench.snapshot"`, "version: 1", "window.parent.postMessage",
 	} {
 		if !strings.Contains(source, required) {
 			t.Errorf("Lab app.js missing Run recovery contract %q", required)
