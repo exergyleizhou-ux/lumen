@@ -41,6 +41,12 @@ func TestVerifierRejectsInvalidTokensWithoutLeakage(t *testing.T) {
 		"future iat":          signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.IssuedAt = jwt.NewNumericDate(time.Now().Add(time.Minute)) }),
 		"missing nbf":         signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.NotBefore = nil }),
 		"missing permissions": signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.Permissions = nil }),
+		"workspace traversal": signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.WorkspaceID = "../victim/ws" }),
+		"workspace slash":     signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.WorkspaceID = "victim/ws" }),
+		"workspace dot":       signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.WorkspaceID = "." }),
+		"workspace encoded":   signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.WorkspaceID = "%2e%2e%2fvictim" }),
+		"user traversal":      signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.UserID = "../victim"; c.Subject = c.UserID }),
+		"user backslash":      signed(t, "correct-secret", jwt.SigningMethodHS256, func(c *Claims) { c.UserID = `victim\user`; c.Subject = c.UserID }),
 	}
 	for name, raw := range cases {
 		t.Run(name, func(t *testing.T) {

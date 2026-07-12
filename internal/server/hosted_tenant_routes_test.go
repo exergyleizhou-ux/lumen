@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +25,49 @@ func tenantToken(t *testing.T, user, workspaceID, session string) string {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestHostedSignedPathIdentityCannotCreateSibling(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
+	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	for _, pair := range [][2]string{{"user", "../victim/ws"}, {"../victim", "ws"}, {"user", "victim/ws"}, {"user", "."}, {"user", "%2e%2e%2fvictim"}} {
+		tok := tenantToken(t, pair[0], pair[1], "s")
+		if rec := hostedCall(t, s, tok, http.MethodGet, "/v1/status", nil); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("identity %q/%q status %d", pair[0], pair[1], rec.Code)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "victim")); !os.IsNotExist(err) {
+		t.Fatalf("sibling created: %v", err)
+	}
+}
+
+func TestMkdirTenantAtResistsConcurrentSymlinkSwap(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			p := filepath.Join(root, "user")
+			_ = os.RemoveAll(p)
+			_ = os.Symlink(outside, p)
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		_ = mkdirTenantAt(root, "user", "workspace")
+	}
+	close(stop)
+	wg.Wait()
+	if _, err := os.Stat(filepath.Join(outside, "workspace")); !os.IsNotExist(err) {
+		t.Fatalf("workspace escaped hosted root: %v", err)
+	}
 }
 
 func hostedCall(t *testing.T, s *Server, token, method, path string, body []byte) *httptest.ResponseRecorder {

@@ -1,11 +1,14 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"syscall"
 
+	"golang.org/x/sys/unix"
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hostedauth"
@@ -53,18 +56,54 @@ func (s *Server) tenantWorkspace(owner runstate.Owner) (workspace.Context, error
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return workspace.Context{}, err
 	}
-	guard, err := workspace.NewLocal("hosted", root, "host", nil)
-	if err != nil {
+	if !safeTenantComponent(owner.UserID) || !safeTenantComponent(owner.WorkspaceID) {
+		return workspace.Context{}, fmt.Errorf("invalid tenant identity")
+	}
+	if err := mkdirTenantAt(root, owner.UserID, owner.WorkspaceID); err != nil {
 		return workspace.Context{}, err
 	}
-	tenantRoot, err := guard.Backend.Resolve(filepath.Join(owner.UserID, owner.WorkspaceID), true)
-	if err != nil {
-		return workspace.Context{}, err
-	}
-	if err := os.MkdirAll(tenantRoot, 0700); err != nil {
-		return workspace.Context{}, err
-	}
+	tenantRoot := filepath.Join(root, owner.UserID, owner.WorkspaceID)
 	return workspace.NewLocal(owner.WorkspaceID, tenantRoot, owner.UserID, nil)
+}
+
+func safeTenantComponent(value string) bool {
+	if value == "" || value == "." || value == ".." || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			return false
+		}
+	}
+	return true
+}
+
+// mkdirTenantAt creates user/workspace below an already-open hosted root.
+// Every component is opened with O_NOFOLLOW before the next is created, so a
+// symlink swap cannot redirect mkdir outside HOSTED_WORKSPACE_ROOT.
+func mkdirTenantAt(root, user, workspaceID string) error {
+	rootFD, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return fmt.Errorf("open hosted root: %w", err)
+	}
+	defer unix.Close(rootFD)
+	userFD, err := mkdirOpenDirAt(rootFD, user)
+	if err != nil {
+		return fmt.Errorf("open tenant user: %w", err)
+	}
+	defer unix.Close(userFD)
+	workspaceFD, err := mkdirOpenDirAt(userFD, workspaceID)
+	if err != nil {
+		return fmt.Errorf("open tenant workspace: %w", err)
+	}
+	return unix.Close(workspaceFD)
+}
+
+func mkdirOpenDirAt(parent int, name string) (int, error) {
+	if err := unix.Mkdirat(parent, name, 0700); err != nil && !errors.Is(err, syscall.EEXIST) {
+		return -1, err
+	}
+	return unix.Openat(parent, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 }
 
 func (s *Server) acquireRuntime(r *http.Request) (*requestRuntime, error) {
