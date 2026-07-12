@@ -81,7 +81,7 @@ api_key = "test"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if finished.Profile != "science" || finished.Status != runstate.StatusSucceeded {
+	if finished.Profile != "lab" || finished.Status != runstate.StatusSucceeded {
 		t.Fatalf("Lab run=%#v", finished)
 	}
 	if !strings.Contains(rec.Body.String(), `"kind":"stream_done"`) || !strings.Contains(rec.Body.String(), `"ok":true`) {

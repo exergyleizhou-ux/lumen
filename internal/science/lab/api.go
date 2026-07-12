@@ -1435,9 +1435,9 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	var run runstate.Run
 	if a.auth != nil {
-		run, err = a.runs.StartOwnedID(owner, runID, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID, startedAt)
+		run, err = a.runs.StartOwnedID(owner, runID, req.SessionID, "lab", summarizeScienceRunTitle(req.Prompt), req.ParentID, startedAt)
 	} else {
-		run, err = a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID)
+		run, err = a.runs.StartOwned(owner, req.SessionID, "lab", summarizeScienceRunTitle(req.Prompt), req.ParentID)
 	}
 	if err != nil {
 		if a.auth != nil && a.quota != nil {
