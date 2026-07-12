@@ -1,8 +1,10 @@
 // Lumen web UI — goal:d6aa846b round9
 const API_BASE =
-  typeof location !== "undefined" && location.pathname.startsWith("/lumen")
-    ? "/lumen"
-    : "";
+  typeof location !== "undefined" && location.pathname.startsWith("/api/lumen/code")
+    ? "/api/lumen/code"
+    : typeof location !== "undefined" && location.pathname.startsWith("/lumen")
+      ? "/lumen"
+      : "";
 
 const $ = (id) => document.getElementById(id);
 
@@ -128,7 +130,19 @@ async function refreshWorkbenchRuntime() {
   } catch (_) {}
 }
 
-window.CodeUI = { buildWorkbenchSnapshotV2, workbenchTargetOrigin };
+// The hosting control plane may start or reconnect to a durable Run outside
+// this document. It can request a refresh by Run ID, but only this Lumen frame
+// fetches the owner-scoped state and constructs the positive snapshot.
+function handleWorkbenchRefreshRequest(event) {
+  if (event.source !== window.parent || event.origin !== workbenchTargetOrigin()) return;
+  const value = event.data;
+  if (!value || value.kind !== "lumen.workbench.refresh" || value.version !== 1 || typeof value.run_id !== "string" || !/^run_[A-Za-z0-9_-]{1,120}$/.test(value.run_id)) return;
+  currentRunId = value.run_id;
+  void refreshWorkbenchRuntime();
+}
+window.addEventListener("message", handleWorkbenchRefreshRequest);
+
+window.CodeUI = { buildWorkbenchSnapshotV2, workbenchTargetOrigin, handleWorkbenchRefreshRequest };
 
 async function respondApproval(allow) {
   if (!pendingApprovalId) return;
