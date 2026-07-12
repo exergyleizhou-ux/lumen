@@ -29,6 +29,7 @@ import (
 	"lumen/internal/timeline"
 	"lumen/internal/tool"
 	"lumen/internal/tool/builtin"
+	runworkspace "lumen/internal/workspace"
 
 	// Side-effect: register builtin providers
 	_ "lumen/internal/provider/openai"
@@ -77,6 +78,7 @@ type Controller struct {
 	tl                *timeline.Recorder // session timeline for replay + change inbox
 	memStore          *memory.Store      // persistent user memories
 	extraMemoryPrompt string             // appended to memory block (e.g. science lab system context)
+	workspace         runworkspace.Context
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -87,6 +89,13 @@ type Controller struct {
 // New creates an unconfigured Controller. Call Configure() before use.
 func New() *Controller {
 	return &Controller{}
+}
+
+// ConfigureOptions supplies immutable run-scoped dependencies that must not be
+// derived from process-global environment in multi-project frontends.
+type ConfigureOptions struct {
+	Workspace    runworkspace.Context
+	ToolsProfile string
 }
 
 // sink returns the current event sink (never nil).
@@ -109,6 +118,20 @@ func (c *Controller) storeSink(s event.Sink) {
 // creates the agent. Sink receives all agent events; Asker handles interactive
 // questions (nil for headless runs). Call once, before Run/Chat/Plan.
 func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("workspace: %w", err)
+	}
+	ws, err := runworkspace.NewLocal("local", wd, "", nil)
+	if err != nil {
+		return fmt.Errorf("workspace: %w", err)
+	}
+	return c.ConfigureWithOptions(sink, asker, cfgPath, ConfigureOptions{Workspace: ws})
+}
+
+// ConfigureWithOptions configures a controller without reading mutable
+// workspace/tool-profile state from process globals.
+func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cfgPath string, opts ConfigureOptions) error {
 	if sink == nil {
 		sink = event.Discard
 	}
@@ -118,6 +141,18 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	sink = event.NewSyncSink(sink)
 	c.storeSink(sink)
 	c.asker = asker
+	if opts.Workspace.Backend == nil || opts.Workspace.Root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		ws, err := runworkspace.NewLocal("local", wd, "", nil)
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		opts.Workspace = ws
+	}
+	c.workspace = opts.Workspace
 
 	// 1. Load config
 	path := cfgPath
@@ -189,7 +224,9 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	// 3. Build tool registry — honoring [tools] profile (default "full"; "core"
 	// offers only the coding set so the model isn't handed ~116 tools per turn).
 	toolProfile := cfg.Tools.Profile
-	if v := strings.TrimSpace(os.Getenv("LUMEN_TOOLS_PROFILE")); v != "" {
+	if v := strings.TrimSpace(opts.ToolsProfile); v != "" {
+		toolProfile = v
+	} else if v := strings.TrimSpace(os.Getenv("LUMEN_TOOLS_PROFILE")); v != "" {
 		toolProfile = v
 	}
 	reg := tool.NewRegistry()
@@ -198,7 +235,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	}
 
 	// 4. Build skill store
-	wd, _ := os.Getwd()
+	wd := c.workspace.Root
 	c.skillStore = skill.New(skillOptionsFromConfig(cfg, wd))
 	skills := c.skillStore.List()
 	_ = skills
@@ -356,6 +393,7 @@ func (c *Controller) setupEditVerify(wd string, cfg editverify.Config) bool {
 // Run executes a one-shot task and returns the agent's final answer.
 // On failure, automatically tries fallback providers if configured.
 func (c *Controller) Run(ctx context.Context, prompt string) error {
+	ctx = c.withWorkspace(ctx)
 	c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
 	err := c.ag.Run(ctx, prompt)
@@ -414,6 +452,7 @@ func (c *Controller) emitError(err error) {
 
 // Plan runs in read-only mode and returns the agent's plan.
 func (c *Controller) Plan(ctx context.Context, prompt string) error {
+	ctx = c.withWorkspace(ctx)
 	c.ag.SetPlanMode(true)
 	defer c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
@@ -427,6 +466,20 @@ func (c *Controller) Plan(ctx context.Context, prompt string) error {
 // Chat runs an interactive session. (TUI placeholder — falls back to Run)
 func (c *Controller) Chat(ctx context.Context, prompt string) error {
 	return c.Run(ctx, prompt)
+}
+
+func (c *Controller) withWorkspace(ctx context.Context) context.Context {
+	if c.workspace.Backend == nil || c.workspace.Root == "" {
+		return ctx
+	}
+	return runworkspace.WithContext(ctx, c.workspace)
+}
+
+// WorkspaceContext returns a defensive copy of the configured workspace.
+func (c *Controller) WorkspaceContext() runworkspace.Context {
+	ctx := runworkspace.WithContext(context.Background(), c.workspace)
+	ws, _ := runworkspace.FromContext(ctx)
+	return ws
 }
 
 // ── Accessors ──────────────────────────────────────────────

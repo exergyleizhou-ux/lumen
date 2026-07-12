@@ -18,8 +18,9 @@ import (
 	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/science/lab/tools"
-	"lumen/internal/science/lab/workspace"
+	labworkspace "lumen/internal/science/lab/workspace"
 	"lumen/internal/skill"
+	runworkspace "lumen/internal/workspace"
 )
 
 //go:embed prompts/science_system.txt
@@ -35,7 +36,7 @@ type Controller struct {
 	slug       string
 	sessID     string
 	workspace  string
-	guard      *workspace.Guard
+	guard      *labworkspace.Guard
 	provenance *provenance.Recorder
 }
 
@@ -62,12 +63,17 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 		return err
 	}
 	c.workspace = ws
-	g, err := workspace.NewGuard(ws)
+	g, err := labworkspace.NewGuard(ws)
 	if err != nil {
 		return err
 	}
 	c.guard = g
-	_ = os.Setenv("LUMEN_WORKSPACE_ROOT", ws)
+	runWS, err := runworkspace.NewLocal(slug, ws, "", map[string]string{
+		"PATH": labruntime.LabPath(c.sciDir, os.Getenv("PATH")),
+	})
+	if err != nil {
+		return err
+	}
 
 	projDir, err := c.projects.ProjectDir(slug)
 	if err != nil {
@@ -87,10 +93,6 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 		return err
 	}
 
-	_ = os.Setenv("LUMEN_TOOLS_PROFILE", defaultToolProfile)
-	// Inject conda/python from the cloned research pack into bash PATH.
-	labruntime.InjectLabPath(c.sciDir)
-
 	// Build system prompt: science base + enabled project skills (bodies).
 	mem := scienceSystemPrompt
 	if skillBlock := c.buildEnabledSkillsPrompt(slug, ws, projDir); skillBlock != "" {
@@ -98,7 +100,10 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	}
 	c.ctrl.SetExtraMemoryPrompt(mem)
 	sink = wrapProvenanceSink(sink, c.provenance, g)
-	if err := c.ctrl.Configure(sink, nil, lumenCfgPath); err != nil {
+	if err := c.ctrl.ConfigureWithOptions(sink, nil, lumenCfgPath, control.ConfigureOptions{
+		Workspace:    runWS,
+		ToolsProfile: defaultToolProfile,
+	}); err != nil {
 		return err
 	}
 	c.ctrl.SetPermissionMode(permission.ModePlan)
@@ -193,8 +198,8 @@ func (c *Controller) buildEnabledSkillsPrompt(slug, ws, projDir string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// Run executes one chat turn. File tools resolve paths via LUMEN_WORKSPACE_ROOT
-// (no process-wide chdir — builtins stay isolated to the project workspace).
+// Run executes one chat turn. File and shell tools receive the immutable project
+// workspace through context.Context; no process-wide chdir/env mutation occurs.
 func (c *Controller) Run(ctx context.Context, prompt, mode string) error {
 	c.mu.Lock()
 	ctrl := c.ctrl

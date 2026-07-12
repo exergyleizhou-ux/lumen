@@ -29,3 +29,19 @@ func TestResolvePythonMissingPack(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestLabPathReturnsOverlayWithoutMutatingProcess(t *testing.T) {
+	sciDir := t.TempDir()
+	bin := filepath.Join(sciDir, "sandbox", "home", ".claude-science", "bin")
+	if err := os.MkdirAll(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	before := os.Getenv("PATH")
+	got := LabPath(sciDir, "/base/bin")
+	if got != bin+string(os.PathListSeparator)+"/base/bin" {
+		t.Fatalf("LabPath=%q", got)
+	}
+	if os.Getenv("PATH") != before {
+		t.Fatal("LabPath mutated process PATH")
+	}
+}

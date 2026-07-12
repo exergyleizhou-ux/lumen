@@ -27,15 +27,20 @@ func CondaEnv(sciDir string) []string {
 	return paths
 }
 
-// Prepends conda/bin directories to PATH for the lab agent's bash tool.
-func InjectLabPath(sciDir string) {
+// LabPath returns a PATH value with Lab runtimes prepended. It never mutates
+// the process environment; callers place the result in a run workspace overlay.
+func LabPath(sciDir, basePATH string) string {
 	paths := CondaEnv(sciDir)
 	if len(paths) == 0 {
-		return
+		return basePATH
 	}
-	cur := os.Getenv("PATH")
-	for _, p := range paths {
-		cur = p + string(os.PathListSeparator) + cur
+	cur := basePATH
+	for i := len(paths) - 1; i >= 0; i-- {
+		if cur == "" {
+			cur = paths[i]
+		} else {
+			cur = paths[i] + string(os.PathListSeparator) + cur
+		}
 	}
-	os.Setenv("PATH", cur)
+	return cur
 }
