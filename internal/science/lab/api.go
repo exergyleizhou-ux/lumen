@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"lumen/internal/event"
+	"lumen/internal/hostedauth"
 	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
@@ -50,6 +51,7 @@ type API struct {
 	approvals  *approvalHub
 	runs       *runstate.Manager
 	activeRuns sync.Map // run_id -> context.CancelFunc
+	auth       *hostedauth.Verifier
 	// activeMode is read by approval hub during a turn.
 	modeMu     sync.Mutex
 	activeMode permission.Mode
@@ -94,33 +96,40 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/health", a.handleHealth)
 	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
-	mux.HandleFunc("/api/lab/projects", a.handleProjects)
-	mux.HandleFunc("/api/lab/projects/", a.handleProjectSub)
-	mux.HandleFunc("/api/lab/skills", a.handleSkills)
-	mux.HandleFunc("/api/lab/skills/", a.handleSkillsSub)
-	mux.HandleFunc("/api/lab/config", a.handleConfig)
-	mux.HandleFunc("/api/lab/chat", a.handleChat)
-	mux.HandleFunc("/api/lab/runs/", a.handleRuns)
-	mux.HandleFunc("/api/lab/approve", a.handleApprove)
-	mux.HandleFunc("/api/lab/brief", a.handleBrief)
-	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
-	mux.HandleFunc("/api/lab/files", a.handleFiles)
-	mux.HandleFunc("/api/lab/files/", a.handleFiles)
-	mux.HandleFunc("/api/lab/provenance", a.handleProvenance)
-	mux.HandleFunc("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/ssh-hosts/", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
-	mux.HandleFunc("/api/lab/compute/hosts/", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/jobs", a.handleComputeJobs)
-	mux.HandleFunc("/api/lab/compute/jobs/", a.handleComputeJob)
-	mux.HandleFunc("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
-	mux.HandleFunc("/api/lab/bridge/open", a.handleBridgeOpen)
-	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
-	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
-	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
-	mux.HandleFunc("/api/lab/langgraph/history", a.handleLangGraphHistory)
-	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
-	mux.HandleFunc("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
+	register := func(pattern string, handler http.HandlerFunc) {
+		if a.auth != nil {
+			mux.Handle(pattern, a.auth.Middleware(handler))
+			return
+		}
+		mux.HandleFunc(pattern, handler)
+	}
+	register("/api/lab/projects", a.handleProjects)
+	register("/api/lab/projects/", a.handleProjectSub)
+	register("/api/lab/skills", a.handleSkills)
+	register("/api/lab/skills/", a.handleSkillsSub)
+	register("/api/lab/config", a.handleConfig)
+	register("/api/lab/chat", a.handleChat)
+	register("/api/lab/runs/", a.handleRuns)
+	register("/api/lab/approve", a.handleApprove)
+	register("/api/lab/brief", a.handleBrief)
+	register("/api/lab/artifacts", a.handleArtifacts)
+	register("/api/lab/files", a.handleFiles)
+	register("/api/lab/files/", a.handleFiles)
+	register("/api/lab/provenance", a.handleProvenance)
+	register("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
+	register("/api/lab/compute/ssh-hosts/", a.handleComputeSSHHosts)
+	register("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
+	register("/api/lab/compute/hosts/", a.handleComputeSSHHosts)
+	register("/api/lab/compute/jobs", a.handleComputeJobs)
+	register("/api/lab/compute/jobs/", a.handleComputeJob)
+	register("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
+	register("/api/lab/bridge/open", a.handleBridgeOpen)
+	register("/api/lab/notebooks", a.handleNotebooks)
+	register("/api/lab/notebooks/", a.handleNotebooks)
+	register("/api/lab/langgraph/run", a.handleLangGraphRun)
+	register("/api/lab/langgraph/history", a.handleLangGraphHistory)
+	register("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
+	register("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
 }
 
 func (a *API) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {
@@ -231,10 +240,6 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if rrep, err := research.Scan(paths.DataDir(a.sciDir)); err == nil {
 		rep = rrep
 	}
-	fleetSt := map[string]any{}
-	if a.fleet != nil {
-		fleetSt = a.fleet.Status()
-	}
 	ctrlTotal, ctrlBusy := a.ctrls.stats()
 	ketcherDir := resolveKetcherDir(a.sciDir)
 	ketcherOK := ketcherDir != ""
@@ -254,10 +259,9 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"domains":       len(rep.Domains),
 			"seed_examples": rep.SeedExamples,
 		},
-		"fleet": fleetSt,
+		"fleet_available": a.fleet != nil,
 		"provider": map[string]any{
 			"set":     masked != "" && masked != "—",
-			"masked":  masked,
 			"adapter": adapter,
 		},
 		"capacity": map[string]any{

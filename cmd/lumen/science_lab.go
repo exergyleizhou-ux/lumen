@@ -46,11 +46,13 @@ func runScienceLab(args []string) {
 		addr = fmt.Sprintf("127.0.0.1:%d", port)
 	}
 	srv, err := lab.New(lab.Config{
-		SciDir:    scienceDir(),
-		LumenCfg:  lumenCfg(),
-		Addr:      addr,
-		Version:   resolveVersion(),
-		OpenPanel: openPanel,
+		SciDir:             scienceDir(),
+		LumenCfg:           lumenCfg(),
+		Addr:               addr,
+		Version:            resolveVersion(),
+		OpenPanel:          openPanel,
+		Hosted:             os.Getenv("LUMEN_HOSTED") == "true",
+		WorkbenchJWTSecret: os.Getenv("WORKBENCH_JWT_SECRET"),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "science lab: %v\n", err)

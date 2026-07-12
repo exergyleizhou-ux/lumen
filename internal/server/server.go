@@ -27,6 +27,7 @@ import (
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/hostedauth"
 	"lumen/internal/lumenstore"
 	"lumen/internal/memory"
 	"lumen/internal/permission"
@@ -35,10 +36,12 @@ import (
 
 // Config holds the server configuration.
 type Config struct {
-	Addr   string // listen address, e.g. ":8080"
-	Ctrl   *control.Controller
-	Static string // path to static files (empty = use embedded)
-	Runs   *runstate.Manager
+	Addr               string // listen address, e.g. ":8080"
+	Ctrl               *control.Controller
+	Static             string // path to static files (empty = use embedded)
+	Runs               *runstate.Manager
+	Hosted             bool
+	WorkbenchJWTSecret string
 }
 
 // Server wraps the HTTP server.
@@ -57,6 +60,7 @@ type Server struct {
 	approvals   sync.Map
 	approvalSeq atomic.Uint64
 	runs        *runstate.Manager
+	auth        *hostedauth.Verifier
 	activeRuns  sync.Map // run_id -> context.CancelFunc
 }
 
@@ -87,14 +91,30 @@ func (s *Server) cancelActiveRun(runID string) bool {
 
 // New creates a new Server.
 func New(cfg Config) (*Server, error) {
+	var verifier *hostedauth.Verifier
+	if cfg.Hosted {
+		var err error
+		verifier, err = hostedauth.NewVerifier(cfg.WorkbenchJWTSecret)
+		if err != nil {
+			return nil, fmt.Errorf("hosted auth: %w", err)
+		}
+	}
 	runs := cfg.Runs
 	if runs == nil {
 		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
+}
+
+func (s *Server) handleBusiness(pattern string, handler http.HandlerFunc) {
+	if s.auth != nil {
+		s.mux.Handle(pattern, s.auth.Middleware(handler))
+		return
+	}
+	s.mux.HandleFunc(pattern, handler)
 }
 
 // ListenAndServe starts the HTTP server. Blocks until error.
@@ -111,12 +131,12 @@ func (s *Server) routes() {
 	s.mountStatic()
 	s.routesAPI()
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/v1/chat", s.handleChat)
-	s.mux.HandleFunc("/v1/models", s.handleModels)
-	s.mux.HandleFunc("/v1/status", s.handleStatus)
-	s.mux.HandleFunc("/v1/sessions", s.handleSessions)
-	s.mux.HandleFunc("/v1/memories", s.handleMemories)
-	s.mux.HandleFunc("/v1/workflow", s.handleWorkflow)
+	s.handleBusiness("/v1/chat", s.handleChat)
+	s.handleBusiness("/v1/models", s.handleModels)
+	s.handleBusiness("/v1/status", s.handleStatus)
+	s.handleBusiness("/v1/sessions", s.handleSessions)
+	s.handleBusiness("/v1/memories", s.handleMemories)
+	s.handleBusiness("/v1/workflow", s.handleWorkflow)
 }
 
 // ── Web UI (embedded static — Claude Code–grade panel) ───────

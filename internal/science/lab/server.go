@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"lumen/internal/config"
+	"lumen/internal/hostedauth"
 	"lumen/internal/runstate"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/tlsutil"
@@ -31,6 +32,8 @@ type Config struct {
 	OpenPanel               bool
 	DisableFleetAutoConnect bool // tests and offline embedding can connect lazily
 	Runs                    *runstate.Manager
+	Hosted                  bool
+	WorkbenchJWTSecret      string
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -50,6 +53,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf("127.0.0.1:%d", DefaultPort)
 	}
+	var verifier *hostedauth.Verifier
+	if cfg.Hosted {
+		var err error
+		verifier, err = hostedauth.NewVerifier(cfg.WorkbenchJWTSecret)
+		if err != nil {
+			return nil, fmt.Errorf("hosted auth: %w", err)
+		}
+	}
 	fleet, err := labruntime.NewFleetManager(cfg.SciDir)
 	if err != nil {
 		return nil, err
@@ -63,6 +74,7 @@ func New(cfg Config) (*Server, error) {
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
+	s.api.auth = verifier
 	s.routes()
 	return s, nil
 }

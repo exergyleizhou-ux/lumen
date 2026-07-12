@@ -7,9 +7,9 @@ require (
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
 	github.com/charmbracelet/x/ansi v0.2.3
+	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/mattn/go-runewidth v0.0.15
 	golang.org/x/term v0.22.0
-	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.5
 )
 

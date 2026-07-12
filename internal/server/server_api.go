@@ -23,18 +23,18 @@ import (
 )
 
 func (s *Server) routesAPI() {
-	s.mux.HandleFunc("/v1/mode", s.handleMode)
-	s.mux.HandleFunc("/v1/command", s.handleCommand)
-	s.mux.HandleFunc("/v1/skills", s.handleSkills)
-	s.mux.HandleFunc("/v1/doctor", s.handleDoctor)
-	s.mux.HandleFunc("/v1/timeline", s.handleTimeline)
-	s.mux.HandleFunc("/v1/rewind", s.handleRewind)
-	s.mux.HandleFunc("/v1/sessions/content", s.handleSessionContent)
-	s.mux.HandleFunc("/v1/sessions/resume", s.handleSessionResume)
-	s.mux.HandleFunc("/v1/runs/", s.handleRuns)
+	s.handleBusiness("/v1/mode", s.handleMode)
+	s.handleBusiness("/v1/command", s.handleCommand)
+	s.handleBusiness("/v1/skills", s.handleSkills)
+	s.handleBusiness("/v1/doctor", s.handleDoctor)
+	s.handleBusiness("/v1/timeline", s.handleTimeline)
+	s.handleBusiness("/v1/rewind", s.handleRewind)
+	s.handleBusiness("/v1/sessions/content", s.handleSessionContent)
+	s.handleBusiness("/v1/sessions/resume", s.handleSessionResume)
+	s.handleBusiness("/v1/runs/", s.handleRuns)
 	// File API
-	s.mux.HandleFunc("/api/files", s.handleFilesList)
-	s.mux.HandleFunc("/api/files/", s.handleFilesList)
+	s.handleBusiness("/api/files", s.handleFilesList)
+	s.handleBusiness("/api/files/", s.handleFilesList)
 	s.routesApproval()
 }
 

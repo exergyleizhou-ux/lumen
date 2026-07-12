@@ -2,11 +2,12 @@
 // A multi-model coding agent for your terminal. Built in Go, single binary.
 //
 // Usage:
-//   lumen chat [--mode M] [--plan]   Interactive chat
-//   lumen run "prompt"                One-shot task
-//   lumen run --plan "..."            Plan mode (read-only)
-//   lumen run --mode M "..."          Permission mode: default | accept-edits | bypass | plan
-//   lumen version                     Print version info
+//
+//	lumen chat [--mode M] [--plan]   Interactive chat
+//	lumen run "prompt"                One-shot task
+//	lumen run --plan "..."            Plan mode (read-only)
+//	lumen run --mode M "..."          Permission mode: default | accept-edits | bypass | plan
+//	lumen version                     Print version info
 package main
 
 import (
@@ -125,7 +126,6 @@ func makeController(sink event.Sink, modeOverride string) (*control.Controller, 
 // Render strategy: agent text goes straight to stdout with no framing.
 // Tool activity shows as a single overwritable status line on stderr so
 // the main output stays clean.  Token counts go to stderr.
-
 
 // ── Setup ──────────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ func runTUI(args []string) {
 // ── HTTP/SSE server ────────────────────────────────────────
 
 func runServe(args []string) {
-	addr := ":8080"
+	addr := "127.0.0.1:8080"
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--addr" && i+1 < len(args) {
 			addr = args[i+1]
@@ -295,8 +295,10 @@ func runServe(args []string) {
 	}
 
 	srv, err := server.New(server.Config{
-		Addr: addr,
-		Ctrl: ctrl,
+		Addr:               addr,
+		Ctrl:               ctrl,
+		Hosted:             os.Getenv("LUMEN_HOSTED") == "true",
+		WorkbenchJWTSecret: os.Getenv("WORKBENCH_JWT_SECRET"),
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "server: %v\n", err)

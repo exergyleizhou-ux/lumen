@@ -19,7 +19,7 @@ type approvalWaiter struct {
 }
 
 func (s *Server) routesApproval() {
-	s.mux.HandleFunc("/v1/approve", s.handleApprove)
+	s.handleBusiness("/v1/approve", s.handleApprove)
 }
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
