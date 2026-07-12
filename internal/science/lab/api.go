@@ -56,6 +56,7 @@ type API struct {
 	// activeMode is read by approval hub during a turn.
 	modeMu     sync.Mutex
 	activeMode permission.Mode
+	ownerModes map[runstate.Owner]permission.Mode
 	startedAt  time.Time
 	// metrics
 	turnsTotal   atomic.Uint64
@@ -95,6 +96,7 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 		ctrls:      newControllerPool(sciDir, fleet, store, MaxControllers),
 		runs:       runs,
 		activeMode: permission.ModeDefault,
+		ownerModes: make(map[runstate.Owner]permission.Mode),
 		startedAt:  time.Now(),
 	}
 	api.approvals = newApprovalHub(func() permission.Mode {
@@ -102,6 +104,7 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 		defer api.modeMu.Unlock()
 		return api.activeMode
 	})
+	api.approvals.ownerModeFunc = api.ownerMode
 	return api
 }
 
@@ -1133,7 +1136,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = a.local.DefaultMode
 	}
-	a.setActiveMode(mode)
+	a.setOwnerMode(labOwner(r), mode)
 
 	// Persist session id (create if missing / unknown)
 	if sess, err := projects.EnsureSession(slug, req.SessionID, ""); err == nil {
@@ -1170,6 +1173,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case <-cfgCtx.Done():
+		ctrls.discard(slug, ctrl)
 		a.turnsFailed.Add(1)
 		sse.emit("error", "配置超时，请刷新页面重试")
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
@@ -1252,6 +1256,33 @@ func (a *API) setActiveMode(mode string) {
 	a.modeMu.Lock()
 	a.activeMode = m
 	a.modeMu.Unlock()
+}
+
+func (a *API) setOwnerMode(owner runstate.Owner, mode string) {
+	m := parseLabMode(mode)
+	a.modeMu.Lock()
+	a.ownerModes[owner] = m
+	a.modeMu.Unlock()
+}
+
+func (a *API) ownerMode(owner runstate.Owner) permission.Mode {
+	a.modeMu.Lock()
+	defer a.modeMu.Unlock()
+	if m, ok := a.ownerModes[owner]; ok {
+		return m
+	}
+	return permission.ModeDefault
+}
+
+func parseLabMode(mode string) permission.Mode {
+	switch mode {
+	case "bypass", "accept-edits":
+		return permission.ModeBypass
+	case "plan":
+		return permission.ModePlan
+	default:
+		return permission.ModeDefault
+	}
 }
 
 type sseSink struct {

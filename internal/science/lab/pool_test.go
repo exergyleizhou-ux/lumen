@@ -74,3 +74,22 @@ func TestControllerPoolParallelProjects(t *testing.T) {
 		}
 	}
 }
+
+func TestControllerPoolDiscardPoisonedController(t *testing.T) {
+	dir := t.TempDir()
+	store := project.NewStore(dir)
+	pool := newControllerPool(dir, nil, store, 1)
+	ctrl, err := pool.acquire("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool.discard("p", ctrl)
+	pool.release("p")
+	replacement, err := pool.acquire("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replacement == ctrl {
+		t.Fatal("poisoned controller reused")
+	}
+}

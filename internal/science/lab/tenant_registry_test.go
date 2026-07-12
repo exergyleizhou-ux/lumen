@@ -66,3 +66,26 @@ func TestTenantRegistrySymlinkCannotEscapeAndCapacityIsBounded(t *testing.T) {
 		t.Fatalf("idle LRU not evicted: %v", err)
 	}
 }
+
+func TestTenantRegistryExistingOwnerSurvivesCapacityCleanup(t *testing.T) {
+	now := time.Now()
+	r, err := newTenantRegistry(t.TempDir(), nil, 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.now = func() time.Time { return now }
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	first, err := r.acquire(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.release(a)
+	now = now.Add(2 * time.Minute)
+	second, err := r.acquire(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatal("existing tenant was evicted before lookup")
+	}
+}

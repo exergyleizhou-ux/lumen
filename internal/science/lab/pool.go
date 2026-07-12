@@ -118,6 +118,17 @@ func (p *controllerPool) release(slug string) {
 	}
 }
 
+// discard removes a poisoned controller (for example, after Configure timed
+// out). The identity check prevents an old goroutine from deleting a newer
+// replacement for the same project.
+func (p *controllerPool) discard(slug string, ctrl *Controller) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e := p.items[slug]; e != nil && e.ctrl == ctrl {
+		delete(p.items, slug)
+	}
+}
+
 func (p *controllerPool) stats() (total, busy int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

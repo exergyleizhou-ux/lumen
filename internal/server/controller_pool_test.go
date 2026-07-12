@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"lumen/internal/runstate"
 	"lumen/internal/workspace"
@@ -21,6 +22,25 @@ func poolWorkspace(t *testing.T, owner runstate.Owner) workspace.Context {
 		t.Fatal(err)
 	}
 	return ws
+}
+
+func TestControllerPoolIdleSessionsReleaseQuota(t *testing.T) {
+	now := time.Now()
+	p := newServerControllerPool(controllerLimits{Global: 1, PerUser: 1, PerWorkspace: 1})
+	p.now = func() time.Time { return now }
+	p.idleTTL = time.Minute
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	if _, err := p.acquire(a, "old", poolWorkspace(t, a)); err != nil {
+		t.Fatal(err)
+	}
+	p.release(a, "old")
+	if _, err := p.acquire(a, "new", poolWorkspace(t, a)); !errors.Is(err, ErrControllerBusy) {
+		t.Fatalf("quota should remain before ttl: %v", err)
+	}
+	now = now.Add(2 * time.Minute)
+	if _, err := p.acquire(a, "new", poolWorkspace(t, a)); err != nil {
+		t.Fatalf("expired session did not release quota: %v", err)
+	}
 }
 func TestControllerPoolTenantSessionIsolation(t *testing.T) {
 	p := newServerControllerPool(controllerLimits{Global: 4, PerUser: 3, PerWorkspace: 2})

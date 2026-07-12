@@ -72,6 +72,17 @@ func TestApprovalHubRejectsCrossOwnerDecision(t *testing.T) {
 	<-done
 }
 
+func TestApprovalModesAreOwnerScoped(t *testing.T) {
+	api := &API{ownerModes: make(map[runstate.Owner]permission.Mode)}
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	b := runstate.Owner{UserID: "b", WorkspaceID: "w"}
+	api.setOwnerMode(a, "bypass")
+	api.setOwnerMode(b, "plan")
+	if api.ownerMode(a) != permission.ModeBypass || api.ownerMode(b) != permission.ModePlan {
+		t.Fatal("owner modes leaked")
+	}
+}
+
 func TestApprovalHubPlanDenies(t *testing.T) {
 	h := newApprovalHub(func() permission.Mode { return permission.ModePlan })
 	ok, _, err := h.decide(context.Background(), "bash", nil, func(string, map[string]any) {})

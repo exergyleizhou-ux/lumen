@@ -62,12 +62,12 @@ func (r *tenantRegistry) acquire(owner runstate.Owner) (*tenantResources, error)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	now := r.now()
-	r.cleanupLocked(now)
 	if t := r.items[owner]; t != nil {
 		t.busy++
 		t.lastUsed = now
 		return t, nil
 	}
+	r.cleanupLocked(now)
 	if len(r.items) >= r.max {
 		return nil, fmt.Errorf("tenant registry capacity reached")
 	}

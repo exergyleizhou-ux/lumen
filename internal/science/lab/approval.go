@@ -21,10 +21,11 @@ type approvalDecision struct {
 
 // approvalHub waits for browser approve/deny decisions (mirrors internal/server).
 type approvalHub struct {
-	seq      atomic.Uint64
-	mu       sync.Mutex
-	waiters  map[string]*approvalWaiter
-	modeFunc func() permission.Mode
+	seq           atomic.Uint64
+	mu            sync.Mutex
+	waiters       map[string]*approvalWaiter
+	modeFunc      func() permission.Mode
+	ownerModeFunc func(runstate.Owner) permission.Mode
 }
 
 type approvalWaiter struct {
@@ -44,13 +45,17 @@ func (h *approvalHub) decide(ctx context.Context, toolName string, args json.Raw
 }
 
 func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, toolName string, args json.RawMessage, emit func(kind string, payload map[string]any)) (bool, json.RawMessage, error) {
-	if h.modeFunc != nil {
-		switch h.modeFunc() {
-		case permission.ModeBypass:
-			return true, nil, nil
-		case permission.ModePlan:
-			return false, nil, nil
-		}
+	mode := permission.ModeDefault
+	if h.ownerModeFunc != nil {
+		mode = h.ownerModeFunc(owner)
+	} else if h.modeFunc != nil {
+		mode = h.modeFunc()
+	}
+	switch mode {
+	case permission.ModeBypass:
+		return true, nil, nil
+	case permission.ModePlan:
+		return false, nil, nil
 	}
 
 	id := fmt.Sprintf("appr-%d", h.seq.Add(1))

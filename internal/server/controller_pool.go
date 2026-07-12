@@ -29,6 +29,7 @@ type serverControllerPool struct {
 	entries map[controllerKey]*serverController
 	factory func() *control.Controller
 	now     func() time.Time
+	idleTTL time.Duration
 }
 
 func newServerControllerPool(limits controllerLimits) *serverControllerPool {
@@ -41,20 +42,26 @@ func newServerControllerPool(limits controllerLimits) *serverControllerPool {
 	if limits.PerWorkspace < 1 {
 		limits.PerWorkspace = 4
 	}
-	return &serverControllerPool{limits: limits, entries: map[controllerKey]*serverController{}, factory: control.New, now: time.Now}
+	return &serverControllerPool{limits: limits, entries: map[controllerKey]*serverController{}, factory: control.New, now: time.Now, idleTTL: 30 * time.Minute}
 }
 
 func (p *serverControllerPool) acquire(owner runstate.Owner, sessionID string, ws workspace.Context) (*serverController, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.now()
 	key := controllerKey{Owner: owner, SessionID: sessionID}
 	if e := p.entries[key]; e != nil {
 		if e.busy {
 			return nil, ErrControllerBusy
 		}
 		e.busy = true
-		e.lastUsed = p.now()
+		e.lastUsed = now
 		return e, nil
+	}
+	for k, e := range p.entries {
+		if !e.busy && now.Sub(e.lastUsed) >= p.idleTTL {
+			delete(p.entries, k)
+		}
 	}
 	userN, workspaceN := 0, 0
 	for k := range p.entries {
@@ -68,7 +75,7 @@ func (p *serverControllerPool) acquire(owner runstate.Owner, sessionID string, w
 	if len(p.entries) >= p.limits.Global || userN >= p.limits.PerUser || workspaceN >= p.limits.PerWorkspace {
 		return nil, ErrControllerBusy
 	}
-	e := &serverController{Controller: p.factory(), Workspace: ws, busy: true, lastUsed: p.now()}
+	e := &serverController{Controller: p.factory(), Workspace: ws, busy: true, lastUsed: now}
 	p.entries[key] = e
 	return e, nil
 }
