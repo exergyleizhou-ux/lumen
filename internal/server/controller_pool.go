@@ -17,12 +17,13 @@ type controllerKey struct {
 	SessionID string
 }
 type serverController struct {
-	Controller *control.Controller
-	Workspace  workspace.Context
-	Plan       planState
-	configured bool
-	lastUsed   time.Time
-	busy       bool
+	Controller  *control.Controller
+	Workspace   workspace.Context
+	Plan        planState
+	configured  bool
+	providerKey string
+	lastUsed    time.Time
+	busy        bool
 }
 type controllerLimits struct{ Global, PerUser, PerWorkspace int }
 type serverControllerPool struct {

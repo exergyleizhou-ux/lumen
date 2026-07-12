@@ -36,6 +36,7 @@ import (
 	"lumen/internal/science/paths"
 	"lumen/internal/science/research"
 	"lumen/internal/skill"
+	"lumen/internal/usage"
 )
 
 // API hosts lab REST + SSE handlers.
@@ -50,6 +51,7 @@ type API struct {
 	ctrls      *controllerPool
 	approvals  *approvalHub
 	runs       *runstate.Manager
+	usage      usage.Store
 	activeRuns *sync.Map // run_id -> labActiveRun
 	auth       *hostedauth.Verifier
 	tenants    *tenantRegistry
@@ -95,6 +97,7 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 		turns:        newTurnPool(MaxConcurrentTurns),
 		ctrls:        newControllerPool(sciDir, fleet, store, MaxControllers),
 		runs:         runs,
+		usage:        usage.NewMemoryStore(),
 		activeRuns:   new(sync.Map),
 		activeMode:   permission.ModeDefault,
 		modeMu:       new(sync.Mutex),
@@ -1204,7 +1207,17 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return
 	}
-	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, hist))
+	pc := ctrl.ProviderConfig()
+	pricing := usage.Pricing{}
+	providerName, modelName := "", ""
+	if pc != nil {
+		providerName, modelName = pc.Name, pc.Model
+		if pc.Pricing != nil {
+			pricing = usage.Pricing{Input: pc.Pricing.Input, Output: pc.Pricing.Output, CacheHit: pc.Pricing.CacheHit}
+		}
+	}
+	capture := usage.CapturingSink{Store: a.usage, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: hist}
+	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, capture))
 	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, DefaultTurnTimeout)
 	defer cleanupRun()
 

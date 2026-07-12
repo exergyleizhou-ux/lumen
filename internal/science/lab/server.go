@@ -19,6 +19,7 @@ import (
 	"lumen/internal/runstate"
 	labruntime "lumen/internal/science/lab/runtime"
 	"lumen/internal/tlsutil"
+	"lumen/internal/usage"
 )
 
 const DefaultPort = 18992
@@ -34,6 +35,7 @@ type Config struct {
 	Runs                    *runstate.Manager
 	Hosted                  bool
 	WorkbenchJWTSecret      string
+	Usage                   usage.Store
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -74,6 +76,9 @@ func New(cfg Config) (*Server, error) {
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
+	if cfg.Usage != nil {
+		s.api.usage = cfg.Usage
+	}
 	s.api.auth = verifier
 	if cfg.Hosted {
 		root := os.Getenv(EnvHostedWorkspaceRoot)

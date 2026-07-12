@@ -190,6 +190,9 @@ func (s *Server) execCommand(rt *requestRuntime, cmd, apiKey, provider string) (
 	case lower == "/models":
 		return formatModels(), map[string]any{"presets": config.ModelPresets()}, nil
 	case strings.HasPrefix(lower, "/model "):
+		if rt.entry != nil {
+			return "", nil, fmt.Errorf("hosted model changes require a new allowlisted session selection")
+		}
 		name := strings.TrimSpace(cmd[len("/model "):])
 		n, err := ctrl.SwitchModel(name)
 		if err != nil {

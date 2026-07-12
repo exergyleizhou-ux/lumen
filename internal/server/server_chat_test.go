@@ -52,6 +52,7 @@ func TestVerificationFailurePropagatesToRunAndSSE(t *testing.T) {
 }
 
 func TestHandleChatDemoSkipsWhenAPIKeyPresent(t *testing.T) {
+	beforeKey := os.Getenv("DEEPSEEK_API_KEY")
 	os.Setenv("LUMEN_DEMO", "1")
 	defer os.Unsetenv("LUMEN_DEMO")
 
@@ -74,8 +75,8 @@ func TestHandleChatDemoSkipsWhenAPIKeyPresent(t *testing.T) {
 	if strings.Contains(out, "[Demo mode] You said:") {
 		t.Fatalf("demo echo should not run when api_key is set:\n%s", out)
 	}
-	if !strings.Contains(out, "no providers configured") {
-		t.Fatalf("expected configure error via SSE, got:\n%s", out)
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != beforeKey {
+		t.Fatalf("request key leaked to environment: %q", got)
 	}
 }
 

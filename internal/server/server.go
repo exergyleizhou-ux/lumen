@@ -32,6 +32,7 @@ import (
 	"lumen/internal/memory"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
+	"lumen/internal/usage"
 )
 
 // Config holds the server configuration.
@@ -42,6 +43,10 @@ type Config struct {
 	Runs               *runstate.Manager
 	Hosted             bool
 	WorkbenchJWTSecret string
+	// HostedProviders is the startup-resolved provider/model allowlist. API keys
+	// are never accepted from requests.
+	HostedProviders []config.ProviderConfig
+	Usage           usage.Store
 }
 
 // Server wraps the HTTP server.
@@ -57,12 +62,15 @@ type Server struct {
 	planMu sync.Mutex
 	plan   planState
 
-	approvals   sync.Map
-	approvalSeq atomic.Uint64
-	runs        *runstate.Manager
-	auth        *hostedauth.Verifier
-	activeRuns  sync.Map // run_id -> activeRun
-	controllers *serverControllerPool
+	approvals       sync.Map
+	approvalSeq     atomic.Uint64
+	runs            *runstate.Manager
+	auth            *hostedauth.Verifier
+	activeRuns      sync.Map // run_id -> activeRun
+	controllers     *serverControllerPool
+	hostedProviders map[string]config.ProviderConfig
+	hostedDefault   *config.ProviderConfig
+	usage           usage.Store
 }
 
 type activeRun struct {
@@ -75,6 +83,67 @@ func ownerFromRequest(r *http.Request) runstate.Owner {
 		return runstate.Owner{UserID: id.UserID, WorkspaceID: id.WorkspaceID}
 	}
 	return runstate.LocalOwner
+}
+
+func (s *Server) requestProvider(apiKey, providerName, model string) (*config.ProviderConfig, error) {
+	if s.auth != nil {
+		if providerName == "" && model == "" && s.hostedDefault != nil {
+			copy := *s.hostedDefault
+			return &copy, nil
+		}
+		var match *config.ProviderConfig
+		for _, pc := range s.hostedProviders {
+			if providerName != "" && pc.Name != providerName && pc.Kind != providerName {
+				continue
+			}
+			if model != "" && pc.Model != model {
+				continue
+			}
+			if match != nil {
+				return nil, fmt.Errorf("provider and model selection is ambiguous")
+			}
+			copy := pc
+			match = &copy
+		}
+		if match == nil {
+			return nil, fmt.Errorf("provider/model is not in the hosted allowlist")
+		}
+		return match, nil
+	}
+	if apiKey == "" && providerName == "" && model == "" {
+		return nil, nil
+	}
+	base := s.cfg.Ctrl.ProviderConfig()
+	if base == nil {
+		base = &config.ProviderConfig{}
+	}
+	if providerName != "" && providerName != base.Name && providerName != base.Kind {
+		preset := config.FindPreset(providerName)
+		if preset == nil {
+			for _, candidate := range config.ModelPresets() {
+				if candidate.Provider == providerName {
+					copy := candidate
+					preset = &copy
+					break
+				}
+			}
+		}
+		if preset == nil {
+			return nil, fmt.Errorf("provider %q not found", providerName)
+		}
+		base.Name, base.Kind, base.BaseURL, base.Model = preset.Name, preset.Kind, preset.BaseURL, preset.Model
+	}
+	if model != "" {
+		base.Model = model
+	}
+	if base.Name == "" {
+		base.Name, base.Kind, base.Model = "request", "openai", model
+	}
+	if apiKey != "" {
+		base.APIKey = apiKey
+		base.APIKeyEnv = ""
+	}
+	return base, nil
 }
 
 func (s *Server) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
@@ -118,7 +187,26 @@ func New(cfg Config) (*Server, error) {
 	if runs == nil {
 		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{})}
+	allowed := make(map[string]config.ProviderConfig)
+	var hostedDefault *config.ProviderConfig
+	for _, pc := range cfg.HostedProviders {
+		allowed[pc.Name+"\x00"+pc.Model] = pc
+		if hostedDefault == nil {
+			copy := pc
+			hostedDefault = &copy
+		}
+	}
+	if cfg.Hosted && len(allowed) == 0 && cfg.Ctrl != nil {
+		if pc := cfg.Ctrl.ProviderConfig(); pc != nil {
+			allowed[pc.Name+"\x00"+pc.Model] = *pc
+			hostedDefault = pc
+		}
+	}
+	usageStore := cfg.Usage
+	if usageStore == nil {
+		usageStore = usage.NewMemoryStore()
+	}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
@@ -230,12 +318,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Request credentials must never mutate process state. Hosted credentials and
 	// model routing are configured in the tenant Controller's immutable config.
-	if s.auth != nil && (req.APIKey != "" || req.Provider != "" || req.Model != "") {
-		jsonErr(w, "request provider overrides are unsupported; configure the tenant provider", http.StatusBadRequest)
+	if s.auth != nil && req.APIKey != "" {
+		jsonCodeErr(w, "provider_key_forbidden", "request provider keys are forbidden", http.StatusBadRequest)
 		return
 	}
-	if s.auth == nil {
-		applyRuntimeKey(req.APIKey, req.Provider)
+	pc, err := s.requestProvider(req.APIKey, req.Provider, req.Model)
+	if err != nil {
+		jsonCodeErr(w, "provider_not_allowed", err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// SSE headers
@@ -256,6 +346,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.releaseRuntime(rt)
+	rt.provider = pc
 	owner, ctrl := rt.owner, rt.ctrl
 
 	// Serialize turns: the shared Controller/Agent/Session is not safe for
@@ -310,7 +401,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, 5*time.Minute)
 	defer cleanupRun()
-	ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
+	pricing := usage.Pricing{}
+	if active := ctrl.ProviderConfig(); active != nil && active.Pricing != nil {
+		pricing = usage.Pricing{Input: active.Pricing.Input, Output: active.Pricing.Output, CacheHit: active.Pricing.CacheHit}
+	}
+	capture := usage.CapturingSink{Store: s.usage, Owner: owner, Provider: ctrl.ProviderName(), Model: ctrl.ModelName(), Pricing: pricing, Next: sink}
+	ctrl.SetSink(s.runs.WrapSink(run.ID, capture))
 
 	var runErr error
 	if ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
@@ -503,6 +599,12 @@ func jsonErr(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+func jsonCodeErr(w http.ResponseWriter, stableCode, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": stableCode})
 }
 
 // ── Embedded web UI ─────────────────────────────────────────

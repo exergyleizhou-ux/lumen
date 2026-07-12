@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/hostedauth"
 )
@@ -23,6 +25,35 @@ func serverToken(t *testing.T, secret string) string {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
+	t.Setenv("HOSTED_WORKSPACE_ROOT", t.TempDir())
+	secretValue := "sk-do-not-log-this"
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(old) })
+	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret", HostedProviders: []config.ProviderConfig{{Name: "approved", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "approved-model", APIKey: "platform-startup-key"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := serverToken(t, "secret")
+	for _, tc := range []struct{ body, code string }{
+		{`{"prompt":"x","provider":"other","model":"bad"}`, "provider_not_allowed"},
+		{`{"prompt":"x","api_key":"` + secretValue + `"}`, "provider_key_forbidden"},
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewBufferString(tc.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte(tc.code)) {
+			t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
+		}
+	}
+	if bytes.Contains(logs.Bytes(), []byte(secretValue)) {
+		t.Fatalf("secret leaked in logs: %s", logs.String())
+	}
 }
 
 func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t *testing.T) {

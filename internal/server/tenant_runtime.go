@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"golang.org/x/sys/unix"
+	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hostedauth"
@@ -23,6 +24,7 @@ type requestRuntime struct {
 	ws            workspace.Context
 	entry         *serverController
 	configureTest func()
+	provider      *config.ProviderConfig
 }
 
 func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath string) (err error) {
@@ -35,15 +37,24 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 		rt.configureTest()
 	}
 	if rt.entry == nil {
+		if rt.provider != nil {
+			return rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, Provider: rt.provider})
+		}
 		return rt.ctrl.Configure(sink, nil, cfgPath)
 	}
 	if rt.entry.configured {
+		if rt.provider != nil && rt.entry.providerKey != rt.provider.Name+"\x00"+rt.provider.Model {
+			return fmt.Errorf("provider/model differs from the session's immutable configuration")
+		}
 		rt.ctrl.SetSink(sink)
 		return nil
 	}
-	err = rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen")})
+	err = rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen"), Provider: rt.provider, ProcessEnvImmutable: s.auth != nil})
 	if err == nil {
 		rt.entry.configured = true
+		if rt.provider != nil {
+			rt.entry.providerKey = rt.provider.Name + "\x00" + rt.provider.Model
+		}
 	}
 	return err
 }

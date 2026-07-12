@@ -169,12 +169,14 @@ func (s *Server) runWorkflowAction(rt *requestRuntime, ctx context.Context, acti
 	if emit == nil {
 		emit = func(_, _ string) {}
 	}
-	if rt.entry != nil && (apiKey != "" || provider != "") {
-		return "", nil, fmt.Errorf("request provider overrides are unsupported; configure the tenant provider")
+	if rt.entry != nil && apiKey != "" {
+		return "", nil, fmt.Errorf("provider_key_forbidden: request provider keys are forbidden")
 	}
-	if rt.entry == nil {
-		applyRuntimeKey(apiKey, provider)
+	pc, err := s.requestProvider(apiKey, provider, "")
+	if err != nil {
+		return "", nil, err
 	}
+	rt.provider = pc
 
 	if workflowDemoOnly(apiKey) {
 		return s.runWorkflowDemo(rt, action, prompt, emit)
@@ -364,22 +366,6 @@ func workflowEventSink(collector *textCollector, emit workflowEmit) event.Sink {
 func demoMode() bool { return os.Getenv("LUMEN_DEMO") == "1" }
 
 func workflowDemoOnly(apiKey string) bool { return demoMode() && apiKey == "" }
-
-func applyRuntimeKey(apiKey, provider string) {
-	if apiKey == "" {
-		return
-	}
-	envVar := "DEEPSEEK_API_KEY"
-	switch provider {
-	case "qwen":
-		envVar = "DASHSCOPE_API_KEY"
-	case "moonshot":
-		envVar = "MOONSHOT_API_KEY"
-	case "zhipu":
-		envVar = "ZHIPU_API_KEY"
-	}
-	_ = os.Setenv(envVar, apiKey)
-}
 
 type textCollector struct {
 	buf strings.Builder

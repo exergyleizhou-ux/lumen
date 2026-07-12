@@ -102,6 +102,9 @@ type ConfigureOptions struct {
 	Provider *config.ProviderConfig
 	// DataRoot scopes sessions, memories and timeline. Empty preserves CLI paths.
 	DataRoot string
+	// ProcessEnvImmutable prevents request-time dotenv loading. Hosted servers
+	// resolve platform credentials once at startup and pass Provider explicitly.
+	ProcessEnvImmutable bool
 }
 
 // sink returns the current event sink (never nil).
@@ -165,17 +168,27 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 	if path == "" {
 		path = config.FindConfig()
 	}
-	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
+	var cfg *config.File
+	var err error
+	if opts.ProcessEnvImmutable {
+		cfg, err = config.Load(path)
+	} else {
+		cfg, err = config.LoadWithEnv(path, config.FindDotEnv())
+	}
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	c.cfg = cfg
 
 	// 2. Resolve default provider
-	if len(cfg.Providers) == 0 {
+	if len(cfg.Providers) == 0 && opts.Provider == nil {
 		return fmt.Errorf("no providers configured — add one in lumen.toml or run 'lumen setup'")
 	}
-	provCfg, matched := resolveProvider(cfg.Providers, cfg.DefaultModel)
+	var provCfg *config.ProviderConfig
+	matched := false
+	if len(cfg.Providers) > 0 {
+		provCfg, matched = resolveProvider(cfg.Providers, cfg.DefaultModel)
+	}
 	if opts.Provider != nil {
 		copy := *opts.Provider
 		provCfg = &copy
@@ -391,6 +404,19 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 	c.setupEditVerify(wd, verifyCfg)
 
 	return nil
+}
+
+// ProviderConfig returns a defensive copy of the active immutable selection.
+func (c *Controller) ProviderConfig() *config.ProviderConfig {
+	if c == nil || c.provCfg == nil {
+		return nil
+	}
+	copy := *c.provCfg
+	if c.provCfg.Pricing != nil {
+		p := *c.provCfg.Pricing
+		copy.Pricing = &p
+	}
+	return &copy
 }
 
 // setupEditVerify installs the verify-after-edit verifier when verification is

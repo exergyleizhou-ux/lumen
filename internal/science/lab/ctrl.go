@@ -59,6 +59,15 @@ func (c *Controller) Close() {
 	}
 }
 
+func (c *Controller) ProviderConfig() *config.ProviderConfig {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctrl == nil {
+		return nil
+	}
+	return c.ctrl.ProviderConfig()
+}
+
 // Configure prepares the agent for a project workspace.
 func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver permission.Asker) error {
 	c.mu.Lock()
@@ -110,9 +119,10 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	c.ctrl.SetExtraMemoryPrompt(mem)
 	sink = wrapProvenanceSink(sink, c.provenance, g)
 	if err := c.ctrl.ConfigureWithOptions(sink, nil, lumenCfgPath, control.ConfigureOptions{
-		Workspace:    runWS,
-		ToolsProfile: defaultToolProfile,
-		Provider:     &providerCfg,
+		Workspace:           runWS,
+		ToolsProfile:        defaultToolProfile,
+		Provider:            &providerCfg,
+		ProcessEnvImmutable: true,
 	}); err != nil {
 		return err
 	}
