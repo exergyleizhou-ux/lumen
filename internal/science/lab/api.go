@@ -206,6 +206,9 @@ func labPermission(r *http.Request) string {
 		if strings.HasSuffix(path, "/cancel") {
 			return "run:cancel"
 		}
+		if strings.Contains(path, "/artifacts/") && strings.HasSuffix(path, "/download") {
+			return "artifact:read"
+		}
 		return "run:read"
 	}
 	if path == "/api/lab/approve" {
@@ -334,6 +337,47 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			safe = append(safe, safeLabApprovalReview(item))
 		}
 		writeJSON(w, 200, map[string]any{"approvals": safe})
+		return
+	}
+	if len(parts) == 4 && parts[0] != "" && parts[1] == "artifacts" && parts[2] != "" && parts[3] == "download" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		var found *artifact.Record
+		for i := range items {
+			if items[i].ID == parts[2] {
+				found = &items[i]
+				break
+			}
+		}
+		if found == nil {
+			writeErr(w, 404, fmt.Errorf("artifact not found"))
+			return
+		}
+		body, err := a.artifactStore.Open(r.Context(), owner, *found)
+		if err != nil {
+			writeErr(w, 404, fmt.Errorf("artifact not found"))
+			return
+		}
+		defer body.Close()
+		name := artifact.SafeName(found.Name)
+		if name == "" {
+			name = "artifact"
+		}
+		w.Header().Set("Content-Type", found.MIME)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.Copy(w, body)
 		return
 	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {

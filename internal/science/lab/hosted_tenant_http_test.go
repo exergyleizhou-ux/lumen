@@ -61,12 +61,12 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if err := s.api.approvalStore.Create(approvalstate.Approval{ID: "snapshot-approval", RunID: run.ID, Owner: a, RiskLevel: "high", Reason: "SECRET", Command: "SECRET", EditableArgs: []byte(`{"key":"SECRET"}`), ArgsHash: hash, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.api.artifactStore.Create(artifact.Record{ID: "snapshot-artifact", RunID: run.ID, Owner: a, ObjectKey: "object", SHA256: "sha"}); err != nil {
+	if err := s.api.artifactStore.(*artifact.MemoryStore).Put(artifact.Record{ID: "snapshot-artifact", RunID: run.ID, Owner: a, Name: "../../lab-report.txt", MIME: "text/plain", ObjectKey: "object"}, []byte("lab artifact bytes")); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cleanup := s.api.beginActiveRun(context.Background(), a, run.ID, time.Minute)
 	defer cleanup()
-	for _, path := range []string{"/api/lab/runs/" + run.ID, "/api/lab/runs/" + run.ID + "/events", "/api/lab/runs/" + run.ID + "/workbench-snapshot", "/api/lab/runs/" + run.ID + "/approvals"} {
+	for _, path := range []string{"/api/lab/runs/" + run.ID, "/api/lab/runs/" + run.ID + "/events", "/api/lab/runs/" + run.ID + "/workbench-snapshot", "/api/lab/runs/" + run.ID + "/approvals", "/api/lab/runs/" + run.ID + "/artifacts/snapshot-artifact/download"} {
 		if rec := labRequest(t, s, bt, http.MethodGet, path, nil); rec.Code != http.StatusNotFound {
 			t.Fatalf("B %s: %d %s", path, rec.Code, rec.Body.String())
 		}
@@ -87,6 +87,12 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	}
 	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/approvals", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"risk_level":"high"`) || strings.Contains(rec.Body.String(), "SECRET") || strings.Contains(rec.Body.String(), "editable_args") {
 		t.Fatalf("unsafe Lab approval review: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/artifacts/snapshot-artifact/download", nil); rec.Code != http.StatusOK || rec.Body.String() != "lab artifact bytes" || strings.Contains(rec.Header().Get("Content-Disposition"), "../") || rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("Lab artifact download: %d %s %#v", rec.Code, rec.Body.String(), rec.Header())
+	}
+	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/artifacts/missing/download", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing Lab artifact: %d", rec.Code)
 	}
 	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: a}
 	s.api.approvals.mu.Lock()
