@@ -228,20 +228,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Allow runtime key like Lumen Science GUI: set env so Configure picks it up
-	if req.APIKey != "" {
-		envVar := "DEEPSEEK_API_KEY"
-		if req.Provider == "qwen" {
-			envVar = "DASHSCOPE_API_KEY"
-		} else if req.Provider == "moonshot" {
-			envVar = "MOONSHOT_API_KEY"
-		} else if req.Provider == "zhipu" {
-			envVar = "ZHIPU_API_KEY"
-		}
-		os.Setenv(envVar, req.APIKey)
-		if req.Model != "" {
-			// Note: full model override would require more ctrl changes; UI shows it
-		}
+	// Request credentials must never mutate process state. Hosted credentials and
+	// model routing are configured in the tenant Controller's immutable config.
+	if s.auth != nil && (req.APIKey != "" || req.Provider != "" || req.Model != "") {
+		jsonErr(w, "request provider overrides are unsupported; configure the tenant provider", http.StatusBadRequest)
+		return
+	}
+	if s.auth == nil {
+		applyRuntimeKey(req.APIKey, req.Provider)
 	}
 
 	// SSE headers

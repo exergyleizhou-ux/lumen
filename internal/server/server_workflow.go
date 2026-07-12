@@ -90,8 +90,10 @@ func (s *Server) execWorkflowCommandRuntime(rt *requestRuntime, cmd, apiKey, pro
 		return "", nil, fmt.Errorf("not a workflow command")
 	}
 
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	if rt.entry == nil {
+		s.turnMu.Lock()
+		defer s.turnMu.Unlock()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	return s.runWorkflowAction(rt, ctx, action, prompt, apiKey, provider, "", nil)
@@ -146,8 +148,10 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	if rt.entry == nil {
+		s.turnMu.Lock()
+		defer s.turnMu.Unlock()
+	}
 
 	sink := sseSink{w: w, flusher: flusher}
 	emit := func(kind, text string) { sink.emit(kind, text) }
@@ -165,7 +169,12 @@ func (s *Server) runWorkflowAction(rt *requestRuntime, ctx context.Context, acti
 	if emit == nil {
 		emit = func(_, _ string) {}
 	}
-	applyRuntimeKey(apiKey, provider)
+	if rt.entry != nil && (apiKey != "" || provider != "") {
+		return "", nil, fmt.Errorf("request provider overrides are unsupported; configure the tenant provider")
+	}
+	if rt.entry == nil {
+		applyRuntimeKey(apiKey, provider)
+	}
 
 	if workflowDemoOnly(apiKey) {
 		return s.runWorkflowDemo(rt, action, prompt, emit)
@@ -366,7 +375,7 @@ func applyRuntimeKey(apiKey, provider string) {
 	case "zhipu":
 		envVar = "ZHIPU_API_KEY"
 	}
-	os.Setenv(envVar, apiKey)
+	_ = os.Setenv(envVar, apiKey)
 }
 
 type textCollector struct {
