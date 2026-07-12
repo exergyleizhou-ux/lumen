@@ -3,12 +3,14 @@ package runstate
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
 
 	"lumen/internal/agent"
 	"lumen/internal/event"
+	"lumen/internal/lumenstore"
 )
 
 type collectingSink struct {
@@ -124,5 +126,47 @@ func TestFinishClassifiesTerminalState(t *testing.T) {
 	}
 	if _, err := mgr.Finish(run.ID, context.Canceled); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("terminal run accepted second finish: %v", err)
+	}
+}
+
+func TestManagerReplaysPersistedRunAfterRestart(t *testing.T) {
+	db, err := lumenstore.Open(filepath.Join(t.TempDir(), "runs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store := NewSQLiteStore(db)
+
+	mgrA := NewManager(store)
+	run, err := mgrA.Start("session-restart", "code", "persist me", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := mgrA.WrapSink(run.ID, event.Discard)
+	sink.Emit(event.Event{Kind: event.TurnStarted})
+	sink.Emit(event.Event{Kind: event.Text, Text: "hello"})
+	sink.Emit(event.Event{Kind: event.TurnDone, StopReason: "finished"})
+	finished, err := mgrA.Finish(run.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgrB := NewManager(store)
+	restored, err := mgrB.Get(run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != StatusSucceeded || restored.Version != finished.Version || restored.SessionID != "session-restart" {
+		t.Fatalf("unexpected restored run: %#v", restored)
+	}
+	replayed, err := mgrB.Events(run.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(replayed) != 2 || replayed[0].Seq != 2 || replayed[1].Seq != 3 {
+		t.Fatalf("unexpected replay: %#v", replayed)
+	}
+	if replayed[0].Text != "hello" || replayed[1].StopReason != "finished" {
+		t.Fatalf("event payloads were not restored: %#v", replayed)
 	}
 }
