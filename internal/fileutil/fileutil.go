@@ -5,13 +5,15 @@
 package fileutil
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
-	
+
+	runworkspace "lumen/internal/workspace"
 )
 
 // processUmask is the process file-creation mask, read once at startup (the
@@ -177,6 +179,19 @@ func ResolvePathAllowMissing(path string) (string, error) {
 	}
 }
 
+// ResolvePathContext resolves path through the immutable workspace attached to
+// ctx. Legacy callers without a workspace retain the process environment/CWD
+// behavior while frontends migrate to per-run contexts.
+func ResolvePathContext(ctx context.Context, path string, allowMissing bool) (string, error) {
+	if ws, ok := runworkspace.FromContext(ctx); ok {
+		return ws.Backend.Resolve(path, allowMissing)
+	}
+	if allowMissing {
+		return ResolvePathAllowMissing(path)
+	}
+	return ResolvePath(path)
+}
+
 // ── Safe read ──────────────────────────────────────────────
 
 // SafeReadFile reads a file with safety checks: size limit, binary detection.
@@ -191,6 +206,19 @@ func SafeReadFile(path, workspaceRoot string, offset, limit int) (content string
 			return "", 0, 0, err
 		}
 	}
+	return safeReadResolved(resolved, offset, limit)
+}
+
+// SafeReadFileContext reads a file through the workspace attached to ctx.
+func SafeReadFileContext(ctx context.Context, path string, offset, limit int) (content string, numLines int, totalLines int, err error) {
+	resolved, err := ResolvePathContext(ctx, path, false)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("resolve %s: %w", path, err)
+	}
+	return safeReadResolved(resolved, offset, limit)
+}
+
+func safeReadResolved(resolved string, offset, limit int) (content string, numLines int, totalLines int, err error) {
 	if err := ValidateReadSize(resolved); err != nil {
 		return "", 0, 0, err
 	}
@@ -242,6 +270,23 @@ func SafeWriteFile(path, workspaceRoot string, content []byte) error {
 			return err
 		}
 	}
+	return safeWriteResolved(resolved, content)
+}
+
+// SafeWriteFileContext atomically writes a file through the workspace attached
+// to ctx.
+func SafeWriteFileContext(ctx context.Context, path string, content []byte) error {
+	if err := ValidateWriteSize(content); err != nil {
+		return err
+	}
+	resolved, err := ResolvePathContext(ctx, path, true)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", path, err)
+	}
+	return safeWriteResolved(resolved, content)
+}
+
+func safeWriteResolved(resolved string, content []byte) error {
 	dir := filepath.Dir(resolved)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir: %w", err)
