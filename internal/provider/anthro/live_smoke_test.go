@@ -1,3 +1,5 @@
+//go:build live
+
 package anthro
 
 import (
@@ -10,18 +12,15 @@ import (
 )
 
 func TestLiveSmokeAnthropic(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live smoke skipped in -short mode")
-	}
 	key := os.Getenv("ANTHROPIC_API_KEY")
 	if key == "" {
 		t.Skip("ANTHROPIC_API_KEY not set — skipping live Anthropic smoke")
 	}
 	p, err := New(provider.Config{
-		Name:   "anthropic-live",
+		Name:    "anthropic-live",
 		BaseURL: "https://api.anthropic.com",
-		Model:  "claude-3-5-haiku-latest",
-		APIKey: key,
+		Model:   "claude-3-5-haiku-latest",
+		APIKey:  key,
 	})
 	if err != nil {
 		t.Fatal(err)

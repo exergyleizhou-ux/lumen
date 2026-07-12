@@ -1,3 +1,5 @@
+//go:build live
+
 package gemini
 
 import (
@@ -10,9 +12,6 @@ import (
 )
 
 func TestLiveSmokeGemini(t *testing.T) {
-	if testing.Short() {
-		t.Skip("live smoke skipped in -short mode")
-	}
 	key := os.Getenv("GEMINI_API_KEY")
 	if key == "" {
 		if key = os.Getenv("GOOGLE_API_KEY"); key == "" {
@@ -20,10 +19,10 @@ func TestLiveSmokeGemini(t *testing.T) {
 		}
 	}
 	p, err := New(provider.Config{
-		Name:   "gemini-live",
+		Name:    "gemini-live",
 		BaseURL: "https://generativelanguage.googleapis.com",
-		Model:  "gemini-2.0-flash",
-		APIKey: key,
+		Model:   "gemini-2.0-flash",
+		APIKey:  key,
 	})
 	if err != nil {
 		t.Fatal(err)

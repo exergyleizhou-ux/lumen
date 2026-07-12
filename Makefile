@@ -67,11 +67,11 @@ test-unit:
 
 ## test-integration: controlled native MCP subprocesses backed by httptest.
 test-integration:
-	go test -tags=integration -p=2 -count=1 -timeout=180s ./internal/science/native
+	go test -tags=integration -p=2 -count=1 -timeout=180s ./internal/science/native ./internal/science/lab/runtime
 
 ## test-live: explicit real-service smoke probes; never part of the PR gate.
 test-live:
-	go test -tags=live -count=1 -timeout=120s ./internal/science/native -run 'Live'
+	go test -tags=live -count=1 -timeout=120s ./internal/science/native ./internal/science/lab/runtime ./internal/provider/anthro ./internal/provider/gemini -run 'Live'
 
 ## race: run the full suite under the race detector (this is a concurrent agent).
 race:

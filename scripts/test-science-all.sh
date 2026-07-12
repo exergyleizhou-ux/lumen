@@ -15,7 +15,7 @@ echo "▶ science-all: science-check"
 make science-check
 
 echo "▶ science-all: controlled native integration"
-go test -tags=integration -p=2 -count=1 -timeout 180s ./internal/science/native
+go test -tags=integration -p=2 -count=1 -timeout 180s ./internal/science/native ./internal/science/lab/runtime
 
 echo "▶ science-all: test count gate"
 COUNT=$(grep -r '^func Test' internal/science --include='*_test.go' | wc -l | tr -d ' ')
