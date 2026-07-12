@@ -78,7 +78,7 @@ func TestAnthropicToOpenAI_ToolUse(t *testing.T) {
 		"max_tokens":  1024,
 	}
 	out := AnthropicToOpenAI(spec, req)
-	if out["model"] != "qwen-max" {
+	if out["model"] != "qwen3.7-max" {
 		t.Fatalf("model = %v", out["model"])
 	}
 	if out["tool_choice"] != "auto" {

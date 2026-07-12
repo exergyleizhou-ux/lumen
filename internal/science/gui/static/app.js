@@ -93,6 +93,13 @@ function updateTelemetry(extra = {}) {
   if ($("telProxy")) $("telProxy").textContent = ":" + proxyPort;
   if ($("telSandbox")) $("telSandbox").textContent = ":" + sandboxPort;
   if ($("telMode")) $("telMode").textContent = m === "official" ? "官方" : "第三方";
+  if ($("telParity")) {
+    const parity = extra.csswitch_parity || "0.4.1";
+    const gw = extra.gateway || "go";
+    $("telParity").textContent = "CS " + parity + " · " + gw;
+    $("telParity").title =
+      "行为对标 CSSwitch " + parity + "（官方数据面为 Rust gateway；Lumen 使用 Go 代理）";
+  }
   if ($("flowProxy")) $("flowProxy").textContent = `PROXY · :${proxyPort}`;
   if ($("flowSandbox")) $("flowSandbox").textContent = `SANDBOX · :${sandboxPort}`;
 }
@@ -932,6 +939,8 @@ async function init() {
       mode: health.mode,
       proxy_port: health.proxy_port,
       sandbox_port: health.sandbox_port,
+      csswitch_parity: health.csswitch_parity,
+      gateway: health.gateway,
     });
     if (health.proxy || health.sandbox) $("brandDot")?.classList.add("live");
   } catch (_) {}

@@ -39,9 +39,12 @@ ECONF
 fi
 systemctl daemon-reload
 systemctl restart lumen-lab
+systemctl restart lumen-science || true
 sleep 2
 systemctl is-active lumen-lab
-curl -sS http://127.0.0.1:18992/api/lab/health | python3 -c 'import sys,json;h=json.load(sys.stdin);print("version",h.get("version"));print("onlyoffice",h.get("onlyoffice"));print("langgraph",h.get("langgraph"));print("jupyter",h.get("jupyter"))'
+systemctl is-active lumen-science || true
+curl -sS http://127.0.0.1:18992/api/lab/health | python3 -c 'import sys,json;h=json.load(sys.stdin);print("lab version",h.get("version"));print("onlyoffice",h.get("onlyoffice"));print("langgraph",h.get("langgraph"));print("jupyter",h.get("jupyter"))'
+curl -sS http://127.0.0.1:18990/api/health | python3 -c 'import sys,json;h=json.load(sys.stdin);print("science version",h.get("version"));print("csswitch_parity",h.get("csswitch_parity"));print("gateway",h.get("gateway"));print("provider",h.get("provider"))'
 EOF
 
 rm -f "$OUT"

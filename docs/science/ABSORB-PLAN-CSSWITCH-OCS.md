@@ -1,12 +1,13 @@
 # Lumen 吸收计划：CSSwitch + OpenClaudeScience
 
-> **状态**：规划定稿（可执行，非许愿）  
-> **日期**：2026-07-09  
+> **状态**：规划定稿（可执行，非许愿） · **Part A 对标已跟到 CSSwitch 0.4.1**  
+> **日期**：2026-07-09（2026-07-12 刷新参考）  
 > **原则**：证据驱动 · PR 粒度 · 有验收闸门 · 先修虚标再加功能  
 > **参考源（只读）**：
-> - `/Users/lei/CSswitch` @ `c552cd6`（≈ v0.3.6+）
+> - `/Users/lei/CSswitch` @ `85825b2` / **v0.4.1**（Rust inference gateway in `desktop/gateway`；Python proxy 已移除）
 > - `/Users/lei/OpenClaudeScience` @ `4a5f2ab`（InternAgentS / OCS）
-> **实现仓**：`/Users/lei/lumen`
+> **实现仓**：`/Users/lei/lumen`  
+> **Lumen 策略**：不嵌 Rust sidecar；Go 代理行为对标（`proxy.CSSwitchParity = "0.4.1"`，health 带 `gateway=go`）
 
 ---
 
@@ -19,7 +20,7 @@
 | **CSSwitch** | Page A · Science Bridge（`:18990/18991`） | 代理协议行为、provider 策略、诊断 catalog |
 | **OpenClaudeScience** | Page B · Lab（`:18992`） | 工作台 API 契约、文件预览、远程算力审批 UX |
 
-**明确不吸收**：CSSwitch 的 Python 代理壳、OCS 的 LangGraph/DeepAgents 运行时栈。Lumen 保持 **Go 单二进制** 优势。
+**明确不吸收**：CSSwitch 的 Python 代理壳（0.4 已废弃）、**不嵌入**其 Rust gateway 二进制、OCS 的 LangGraph/DeepAgents 运行时栈。Lumen 保持 **Go 单二进制** 优势，只吸收协议/模型/策略行为。
 
 ---
 

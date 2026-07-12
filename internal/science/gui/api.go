@@ -115,18 +115,21 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 		st = mgr.Status()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       "ok",
-		"panel":        "lumen://science",
-		"https_url":   fmt.Sprintf("https://127.0.0.1:%d", 18993),
-		"version":      a.version,
-		"healthy":      healthy,
-		"uptime_ms":    time.Since(a.startedAt).Milliseconds(),
-		"proxy":        st["proxy_healthy"],
-		"sandbox":      st["sandbox_running"],
-		"provider":     st["provider"],
-		"mode":         st["mode"],
-		"proxy_port":   st["proxy_port"],
-		"sandbox_port": st["sandbox_port"],
+		"status":          "ok",
+		"panel":           "lumen://science",
+		"https_url":       fmt.Sprintf("https://127.0.0.1:%d", 18993),
+		"version":         a.version,
+		"healthy":         healthy,
+		"uptime_ms":       time.Since(a.startedAt).Milliseconds(),
+		"proxy":           st["proxy_healthy"],
+		"sandbox":         st["sandbox_running"],
+		"provider":        st["provider"],
+		"mode":            st["mode"],
+		"proxy_port":      st["proxy_port"],
+		"sandbox_port":    st["sandbox_port"],
+		// Behavioral parity target (CSSwitch ships Rust gateway; Lumen uses Go).
+		"csswitch_parity": proxy.CSSwitchParity,
+		"gateway":         "go",
 	})
 }
 

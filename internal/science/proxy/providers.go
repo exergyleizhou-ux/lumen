@@ -2,6 +2,11 @@ package proxy
 
 import "strings"
 
+// CSSwitchParity is the CSSwitch release whose gateway behavior we target.
+// CSSwitch 0.4.x ships a Rust inference gateway; Lumen keeps a Go data plane
+// with behavioral parity (models, force-shell, thinking/tool policy, Responses).
+const CSSwitchParity = "0.4.1"
+
 // Mode is how the proxy talks to the upstream API.
 type Mode string
 
@@ -101,28 +106,40 @@ var BuiltInProviders = map[string]ProviderSpec{
 		DefaultModel: "glm-4",
 	},
 	"qwen": {
+		// Model list aligned with CSSwitch 0.4 gateway QWEN_MODELS
+		// (desktop/gateway/src/config.rs).
 		Name:   "qwen",
 		Mode:   ModeOpenAI,
 		URL:    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
 		KeyEnv: "DASHSCOPE_API_KEY",
 		Models: []ModelEntry{
-			{ID: "qwen-max", DisplayName: "Qwen Max"},
-			{ID: "qwen-plus", DisplayName: "Qwen Plus"},
+			{ID: "qwen3.7-max", DisplayName: "Qwen 3.7 Max"},
+			{ID: "qwen-plus-latest", DisplayName: "Qwen Plus Latest"},
 			{ID: "qwen-turbo", DisplayName: "Qwen Turbo"},
 		},
 		ModelMap: map[string]string{
-			"claude-opus-4-8":   "qwen-max",
-			"claude-sonnet-5":   "qwen-plus",
-			"claude-sonnet-4-6": "qwen-plus",
+			// Science may still send Claude shells
+			"claude-opus-4-8":   "qwen3.7-max",
+			"claude-sonnet-5":   "qwen-plus-latest",
+			"claude-sonnet-4-6": "qwen-plus-latest",
 			"claude-haiku-4-5":  "qwen-turbo",
+			// CSSwitch static ids (identity)
+			"qwen3.7-max":       "qwen3.7-max",
+			"qwen-plus-latest":  "qwen-plus-latest",
+			"qwen-turbo":        "qwen-turbo",
+			// legacy names from older Lumen/CSSwitch profiles
+			"qwen-max":  "qwen3.7-max",
+			"qwen-plus": "qwen-plus-latest",
 		},
 		ModelCaps: map[string]int{
-			"qwen-max":   8192,
-			"qwen-plus":  8192,
-			"qwen-turbo": 8192,
+			"qwen3.7-max":      8192,
+			"qwen-plus-latest": 8192,
+			"qwen-turbo":       8192,
+			"qwen-max":         8192,
+			"qwen-plus":        8192,
 		},
 		DefaultCap:   8192,
-		DefaultModel: "qwen-plus",
+		DefaultModel: "qwen-plus-latest",
 	},
 	"minimax": {
 		Name:           "minimax",

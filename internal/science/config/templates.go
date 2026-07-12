@@ -55,7 +55,8 @@ var templates = []Template{
 	{ID: "qwen", Name: "通义千问", Category: "cn_official", APIFormat: "openai_chat", Adapter: "qwen",
 		BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", WebsiteURL: "https://dashscope.aliyun.com",
 		Icon: "qwen", IconColor: "#615CED",
-		BuiltinModels: []string{"qwen-max", "qwen-plus", "qwen-turbo"}},
+		// CSSwitch 0.4 QWEN_MODELS
+		BuiltinModels: []string{"qwen3.7-max", "qwen-plus-latest", "qwen-turbo"}},
 	{ID: "moonshot", Name: "Moonshot", Category: "cn_official", APIFormat: "openai_chat", Adapter: "moonshot",
 		BaseURL: "https://api.moonshot.cn/v1", WebsiteURL: "https://www.moonshot.cn",
 		Icon: "moonshot", IconColor: "#000000",

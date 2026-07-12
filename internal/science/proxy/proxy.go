@@ -176,10 +176,19 @@ func (s *Server) authOK(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter) {
+	// Identity fields mirror CSSwitch 0.4 Rust gateway /health so orchestrators
+	// can tell which data plane is live (gateway=go | rust) without guessing.
+	shim := string(s.cfg.ToolUseShim)
+	if shim == "" {
+		shim = string(ResolveToolUseShim(s.spec, ""))
+	}
 	out := map[string]any{
-		"status":   "ok",
-		"provider": s.spec.Name,
-		"mode":     string(s.spec.Mode),
+		"status":          "ok",
+		"gateway":         "go",
+		"csswitch_parity": CSSwitchParity,
+		"provider":        s.spec.Name,
+		"mode":            string(s.spec.Mode),
+		"shim":            shim,
 	}
 	if s.spec.ForceModelOverride {
 		out["force_model"] = s.spec.ForceModel
@@ -198,21 +207,19 @@ func (s *Server) handleHealth(w http.ResponseWriter) {
 
 func (s *Server) handleModels(w http.ResponseWriter) {
 	models := s.spec.Models
-	// Force-shell: Science only understands claude-* ids; expose one shell with real display name.
+	// Force-shell (CSSwitch contract): one claude-opus-4-8 shell whose
+	// display_name is the real upstream model id (Science shows real name).
 	if s.spec.ForceModelOverride && s.spec.ForceModel != "" {
-		display := s.spec.ForceModel
-		if len(s.spec.Models) > 0 && s.spec.Models[0].DisplayName != "" {
-			display = s.spec.Models[0].DisplayName
-		}
-		models = []ModelEntry{{ID: "claude-opus-4-8", DisplayName: display}}
+		models = []ModelEntry{{ID: "claude-opus-4-8", DisplayName: s.spec.ForceModel}}
 	}
 	data := make([]map[string]any, 0, len(models))
 	for _, m := range models {
 		data = append(data, map[string]any{
-			"type":         "model",
-			"id":           m.ID,
-			"display_name": m.DisplayName,
-			"created_at":   "2026-01-01T00:00:00Z",
+			"type":           "model",
+			"id":             m.ID,
+			"display_name":   m.DisplayName,
+			"supports_tools": nil,
+			"created_at":     "2026-01-01T00:00:00Z",
 		})
 	}
 	var firstID, lastID string

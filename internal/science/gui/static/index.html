@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lumen Science · 绿洲 Oasis</title><!-- -->
   <link rel="stylesheet" href="assets/fonts.css" />
-  <link rel="stylesheet" href="assets/app.css?v=11" />
+  <link rel="stylesheet" href="assets/app.css?v=12" />
 </head>
 <body>
   <div class="shell" id="shell">
@@ -19,9 +19,9 @@
 
     <main class="panel-main">
       <div class="page-hd reveal">
-        <p class="kicker">对标 Claude Science · 绿洲官方</p>
+        <p class="kicker">对标 Claude Science · CSSwitch 0.4 行为 · 绿洲官方</p>
         <h1 class="display-sm">科研运行时<br />第三方模型桥接</h1>
-        <p class="lede">一键启动代理 + 沙箱 + Science 会话。DeepSeek / 通义 / Moonshot 等经 Anthropic 协议接入，配置仅存本机，可打包为 C2D Agent 上架绿洲。</p>
+        <p class="lede">一键启动代理 + 沙箱 + Science 会话。协议与模型策略对齐 <a href="https://github.com/SuperJJ007/CSSwitch" target="_blank" rel="noopener">CSSwitch 0.4</a>（其数据面为 Rust gateway；Lumen 使用 Go 单二进制，能力对标）。DeepSeek / 通义 / Kimi / 自定义端点经 Anthropic 协议接入。</p>
       </div>
 
       <div class="telemetry reveal" id="telemetry" aria-live="polite">
@@ -29,6 +29,7 @@
         <span class="stat mono"><span class="stat-k">代理</span><b id="telProxy">:—</b></span>
         <span class="stat mono"><span class="stat-k">沙箱</span><b id="telSandbox">:—</b></span>
         <span class="stat"><span class="stat-k">模式</span><b id="telMode">—</b></span>
+        <span class="stat mono"><span class="stat-k">对标</span><b id="telParity">CS 0.4</b></span>
         <span class="stat mono"><span class="stat-k">运行</span><b id="telUptime">00:00:00</b></span>
       </div>
 
@@ -49,7 +50,7 @@
       <div class="settings-grid" id="bridgeContent">
         <div class="controls-grid">
           <section class="card tp-only reveal" id="profilesCard">
-            <p class="card-kicker">profiles · 对标 CSSwitch</p>
+            <p class="card-kicker">profiles · 对标 CSSwitch 0.4</p>
             <div id="profileList" class="profile-list" role="list"></div>
             <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px;">
               <button class="btn secondary compact" id="addProfileBtn" type="button">＋ 新建配置</button>
@@ -254,6 +255,6 @@
       <pre id="modalBody"></pre>
     </dialog>
   </div>
-  <script src="assets/app.js?v=11" defer></script>
+  <script src="assets/app.js?v=12" defer></script>
 </body>
 </html>
