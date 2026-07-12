@@ -64,7 +64,8 @@ type policyJSON struct {
 func (s *HTTPStore) Admit(ctx context.Context, a Admission) (Limits, error) {
 	var out struct {
 		Data struct {
-			Quota policyJSON `json:"quota"`
+			Quota          policyJSON `json:"quota"`
+			LeaseExpiresAt time.Time  `json:"lease_expires_at"`
 		} `json:"data"`
 	}
 	if err := s.post(ctx, a.RunID, "admit", struct {
@@ -75,6 +76,14 @@ func (s *HTTPStore) Admit(ctx context.Context, a Admission) (Limits, error) {
 	}
 	p := out.Data.Quota
 	limits := Limits{UserConcurrent: p.UserConcurrent, WorkspaceConcurrent: p.WorkspaceConcurrent, MonthlyTokens: p.MonthlyTokens, MonthlyComputeMillis: p.MonthlyComputeMillis, StorageBytes: p.StorageBytes, MaxWallTime: time.Duration(p.RunWallMillis) * time.Millisecond, MaxSteps: p.RunMaxSteps, MaxEvents: p.RunMaxEvents, MaxEventBytes: p.EventMaxBytes, MaxArtifactBytes: p.ArtifactSingleBytes}
+	leaseRemaining := time.Until(out.Data.LeaseExpiresAt)
+	if leaseRemaining <= 0 {
+		return Limits{}, errors.New("quota service returned expired lease")
+	}
+	limits.HeartbeatInterval = leaseRemaining / 3
+	if limits.HeartbeatInterval > 60*time.Second {
+		limits.HeartbeatInterval = 60 * time.Second
+	}
 	if p.ArtifactTotalBytes > 0 && (limits.StorageBytes <= 0 || p.ArtifactTotalBytes < limits.StorageBytes) {
 		limits.StorageBytes = p.ArtifactTotalBytes
 	}
@@ -82,6 +91,21 @@ func (s *HTTPStore) Admit(ctx context.Context, a Admission) (Limits, error) {
 		return Limits{}, errors.New("quota service returned invalid runtime limits")
 	}
 	return limits, nil
+}
+
+func (s *HTTPStore) Heartbeat(ctx context.Context, a Admission) error {
+	var out struct {
+		LeaseExpiresAt time.Time `json:"lease_expires_at"`
+	}
+	if err := s.post(ctx, a.RunID, "heartbeat", struct {
+		Owner ownerJSON `json:"owner"`
+	}{owner(a.Owner)}, &out); err != nil {
+		return err
+	}
+	if !out.LeaseExpiresAt.After(time.Now()) {
+		return errors.New("quota service returned expired heartbeat lease")
+	}
+	return nil
 }
 
 func (s *HTTPStore) RecordUsage(ctx context.Context, r usage.Record) error {
@@ -110,6 +134,12 @@ func (s *HTTPStore) ReserveArtifact(ctx context.Context, a Artifact) error {
 		SizeBytes  int64     `json:"size_bytes"`
 	}{owner(a.Owner), a.IdempotencyKey, a.Bytes}, nil)
 }
+func (s *HTTPStore) CommitArtifact(ctx context.Context, a Artifact) error {
+	return s.postPath(ctx, a.RunID, "artifacts/commit", struct {
+		Owner      ownerJSON `json:"owner"`
+		ArtifactID string    `json:"artifact_id"`
+	}{owner(a.Owner), a.IdempotencyKey}, nil)
+}
 func (s *HTTPStore) ReleaseArtifact(ctx context.Context, a Artifact) error {
 	return s.postPath(ctx, a.RunID, "artifacts/release", struct {
 		Owner      ownerJSON `json:"owner"`
@@ -122,11 +152,21 @@ func (s *HTTPStore) Complete(ctx context.Context, c Completion) error {
 	if status == "succeeded" {
 		status = "completed"
 	}
-	return s.post(ctx, c.RunID, "complete", struct {
+	body := struct {
 		Owner       ownerJSON `json:"owner"`
 		Status      string    `json:"status"`
 		CompletedAt time.Time `json:"completed_at"`
-	}{owner(c.Owner), status, c.CompletedAt}, nil)
+	}{owner(c.Owner), status, c.CompletedAt}
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if err = s.post(ctx, c.RunID, "complete", body, nil); err == nil {
+			return nil
+		}
+		if IsLimit(err) || ctx.Err() != nil {
+			break
+		}
+	}
+	return err
 }
 
 func (s *HTTPStore) post(ctx context.Context, runID, action string, body, out any) error {
@@ -160,7 +200,7 @@ func (s *HTTPStore) postPath(ctx context.Context, runID, action string, body, ou
 			} `json:"error"`
 		}
 		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&envelope)
-		if resp.StatusCode == http.StatusTooManyRequests && envelope.Error.Code != "" {
+		if strings.HasPrefix(envelope.Error.Code, "quota_") {
 			return &Error{Code: envelope.Error.Code, Message: envelope.Error.Message, NextAction: envelope.Error.NextAction}
 		}
 		return fmt.Errorf("quota service returned HTTP %d", resp.StatusCode)

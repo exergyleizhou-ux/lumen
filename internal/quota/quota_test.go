@@ -7,10 +7,18 @@ import (
 	"testing"
 	"time"
 
+	"lumen/internal/artifact"
 	"lumen/internal/event"
 	"lumen/internal/runstate"
 	"lumen/internal/usage"
 )
+
+type commitFailStore struct {
+	*MemoryStore
+	err error
+}
+
+func (s commitFailStore) CommitArtifact(context.Context, Artifact) error { return s.err }
 
 func limits() Limits {
 	return Limits{UserConcurrent: 1, WorkspaceConcurrent: 1, MonthlyTokens: 10, MonthlyComputeMillis: 100, StorageBytes: 20, MonthlyCostMicros: 20, MaxWallTime: time.Second, MaxSteps: 1, MaxEvents: 2, MaxEventBytes: 1024, MaxArtifactBytes: 10}
@@ -115,6 +123,9 @@ func TestArtifactReserveDuplicateAndRelease(t *testing.T) {
 	if err := s.ReserveArtifact(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.CommitArtifact(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
 	if err := s.ReserveArtifact(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
@@ -124,4 +135,53 @@ func TestArtifactReserveDuplicateAndRelease(t *testing.T) {
 	if err := s.ReserveArtifact(context.Background(), Artifact{RunID: "r", IdempotencyKey: "big", Owner: a.Owner, Bytes: 11}); err == nil {
 		t.Fatal("expected single artifact limit")
 	}
+}
+
+func TestArtifactCommitFailureCompensatesBytesMetadataAndReservation(t *testing.T) {
+	limits := limits()
+	ledger := NewMemoryStore(limits)
+	ledgerWithFailure := commitFailStore{MemoryStore: ledger, err: errors.New("commit unavailable")}
+	objects := artifact.NewMemoryStore()
+	o := runstate.Owner{UserID: "u", WorkspaceID: "w"}
+	r, err := artifact.NewRecord(o, "run", "result.txt", "text/plain", []byte("result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := ArtifactStore{Store: objects, Quota: ledgerWithFailure}
+	if err := store.Persist(context.Background(), r, []byte("result")); err == nil {
+		t.Fatal("expected commit failure")
+	}
+	if records, _ := objects.ListRun(o, "run"); len(records) != 0 {
+		t.Fatalf("metadata survived compensation: %v", records)
+	}
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	if ledger.storage[o.UserID+"\x00"+o.WorkspaceID] != 0 || len(ledger.artifacts) != 0 {
+		t.Fatalf("reservation survived compensation")
+	}
+}
+
+type heartbeatFailStore struct {
+	*MemoryStore
+	calls int
+}
+
+func (s *heartbeatFailStore) Heartbeat(context.Context, Admission) error {
+	s.calls++
+	return errors.New("control plane unavailable")
+}
+
+func TestMaintainLeaseReportsHeartbeatFailureAndStops(t *testing.T) {
+	store := &heartbeatFailStore{MemoryStore: NewMemoryStore(limits())}
+	failed := make(chan error, 1)
+	stop := MaintainLease(context.Background(), store, Admission{RunID: "run"}, time.Millisecond, func(err error) { failed <- err })
+	select {
+	case err := <-failed:
+		if err == nil || store.calls != 1 {
+			t.Fatalf("err=%v calls=%d", err, store.calls)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("heartbeat failure was not reported")
+	}
+	stop()
 }

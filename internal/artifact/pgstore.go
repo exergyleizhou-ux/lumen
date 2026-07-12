@@ -77,6 +77,19 @@ func (s PostgresStore) Create(r Record) error {
 	}
 	return ErrConflict
 }
+func (s PostgresStore) Delete(ctx context.Context, o runstate.Owner, r Record) error {
+	res, err := s.DB.ExecContext(ctx, `DELETE FROM workbench_artifacts WHERE id=$1 AND run_id=$2 AND account_id=$3 AND workspace_id=$4 AND object_key=$5`, r.ID, r.RunID, o.UserID, o.WorkspaceID, r.ObjectKey)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if s.Objects != nil {
+		return s.Objects.Delete(ctx, r.ObjectKey)
+	}
+	return nil
+}
 func (s PostgresStore) ListRun(o runstate.Owner, run string) ([]Record, error) {
 	rows, err := s.DB.Query(`SELECT id,run_id,account_id::text,workspace_id::text,name,media_type,object_key,sha256,size_bytes,provenance,metadata,created_at,COALESCE(step_id,''),COALESCE(tool_call_id,''),COALESCE(model,''),input_refs FROM workbench_artifacts WHERE run_id=$1 AND account_id=$2 AND workspace_id=$3 ORDER BY created_at`, run, o.UserID, o.WorkspaceID)
 	if err != nil {

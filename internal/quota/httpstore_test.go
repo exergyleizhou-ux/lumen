@@ -30,13 +30,15 @@ func TestHTTPStoreContractAndMachineAuthentication(t *testing.T) {
 		}
 		switch {
 		case r.URL.Path == "/api/v1/workbench/runtime/quota/runs/run_1/admit":
-			_, _ = w.Write([]byte(`{"data":{"quota":{"user_concurrent_runs":2,"workspace_concurrent_runs":4,"monthly_tokens":100,"monthly_compute_millis":200,"storage_bytes":300,"artifact_total_bytes":250,"artifact_single_bytes":50,"run_wall_millis":60000,"run_max_steps":10,"run_max_events":20,"event_max_bytes":4096}}}`))
+			_, _ = w.Write([]byte(`{"data":{"quota":{"user_concurrent_runs":2,"workspace_concurrent_runs":4,"monthly_tokens":100,"monthly_compute_millis":200,"storage_bytes":300,"artifact_total_bytes":250,"artifact_single_bytes":50,"run_wall_millis":60000,"run_max_steps":10,"run_max_events":20,"event_max_bytes":4096},"lease_expires_at":"2099-01-01T00:00:00Z"}}`))
 		case r.URL.Path == "/api/v1/workbench/runtime/quota/runs/run_1/usage":
 			u := body["usage"].(map[string]any)
 			if u["cache_read_tokens"] != float64(3) || u["cache_write_tokens"] != float64(4) || u["cost_microunits"] != float64(9) {
 				t.Errorf("usage=%v", u)
 			}
 			_, _ = w.Write([]byte(`{"recorded":true}`))
+		case r.URL.Path == "/api/v1/workbench/runtime/quota/runs/run_1/heartbeat":
+			_, _ = w.Write([]byte(`{"lease_expires_at":"2099-01-01T00:00:00Z"}`))
 		default:
 			_, _ = w.Write([]byte(`{"released":true}`))
 		}
@@ -65,11 +67,35 @@ func TestHTTPStoreContractAndMachineAuthentication(t *testing.T) {
 	if err := store.ReserveArtifact(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
+	if err := store.CommitArtifact(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
 	if err := store.ReleaseArtifact(context.Background(), a); err != nil {
 		t.Fatal(err)
 	}
-	if len(actions) != 5 || actions[3] != "/api/v1/workbench/runtime/quota/runs/run_1/artifacts/reserve" || actions[4] != "/api/v1/workbench/runtime/quota/runs/run_1/artifacts/release" {
+	if err := store.Heartbeat(context.Background(), Admission{RunID: "run_1", Owner: o}); err != nil {
+		t.Fatal(err)
+	}
+	if len(actions) != 7 || actions[3] != "/api/v1/workbench/runtime/quota/runs/run_1/artifacts/reserve" || actions[4] != "/api/v1/workbench/runtime/quota/runs/run_1/artifacts/commit" || actions[5] != "/api/v1/workbench/runtime/quota/runs/run_1/artifacts/release" || actions[6] != "/api/v1/workbench/runtime/quota/runs/run_1/heartbeat" {
 		t.Fatalf("actions=%v", actions)
+	}
+}
+
+func TestHTTPStoreRetriesTransientCompletion(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte(`{"released":true}`))
+	}))
+	defer srv.Close()
+	store, _ := NewHTTPStore(srv.URL, "01234567890123456789012345678901", srv.Client())
+	err := store.Complete(context.Background(), Completion{RunID: "run", Owner: runstate.Owner{UserID: "u", WorkspaceID: "w"}, Status: "failed", CompletedAt: time.Now()})
+	if err != nil || calls != 2 {
+		t.Fatalf("err=%v calls=%d", err, calls)
 	}
 }
 

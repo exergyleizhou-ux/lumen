@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -26,6 +27,8 @@ const (
 	CodeEventSize           = "quota_event_size"
 	CodeArtifact            = "quota_artifact_single"
 	CodeArtifactTotal       = "quota_artifact_total"
+	CodeLeaseExpired        = "quota_run_lease_expired"
+	CodeArtifactReservation = "quota_artifact_reservation_missing"
 )
 
 type Error struct{ Code, Message, NextAction string }
@@ -39,6 +42,39 @@ func IsLimit(err error) bool   { var e *Error; return errors.As(err, &e) }
 type Failure struct {
 	mu  sync.Mutex
 	err error
+}
+
+// MaintainLease heartbeats an admitted hosted Run until the returned stop
+// function is called. A failed heartbeat is terminal: continuing execution
+// without a durable concurrency lease would permit quota oversell.
+func MaintainLease(parent context.Context, store Store, admission Admission, interval time.Duration, failure func(error)) func() {
+	if store == nil || interval <= 0 {
+		return func() {}
+	}
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := store.Heartbeat(ctx, admission); err != nil {
+					if ctx.Err() == nil && failure != nil {
+						failure(fmt.Errorf("quota heartbeat failed: %w", err))
+					}
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		cancel()
+		<-done
+	}
 }
 
 func (f *Failure) Set(err error) {
@@ -65,6 +101,7 @@ type Limits struct {
 	MaxWallTime                         time.Duration
 	MaxSteps, MaxEvents                 int
 	MaxEventBytes, MaxArtifactBytes     int64
+	HeartbeatInterval                   time.Duration
 }
 
 func LocalLimits() Limits {
@@ -93,8 +130,10 @@ type Artifact struct {
 // implementations are durable (Oasis/Postgres); Redis may only be a cache.
 type Store interface {
 	Admit(context.Context, Admission) (Limits, error)
+	Heartbeat(context.Context, Admission) error
 	RecordUsage(context.Context, usage.Record) error
 	ReserveArtifact(context.Context, Artifact) error
+	CommitArtifact(context.Context, Artifact) error
 	ReleaseArtifact(context.Context, Artifact) error
 	Complete(context.Context, Completion) error
 }
@@ -167,6 +206,14 @@ func (s *MemoryStore) Admit(_ context.Context, a Admission) (Limits, error) {
 	s.workspace[w]++
 	return s.Limits, nil
 }
+func (s *MemoryStore) Heartbeat(_ context.Context, a Admission) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.admissions[a.IdempotencyKey]; !ok {
+		return errors.New("quota admission not found")
+	}
+	return nil
+}
 func (s *MemoryStore) Complete(_ context.Context, c Completion) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -225,6 +272,14 @@ func (s *MemoryStore) ReserveArtifact(_ context.Context, a Artifact) error {
 	}
 	s.storage[w] += a.Bytes
 	s.artifacts[a.IdempotencyKey] = true
+	return nil
+}
+func (s *MemoryStore) CommitArtifact(_ context.Context, a Artifact) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.artifacts[a.IdempotencyKey] {
+		return errors.New("artifact reservation not found")
+	}
 	return nil
 }
 func (s *MemoryStore) ReleaseArtifact(_ context.Context, a Artifact) error {

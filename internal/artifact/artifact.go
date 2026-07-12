@@ -46,6 +46,9 @@ type Store interface {
 type Writer interface {
 	Persist(context.Context, Record, []byte) error
 }
+type Deleter interface {
+	Delete(context.Context, runstate.Owner, Record) error
+}
 
 // ObjectBackend mirrors the established Oasis local/S3 semantics without
 // importing a second storage client into Lumen.
@@ -91,6 +94,21 @@ func (s *MemoryStore) Put(r Record, b []byte) error {
 	return nil
 }
 func (s *MemoryStore) Persist(_ context.Context, r Record, b []byte) error { return s.Put(r, b) }
+func (s *MemoryStore) Delete(_ context.Context, o runstate.Owner, r Record) error {
+	if r.Owner != o {
+		return ErrNotFound
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, existing := range s.records {
+		if existing.ID == r.ID && existing.Owner == o {
+			s.records = append(s.records[:i], s.records[i+1:]...)
+			delete(s.data, existing.ObjectKey)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
 func (s *MemoryStore) ListRun(o runstate.Owner, id string) ([]Record, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

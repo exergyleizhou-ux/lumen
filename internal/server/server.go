@@ -493,6 +493,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	limits := quota.LocalLimits()
 	startedAt := time.Now().UTC()
 	runID := ""
+	var admission quota.Admission
 	if s.auth != nil {
 		runID, err = runstate.NewRunID()
 		if err != nil {
@@ -503,7 +504,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if s.quota == nil {
 			err = &quota.Error{Code: quota.CodeUnavailable, Message: "quota service unavailable", NextAction: "retry_later"}
 		} else {
-			limits, err = s.quota.Admit(r.Context(), quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt})
+			admission = quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt}
+			limits, err = s.quota.Admit(r.Context(), admission)
 		}
 		if err != nil {
 			var qerr *quota.Error
@@ -541,6 +543,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, timeout)
 	defer cleanupRun()
 	var runFailure quota.Failure
+	stopLease := quota.MaintainLease(ctx, s.quota, admission, limits.HeartbeatInterval, func(e error) {
+		runFailure.Set(e)
+		s.cancelActiveRun(owner, run.ID)
+	})
+	defer stopLease()
 	pricing := usage.Pricing{}
 	if active := ctrl.ProviderConfig(); active != nil && active.Pricing != nil {
 		pricing = usage.Pricing{Input: active.Pricing.Input, Output: active.Pricing.Output, CacheHit: active.Pricing.CacheHit}
@@ -582,6 +589,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	} else if errors.Is(ctx.Err(), context.Canceled) && runFailure.Err() == nil {
 		completionStatus = "canceled"
 	}
+	stopLease()
 	if s.auth != nil && s.quota != nil {
 		if completeErr := s.quota.Complete(context.Background(), quota.Completion{RunID: run.ID, IdempotencyKey: run.ID + ":complete", Owner: owner, Status: completionStatus, ComputeMillis: time.Since(computeStartedAt).Milliseconds(), CompletedAt: time.Now().UTC()}); completeErr != nil && runErr == nil {
 			runErr = fmt.Errorf("quota completion failed: %w", completeErr)

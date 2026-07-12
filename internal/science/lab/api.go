@@ -1408,6 +1408,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	limits := quota.LocalLimits()
 	startedAt := time.Now().UTC()
 	runID := ""
+	var admission quota.Admission
 	if a.auth != nil {
 		runID, err = runstate.NewRunID()
 		if err != nil {
@@ -1417,7 +1418,8 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		if a.quota == nil {
 			err = &quota.Error{Code: quota.CodeUnavailable, Message: "quota service unavailable", NextAction: "retry_later"}
 		} else {
-			limits, err = a.quota.Admit(r.Context(), quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt})
+			admission = quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt}
+			limits, err = a.quota.Admit(r.Context(), admission)
 		}
 		if err != nil {
 			var qe *quota.Error
@@ -1466,6 +1468,11 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, timeout)
 	defer cleanupRun()
 	var runFailure quota.Failure
+	stopLease := quota.MaintainLease(ctx, a.quota, admission, limits.HeartbeatInterval, func(e error) {
+		runFailure.Set(e)
+		a.cancelActiveRun(owner, run.ID)
+	})
+	defer stopLease()
 	artifactCapture := &artifact.CapturingSink{Context: ctx, Store: a.artifactStore, Owner: owner, RunID: run.ID, Model: modelName, Workspace: ctrl.WorkspaceContext(), Next: hist, Failure: func(e error) {
 		runFailure.Set(fmt.Errorf("artifact persistence failed: %w", e))
 		a.cancelActiveRun(owner, run.ID)
@@ -1500,6 +1507,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	} else if errors.Is(ctx.Err(), context.Canceled) && runFailure.Err() == nil {
 		completionStatus = "canceled"
 	}
+	stopLease()
 	if a.auth != nil && a.quota != nil {
 		if completeErr := a.quota.Complete(context.Background(), quota.Completion{RunID: run.ID, IdempotencyKey: run.ID + ":complete", Owner: owner, Status: completionStatus, ComputeMillis: time.Since(computeStartedAt).Milliseconds(), CompletedAt: time.Now().UTC()}); completeErr != nil && runErr == nil {
 			runErr = fmt.Errorf("quota completion failed: %w", completeErr)
