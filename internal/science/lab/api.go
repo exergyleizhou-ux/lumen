@@ -843,11 +843,12 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	destDir := filepath.Join(projDir, ".lumen", "skills")
-	if err := os.MkdirAll(destDir, 0o700); err != nil {
+	g, err := workspace.NewGuard(projDir)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	const destDir = ".lumen/skills"
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("upload too large or bad form"))
@@ -889,8 +890,7 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 			}
 			body, _ := io.ReadAll(io.LimitReader(rc, 1<<20))
 			_ = rc.Close()
-			dst := filepath.Join(destDir, base)
-			if err := os.WriteFile(dst, body, 0o600); err == nil {
+			if err := g.WriteFile(filepath.Join(destDir, base), body, 0o600); err == nil {
 				written = append(written, base)
 			}
 		}
@@ -900,7 +900,7 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(strings.ToLower(base), ".md") {
 			base = base + ".md"
 		}
-		if err := os.WriteFile(filepath.Join(destDir, base), data, 0o600); err != nil {
+		if err := g.WriteFile(filepath.Join(destDir, base), data, 0o600); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -2411,8 +2411,12 @@ func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	provPath := filepath.Join(projectDir, "provenance.jsonl")
-	data, err := os.ReadFile(provPath)
+	g, guardErr := workspace.NewGuard(projectDir)
+	if guardErr != nil {
+		writeErr(w, http.StatusInternalServerError, guardErr)
+		return
+	}
+	data, err := g.ReadFile("provenance.jsonl")
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"records": []any{}, "count": 0})
 		return
@@ -2855,22 +2859,31 @@ func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, 
 		}
 	}
 	if src == "" && j.WorkDir != "" {
-		cand := filepath.Join(j.WorkDir, outPath)
-		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
-			src = cand
-			size = st.Size()
-		}
+		src = filepath.Join(j.WorkDir, outPath)
 	}
 	if src == "" {
 		return "", 0, fmt.Errorf("output not found or not harvested: %s", outPath)
 	}
-	srcAbs, _ := filepath.Abs(src)
-	projAbs, _ := filepath.Abs(projectDir)
-	if !strings.HasPrefix(srcAbs, projAbs+string(os.PathSeparator)) &&
-		!(j.WorkDir != "" && strings.HasPrefix(srcAbs, filepath.Clean(j.WorkDir)+string(os.PathSeparator))) {
-		if !strings.HasPrefix(srcAbs, projAbs) {
-			return "", 0, fmt.Errorf("source outside project")
+	var data []byte
+	for _, root := range []string{projectDir, j.WorkDir} {
+		if root == "" {
+			continue
 		}
+		relSrc, relErr := filepath.Rel(root, src)
+		if relErr != nil || relSrc == ".." || strings.HasPrefix(relSrc, ".."+string(os.PathSeparator)) || filepath.IsAbs(relSrc) {
+			continue
+		}
+		srcGuard, guardErr := workspace.NewGuard(root)
+		if guardErr != nil {
+			continue
+		}
+		data, err = srcGuard.ReadFile(relSrc)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil || data == nil {
+		return "", 0, fmt.Errorf("source outside project or unsafe: %s", outPath)
 	}
 	ws, err := a.projects.WorkspacePath(slug)
 	if err != nil {
@@ -2881,10 +2894,6 @@ func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, 
 		return "", 0, err
 	}
 	rel = filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return "", 0, err
-	}
 	if err := g.WriteFile(rel, data, 0o600); err != nil {
 		return "", 0, err
 	}

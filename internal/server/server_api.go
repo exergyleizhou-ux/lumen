@@ -374,12 +374,19 @@ func (s *Server) handleSessionContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.releaseRuntime(rt)
-	histDir := filepath.Join(rt.ws.Root, ".lumen", "history")
+	var data []byte
+	var err error
 	if s.auth == nil {
-		histDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+		path := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history", name)
+		data, err = os.ReadFile(path)
+	} else {
+		g, guardErr := labworkspace.NewGuard(rt.ws.Root)
+		if guardErr != nil {
+			jsonErr(w, "session unavailable", http.StatusInternalServerError)
+			return
+		}
+		data, err = g.ReadFile(filepath.Join(".lumen", "history", name))
 	}
-	path := filepath.Join(histDir, name)
-	data, err := os.ReadFile(path)
 	if err != nil {
 		jsonErr(w, "session not found", http.StatusNotFound)
 		return

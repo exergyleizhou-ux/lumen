@@ -127,3 +127,24 @@ func TestHostedSessionsUseTenantHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestHostedSessionContentRejectsSymlinkSwap(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	t.Setenv("HOSTED_WORKSPACE_ROOT", root)
+	s, _ := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	tok := tenantToken(t, "a", "w", "s")
+	history := filepath.Join(root, "a", "w", ".lumen", "history")
+	if err := os.MkdirAll(filepath.Dir(history), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.jsonl"), []byte(`{"role":"user","content":"outside"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, history); err != nil {
+		t.Fatal(err)
+	}
+	rec := hostedCall(t, s, tok, http.MethodGet, "/v1/sessions/content?name=secret", nil)
+	if rec.Code != http.StatusNotFound || bytes.Contains(rec.Body.Bytes(), []byte("outside")) {
+		t.Fatalf("session symlink escaped: %d %s", rec.Code, rec.Body.String())
+	}
+}
