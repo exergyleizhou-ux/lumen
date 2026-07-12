@@ -1,8 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +23,35 @@ func serverToken(t *testing.T, secret string) string {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t *testing.T) {
+	t.Setenv("HOSTED_WORKSPACE_ROOT", t.TempDir())
+	t.Setenv("DEEPSEEK_API_KEY", "sentinel")
+	s, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := serverToken(t, "secret")
+	bodies := []string{`{"prompt":"a","provider":"deepseek","api_key":"a"}`, `{"prompt":"b","provider":"qwen","model":"b"}`}
+	var wg sync.WaitGroup
+	for _, body := range bodies {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewBufferString(body))
+			req.Header.Set("Authorization", "Bearer "+token)
+			rec := httptest.NewRecorder()
+			s.mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status %d: %s", rec.Code, rec.Body.String())
+			}
+		}()
+	}
+	wg.Wait()
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != "sentinel" {
+		t.Fatalf("environment mutated: %q", got)
+	}
 }
 
 func TestHostedServerFailsClosedAndProtectsBusinessRoutes(t *testing.T) {
