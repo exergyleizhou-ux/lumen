@@ -24,6 +24,9 @@ type NotebookEditTool struct{}
 
 func (t *NotebookEditTool) Name() string   { return "notebook_edit" }
 func (t *NotebookEditTool) ReadOnly() bool { return false }
+func (t *NotebookEditTool) Effects() tool.Effects {
+	return tool.Effects{ReadsFiles: true, WritesFiles: true}
+}
 
 func (t *NotebookEditTool) Description() string {
 	return "Edit one cell of a Jupyter notebook (.ipynb). Target a cell by 0-based cell_number (or cell_id). edit_mode: \"replace\" (default) swaps the cell's source; \"insert\" adds a new cell after cell_number (use -1 to prepend at the top), taking cell_type and new_source; \"delete\" removes the cell. Editing a code cell clears its outputs."
@@ -63,16 +66,10 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 		p.EditMode = "replace"
 	}
 
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
 	}
-	if wsRoot := fileutil.WorkspaceRoot(); wsRoot != "" {
-		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
-			return "", err
-		}
-	}
-
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", p.Path, err)
@@ -113,7 +110,7 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 			cells[idx]["outputs"] = []any{}
 			cells[idx]["execution_count"] = nil
 		}
-		return writeNotebook(resolved, nb, cells, "replaced cell", idx)
+		return writeNotebook(ctx, resolved, nb, cells, "replaced cell", idx)
 
 	case "insert":
 		newCell := map[string]any{
@@ -128,14 +125,14 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 		idx := p.CellNumber + 1 // insert after
 		if p.CellNumber < 0 {
 			cells = append([]map[string]any{newCell}, cells...)
-			return writeNotebook(resolved, nb, cells, "prepended cell", 0)
+			return writeNotebook(ctx, resolved, nb, cells, "prepended cell", 0)
 		}
 		if idx >= len(cells) {
 			cells = append(cells, newCell)
 		} else {
 			cells = append(cells[:idx], append([]map[string]any{newCell}, cells[idx:]...)...)
 		}
-		return writeNotebook(resolved, nb, cells, "inserted cell", idx)
+		return writeNotebook(ctx, resolved, nb, cells, "inserted cell", idx)
 
 	case "delete":
 		idx := p.CellNumber
@@ -151,7 +148,7 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 			return "", fmt.Errorf("cell %d out of range", idx)
 		}
 		cells = append(cells[:idx], cells[idx+1:]...)
-		return writeNotebook(resolved, nb, cells, "deleted cell", idx)
+		return writeNotebook(ctx, resolved, nb, cells, "deleted cell", idx)
 	}
 
 	return "", fmt.Errorf("unknown edit_mode: %s", p.EditMode)
@@ -161,19 +158,28 @@ func (t *NotebookEditTool) Preview(ctx context.Context, args json.RawMessage) (d
 	var p struct {
 		Path string `json:"path"`
 	}
-	json.Unmarshal(args, &p)
-	data, _ := os.ReadFile(p.Path)
-	return diff.Change{Path: p.Path, Before: string(data)}, nil
+	if err := json.Unmarshal(args, &p); err != nil {
+		return diff.Change{}, err
+	}
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	return diff.Change{Path: resolved, Before: string(data)}, nil
 }
 
-func writeNotebook(path string, nb map[string]any, cells []map[string]any, action string, idx int) (string, error) {
+func writeNotebook(ctx context.Context, path string, nb map[string]any, cells []map[string]any, action string, idx int) (string, error) {
 	nb["cells"] = cells
 	data, err := json.MarshalIndent(nb, "", " ")
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
 	}
 	// Atomic + workspace-boundary-checked write (temp file + rename under SafeWriteFile).
-	if err := fileutil.SafeWriteFile(path, fileutil.WorkspaceRoot(), data); err != nil {
+	if err := fileutil.SafeWriteFileContext(ctx, path, data); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 	return fmt.Sprintf("%s at index %d", action, idx), nil
@@ -187,6 +193,9 @@ type DeleteRangeTool struct{}
 
 func (t *DeleteRangeTool) Name() string   { return "delete_range" }
 func (t *DeleteRangeTool) ReadOnly() bool { return false }
+func (t *DeleteRangeTool) Effects() tool.Effects {
+	return tool.Effects{ReadsFiles: true, WritesFiles: true}
+}
 
 func (t *DeleteRangeTool) Description() string {
 	return "Delete a contiguous text range from a file using exact start/end text anchors. Each anchor must match exactly one line. Returns unified diff on success."
@@ -219,17 +228,10 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 		return "", fmt.Errorf("path is required")
 	}
 
-	wsRoot := fileutil.WorkspaceRoot()
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
 	}
-	if wsRoot != "" {
-		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
-			return "", err
-		}
-	}
-
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", fmt.Errorf("read: %w", err)
@@ -289,7 +291,7 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 	newLines := append(lines[:delStart], lines[delEnd:]...)
 	newContent := strings.Join(newLines, "\n")
 
-	if err := fileutil.SafeWriteFile(resolved, wsRoot, []byte(newContent)); err != nil {
+	if err := fileutil.SafeWriteFileContext(ctx, resolved, []byte(newContent)); err != nil {
 		return "", fmt.Errorf("write: %w", err)
 	}
 
@@ -301,7 +303,16 @@ func (t *DeleteRangeTool) Preview(ctx context.Context, args json.RawMessage) (di
 	var p struct {
 		Path string `json:"path"`
 	}
-	json.Unmarshal(args, &p)
-	data, _ := os.ReadFile(p.Path)
-	return diff.Change{Path: p.Path, Before: string(data)}, nil
+	if err := json.Unmarshal(args, &p); err != nil {
+		return diff.Change{}, err
+	}
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return diff.Change{}, err
+	}
+	return diff.Change{Path: resolved, Before: string(data)}, nil
 }

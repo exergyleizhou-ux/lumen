@@ -22,6 +22,9 @@ type EditFileTool struct{}
 
 func (t *EditFileTool) Name() string   { return "edit_file" }
 func (t *EditFileTool) ReadOnly() bool { return false }
+func (t *EditFileTool) Effects() tool.Effects {
+	return tool.Effects{ReadsFiles: true, WritesFiles: true}
+}
 
 func (t *EditFileTool) Description() string {
 	return "Replace an exact string in a file with another. old_string must occur exactly once; add surrounding context to disambiguate. Use for targeted edits instead of rewriting the whole file."
@@ -52,15 +55,9 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("path is required")
 	}
 
-	wsRoot := fileutil.WorkspaceRoot()
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
-	}
-	if wsRoot != "" {
-		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
-			return "", err
-		}
 	}
 	if err := fileutil.ValidateReadSize(resolved); err != nil {
 		return "", err
@@ -79,7 +76,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", p.Path, err)
 	}
-	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(newContent)); err != nil {
+	if err := fileutil.SafeWriteFileContext(ctx, resolved, []byte(newContent)); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("Replaced 1 occurrence in %s", p.Path), nil
@@ -98,7 +95,7 @@ func (t *EditFileTool) Preview(ctx context.Context, args json.RawMessage) (diff.
 	}
 	// Resolve the path the same way Execute does, so the diff isn't dropped and
 	// the reported changed-file matches what Execute mutates (verify-after-edit).
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return diff.Change{}, err
 	}

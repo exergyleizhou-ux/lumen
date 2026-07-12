@@ -22,6 +22,9 @@ type MultiEditTool struct{}
 
 func (t *MultiEditTool) Name() string   { return "multi_edit" }
 func (t *MultiEditTool) ReadOnly() bool { return false }
+func (t *MultiEditTool) Effects() tool.Effects {
+	return tool.Effects{ReadsFiles: true, WritesFiles: true}
+}
 
 func (t *MultiEditTool) Description() string {
 	return "Apply multiple old_string→new_string replacements to one file, in order. Each edit must match exactly once at the moment it is applied."
@@ -56,15 +59,9 @@ func (t *MultiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("edits is required")
 	}
 
-	wsRoot := fileutil.WorkspaceRoot()
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return "", fmt.Errorf("resolve %s: %w", p.Path, err)
-	}
-	if wsRoot != "" {
-		if err := fileutil.ValidateWorkspaceBoundary(resolved, wsRoot); err != nil {
-			return "", err
-		}
 	}
 	if err := fileutil.ValidateReadSize(resolved); err != nil {
 		return "", err
@@ -90,7 +87,7 @@ func (t *MultiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 		return "", fmt.Errorf("%s: %w", p.Path, err)
 	}
 
-	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(content)); err != nil {
+	if err := fileutil.SafeWriteFileContext(ctx, resolved, []byte(content)); err != nil {
 		return "", fmt.Errorf("write %s: %w", p.Path, err)
 	}
 	return fmt.Sprintf("Applied %d edits to %s", len(p.Edits), p.Path), nil
@@ -111,7 +108,7 @@ func (t *MultiEditTool) Preview(ctx context.Context, args json.RawMessage) (diff
 	}
 	// Resolve the path like Execute does, so the diff isn't dropped and the
 	// reported changed-file matches what Execute mutates (verify-after-edit).
-	resolved, err := fileutil.ResolvePath(p.Path)
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, false)
 	if err != nil {
 		return diff.Change{}, err
 	}

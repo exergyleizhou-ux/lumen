@@ -18,8 +18,9 @@ func init() {
 // ReadFileTool reads a file from the workspace.
 type ReadFileTool struct{}
 
-func (t *ReadFileTool) Name() string   { return "read_file" }
-func (t *ReadFileTool) ReadOnly() bool { return true }
+func (t *ReadFileTool) Name() string          { return "read_file" }
+func (t *ReadFileTool) ReadOnly() bool        { return true }
+func (t *ReadFileTool) Effects() tool.Effects { return tool.Effects{ReadsFiles: true} }
 
 func (t *ReadFileTool) Description() string {
 	return "Read a text file with optional line offset/limit. Output prefixes each line with its 1-based number so subsequent edit_file calls can target exact lines."
@@ -50,8 +51,7 @@ func (t *ReadFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 		return "", fmt.Errorf("path is required")
 	}
 
-	wsRoot := fileutil.WorkspaceRoot()
-	content, _, _, err := fileutil.SafeReadFile(p.Path, wsRoot, p.Offset, p.Limit)
+	content, _, _, err := fileutil.SafeReadFileContext(ctx, p.Path, p.Offset, p.Limit)
 	if err == nil && untrusted.ReadsWrapped() {
 		// Opt-in (LUMEN_UNTRUSTED_READS): treat file contents as untrusted when
 		// working in a repo whose contents may carry injection payloads. Off by

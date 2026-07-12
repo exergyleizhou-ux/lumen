@@ -18,8 +18,9 @@ func init() {
 // WriteFileTool writes content to a file, overwriting existing content.
 type WriteFileTool struct{}
 
-func (t *WriteFileTool) Name() string   { return "write_file" }
-func (t *WriteFileTool) ReadOnly() bool { return false }
+func (t *WriteFileTool) Name() string          { return "write_file" }
+func (t *WriteFileTool) ReadOnly() bool        { return false }
+func (t *WriteFileTool) Effects() tool.Effects { return tool.Effects{WritesFiles: true} }
 
 func (t *WriteFileTool) Description() string {
 	return "Write content to a file at the given path (overwriting existing content). Creates parent directories as needed."
@@ -47,8 +48,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	if p.Path == "" {
 		return "", fmt.Errorf("path is required")
 	}
-	wsRoot := fileutil.WorkspaceRoot()
-	if err := fileutil.SafeWriteFile(p.Path, wsRoot, []byte(p.Content)); err != nil {
+	if err := fileutil.SafeWriteFileContext(ctx, p.Path, []byte(p.Content)); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("wrote %d bytes to %s", len(p.Content), p.Path), nil
@@ -64,12 +64,16 @@ func (t *WriteFileTool) Preview(ctx context.Context, args json.RawMessage) (diff
 	if err := json.Unmarshal(args, &p); err != nil {
 		return diff.Change{}, err
 	}
+	resolved, err := fileutil.ResolvePathContext(ctx, p.Path, true)
+	if err != nil {
+		return diff.Change{}, err
+	}
 	var before string
-	if data, err := os.ReadFile(p.Path); err == nil {
+	if data, err := os.ReadFile(resolved); err == nil {
 		before = string(data)
 	}
 	return diff.Change{
-		Path:   p.Path,
+		Path:   resolved,
 		Before: before,
 		After:  p.Content,
 		New:    before == "",
