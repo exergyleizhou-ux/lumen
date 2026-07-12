@@ -3,11 +3,13 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"lumen/internal/config"
@@ -15,6 +17,7 @@ import (
 	"lumen/internal/doctor"
 	"lumen/internal/permission"
 	"lumen/internal/provider"
+	"lumen/internal/runstate"
 	"lumen/internal/skill"
 	"lumen/internal/timeline"
 )
@@ -28,10 +31,60 @@ func (s *Server) routesAPI() {
 	s.mux.HandleFunc("/v1/rewind", s.handleRewind)
 	s.mux.HandleFunc("/v1/sessions/content", s.handleSessionContent)
 	s.mux.HandleFunc("/v1/sessions/resume", s.handleSessionResume)
+	s.mux.HandleFunc("/v1/runs/", s.handleRuns)
 	// File API
 	s.mux.HandleFunc("/api/files", s.handleFilesList)
 	s.mux.HandleFunc("/api/files/", s.handleFilesList)
 	s.routesApproval()
+}
+
+func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rel := strings.TrimPrefix(r.URL.Path, "/v1/runs/")
+	if rel == "" || strings.Contains(rel, "..") {
+		jsonErr(w, "invalid run path", http.StatusBadRequest)
+		return
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 1 && parts[0] != "" {
+		run, err := s.runs.Get(parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, map[string]any{"run": run})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "events" {
+		var after uint64
+		if raw := r.URL.Query().Get("after"); raw != "" {
+			value, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				jsonErr(w, "after must be a non-negative integer", http.StatusBadRequest)
+				return
+			}
+			after = value
+		}
+		events, err := s.runs.Events(parts[0], after)
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		if err != nil {
+			jsonErr(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonOK(w, map[string]any{"events": events, "run_id": parts[0], "after": after})
+		return
+	}
+	jsonErr(w, "invalid run path", http.StatusBadRequest)
 }
 
 func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
@@ -233,7 +286,7 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonOK(w, map[string]any{
-		"resumed": req.Name,
+		"resumed":  req.Name,
 		"messages": s.cfg.Ctrl.Session().Len(),
 	})
 }

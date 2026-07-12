@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"lumen/internal/control"
+	"lumen/internal/event"
 	"lumen/internal/runstate"
 )
 
@@ -89,6 +90,82 @@ func TestChatConfigureFailureCreatesNoGhostRun(t *testing.T) {
 	s.handleChat(rec, req)
 	if strings.Contains(rec.Body.String(), `"run_id":"run_`) {
 		t.Fatalf("configure failure created a ghost run: %s", rec.Body.String())
+	}
+}
+
+func TestRunAPIGetAndReplay(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	run, err := runs.Start("session-api", "code", "api test", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := runs.WrapSink(run.ID, event.Discard)
+	sink.Emit(event.Event{Kind: event.TurnStarted})
+	sink.Emit(event.Event{Kind: event.Text, Text: "hello"})
+	sink.Emit(event.Event{Kind: event.TurnDone, StopReason: "finished"})
+	if _, err := runs.Finish(run.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/runs/"+run.ID, nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"succeeded"`) {
+		t.Fatalf("get run status=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/runs/"+run.ID+"/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get events status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var all struct {
+		Events []event.Event `json:"events"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&all); err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Events) != 3 {
+		t.Fatalf("expected 3 events, got %#v", all.Events)
+	}
+
+	rec = httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/runs/"+run.ID+"/events?after=2", nil))
+	var replay struct {
+		Events []event.Event `json:"events"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&replay); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || len(replay.Events) != 1 || replay.Events[0].Seq != 3 {
+		t.Fatalf("unexpected replay status=%d events=%#v", rec.Code, replay.Events)
+	}
+}
+
+func TestRunAPIRejectsMissingAndInvalidRequests(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"/v1/runs/run_missing", http.StatusNotFound},
+		{"/v1/runs/run_missing/events?after=x", http.StatusBadRequest},
+		{"/v1/runs/", http.StatusBadRequest},
+		{"/v1/runs/run_missing/events/extra", http.StatusBadRequest},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if rec.Code != tc.want {
+			t.Errorf("GET %s status=%d want=%d body=%s", tc.path, rec.Code, tc.want, rec.Body.String())
+		}
 	}
 }
 
