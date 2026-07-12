@@ -356,6 +356,7 @@ func (c *Controller) setupEditVerify(wd string, cfg editverify.Config) bool {
 // Run executes a one-shot task and returns the agent's final answer.
 // On failure, automatically tries fallback providers if configured.
 func (c *Controller) Run(ctx context.Context, prompt string) error {
+	c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
 	err := c.ag.Run(ctx, prompt)
 	if err != nil && len(c.fallbacks) > 0 {
@@ -414,6 +415,7 @@ func (c *Controller) emitError(err error) {
 // Plan runs in read-only mode and returns the agent's plan.
 func (c *Controller) Plan(ctx context.Context, prompt string) error {
 	c.ag.SetPlanMode(true)
+	defer c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
 	err := c.ag.Run(ctx, prompt)
 	if err != nil {
