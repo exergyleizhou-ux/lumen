@@ -45,8 +45,9 @@ type Config struct {
 	WorkbenchJWTSecret string
 	// HostedProviders is the startup-resolved provider/model allowlist. API keys
 	// are never accepted from requests.
-	HostedProviders []config.ProviderConfig
-	Usage           usage.Store
+	HostedProviders     []config.ProviderConfig
+	Usage               usage.Store
+	HostedWorkspaceRoot string
 }
 
 // Server wraps the HTTP server.
@@ -178,6 +179,9 @@ func (s *Server) cancelActiveRun(owner runstate.Owner, runID string) bool {
 
 // New creates a new Server.
 func New(cfg Config) (*Server, error) {
+	if cfg.HostedWorkspaceRoot == "" {
+		cfg.HostedWorkspaceRoot = os.Getenv("HOSTED_WORKSPACE_ROOT")
+	}
 	var verifier *hostedauth.Verifier
 	if cfg.Hosted {
 		var err error

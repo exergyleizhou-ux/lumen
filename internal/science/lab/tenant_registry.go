@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"lumen/internal/config"
 	"lumen/internal/runstate"
 	"lumen/internal/science/lab/project"
 	labruntime "lumen/internal/science/lab/runtime"
@@ -29,18 +30,20 @@ type tenantResources struct {
 }
 
 type tenantRegistry struct {
-	mu      sync.Mutex
-	root    coreworkspace.Context
-	guard   *labworkspace.Guard
-	fleet   *labruntime.FleetManager
-	max     int
-	idleTTL time.Duration
-	now     func() time.Time
-	items   map[runstate.Owner]*tenantResources
-	onEvict func(runstate.Owner)
+	mu       sync.Mutex
+	root     coreworkspace.Context
+	guard    *labworkspace.Guard
+	fleet    *labruntime.FleetManager
+	max      int
+	idleTTL  time.Duration
+	now      func() time.Time
+	items    map[runstate.Owner]*tenantResources
+	onEvict  func(runstate.Owner)
+	provider *config.ProviderConfig
+	basePATH string
 }
 
-func newTenantRegistry(root string, fleet *labruntime.FleetManager, max int, idleTTL time.Duration) (*tenantRegistry, error) {
+func newTenantRegistry(root string, fleet *labruntime.FleetManager, max int, idleTTL time.Duration, platform ...any) (*tenantRegistry, error) {
 	if max < 1 {
 		return nil, fmt.Errorf("tenant capacity must be positive")
 	}
@@ -55,7 +58,19 @@ func newTenantRegistry(root string, fleet *labruntime.FleetManager, max int, idl
 	if err != nil {
 		return nil, err
 	}
-	return &tenantRegistry{root: guard, guard: fsGuard, fleet: fleet, max: max, idleTTL: idleTTL, now: time.Now, items: make(map[runstate.Owner]*tenantResources)}, nil
+	r := &tenantRegistry{root: guard, guard: fsGuard, fleet: fleet, max: max, idleTTL: idleTTL, now: time.Now, items: make(map[runstate.Owner]*tenantResources)}
+	for _, v := range platform {
+		switch x := v.(type) {
+		case *config.ProviderConfig:
+			if x != nil {
+				copy := *x
+				r.provider = &copy
+			}
+		case string:
+			r.basePATH = x
+		}
+	}
+	return r, nil
 }
 
 func (r *tenantRegistry) acquire(owner runstate.Owner) (*tenantResources, error) {
@@ -87,7 +102,9 @@ func (r *tenantRegistry) acquire(owner runstate.Owner) (*tenantResources, error)
 		return nil, err
 	}
 	projects := project.NewStore(root)
-	t := &tenantResources{Owner: owner, Root: root, Workspace: ws, Projects: projects, Controllers: newControllerPool(root, r.fleet, projects, MaxControllers), lastUsed: now, busy: 1}
+	controllers := newControllerPool(root, r.fleet, projects, MaxControllers)
+	controllers.setPlatformProvider(r.provider, r.basePATH)
+	t := &tenantResources{Owner: owner, Root: root, Workspace: ws, Projects: projects, Controllers: controllers, lastUsed: now, busy: 1}
 	r.items[owner] = t
 	return t, nil
 }

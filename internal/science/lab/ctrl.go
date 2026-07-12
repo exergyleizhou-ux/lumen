@@ -39,6 +39,8 @@ type Controller struct {
 	workspace  string
 	guard      *labworkspace.Guard
 	provenance *provenance.Recorder
+	provider   *config.ProviderConfig
+	basePATH   string
 }
 
 // NewController builds a lab agent controller.
@@ -48,7 +50,18 @@ func NewController(sciDir string, fleet *labruntime.FleetManager, projects *proj
 		fleet:    fleet,
 		projects: projects,
 		ctrl:     control.New(),
+		basePATH: os.Getenv("PATH"),
 	}
+}
+
+func newControllerWithPlatformProvider(sciDir string, fleet *labruntime.FleetManager, projects *project.Store, pc *config.ProviderConfig, basePATH string) *Controller {
+	c := NewController(sciDir, fleet, projects)
+	c.basePATH = basePATH
+	if pc != nil {
+		copy := *pc
+		c.provider = &copy
+	}
+	return c
 }
 
 func (c *Controller) Close() {
@@ -87,7 +100,7 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	}
 	c.guard = g
 	runWS, err := runworkspace.NewLocal(slug, ws, "", map[string]string{
-		"PATH": labruntime.LabPath(c.sciDir, os.Getenv("PATH")),
+		"PATH": labruntime.LabPath(c.sciDir, c.runtimePATH()),
 	})
 	if err != nil {
 		return err
@@ -97,13 +110,18 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	if err != nil {
 		return err
 	}
-	sciCfg, err := scienceConfig(c.sciDir)
-	if err != nil {
-		return err
-	}
-	providerCfg, _, _, err := ScienceProviderConfig(sciCfg)
-	if err != nil {
-		return err
+	var providerCfg config.ProviderConfig
+	if c.provider != nil {
+		providerCfg = *c.provider
+	} else {
+		sciCfg, err := scienceConfig(c.sciDir)
+		if err != nil {
+			return err
+		}
+		providerCfg, _, _, err = ScienceProviderConfig(sciCfg)
+		if err != nil {
+			return err
+		}
 	}
 	rec, err := provenance.NewRecorder(projDir, sessionID, providerCfg.Model)
 	if err != nil {
@@ -142,6 +160,8 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	c.ctrl.AddExtraTools(extra)
 	return nil
 }
+
+func (c *Controller) runtimePATH() string { return c.basePATH }
 
 // buildEnabledSkillsPrompt injects enabled skill bodies into the system prompt.
 // If no enable list is saved, injects a short catalog of names only (not full bodies)

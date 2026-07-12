@@ -787,9 +787,17 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			DefaultMode string `json:"default_mode"`
 			ToolProfile string `json:"tool_profile"`
+			APIKey      string `json:"api_key"`
+			BaseURL     string `json:"base_url"`
+			Model       string `json:"model"`
+			Provider    string `json:"provider"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid body"))
+			return
+		}
+		if a.auth != nil && (body.APIKey != "" || body.BaseURL != "" || body.Model != "" || body.Provider != "") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"code": "provider_config_forbidden", "error": "hosted provider configuration is startup-only"})
 			return
 		}
 		cfg := loadLocalConfig(a.sciDir)

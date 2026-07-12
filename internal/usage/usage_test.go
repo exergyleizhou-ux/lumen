@@ -1,11 +1,20 @@
 package usage
 
 import (
+	"errors"
 	"lumen/internal/event"
 	"lumen/internal/runstate"
 	"testing"
 	"time"
 )
+
+type failingStore struct{}
+
+func (failingStore) CreateUsage(Record) error { return errors.New("database unavailable") }
+
+type collectSink struct{ events []event.Event }
+
+func (s *collectSink) Emit(e event.Event) { s.events = append(s.events, e) }
 
 func TestCapturingSinkReplayIsIdempotent(t *testing.T) {
 	store := NewMemoryStore()
@@ -23,5 +32,14 @@ func TestCapturingSinkReplayIsIdempotent(t *testing.T) {
 	}
 	if r.EstimatedCostMicros != 340 {
 		t.Fatalf("cost=%d", r.EstimatedCostMicros)
+	}
+}
+
+func TestCapturingSinkSurfacesStoreOutage(t *testing.T) {
+	next := &collectSink{}
+	sink := CapturingSink{Store: failingStore{}, Owner: runstate.LocalOwner, Next: next}
+	sink.Emit(event.Event{Kind: event.UsageKind, RunID: "r", EventID: "r:1", Usage: &event.Usage{PromptTokens: 1}})
+	if len(next.events) != 2 || next.events[0].Kind != event.Notice || next.events[0].Level != event.LevelErr {
+		t.Fatalf("events=%+v", next.events)
 	}
 }

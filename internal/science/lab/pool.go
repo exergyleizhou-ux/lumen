@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"lumen/internal/config"
 	"lumen/internal/science/lab/project"
 	labruntime "lumen/internal/science/lab/runtime"
 )
@@ -51,8 +52,18 @@ type controllerPool struct {
 	sciDir   string
 	fleet    *labruntime.FleetManager
 	projects *project.Store
+	provider *config.ProviderConfig
+	basePATH string
 	items    map[string]*poolEntry
 	max      int
+}
+
+func (p *controllerPool) setPlatformProvider(pc *config.ProviderConfig, basePATH string) {
+	if pc != nil {
+		copy := *pc
+		p.provider = &copy
+	}
+	p.basePATH = basePATH
 }
 
 type poolEntry struct {
@@ -105,7 +116,7 @@ func (p *controllerPool) acquire(slug string) (*Controller, error) {
 		p.items[oldestKey].ctrl.Close()
 		delete(p.items, oldestKey)
 	}
-	c := NewController(p.sciDir, p.fleet, p.projects)
+	c := newControllerWithPlatformProvider(p.sciDir, p.fleet, p.projects, p.provider, p.basePATH)
 	p.items[slug] = &poolEntry{ctrl: c, lastUsed: time.Now(), busy: true}
 	return c, nil
 }

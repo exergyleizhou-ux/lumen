@@ -36,6 +36,9 @@ type Config struct {
 	Hosted                  bool
 	WorkbenchJWTSecret      string
 	Usage                   usage.Store
+	HostedProviders         []config.ProviderConfig
+	HostedWorkspaceRoot     string
+	RuntimePATH             string
 }
 
 // Server hosts Page B — the Lumen Science laboratory.
@@ -54,6 +57,20 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Addr == "" {
 		cfg.Addr = fmt.Sprintf("127.0.0.1:%d", DefaultPort)
+	}
+	if cfg.RuntimePATH == "" {
+		cfg.RuntimePATH = os.Getenv("PATH")
+	}
+	if cfg.HostedWorkspaceRoot == "" {
+		cfg.HostedWorkspaceRoot = os.Getenv(EnvHostedWorkspaceRoot)
+	}
+	var platformProvider *config.ProviderConfig
+	if len(cfg.HostedProviders) > 0 {
+		copy := cfg.HostedProviders[0]
+		platformProvider = &copy
+	} else if cfg.LumenCfg != nil && len(cfg.LumenCfg.Providers) > 0 {
+		copy := cfg.LumenCfg.Providers[0]
+		platformProvider = &copy
 	}
 	var verifier *hostedauth.Verifier
 	if cfg.Hosted {
@@ -76,16 +93,17 @@ func New(cfg Config) (*Server, error) {
 	_ = SeedElevationSkills(cfg.SciDir)
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
+	s.api.ctrls.setPlatformProvider(platformProvider, cfg.RuntimePATH)
 	if cfg.Usage != nil {
 		s.api.usage = cfg.Usage
 	}
 	s.api.auth = verifier
 	if cfg.Hosted {
-		root := os.Getenv(EnvHostedWorkspaceRoot)
+		root := cfg.HostedWorkspaceRoot
 		if root == "" {
 			return nil, fmt.Errorf("lab: %s required in hosted mode", EnvHostedWorkspaceRoot)
 		}
-		registry, err := newTenantRegistry(root, fleet, 64, 30*time.Minute)
+		registry, err := newTenantRegistry(root, fleet, 64, 30*time.Minute, platformProvider, cfg.RuntimePATH)
 		if err != nil {
 			return nil, fmt.Errorf("lab tenant registry: %w", err)
 		}

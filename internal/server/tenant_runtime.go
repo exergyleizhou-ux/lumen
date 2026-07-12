@@ -37,10 +37,11 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 		rt.configureTest()
 	}
 	if rt.entry == nil {
-		if rt.provider != nil {
-			return rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, Provider: rt.provider})
+		if rt.provider == nil && cfgPath == "" && rt.ctrl.ProviderConfig() != nil {
+			rt.ctrl.SetSink(sink)
+			return nil
 		}
-		return rt.ctrl.Configure(sink, nil, cfgPath)
+		return rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, Provider: rt.provider, ProcessEnvImmutable: true})
 	}
 	if rt.entry.configured {
 		if rt.provider != nil && rt.entry.providerKey != rt.provider.Name+"\x00"+rt.provider.Model {
@@ -60,7 +61,7 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 }
 
 func (s *Server) tenantWorkspace(owner runstate.Owner) (workspace.Context, error) {
-	root := os.Getenv("HOSTED_WORKSPACE_ROOT")
+	root := s.cfg.HostedWorkspaceRoot
 	if root == "" {
 		return workspace.Context{}, fmt.Errorf("hosted workspace root unavailable")
 	}

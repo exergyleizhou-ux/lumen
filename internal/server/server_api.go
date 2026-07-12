@@ -161,6 +161,10 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "command required", http.StatusBadRequest)
 		return
 	}
+	if s.auth != nil && req.APIKey != "" {
+		jsonCodeErr(w, "provider_key_forbidden", "request provider keys are forbidden", http.StatusBadRequest)
+		return
+	}
 	rt := s.runtimeOrError(w, r)
 	if rt == nil {
 		return
@@ -271,7 +275,7 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer s.releaseRuntime(rt)
-	cfg, err := config.LoadWithEnv(config.FindConfig(), config.FindDotEnv())
+	cfg, err := config.Load(config.FindConfig())
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return

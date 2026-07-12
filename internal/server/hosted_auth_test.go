@@ -51,6 +51,15 @@ func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
 			t.Fatalf("response=%d %s", rec.Code, rec.Body.String())
 		}
 	}
+	for _, endpoint := range []struct{ path, body string }{{"/v1/command", `{"command":"/help","api_key":"` + secretValue + `"}`}, {"/v1/workflow", `{"action":"reject","api_key":"` + secretValue + `"}`}} {
+		req := httptest.NewRequest(http.MethodPost, endpoint.path, bytes.NewBufferString(endpoint.body))
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		s.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest || !bytes.Contains(rec.Body.Bytes(), []byte("provider_key_forbidden")) {
+			t.Fatalf("%s response=%d %s", endpoint.path, rec.Code, rec.Body.String())
+		}
+	}
 	if bytes.Contains(logs.Bytes(), []byte(secretValue)) {
 		t.Fatalf("secret leaked in logs: %s", logs.String())
 	}

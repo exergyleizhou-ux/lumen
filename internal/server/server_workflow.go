@@ -122,6 +122,10 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "action required", http.StatusBadRequest)
 		return
 	}
+	if s.auth != nil && req.APIKey != "" {
+		jsonCodeErr(w, "provider_key_forbidden", "request provider keys are forbidden", http.StatusBadRequest)
+		return
+	}
 	rt := s.runtimeOrError(w, r)
 	if rt == nil {
 		return
