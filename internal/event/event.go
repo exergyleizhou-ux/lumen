@@ -106,15 +106,21 @@ type AskAnswer struct {
 
 // Event is one typed event from the agent run loop.
 type Event struct {
-	Kind      Kind          `json:"kind"`
-	Text      string        `json:"text,omitempty"`
-	Tool      Tool          `json:"tool,omitempty"`
-	Usage     *Usage        `json:"usage,omitempty"`
-	Level     Level         `json:"level,omitempty"`
-	Profile   *Profile      `json:"profile,omitempty"`
-	Perf      *Perf         `json:"perf,omitempty"`
-	Questions []AskQuestion `json:"questions,omitempty"`
-	DiffText  string        `json:"diff,omitempty"`
+	SchemaVersion int           `json:"schema_version,omitempty"`
+	Seq           uint64        `json:"seq,omitempty"`
+	EventID       string        `json:"event_id,omitempty"`
+	RunID         string        `json:"run_id,omitempty"`
+	StepID        string        `json:"step_id,omitempty"`
+	ToolCallID    string        `json:"tool_call_id,omitempty"`
+	Kind          Kind          `json:"kind"`
+	Text          string        `json:"text,omitempty"`
+	Tool          Tool          `json:"tool,omitempty"`
+	Usage         *Usage        `json:"usage,omitempty"`
+	Level         Level         `json:"level,omitempty"`
+	Profile       *Profile      `json:"profile,omitempty"`
+	Perf          *Perf         `json:"perf,omitempty"`
+	Questions     []AskQuestion `json:"questions,omitempty"`
+	DiffText      string        `json:"diff,omitempty"`
 	// StopReason is set on a TurnDone event to record WHY the turn ended:
 	// "finished" | "max_steps" | "empty_stream" | "empty_final". (A turn-timeout
 	// cancels the context before a clean TurnDone, so it is detected from Run's
