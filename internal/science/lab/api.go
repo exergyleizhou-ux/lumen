@@ -3069,14 +3069,15 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Ensure science provider keys are in env for optional LLM synthesize.
-	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
-		_, _, _ = ApplyScienceProfile(sciCfg)
-	}
 	var req langgraph.RunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
 		return
+	}
+	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
+		if pc, _, adapter, err := ScienceProviderConfig(sciCfg); err == nil {
+			req.Provider = &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: adapter}
+		}
 	}
 	// Resolve workspace from project slug when client did not supply an absolute path.
 	// project_id is the project slug (frontend activeProject.slug), not proj_* id.

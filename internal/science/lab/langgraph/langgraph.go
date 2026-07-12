@@ -65,8 +65,13 @@ type RunRequest struct {
 	Prompt    string `json:"prompt"`
 	// Workspace is an absolute path to the project workspace directory.
 	// Usually filled by the lab API from project slug; clients may omit it.
-	Workspace string `json:"workspace,omitempty"`
+	Workspace string          `json:"workspace,omitempty"`
+	Provider  *ProviderConfig `json:"-"`
 }
+
+// ProviderConfig is immutable per invocation and is only inherited by the
+// spawned sidecar process.
+type ProviderConfig struct{ APIKey, BaseURL, Model, Adapter string }
 
 // RunResponse is the output from the LangGraph run endpoint.
 type RunResponse struct {
@@ -112,6 +117,13 @@ func Run(ctx context.Context, req RunRequest) RunResponse {
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, python, args...)
 	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	if p := req.Provider; p != nil {
+		keyName := map[string]string{"deepseek": "DEEPSEEK_API_KEY", "qwen": "DASHSCOPE_API_KEY", "moonshot": "MOONSHOT_API_KEY", "zhipu": "ZHIPU_API_KEY"}[p.Adapter]
+		if keyName == "" {
+			keyName = "OPENAI_API_KEY"
+		}
+		cmd.Env = append(cmd.Env, keyName+"="+p.APIKey, "OPENAI_BASE_URL="+p.BaseURL, "LUMEN_SCIENCE_MODEL="+p.Model)
+	}
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()

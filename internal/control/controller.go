@@ -97,6 +97,9 @@ func New() *Controller {
 type ConfigureOptions struct {
 	Workspace    runworkspace.Context
 	ToolsProfile string
+	// Provider, when non-nil, is an immutable run-scoped provider selection.
+	// It avoids translating request-level credentials through process globals.
+	Provider *config.ProviderConfig
 	// DataRoot scopes sessions, memories and timeline. Empty preserves CLI paths.
 	DataRoot string
 }
@@ -173,6 +176,11 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 		return fmt.Errorf("no providers configured — add one in lumen.toml or run 'lumen setup'")
 	}
 	provCfg, matched := resolveProvider(cfg.Providers, cfg.DefaultModel)
+	if opts.Provider != nil {
+		copy := *opts.Provider
+		provCfg = &copy
+		matched = true
+	}
 	if !matched && cfg.DefaultModel != "" {
 		sink.Emit(event.Event{
 			Kind: event.Notice, Level: event.LevelWarn,

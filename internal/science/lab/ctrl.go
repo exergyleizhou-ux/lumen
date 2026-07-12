@@ -88,19 +88,19 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	if err != nil {
 		return err
 	}
-	rec, err := provenance.NewRecorder(projDir, sessionID, os.Getenv("LUMEN_SCIENCE_MODEL"))
-	if err != nil {
-		return err
-	}
-	c.provenance = rec
-
 	sciCfg, err := scienceConfig(c.sciDir)
 	if err != nil {
 		return err
 	}
-	if _, _, err := ApplyScienceProfile(sciCfg); err != nil {
+	providerCfg, _, _, err := ScienceProviderConfig(sciCfg)
+	if err != nil {
 		return err
 	}
+	rec, err := provenance.NewRecorder(projDir, sessionID, providerCfg.Model)
+	if err != nil {
+		return err
+	}
+	c.provenance = rec
 
 	// Build system prompt: science base + enabled project skills (bodies).
 	mem := scienceSystemPrompt
@@ -112,6 +112,7 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 	if err := c.ctrl.ConfigureWithOptions(sink, nil, lumenCfgPath, control.ConfigureOptions{
 		Workspace:    runWS,
 		ToolsProfile: defaultToolProfile,
+		Provider:     &providerCfg,
 	}); err != nil {
 		return err
 	}
