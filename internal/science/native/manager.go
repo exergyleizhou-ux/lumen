@@ -85,7 +85,7 @@ func (m *Manager) connectOne(ctx context.Context, mem FleetMember) error {
 			return err
 		}
 	case <-ctx.Done():
-		_ = c.Close()
+		_ = c.Abort()
 		return fmt.Errorf("connect %s: %w", mem.ID, ctx.Err())
 	}
 	m.clients[mem.ID] = c

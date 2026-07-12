@@ -354,6 +354,25 @@ func (c *Client) Close() error {
 	return c.closeErr
 }
 
+// Abort force-stops the server process and unblocks any pending stdio read.
+// Use it when a caller deadline has already expired; Close intentionally gives
+// the child time to exit gracefully and therefore must not be used on a hard
+// cancellation path.
+func (c *Client) Abort() error {
+	c.closeOnce.Do(func() {
+		_ = c.stdin.Close()
+		if c.cmd != nil && c.cmd.Process != nil {
+			_ = c.cmd.Process.Kill()
+		}
+		<-c.readLoopDone
+		if c.cmd != nil && c.cmd.Process != nil {
+			_ = c.cmd.Wait()
+		}
+		c.closeErr = nil
+	})
+	return c.closeErr
+}
+
 // ── MCPClient interface implementation ─────────────────────────────
 
 // Connect initializes the client with a default name and returns the list
