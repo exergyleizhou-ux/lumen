@@ -74,7 +74,17 @@ func NewManager() *Manager {
 // Start launches a background function as a named job and returns its ID.
 // The fn receives a context that is cancelled when the job is killed.
 func (m *Manager) Start(jobType, label string, fn func(ctx context.Context) (string, error)) *Job {
-	ctx, cancel := context.WithCancel(context.Background())
+	return m.StartContext(context.Background(), jobType, label, fn)
+}
+
+// StartContext launches a background job while preserving immutable run-scoped
+// context values. The parent's cancellation/deadline is intentionally detached;
+// the returned job owns cancellation through Kill.
+func (m *Manager) StartContext(parent context.Context, jobType, label string, fn func(ctx context.Context) (string, error)) *Job {
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 
 	id := fmt.Sprintf("%s-%d", jobType, m.seq.Add(1))
 

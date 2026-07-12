@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	runworkspace "lumen/internal/workspace"
 )
 
 func TestStartAndGet(t *testing.T) {
@@ -32,6 +34,33 @@ func TestStartAndGet(t *testing.T) {
 	}
 	if got.Label != "test command" {
 		t.Errorf("label: want 'test command', got %q", got.Label)
+	}
+}
+
+func TestStartContextPreservesWorkspaceValues(t *testing.T) {
+	ws, err := runworkspace.NewLocal("job-ws", t.TempDir(), "", map[string]string{"RUN_MARKER": "job"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, cancel := context.WithCancel(runworkspace.WithContext(context.Background(), ws))
+	m := NewManager()
+	job := m.StartContext(parent, "bash", "context", func(ctx context.Context) (string, error) {
+		got, ok := runworkspace.FromContext(ctx)
+		if !ok {
+			return "", context.Canceled
+		}
+		return got.Root + ":" + got.Env["RUN_MARKER"], nil
+	})
+	cancel()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+	got, err := m.Wait(waitCtx, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != ws.Root+":job" {
+		t.Fatalf("background context=%q", got)
 	}
 }
 
