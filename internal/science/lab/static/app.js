@@ -219,6 +219,12 @@ function reduceSSE(state, ev) {
   state.tools = state.tools || {};
   state.approvals = state.approvals || [];
   state.errors = state.errors || [];
+  state.lastSeq = state.lastSeq || 0;
+  if (ev.run_id) state.runId = ev.run_id;
+  if (Number.isInteger(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= state.lastSeq) return state;
+    state.lastSeq = ev.seq;
+  }
   var kind = ev.kind || "";
 
   switch (kind) {
@@ -295,6 +301,9 @@ function reduceSSE(state, ev) {
       break;
     case "turn_done":
       state.turn = "done";
+      break;
+    case "stream_done":
+      state.terminal = { ok: ev.ok === true, error: ev.error || "" };
       break;
     case "usage":
       state.usage = {
@@ -679,6 +688,8 @@ var activeProject = null;
 var threads = []; // {id,title,turn_count} from API sessions
 var activeThread = "";
 var currentAbort = null;
+var currentRunId = "";
+var currentRunSeq = 0;
 var fileCwd = ".";
 var sseState = null; // per-turn SSE accumulator
 var turnTasks = []; // this-turn tools for tasks pane
@@ -1744,6 +1755,13 @@ function addErrorBubble(toolLog, message) {
 
 function handleSSEEvent(ev, state, bubble) {
   state = reduceSSE(state, ev);
+  if (state.runId) {
+    currentRunId = state.runId;
+    currentRunSeq = state.lastSeq || currentRunSeq;
+    try {
+      sessionStorage.setItem("lumen_lab_active_run", JSON.stringify({ runId: currentRunId, lastSeq: currentRunSeq }));
+    } catch (_) {}
+  }
   var kind = ev.kind || "";
 
   // Update reasoning (think block)
@@ -1980,7 +1998,9 @@ async function streamChat(prompt, mode) {
   var bubble = createAgentBubble();
 
   // Reset state
-  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null };
+  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null, lastSeq: 0 };
+  currentRunId = "";
+  currentRunSeq = 0;
   turnTasks = [];
   renderTasksPane();
   setRunStatus(true);
@@ -2037,6 +2057,9 @@ async function streamChat(prompt, mode) {
       bubble.textDiv.innerHTML = '<span class="error-text">错误: ' + escHtml(e.message) + "</span>";
     }
   } finally {
+    if (sseState && sseState.terminal) {
+      try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (_) {}
+    }
     setRunStatus(false);
     // Remove cursor
     if (bubble.textDiv) {
@@ -2048,6 +2071,59 @@ async function streamChat(prompt, mode) {
   }
 
   $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
+}
+
+function labRunTerminal(status) {
+  return ["succeeded", "failed", "canceled", "timed_out", "exhausted"].indexOf(status) >= 0;
+}
+
+async function restoreStoredLabRun() {
+  var raw;
+  try { raw = sessionStorage.getItem("lumen_lab_active_run"); } catch (_) { return; }
+  if (!raw) return;
+  var saved;
+  try { saved = JSON.parse(raw); } catch (_) {
+    try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (__) {}
+    return;
+  }
+  if (!saved || !saved.runId) return;
+
+  currentRunId = saved.runId;
+  currentRunSeq = 0;
+  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null, lastSeq: 0 };
+  var bubble = createAgentBubble();
+  setRunStatus(true);
+  try {
+    while (true) {
+      var eventsRes = await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId) + "/events?after=" + currentRunSeq), { cache: "no-store" });
+      if (!eventsRes.ok) throw new Error("无法读取科研 Run 事件");
+      var eventsBody = await eventsRes.json();
+      var events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
+      for (var i = 0; i < events.length; i++) {
+        sseState = handleSSEEvent(events[i], sseState, bubble);
+        currentRunSeq = sseState.lastSeq || currentRunSeq;
+      }
+
+      var runRes = await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId)), { cache: "no-store" });
+      if (!runRes.ok) throw new Error("无法读取科研 Run 状态");
+      var runBody = await runRes.json();
+      var run = runBody.run || {};
+      if (labRunTerminal(run.status)) {
+        if (!sseState.text && bubble.textDiv) bubble.textDiv.innerHTML = renderMarkdown("Run " + currentRunId + "：" + run.status);
+        if (run.status !== "succeeded" && bubble.textDiv) {
+          bubble.textDiv.innerHTML += '<div class="stop-notice">' + escHtml(run.error || run.stop_reason || run.status) + "</div>";
+        }
+        try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (_) {}
+        break;
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 1000); });
+    }
+  } catch (e) {
+    if (bubble.textDiv) bubble.textDiv.innerHTML += '<div class="stop-notice">' + escHtml(e.message || "恢复失败") + "</div>";
+  } finally {
+    setRunStatus(false);
+    try { await refreshFiles(); } catch (_) {}
+  }
 }
 
 /* ── 8. Approval card (editable args applied on allow) ── */
@@ -3056,7 +3132,12 @@ $("btnRerun") && $("btnRerun").addEventListener("click", function () { rerunLast
 })();
 
 // Stop button
-$("btnStop") && $("btnStop").addEventListener("click", function () {
+$("btnStop") && $("btnStop").addEventListener("click", async function () {
+  if (currentRunId) {
+    try {
+      await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId) + "/cancel"), { method: "POST" });
+    } catch (_) {}
+  }
   if (currentAbort) {
     currentAbort.abort();
     currentAbort = null;
@@ -5715,6 +5796,7 @@ document.addEventListener("click", function (e) {
     } else {
       renderThreadTabs();
     }
+    await restoreStoredLabRun();
   } catch (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";

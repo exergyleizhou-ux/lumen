@@ -284,6 +284,13 @@ function runOnce(runLabel) {
   assert(s.reasoning === "think", "reasoning: " + s.reasoning);
   console.log("OK text/reasoning accumulate");
 
+  let replay = L.reduceSSE(null, { kind: "text", text: "once", run_id: "run-1", seq: 1 });
+  replay = L.reduceSSE(replay, { kind: "text", text: "duplicate", run_id: "run-1", seq: 1 });
+  replay = L.reduceSSE(replay, { kind: "text", text: " twice", run_id: "run-1", seq: 2 });
+  assert(replay.text === "once twice", "run replay deduplicates seq: " + replay.text);
+  assert(replay.runId === "run-1" && replay.lastSeq === 2, "run replay cursor: " + JSON.stringify(replay));
+  console.log("OK run replay deduplicates seq");
+
   console.log("PASS " + runLabel + " all assertions");
   return true;
 }

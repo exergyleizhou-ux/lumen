@@ -56,6 +56,7 @@ func TestLabUIPureHelpersJS(t *testing.T) {
 			"OK tool_dispatch keyed by id",
 			"OK tool_result merges by id",
 			"OK approval_request shape",
+			"OK run replay deduplicates seq",
 			"PASS labui_test.mjs",
 		}
 		for _, n := range needles {
@@ -65,4 +66,20 @@ func TestLabUIPureHelpersJS(t *testing.T) {
 		}
 	}
 	t.Logf("LabUI JS pure helpers OK (2 node runs)\n%s", combined.String())
+}
+
+func TestLabUIRunReplayContract(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("static", "app.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(data)
+	for _, required := range []string{
+		"/api/lab/runs/", "/events?after=", "/cancel", "restoreStoredLabRun",
+		`sessionStorage.getItem("lumen_lab_active_run")`, "currentRunSeq",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("Lab app.js missing Run recovery contract %q", required)
+		}
+	}
 }
