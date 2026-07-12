@@ -107,10 +107,14 @@ type UsageStore struct {
 }
 
 func (s UsageStore) CreateUsage(r usage.Record) error {
-	if err := s.Quota.RecordUsage(context.Background(), r); err != nil {
+	// Persist the canonical usage row first. A duplicate means an earlier
+	// attempt may have committed the row but failed before the control-plane
+	// debit, so it must continue to the idempotent quota call. Any other
+	// persistence failure must not charge the tenant.
+	if err := s.Usage.CreateUsage(r); err != nil && !errors.Is(err, usage.ErrDuplicate) {
 		return err
 	}
-	return s.Usage.CreateUsage(r)
+	return s.Quota.RecordUsage(context.Background(), r)
 }
 
 // MemoryStore is the local default and deterministic concurrency test double.
