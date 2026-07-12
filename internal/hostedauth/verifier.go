@@ -16,8 +16,9 @@ type Verifier struct {
 }
 
 func NewVerifier(secret string) (*Verifier, error) {
-	if strings.TrimSpace(secret) == "" {
-		return nil, errors.New("workbench JWT secret required")
+	secret = strings.TrimSpace(secret)
+	if len(secret) < 32 {
+		return nil, errors.New("workbench JWT secret must be at least 32 bytes")
 	}
 	return &Verifier{secret: []byte(secret), now: time.Now}, nil
 }

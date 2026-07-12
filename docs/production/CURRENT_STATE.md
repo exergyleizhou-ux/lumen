@@ -113,3 +113,9 @@ The Go test output was served from the build cache.
 - Hosted Code SSE reflects only the exact configured Workbench origin; Lab CORS likewise removed broad production-domain matching and attacker fallback headers. The legacy Lab embed relay now requires both the exact child frame window and an exact Lab/GUI origin before forwarding a message.
 - The security audit found parameterized hosted SQL and no prompt, provider key, Workbench token, or authorization value in runtime logs. The only credential-pattern source hits were a deliberately invalid compatibility probe, a generated configuration placeholder, and the platform provider's explicit child-process environment handoff.
 - Phase 7 gates passed: `go test -race ./...`, `go vet ./...`, `go build ./...`, uncached `go test ./...`, and `git diff --check`.
+
+### Phase 7 security reacceptance
+
+- Hosted Code caps JSON requests, including image-bearing chat payloads, at 2 MiB and multipart uploads at 64 MiB before business handlers. Oversize JSON receives HTTP 413 with stable code `request_too_large`; chunked bodies cannot bypass the limit.
+- HS256 Workbench secrets shorter than 32 bytes now fail server startup. Hosted Code CSP contains only `'self'` and the exact configured Workbench origin; demo and wildcard ancestors remain local-mode compatibility only.
+- The real-Postgres integration fault consumes a dangerous approval, closes the event-store connection before ToolResult persistence, and verifies after restart that the grant remains consumed, cannot execute twice, and the durable Run did not become successful. Local object compensation is also verified through a newly opened backend instance.

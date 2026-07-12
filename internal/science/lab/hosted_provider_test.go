@@ -15,7 +15,7 @@ import (
 )
 
 func TestHostedLabRejectsTenantProviderConfiguration(t *testing.T) {
-	root, secret := t.TempDir(), "secret"
+	root, secret := t.TempDir(), "test-secret-that-is-at-least-32-bytes"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
 	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{{Name: "platform", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "allowed", APIKey: "platform-key"}}, Runs: runstate.NewManager(nil)})
 	if err != nil {
@@ -81,7 +81,7 @@ func TestHostedLabFreshControllersUseDistinctPlatformConfigsWithoutEnvironmentMu
 }
 
 func TestHostedLangGraphExclusivelyUsesStartupPlatformProvider(t *testing.T) {
-	root, secret := t.TempDir(), "secret"
+	root, secret := t.TempDir(), "test-secret-that-is-at-least-32-bytes"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
 	before := append([]string(nil), os.Environ()...)
 	// A malicious tenant-local-looking configuration must be irrelevant in hosted mode.

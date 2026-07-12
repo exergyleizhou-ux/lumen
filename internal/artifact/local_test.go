@@ -45,7 +45,11 @@ func TestPersistCompensatesObjectOnMetadataFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("outage accepted")
 	}
-	if _, err = b.Get(context.Background(), r.ObjectKey); !os.IsNotExist(err) {
+	restarted, restartErr := NewLocalBackend(dir)
+	if restartErr != nil {
+		t.Fatal(restartErr)
+	}
+	if _, err = restarted.Get(context.Background(), r.ObjectKey); !os.IsNotExist(err) {
 		t.Fatalf("orphan object remains: %v", err)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -286,10 +287,46 @@ func New(cfg Config) (*Server, error) {
 
 func (s *Server) handleBusiness(pattern string, handler http.HandlerFunc) {
 	if s.auth != nil {
-		s.mux.Handle(pattern, s.auth.RequireFor(codePermission)(handler))
+		s.mux.Handle(pattern, s.auth.RequireFor(codePermission)(s.hostedBodyLimit(handler)))
 		return
 	}
 	s.mux.HandleFunc(pattern, handler)
+}
+
+const hostedJSONBodyMax = int64(2 << 20)
+
+func (s *Server) hostedBodyLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch {
+			next(w, r)
+			return
+		}
+		limit := hostedJSONBodyMax
+		multipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+		if multipart {
+			limit = 64 << 20
+		}
+		if r.ContentLength > limit {
+			jsonCodeErr(w, "request_too_large", "request body exceeds hosted limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if multipart {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			next(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil {
+			jsonErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if int64(len(body)) > limit {
+			jsonCodeErr(w, "request_too_large", "request body exceeds hosted limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next(w, r)
+	}
 }
 
 func codePermission(r *http.Request) string {
@@ -369,9 +406,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	ancestors := "frame-ancestors 'self' https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz"
+	ancestors := "frame-ancestors 'self'"
 	if origin := cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin); origin != "" {
 		ancestors += " " + origin
+	} else if s.auth == nil {
+		ancestors += " https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz"
 	}
 	w.Header().Set("Content-Security-Policy", ancestors)
 	w.Write(data)

@@ -35,11 +35,11 @@ func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret", HostedProviders: []config.ProviderConfig{{Name: "approved", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "approved-model", APIKey: "platform-startup-key"}}})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes", HostedProviders: []config.ProviderConfig{{Name: "approved", Kind: "openai", BaseURL: "http://127.0.0.1:1", Model: "approved-model", APIKey: "platform-startup-key"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := serverToken(t, "secret")
+	token := serverToken(t, "test-secret-that-is-at-least-32-bytes")
 	for _, tc := range []struct{ body, code string }{
 		{`{"prompt":"x","provider":"other","model":"bad"}`, "provider_not_allowed"},
 		{`{"prompt":"x","api_key":"` + secretValue + `"}`, "provider_key_forbidden"},
@@ -69,11 +69,11 @@ func TestHostedProviderAllowlistAndKeyRedaction(t *testing.T) {
 func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t *testing.T) {
 	t.Setenv("HOSTED_WORKSPACE_ROOT", t.TempDir())
 	t.Setenv("DEEPSEEK_API_KEY", "sentinel")
-	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := serverToken(t, "secret")
+	token := serverToken(t, "test-secret-that-is-at-least-32-bytes")
 	bodies := []string{`{"prompt":"a","provider":"deepseek","api_key":"a"}`, `{"prompt":"b","provider":"qwen","model":"b"}`}
 	var wg sync.WaitGroup
 	for _, body := range bodies {
@@ -97,13 +97,13 @@ func TestHostedProviderOverridesRejectedConcurrentlyWithoutEnvironmentMutation(t
 
 func TestHostedServerFailsClosedAndProtectsBusinessRoutes(t *testing.T) {
 	t.Setenv("WORKBENCH_DATABASE_URL", "")
-	if _, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "secret"}); err == nil {
+	if _, err := New(Config{Ctrl: control.New(), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes"}); err == nil {
 		t.Fatal("hosted server accepted missing durable database")
 	}
 	if _, err := New(Config{Ctrl: control.New(), Hosted: true}); err == nil {
 		t.Fatal("hosted server accepted missing secret")
 	}
-	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +116,7 @@ func TestHostedServerFailsClosedAndProtectsBusinessRoutes(t *testing.T) {
 		}
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/chat", nil)
-	req.Header.Set("Authorization", "Bearer "+serverToken(t, "secret"))
+	req.Header.Set("Authorization", "Bearer "+serverToken(t, "test-secret-that-is-at-least-32-bytes"))
 	rec := httptest.NewRecorder()
 	s.mux.ServeHTTP(rec, req)
 	if rec.Code == http.StatusUnauthorized {
@@ -141,7 +141,7 @@ func TestCodePermissionByOperation(t *testing.T) {
 }
 
 func TestHostedSSECORSOnlyAllowsConfiguredWorkbenchOrigin(t *testing.T) {
-	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "secret", WorkbenchOrigin: "https://oasis.example"})
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes", WorkbenchOrigin: "https://oasis.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,5 +160,36 @@ func TestHostedSSECORSOnlyAllowsConfiguredWorkbenchOrigin(t *testing.T) {
 		if got := rec.Header().Get("Access-Control-Allow-Origin"); got != tc.want {
 			t.Errorf("origin %q: got %q want %q", tc.origin, got, tc.want)
 		}
+	}
+}
+
+func TestHostedRejectsOversizeJSONBeforeHandler(t *testing.T) {
+	secret := "test-secret-that-is-at-least-32-bytes"
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := append([]byte(`{"prompt":"`), bytes.Repeat([]byte("x"), int(hostedJSONBodyMax)+1)...)
+	body = append(body, []byte(`"}`)...)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+serverToken(t, secret))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge || !bytes.Contains(rec.Body.Bytes(), []byte(`"code":"request_too_large"`)) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestHostedCSPHasOnlyExactWorkbenchAncestor(t *testing.T) {
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes", WorkbenchOrigin: "https://oasis.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp != "frame-ancestors 'self' https://oasis.example" {
+		t.Fatalf("unexpected hosted CSP %q", csp)
 	}
 }

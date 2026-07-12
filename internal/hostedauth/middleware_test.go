@@ -9,8 +9,8 @@ import (
 )
 
 func TestMiddlewareAuthenticatesAndDoesNotLeakToken(t *testing.T) {
-	v, _ := NewVerifier("secret")
-	raw := signed(t, "secret", jwt.SigningMethodHS256, nil)
+	v, _ := NewVerifier("test-secret-that-is-at-least-32-bytes")
+	raw := signed(t, "test-secret-that-is-at-least-32-bytes", jwt.SigningMethodHS256, nil)
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id, ok := FromContext(r.Context())
 		if !ok || id.UserID != "user-1" {
@@ -35,10 +35,10 @@ func TestMiddlewareAuthenticatesAndDoesNotLeakToken(t *testing.T) {
 }
 
 func TestMiddlewareEnforcesPermission(t *testing.T) {
-	v, _ := NewVerifier("secret")
+	v, _ := NewVerifier("test-secret-that-is-at-least-32-bytes")
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat", nil)
-	req.Header.Set("Authorization", "Bearer "+signed(t, "secret", jwt.SigningMethodHS256, nil))
+	req.Header.Set("Authorization", "Bearer "+signed(t, "test-secret-that-is-at-least-32-bytes", jwt.SigningMethodHS256, nil))
 	rec := httptest.NewRecorder()
 	v.Require("lab:run")(next).ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "workbench_forbidden") {

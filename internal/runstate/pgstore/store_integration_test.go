@@ -96,6 +96,48 @@ func TestActualOasisMigrationFullContract(t *testing.T) {
 	if err = aps.Complete(runstate.Owner{UserID: uid, WorkspaceID: wid}, "ap_"+uid, "exec_"+uid, true, now); err != nil {
 		t.Fatal(err)
 	}
+	// Real connection-loss fault: consume the dangerous operation durably,
+	// then lose the event-store connection before its result can be appended.
+	// Restart must see the consumed grant and must not report durable success.
+	outageDB, err := sql.Open("pgx", url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outageStore := New(outageDB)
+	outageRuns := runstate.NewManager(outageStore)
+	owner := runstate.Owner{UserID: uid, WorkspaceID: wid}
+	faultRun, err := outageRuns.StartOwned(owner, "fault-session", "code", "fault", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	faultApprovalID := "fault_ap_" + uid
+	if err = aps.Create(approvalstate.Approval{ID: faultApprovalID, RunID: faultRun.ID, ToolCallID: "dangerous", Owner: owner, RiskLevel: "high", ArgsHash: h, EditableArgs: json.RawMessage(`{"x":1}`), CreatedAt: now, ExpiresAt: now.Add(time.Minute), Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = aps.Decide(owner, faultApprovalID, approvalstate.DecisionApproved, uid, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = aps.Consume(owner, faultApprovalID, "fault-exec", now); err != nil {
+		t.Fatal(err)
+	}
+	if err = outageDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	outageRuns.WrapSink(faultRun.ID, event.Discard).Emit(event.Event{Kind: event.ToolResult, ToolCallID: "dangerous"})
+	if _, err = outageRuns.Finish(faultRun.ID, nil); err == nil {
+		t.Fatal("connection loss produced a successful terminal update")
+	}
+	restartedApproval, err := aps.Get(owner, faultApprovalID)
+	if err != nil || restartedApproval.ExecutionState != "consumed" {
+		t.Fatalf("restart lost consumed execution: %#v %v", restartedApproval, err)
+	}
+	if _, err = aps.Consume(owner, faultApprovalID, "fault-exec-retry", now); !errors.Is(err, approvalstate.ErrNotExecutable) {
+		t.Fatalf("restart repeated dangerous execution: %v", err)
+	}
+	durableFaultRun, err := s.GetRun(faultRun.ID)
+	if err != nil || durableFaultRun.Status != runstate.StatusRunning {
+		t.Fatalf("outage persisted fake success: %#v %v", durableFaultRun, err)
+	}
 	us := usage.PostgresStore{DB: db}
 	if err = us.CreateUsage(usage.Record{RunID: r.ID, EventID: "usage", UserID: uid, WorkspaceID: wid, Provider: "p", Model: "m", InputTokens: 1, CreatedAt: now}); err != nil {
 		t.Fatal(err)

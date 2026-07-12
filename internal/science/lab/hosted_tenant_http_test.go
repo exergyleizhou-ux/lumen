@@ -40,7 +40,7 @@ func hostedLabToken(t *testing.T, secret, user, workspace string) string {
 }
 
 func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
-	root, secret := t.TempDir(), "secret"
+	root, secret := t.TempDir(), "test-secret-that-is-at-least-32-bytes"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
 	runs := runstate.NewManager(nil)
 	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, Runs: runs})
@@ -54,7 +54,7 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "test-secret-that-is-at-least-32-bytes"})
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyStarted})
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyResult, Level: event.LevelInfo, Text: "passed"})
 	hash, _ := approvalstate.HashArgs([]byte(`{}`))
@@ -82,7 +82,7 @@ func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID, nil); rec.Code != http.StatusOK {
 		t.Fatalf("A get: %d", rec.Code)
 	}
-	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/workbench-snapshot", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "secret") {
+	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/workbench-snapshot", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "test-secret-that-is-at-least-32-bytes") {
 		t.Fatalf("A snapshot must be owner scoped and sanitized: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID+"/approvals", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"risk_level":"high"`) || strings.Contains(rec.Body.String(), "SECRET") || strings.Contains(rec.Body.String(), "editable_args") {
@@ -140,7 +140,7 @@ func labRequest(t *testing.T, s *Server, token, method, path string, body any) *
 }
 
 func TestHostedLabTenantHTTPMatrix(t *testing.T) {
-	root, secret := t.TempDir(), "tenant-test-secret"
+	root, secret := t.TempDir(), "tenant-test-secret-that-is-at-least-32-bytes"
 	t.Setenv(EnvHostedWorkspaceRoot, root)
 	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, Runs: runstate.NewManager(nil)})
 	if err != nil {

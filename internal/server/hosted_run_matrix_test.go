@@ -37,7 +37,7 @@ func authReq(s *Server, token, method, path, body string) *httptest.ResponseReco
 }
 
 func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
-	secret := "secret"
+	secret := "test-secret-that-is-at-least-32-bytes"
 	runs := runstate.NewManager(nil)
 	s, err := New(Config{Ctrl: control.New(), Runs: runs, Hosted: true, WorkbenchJWTSecret: secret})
 	if err != nil {
@@ -50,7 +50,7 @@ func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "test-secret-that-is-at-least-32-bytes"})
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyStarted})
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyResult, Level: event.LevelInfo, Text: "passed"})
 	hash, _ := approvalstate.HashArgs([]byte(`{}`))
@@ -78,7 +78,7 @@ func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID, ""); rec.Code != http.StatusOK {
 		t.Fatalf("A get: %d", rec.Code)
 	}
-	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID+"/workbench-snapshot", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "secret") {
+	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID+"/workbench-snapshot", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "test-secret-that-is-at-least-32-bytes") {
 		t.Fatalf("A snapshot must be owner scoped and sanitized: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID+"/approvals", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"risk_level":"high"`) || strings.Contains(rec.Body.String(), "SECRET") || strings.Contains(rec.Body.String(), "editable_args") {
