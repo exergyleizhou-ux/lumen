@@ -21,6 +21,7 @@ import (
 	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/hostedauth"
+	"lumen/internal/quota"
 	"lumen/internal/runstate"
 	"lumen/internal/runstate/pgstore"
 	"lumen/internal/runtimeevidence"
@@ -43,6 +44,7 @@ type Config struct {
 	Hosted                  bool
 	WorkbenchJWTSecret      string
 	Usage                   usage.Store
+	Quota                   quota.Store
 	HostedProviders         []config.ProviderConfig
 	HostedWorkspaceRoot     string
 	RuntimePATH             string
@@ -139,6 +141,10 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.Usage != nil {
 		s.api.usage = cfg.Usage
+	}
+	s.api.quota = cfg.Quota
+	if cfg.Hosted && cfg.Quota != nil {
+		s.api.artifactStore = quota.ArtifactStore{Store: s.api.artifactStore, Quota: cfg.Quota}
 	}
 	if ur, ok := s.api.usage.(runtimeevidence.UsageReader); ok {
 		s.api.evidence = runtimeevidence.Service{Runs: s.api.runs, Approvals: s.api.approvalStore, Artifacts: s.api.artifactStore, Usage: ur}

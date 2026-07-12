@@ -95,3 +95,10 @@ The Go test output was served from the build cache.
 - Code and Lab expose owner-scoped per-Run approval reviews containing only identity, risk, typed effects, cost, lifecycle timestamps, decision, and execution state. Potentially sensitive reasons, commands, paths, targets, argument bodies/hashes, and decision actors are omitted; decisions continue through the existing owner-scoped approve endpoints.
 - Code and Lab Artifact bytes are downloaded by authenticated Run ID plus Artifact ID, never a user path. Responses use sanitized attachment filenames and `nosniff`; cross-owner and unknown IDs both return not found.
 - A skipped verification is represented as `not_run`, never `failed` or `passed`. `WORKBENCH_PARENT_ORIGIN` is validated as one exact HTTP(S) origin and injected as `window.__LUMEN_WORKBENCH_ORIGIN__`; bridge delivery falls back to the current origin and rejects wildcard or path-bearing targets.
+
+## Phase 6 hosted quota enforcement (2026-07-13)
+
+- Hosted Code and Lab reserve user/workspace concurrency through Oasis before inserting a Run. Oasis returns the durable workspace policy for wall time, steps, events, event size, Artifact size, tokens, compute and storage; a transport or malformed-policy failure closes the Run boundary instead of falling back to process-local counters.
+- Usage debits are machine-authenticated and idempotent by Run/Event. Input, output, cache-read and cache-write buckets are reported with integer cost microunits; failed and canceled Runs retain actual usage. Completion is idempotent and releases the durable reservation.
+- Artifact bytes reserve single-file and total storage quota before object I/O. Failed persistence compensates the reservation; retries use the same Artifact identity.
+- Local desktop mode retains permissive in-process limits and does not require Oasis. Hosted CLI startup requires `WORKBENCH_CONTROL_PLANE_URL` and a distinct `WORKBENCH_RUNTIME_INGEST_SECRET` of at least 32 bytes.

@@ -53,11 +53,26 @@ func (m *Manager) StartOwned(owner Owner, sessionID, profile, title, parentID st
 	if !owner.Valid() {
 		return Run{}, errors.New("run owner required")
 	}
-	id, err := newRunID()
+	id, err := NewRunID()
 	if err != nil {
 		return Run{}, err
 	}
-	now := time.Now().UTC()
+	return m.StartOwnedID(owner, id, sessionID, profile, title, parentID, time.Now().UTC())
+}
+
+// StartOwnedID persists a caller-reserved run identity. Hosted callers use it
+// to atomically reserve tenant quota before the durable run row is inserted.
+func (m *Manager) StartOwnedID(owner Owner, id, sessionID, profile, title, parentID string, startedAt time.Time) (Run, error) {
+	if !owner.Valid() {
+		return Run{}, errors.New("run owner required")
+	}
+	if id == "" {
+		return Run{}, errors.New("run id required")
+	}
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+	now := startedAt.UTC()
 	run := Run{
 		ID: id, UserID: owner.UserID, WorkspaceID: owner.WorkspaceID, SessionID: sessionID, ParentID: parentID,
 		Profile: profile, Title: title, Status: StatusRunning,
@@ -233,7 +248,7 @@ func (s *stampingSink) Emit(ev event.Event) {
 	s.inner.Emit(stamped)
 }
 
-func newRunID() (string, error) {
+func NewRunID() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		return "", fmt.Errorf("generate run id: %w", err)

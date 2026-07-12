@@ -87,6 +87,14 @@ func (c *Controller) ProviderConfig() *config.ProviderConfig {
 	return c.ctrl.ProviderConfig()
 }
 
+func (c *Controller) SetMaxSteps(v int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.ctrl != nil {
+		c.ctrl.SetMaxSteps(v)
+	}
+}
+
 // Configure prepares the agent for a project workspace.
 func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver permission.Asker) error {
 	c.mu.Lock()

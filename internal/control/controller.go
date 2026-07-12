@@ -540,6 +540,12 @@ func (c *Controller) WorkspaceContext() runworkspace.Context {
 // Agent returns the underlying agent (for direct access when needed).
 func (c *Controller) Agent() *agent.Agent { return c.ag }
 
+func (c *Controller) SetMaxSteps(v int) {
+	if c.ag != nil {
+		c.ag.SetMaxSteps(v)
+	}
+}
+
 // Session returns the agent's session.
 func (c *Controller) Session() *agent.Session { return c.sess }
 

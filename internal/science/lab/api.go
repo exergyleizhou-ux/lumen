@@ -26,6 +26,7 @@ import (
 	"lumen/internal/hostedauth"
 	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
+	"lumen/internal/quota"
 	"lumen/internal/runstate"
 	"lumen/internal/runtimeevidence"
 	"lumen/internal/science/lab/compute"
@@ -56,6 +57,7 @@ type API struct {
 	approvals        *approvalHub
 	runs             *runstate.Manager
 	usage            usage.Store
+	quota            quota.Store
 	approvalStore    approvalstate.Store
 	artifactStore    artifact.Store
 	evidence         runtimeevidence.Service
@@ -1403,14 +1405,51 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	run, err := a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID)
+	limits := quota.LocalLimits()
+	startedAt := time.Now().UTC()
+	runID := ""
+	if a.auth != nil {
+		runID, err = runstate.NewRunID()
+		if err != nil {
+			sse.emit("error", err.Error())
+			return
+		}
+		if a.quota == nil {
+			err = &quota.Error{Code: quota.CodeUnavailable, Message: "quota service unavailable", NextAction: "retry_later"}
+		} else {
+			limits, err = a.quota.Admit(r.Context(), quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt})
+		}
+		if err != nil {
+			var qe *quota.Error
+			if errors.As(err, &qe) {
+				sse.emitPayload("error", map[string]any{"code": qe.Code, "error": qe.Message, "next_action": qe.NextAction})
+			} else {
+				sse.emit("error", err.Error())
+			}
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		}
+	}
+	var run runstate.Run
+	if a.auth != nil {
+		run, err = a.runs.StartOwnedID(owner, runID, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID, startedAt)
+	} else {
+		run, err = a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID)
+	}
 	if err != nil {
+		if a.auth != nil && a.quota != nil {
+			_ = a.quota.Complete(context.Background(), quota.Completion{RunID: runID, IdempotencyKey: runID + ":complete", Owner: owner, Status: "failed", CompletedAt: time.Now().UTC()})
+		}
 		a.turnsFailed.Add(1)
 		sse.emit("error", err.Error())
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 		flusher.Flush()
 		return
 	}
+	computeStartedAt := time.Now()
+	completionStatus := "failed"
+	ctrl.SetMaxSteps(limits.MaxSteps)
 	pc := ctrl.ProviderConfig()
 	pricing := usage.Pricing{}
 	providerName, modelName := "", ""
@@ -1420,17 +1459,27 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			pricing = usage.Pricing{Input: pc.Pricing.Input, Output: pc.Pricing.Output, CacheHit: pc.Pricing.CacheHit}
 		}
 	}
-	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, DefaultTurnTimeout)
+	timeout := limits.MaxWallTime
+	if timeout <= 0 {
+		timeout = DefaultTurnTimeout
+	}
+	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, timeout)
 	defer cleanupRun()
+	var runFailure quota.Failure
 	artifactCapture := &artifact.CapturingSink{Context: ctx, Store: a.artifactStore, Owner: owner, RunID: run.ID, Model: modelName, Workspace: ctrl.WorkspaceContext(), Next: hist, Failure: func(e error) {
-		_, _ = a.runs.Finish(run.ID, fmt.Errorf("artifact persistence failed: %w", e))
+		runFailure.Set(fmt.Errorf("artifact persistence failed: %w", e))
 		a.cancelActiveRun(owner, run.ID)
 	}}
-	capture := usage.CapturingSink{Store: a.usage, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: artifactCapture, Failure: func(e error) {
-		_, _ = a.runs.Finish(run.ID, fmt.Errorf("usage persistence failed: %w", e))
+	usageStore := a.usage
+	if a.auth != nil {
+		usageStore = quota.UsageStore{Usage: a.usage, Quota: a.quota}
+	}
+	capture := usage.CapturingSink{Store: usageStore, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: artifactCapture, Failure: func(e error) {
+		runFailure.Set(fmt.Errorf("usage persistence failed: %w", e))
 		a.cancelActiveRun(owner, run.ID)
 	}}
-	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, capture))
+	limited := &quota.Sink{Limits: limits, Next: a.runs.WrapSink(run.ID, capture), Failure: func(e error) { runFailure.Set(e); a.cancelActiveRun(owner, run.ID) }}
+	ctrl.BindRun(run.ID, limited)
 
 	a.turnsTotal.Add(1)
 	runErr := func() (err error) {
@@ -1441,6 +1490,21 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		return ctrl.Run(ctx, req.Prompt, mode)
 	}()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		runErr = &quota.Error{Code: quota.CodeWallTime, Message: "run wall time quota exceeded", NextAction: "start_new_run"}
+	} else if failure := runFailure.Err(); failure != nil {
+		runErr = failure
+	}
+	if runErr == nil {
+		completionStatus = "succeeded"
+	} else if errors.Is(ctx.Err(), context.Canceled) && runFailure.Err() == nil {
+		completionStatus = "canceled"
+	}
+	if a.auth != nil && a.quota != nil {
+		if completeErr := a.quota.Complete(context.Background(), quota.Completion{RunID: run.ID, IdempotencyKey: run.ID + ":complete", Owner: owner, Status: completionStatus, ComputeMillis: time.Since(computeStartedAt).Milliseconds(), CompletedAt: time.Now().UTC()}); completeErr != nil && runErr == nil {
+			runErr = fmt.Errorf("quota completion failed: %w", completeErr)
+		}
+	}
 	if _, finishErr := a.runs.Finish(run.ID, runErr); finishErr != nil {
 		if runErr == nil {
 			runErr = finishErr

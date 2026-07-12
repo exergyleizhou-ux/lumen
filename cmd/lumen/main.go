@@ -26,6 +26,7 @@ import (
 	"lumen/internal/doctor"
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/quota"
 	"lumen/internal/server"
 	"lumen/internal/tui"
 	"lumen/internal/watch"
@@ -294,11 +295,20 @@ func runServe(args []string) {
 		os.Exit(1)
 	}
 
+	var quotaStore quota.Store
+	if os.Getenv("LUMEN_HOSTED") == "true" {
+		quotaStore, err = quota.NewHTTPStore(os.Getenv("WORKBENCH_CONTROL_PLANE_URL"), os.Getenv("WORKBENCH_RUNTIME_INGEST_SECRET"), nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "quota: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	srv, err := server.New(server.Config{
 		Addr:               addr,
 		Ctrl:               ctrl,
 		Hosted:             os.Getenv("LUMEN_HOSTED") == "true",
 		WorkbenchJWTSecret: os.Getenv("WORKBENCH_JWT_SECRET"),
+		Quota:              quotaStore,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "server: %v\n", err)

@@ -230,6 +230,14 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // non-ReadOnly tool. Cache-friendly — nothing changes in the prompt.
 func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
 
+// SetMaxSteps applies a per-run hard ceiling. Controllers are tenant/run
+// scoped before this is called, so the policy cannot leak between owners.
+func (a *Agent) SetMaxSteps(v int) {
+	if v > 0 && (a.maxSteps <= 0 || v < a.maxSteps) {
+		a.maxSteps = v
+	}
+}
+
 // IsPlanMode reports whether the agent is currently in plan mode.
 func (a *Agent) IsPlanMode() bool { return a.planMode.Load() }
 
