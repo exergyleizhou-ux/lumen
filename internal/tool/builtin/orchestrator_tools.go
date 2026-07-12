@@ -170,11 +170,11 @@ func (t *CreateWorkflowTool) Execute(ctx context.Context, args json.RawMessage) 
 			t.ID = fmt.Sprintf("task-%d", i)
 		}
 		tasks = append(tasks, &orchestrator.Task{
-			ID:        t.ID,
-			Name:      t.Name,
-			Agent:     t.Agent,
-			Prompt:    t.Prompt,
-			DependsOn: t.DependsOn,
+			ID:         t.ID,
+			Name:       t.Name,
+			Agent:      t.Agent,
+			Prompt:     t.Prompt,
+			DependsOn:  t.DependsOn,
 			MaxRetries: 2,
 		})
 	}

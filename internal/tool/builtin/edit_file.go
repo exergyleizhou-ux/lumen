@@ -87,7 +87,7 @@ func (t *EditFileTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 // ── Previewer implementation ──────────────────────────────
 
-func (t *EditFileTool) Preview(args json.RawMessage) (diff.Change, error) {
+func (t *EditFileTool) Preview(ctx context.Context, args json.RawMessage) (diff.Change, error) {
 	var p struct {
 		Path      string `json:"path"`
 		OldString string `json:"old_string"`

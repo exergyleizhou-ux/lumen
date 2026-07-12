@@ -27,12 +27,12 @@ func init() {
 // ── Shared state ────────────────────────────────────────────────────────────
 
 var (
-	sealMgr     *seal.Manager
-	sealOnce    sync.Once
-	notaryInst  *notary.Notary
-	notaryOnce  sync.Once
-	hashChain   *notary.HashChain
-	hashOnce    sync.Once
+	sealMgr    *seal.Manager
+	sealOnce   sync.Once
+	notaryInst *notary.Notary
+	notaryOnce sync.Once
+	hashChain  *notary.HashChain
+	hashOnce   sync.Once
 )
 
 // auditStoreFn returns the audit store the audit_query tool reads. It is a var so
@@ -60,7 +60,6 @@ func getHashChain() *notary.HashChain {
 	})
 	return hashChain
 }
-
 
 // ── seal_data ───────────────────────────────────────────────────────────────
 

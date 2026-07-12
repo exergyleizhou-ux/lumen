@@ -17,8 +17,9 @@ func init() {
 }
 
 type ModelListTool struct{}
-func (t *ModelListTool) Name() string     { return "model_list" }
-func (t *ModelListTool) ReadOnly() bool   { return true }
+
+func (t *ModelListTool) Name() string   { return "model_list" }
+func (t *ModelListTool) ReadOnly() bool { return true }
 func (t *ModelListTool) Description() string {
 	return "List all supported AI models across all providers (OpenAI, Anthropic, DeepSeek, Grok, Kimi, Qwen, GLM, Mimo, Gemini). Shows model name, provider, and API endpoint."
 }
@@ -68,8 +69,9 @@ func (t *ModelListTool) Execute(ctx context.Context, args json.RawMessage) (stri
 }
 
 type ModelPresetTool struct{}
-func (t *ModelPresetTool) Name() string     { return "model_preset" }
-func (t *ModelPresetTool) ReadOnly() bool   { return true }
+
+func (t *ModelPresetTool) Name() string   { return "model_preset" }
+func (t *ModelPresetTool) ReadOnly() bool { return true }
 func (t *ModelPresetTool) Description() string {
 	return "Show how to configure a specific model in lumen.toml. Shows the provider kind, base URL, and example TOML config."
 }
@@ -78,7 +80,9 @@ func (t *ModelPresetTool) Schema() json.RawMessage {
 }
 func (t *ModelPresetTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct{ Name string }
-	if err := json.Unmarshal(args, &p); err != nil { return "", err }
+	if err := json.Unmarshal(args, &p); err != nil {
+		return "", err
+	}
 
 	preset := config.FindPreset(p.Name)
 	if preset == nil {

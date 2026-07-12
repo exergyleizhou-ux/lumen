@@ -157,3 +157,41 @@ func TestBuiltins(t *testing.T) {
 	// but at minimum, the map should exist
 	_ = Builtins()
 }
+
+type effectTool struct {
+	testTool
+	effects Effects
+}
+
+func (t *effectTool) Effects() Effects { return t.effects }
+
+func TestEffectsOfUsesExplicitContractAndSafeFallback(t *testing.T) {
+	cases := []struct {
+		name string
+		tool Tool
+		want Effects
+	}{
+		{
+			name: "explicit command",
+			tool: &effectTool{testTool: testTool{name: "bash"}, effects: Effects{RunsCommands: true}},
+			want: Effects{RunsCommands: true},
+		},
+		{
+			name: "legacy read",
+			tool: &testTool{name: "read", readOnly: true},
+			want: Effects{},
+		},
+		{
+			name: "legacy writer remains conservative",
+			tool: &testTool{name: "write", readOnly: false},
+			want: Effects{WritesFiles: true},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EffectsOf(tc.tool); got != tc.want {
+				t.Fatalf("EffectsOf()=%+v want %+v", got, tc.want)
+			}
+		})
+	}
+}

@@ -34,9 +34,11 @@ func memStore() *memory.Store { return globalMemStore.Load() }
 
 type RememberTool struct{}
 
-func (t *RememberTool) Name() string        { return "remember" }
-func (t *RememberTool) Description() string { return "Save a fact to persistent user memory. Memories survive across sessions and are loaded into the system prompt on startup. Use for user preferences, project constraints, or important facts worth keeping." }
-func (t *RememberTool) ReadOnly() bool      { return false }
+func (t *RememberTool) Name() string { return "remember" }
+func (t *RememberTool) Description() string {
+	return "Save a fact to persistent user memory. Memories survive across sessions and are loaded into the system prompt on startup. Use for user preferences, project constraints, or important facts worth keeping."
+}
+func (t *RememberTool) ReadOnly() bool { return false }
 
 func (t *RememberTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -97,9 +99,11 @@ func (t *RememberTool) Execute(ctx context.Context, args json.RawMessage) (strin
 
 type ForgetTool struct{}
 
-func (t *ForgetTool) Name() string        { return "forget" }
-func (t *ForgetTool) Description() string { return "Delete a saved memory by name. Use when a memory is wrong, stale, or superseded." }
-func (t *ForgetTool) ReadOnly() bool      { return false }
+func (t *ForgetTool) Name() string { return "forget" }
+func (t *ForgetTool) Description() string {
+	return "Delete a saved memory by name. Use when a memory is wrong, stale, or superseded."
+}
+func (t *ForgetTool) ReadOnly() bool { return false }
 
 func (t *ForgetTool) Schema() json.RawMessage {
 	return json.RawMessage(`{
@@ -131,9 +135,11 @@ func (t *ForgetTool) Execute(ctx context.Context, args json.RawMessage) (string,
 
 type MemoriesTool struct{}
 
-func (t *MemoriesTool) Name() string        { return "memories" }
-func (t *MemoriesTool) Description() string { return "List all saved user memories with their names, titles, kinds, and descriptions." }
-func (t *MemoriesTool) ReadOnly() bool      { return true }
+func (t *MemoriesTool) Name() string { return "memories" }
+func (t *MemoriesTool) Description() string {
+	return "List all saved user memories with their names, titles, kinds, and descriptions."
+}
+func (t *MemoriesTool) ReadOnly() bool { return true }
 
 func (t *MemoriesTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type": "object", "properties": {}}`)

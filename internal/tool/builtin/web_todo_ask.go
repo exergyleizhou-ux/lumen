@@ -312,9 +312,9 @@ func (t *AskTool) Execute(ctx context.Context, args json.RawMessage) (string, er
 	// event.AskQuestion's JSON tag is "multi_select", so parse explicitly).
 	var in struct {
 		Questions []struct {
-			Header      string `json:"header"`
-			Question    string `json:"question"`
-			Options     []struct {
+			Header   string `json:"header"`
+			Question string `json:"question"`
+			Options  []struct {
 				Label       string `json:"label"`
 				Description string `json:"description"`
 			} `json:"options"`
@@ -378,8 +378,8 @@ func formatAskAnswers(questions []event.AskQuestion, answers []event.AskAnswer) 
 // WebSearchTool searches the web via Brave or Bing API.
 type WebSearchTool struct{}
 
-func (t *WebSearchTool) Name() string     { return "web_search" }
-func (t *WebSearchTool) ReadOnly() bool   { return true }
+func (t *WebSearchTool) Name() string   { return "web_search" }
+func (t *WebSearchTool) ReadOnly() bool { return true }
 
 func (t *WebSearchTool) Description() string {
 	return "Search the web using Brave or Bing Search API. Returns title, URL, and description for each result."

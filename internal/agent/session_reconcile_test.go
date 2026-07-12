@@ -13,15 +13,15 @@ func TestReconcileLoad(t *testing.T) {
 	rowBye, _ := marshalMsg(provider.Message{Role: provider.RoleAssistant, Content: "bye"})
 
 	tests := []struct {
-		name          string
-		state         jsonlFileState
-		jsonl         []provider.Message
-		sqlite        [][]byte
-		wantLen       int
-		wantFirst     string
-		wantClear     bool
-		wantReplace   bool
-		wantMigrate   bool
+		name        string
+		state       jsonlFileState
+		jsonl       []provider.Message
+		sqlite      [][]byte
+		wantLen     int
+		wantFirst   string
+		wantClear   bool
+		wantReplace bool
+		wantMigrate bool
 	}{
 		{
 			name:    "unreadable_no_sqlite_empty_session",

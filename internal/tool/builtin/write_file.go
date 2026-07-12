@@ -56,7 +56,7 @@ func (t *WriteFileTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 // ── Previewer implementation ──────────────────────────────
 
-func (t *WriteFileTool) Preview(args json.RawMessage) (diff.Change, error) {
+func (t *WriteFileTool) Preview(ctx context.Context, args json.RawMessage) (diff.Change, error) {
 	var p struct {
 		Path    string `json:"path"`
 		Content string `json:"content"`

@@ -186,6 +186,17 @@ func (t *testFailingTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return "", errors.New("simulated failure")
 }
 
+type testCommandTool struct{}
+
+func (t *testCommandTool) Name() string            { return "command_test" }
+func (t *testCommandTool) Description() string     { return "test command tool" }
+func (t *testCommandTool) ReadOnly() bool          { return false }
+func (t *testCommandTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
+func (t *testCommandTool) Effects() tool.Effects   { return tool.Effects{RunsCommands: true} }
+func (t *testCommandTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return "command ok", nil
+}
+
 // ── Test agent helpers ─────────────────────────────────────
 
 func testRegistry() *tool.Registry {
@@ -217,6 +228,21 @@ func TestExecuteOneUnknownTool(t *testing.T) {
 	})
 	if outcome.errMsg == "" {
 		t.Error("unknown tool should return error")
+	}
+}
+
+func TestCommandEffectDoesNotReportFileWrite(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(&testCommandTool{})
+	a := New(&mockProvider{name: "test"}, reg, NewSession(""), Options{MaxSteps: 3})
+	outcome := a.executeOne(context.Background(), provider.ToolCall{
+		ID: "command-1", Name: "command_test", Arguments: "{}",
+	})
+	if outcome.errMsg != "" {
+		t.Fatalf("command failed: %s", outcome.errMsg)
+	}
+	if outcome.wroteFile {
+		t.Fatal("command-only effects must not trigger edit verification")
 	}
 }
 

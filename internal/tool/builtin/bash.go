@@ -59,8 +59,8 @@ func init() {
 // with kill_shell.
 type BashTool struct{}
 
-func (t *BashTool) Name() string     { return "bash" }
-func (t *BashTool) ReadOnly() bool   { return false }
+func (t *BashTool) Name() string   { return "bash" }
+func (t *BashTool) ReadOnly() bool { return false }
 
 func (t *BashTool) Description() string {
 	return "Execute a command in the shell and return combined stdout/stderr. Use for builds, tests, git, package managers, etc. To search/read/list/edit files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file) over shell grep/cat/ls/find/sed — they behave identically on every OS. For symbol search, call graphs, or architecture questions, use codegraph tools instead of grep."
@@ -147,8 +147,8 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 // BashOutputTool reads new output from a background bash job.
 type BashOutputTool struct{}
 
-func (t *BashOutputTool) Name() string     { return "bash_output" }
-func (t *BashOutputTool) ReadOnly() bool   { return true }
+func (t *BashOutputTool) Name() string   { return "bash_output" }
+func (t *BashOutputTool) ReadOnly() bool { return true }
 
 func (t *BashOutputTool) Description() string {
 	return "Read new output from a background job started with bash(run_in_background=true) or task(run_in_background=true). Returns the output produced since the last bash_output call for that job, plus its status (running/done/failed/killed). Does not block."
@@ -228,8 +228,8 @@ func filterLines(output, filter string) string {
 // WaitTool blocks until a background job finishes.
 type WaitTool struct{}
 
-func (t *WaitTool) Name() string     { return "wait" }
-func (t *WaitTool) ReadOnly() bool   { return true }
+func (t *WaitTool) Name() string   { return "wait" }
+func (t *WaitTool) ReadOnly() bool { return true }
 
 func (t *WaitTool) Description() string {
 	return "Block until background jobs finish, then return each job's status and final output/answer. Use to collect the result of a task(run_in_background) or bash(run_in_background) before continuing. Omit job_ids to wait for every running job."
@@ -294,8 +294,8 @@ func (t *WaitTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 // KillShellTool terminates a running background job.
 type KillShellTool struct{}
 
-func (t *KillShellTool) Name() string     { return "kill_shell" }
-func (t *KillShellTool) ReadOnly() bool   { return false }
+func (t *KillShellTool) Name() string   { return "kill_shell" }
+func (t *KillShellTool) ReadOnly() bool { return false }
 
 func (t *KillShellTool) Description() string {
 	return "Terminate a running background job (bash or task) started with run_in_background. A no-op if the job has already finished or the id is unknown."
