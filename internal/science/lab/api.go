@@ -317,6 +317,9 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, err)
 			return
 		}
+		if items == nil {
+			items = []artifact.Record{}
+		}
 		writeJSON(w, 200, map[string]any{"artifacts": items})
 		return
 	}

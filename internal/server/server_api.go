@@ -134,6 +134,9 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			jsonErr(w, err.Error(), 500)
 			return
 		}
+		if items == nil {
+			items = []artifact.Record{}
+		}
 		jsonOK(w, map[string]any{"artifacts": items})
 		return
 	}
