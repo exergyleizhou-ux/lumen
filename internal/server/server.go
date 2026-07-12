@@ -32,7 +32,6 @@ import (
 	"lumen/internal/memory"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
-	"lumen/internal/workspace"
 )
 
 // Config holds the server configuration.
@@ -258,51 +257,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// SSE sink — emits each event as an SSE data frame
 	sink := sseSink{w: w, flusher: flusher}
-	owner := ownerFromRequest(r)
-	ctrl := s.cfg.Ctrl
-	var hostedWorkspace workspace.Context
-	poolSession := "local"
-	if id, ok := hostedauth.FromContext(r.Context()); ok {
-		poolSession = id.SessionID
-		root := os.Getenv("HOSTED_WORKSPACE_ROOT")
-		if root == "" {
-			jsonErr(w, "hosted workspace root unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if err := os.MkdirAll(root, 0o700); err != nil {
-			jsonErr(w, "hosted workspace unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		guard, err := workspace.NewLocal("hosted", root, "host", nil)
-		if err != nil {
-			jsonErr(w, "hosted workspace unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		tenantRoot, err := guard.Backend.Resolve(filepath.Join(owner.UserID, owner.WorkspaceID), true)
-		if err != nil {
-			jsonErr(w, "invalid workspace", http.StatusBadRequest)
-			return
-		}
-		if err := os.MkdirAll(tenantRoot, 0o700); err != nil {
-			jsonErr(w, "workspace unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		ws, err := workspace.NewLocal(owner.WorkspaceID, tenantRoot, owner.UserID, nil)
-		if err != nil {
-			jsonErr(w, "workspace unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		entry, err := s.controllers.acquire(owner, poolSession, ws)
-		if err != nil {
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_ = json.NewEncoder(w).Encode(map[string]any{"error": "controller capacity reached", "next_action": "retry with backoff"})
-			return
-		}
-		defer s.controllers.release(owner, poolSession)
-		ctrl = entry.Controller
-		hostedWorkspace = ws
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
 	}
+	defer s.releaseRuntime(rt)
+	owner, ctrl := rt.owner, rt.ctrl
 
 	// Serialize turns: the shared Controller/Agent/Session is not safe for
 	// concurrent Configure+Run. One chat at a time (acceptable for a single-
@@ -324,12 +284,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var configureErr error
-	if hostedWorkspace.Backend != nil {
-		configureErr = ctrl.ConfigureWithOptions(sink, nil, "", control.ConfigureOptions{Workspace: hostedWorkspace})
-	} else {
-		configureErr = ctrl.Configure(sink, nil, "")
-	}
+	configureErr := s.configureRuntime(rt, sink, "")
 	if configureErr != nil {
 		sink.emit("turn_started", "")
 		sink.emit("error", configureErr.Error())
@@ -435,8 +390,13 @@ func (s sseSink) emitPayload(kind string, payload map[string]any) {
 
 // ── REST ────────────────────────────────────────────────────
 
-func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	ctrl := s.cfg.Ctrl
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	ctrl := rt.ctrl
 	jsonOK(w, map[string]any{
 		"provider": ctrl.ProviderName(),
 		"model":    ctrl.ModelName(),
@@ -446,16 +406,29 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 	jsonOK(w, map[string]any{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
-		"agent":  s.statusData(),
+		"agent":  statusData(rt.ctrl),
 	})
 }
 
-func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
-	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	histDir := filepath.Join(rt.ws.Root, ".lumen", "history")
+	if s.auth == nil {
+		histDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	}
 	entries, _ := os.ReadDir(histDir)
 	var sessions []map[string]any
 	for _, e := range entries {
@@ -473,7 +446,16 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
-	store, err := memory.NewStore(s.memDir)
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	memDir := filepath.Join(rt.ws.Root, ".lumen", "memories")
+	if s.auth == nil {
+		memDir = s.memDir
+	}
+	store, err := memory.NewStore(memDir)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return

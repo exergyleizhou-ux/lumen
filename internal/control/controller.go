@@ -79,6 +79,7 @@ type Controller struct {
 	memStore          *memory.Store      // persistent user memories
 	extraMemoryPrompt string             // appended to memory block (e.g. science lab system context)
 	workspace         runworkspace.Context
+	timelinePath      string
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -96,6 +97,8 @@ func New() *Controller {
 type ConfigureOptions struct {
 	Workspace    runworkspace.Context
 	ToolsProfile string
+	// DataRoot scopes sessions, memories and timeline. Empty preserves CLI paths.
+	DataRoot string
 }
 
 // sink returns the current event sink (never nil).
@@ -287,7 +290,12 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 	}, maxParallel)
 
 	// 8. Init timeline recorder (session replay + change inbox)
-	tl, err := timeline.NewRecorder(".lumen/timeline.jsonl")
+	timelinePath := filepath.Join(".lumen", "timeline.jsonl")
+	if opts.DataRoot != "" {
+		timelinePath = filepath.Join(opts.DataRoot, "timeline.jsonl")
+	}
+	c.timelinePath = timelinePath
+	tl, err := timeline.NewRecorder(timelinePath)
 	if err != nil {
 		c.logf("timeline: %v (replay disabled)", err)
 	} else {
@@ -302,6 +310,9 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 	// Large sessions (>30 messages) are not reused to avoid context window overflow
 	// on the first turn of a new run.
 	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	if opts.DataRoot != "" {
+		histDir = filepath.Join(opts.DataRoot, "history")
+	}
 	os.MkdirAll(histDir, 0700)
 	sessPath := filepath.Join(histDir, time.Now().Format("2006-01-02-150405")+".jsonl")
 
@@ -318,6 +329,9 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 
 	// 10. Init persistent memory store (~/.lumen/memories/)
 	memDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
+	if opts.DataRoot != "" {
+		memDir = filepath.Join(opts.DataRoot, "memories")
+	}
 	memStore, err := memory.NewStore(memDir)
 	if err != nil {
 		c.logf("memory: %v (disabled)", err)
@@ -634,13 +648,20 @@ func (c *Controller) approveCallback() permission.Asker {
 // LoadSession switches the active conversation to a persisted JSONL history file.
 // The name must be a bare filename (e.g. "2026-07-03-194241.jsonl").
 func (c *Controller) LoadSession(name string) error {
+	return c.LoadSessionFromDir(filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history"), name)
+}
+
+// LoadSessionFromDir switches to a session inside the caller's guarded history directory.
+func (c *Controller) LoadSessionFromDir(histDir, name string) error {
 	if strings.Contains(name, "/") || strings.Contains(name, "..") {
 		return fmt.Errorf("invalid session name")
 	}
 	if !strings.HasSuffix(name, ".jsonl") {
 		name += ".jsonl"
 	}
-	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	if err := os.MkdirAll(histDir, 0700); err != nil {
+		return fmt.Errorf("session directory: %w", err)
+	}
 	path := filepath.Join(histDir, name)
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("session not found: %s", name)
@@ -674,7 +695,7 @@ func (c *Controller) TimelinePath() string {
 	if c.tl == nil {
 		return ""
 	}
-	return ".lumen/timeline.jsonl"
+	return c.timelinePath
 }
 
 // Close shuts down infrastructure (timeline, jobs, etc).

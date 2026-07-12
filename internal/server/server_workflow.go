@@ -12,12 +12,35 @@ import (
 
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
+	"lumen/internal/workspace"
 )
 
 // planState tracks the workflow review gate (mirrors cmd/lumen/terminal.go).
 type planState struct {
 	lastPlan  string
 	planReady bool
+}
+
+func (s *Server) setRuntimePlanReady(rt *requestRuntime, prompt string) {
+	if rt.entry == nil {
+		s.setPlanReady(prompt)
+		return
+	}
+	rt.entry.Plan.lastPlan, rt.entry.Plan.planReady = prompt, true
+}
+func (s *Server) clearRuntimePlan(rt *requestRuntime) {
+	if rt.entry == nil {
+		s.clearPlan()
+		return
+	}
+	rt.entry.Plan = planState{}
+}
+func (s *Server) runtimePlanStatus(rt *requestRuntime) (bool, string) {
+	if rt.entry == nil {
+		return s.planStatus()
+	}
+	return rt.entry.Plan.planReady, rt.entry.Plan.lastPlan
 }
 
 // workflowEmit streams workflow events to SSE (nil discards).
@@ -43,17 +66,17 @@ func (s *Server) planStatus() (ready bool, prompt string) {
 	return s.plan.planReady, s.plan.lastPlan
 }
 
-func (s *Server) execWorkflowCommand(cmd, apiKey, provider string) (string, any, error) {
+func (s *Server) execWorkflowCommandRuntime(rt *requestRuntime, cmd, apiKey, provider string) (string, any, error) {
 	lower := strings.ToLower(strings.TrimSpace(cmd))
 
 	var action, prompt string
 	switch {
 	case lower == "/reject":
-		ready, _ := s.planStatus()
+		ready, _ := s.runtimePlanStatus(rt)
 		if !ready {
 			return "no plan to reject", map[string]any{"plan_ready": false}, nil
 		}
-		s.clearPlan()
+		s.clearRuntimePlan(rt)
 		return "✗ plan rejected", map[string]any{"rejected": true}, nil
 	case strings.HasPrefix(lower, "/workflow "):
 		action, prompt = "workflow", strings.TrimSpace(cmd[len("/workflow "):])
@@ -71,7 +94,14 @@ func (s *Server) execWorkflowCommand(cmd, apiKey, provider string) (string, any,
 	defer s.turnMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	return s.runWorkflowAction(ctx, action, prompt, apiKey, provider, "", nil)
+	return s.runWorkflowAction(rt, ctx, action, prompt, apiKey, provider, "", nil)
+}
+
+func (s *Server) execWorkflowCommand(cmd, apiKey, provider string) (string, any, error) {
+	rt := &requestRuntime{owner: runstate.LocalOwner, session: "local", ctrl: s.cfg.Ctrl}
+	wd, _ := os.Getwd()
+	rt.ws, _ = workspace.NewLocal("local", wd, "", nil)
+	return s.execWorkflowCommandRuntime(rt, cmd, apiKey, provider)
 }
 
 func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
@@ -90,9 +120,14 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "action required", http.StatusBadRequest)
 		return
 	}
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 
 	if req.Action == "reject" {
-		text, data, err := s.execWorkflowCommand("/reject", "", "")
+		text, data, err := s.execWorkflowCommandRuntime(rt, "/reject", "", "")
 		if err != nil {
 			jsonErr(w, err.Error(), http.StatusBadRequest)
 			return
@@ -119,26 +154,26 @@ func (s *Server) handleWorkflow(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 
-	_, _, _ = s.runWorkflowAction(ctx, req.Action, req.Prompt, req.APIKey, req.Provider, "", emit)
+	_, _, _ = s.runWorkflowAction(rt, ctx, req.Action, req.Prompt, req.APIKey, req.Provider, "", emit)
 
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
 }
 
 // runWorkflowAction is the single orchestrator for sync (/v1/command) and SSE (/v1/workflow).
-func (s *Server) runWorkflowAction(ctx context.Context, action, prompt, apiKey, provider, cfgPath string, emit workflowEmit) (string, map[string]any, error) {
+func (s *Server) runWorkflowAction(rt *requestRuntime, ctx context.Context, action, prompt, apiKey, provider, cfgPath string, emit workflowEmit) (string, map[string]any, error) {
 	if emit == nil {
 		emit = func(_, _ string) {}
 	}
 	applyRuntimeKey(apiKey, provider)
 
 	if workflowDemoOnly(apiKey) {
-		return s.runWorkflowDemo(action, prompt, emit)
+		return s.runWorkflowDemo(rt, action, prompt, emit)
 	}
 
 	collector := &textCollector{}
 	sink := workflowEventSink(collector, emit)
-	if err := s.cfg.Ctrl.Configure(sink, nil, cfgPath); err != nil {
+	if err := s.configureRuntime(rt, sink, cfgPath); err != nil {
 		emit("error", err.Error())
 		return "", nil, err
 	}
@@ -157,32 +192,32 @@ func (s *Server) runWorkflowAction(ctx context.Context, action, prompt, apiKey, 
 			return "", nil, fmt.Errorf("prompt required")
 		}
 		emit("phase", "📋 Plan phase (read-only)")
-		s.cfg.Ctrl.SetPermissionMode(permission.ModePlan)
-		if err := s.cfg.Ctrl.Plan(ctx, prompt); err != nil {
+		rt.ctrl.SetPermissionMode(permission.ModePlan)
+		if err := rt.ctrl.Plan(ctx, prompt); err != nil {
 			emit("error", err.Error())
 			return "", nil, err
 		}
-		s.setPlanReady(prompt)
+		s.setRuntimePlanReady(rt, prompt)
 		emit("plan_ready", prompt)
 		return strings.TrimSpace("📋 Plan ready — review above, then /execute or /reject\n\n" + body()),
 			map[string]any{"plan_ready": true, "prompt": prompt}, nil
 
 	case "execute":
-		ready, p := s.planStatus()
+		ready, p := s.runtimePlanStatus(rt)
 		if !ready {
 			emit("error", "no plan ready — use workflow first")
 			return "no plan ready — use /workflow <task> first", map[string]any{"plan_ready": false}, nil
 		}
 		emit("phase", "🚀 Executing plan")
-		if ag := s.cfg.Ctrl.Agent(); ag != nil {
+		if ag := rt.ctrl.Agent(); ag != nil {
 			ag.SetPlanMode(false)
 		}
-		s.cfg.Ctrl.SetPermissionMode(permission.ModeBypass)
-		if err := s.cfg.Ctrl.Run(ctx, p); err != nil {
+		rt.ctrl.SetPermissionMode(permission.ModeBypass)
+		if err := rt.ctrl.Run(ctx, p); err != nil {
 			emit("error", err.Error())
 			return "", nil, err
 		}
-		s.clearPlan()
+		s.clearRuntimePlan(rt)
 		emit("workflow_done", "complete")
 		return strings.TrimSpace("🚀 Executing plan…\n\n" + body()),
 			map[string]any{"executed": true, "prompt": p}, nil
@@ -193,18 +228,18 @@ func (s *Server) runWorkflowAction(ctx context.Context, action, prompt, apiKey, 
 			return "", nil, fmt.Errorf("prompt required")
 		}
 		emit("phase", "⚡ Ultra: plan → auto-execute")
-		s.cfg.Ctrl.SetPermissionMode(permission.ModePlan)
-		if err := s.cfg.Ctrl.Plan(ctx, prompt); err != nil {
+		rt.ctrl.SetPermissionMode(permission.ModePlan)
+		if err := rt.ctrl.Plan(ctx, prompt); err != nil {
 			emit("error", err.Error())
 			return "", nil, err
 		}
 		planText := body()
-		if ag := s.cfg.Ctrl.Agent(); ag != nil {
+		if ag := rt.ctrl.Agent(); ag != nil {
 			ag.SetPlanMode(false)
 		}
-		s.cfg.Ctrl.SetPermissionMode(permission.ModeBypass)
+		rt.ctrl.SetPermissionMode(permission.ModeBypass)
 		emit("phase", "🚀 Executing")
-		if err := s.cfg.Ctrl.Run(ctx, prompt); err != nil {
+		if err := rt.ctrl.Run(ctx, prompt); err != nil {
 			emit("error", err.Error())
 			return "", nil, err
 		}
@@ -218,7 +253,7 @@ func (s *Server) runWorkflowAction(ctx context.Context, action, prompt, apiKey, 
 			return "", nil, fmt.Errorf("prompt required")
 		}
 		emit("phase", "🎯 Goal: autonomous execution")
-		if err := s.cfg.Ctrl.Run(ctx, prompt); err != nil {
+		if err := rt.ctrl.Run(ctx, prompt); err != nil {
 			emit("error", err.Error())
 			return "", nil, err
 		}
@@ -232,7 +267,7 @@ func (s *Server) runWorkflowAction(ctx context.Context, action, prompt, apiKey, 
 	}
 }
 
-func (s *Server) runWorkflowDemo(action, prompt string, emit workflowEmit) (string, map[string]any, error) {
+func (s *Server) runWorkflowDemo(rt *requestRuntime, action, prompt string, emit workflowEmit) (string, map[string]any, error) {
 	switch action {
 	case "workflow":
 		if strings.TrimSpace(prompt) == "" {
@@ -242,13 +277,13 @@ func (s *Server) runWorkflowDemo(action, prompt string, emit workflowEmit) (stri
 		emit("phase", "📋 Plan phase (read-only)")
 		text := "[Demo mode] Plan for: " + prompt
 		emit("text", text)
-		s.setPlanReady(prompt)
+		s.setRuntimePlanReady(rt, prompt)
 		emit("plan_ready", prompt)
 		return strings.TrimSpace("📋 Plan ready — review above, then /execute or /reject\n\n" + text),
 			map[string]any{"plan_ready": true, "prompt": prompt}, nil
 
 	case "execute":
-		ready, p := s.planStatus()
+		ready, p := s.runtimePlanStatus(rt)
 		if !ready {
 			emit("error", "no plan ready — use workflow first")
 			return "no plan ready — use /workflow <task> first", map[string]any{"plan_ready": false}, nil
@@ -256,7 +291,7 @@ func (s *Server) runWorkflowDemo(action, prompt string, emit workflowEmit) (stri
 		emit("phase", "🚀 Executing plan")
 		text := "[Demo mode] Executed plan: " + p
 		emit("text", text)
-		s.clearPlan()
+		s.clearRuntimePlan(rt)
 		emit("workflow_done", "complete")
 		return strings.TrimSpace("🚀 Executing plan…\n\n" + text),
 			map[string]any{"executed": true, "prompt": p}, nil

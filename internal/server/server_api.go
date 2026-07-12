@@ -20,6 +20,7 @@ import (
 	"lumen/internal/runstate"
 	"lumen/internal/skill"
 	"lumen/internal/timeline"
+	"lumen/internal/workspace"
 )
 
 func (s *Server) routesAPI() {
@@ -114,7 +115,12 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMode(w http.ResponseWriter, r *http.Request) {
-	ctrl := s.cfg.Ctrl
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	ctrl := rt.ctrl
 	switch r.Method {
 	case http.MethodGet:
 		jsonOK(w, map[string]any{
@@ -154,7 +160,12 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "command required", http.StatusBadRequest)
 		return
 	}
-	text, data, err := s.execCommand(strings.TrimSpace(req.Command), req.APIKey, req.Provider)
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	text, data, err := s.execCommand(rt, strings.TrimSpace(req.Command), req.APIKey, req.Provider)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusBadRequest)
 		return
@@ -162,19 +173,19 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"text": text, "data": data})
 }
 
-func (s *Server) execCommand(cmd, apiKey, provider string) (string, any, error) {
-	ctrl := s.cfg.Ctrl
+func (s *Server) execCommand(rt *requestRuntime, cmd, apiKey, provider string) (string, any, error) {
+	ctrl := rt.ctrl
 	lower := strings.ToLower(cmd)
 
 	switch {
 	case lower == "/help":
 		return helpText(), nil, nil
 	case lower == "/status":
-		return s.formatStatus(), s.statusData(), nil
+		return formatStatus(ctrl), statusData(ctrl), nil
 	case lower == "/cost":
-		return s.formatCost(), s.costData(), nil
+		return formatCost(ctrl), costData(ctrl), nil
 	case lower == "/cache":
-		return s.formatCache(), s.cacheData(), nil
+		return formatCache(ctrl), cacheData(ctrl), nil
 	case lower == "/models":
 		return formatModels(), map[string]any{"presets": config.ModelPresets()}, nil
 	case strings.HasPrefix(lower, "/model "):
@@ -203,28 +214,28 @@ func (s *Server) execCommand(cmd, apiKey, provider string) (string, any, error) 
 		return fmt.Sprintf("rewound %d file(s): %s", len(rewound), strings.Join(rewound, ", ")),
 			map[string]any{"rewound": rewound}, nil
 	case lower == "/replay":
-		entries, err := timeline.LoadTimeline(s.timelinePath())
+		entries, err := timeline.LoadTimeline(timelinePath(ctrl, rt.ws))
 		if err != nil || len(entries) == 0 {
 			return "no timeline yet", nil, nil
 		}
 		return timeline.FormatTimeline(entries), map[string]any{"entries": entries}, nil
 	case lower == "/changes":
-		changes, err := timeline.LoadChanges(s.timelinePath())
+		changes, err := timeline.LoadChanges(timelinePath(ctrl, rt.ws))
 		if err != nil || len(changes) == 0 {
 			return "no changes yet", nil, nil
 		}
 		return timeline.FormatChanges(changes), map[string]any{"changes": changes}, nil
 	case lower == "/skills":
-		return s.formatSkills(), s.skillsData(), nil
+		return formatSkills(ctrl), skillsData(ctrl), nil
 	case lower == "/execute", lower == "/reject",
 		strings.HasPrefix(lower, "/workflow "),
 		strings.HasPrefix(lower, "/ultra "),
 		strings.HasPrefix(lower, "/goal "):
-		return s.execWorkflowCommand(cmd, apiKey, provider)
+		return s.execWorkflowCommandRuntime(rt, cmd, apiKey, provider)
 	default:
 		if strings.HasPrefix(cmd, "/") && !strings.Contains(cmd, " ") {
 			name := strings.TrimPrefix(cmd, "/")
-			if sk := s.findSkill(name); sk != nil {
+			if sk := findSkill(ctrl, name); sk != nil {
 				return fmt.Sprintf("skill: %s — send a message to invoke via run_skill", sk.Name),
 					map[string]any{"skill": sk}, nil
 			}
@@ -238,7 +249,12 @@ func (s *Server) handleSkills(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	jsonOK(w, s.skillsData())
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	jsonOK(w, skillsData(rt.ctrl))
 }
 
 func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +262,11 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 	cfg, err := config.LoadWithEnv(config.FindConfig(), config.FindDotEnv())
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
@@ -260,8 +281,13 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 	kind := r.URL.Query().Get("kind")
-	path := s.timelinePath()
+	path := timelinePath(rt.ctrl, rt.ws)
 	switch kind {
 	case "changes":
 		changes, err := timeline.LoadChanges(path)
@@ -285,7 +311,12 @@ func (s *Server) handleRewind(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	rewound, err := s.cfg.Ctrl.Rewind()
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	rewound, err := rt.ctrl.Rewind()
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusBadRequest)
 		return
@@ -305,15 +336,22 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "name required", http.StatusBadRequest)
 		return
 	}
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
-	if err := s.cfg.Ctrl.LoadSession(strings.TrimSpace(req.Name)); err != nil {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	histDir := filepath.Join(rt.ws.Root, ".lumen", "history")
+	if s.auth == nil {
+		histDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	}
+	if err := rt.ctrl.LoadSessionFromDir(histDir, strings.TrimSpace(req.Name)); err != nil {
 		jsonErr(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	jsonOK(w, map[string]any{
 		"resumed":  req.Name,
-		"messages": s.cfg.Ctrl.Session().Len(),
+		"messages": rt.ctrl.Session().Len(),
 	})
 }
 
@@ -330,7 +368,16 @@ func (s *Server) handleSessionContent(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(name, ".jsonl") {
 		name += ".jsonl"
 	}
-	path := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history", name)
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	histDir := filepath.Join(rt.ws.Root, ".lumen", "history")
+	if s.auth == nil {
+		histDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	}
+	path := filepath.Join(histDir, name)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		jsonErr(w, "session not found", http.StatusNotFound)
@@ -366,12 +413,15 @@ func (s *Server) handleSessionContent(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ─────────────────────────────────────────────────
 
-func (s *Server) timelinePath() string {
-	p := s.cfg.Ctrl.TimelinePath()
+func timelinePath(ctrl *control.Controller, ws workspace.Context) string {
+	p := ctrl.TimelinePath()
 	if p == "" {
-		return filepath.Join(".lumen", "timeline.jsonl")
+		return filepath.Join(ws.Root, ".lumen", "timeline.jsonl")
 	}
-	return p
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(ws.Root, p)
 }
 
 func parseUIMode(s string) permission.Mode {
@@ -422,8 +472,7 @@ Commands:
 `)
 }
 
-func (s *Server) formatStatus() string {
-	ctrl := s.cfg.Ctrl
+func formatStatus(ctrl *control.Controller) string {
 	ag := ctrl.Agent()
 	var ti, to int
 	pct := 0
@@ -443,8 +492,7 @@ func (s *Server) formatStatus() string {
 		float64(ti+to)/1000, pct)
 }
 
-func (s *Server) statusData() map[string]any {
-	ctrl := s.cfg.Ctrl
+func statusData(ctrl *control.Controller) map[string]any {
 	ag := ctrl.Agent()
 	out := map[string]any{
 		"provider": ctrl.ProviderName(),
@@ -467,14 +515,14 @@ func (s *Server) statusData() map[string]any {
 	return out
 }
 
-func (s *Server) formatCost() string {
-	d := s.costData()
+func formatCost(ctrl *control.Controller) string {
+	d := costData(ctrl)
 	return fmt.Sprintf("session tokens: %.1fk · est. cost $%.4f",
 		d["total_tokens_k"], d["cost_usd"])
 }
 
-func (s *Server) costData() map[string]any {
-	ag := s.cfg.Ctrl.Agent()
+func costData(ctrl *control.Controller) map[string]any {
+	ag := ctrl.Agent()
 	var ti, to int64
 	if ag != nil {
 		hit, miss := ag.SessionCache()
@@ -484,7 +532,7 @@ func (s *Server) costData() map[string]any {
 			to = int64(last.CompletionTokens)
 		}
 	}
-	cost := estimateCost(s.cfg.Ctrl)
+	cost := estimateCost(ctrl)
 	return map[string]any{
 		"input_tokens":   ti,
 		"output_tokens":  to,
@@ -509,13 +557,13 @@ func estimateCost(ctrl *control.Controller) float64 {
 	return pr.Cost(last)
 }
 
-func (s *Server) formatCache() string {
-	d := s.cacheData()
+func formatCache(ctrl *control.Controller) string {
+	d := cacheData(ctrl)
 	return fmt.Sprintf("cache hits %v · %v%% efficiency", d["cache_hit"], d["cache_pct"])
 }
 
-func (s *Server) cacheData() map[string]any {
-	ag := s.cfg.Ctrl.Agent()
+func cacheData(ctrl *control.Controller) map[string]any {
+	ag := ctrl.Agent()
 	var hit, miss int64
 	if ag != nil {
 		hit, miss = ag.SessionCache()
@@ -538,8 +586,8 @@ func formatModels() string {
 	return sb.String()
 }
 
-func (s *Server) skillsData() map[string]any {
-	store := s.cfg.Ctrl.Skills()
+func skillsData(ctrl *control.Controller) map[string]any {
+	store := ctrl.Skills()
 	if store == nil {
 		return map[string]any{"skills": []any{}}
 	}
@@ -554,8 +602,8 @@ func (s *Server) skillsData() map[string]any {
 	return map[string]any{"skills": out}
 }
 
-func (s *Server) formatSkills() string {
-	d := s.skillsData()
+func formatSkills(ctrl *control.Controller) string {
+	d := skillsData(ctrl)
 	skills, _ := d["skills"].([]map[string]string)
 	if len(skills) == 0 {
 		return "no skills loaded"
@@ -567,8 +615,8 @@ func (s *Server) formatSkills() string {
 	return strings.TrimSpace(sb.String())
 }
 
-func (s *Server) findSkill(name string) *skill.Skill {
-	store := s.cfg.Ctrl.Skills()
+func findSkill(ctrl *control.Controller, name string) *skill.Skill {
+	store := ctrl.Skills()
 	if store == nil {
 		return nil
 	}
@@ -604,27 +652,32 @@ func (s *Server) resolveSafe(rel string) (string, error) {
 }
 
 func (s *Server) handleFilesList(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 	sub := strings.TrimPrefix(r.URL.Path, "/api/files")
 	sub = strings.TrimPrefix(sub, "/")
 
 	switch {
 	case sub == "upload":
-		s.handleFileUpload(w, r)
+		s.handleFileUpload(rt, w, r)
 	case sub == "content" || strings.HasPrefix(sub, "content"):
-		s.handleFileContent(w, r)
+		s.handleFileContent(rt, w, r)
 	case sub == "write":
-		s.handleFileWrite(w, r)
+		s.handleFileWrite(rt, w, r)
 	default:
-		s.handleFileList(w, r)
+		s.handleFileList(rt, w, r)
 	}
 }
 
-func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFileList(rt *requestRuntime, w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
 	if rel == "" {
 		rel = "."
 	}
-	abs, err := s.resolveSafe(rel)
+	abs, err := s.resolveRuntimePath(rt, rel, false)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
@@ -647,16 +700,16 @@ func (s *Server) handleFileList(w http.ResponseWriter, r *http.Request) {
 		}
 		files = append(files, entry)
 	}
-	jsonOK(w, map[string]any{"files": files, "root": abs})
+	jsonOK(w, map[string]any{"files": files, "root": "."})
 }
 
-func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFileContent(rt *requestRuntime, w http.ResponseWriter, r *http.Request) {
 	rel := r.URL.Query().Get("path")
 	if rel == "" {
 		jsonErr(w, "path required", http.StatusBadRequest)
 		return
 	}
-	abs, err := s.resolveSafe(rel)
+	abs, err := s.resolveRuntimePath(rt, rel, false)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
@@ -678,7 +731,7 @@ func (s *Server) handleFileContent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFileUpload(rt *requestRuntime, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -695,7 +748,7 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	abs, err := s.resolveSafe(header.Filename)
+	abs, err := s.resolveRuntimePath(rt, header.Filename, true)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
@@ -718,7 +771,7 @@ func (s *Server) handleFileUpload(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{"uploaded": header.Filename, "size": written})
 }
 
-func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleFileWrite(rt *requestRuntime, w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -731,7 +784,7 @@ func (s *Server) handleFileWrite(w http.ResponseWriter, r *http.Request) {
 		jsonErr(w, "path and content required", http.StatusBadRequest)
 		return
 	}
-	abs, err := s.resolveSafe(req.Path)
+	abs, err := s.resolveRuntimePath(rt, req.Path, true)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return

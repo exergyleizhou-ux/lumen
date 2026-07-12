@@ -19,6 +19,8 @@ type controllerKey struct {
 type serverController struct {
 	Controller *control.Controller
 	Workspace  workspace.Context
+	Plan       planState
+	configured bool
 	lastUsed   time.Time
 	busy       bool
 }
@@ -60,6 +62,7 @@ func (p *serverControllerPool) acquire(owner runstate.Owner, sessionID string, w
 	}
 	for k, e := range p.entries {
 		if !e.busy && now.Sub(e.lastUsed) >= p.idleTTL {
+			e.Controller.Close()
 			delete(p.entries, k)
 		}
 	}
