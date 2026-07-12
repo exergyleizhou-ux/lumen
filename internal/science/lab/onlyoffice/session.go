@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"lumen/internal/science/lab/workspace"
 )
 
 // CallbackToken returns the optional shared secret for callback auth.
@@ -123,6 +125,15 @@ type Session struct {
 // BuildSession constructs editor session metadata for a workspace file.
 // absWorkspace is the project workspace absolute directory.
 func BuildSession(publicBase, projectID, relPath, mode, absWorkspace string) Session {
+	g, err := workspace.NewGuard(absWorkspace)
+	if err != nil {
+		return Session{OK: false, Error: err.Error()}
+	}
+	return BuildSessionGuarded(publicBase, projectID, relPath, mode, g)
+}
+
+// BuildSessionGuarded derives file identity without following tenant symlinks.
+func BuildSessionGuarded(publicBase, projectID, relPath, mode string, g *workspace.Guard) Session {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode != "edit" {
 		mode = "view"
@@ -137,8 +148,10 @@ func BuildSession(publicBase, projectID, relPath, mode, absWorkspace string) Ses
 	}
 	ext := strings.TrimPrefix(filepath.Ext(p), ".")
 	title := filepath.Base(p)
-	abs := filepath.Join(absWorkspace, filepath.FromSlash(p))
-	key := DocumentKeyFromFile(projectID, p, abs)
+	key := DocumentKey(projectID, p, 0, 0)
+	if st, err := g.Stat(filepath.FromSlash(p)); err == nil {
+		key = DocumentKey(projectID, p, st.Size(), st.ModTime().Unix())
+	}
 
 	s := Session{
 		OK:            true,

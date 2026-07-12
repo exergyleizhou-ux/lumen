@@ -106,20 +106,18 @@ func HandleCallback(w http.ResponseWriter, r *http.Request, g *workspace.Guard, 
 		return
 	}
 
-	// Resolve workspace path (Guard prevents traversal)
-	abs, err := g.Resolve(relPath)
-	if err != nil {
+	if _, err := g.Resolve(relPath); err != nil {
 		writeCB(w, 1)
 		return
 	}
 
 	// Create parent directories if needed
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
+	if err := g.MkdirAll(filepath.Dir(relPath), 0o700); err != nil {
 		writeCB(w, 1)
 		return
 	}
 
-	if err := os.WriteFile(abs, body, 0o600); err != nil {
+	if err := g.AtomicWriteFile(relPath, body, 0o600); err != nil {
 		writeCB(w, 1)
 		return
 	}

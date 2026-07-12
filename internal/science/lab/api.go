@@ -2965,7 +2965,7 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if sub == "" || sub == "list" {
-			notebooks, err := jupyter.ListNotebooks(ws)
+			notebooks, err := jupyter.ListNotebooksGuarded(g)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -2978,9 +2978,12 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Get cell content
-		name := strings.TrimPrefix(sub, "cells/")
-		path := filepath.Join(ws, "notebooks", name)
-		nb, err := jupyter.Load(path)
+		name, err := notebookName(strings.TrimPrefix(sub, "cells/"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		nb, err := jupyter.LoadGuarded(g, filepath.Join("notebooks", name))
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err)
 			return
@@ -3005,6 +3008,12 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasSuffix(body.Name, ".ipynb") {
 				body.Name += ".ipynb"
 			}
+			name, err := notebookName(body.Name)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			body.Name = name
 			nb := jupyter.New(strings.TrimSuffix(body.Name, ".ipynb"))
 			rel := filepath.ToSlash(filepath.Join("notebooks", body.Name))
 			nb.Normalize()
@@ -3022,15 +3031,19 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(sub, "execute/") {
 			// Execute notebook
-			name := strings.TrimPrefix(sub, "execute/")
-			path := filepath.Join(ws, "notebooks", name)
-			nb, err := jupyter.Load(path)
+			name, err := notebookName(strings.TrimPrefix(sub, "execute/"))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			rel := filepath.Join("notebooks", name)
+			nb, err := jupyter.LoadGuarded(g, rel)
 			if err != nil {
 				writeErr(w, http.StatusNotFound, err)
 				return
 			}
 			python := labruntime.ResolvePython(paths.DataDir(a.sciDir))
-			if err := nb.Execute(path, python); err != nil {
+			if err := nb.ExecuteGuarded(g, rel, python); err != nil {
 				writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "cells": nb.Cells})
 				return
 			}
@@ -3039,9 +3052,13 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 		}
 		// Append cell
 		if strings.HasPrefix(sub, "cell/") {
-			name := strings.TrimPrefix(sub, "cell/")
-			path := filepath.Join(ws, "notebooks", name)
-			nb, err := jupyter.Load(path)
+			name, err := notebookName(strings.TrimPrefix(sub, "cell/"))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			rel := filepath.Join("notebooks", name)
+			nb, err := jupyter.LoadGuarded(g, rel)
 			if err != nil {
 				writeErr(w, http.StatusNotFound, err)
 				return
@@ -3049,7 +3066,7 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			if body.Source != "" {
 				nb.AddCode(body.Source)
 			}
-			if err := nb.Save(path); err != nil {
+			if err := nb.SaveGuarded(g, rel); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
@@ -3060,6 +3077,14 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func notebookName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\\`) || !strings.HasSuffix(name, ".ipynb") {
+		return "", fmt.Errorf("invalid notebook name")
+	}
+	return name, nil
 }
 
 // ── LangGraph sidecar ──
@@ -3186,12 +3211,17 @@ func (a *API) handleOnlyOfficeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, onlyoffice.Session{OK: false, Error: "invalid project"})
 		return
 	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, onlyoffice.Session{OK: false, Error: "workspace unavailable"})
+		return
+	}
 	base := onlyoffice.PublicBaseFromRequest(r)
 	if base == "" {
 		// Fall back to local listen address
 		base = fmt.Sprintf("http://127.0.0.1:%d", a.listenPort)
 	}
-	sess := onlyoffice.BuildSession(base, slug, path, mode, ws)
+	sess := onlyoffice.BuildSessionGuarded(base, slug, path, mode, g)
 	if !sess.OK {
 		writeJSON(w, http.StatusBadRequest, sess)
 		return

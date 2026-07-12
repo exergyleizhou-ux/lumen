@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -120,6 +121,29 @@ func TestCallbackRejectsPathTraversal(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Logf("bad path %q got %d", badPath, rec.Code)
 		}
+	}
+}
+
+func TestCallbackRejectsSymlinkParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics")
+	}
+	root, outside := t.TempDir(), t.TempDir()
+	g, err := workspace.NewGuard(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "reports")); err != nil {
+		t.Fatal(err)
+	}
+	fakeDS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("changed")) }))
+	defer fakeDS.Close()
+	body, _ := json.Marshal(CallbackBody{Status: 2, URL: fakeDS.URL})
+	req := httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	HandleCallback(rec, req, g, "reports/out.docx")
+	if _, err := os.Stat(filepath.Join(outside, "out.docx")); !os.IsNotExist(err) {
+		t.Fatal("callback escaped through symlink")
 	}
 }
 
