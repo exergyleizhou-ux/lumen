@@ -2,10 +2,49 @@ package workspace
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// Walk traverses without exposing host absolute paths. Platform primitives
+// re-open every component with no-follow semantics on Unix.
+func (g *Guard) Walk(rel string, fn func(string, fs.FileInfo, error) error) error {
+	if rel == "" {
+		rel = "."
+	}
+	st, err := g.Stat(rel)
+	if err != nil {
+		return fn(rel, nil, err)
+	}
+	if err = fn(filepath.ToSlash(rel), st, nil); err != nil {
+		if err == filepath.SkipDir {
+			return nil
+		}
+		return err
+	}
+	if !st.IsDir() {
+		return nil
+	}
+	entries, err := g.ReadDir(rel)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		child := e.Name()
+		if rel != "." {
+			child = filepath.Join(rel, child)
+		}
+		if err = g.Walk(child, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Guard ensures paths stay within a project workspace root.
 type Guard struct {

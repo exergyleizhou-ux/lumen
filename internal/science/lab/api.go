@@ -1022,13 +1022,12 @@ func (a *API) handleBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	outPath, err := g.Resolve(filepath.Join("reports", "brief.md"))
-	if err != nil {
+	const briefPath = "reports/brief.md"
+	if err := g.WriteFile(briefPath, []byte(res.Markdown), 0o600); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(outPath), 0o700)
-	_ = os.WriteFile(outPath, []byte(res.Markdown), 0o600)
+	outPath, _ := g.Resolve(briefPath)
 	if projDir, err := a.projects.ProjectDir(slug); err == nil {
 		rec, _ := provenance.NewRecorder(projDir, "", os.Getenv("LUMEN_SCIENCE_MODEL"))
 		_ = rec.RecordArtifact(outPath)
@@ -1058,19 +1057,11 @@ func (a *API) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	var artifacts []map[string]any
 	for _, sub := range []string{"reports", "figures", "data", "notebooks", "imports"} {
-		dir, err := g.Resolve(sub)
-		if err != nil {
-			continue
-		}
-		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		_ = g.Walk(sub, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
-			rel, err := filepath.Rel(ws, path)
-			if err != nil {
-				return nil
-			}
-			rel = filepath.ToSlash(rel)
+			rel := filepath.ToSlash(path)
 			artifacts = append(artifacts, map[string]any{
 				"path":        rel,
 				"name":        filepath.Base(rel),
@@ -1434,7 +1425,7 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 	var nFiles int
 	var total int64
 	seen := map[string]bool{}
-	addFile := func(rel, abs string, size int64) error {
+	addFile := func(rel string, size int64) error {
 		rel = filepath.ToSlash(rel)
 		if seen[rel] {
 			return nil
@@ -1445,7 +1436,7 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 		if nFiles >= maxFiles || total >= maxTotal {
 			return fmt.Errorf("limit")
 		}
-		data, err := os.ReadFile(abs)
+		data, err := g.ReadFile(rel)
 		if err != nil {
 			return nil
 		}
@@ -1464,39 +1455,24 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 		if p == "" || p == "." || strings.HasPrefix(p, "..") {
 			continue
 		}
-		abs, err := g.Resolve(p)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(abs)
+		info, err := g.Stat(p)
 		if err != nil {
 			continue
 		}
 		if !info.IsDir() {
-			_ = addFile(p, abs, info.Size())
+			_ = addFile(p, info.Size())
 			continue
 		}
 		// walk directory
-		_ = filepath.Walk(abs, func(path string, fi os.FileInfo, err error) error {
+		_ = g.Walk(p, func(path string, fi os.FileInfo, err error) error {
 			if err != nil || fi.IsDir() {
 				return nil
 			}
 			if nFiles >= maxFiles || total >= maxTotal {
 				return filepath.SkipAll
 			}
-			rel, err := filepath.Rel(filepath.Dir(abs), path)
-			if err != nil {
-				return nil
-			}
-			// keep parent folder name in zip
-			rel = filepath.ToSlash(filepath.Join(filepath.Base(abs), rel))
-			// better: relative to workspace
-			if root, e2 := g.Resolve("."); e2 == nil {
-				if r2, e3 := filepath.Rel(root, path); e3 == nil {
-					rel = filepath.ToSlash(r2)
-				}
-			}
-			_ = addFile(rel, path, fi.Size())
+			rel := filepath.ToSlash(path)
+			_ = addFile(rel, fi.Size())
 			return nil
 		})
 	}
@@ -1515,17 +1491,12 @@ func (a *API) handleFileStats(w http.ResponseWriter, r *http.Request, g *workspa
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
 	var files, dirs int
 	var bytes int64
 	var newest time.Time
 	const maxWalk = 5000
 	n := 0
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -1534,11 +1505,11 @@ func (a *API) handleFileStats(w http.ResponseWriter, r *http.Request, g *workspa
 		}
 		base := info.Name()
 		if base == ".git" || base == "node_modules" || base == ".lumen" {
-			if info.IsDir() && path != root {
+			if info.IsDir() && path != "." {
 				return filepath.SkipDir
 			}
 		}
-		if path == root {
+		if path == "." {
 			return nil
 		}
 		n++
@@ -1624,10 +1595,8 @@ func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *worksp
 	}
 	// existing size + append must stay under 16 MiB
 	var existing int64
-	if abs, err := g.Resolve(rel); err == nil {
-		if st, err := os.Stat(abs); err == nil {
-			existing = st.Size()
-		}
+	if st, err := g.Stat(rel); err == nil {
+		existing = st.Size()
 	}
 	if existing+int64(len(body.Content)) > 16<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("file would exceed 16MB after append"))
@@ -1663,22 +1632,12 @@ func (a *API) handleFileDiff(w http.ResponseWriter, r *http.Request, g *workspac
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("a and b paths required"))
 		return
 	}
-	absA, err := g.Resolve(pa)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	absB, err := g.Resolve(pb)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	dataA, err := os.ReadFile(absA)
+	dataA, err := g.ReadFile(pa)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
-	dataB, err := os.ReadFile(absB)
+	dataB, err := g.ReadFile(pb)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -1800,12 +1759,7 @@ func (a *API) handleFileMkdir(w http.ResponseWriter, r *http.Request, g *workspa
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	abs, err := g.Resolve(p)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := os.MkdirAll(abs, 0o700); err != nil {
+	if err := g.MkdirAll(p, 0o700); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -1837,29 +1791,15 @@ func (a *API) handleFileRename(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
 		return
 	}
-	src, err := g.Resolve(from)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	dst, err := g.Resolve(to)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if _, err := os.Stat(src); err != nil {
+	if _, err := g.Stat(from); err != nil {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
 		return
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := g.Stat(to); err == nil {
 		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if err := os.Rename(src, dst); err != nil {
+	if err := g.Rename(from, to); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -1891,27 +1831,39 @@ func (a *API) handleFileCopy(w http.ResponseWriter, r *http.Request, g *workspac
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
 		return
 	}
-	src, err := g.Resolve(from)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	dst, err := g.Resolve(to)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	info, err := os.Stat(src)
+	info, err := g.Stat(from)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
 		return
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := g.Stat(to); err == nil {
 		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
 		return
 	}
 	if info.IsDir() {
-		if err := copyDirLimited(src, dst, 500, 32<<20); err != nil {
+		var files int
+		var bytes int64
+		if err := g.Walk(from, func(_ string, st os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if st.IsDir() {
+				return nil
+			}
+			files++
+			bytes += st.Size()
+			if files > 500 {
+				return fmt.Errorf("too many files (max 500)")
+			}
+			if bytes > 32<<20 {
+				return fmt.Errorf("directory too large to copy")
+			}
+			return nil
+		}); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := g.Copy(from, to); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -1920,59 +1872,12 @@ func (a *API) handleFileCopy(w http.ResponseWriter, r *http.Request, g *workspac
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("file too large to copy (max 32MB)"))
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		data, err := os.ReadFile(src)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		if err := os.WriteFile(dst, data, 0o600); err != nil {
+		if err := g.Copy(from, to); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "from": from, "to": to})
-}
-
-// copyDirLimited copies a directory tree with file/byte caps.
-func copyDirLimited(src, dst string, maxFiles int, maxBytes int64) error {
-	var n int
-	var total int64
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		if n >= maxFiles {
-			return fmt.Errorf("too many files (max %d)", maxFiles)
-		}
-		if total+info.Size() > maxBytes {
-			return fmt.Errorf("directory too large to copy")
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, data, 0o600); err != nil {
-			return err
-		}
-		n++
-		total += int64(len(data))
-		return nil
-	})
 }
 
 // handleFilesDelete removes workspace files/dirs (POST {paths:[]}).
@@ -2000,12 +1905,7 @@ func (a *API) handleFilesDelete(w http.ResponseWriter, r *http.Request, g *works
 			failed = append(failed, map[string]string{"path": p, "error": "invalid path"})
 			continue
 		}
-		abs, err := g.Resolve(p)
-		if err != nil {
-			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
-			continue
-		}
-		if err := os.RemoveAll(abs); err != nil {
+		if err := g.RemoveAll(p); err != nil {
 			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
 			continue
 		}
@@ -2079,14 +1979,7 @@ func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *w
 			continue
 		}
 		rel := filepath.ToSlash(filepath.Join(destPrefix, name))
-		abs, err := g.Resolve(rel)
-		if err != nil {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-			continue
-		}
-		if err := os.WriteFile(abs, body, 0o600); err != nil {
+		if err := g.WriteFile(rel, body, 0o600); err != nil {
 			continue
 		}
 		written = append(written, rel)
@@ -2109,11 +2002,6 @@ func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *w
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
 	slug := r.URL.Query().Get("project_id")
 	name := "workspace.zip"
 	if slug != "" {
@@ -2127,7 +2015,7 @@ func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *w
 	const maxTotal = 64 << 20 // 64 MiB
 	var nFiles int
 	var total int64
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -2141,15 +2029,11 @@ func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *w
 		if nFiles >= maxFiles || total >= maxTotal {
 			return filepath.SkipAll
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		rel := filepath.ToSlash(path)
 		if info.Size() > 8<<20 {
 			return nil // skip huge single files
 		}
-		data, err := os.ReadFile(path)
+		data, err := g.ReadFile(rel)
 		if err != nil {
 			return nil
 		}
@@ -2184,12 +2068,7 @@ func (a *API) handleFileTree(w http.ResponseWriter, r *http.Request, g *workspac
 	if maxDepth > 8 {
 		maxDepth = 8
 	}
-	abs, err := g.Resolve(rootRel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	tree, err := buildFileTree(abs, rootRel, 0, maxDepth, 500)
+	tree, err := buildFileTree(g, rootRel, 0, maxDepth, 500)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2206,12 +2085,12 @@ type fileTreeNode struct {
 	Children    []fileTreeNode `json:"children,omitempty"`
 }
 
-func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, error) {
-	st, err := os.Stat(abs)
+func buildFileTree(g *workspace.Guard, rel string, depth, maxDepth, budget int) (fileTreeNode, error) {
+	st, err := g.Stat(rel)
 	if err != nil {
 		return fileTreeNode{}, err
 	}
-	name := filepath.Base(abs)
+	name := filepath.Base(rel)
 	if rel == "." || rel == "" {
 		name = "."
 	}
@@ -2226,7 +2105,7 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 	if depth >= maxDepth || budget <= 0 {
 		return node, nil
 	}
-	entries, err := os.ReadDir(abs)
+	entries, err := g.ReadDir(rel)
 	if err != nil {
 		return node, err
 	}
@@ -2243,8 +2122,7 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 		if rel != "" && rel != "." {
 			childRel = filepath.ToSlash(filepath.Join(rel, base))
 		}
-		childAbs := filepath.Join(abs, base)
-		child, err := buildFileTree(childAbs, childRel, depth+1, maxDepth, left-1)
+		child, err := buildFileTree(g, childRel, depth+1, maxDepth, left-1)
 		if err != nil {
 			continue
 		}
@@ -2261,11 +2139,6 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
 		return
 	}
 	limit := 40
@@ -2286,7 +2159,7 @@ func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *worksp
 		PreviewKind string    `json:"previewKind"`
 	}
 	var all []entry
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			if info != nil && info.IsDir() {
 				base := info.Name()
@@ -2296,11 +2169,7 @@ func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *worksp
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		rel := filepath.ToSlash(path)
 		all = append(all, entry{
 			Name: filepath.Base(rel), Path: rel, Size: info.Size(),
 			Mtime: info.ModTime().UTC(), PreviewKind: previewKind(rel),
@@ -2337,16 +2206,11 @@ func (a *API) handleFileSearch(w http.ResponseWriter, r *http.Request, g *worksp
 		writeJSON(w, http.StatusOK, map[string]any{"hits": []any{}, "count": 0, "q": q})
 		return
 	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
-	hits, err := SearchWorkspace(root, q, limit)
+	hits, err := SearchWorkspaceGuarded(g, q, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2364,12 +2228,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 		return
 	}
 
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	st, err := os.Stat(abs)
+	st, err := g.Stat(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -2379,7 +2238,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 		return
 	}
 
-	data, err := os.ReadFile(abs)
+	data, err := g.ReadFile(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -2434,12 +2293,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 }
 
 func (a *API) writeDirListing(w http.ResponseWriter, g *workspace.Guard, rel string) {
-	root, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	entries, err := os.ReadDir(root)
+	entries, err := g.ReadDir(rel)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2464,7 +2318,7 @@ func (a *API) writeDirListing(w http.ResponseWriter, g *workspace.Guard, rel str
 		}
 		files = append(files, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files, "path": rel, "root": root})
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "path": rel, "root": "."})
 }
 
 func previewKind(name string) string {
@@ -2494,18 +2348,13 @@ func previewKind(name string) string {
 
 func (a *API) handleFileDownload(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	rel := r.URL.Query().Get("path")
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	data, err := os.ReadFile(abs)
+	data, err := g.ReadFile(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(rel)))
 	_, _ = w.Write(data)
 }
 
@@ -2529,17 +2378,7 @@ func (a *API) handleFileUpload(w http.ResponseWriter, r *http.Request, g *worksp
 	defer file.Close()
 
 	// Resolve safe path inside workspace
-	abs, err := g.Resolve(header.Filename)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	dst, err := os.Create(abs)
+	dst, err := g.OpenFile(header.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -3042,18 +2881,11 @@ func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, 
 		return "", 0, err
 	}
 	rel = filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
-	dst, err := g.Resolve(rel)
-	if err != nil {
-		return "", 0, err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return "", 0, err
-	}
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return "", 0, err
 	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
+	if err := g.WriteFile(rel, data, 0o600); err != nil {
 		return "", 0, err
 	}
 	if size == 0 {
@@ -3165,20 +2997,18 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 				body.Name += ".ipynb"
 			}
 			nb := jupyter.New(strings.TrimSuffix(body.Name, ".ipynb"))
-			path, err := g.Resolve(filepath.Join("notebooks", body.Name))
+			rel := filepath.ToSlash(filepath.Join("notebooks", body.Name))
+			nb.Normalize()
+			data, err := json.MarshalIndent(nb, "", "  ")
+			if err == nil {
+				data = append(data, '\n')
+				err = g.WriteFile(rel, data, 0o600)
+			}
 			if err != nil {
-				writeErr(w, http.StatusForbidden, err)
-				return
-			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
-			if err := nb.Save(path); err != nil {
-				writeErr(w, http.StatusInternalServerError, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "path": path})
+			writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "path": rel})
 			return
 		}
 		if strings.HasPrefix(sub, "execute/") {

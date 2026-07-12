@@ -18,6 +18,7 @@ import (
 	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/runstate"
+	labworkspace "lumen/internal/science/lab/workspace"
 	"lumen/internal/skill"
 	"lumen/internal/timeline"
 	"lumen/internal/workspace"
@@ -677,12 +678,16 @@ func (s *Server) handleFileList(rt *requestRuntime, w http.ResponseWriter, r *ht
 	if rel == "" {
 		rel = "."
 	}
-	abs, err := s.resolveRuntimePath(rt, rel, false)
+	g, err := labworkspace.NewGuard(rt.ws.Root)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	entries, err := os.ReadDir(abs)
+	if _, err = g.Resolve(rel); err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	entries, err := g.ReadDir(rel)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusNotFound)
 		return
@@ -709,12 +714,16 @@ func (s *Server) handleFileContent(rt *requestRuntime, w http.ResponseWriter, r 
 		jsonErr(w, "path required", http.StatusBadRequest)
 		return
 	}
-	abs, err := s.resolveRuntimePath(rt, rel, false)
+	g, err := labworkspace.NewGuard(rt.ws.Root)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	data, err := os.ReadFile(abs)
+	if _, err = g.Resolve(rel); err != nil {
+		jsonErr(w, err.Error(), http.StatusForbidden)
+		return
+	}
+	data, err := g.ReadFile(rel)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusNotFound)
 		return
@@ -748,16 +757,12 @@ func (s *Server) handleFileUpload(rt *requestRuntime, w http.ResponseWriter, r *
 	}
 	defer file.Close()
 
-	abs, err := s.resolveRuntimePath(rt, header.Filename, true)
+	g, err := labworkspace.NewGuard(rt.ws.Root)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-		jsonErr(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	dst, err := os.Create(abs)
+	dst, err := g.OpenFile(header.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -784,16 +789,12 @@ func (s *Server) handleFileWrite(rt *requestRuntime, w http.ResponseWriter, r *h
 		jsonErr(w, "path and content required", http.StatusBadRequest)
 		return
 	}
-	abs, err := s.resolveRuntimePath(rt, req.Path, true)
+	g, err := labworkspace.NewGuard(rt.ws.Root)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusForbidden)
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-		jsonErr(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := os.WriteFile(abs, []byte(req.Content), 0644); err != nil {
+	if err := g.WriteFile(req.Path, []byte(req.Content), 0644); err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
