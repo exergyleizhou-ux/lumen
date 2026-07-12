@@ -69,11 +69,9 @@ func findProjectRoot(start string) string {
 
 type CodeSearchTool struct{}
 
-func (t *CodeSearchTool) Name() string { return "code_search" }
-func (t *CodeSearchTool) Description() string {
-	return "Search the codebase with a natural-language query. Returns ranked file:line snippets based on TF-IDF relevance. Use for finding functions, types, patterns, or any code by description."
-}
-func (t *CodeSearchTool) ReadOnly() bool { return true }
+func (t *CodeSearchTool) Name() string        { return "code_search" }
+func (t *CodeSearchTool) Description() string { return "Search the codebase with a natural-language query. Returns ranked file:line snippets based on TF-IDF relevance. Use for finding functions, types, patterns, or any code by description." }
+func (t *CodeSearchTool) ReadOnly() bool      { return true }
 
 func (t *CodeSearchTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

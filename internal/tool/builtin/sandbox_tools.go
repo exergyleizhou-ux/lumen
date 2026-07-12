@@ -20,11 +20,9 @@ func init() {
 
 type SandboxExecTool struct{}
 
-func (t *SandboxExecTool) Name() string { return "sandbox_exec" }
-func (t *SandboxExecTool) Description() string {
-	return "Execute code in an isolated Docker sandbox. Safe: no network, read-only root, memory/cpu/timeout limits. Supports python3, node, go, bash. Use for running untrusted code, testing snippets, or executing user-provided scripts."
-}
-func (t *SandboxExecTool) ReadOnly() bool { return false }
+func (t *SandboxExecTool) Name() string        { return "sandbox_exec" }
+func (t *SandboxExecTool) Description() string { return "Execute code in an isolated Docker sandbox. Safe: no network, read-only root, memory/cpu/timeout limits. Supports python3, node, go, bash. Use for running untrusted code, testing snippets, or executing user-provided scripts." }
+func (t *SandboxExecTool) ReadOnly() bool      { return false }
 
 func (t *SandboxExecTool) Schema() json.RawMessage {
 	return json.RawMessage(`{

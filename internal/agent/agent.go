@@ -673,7 +673,6 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
-	effects := tool.EffectsOf(t)
 
 	// Plan mode gate: refuse writer tools without changing the prompt
 	if a.planMode.Load() && !t.ReadOnly() {
@@ -716,9 +715,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// (previewing afterward would diff against the already-modified file). Used
 	// for both the diff preview event and the verify-after-edit changeset.
 	var changedPath string
-	if effects.WritesFiles {
+	if !t.ReadOnly() {
 		if pv, ok := t.(tool.Previewer); ok {
-			if change, err := pv.Preview(ctx, execArgs); err == nil {
+			if change, err := pv.Preview(execArgs); err == nil {
 				changedPath = change.Path
 				if a.onPreEdit != nil {
 					a.onPreEdit(change)
@@ -769,7 +768,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	return toolOutcome{
 		output:      body,
 		truncated:   truncMsg != "",
-		wroteFile:   effects.WritesFiles,
+		wroteFile:   !t.ReadOnly(),
 		changedPath: changedPath,
 	}
 }

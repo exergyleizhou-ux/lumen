@@ -55,9 +55,9 @@ func TestCheckFetchURL(t *testing.T) {
 		"file:///etc/passwd",
 		"ftp://example.com/x",
 		"gopher://x",
-		"http://127.0.0.1/admin",   // loopback literal
-		"http://169.254.169.254/",  // metadata literal
-		"https://[::1]/",           // ipv6 loopback literal
+		"http://127.0.0.1/admin",  // loopback literal
+		"http://169.254.169.254/", // metadata literal
+		"https://[::1]/",          // ipv6 loopback literal
 		"http://10.0.0.5/internal", // private literal
 		"not a url",
 	}

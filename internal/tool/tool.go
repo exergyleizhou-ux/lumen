@@ -23,55 +23,24 @@ type Tool interface {
 	ReadOnly() bool
 }
 
-// Effects describes the externally observable side effects a tool may have.
-// It is intentionally orthogonal to ReadOnly, which remains the compatibility
-// input for the current permission and plan-mode gates.
-type Effects struct {
-	ReadsFiles      bool
-	WritesFiles     bool
-	RunsCommands    bool
-	UsesNetwork     bool
-	SendsRemoteData bool
-	StartsCompute   bool
-	Publishes       bool
-	MayCharge       bool
-}
-
-// EffectProvider is implemented by tools with an explicit side-effect contract.
-type EffectProvider interface {
-	Effects() Effects
-}
-
-// EffectsOf returns a tool's explicit effects. Unmigrated writer tools retain a
-// conservative WritesFiles fallback so verification is never silently weakened.
-func EffectsOf(t Tool) Effects {
-	if t == nil {
-		return Effects{}
-	}
-	if provider, ok := t.(EffectProvider); ok {
-		return provider.Effects()
-	}
-	return Effects{WritesFiles: !t.ReadOnly()}
-}
-
 // Previewer is an optional capability a writer Tool may implement: given the
 // same raw JSON args Execute would receive, compute the file change the call
 // *would* make — without touching disk. Type-assert a Tool to Previewer.
 type Previewer interface {
-	Preview(ctx context.Context, args json.RawMessage) (diff.Change, error)
+	Preview(args json.RawMessage) (diff.Change, error)
 }
 
 // PreviewChange returns the change a writer tool would make for args, or ok=false
 // when there's nothing renderable.
-func PreviewChange(ctx context.Context, t Tool, args json.RawMessage) (diff.Change, bool) {
-	if t == nil || !EffectsOf(t).WritesFiles {
+func PreviewChange(t Tool, args json.RawMessage) (diff.Change, bool) {
+	if t == nil || t.ReadOnly() {
 		return diff.Change{}, false
 	}
 	pv, ok := t.(Previewer)
 	if !ok {
 		return diff.Change{}, false
 	}
-	ch, err := pv.Preview(ctx, args)
+	ch, err := pv.Preview(args)
 	if err != nil || ch.Binary {
 		return diff.Change{}, false
 	}

@@ -98,7 +98,7 @@ func (t *MultiEditTool) Execute(ctx context.Context, args json.RawMessage) (stri
 
 // ── Previewer implementation ──────────────────────────────
 
-func (t *MultiEditTool) Preview(ctx context.Context, args json.RawMessage) (diff.Change, error) {
+func (t *MultiEditTool) Preview(args json.RawMessage) (diff.Change, error) {
 	var p struct {
 		Path  string `json:"path"`
 		Edits []struct {

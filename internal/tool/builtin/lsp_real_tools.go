@@ -18,11 +18,11 @@ import (
 // ── Persistent gopls connection ────────────────────────────
 
 var (
-	goplsClient    *lsp.LSPClient
-	goplsMu        sync.Mutex
-	goplsStarted   bool
+	goplsClient   *lsp.LSPClient
+	goplsMu       sync.Mutex
+	goplsStarted  bool
 	goplsWorkspace string
-	goplsDocs      = map[string]bool{} // tracked open documents
+	goplsDocs     = map[string]bool{} // tracked open documents
 )
 
 func getGopls(ctx context.Context) (*lsp.LSPClient, error) {
@@ -114,9 +114,8 @@ func init() {
 // ── Workspace ───────────────────────────────────────────────
 
 type WorkspaceTool struct{}
-
-func (t *WorkspaceTool) Name() string   { return "workspace" }
-func (t *WorkspaceTool) ReadOnly() bool { return true }
+func (t *WorkspaceTool) Name() string    { return "workspace" }
+func (t *WorkspaceTool) ReadOnly() bool  { return true }
 func (t *WorkspaceTool) Description() string {
 	return "Discover the project workspace: root directory, git branch, go.mod module name, and file tree summary. Use this first to orient yourself."
 }
@@ -159,19 +158,13 @@ func (t *WorkspaceTool) Execute(ctx context.Context, args json.RawMessage) (stri
 	entries, _ := os.ReadDir(wd)
 	dirs, files := 0, 0
 	for _, e := range entries {
-		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-			dirs++
-		} else if !strings.HasPrefix(e.Name(), ".") {
-			files++
-		}
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") { dirs++ } else if !strings.HasPrefix(e.Name(), ".") { files++ }
 	}
 	fmt.Fprintf(&sb, "Contents:  %d dirs, %d files\n", dirs, files)
 
 	// List top entries
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
+		if strings.HasPrefix(e.Name(), ".") { continue }
 		if e.IsDir() {
 			fmt.Fprintf(&sb, "  %s/\n", e.Name())
 		}
@@ -183,9 +176,8 @@ func (t *WorkspaceTool) Execute(ctx context.Context, args json.RawMessage) (stri
 // ── Diagnostics ─────────────────────────────────────────────
 
 type LSPDiagnosticTool struct{}
-
-func (t *LSPDiagnosticTool) Name() string   { return "lsp_diagnostics" }
-func (t *LSPDiagnosticTool) ReadOnly() bool { return true }
+func (t *LSPDiagnosticTool) Name() string     { return "lsp_diagnostics" }
+func (t *LSPDiagnosticTool) ReadOnly() bool   { return true }
 func (t *LSPDiagnosticTool) Description() string {
 	return "Real-time Go diagnostics via persistent gopls. Opens the file once, then returns errors/warnings with line numbers. Falls back to go vet."
 }
@@ -194,12 +186,8 @@ func (t *LSPDiagnosticTool) Schema() json.RawMessage {
 }
 func (t *LSPDiagnosticTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
 	var p struct{ File string }
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
-	if p.File == "" {
-		return "", fmt.Errorf("file is required")
-	}
+	if err := json.Unmarshal(args, &p); err != nil { return "", err }
+	if p.File == "" { return "", fmt.Errorf("file is required") }
 
 	// Priority 1: persistent gopls
 	if err := openInGopls(ctx, p.File); err == nil {
@@ -216,19 +204,13 @@ func (t *LSPDiagnosticTool) Execute(ctx context.Context, args json.RawMessage) (
 					for _, d := range diags {
 						sev := "?"
 						switch d.Severity {
-						case 1:
-							sev = "ERROR"
-						case 2:
-							sev = "WARN"
-						case 3:
-							sev = "INFO"
-						case 4:
-							sev = "HINT"
+						case 1: sev = "ERROR"
+						case 2: sev = "WARN"
+						case 3: sev = "INFO"
+						case 4: sev = "HINT"
 						}
 						fmt.Fprintf(&sb, "  %s  L%d:%d  %s", sev, d.Range.Start.Line+1, d.Range.Start.Character+1, d.Message)
-						if d.Code != "" {
-							fmt.Fprintf(&sb, "  (%s)", d.Code)
-						}
+						if d.Code != "" { fmt.Fprintf(&sb, "  (%s)", d.Code) }
 						sb.WriteByte('\n')
 					}
 					return sb.String(), nil
@@ -253,9 +235,8 @@ func (t *LSPDiagnosticTool) Execute(ctx context.Context, args json.RawMessage) (
 // ── Completion ─────────────────────────────────────────────
 
 type LSPCompletionTool struct{}
-
-func (t *LSPCompletionTool) Name() string   { return "lsp_completion" }
-func (t *LSPCompletionTool) ReadOnly() bool { return true }
+func (t *LSPCompletionTool) Name() string     { return "lsp_completion" }
+func (t *LSPCompletionTool) ReadOnly() bool   { return true }
 func (t *LSPCompletionTool) Description() string {
 	return "Code completion via persistent gopls. Shows suggestions at a file position with type info."
 }
@@ -263,13 +244,8 @@ func (t *LSPCompletionTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"}},"required":["file","line","column"]}`)
 }
 func (t *LSPCompletionTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		File         string
-		Line, Column int
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
+	var p struct{ File string; Line, Column int }
+	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 
 	if err := openInGopls(ctx, p.File); err == nil {
 		client, _ := getGopls(ctx)
@@ -279,27 +255,17 @@ func (t *LSPCompletionTool) Execute(ctx context.Context, args json.RawMessage) (
 				var sb strings.Builder
 				fmt.Fprintf(&sb, "%d completion(s) at L%d:%d:\n", len(items), p.Line, p.Column)
 				for i, it := range items {
-					if i >= 20 {
-						fmt.Fprintf(&sb, "  ... +%d more\n", len(items)-20)
-						break
-					}
+					if i >= 20 { fmt.Fprintf(&sb, "  ... +%d more\n", len(items)-20); break }
 					kind := "?"
 					switch it.Kind {
-					case 3:
-						kind = "func"
-					case 5:
-						kind = "field"
-					case 6:
-						kind = "var"
-					case 9:
-						kind = "pkg"
-					case 14:
-						kind = "kw"
+					case 3: kind = "func"
+					case 5: kind = "field"
+					case 6: kind = "var"
+					case 9: kind = "pkg"
+					case 14: kind = "kw"
 					}
 					fmt.Fprintf(&sb, "  [%s] %s", kind, it.Label)
-					if it.Detail != "" {
-						fmt.Fprintf(&sb, " — %s", it.Detail)
-					}
+					if it.Detail != "" { fmt.Fprintf(&sb, " — %s", it.Detail) }
 					sb.WriteByte('\n')
 				}
 				return sb.String(), nil
@@ -312,9 +278,8 @@ func (t *LSPCompletionTool) Execute(ctx context.Context, args json.RawMessage) (
 // ── Hover ───────────────────────────────────────────────────
 
 type LSPHoverTool struct{}
-
-func (t *LSPHoverTool) Name() string   { return "lsp_hover" }
-func (t *LSPHoverTool) ReadOnly() bool { return true }
+func (t *LSPHoverTool) Name() string    { return "lsp_hover" }
+func (t *LSPHoverTool) ReadOnly() bool  { return true }
 func (t *LSPHoverTool) Description() string {
 	return "Type info via persistent gopls hover. Falls back to go doc."
 }
@@ -322,13 +287,8 @@ func (t *LSPHoverTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"}},"required":["file","line","column"]}`)
 }
 func (t *LSPHoverTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		File         string
-		Line, Column int
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
+	var p struct{ File string; Line, Column int }
+	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 
 	if err := openInGopls(ctx, p.File); err == nil {
 		client, _ := getGopls(ctx)
@@ -345,9 +305,8 @@ func (t *LSPHoverTool) Execute(ctx context.Context, args json.RawMessage) (strin
 // ── Definition ──────────────────────────────────────────────
 
 type LSPDefinitionTool struct{}
-
-func (t *LSPDefinitionTool) Name() string   { return "lsp_definition" }
-func (t *LSPDefinitionTool) ReadOnly() bool { return true }
+func (t *LSPDefinitionTool) Name() string     { return "lsp_definition" }
+func (t *LSPDefinitionTool) ReadOnly() bool   { return true }
 func (t *LSPDefinitionTool) Description() string {
 	return "Jump-to-definition via persistent gopls. Returns file:line location."
 }
@@ -355,13 +314,8 @@ func (t *LSPDefinitionTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"}},"required":["file","line","column"]}`)
 }
 func (t *LSPDefinitionTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		File         string
-		Line, Column int
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
+	var p struct{ File string; Line, Column int }
+	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 
 	if err := openInGopls(ctx, p.File); err == nil {
 		client, _ := getGopls(ctx)
@@ -383,9 +337,8 @@ func (t *LSPDefinitionTool) Execute(ctx context.Context, args json.RawMessage) (
 // ── References ──────────────────────────────────────────────
 
 type LSPReferencesTool struct{}
-
-func (t *LSPReferencesTool) Name() string   { return "lsp_references" }
-func (t *LSPReferencesTool) ReadOnly() bool { return true }
+func (t *LSPReferencesTool) Name() string     { return "lsp_references" }
+func (t *LSPReferencesTool) ReadOnly() bool   { return true }
 func (t *LSPReferencesTool) Description() string {
 	return "Find-all-references via persistent gopls. Lists every usage site across the project."
 }
@@ -393,13 +346,8 @@ func (t *LSPReferencesTool) Schema() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"column":{"type":"integer"}},"required":["file","line","column"]}`)
 }
 func (t *LSPReferencesTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
-	var p struct {
-		File         string
-		Line, Column int
-	}
-	if err := json.Unmarshal(args, &p); err != nil {
-		return "", err
-	}
+	var p struct{ File string; Line, Column int }
+	if err := json.Unmarshal(args, &p); err != nil { return "", err }
 
 	if err := openInGopls(ctx, p.File); err == nil {
 		client, _ := getGopls(ctx)
@@ -409,10 +357,7 @@ func (t *LSPReferencesTool) Execute(ctx context.Context, args json.RawMessage) (
 				var sb strings.Builder
 				fmt.Fprintf(&sb, "%d reference(s):\n", len(refs))
 				for i, r := range refs {
-					if i >= 50 {
-						fmt.Fprintf(&sb, "  ... +%d more\n", len(refs)-50)
-						break
-					}
+					if i >= 50 { fmt.Fprintf(&sb, "  ... +%d more\n", len(refs)-50); break }
 					path := strings.TrimPrefix(r.URI, "file://")
 					fmt.Fprintf(&sb, "  %s L%d\n", path, r.Range.Start.Line+1)
 				}
