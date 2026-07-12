@@ -28,6 +28,7 @@ import (
 	"lumen/internal/provider"
 	"lumen/internal/render"
 	"lumen/internal/tool"
+	runworkspace "lumen/internal/workspace"
 )
 
 // DefaultSystemPrompt is the base system message sent to every model.
@@ -152,6 +153,16 @@ type Agent struct {
 	repairCycle     int
 	verifyExhausted bool
 	faultRollback   map[string]int // file → consecutive failure count (R6)
+	completion      engineeringCompletion
+}
+
+type engineeringCompletion struct {
+	wroteFiles           bool
+	verificationRequired bool
+	verificationRan      bool
+	verificationPassed   bool
+	verificationFailed   bool
+	failedStep           string
 }
 
 // changeVerifier runs verification (build/vet/test) over the files changed in a
@@ -333,6 +344,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.streamRecoveryCount = 0
 	a.repairCycle = 0
 	a.verifyExhausted = false
+	a.completion = engineeringCompletion{}
 	// The auto-compaction circuit breaker is a per-turn guard (its warning says
 	// "this turn"). Reset it so a long, healthy multi-turn session that compacts
 	// a few times over its life doesn't permanently disable compaction.
@@ -540,6 +552,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			if !a.finalAnswerReady(text) {
 				continue // retry with a prompt to finish
 			}
+			if completionErr := a.engineeringCompletionError(); completionErr != nil {
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: verificationStopReason(completionErr), Timestamp: time.Now()})
+				return completionErr
+			}
 			a.session.Add(provider.Message{
 				Role:             provider.RoleAssistant,
 				Content:          text,
@@ -580,6 +596,12 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				tc := batch.calls[i]
 				if outcome.wroteFile {
 					stepWrote = true
+					a.completion.wroteFiles = true
+					a.completion.verificationRequired = a.verifier != nil && a.verifyCfg.Enabled
+					a.completion.verificationRan = false
+					a.completion.verificationPassed = false
+					a.completion.verificationFailed = false
+					a.completion.failedStep = ""
 					if outcome.changedPath != "" {
 						stepChanged = append(stepChanged, outcome.changedPath)
 					}
@@ -784,10 +806,15 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	// Quick skip: if none of the changed files are in the workspace root,
 	// go build won't help — the model was editing something outside the project.
 	// Avoids 2-5s of silent go build on every external file write.
-	workspaceRoot, _ := os.Getwd()
+	workspaceRoot := ""
+	if ws, ok := runworkspace.FromContext(ctx); ok {
+		workspaceRoot = ws.Root
+	} else {
+		workspaceRoot, _ = os.Getwd()
+	}
 	anyInWorkspace := false
 	for _, f := range changed {
-		if strings.HasPrefix(f, workspaceRoot) || !filepath.IsAbs(f) {
+		if pathWithinWorkspace(f, workspaceRoot) {
 			anyInWorkspace = true
 			break
 		}
@@ -811,6 +838,8 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	// build would otherwise be reported as broken, burning a repair cycle (and
 	// previously triggering rollback) for an edit that may be entirely correct.
 	if verifyCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		a.completion.verificationRan = false
+		a.completion.verificationPassed = false
 		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelWarn,
@@ -827,6 +856,12 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 		text := "✓"
 		if res.Ran == 0 {
 			text = "↷ verify skipped — no build/test toolchain ran"
+			a.completion.verificationRan = false
+			a.completion.verificationPassed = false
+		} else {
+			a.completion.verificationRan = true
+			a.completion.verificationPassed = true
+			a.completion.verificationFailed = false
 		}
 		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
@@ -838,6 +873,9 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	}
 
 	a.repairCycle++
+	a.completion.verificationRan = res.Ran > 0
+	a.completion.verificationPassed = false
+	a.completion.verificationFailed = true
 	max := a.verifyCfg.MaxRepairCycles
 	if max <= 0 {
 		max = 3
@@ -847,6 +885,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	if res.Failed != nil {
 		failName = res.Failed.Name
 	}
+	a.completion.failedStep = failName
 	a.Sink().Emit(event.Event{
 		Kind:      event.VerifyResult,
 		Level:     event.LevelWarn,
@@ -861,6 +900,34 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	}
 
 	return editverify.FormatFeedback(res, a.repairCycle, max)
+}
+
+func pathWithinWorkspace(path, root string) bool {
+	if path == "" || root == "" {
+		return false
+	}
+	if !filepath.IsAbs(path) {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func (a *Agent) engineeringCompletionError() error {
+	state := a.completion
+	if !state.wroteFiles || !state.verificationRequired {
+		return nil
+	}
+	if state.verificationFailed {
+		return &VerificationFailedError{Step: state.failedStep}
+	}
+	if !state.verificationRan || !state.verificationPassed {
+		return &VerificationIncompleteError{Reason: "file changes were not checked by an available build/test command"}
+	}
+	return nil
 }
 
 // checkFaultRollback flags a .go file that has failed verify repeatedly so the
