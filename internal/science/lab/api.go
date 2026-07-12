@@ -1112,11 +1112,19 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), DefaultTurnTimeout)
-	defer cancel()
+	run, err := a.runs.Start(req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), "")
+	if err != nil {
+		a.turnsFailed.Add(1)
+		sse.emit("error", err.Error())
+		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+		flusher.Flush()
+		return
+	}
+	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, hist))
+	ctx, cleanupRun := a.beginActiveRun(r.Context(), run.ID, DefaultTurnTimeout)
+	defer cleanupRun()
 
 	a.turnsTotal.Add(1)
-	sse.emit("turn_started", "")
 	runErr := func() (err error) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -1125,6 +1133,12 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		return ctrl.Run(ctx, req.Prompt, mode)
 	}()
+	if _, finishErr := a.runs.Finish(run.ID, runErr); finishErr != nil {
+		if runErr == nil {
+			runErr = finishErr
+		}
+		sse.emit("error", "finish run: "+finishErr.Error())
+	}
 	if runErr != nil {
 		a.turnsFailed.Add(1)
 		sse.emit("error", runErr.Error())
@@ -1140,9 +1154,23 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			_, _ = a.projects.AppendTurns(slug, req.SessionID, asst)
 		}
 	}
-	sse.emit("turn_done", "")
+	terminal := map[string]any{"ok": runErr == nil, "run_id": run.ID}
+	if runErr != nil {
+		terminal["error"] = runErr.Error()
+	}
+	sse.emitPayload("stream_done", terminal)
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
+}
+
+func summarizeScienceRunTitle(prompt string) string {
+	title := strings.TrimSpace(prompt)
+	const maxRunes = 120
+	runes := []rune(title)
+	if len(runes) > maxRunes {
+		title = string(runes[:maxRunes])
+	}
+	return title
 }
 
 func (a *API) setActiveMode(mode string) {
@@ -1166,9 +1194,7 @@ type sseSink struct {
 }
 
 func (s sseSink) Emit(e event.Event) {
-	data, _ := json.Marshal(map[string]any{
-		"kind": e.Kind, "text": e.Text, "tool": e.Tool,
-	})
+	data, _ := json.Marshal(e)
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	s.flusher.Flush()
 }
