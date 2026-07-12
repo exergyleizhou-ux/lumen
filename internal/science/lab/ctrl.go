@@ -14,6 +14,7 @@ import (
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 	"lumen/internal/science/lab/project"
 	"lumen/internal/science/lab/provenance"
 	labruntime "lumen/internal/science/lab/runtime"
@@ -264,11 +265,15 @@ func (c *Controller) PermissionMode() permission.Mode {
 // makeApprover builds an SSE approval handler that blocks until /api/lab/approve.
 // May return edited args JSON when the user modifies the approval card.
 func (a *API) makeApprover(emit func(kind string, payload map[string]any)) permission.Asker {
+	return a.makeOwnedApprover(runstate.LocalOwner, emit)
+}
+
+func (a *API) makeOwnedApprover(owner runstate.Owner, emit func(kind string, payload map[string]any)) permission.Asker {
 	return func(ctx context.Context, toolName string, args json.RawMessage) (bool, json.RawMessage, error) {
 		if a.approvals == nil {
 			return false, nil, fmt.Errorf("approval hub not configured")
 		}
-		return a.approvals.decide(ctx, toolName, args, func(kind string, payload map[string]any) {
+		return a.approvals.decideOwned(ctx, owner, toolName, args, func(kind string, payload map[string]any) {
 			if kind == "error" {
 				if t, ok := payload["text"].(string); ok {
 					emit("error", map[string]any{"text": t})

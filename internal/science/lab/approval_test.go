@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 )
 
 func TestApprovalHubBlocksUntilResolve(t *testing.T) {
@@ -49,6 +50,26 @@ func TestApprovalHubBlocksUntilResolve(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting decide")
 	}
+}
+
+func TestApprovalHubRejectsCrossOwnerDecision(t *testing.T) {
+	h := newApprovalHub(func() permission.Mode { return permission.ModeDefault })
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	b := runstate.Owner{UserID: "b", WorkspaceID: "w"}
+	id := make(chan string, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = h.decideOwned(context.Background(), a, "bash", nil, func(_ string, p map[string]any) { id <- p["id"].(string) })
+	}()
+	approvalID := <-id
+	if h.resolveOwned(b, approvalID, true, nil) {
+		t.Fatal("cross-owner approval resolved")
+	}
+	if !h.resolveOwned(a, approvalID, false, nil) {
+		t.Fatal("owner could not resolve approval")
+	}
+	<-done
 }
 
 func TestApprovalHubPlanDenies(t *testing.T) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"lumen/internal/permission"
+	"lumen/internal/runstate"
 )
 
 // approvalDecision is the browser's answer (allow + optional edited args).
@@ -27,7 +28,8 @@ type approvalHub struct {
 }
 
 type approvalWaiter struct {
-	ch chan approvalDecision
+	ch    chan approvalDecision
+	owner runstate.Owner
 }
 
 func newApprovalHub(modeFunc func() permission.Mode) *approvalHub {
@@ -38,6 +40,10 @@ func newApprovalHub(modeFunc func() permission.Mode) *approvalHub {
 }
 
 func (h *approvalHub) decide(ctx context.Context, toolName string, args json.RawMessage, emit func(kind string, payload map[string]any)) (bool, json.RawMessage, error) {
+	return h.decideOwned(ctx, runstate.LocalOwner, toolName, args, emit)
+}
+
+func (h *approvalHub) decideOwned(ctx context.Context, owner runstate.Owner, toolName string, args json.RawMessage, emit func(kind string, payload map[string]any)) (bool, json.RawMessage, error) {
 	if h.modeFunc != nil {
 		switch h.modeFunc() {
 		case permission.ModeBypass:
@@ -48,7 +54,7 @@ func (h *approvalHub) decide(ctx context.Context, toolName string, args json.Raw
 	}
 
 	id := fmt.Sprintf("appr-%d", h.seq.Add(1))
-	wt := &approvalWaiter{ch: make(chan approvalDecision, 1)}
+	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: owner}
 	h.mu.Lock()
 	h.waiters[id] = wt
 	h.mu.Unlock()
@@ -96,10 +102,14 @@ func (h *approvalHub) decide(ctx context.Context, toolName string, args json.Raw
 }
 
 func (h *approvalHub) resolve(id string, allow bool, args json.RawMessage) bool {
+	return h.resolveOwned(runstate.LocalOwner, id, allow, args)
+}
+
+func (h *approvalHub) resolveOwned(owner runstate.Owner, id string, allow bool, args json.RawMessage) bool {
 	h.mu.Lock()
 	wt, ok := h.waiters[id]
 	h.mu.Unlock()
-	if !ok {
+	if !ok || wt.owner != owner {
 		return false
 	}
 	select {
@@ -124,7 +134,7 @@ func (a *API) handleApprove(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("id required"))
 		return
 	}
-	if a.approvals == nil || !a.approvals.resolve(req.ID, req.Allow, req.Args) {
+	if a.approvals == nil || !a.approvals.resolveOwned(labOwner(r), req.ID, req.Allow, req.Args) {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("approval expired or unknown"))
 		return
 	}

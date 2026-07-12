@@ -36,3 +36,12 @@ The Go test output was served from the build cache.
 - Code HTTP handling still shares one mutable Controller behind a global turn mutex and still accepts a request API key that can update process environment.
 - Run lookup, replay, cancellation, file access, Lab projects, and artifacts are not currently owner-scoped at the Store/Manager boundary.
 - No hosted Workbench JWT verifier or hosted-mode HTTP authorization layer exists in this baseline.
+
+## Phase 2 owner isolation (2026-07-12)
+
+- Runs now persist immutable `user_id` and `workspace_id`; owner-scoped Manager APIs return `run not found` across tenant boundaries, including after SQLite restart.
+- Code and Lab run lookup, event replay, active cancellation, and Code approval decisions enforce the authenticated owner; local mode uses the explicit `local/local` owner.
+- Hosted Code allocates Controllers by user/workspace/session with distinct workspace contexts and fail-fast global, per-user, and per-workspace capacity limits.
+- Hosted Lab uses a bounded tenant registry. Each tenant receives a guarded `<HOSTED_WORKSPACE_ROOT>/<user>/<workspace>/science` root, project store, controller pool, session, and artifact namespace; idle entries are LRU-evicted.
+- Tenant identifiers are strict safe path components, and workspace resolution rejects traversal and symlink escapes.
+- Phase 2 gates passed: targeted race suite, uncached full test suite, `go vet ./...`, and `git diff --check`.

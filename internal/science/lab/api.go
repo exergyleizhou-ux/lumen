@@ -1158,7 +1158,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 				done <- fmt.Errorf("configure panic: %v", rec)
 			}
 		}()
-		done <- ctrl.Configure(slug, req.SessionID, hist, a.makeApprover(sse.emitPayload))
+		done <- ctrl.Configure(slug, req.SessionID, hist, a.makeOwnedApprover(labOwner(r), sse.emitPayload))
 	}()
 	select {
 	case err := <-done:
