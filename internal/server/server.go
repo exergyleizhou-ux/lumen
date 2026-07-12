@@ -181,8 +181,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sink.emit("text", " (with "+strconv.Itoa(len(req.Images))+" image(s))")
 		}
 		sink.emit("turn_done", "")
-		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-		flusher.Flush()
+		sink.done(nil)
 		return
 	}
 
@@ -190,8 +189,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		sink.emit("turn_started", "")
 		sink.emit("error", err.Error())
 		sink.emit("turn_done", "")
-		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-		flusher.Flush()
+		sink.done(err)
 		return
 	}
 
@@ -207,18 +205,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	sink.emit("turn_started", "")
+	var runErr error
 	if s.cfg.Ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
-		if err := s.cfg.Ctrl.Plan(ctx, req.Prompt); err != nil {
-			sink.emit("error", err.Error())
+		runErr = s.cfg.Ctrl.Plan(ctx, req.Prompt)
+		if runErr != nil {
+			sink.emit("error", runErr.Error())
 		}
-	} else if err := s.cfg.Ctrl.Run(ctx, req.Prompt); err != nil {
-		sink.emit("error", err.Error())
+	} else {
+		runErr = s.cfg.Ctrl.Run(ctx, req.Prompt)
+		if runErr != nil {
+			sink.emit("error", runErr.Error())
+		}
 	}
-	sink.emit("turn_done", "")
-
-	// Send terminal event
-	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-	flusher.Flush()
+	sink.done(runErr)
 }
 
 type sseSink struct {
@@ -227,14 +226,22 @@ type sseSink struct {
 }
 
 func (s sseSink) Emit(e event.Event) {
-	data, _ := json.Marshal(map[string]any{
-		"kind":      e.Kind,
-		"text":      e.Text,
-		"tool":      e.Tool,
-		"usage":     e.Usage,
-		"timestamp": e.Timestamp,
-	})
+	data, err := json.Marshal(e)
+	if err != nil {
+		s.emit("error", "encode event: "+err.Error())
+		return
+	}
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	s.flusher.Flush()
+}
+
+func (s sseSink) done(err error) {
+	terminal := map[string]any{"kind": "stream_done", "ok": err == nil}
+	if err != nil {
+		terminal["error"] = err.Error()
+	}
+	data, _ := json.Marshal(terminal)
+	fmt.Fprintf(s.w, "event: done\ndata: %s\n\n", data)
 	s.flusher.Flush()
 }
 
@@ -348,4 +355,3 @@ func jsonErr(w http.ResponseWriter, msg string, code int) {
 }
 
 // ── Embedded web UI ─────────────────────────────────────────
-

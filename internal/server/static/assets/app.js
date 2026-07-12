@@ -168,8 +168,7 @@ function addToolCard(parent, name, state) {
   hd.className = `tool-hd ${state}`;
   const spin = state === "running" ? '<span class="tool-spin"></span>' : "";
   const icon = state === "done-ok" ? "✓" : state === "done-err" ? "✗" : "⚙";
-  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>` +
-    (state === "running" ? '<span class="tool-approve-btn" style="margin-left:auto;font-size:10px;cursor:pointer;padding:2px 8px;border-radius:4px;background:var(--ocs-success, #5b8c7a);color:#fff" onclick="event.stopPropagation();if(window.pendingApprovalId){fetch('/api/approve/'+window.pendingApprovalId,{method:'POST'});this.textContent='已批准';this.style.background='var(--ocs-muted)';?.close();}">✓ 批准</span>' : '');
+  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>`;
   card.appendChild(hd);
   parent.querySelector(".msg-body").appendChild(card);
   return hd;
@@ -258,8 +257,8 @@ async function streamWorkflow(action, prompt) {
             hidePlanBar();
           } else if (ev.kind === "approval_request") {
             pendingApprovalId = ev.id;
-            if (typeof showApprovalModal === "function") showApprovalModal(
-              (ev.tool || "工具") + ": " + (ev.summary || ""));
+			$("approvalSummary").textContent = `${ev.tool || "工具"}: ${ev.summary || ""}`;
+			$("approvalModal")?.showModal();
           } else if (ev.kind === "error") {
             const err = document.createElement("div");
             err.className = "msg-error";
@@ -405,6 +404,8 @@ async function send() {
   const { el, bubble } = appendMsg("assistant", "");
   let assistantText = "";
   let thinkEl = null;
+	let terminalOK = null;
+	let terminalError = "";
 
   const imgs = pendingImages;
   pendingImages = [];
@@ -506,6 +507,10 @@ async function send() {
             case "turn_done":
               turn++;
               break;
+			case "stream_done":
+			  terminalOK = ev.ok === true;
+			  terminalError = ev.error || "";
+			  break;
             case "plan_start":
               onPlanStart(); break;
             case "plan_step":
@@ -519,11 +524,19 @@ async function send() {
 
     if (assistantText) {
       bubble.innerHTML = renderMarkdown(assistantText);
+	} else if (terminalOK === false) {
+	  bubble.remove();
     } else if (!bubble.querySelector(".tool-card")) {
       bubble.innerHTML = "<p>（无文本输出）</p>";
     } else {
       bubble.remove();
     }
+	if (terminalOK === false) {
+	  const err = document.createElement("div");
+	  err.className = "msg-error";
+	  err.textContent = terminalError || "任务未完成";
+	  el.querySelector(".msg-body").appendChild(err);
+	}
     if (thinkEl) thinkEl.textContent = thinkEl.textContent || "（推理完成）";
   } catch (e) {
     if (e.name === "AbortError") {
@@ -1003,7 +1016,7 @@ function renderPlanStep(step){
   card.style.cssText="margin-bottom:8px;padding:10px 12px;border:1px solid var(--ocs-line);border-radius:10px;background:var(--ocs-surface-soft);border-left:4px solid "+(planApproved[step.id]?"var(--ocs-success)":"var(--ocs-accent)");
   var riskColors={low:"#5b8c7a",mid:"#c28b4b",high:"#b42318"};
   var risk=step.risk||"low";
-  card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div style="font-size:12px;font-weight:650;color:var(--ocs-ink)">'+(step.idx||"")+". '+escapeHtml(step.title||"步骤")+'</div><div style="font-size:11px;color:var(--ocs-muted);margin-top:2px">'+escapeHtml(step.desc||"")+'</div>'+
+  card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div style="font-size:12px;font-weight:650;color:var(--ocs-ink)">'+(step.idx||"")+". "+escapeHtml(step.title||"步骤")+'</div><div style="font-size:11px;color:var(--ocs-muted);margin-top:2px">'+escapeHtml(step.desc||"")+'</div>'+
     (step.files&&step.files.length?'<div style="margin-top:4px;font-size:10px">'+step.files.map(function(f){return'<span style="color:var(--ocs-accent);cursor:pointer;margin-right:8px">📄 '+escapeHtml(f)+'</span>';}).join("")+'</div>':'')+
     '<div style="display:flex;gap:6px;margin-top:6px"><span style="font-size:10px;padding:1px 6px;border-radius:4px;background:'+(riskColors[risk]||riskColors.low)+'20;color:'+(riskColors[risk]||riskColors.low)+'">'+(step.risk||"低")+'风险</span><span style="font-size:10px;color:var(--ocs-muted)">~'+((step.lines||0)||"?")+' 行</span></div></div>'+
     (planApproved[step.id]?'<span style="color:var(--ocs-success);font-weight:650;font-size:11px">✓ 已批准</span>':'<div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0"><button class="btn sm plan-approve" style="font-size:10px;background:var(--ocs-success);color:#fff;border-color:var(--ocs-success)" data-sid="'+step.id+'">批准</button><button class="btn sm plan-skip" style="font-size:10px;color:var(--ocs-muted)" data-sid="'+step.id+'">跳过</button></div>')+
@@ -1184,32 +1197,6 @@ document.addEventListener("paste", function(e) {
   }
 });
 
-// ── Tool Approval Cards ──
-var pendingApprovalId = null;
-var approveCallback = null;
-
-function showApprovalModal(msg) {
-  pendingApprovalId = msg;
-  var modal = document.createElement("div");
-  modal.className = "modal-overlay";
-  modal.id = "approvalModal";
-  modal.innerHTML = '<div class="modal"><p class="text-sm" style="margin-bottom:16px">工具需要审批</p><p class="font-mono text-xs" style="background:rgb(244 243 239);padding:10px;border-radius:8px;margin-bottom:16px">'+escapeHtml(msg)+'</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onclick="rejectApproval()">拒绝</button><button class="btn btn-primary" onclick="approveTool()">批准</button></div></div>';
-  document.body.appendChild(modal);
-}
-function approveTool() {
-  if (pendingApprovalId) {
-    try { fetch("/api/approve/" + pendingApprovalId, { method: "POST" }); } catch (_) {}
-  }
-  var m = document.getElementById("approvalModal");
-  if (m) m.remove();
-  pendingApprovalId = null;
-}
-function rejectApproval() {
-  var m = document.getElementById("approvalModal");
-  if (m) m.remove();
-  pendingApprovalId = null;
-}
-
 // ── Plan Step Cards (SSE: plan_start / plan_step / plan_done) ──
 var planSteps = [];
 var planActive = false;
@@ -1263,7 +1250,7 @@ function showDiff(oldText, newText, path) {
     if (o === n) { lines.push('<div style="color:rgb(24 24 27/.6);padding:1px 8px">  '+escapeHtml(o)+'</div>'); }
     else { lines.push('<div style="background:rgba(220,38,38,.06);padding:1px 8px">- '+escapeHtml(o)+'</div>'); lines.push('<div style="background:rgba(4,120,87,.06);padding:1px 8px">+ '+escapeHtml(n)+'</div>'); }
   }
-  overlay.innerHTML = '<div class="modal" style="max-width:700px;max-height:80vh"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span class="font-mono text-xs">'+escapeHtml(path||"diff")+'</span><button class="btn btn-sm btn-ghost" onclick="this.closest('.modal-overlay').remove()">关闭</button></div><div class="font-mono text-xs" style="overflow-y:auto;max-height:60vh">'+lines.join("\n")+'</div></div>';
+  overlay.innerHTML = `<div class="modal" style="max-width:700px;max-height:80vh"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span class="font-mono text-xs">${escapeHtml(path||"diff")}</span><button class="btn btn-sm btn-ghost" onclick="this.closest('.modal-overlay').remove()">关闭</button></div><div class="font-mono text-xs" style="overflow-y:auto;max-height:60vh">${lines.join("\n")}</div></div>`;
   document.body.appendChild(overlay);
 }
 
