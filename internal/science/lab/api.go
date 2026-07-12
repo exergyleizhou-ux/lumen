@@ -19,6 +19,7 @@ import (
 
 	"sync/atomic"
 
+	"lumen/internal/config"
 	"lumen/internal/event"
 	"lumen/internal/hostedauth"
 	"lumen/internal/lumenstore"
@@ -41,20 +42,21 @@ import (
 
 // API hosts lab REST + SSE handlers.
 type API struct {
-	sciDir     string
-	version    string
-	listenPort int
-	projects   *project.Store
-	fleet      *labruntime.FleetManager
-	local      LocalConfig
-	turns      *turnPool
-	ctrls      *controllerPool
-	approvals  *approvalHub
-	runs       *runstate.Manager
-	usage      usage.Store
-	activeRuns *sync.Map // run_id -> labActiveRun
-	auth       *hostedauth.Verifier
-	tenants    *tenantRegistry
+	sciDir           string
+	version          string
+	listenPort       int
+	projects         *project.Store
+	fleet            *labruntime.FleetManager
+	local            LocalConfig
+	turns            *turnPool
+	ctrls            *controllerPool
+	approvals        *approvalHub
+	runs             *runstate.Manager
+	usage            usage.Store
+	platformProvider *config.ProviderConfig
+	activeRuns       *sync.Map // run_id -> labActiveRun
+	auth             *hostedauth.Verifier
+	tenants          *tenantRegistry
 	// activeMode is read by approval hub during a turn.
 	modeMu     *sync.Mutex
 	activeMode permission.Mode
@@ -3120,11 +3122,7 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
 		return
 	}
-	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
-		if pc, _, adapter, err := ScienceProviderConfig(sciCfg); err == nil {
-			req.Provider = &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: adapter}
-		}
-	}
+	req.Provider = a.langGraphProvider()
 	// Resolve workspace from project slug when client did not supply an absolute path.
 	// project_id is the project slug (frontend activeProject.slug), not proj_* id.
 	if strings.TrimSpace(req.Workspace) == "" && strings.TrimSpace(req.ProjectID) != "" && a.projects != nil {
@@ -3156,6 +3154,22 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *API) langGraphProvider() *langgraph.ProviderConfig {
+	if a.auth != nil {
+		if a.platformProvider == nil {
+			return nil
+		}
+		pc := *a.platformProvider
+		return &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: pc.Kind}
+	}
+	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
+		if pc, _, adapter, err := ScienceProviderConfig(sciCfg); err == nil {
+			return &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: adapter}
+		}
+	}
+	return nil
 }
 
 // handleLangGraphHistory lists server-persisted sidecar runs for a project.

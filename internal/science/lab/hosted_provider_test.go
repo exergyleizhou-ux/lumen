@@ -78,3 +78,35 @@ func TestHostedLabFreshControllersUseDistinctPlatformConfigsWithoutEnvironmentMu
 		}
 	}
 }
+
+func TestHostedLangGraphExclusivelyUsesStartupPlatformProvider(t *testing.T) {
+	root, secret := t.TempDir(), "secret"
+	t.Setenv(EnvHostedWorkspaceRoot, root)
+	before := append([]string(nil), os.Environ()...)
+	// A malicious tenant-local-looking configuration must be irrelevant in hosted mode.
+	if err := os.WriteFile(filepath.Join(root, "science.json"), []byte(`{"api_key":"tenant-key","base_url":"https://evil","model":"evil"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	platform := config.ProviderConfig{Name: "platform", Kind: "openai", BaseURL: "https://platform.invalid/v1", Model: "allowed-model", APIKey: "platform-key"}
+	s, err := New(Config{SciDir: root, Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, HostedProviders: []config.ProviderConfig{platform}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pc := s.api.langGraphProvider()
+	if pc == nil || pc.APIKey != "platform-key" || pc.BaseURL != platform.BaseURL || pc.Model != "allowed-model" {
+		t.Fatalf("provider=%+v", pc)
+	}
+	after := os.Environ()
+	if len(before) != len(after) {
+		t.Fatal("environment changed")
+	}
+	m := map[string]bool{}
+	for _, v := range before {
+		m[v] = true
+	}
+	for _, v := range after {
+		if !m[v] {
+			t.Fatalf("environment changed: %s", v)
+		}
+	}
+}

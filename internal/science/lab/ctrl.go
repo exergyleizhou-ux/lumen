@@ -141,6 +141,7 @@ func (c *Controller) Configure(slug, sessionID string, sink event.Sink, approver
 		ToolsProfile:        defaultToolProfile,
 		Provider:            &providerCfg,
 		ProcessEnvImmutable: true,
+		ProviderOnly:        c.provider != nil,
 	}); err != nil {
 		return err
 	}

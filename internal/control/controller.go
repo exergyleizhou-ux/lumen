@@ -105,6 +105,9 @@ type ConfigureOptions struct {
 	// ProcessEnvImmutable prevents request-time dotenv loading. Hosted servers
 	// resolve platform credentials once at startup and pass Provider explicitly.
 	ProcessEnvImmutable bool
+	// ProviderOnly disables every config-file fallback backend. Hosted runtimes
+	// must set this with Provider so failover cannot escape the startup allowlist.
+	ProviderOnly bool
 }
 
 // sink returns the current event sink (never nil).
@@ -218,20 +221,22 @@ func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cf
 
 	// 2b. Build fallback providers from remaining configs
 	backends := []modelpool.Backend{{Name: provCfg.Name, Provider: prov, IsLocal: isLoopbackURL(provCfg.BaseURL)}}
-	for i := range cfg.Providers {
-		if cfg.Providers[i].Name == provCfg.Name {
-			continue
-		}
-		fb, err := provider.New(cfg.Providers[i].Kind, provider.Config{
-			Name:    cfg.Providers[i].Name,
-			BaseURL: cfg.Providers[i].BaseURL,
-			Model:   cfg.Providers[i].Model,
-			APIKey:  cfg.Providers[i].APIKey,
-			Timeout: c.turnTimeout,
-		})
-		if err == nil {
-			c.fallbacks = append(c.fallbacks, fb)
-			backends = append(backends, modelpool.Backend{Name: cfg.Providers[i].Name, Provider: fb, IsLocal: isLoopbackURL(cfg.Providers[i].BaseURL)})
+	if !opts.ProviderOnly {
+		for i := range cfg.Providers {
+			if cfg.Providers[i].Name == provCfg.Name {
+				continue
+			}
+			fb, err := provider.New(cfg.Providers[i].Kind, provider.Config{
+				Name:    cfg.Providers[i].Name,
+				BaseURL: cfg.Providers[i].BaseURL,
+				Model:   cfg.Providers[i].Model,
+				APIKey:  cfg.Providers[i].APIKey,
+				Timeout: c.turnTimeout,
+			})
+			if err == nil {
+				c.fallbacks = append(c.fallbacks, fb)
+				backends = append(backends, modelpool.Backend{Name: cfg.Providers[i].Name, Provider: fb, IsLocal: isLoopbackURL(cfg.Providers[i].BaseURL)})
+			}
 		}
 	}
 

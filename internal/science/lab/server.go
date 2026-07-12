@@ -94,6 +94,10 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
 	s.api.ctrls.setPlatformProvider(platformProvider, cfg.RuntimePATH)
+	if platformProvider != nil {
+		copy := *platformProvider
+		s.api.platformProvider = &copy
+	}
 	if cfg.Usage != nil {
 		s.api.usage = cfg.Usage
 	}

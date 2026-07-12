@@ -50,7 +50,7 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 		rt.ctrl.SetSink(sink)
 		return nil
 	}
-	err = rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen"), Provider: rt.provider, ProcessEnvImmutable: s.auth != nil})
+	err = rt.ctrl.ConfigureWithOptions(sink, nil, cfgPath, control.ConfigureOptions{Workspace: rt.ws, DataRoot: filepath.Join(rt.ws.Root, ".lumen"), Provider: rt.provider, ProcessEnvImmutable: s.auth != nil, ProviderOnly: s.auth != nil})
 	if err == nil {
 		rt.entry.configured = true
 		if rt.provider != nil {
