@@ -82,6 +82,20 @@ func (m *Manager) GetOwned(owner Owner, runID string) (Run, error) {
 	return run, nil
 }
 
+// ValidateRetryParent permits retry lineage only from an owned terminal Run.
+// Callers must still require a new prompt; the original prompt is intentionally
+// neither reconstructed nor copied into the child Run.
+func (m *Manager) ValidateRetryParent(owner Owner, runID string) (Run, error) {
+	run, err := m.GetOwned(owner, runID)
+	if err != nil {
+		return Run{}, err
+	}
+	if !run.Status.Terminal() {
+		return Run{}, errors.New("parent run must be terminal")
+	}
+	return run, nil
+}
+
 func (m *Manager) EventsOwned(owner Owner, runID string, afterSeq uint64) ([]event.Event, error) {
 	if _, err := m.GetOwned(owner, runID); err != nil {
 		return nil, err

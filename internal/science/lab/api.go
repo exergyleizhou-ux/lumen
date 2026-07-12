@@ -315,6 +315,44 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"artifacts": items})
 		return
 	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		run, err := a.runs.GetOwned(owner, parts[0])
+		if err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		events, err := a.runs.EventsOwned(owner, run.ID, 0)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		approvals, err := a.approvalStore.ListRun(owner, run.ID)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		artifacts, err := a.artifactStore.ListRun(owner, run.ID)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		pending := 0
+		for _, approval := range approvals {
+			if approval.Decision == nil && time.Now().UTC().Before(approval.ExpiresAt) {
+				pending++
+			}
+		}
+		var lastSeq uint64
+		if len(events) > 0 {
+			lastSeq = events[len(events)-1].Seq
+		}
+		writeJSON(w, 200, map[string]any{"workspace_id": run.WorkspaceID, "run_id": run.ID, "last_seq": lastSeq, "status": run.Status, "terminal": run.Status.Terminal(), "pending_approvals": pending, "verification": labWorkbenchVerification(events, run), "artifact_count": len(artifacts)})
+		return
+	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "evidence" {
 		if r.Method != http.MethodGet {
 			writeErr(w, 405, fmt.Errorf("method not allowed"))
@@ -354,6 +392,29 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
+}
+
+func labWorkbenchVerification(events []event.Event, run runstate.Run) string {
+	state := "idle"
+	for _, ev := range events {
+		switch ev.Kind {
+		case event.VerifyStarted:
+			state = "running"
+		case event.VerifyResult:
+			if ev.Level == event.LevelInfo && !strings.Contains(ev.Text, "skipped") {
+				state = "passed"
+			} else {
+				state = "failed"
+			}
+		}
+	}
+	if run.StopReason == "verification_failed" || run.StopReason == "verification_incomplete" {
+		return "failed"
+	}
+	if state == "idle" && run.Status.Terminal() {
+		return "not_run"
+	}
+	return state
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -1165,6 +1226,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		SessionID string `json:"session_id"`
 		Prompt    string `json:"prompt"`
 		Mode      string `json:"mode"`
+		ParentID  string `json:"parent_run_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("prompt required"))
@@ -1261,7 +1323,16 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	owner := labOwner(r)
-	run, err := a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), "")
+	if req.ParentID != "" {
+		if _, parentErr := a.runs.ValidateRetryParent(owner, req.ParentID); parentErr != nil {
+			a.turnsFailed.Add(1)
+			sse.emit("error", "parent run must be an owned terminal run")
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		}
+	}
+	run, err := a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), req.ParentID)
 	if err != nil {
 		a.turnsFailed.Add(1)
 		sse.emit("error", err.Error())

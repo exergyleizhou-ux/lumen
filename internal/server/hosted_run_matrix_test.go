@@ -5,10 +5,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/control"
 	"lumen/internal/event"
 	"lumen/internal/hostedauth"
@@ -48,9 +51,18 @@ func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyStarted})
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.VerifyResult, Level: event.LevelInfo, Text: "passed"})
+	hash, _ := approvalstate.HashArgs([]byte(`{}`))
+	if err := s.approvalStore.Create(approvalstate.Approval{ID: "snapshot-approval", RunID: run.ID, Owner: a, ArgsHash: hash, ExpiresAt: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.artifactStore.Create(artifact.Record{ID: "snapshot-artifact", RunID: run.ID, Owner: a, ObjectKey: "object", SHA256: "sha"}); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cleanup := s.beginActiveRun(context.Background(), a, run.ID, time.Minute)
 	defer cleanup()
-	for _, path := range []string{"/v1/runs/" + run.ID, "/v1/runs/" + run.ID + "/events"} {
+	for _, path := range []string{"/v1/runs/" + run.ID, "/v1/runs/" + run.ID + "/events", "/v1/runs/" + run.ID + "/workbench-snapshot"} {
 		if rec := authReq(s, bToken, http.MethodGet, path, ""); rec.Code != http.StatusNotFound {
 			t.Fatalf("B %s: %d %s", path, rec.Code, rec.Body.String())
 		}
@@ -65,6 +77,9 @@ func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
 	}
 	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID, ""); rec.Code != http.StatusOK {
 		t.Fatalf("A get: %d", rec.Code)
+	}
+	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID+"/workbench-snapshot", ""); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"workspace_id":"w"`) || !strings.Contains(rec.Body.String(), `"last_seq":3`) || !strings.Contains(rec.Body.String(), `"pending_approvals":1`) || !strings.Contains(rec.Body.String(), `"verification":"passed"`) || !strings.Contains(rec.Body.String(), `"artifact_count":1`) || strings.Contains(rec.Body.String(), "secret") {
+		t.Fatalf("A snapshot must be owner scoped and sanitized: %d %s", rec.Code, rec.Body.String())
 	}
 	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: a}
 	s.approvals.Store("appr-x", wt)

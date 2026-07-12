@@ -85,3 +85,10 @@ The Go test output was served from the build cache.
 - Replacement approvals update the live waiter identity, so the second decision validates and consumes only the new grant; end-to-end Code and Lab tests preserve the invalidated original.
 - Postgres Artifact persistence reserves metadata transactionally before writing bytes. Exact replay does not touch the object, changed ID/SHA or Run/ToolCall conflicts fail, and commit compensation deletes only the object created by that attempt. Concurrent and restart replay tests verify the original bytes remain intact.
 - Evidence redaction preserves numeric usage counters such as `input_tokens`, `output_tokens`, and cache-token counts while still removing credential and authorization token values.
+
+## Phase 5 unified Workbench bridge (2026-07-13)
+
+- Code and Lab publish the strict `lumen.workbench.snapshot` v2 contract. The constructors explicitly copy only workspace/project identity, Run id/sequence/status/terminal, pending-approval count, structured verification state, and Artifact count; prompt, reasoning, tool arguments, keys, and file content cannot enter the message through object spreading.
+- Lab continues publishing its original v1 snapshot unchanged alongside v2 for compatibility.
+- `GET /v1/runs/{id}/workbench-snapshot` and `GET /api/lab/runs/{id}/workbench-snapshot` derive v2 runtime fields from owner-scoped durable Run, ordered event, approval, and Artifact stores. Cross-owner requests remain indistinguishable from missing Runs.
+- Code and Lab chat retry requests require a new non-empty `prompt` and may include `parent_run_id`. The parent must be an owned terminal Run; the new Run records lineage and never overwrites or reconstructs the original prompt.

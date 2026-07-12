@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/doctor"
+	"lumen/internal/event"
 	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/runstate"
@@ -23,6 +25,29 @@ import (
 	"lumen/internal/timeline"
 	"lumen/internal/workspace"
 )
+
+func workbenchVerification(events []event.Event, run runstate.Run) string {
+	state := "idle"
+	for _, ev := range events {
+		switch ev.Kind {
+		case event.VerifyStarted:
+			state = "running"
+		case event.VerifyResult:
+			if ev.Level == event.LevelInfo && !strings.Contains(ev.Text, "skipped") {
+				state = "passed"
+			} else {
+				state = "failed"
+			}
+		}
+	}
+	if run.StopReason == "verification_failed" || run.StopReason == "verification_incomplete" {
+		return "failed"
+	}
+	if state == "idle" && run.Status.Terminal() {
+		return "not_run"
+	}
+	return state
+}
 
 func (s *Server) routesAPI() {
 	s.handleBusiness("/v1/mode", s.handleMode)
@@ -106,6 +131,44 @@ func (s *Server) handleRuns(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonOK(w, map[string]any{"artifacts": items})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {
+		if r.Method != http.MethodGet {
+			jsonErr(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		run, err := s.runs.GetOwned(owner, parts[0])
+		if err != nil {
+			jsonErr(w, "run not found", http.StatusNotFound)
+			return
+		}
+		events, err := s.runs.EventsOwned(owner, run.ID, 0)
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		approvals, err := s.approvalStore.ListRun(owner, run.ID)
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		artifacts, err := s.artifactStore.ListRun(owner, run.ID)
+		if err != nil {
+			jsonErr(w, err.Error(), 500)
+			return
+		}
+		pending := 0
+		for _, approval := range approvals {
+			if approval.Decision == nil && time.Now().UTC().Before(approval.ExpiresAt) {
+				pending++
+			}
+		}
+		var lastSeq uint64
+		if len(events) > 0 {
+			lastSeq = events[len(events)-1].Seq
+		}
+		jsonOK(w, map[string]any{"workspace_id": run.WorkspaceID, "run_id": run.ID, "last_seq": lastSeq, "status": run.Status, "terminal": run.Status.Terminal(), "pending_approvals": pending, "verification": workbenchVerification(events, run), "artifact_count": len(artifacts)})
 		return
 	}
 	if len(parts) == 2 && parts[0] != "" && parts[1] == "evidence" {

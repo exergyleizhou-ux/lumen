@@ -54,11 +54,78 @@ function syncModeSelect() {
 let pendingApprovalId = null;
 let currentRunId = "";
 let currentRunSeq = 0;
+let workbenchRunStatus = "idle";
+let workbenchVerification = "idle";
+let workbenchArtifactCount = 0;
+let workbenchPendingApprovals = 0;
+let workbenchRefreshRunId = "";
+
+// buildWorkbenchSnapshotV2 is deliberately a strict constructor.  Never spread
+// runtime objects into the cross-frame message: Run and event objects can carry
+// prompts, tool arguments, file content, or provider credentials.
+function buildWorkbenchSnapshotV2(state) {
+  const workspaceID = typeof state?.workspace_id === "string" ? state.workspace_id.trim() : "";
+  const runID = typeof state?.run_id === "string" ? state.run_id.trim() : "";
+  const allowed = ["queued", "running", "waiting_approval", "verifying", "succeeded", "failed", "canceled", "timed_out", "exhausted"];
+  const status = allowed.includes(state?.status) ? state.status : "running";
+  const verificationAllowed = ["idle", "running", "passed", "failed", "not_run"];
+  const verification = verificationAllowed.includes(state?.verification) ? state.verification : "idle";
+  return {
+    kind: "lumen.workbench.snapshot",
+    version: 2,
+    surface: "code",
+    workspace: { id: workspaceID },
+    project: null,
+    run: runID ? {
+      id: runID,
+      last_seq: Number.isInteger(state?.last_seq) && state.last_seq > 0 ? state.last_seq : 0,
+      status,
+      terminal: allowed.slice(4).includes(status),
+    } : null,
+    pending_approvals: Number.isInteger(state?.pending_approvals) && state.pending_approvals > 0 ? state.pending_approvals : 0,
+    verification,
+    artifact_count: Number.isInteger(state?.artifact_count) && state.artifact_count > 0 ? state.artifact_count : 0,
+  };
+}
+
+function postWorkbenchSnapshotV2() {
+  if (!window.parent || window.parent === window) return;
+  window.parent.postMessage(buildWorkbenchSnapshotV2({
+    workspace_id: document.documentElement.dataset.workspaceId || "",
+    run_id: currentRunId,
+    last_seq: currentRunSeq,
+    status: workbenchRunStatus,
+    pending_approvals: workbenchPendingApprovals,
+    verification: workbenchVerification,
+    artifact_count: workbenchArtifactCount,
+  }), window.location.origin);
+}
+
+async function refreshWorkbenchRuntime() {
+  if (!currentRunId) return;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/workbench-snapshot`, { cache: "no-store" });
+    if (!response.ok) return;
+    const value = await response.json();
+    document.documentElement.dataset.workspaceId = typeof value.workspace_id === "string" ? value.workspace_id : "";
+    currentRunSeq = Number.isInteger(value.last_seq) ? value.last_seq : currentRunSeq;
+    workbenchRunStatus = typeof value.status === "string" ? value.status : workbenchRunStatus;
+    workbenchVerification = typeof value.verification === "string" ? value.verification : workbenchVerification;
+    workbenchArtifactCount = Number.isInteger(value.artifact_count) ? value.artifact_count : 0;
+    workbenchPendingApprovals = Number.isInteger(value.pending_approvals) ? value.pending_approvals : 0;
+    if (workbenchPendingApprovals === 0 && workbenchRunStatus !== "waiting_approval") pendingApprovalId = null;
+    postWorkbenchSnapshotV2();
+  } catch (_) {}
+}
+
+window.CodeUI = { buildWorkbenchSnapshotV2 };
 
 async function respondApproval(allow) {
   if (!pendingApprovalId) return;
   const id = pendingApprovalId;
   pendingApprovalId = null;
+  workbenchPendingApprovals = Math.max(0, workbenchPendingApprovals - 1);
+  postWorkbenchSnapshotV2();
   $("approvalModal")?.close();
   try {
     await fetch(API_BASE + "/v1/approve", {
@@ -414,6 +481,10 @@ async function send() {
 
 	const applyRunEvent = (ev) => {
 	  if (ev.run_id) currentRunId = ev.run_id;
+	  if (currentRunId && workbenchRefreshRunId !== currentRunId) {
+	    workbenchRefreshRunId = currentRunId;
+	    refreshWorkbenchRuntime();
+	  }
 	  if (Number.isInteger(ev.seq) && ev.seq > currentRunSeq) currentRunSeq = ev.seq;
 	  if (currentRunId) {
 	    sessionStorage.setItem("lumen_active_run", JSON.stringify({ runId: currentRunId, lastSeq: currentRunSeq }));
@@ -462,6 +533,8 @@ async function send() {
 	      break;
 	    case "approval_request":
 	      pendingApprovalId = ev.id;
+	      workbenchPendingApprovals++;
+	      workbenchRunStatus = "waiting_approval";
 	      $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
 	      $("approvalModal")?.showModal();
 	      break;
@@ -473,6 +546,13 @@ async function send() {
           terminalError = terminalFailureMessage("", ev.stop_reason);
         }
         break;
+	    case "verify_started":
+	      workbenchRunStatus = "verifying";
+	      workbenchVerification = "running";
+	      break;
+	    case "verify_result":
+	      workbenchVerification = ev.ok === true ? "passed" : "failed";
+	      break;
       case "stream_done":
         terminalOK = ev.ok === true;
         terminalError = terminalFailureMessage(ev.error || "", "");
@@ -481,6 +561,8 @@ async function send() {
 	    case "plan_step": onPlanStep(ev.step || ev); break;
 	    case "plan_done": onPlanDone(); break;
 	  }
+	  if (currentRunId && workbenchRunStatus === "idle") workbenchRunStatus = "running";
+	  postWorkbenchSnapshotV2();
 	};
 
   const imgs = pendingImages;
@@ -550,6 +632,12 @@ async function send() {
 	  el.querySelector(".msg-body").appendChild(err);
 	}
     if (terminalOK !== null) sessionStorage.removeItem("lumen_active_run");
+	if (terminalOK !== null) {
+	  workbenchRunStatus = terminalOK ? "succeeded" : "failed";
+	  if (workbenchVerification === "idle") workbenchVerification = "not_run";
+	  refreshWorkbenchRuntime();
+	  postWorkbenchSnapshotV2();
+	}
     if (thinkEl) thinkEl.textContent = thinkEl.textContent || "（推理完成）";
   } catch (e) {
     if (e.name === "AbortError") {
@@ -604,6 +692,17 @@ function runIsTerminal(status) {
   return ["succeeded", "failed", "canceled", "timed_out", "exhausted"].includes(status);
 }
 
+async function refreshWorkbenchArtifacts() {
+  if (!currentRunId) return;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/artifacts`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    workbenchArtifactCount = Array.isArray(payload.artifacts) ? payload.artifacts.length : 0;
+    postWorkbenchSnapshotV2();
+  } catch (_) {}
+}
+
 async function restoreStoredRun() {
   const raw = sessionStorage.getItem("lumen_active_run");
   if (!raw || running) return;
@@ -652,6 +751,9 @@ async function restoreStoredRun() {
       if (!runResponse.ok) throw new Error("无法读取 Run 状态");
       const runPayload = await runResponse.json();
       const run = runPayload.run || {};
+      document.documentElement.dataset.workspaceId = typeof run.workspace_id === "string" ? run.workspace_id : "";
+      workbenchRunStatus = run.status || "running";
+      postWorkbenchSnapshotV2();
       if (runIsTerminal(run.status)) {
         if (!restoredText) bubble.innerHTML = renderMarkdown(`Run ${runId}：${run.status}`);
         if (run.status !== "succeeded") {
@@ -661,6 +763,11 @@ async function restoreStoredRun() {
           el.querySelector(".msg-body").appendChild(err);
         }
         sessionStorage.removeItem("lumen_active_run");
+		if (workbenchVerification === "idle") {
+		  workbenchVerification = run.stop_reason === "verification_failed" || run.stop_reason === "verification_incomplete" ? "failed" : "not_run";
+		}
+		refreshWorkbenchRuntime();
+		postWorkbenchSnapshotV2();
         break;
       }
       await new Promise((resolve) => setTimeout(resolve, 1000));

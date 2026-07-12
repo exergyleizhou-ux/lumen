@@ -36,12 +36,33 @@ func TestEngineeringTaskE2ERejectsInvalidCode(t *testing.T) {
 	}
 }
 
+func TestEngineeringRetryCreatesChildWithoutOverwritingParent(t *testing.T) {
+	result, parent := runEngineeringE2EWithParent(t, "package main\n\nfunc main() {}\n")
+	if result.run.ParentID != parent.ID || result.run.ID == parent.ID {
+		t.Fatalf("retry run=%#v parent=%#v", result.run, parent)
+	}
+	unchanged, err := result.manager.Get(parent.ID)
+	if err != nil || unchanged.Version != parent.Version || unchanged.Status != parent.Status {
+		t.Fatalf("parent was overwritten: %#v err=%v", unchanged, err)
+	}
+}
+
 type engineeringE2EResult struct {
-	run runstate.Run
-	sse string
+	run     runstate.Run
+	sse     string
+	manager *runstate.Manager
 }
 
 func runEngineeringE2E(t *testing.T, content string) engineeringE2EResult {
+	result, _ := runEngineeringE2EInternal(t, content, false)
+	return result
+}
+
+func runEngineeringE2EWithParent(t *testing.T, content string) (engineeringE2EResult, runstate.Run) {
+	return runEngineeringE2EInternal(t, content, true)
+}
+
+func runEngineeringE2EInternal(t *testing.T, content string, retry bool) (engineeringE2EResult, runstate.Run) {
 	t.Helper()
 	var calls atomic.Int32
 	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -75,13 +96,28 @@ func runEngineeringE2E(t *testing.T, content string) engineeringE2EResult {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
 
 	runs := runstate.NewManager(nil)
+	var parent runstate.Run
+	if retry {
+		parent, err = runs.Start("parent-session", "code", "original", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent, err = runs.Finish(parent.ID, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{
+	bodyMap := map[string]any{
 		"prompt": "create a valid Go entrypoint", "api_key": "sk-test", "provider": "deepseek", "mode": "bypass",
-	})
+	}
+	if retry {
+		bodyMap["parent_run_id"] = parent.ID
+	}
+	body, _ := json.Marshal(bodyMap)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleChat(rec, req)
@@ -100,5 +136,5 @@ func runEngineeringE2E(t *testing.T, content string) engineeringE2EResult {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return engineeringE2EResult{run: finished, sse: rec.Body.String()}
+	return engineeringE2EResult{run: finished, sse: rec.Body.String(), manager: runs}, parent
 }

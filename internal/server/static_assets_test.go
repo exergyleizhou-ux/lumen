@@ -18,6 +18,15 @@ func TestEmbeddedAppJSSyntax(t *testing.T) {
 	}
 }
 
+func TestEmbeddedAppJSWorkbenchSnapshotV2(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil { t.Skip("node is not installed") }
+	cmd := exec.Command(node, "static/assets/codeui_test.mjs")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("Code WorkbenchSnapshotV2 contract: %v\n%s", err, out)
+	}
+}
+
 func TestEmbeddedAppJSRunReplayContract(t *testing.T) {
 	data, err := os.ReadFile("static/assets/app.js")
 	if err != nil {

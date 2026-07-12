@@ -370,6 +370,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Provider string   `json:"provider,omitempty"`
 		Model    string   `json:"model,omitempty"`
 		Mode     string   `json:"mode,omitempty"` // agent · plan · bypass · default · accept-edits
+		ParentID string   `json:"parent_run_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 		http.Error(w, `{"error":"prompt required"}`, http.StatusBadRequest)
@@ -408,6 +409,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	defer s.releaseRuntime(rt)
 	rt.provider = pc
 	owner, ctrl := rt.owner, rt.ctrl
+	if req.ParentID != "" {
+		if _, parentErr := s.runs.ValidateRetryParent(owner, req.ParentID); parentErr != nil {
+			jsonCodeErr(w, "invalid_parent_run", "parent run must be an owned terminal run", http.StatusConflict)
+			return
+		}
+	}
 
 	// Serialize turns: the shared Controller/Agent/Session is not safe for
 	// concurrent Configure+Run. One chat at a time (acceptable for a single-
@@ -449,7 +456,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if sess := ctrl.Session(); sess != nil && sess.Path != "" {
 		sessionID = lumenstore.SessionIDFromPath(sess.Path)
 	}
-	run, err := s.runs.StartOwned(owner, sessionID, "code", summarizeRunTitle(req.Prompt), "")
+	run, err := s.runs.StartOwned(owner, sessionID, "code", summarizeRunTitle(req.Prompt), req.ParentID)
 	if err != nil {
 		sink.emit("error", err.Error())
 		sink.done("", err)

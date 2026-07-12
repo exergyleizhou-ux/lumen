@@ -62,6 +62,29 @@ func TestStampingSinkAddsOrderedRunMetadata(t *testing.T) {
 	}
 }
 
+func TestValidateRetryParentRequiresOwnedTerminalRun(t *testing.T) {
+	mgr := NewManager(nil)
+	a := Owner{UserID: "a", WorkspaceID: "w"}
+	b := Owner{UserID: "b", WorkspaceID: "w"}
+	run, err := mgr.StartOwned(a, "session", "code", "original", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ValidateRetryParent(a, run.ID); err == nil {
+		t.Fatal("active parent accepted")
+	}
+	finished, err := mgr.Finish(run.ID, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := mgr.ValidateRetryParent(a, run.ID); err != nil || got.ID != finished.ID {
+		t.Fatalf("owned terminal parent rejected: %#v %v", got, err)
+	}
+	if _, err := mgr.ValidateRetryParent(b, run.ID); !errors.Is(err, ErrRunNotFound) {
+		t.Fatalf("cross-owner parent leaked: %v", err)
+	}
+}
+
 func TestStampingSinkConcurrentSequenceIsContiguous(t *testing.T) {
 	mgr := NewManager(nil)
 	run, err := mgr.Start("session-1", "code", "parallel reads", "")
