@@ -2,7 +2,9 @@ package lab
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"lumen/internal/event"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -32,6 +34,57 @@ func hostedLabToken(t *testing.T, secret, user, workspace string) string {
 		t.Fatal(err)
 	}
 	return raw
+}
+
+func TestHostedLabRunAndApprovalCrossOwnerMatrix(t *testing.T) {
+	root, secret := t.TempDir(), "secret"
+	t.Setenv(EnvHostedWorkspaceRoot, root)
+	runs := runstate.NewManager(nil)
+	s, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, WorkbenchJWTSecret: secret, DisableFleetAutoConnect: true, Runs: runs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	at := hostedLabToken(t, secret, "a", "w")
+	bt := hostedLabToken(t, secret, "b", "w")
+	run, err := runs.StartOwned(a, "s", "science", "private", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+	ctx, cleanup := s.api.beginActiveRun(context.Background(), a, run.ID, time.Minute)
+	defer cleanup()
+	for _, path := range []string{"/api/lab/runs/" + run.ID, "/api/lab/runs/" + run.ID + "/events"} {
+		if rec := labRequest(t, s, bt, http.MethodGet, path, nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("B %s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := labRequest(t, s, bt, http.MethodPost, "/api/lab/runs/"+run.ID+"/cancel", nil); rec.Code != http.StatusNotFound {
+		t.Fatalf("B cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("B canceled A")
+	default:
+	}
+	if rec := labRequest(t, s, at, http.MethodGet, "/api/lab/runs/"+run.ID, nil); rec.Code != http.StatusOK {
+		t.Fatalf("A get: %d", rec.Code)
+	}
+	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: a}
+	s.api.approvals.mu.Lock()
+	s.api.approvals.waiters["appr-x"] = wt
+	s.api.approvals.mu.Unlock()
+	if rec := labRequest(t, s, bt, http.MethodPost, "/api/lab/approve", map[string]any{"id": "appr-x", "allow": true}); rec.Code != http.StatusNotFound {
+		t.Fatalf("B approve: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-wt.ch:
+		t.Fatal("B resolved A")
+	default:
+	}
+	if rec := labRequest(t, s, at, http.MethodPost, "/api/lab/approve", map[string]any{"id": "appr-x", "allow": false}); rec.Code != http.StatusOK {
+		t.Fatalf("A approve: %d", rec.Code)
+	}
 }
 
 func labRequest(t *testing.T, s *Server, token, method, path string, body any) *httptest.ResponseRecorder {

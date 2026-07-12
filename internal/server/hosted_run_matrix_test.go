@@ -1,0 +1,83 @@
+package server
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"lumen/internal/control"
+	"lumen/internal/event"
+	"lumen/internal/hostedauth"
+	"lumen/internal/runstate"
+)
+
+func ownerToken(t *testing.T, secret, user string) string {
+	t.Helper()
+	now := time.Now()
+	c := hostedauth.Claims{UserID: user, WorkspaceID: "w", Permissions: []string{"run:read", "run:cancel", "approval:decide", "code:run"}, RegisteredClaims: jwt.RegisteredClaims{Issuer: hostedauth.Issuer, Audience: jwt.ClaimStrings{hostedauth.Audience}, Subject: user, ID: "s-" + user, IssuedAt: jwt.NewNumericDate(now), NotBefore: jwt.NewNumericDate(now.Add(-time.Second)), ExpiresAt: jwt.NewNumericDate(now.Add(time.Minute))}}
+	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString([]byte(secret))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+func authReq(s *Server, token, method, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestHostedRunAndApprovalCrossOwnerMatrix(t *testing.T) {
+	secret := "secret"
+	runs := runstate.NewManager(nil)
+	s, err := New(Config{Ctrl: control.New(), Runs: runs, Hosted: true, WorkbenchJWTSecret: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := runstate.Owner{UserID: "a", WorkspaceID: "w"}
+	bToken := ownerToken(t, secret, "b")
+	aToken := ownerToken(t, secret, "a")
+	run, err := runs.StartOwned(a, "s", "code", "private", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runs.WrapSink(run.ID, event.Discard).Emit(event.Event{Kind: event.Text, Text: "secret"})
+	ctx, cleanup := s.beginActiveRun(context.Background(), a, run.ID, time.Minute)
+	defer cleanup()
+	for _, path := range []string{"/v1/runs/" + run.ID, "/v1/runs/" + run.ID + "/events"} {
+		if rec := authReq(s, bToken, http.MethodGet, path, ""); rec.Code != http.StatusNotFound {
+			t.Fatalf("B %s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	if rec := authReq(s, bToken, http.MethodPost, "/v1/runs/"+run.ID+"/cancel", ""); rec.Code != http.StatusNotFound {
+		t.Fatalf("B cancel: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-ctx.Done():
+		t.Fatal("B canceled A")
+	default:
+	}
+	if rec := authReq(s, aToken, http.MethodGet, "/v1/runs/"+run.ID, ""); rec.Code != http.StatusOK {
+		t.Fatalf("A get: %d", rec.Code)
+	}
+	wt := &approvalWaiter{ch: make(chan approvalDecision, 1), owner: a}
+	s.approvals.Store("appr-x", wt)
+	defer s.approvals.Delete("appr-x")
+	if rec := authReq(s, bToken, http.MethodPost, "/v1/approve", `{"id":"appr-x","allow":true}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("B approve: %d %s", rec.Code, rec.Body.String())
+	}
+	select {
+	case <-wt.ch:
+		t.Fatal("B resolved A approval")
+	default:
+	}
+	if rec := authReq(s, aToken, http.MethodPost, "/v1/approve", `{"id":"appr-x","allow":false}`); rec.Code != http.StatusOK {
+		t.Fatalf("A approve: %d", rec.Code)
+	}
+}
