@@ -75,6 +75,17 @@ func New(cfg Config) (*Server, error) {
 	s := &Server{cfg: cfg, fleet: fleet, mux: http.NewServeMux()}
 	s.api = NewAPI(cfg.SciDir, cfg.Version, fleet, parseListenPort(cfg.Addr), cfg.Runs)
 	s.api.auth = verifier
+	if cfg.Hosted {
+		root := os.Getenv(EnvHostedWorkspaceRoot)
+		if root == "" {
+			return nil, fmt.Errorf("lab: %s required in hosted mode", EnvHostedWorkspaceRoot)
+		}
+		registry, err := newTenantRegistry(root, fleet, 64, 30*time.Minute)
+		if err != nil {
+			return nil, fmt.Errorf("lab tenant registry: %w", err)
+		}
+		s.api.tenants = registry
+	}
 	s.routes()
 	return s, nil
 }

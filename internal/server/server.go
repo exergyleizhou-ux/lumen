@@ -32,6 +32,7 @@ import (
 	"lumen/internal/memory"
 	"lumen/internal/permission"
 	"lumen/internal/runstate"
+	"lumen/internal/workspace"
 )
 
 // Config holds the server configuration.
@@ -62,6 +63,7 @@ type Server struct {
 	runs        *runstate.Manager
 	auth        *hostedauth.Verifier
 	activeRuns  sync.Map // run_id -> activeRun
+	controllers *serverControllerPool
 }
 
 type activeRun struct {
@@ -117,7 +119,7 @@ func New(cfg Config) (*Server, error) {
 	if runs == nil {
 		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{})}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
@@ -256,12 +258,59 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// SSE sink — emits each event as an SSE data frame
 	sink := sseSink{w: w, flusher: flusher}
+	owner := ownerFromRequest(r)
+	ctrl := s.cfg.Ctrl
+	var hostedWorkspace workspace.Context
+	poolSession := "local"
+	if id, ok := hostedauth.FromContext(r.Context()); ok {
+		poolSession = id.SessionID
+		root := os.Getenv("HOSTED_WORKSPACE_ROOT")
+		if root == "" {
+			jsonErr(w, "hosted workspace root unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			jsonErr(w, "hosted workspace unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		guard, err := workspace.NewLocal("hosted", root, "host", nil)
+		if err != nil {
+			jsonErr(w, "hosted workspace unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		tenantRoot, err := guard.Backend.Resolve(filepath.Join(owner.UserID, owner.WorkspaceID), true)
+		if err != nil {
+			jsonErr(w, "invalid workspace", http.StatusBadRequest)
+			return
+		}
+		if err := os.MkdirAll(tenantRoot, 0o700); err != nil {
+			jsonErr(w, "workspace unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		ws, err := workspace.NewLocal(owner.WorkspaceID, tenantRoot, owner.UserID, nil)
+		if err != nil {
+			jsonErr(w, "workspace unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		entry, err := s.controllers.acquire(owner, poolSession, ws)
+		if err != nil {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "controller capacity reached", "next_action": "retry with backoff"})
+			return
+		}
+		defer s.controllers.release(owner, poolSession)
+		ctrl = entry.Controller
+		hostedWorkspace = ws
+	}
 
 	// Serialize turns: the shared Controller/Agent/Session is not safe for
 	// concurrent Configure+Run. One chat at a time (acceptable for a single-
 	// session agent); concurrent requests queue here rather than corrupt state.
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	if s.auth == nil {
+		s.turnMu.Lock()
+		defer s.turnMu.Unlock()
+	}
 
 	if os.Getenv("LUMEN_DEMO") == "1" && req.APIKey == "" { // goal:d6aa846b round9
 		// Demo echo only when no runtime API key — browser-local keys still hit the real provider.
@@ -275,25 +324,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.cfg.Ctrl.Configure(sink, nil, ""); err != nil {
+	var configureErr error
+	if hostedWorkspace.Backend != nil {
+		configureErr = ctrl.ConfigureWithOptions(sink, nil, "", control.ConfigureOptions{Workspace: hostedWorkspace})
+	} else {
+		configureErr = ctrl.Configure(sink, nil, "")
+	}
+	if configureErr != nil {
 		sink.emit("turn_started", "")
-		sink.emit("error", err.Error())
+		sink.emit("error", configureErr.Error())
 		sink.emit("turn_done", "")
-		sink.done("", err)
+		sink.done("", configureErr)
 		return
 	}
 
-	owner := ownerFromRequest(r)
-	s.cfg.Ctrl.SetApprover(s.webApprover(owner, func(kind string, payload map[string]any) {
+	ctrl.SetApprover(s.webApprover(owner, func(kind string, payload map[string]any) {
 		sink.emitPayload(kind, payload)
 	}))
 
 	if req.Mode != "" {
-		s.cfg.Ctrl.SetPermissionMode(parseUIMode(req.Mode))
+		ctrl.SetPermissionMode(parseUIMode(req.Mode))
 	}
 
 	sessionID := ""
-	if sess := s.cfg.Ctrl.Session(); sess != nil && sess.Path != "" {
+	if sess := ctrl.Session(); sess != nil && sess.Path != "" {
 		sessionID = lumenstore.SessionIDFromPath(sess.Path)
 	}
 	run, err := s.runs.StartOwned(owner, sessionID, "code", summarizeRunTitle(req.Prompt), "")
@@ -304,16 +358,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, 5*time.Minute)
 	defer cleanupRun()
-	s.cfg.Ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
+	ctrl.SetSink(s.runs.WrapSink(run.ID, sink))
 
 	var runErr error
-	if s.cfg.Ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
-		runErr = s.cfg.Ctrl.Plan(ctx, req.Prompt)
+	if ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
+		runErr = ctrl.Plan(ctx, req.Prompt)
 		if runErr != nil {
 			sink.emit("error", runErr.Error())
 		}
 	} else {
-		runErr = s.cfg.Ctrl.Run(ctx, req.Prompt)
+		runErr = ctrl.Run(ctx, req.Prompt)
 		if runErr != nil {
 			sink.emit("error", runErr.Error())
 		}

@@ -22,8 +22,8 @@ type HistoryEntry struct {
 }
 
 const (
-	historyFileName = "langgraph-history.jsonl"
-	historyMaxLines = 100
+	historyFileName  = "langgraph-history.jsonl"
+	historyMaxLines  = 100
 	historyMaxResult = 12000
 )
 

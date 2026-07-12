@@ -17,11 +17,11 @@ import (
 
 // Cell represents a notebook cell (nbformat 4.x compatible).
 type Cell struct {
-	CellType       string   `json:"cell_type"`                 // code | markdown
-	Metadata       map[string]any `json:"metadata"`            // at minimum {}
-	Source         []string `json:"source"`
-	ExecutionCount *int     `json:"execution_count"`           // null for unexecuted code cells
-	Outputs        []Output `json:"outputs"` // always present for code cells ([]); nil for markdown (null)
+	CellType       string         `json:"cell_type"` // code | markdown
+	Metadata       map[string]any `json:"metadata"`  // at minimum {}
+	Source         []string       `json:"source"`
+	ExecutionCount *int           `json:"execution_count"` // null for unexecuted code cells
+	Outputs        []Output       `json:"outputs"`         // always present for code cells ([]); nil for markdown (null)
 }
 
 // Output is one cell execution output.

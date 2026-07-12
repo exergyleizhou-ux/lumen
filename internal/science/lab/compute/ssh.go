@@ -9,10 +9,10 @@ import (
 
 // SSHHost represents a Host entry from ~/.ssh/config.
 type SSHHost struct {
-	Alias      string `json:"alias"`
-	Hostname   string `json:"hostname,omitempty"`
-	User       string `json:"user,omitempty"`
-	Port       string `json:"port,omitempty"`
+	Alias        string `json:"alias"`
+	Hostname     string `json:"hostname,omitempty"`
+	User         string `json:"user,omitempty"`
+	Port         string `json:"port,omitempty"`
 	IdentityFile string `json:"identity_file,omitempty"`
 }
 

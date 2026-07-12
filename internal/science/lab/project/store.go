@@ -198,7 +198,6 @@ func (s *Store) ProjectDir(slug string) (string, error) {
 	return s.projectDir(slug), nil
 }
 
-
 // Rename updates a project's display title (slug unchanged).
 func (s *Store) Rename(slug, title string) (Project, error) {
 	title = strings.TrimSpace(title)
@@ -501,11 +500,11 @@ func (s *Store) AppendTurns(slug, sessionID string, turns ...Turn) (Session, err
 
 // SessionSearchHit is one turn matching a full-text query.
 type SessionSearchHit struct {
-	SessionID    string `json:"session_id"`
-	SessionTitle string `json:"session_title"`
-	TurnIndex    int    `json:"turn_index"`
-	Role         string `json:"role"`
-	Snippet      string `json:"snippet"`
+	SessionID    string    `json:"session_id"`
+	SessionTitle string    `json:"session_title"`
+	TurnIndex    int       `json:"turn_index"`
+	Role         string    `json:"role"`
+	Snippet      string    `json:"snippet"`
 	At           time.Time `json:"at,omitempty"`
 }
 

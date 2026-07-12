@@ -106,18 +106,18 @@ func RewriteBaseHost(absURL, newHost string) string {
 
 // Session describes parameters the SPA needs to open the editor.
 type Session struct {
-	OK           bool   `json:"ok"`
-	Mode         string `json:"mode"`
-	DSURL        string `json:"ds_url,omitempty"`
-	CallbackURL  string `json:"callback_url,omitempty"`
-	DocumentKey  string `json:"document_key,omitempty"`
-	DownloadPath string `json:"download_path,omitempty"` // relative API path with query
-	FileType     string `json:"file_type,omitempty"`
-	DocumentType string `json:"document_type,omitempty"`
-	Title        string `json:"title,omitempty"`
-	Path         string `json:"path,omitempty"`
-	Error        string `json:"error,omitempty"`
-	TokenRequired bool  `json:"token_required"`
+	OK            bool   `json:"ok"`
+	Mode          string `json:"mode"`
+	DSURL         string `json:"ds_url,omitempty"`
+	CallbackURL   string `json:"callback_url,omitempty"`
+	DocumentKey   string `json:"document_key,omitempty"`
+	DownloadPath  string `json:"download_path,omitempty"` // relative API path with query
+	FileType      string `json:"file_type,omitempty"`
+	DocumentType  string `json:"document_type,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Error         string `json:"error,omitempty"`
+	TokenRequired bool   `json:"token_required"`
 }
 
 // BuildSession constructs editor session metadata for a workspace file.

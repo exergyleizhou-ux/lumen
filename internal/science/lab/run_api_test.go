@@ -26,7 +26,7 @@ func TestLabRunAPIGetReplayAndCancel(t *testing.T) {
 	sink.Emit(event.Event{Kind: event.TurnStarted})
 	sink.Emit(event.Event{Kind: event.Text, Text: "result"})
 	sink.Emit(event.Event{Kind: event.TurnDone, StopReason: "finished"})
-	runCtx, cleanup := api.beginActiveRun(context.Background(), run.ID, time.Minute)
+	runCtx, cleanup := api.beginActiveRun(context.Background(), runstate.LocalOwner, run.ID, time.Minute)
 	defer cleanup()
 
 	rec := httptest.NewRecorder()

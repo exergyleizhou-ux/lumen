@@ -50,8 +50,9 @@ type API struct {
 	ctrls      *controllerPool
 	approvals  *approvalHub
 	runs       *runstate.Manager
-	activeRuns sync.Map // run_id -> context.CancelFunc
+	activeRuns sync.Map // run_id -> labActiveRun
 	auth       *hostedauth.Verifier
+	tenants    *tenantRegistry
 	// activeMode is read by approval hub during a turn.
 	modeMu     sync.Mutex
 	activeMode permission.Mode
@@ -60,6 +61,18 @@ type API struct {
 	turnsTotal   atomic.Uint64
 	turnsFailed  atomic.Uint64
 	approvalsTot atomic.Uint64
+}
+
+type labActiveRun struct {
+	Owner  runstate.Owner
+	Cancel context.CancelFunc
+}
+
+func labOwner(r *http.Request) runstate.Owner {
+	if id, ok := hostedauth.FromContext(r.Context()); ok {
+		return runstate.Owner{UserID: id.UserID, WorkspaceID: id.WorkspaceID}
+	}
+	return runstate.LocalOwner
 }
 
 // NewAPI builds the lab API.
@@ -98,7 +111,18 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
 	register := func(pattern string, handler http.HandlerFunc) {
 		if a.auth != nil {
-			mux.Handle(pattern, a.auth.RequireFor(labPermission)(handler))
+			wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				owner := labOwner(r)
+				tenant, err := a.tenants.acquire(owner)
+				if err != nil {
+					w.Header().Set("Retry-After", "2")
+					writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("tenant capacity reached; next_action=retry with backoff"))
+					return
+				}
+				defer a.tenants.release(owner)
+				handler(w, r.WithContext(context.WithValue(r.Context(), tenantContextKey{}, tenant)))
+			})
+			mux.Handle(pattern, a.auth.RequireFor(labPermission)(wrapped))
 			return
 		}
 		mux.HandleFunc(pattern, handler)
@@ -132,6 +156,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	register("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
 }
 
+type tenantContextKey struct{}
+
+func tenantFromRequest(r *http.Request) *tenantResources {
+	t, _ := r.Context().Value(tenantContextKey{}).(*tenantResources)
+	return t
+}
+
 func labPermission(r *http.Request) string {
 	path := r.URL.Path
 	if strings.HasPrefix(path, "/api/lab/runs/") {
@@ -151,9 +182,9 @@ func labPermission(r *http.Request) string {
 	return "lab:run"
 }
 
-func (a *API) beginActiveRun(parent context.Context, runID string, timeout time.Duration) (context.Context, func()) {
+func (a *API) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
-	a.activeRuns.Store(runID, context.CancelFunc(cancel))
+	a.activeRuns.Store(runID, labActiveRun{Owner: owner, Cancel: cancel})
 	var once sync.Once
 	cleanup := func() {
 		once.Do(func() {
@@ -164,19 +195,22 @@ func (a *API) beginActiveRun(parent context.Context, runID string, timeout time.
 	return ctx, cleanup
 }
 
-func (a *API) cancelActiveRun(runID string) bool {
-	value, ok := a.activeRuns.LoadAndDelete(runID)
+func (a *API) cancelActiveRun(owner runstate.Owner, runID string) bool {
+	value, ok := a.activeRuns.Load(runID)
 	if !ok {
 		return false
 	}
-	cancel, ok := value.(context.CancelFunc)
-	if ok {
-		cancel()
+	active, ok := value.(labActiveRun)
+	if !ok || active.Owner != owner {
+		return false
 	}
-	return ok
+	a.activeRuns.Delete(runID)
+	active.Cancel()
+	return true
 }
 
 func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
+	owner := labOwner(r)
 	rel := strings.TrimPrefix(r.URL.Path, "/api/lab/runs/")
 	if rel == "" || strings.Contains(rel, "..") {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
@@ -188,7 +222,7 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 			return
 		}
-		run, err := a.runs.Get(parts[0])
+		run, err := a.runs.GetOwned(owner, parts[0])
 		if errors.Is(err, runstate.ErrRunNotFound) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
 			return
@@ -214,7 +248,7 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			}
 			after = value
 		}
-		events, err := a.runs.Events(parts[0], after)
+		events, err := a.runs.EventsOwned(owner, parts[0], after)
 		if errors.Is(err, runstate.ErrRunNotFound) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
 			return
@@ -231,14 +265,14 @@ func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
 			return
 		}
-		if _, err := a.runs.Get(parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
+		if _, err := a.runs.GetOwned(owner, parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
 			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
 			return
 		} else if err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
-		if !a.cancelActiveRun(parts[0]) {
+		if !a.cancelActiveRun(owner, parts[0]) {
 			writeErr(w, http.StatusConflict, fmt.Errorf("run is not active"))
 			return
 		}
@@ -772,10 +806,14 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
 		return
 	}
-	if p, err := a.projects.Get(slug); err == nil {
+	projects := a.projects
+	if tenant := tenantFromRequest(r); tenant != nil {
+		projects = tenant.Projects
+	}
+	if p, err := projects.Get(slug); err == nil {
 		slug = p.Slug
 	}
-	projDir, err := a.projects.ProjectDir(slug)
+	projDir, err := projects.ProjectDir(slug)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
@@ -1051,8 +1089,12 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("prompt required"))
 		return
 	}
+	projects, ctrls := a.projects, a.ctrls
+	if tenant := tenantFromRequest(r); tenant != nil {
+		projects, ctrls = tenant.Projects, tenant.Controllers
+	}
 	slug := req.ProjectID
-	if p, err := a.projects.Get(slug); err == nil {
+	if p, err := projects.Get(slug); err == nil {
 		slug = p.Slug
 	} else if slug == "" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
@@ -1066,13 +1108,13 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer a.turns.release()
 
-	ctrl, err := a.ctrls.acquire(slug)
+	ctrl, err := ctrls.acquire(slug)
 	if err != nil {
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
-	defer a.ctrls.release(slug)
+	defer ctrls.release(slug)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1094,11 +1136,11 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	a.setActiveMode(mode)
 
 	// Persist session id (create if missing / unknown)
-	if sess, err := a.projects.EnsureSession(slug, req.SessionID, ""); err == nil {
+	if sess, err := projects.EnsureSession(slug, req.SessionID, ""); err == nil {
 		req.SessionID = sess.ID
 		// Tell client the canonical session id early
 		sse.emitPayload("session", map[string]any{"id": sess.ID, "title": sess.Title})
-		_, _ = a.projects.AppendTurns(slug, sess.ID, project.Turn{
+		_, _ = projects.AppendTurns(slug, sess.ID, project.Turn{
 			Role: "user",
 			Text: req.Prompt,
 			Mode: mode,
@@ -1135,7 +1177,8 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := a.runs.Start(req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), "")
+	owner := labOwner(r)
+	run, err := a.runs.StartOwned(owner, req.SessionID, "science", summarizeScienceRunTitle(req.Prompt), "")
 	if err != nil {
 		a.turnsFailed.Add(1)
 		sse.emit("error", err.Error())
@@ -1144,7 +1187,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctrl.BindRun(run.ID, a.runs.WrapSink(run.ID, hist))
-	ctx, cleanupRun := a.beginActiveRun(r.Context(), run.ID, DefaultTurnTimeout)
+	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, DefaultTurnTimeout)
 	defer cleanupRun()
 
 	a.turnsTotal.Add(1)

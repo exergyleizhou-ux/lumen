@@ -7,6 +7,7 @@ import (
 )
 
 func TestHostedLabFailsClosedAndKeepsOnlyProbesPublic(t *testing.T) {
+	t.Setenv(EnvHostedWorkspaceRoot, t.TempDir())
 	if _, err := New(Config{SciDir: t.TempDir(), Addr: "127.0.0.1:0", Hosted: true, DisableFleetAutoConnect: true}); err == nil {
 		t.Fatal("hosted lab accepted missing secret")
 	}

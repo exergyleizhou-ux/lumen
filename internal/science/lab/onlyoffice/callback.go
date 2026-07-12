@@ -18,9 +18,9 @@ import (
 
 // CallbackBody is the JSON payload OnlyOffice Document Server POSTs on save.
 type CallbackBody struct {
-	Status     int    `json:"status"`               // 1=editing, 2=ready, 6=force-save
-	URL        string `json:"url,omitempty"`         // download URL of the modified file
-	Key        string `json:"key,omitempty"`         // document identifier
+	Status     int    `json:"status"`        // 1=editing, 2=ready, 6=force-save
+	URL        string `json:"url,omitempty"` // download URL of the modified file
+	Key        string `json:"key,omitempty"` // document identifier
 	History    any    `json:"history,omitempty"`
 	Actions    any    `json:"actions,omitempty"`
 	Users      any    `json:"users,omitempty"`

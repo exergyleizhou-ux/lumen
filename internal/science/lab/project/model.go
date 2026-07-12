@@ -16,12 +16,12 @@ type Project struct {
 
 // Turn is one persisted chat message (user or assistant summary).
 type Turn struct {
-	Role    string         `json:"role"` // user | assistant | system
-	Text    string         `json:"text"`
-	Tools   []ToolSummary  `json:"tools,omitempty"`
-	At      time.Time      `json:"at"`
-	Mode    string         `json:"mode,omitempty"`
-	Stopped bool           `json:"stopped,omitempty"`
+	Role    string        `json:"role"` // user | assistant | system
+	Text    string        `json:"text"`
+	Tools   []ToolSummary `json:"tools,omitempty"`
+	At      time.Time     `json:"at"`
+	Mode    string        `json:"mode,omitempty"`
+	Stopped bool          `json:"stopped,omitempty"`
 }
 
 // ToolSummary is a compact tool call for history restore.
