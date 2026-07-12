@@ -113,7 +113,10 @@ func (s *Server) requestProvider(apiKey, providerName, model string) (*config.Pr
 	if apiKey == "" && providerName == "" && model == "" {
 		return nil, nil
 	}
-	base := s.cfg.Ctrl.ProviderConfig()
+	var base *config.ProviderConfig
+	if s.cfg.Ctrl != nil {
+		base = s.cfg.Ctrl.ProviderConfig()
+	}
 	if base == nil {
 		base = &config.ProviderConfig{}
 	}
