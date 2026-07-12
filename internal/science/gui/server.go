@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"lumen/internal/config"
@@ -57,11 +58,7 @@ func (s *Server) routes() {
 		w.Header().Set("Cache-Control", "public, max-age=86400, immutable")
 		fileServer.ServeHTTP(w, r)
 	}))
-	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
 		data, err := staticFS.ReadFile("static/index.html")
 		if err != nil {
 			http.Error(w, "panel missing", 500)
@@ -70,8 +67,31 @@ func (s *Server) routes() {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
+	}
+	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/" || path == "/index.html" {
+			serveIndex(w, r)
+			return
+		}
+		// Real static files under embed FS (e.g. /oasis-embed.html) — serve if present.
+		rel := strings.TrimPrefix(path, "/")
+		if rel != "" {
+			if f, err := static.Open(rel); err == nil {
+				_ = f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		// SPA fallback: unknown paths (Safari data-detectors on Chinese punctuation,
+		// accidental /lumen-science/（… links) must not 404 the panel.
+		serveIndex(w, r)
 	})
 	s.mux.Handle("/assets/", assetHandler)
+	// Quiet favicon noise under /lumen-science/favicon.ico
+	s.mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
 	s.api.Register(s.mux)
 }
 

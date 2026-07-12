@@ -31,10 +31,16 @@ function labHealthURL() {
 
 function openLabWorkbench(extraQuery) {
   let u = labBaseURL();
-  if (extraQuery) {
+  // Only allow ascii query keys to avoid Safari data-detectors inventing paths.
+  if (extraQuery && /^[a-zA-Z0-9_=&%-]+$/.test(String(extraQuery))) {
     u += (u.indexOf("?") >= 0 ? "&" : "?") + String(extraQuery).replace(/^\?/, "");
   }
-  window.open(u, "_blank");
+  // Same-tab navigation is more reliable on mobile Safari than window.open.
+  if (isOasisPublicHost()) {
+    location.href = u;
+  } else {
+    window.open(u, "_blank");
+  }
   return u;
 }
 let mode = "proxy";
@@ -640,14 +646,8 @@ async function saveKey() {
 async function oneClick() {
   // Oasis public demo: no Claude Science.app on the VPS — open Lab instead.
   if (isOasisPublicHost()) {
-    const u = openLabWorkbench("embed=1");
-    setMsg(
-      "绿洲网页端没有 Claude Science 桌面程序，已为你打开「实验室」工作台。\n" +
-        "桥接配置可在本页管理；完整桌面 Science 请在 Mac 安装 Lumen Science.app + Claude Science。\n" +
-        u,
-      "ok"
-    );
-    applyMode("lab");
+    setMsg("正在打开实验室…", "ok");
+    openLabWorkbench("embed=1"); // same-tab navigate
     return;
   }
   setBusy(true);
@@ -682,18 +682,13 @@ async function oneClick() {
     }
   } catch (e) {
     const msg = String(e.message || e);
-    if (/Science binary not found|claude-science/i.test(msg)) {
+    if (/Science binary not found|claude-science|未找到 Claude Science/i.test(msg)) {
       setMsg(
-        "未找到 Claude Science 桌面程序，无法启动沙箱。\n" +
-          "• Mac 桌面：安装 Claude Science.app 后再点「一键开始」\n" +
-          "• 绿洲网页：请改用「实验室」标签做科研对话\n" +
-          "实验室：" +
-          labBaseURL(),
+        "未找到 Claude Science 桌面程序，无法启动沙箱。Mac 请安装 Claude Science.app；绿洲网页请点顶栏「实验室」。",
         "err"
       );
       try {
         openLabWorkbench("embed=1");
-        applyMode("lab");
       } catch (_) {}
     } else {
       setMsg(msg, "err");
