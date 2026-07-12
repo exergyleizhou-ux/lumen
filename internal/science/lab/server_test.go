@@ -57,6 +57,16 @@ func TestLabCORSOnlyAllowsConfiguredWorkbenchOrigin(t *testing.T) {
 	}
 }
 
+func TestHostedSecurityHeadersUseOnlyExactWorkbenchOrigin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/lab/health", nil)
+	rec := httptest.NewRecorder()
+	securityHeaders(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), true, "https://oasis.example").ServeHTTP(rec, req)
+	got := rec.Header().Get("Content-Security-Policy")
+	if got != "frame-ancestors 'self' https://oasis.example" || strings.Contains(got, "*") || strings.Contains(got, "demo.") {
+		t.Fatalf("hosted CSP=%q", got)
+	}
+}
+
 func TestOasisEmbedRejectsForgedMessages(t *testing.T) {
 	b, err := staticFS.ReadFile("static/oasis-embed.html")
 	if err != nil {

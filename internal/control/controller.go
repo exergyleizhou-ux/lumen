@@ -583,10 +583,20 @@ func (c *Controller) warn(text string) {
 // configured (the cost readout then uses the built-in default).
 func (c *Controller) Pricing() *provider.Pricing { return c.pricing }
 
-func (c *Controller) ProviderName() string { return c.provCfg.Name }
+func (c *Controller) ProviderName() string {
+	if c == nil || c.provCfg == nil {
+		return "unconfigured"
+	}
+	return c.provCfg.Name
+}
 
 // ModelName returns the active model ID.
-func (c *Controller) ModelName() string { return c.provCfg.Model }
+func (c *Controller) ModelName() string {
+	if c == nil || c.provCfg == nil {
+		return "unconfigured"
+	}
+	return c.provCfg.Model
+}
 
 // PermissionMode returns the resolved permission mode.
 func (c *Controller) PermissionMode() permission.Mode { return c.permMode }

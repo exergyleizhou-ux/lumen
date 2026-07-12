@@ -260,7 +260,7 @@ func resolveKetcherDir(sciDir string) string {
 
 // Handler returns the HTTP handler with middleware.
 func (s *Server) Handler() http.Handler {
-	return securityHeaders(s.cors(wrapMiddleware(s.mux)))
+	return securityHeaders(s.cors(wrapMiddleware(s.mux)), s.cfg.Hosted, s.cfg.WorkbenchOrigin)
 }
 
 // URL returns the lab URL.
@@ -317,11 +317,13 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		workbenchOrigin := labWorkbenchOrigin(s.cfg.WorkbenchOrigin)
-		allowed := origin == "http://"+s.cfg.Addr ||
-			origin == "https://"+s.cfg.Addr ||
-			(origin != "" && origin == workbenchOrigin) ||
-			origin == "http://localhost:3100" ||
-			origin == "http://127.0.0.1:3000"
+		allowed := origin != "" && origin == workbenchOrigin
+		if !s.cfg.Hosted {
+			allowed = allowed || origin == "http://"+s.cfg.Addr ||
+				origin == "https://"+s.cfg.Addr ||
+				origin == "http://localhost:3100" ||
+				origin == "http://127.0.0.1:3000"
+		}
 		if allowed && origin != "" {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")

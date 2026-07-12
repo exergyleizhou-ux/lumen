@@ -181,6 +181,21 @@ func TestHostedRejectsOversizeJSONBeforeHandler(t *testing.T) {
 	}
 }
 
+func TestHostedStatusBeforeFirstRunDoesNotPanic(t *testing.T) {
+	secret := "test-secret-that-is-at-least-32-bytes"
+	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: secret, HostedWorkspaceRoot: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	req.Header.Set("Authorization", "Bearer "+serverToken(t, secret))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"provider":"unconfigured"`)) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHostedCSPHasOnlyExactWorkbenchAncestor(t *testing.T) {
 	s, err := New(Config{Ctrl: control.New(), Runs: runstate.NewManager(nil), Hosted: true, WorkbenchJWTSecret: "test-secret-that-is-at-least-32-bytes", WorkbenchOrigin: "https://oasis.example"})
 	if err != nil {

@@ -54,10 +54,18 @@ func wrapMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, hosted bool, workbenchOrigin string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' http://127.0.0.1:18990 https://127.0.0.1:18993 https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz")
+		ancestors := "frame-ancestors 'self'"
+		if hosted {
+			if origin := labWorkbenchOrigin(workbenchOrigin); origin != "" {
+				ancestors += " " + origin
+			}
+		} else {
+			ancestors += " http://127.0.0.1:18990 https://127.0.0.1:18993 https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz"
+		}
+		w.Header().Set("Content-Security-Policy", ancestors)
 		next.ServeHTTP(w, r)
 	})
 }
