@@ -13,7 +13,18 @@ type Recorder struct {
 	writer     *Writer
 	projectDir string
 	sessionID  string
+	runID      string
 	model      string
+}
+
+// SetRunID binds subsequent provenance records to one durable Runtime Run.
+func (r *Recorder) SetRunID(runID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.runID = runID
+	r.mu.Unlock()
 }
 
 // NewRecorder opens provenance logging for a lab project.
@@ -34,6 +45,8 @@ func (r *Recorder) RecordMCP(domain, tool, query string) {
 	if r == nil || r.writer == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	provPath := filepath.Join(r.projectDir, "provenance.jsonl")
 	rec := Record{
 		TS:         time.Now().UTC(),
@@ -41,6 +54,7 @@ func (r *Recorder) RecordMCP(domain, tool, query string) {
 		Kind:       "mcp_call",
 		Version:    NextVersion(provPath),
 		SessionID:  r.sessionID,
+		RunID:      r.runID,
 		Model:      r.model,
 		MCPCalls: []MCPCall{{
 			Tool:  domain + "/" + tool,
@@ -59,11 +73,11 @@ func (r *Recorder) RecordArtifact(absPath string) error {
 	if err != nil {
 		return err
 	}
-	rec, err := RecordWrite(r.projectDir, rel, r.sessionID, r.model)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	rec, err := RecordWrite(r.projectDir, rel, r.sessionID, r.runID, r.model)
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	return r.writer.Append(rec)
 }

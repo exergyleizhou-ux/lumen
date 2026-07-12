@@ -223,6 +223,34 @@ func (c *Controller) Run(ctx context.Context, prompt, mode string) error {
 	}
 }
 
+// BindRun redirects subsequent events through the shared Runtime sink while
+// preserving Lab provenance capture for this project controller.
+func (c *Controller) BindRun(runID string, sink event.Sink) {
+	c.mu.Lock()
+	ctrl := c.ctrl
+	rec := c.provenance
+	guard := c.guard
+	c.mu.Unlock()
+	if rec != nil {
+		rec.SetRunID(runID)
+	}
+	if ctrl != nil {
+		ctrl.SetSink(wrapProvenanceSink(sink, rec, guard))
+	}
+}
+
+func (c *Controller) Workspace() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.workspace
+}
+
+func (c *Controller) SessionID() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sessID
+}
+
 // PermissionMode returns the current agent permission mode (for approval hub).
 func (c *Controller) PermissionMode() permission.Mode {
 	c.mu.Lock()
