@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -26,7 +27,7 @@ func TestEditFilePreview_ResolvesPathLikeExecute(t *testing.T) {
 	}
 
 	args, _ := json.Marshal(map[string]string{"path": f, "old_string": "world", "new_string": "there"})
-	ch, err := (&EditFileTool{}).Preview(args)
+	ch, err := (&EditFileTool{}).Preview(context.Background(), args)
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
@@ -35,7 +36,7 @@ func TestEditFilePreview_ResolvesPathLikeExecute(t *testing.T) {
 	}
 
 	margs, _ := json.Marshal(map[string]any{"path": f, "edits": []map[string]string{{"old_string": "hello", "new_string": "hi"}}})
-	mch, err := (&MultiEditTool{}).Preview(margs)
+	mch, err := (&MultiEditTool{}).Preview(context.Background(), margs)
 	if err != nil {
 		t.Fatalf("multi preview: %v", err)
 	}

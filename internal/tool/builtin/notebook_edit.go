@@ -157,7 +157,7 @@ func (t *NotebookEditTool) Execute(ctx context.Context, args json.RawMessage) (s
 	return "", fmt.Errorf("unknown edit_mode: %s", p.EditMode)
 }
 
-func (t *NotebookEditTool) Preview(args json.RawMessage) (diff.Change, error) {
+func (t *NotebookEditTool) Preview(ctx context.Context, args json.RawMessage) (diff.Change, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
@@ -297,7 +297,7 @@ func (t *DeleteRangeTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return fmt.Sprintf("Deleted %d line(s) from %s (lines %d-%d)", deleted, p.Path, startLine+1, endLine+1), nil
 }
 
-func (t *DeleteRangeTool) Preview(args json.RawMessage) (diff.Change, error) {
+func (t *DeleteRangeTool) Preview(ctx context.Context, args json.RawMessage) (diff.Change, error) {
 	var p struct {
 		Path string `json:"path"`
 	}
