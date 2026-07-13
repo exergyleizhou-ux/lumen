@@ -11,9 +11,9 @@ const CSSwitchParity = "0.4.1"
 type Mode string
 
 const (
-	ModeAnthropic  Mode = "anthropic"  // native Anthropic wire — passthrough + remap
-	ModeOpenAI     Mode = "openai"     // OpenAI Chat Completions — translate Anthropic↔OpenAI
-	ModeResponses  Mode = "responses"  // OpenAI Responses API — translate Anthropic↔Responses
+	ModeAnthropic Mode = "anthropic" // native Anthropic wire — passthrough + remap
+	ModeOpenAI    Mode = "openai"    // OpenAI Chat Completions — translate Anthropic↔OpenAI
+	ModeResponses Mode = "responses" // OpenAI Responses API — translate Anthropic↔Responses
 )
 
 // ModelEntry is one model exposed to Claude Science's selector.
@@ -124,9 +124,9 @@ var BuiltInProviders = map[string]ProviderSpec{
 			"claude-sonnet-4-6": "qwen-plus-latest",
 			"claude-haiku-4-5":  "qwen-turbo",
 			// CSSwitch static ids (identity)
-			"qwen3.7-max":       "qwen3.7-max",
-			"qwen-plus-latest":  "qwen-plus-latest",
-			"qwen-turbo":        "qwen-turbo",
+			"qwen3.7-max":      "qwen3.7-max",
+			"qwen-plus-latest": "qwen-plus-latest",
+			"qwen-turbo":       "qwen-turbo",
 			// legacy names from older Lumen/CSSwitch profiles
 			"qwen-max":  "qwen3.7-max",
 			"qwen-plus": "qwen-plus-latest",

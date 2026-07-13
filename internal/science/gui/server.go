@@ -195,8 +195,13 @@ func (s *Server) QuitProxy() {
 // This avoids mixed-content blocking when embedded in HTTPS sites like Oasis.
 func (s *Server) serveHTTPS() {
 	host, portStr, _ := net.SplitHostPort(s.cfg.Addr)
-	if host == "" { host = "127.0.0.1" }
-	port, _ := strconv.Atoi(portStr); if port == 0 { port = DefaultPort }
+	if host == "" {
+		host = "127.0.0.1"
+	}
+	port, _ := strconv.Atoi(portStr)
+	if port == 0 {
+		port = DefaultPort
+	}
 	httpsAddr := fmt.Sprintf("%s:%d", host, port+3)
 
 	tlsCfg, err := tlsutil.EnsureCert(s.cfg.SciDir)

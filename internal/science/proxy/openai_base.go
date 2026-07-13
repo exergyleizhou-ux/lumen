@@ -65,12 +65,12 @@ func OpenAIChatSpec(baseURL, model string) ProviderSpec {
 		display = "custom-model"
 	}
 	return ProviderSpec{
-		Name:         "openai-custom",
-		Mode:         ModeOpenAI,
-		URL:          base + "/chat/completions",
-		KeyEnv:       "LUMEN_OPENAI_API_KEY",
-		DefaultCap:   8192,
-		DefaultModel: model,
+		Name:               "openai-custom",
+		Mode:               ModeOpenAI,
+		URL:                base + "/chat/completions",
+		KeyEnv:             "LUMEN_OPENAI_API_KEY",
+		DefaultCap:         8192,
+		DefaultModel:       model,
 		ForceModelOverride: model != "",
 		ForceModel:         model,
 		Models: []ModelEntry{
