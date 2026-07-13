@@ -132,3 +132,23 @@ The Go test output was served from the build cache.
 - An old SQLite fixture retained its legacy audit row while the new binary created current Run/session tables and served successfully. The production image built locally as `lumen:phase9-rc`; rollback remains an application image replacement with database down/forward-fix controlled separately.
 - Code now separates public `/healthz` liveness from `/readyz`. Hosted readiness returns only named booleans and fails with 503 unless Postgres pings, object storage accepts a create/delete probe, the Oasis `/readyz` control plane responds, and the startup provider has a resolved credential. Compose healthchecks and deploy smoke use the dedicated readiness path.
 - OCI images carry build-supplied version, revision, source and creation-time labels. `scripts/smoke-lumen-hosted.sh` is the replayable real-token proxy acceptance command and verifies health/readiness, unauthenticated rejection, authenticated Code/Lab access, exact-origin SSE, durable event identity and a terminal stream result without printing the JWT.
+
+## Phase 10 release-candidate finalization (2026-07-13)
+
+- Final gate input HEAD: `ae2eee5` on `feat/lumen-production-runtime`, based on
+  `main` at `e07c1d7`. All 160 branch-changed Go files were passed through
+  `gofmt` without producing a formatting diff.
+- `go test -race ./...`, `go vet ./...`, `go build ./...`, and
+  `go test ./... -count=3` passed across the 116-package module. Final
+  `git diff --check main...HEAD` passed; command failure count was zero.
+- The production architecture, security boundary, final test evidence,
+  deployment, rollback, and known limitations are consolidated in this
+  directory. The deterministic model harness is green, while live Qwen/DeepSeek
+  evaluation remains explicitly blocked on an operator-approved real provider
+  credential, current pricing, and paid network access.
+- No remote push, merge to `main`, public production deploy, production data
+  mutation, credential rotation, or paid provider call was performed.
+- Worktree cleanliness has one precise external exception: five pre-existing
+  user-owned modifications under `cmd/lumen` are not part of the feature
+  branch's `main...HEAD` Go changes and were not formatted, staged, or committed
+  during Phase 10.
