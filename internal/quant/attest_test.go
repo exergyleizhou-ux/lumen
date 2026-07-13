@@ -47,9 +47,9 @@ func TestTamperedClaimBreaksSignature(t *testing.T) {
 	}
 
 	bad2 := att
-	replacement := byte('A')
+	replacement := byte('0')
 	if att.Signature[0] == replacement {
-		replacement = 'B'
+		replacement = '1'
 	}
 	bad2.Signature = string(replacement) + att.Signature[1:]
 	if VerifyAttestationSig(bad2) {

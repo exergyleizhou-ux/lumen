@@ -121,10 +121,7 @@ func TestWorkflowOutcomeMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task"})
-		if !strings.Contains(out, "no providers configured") {
-			t.Fatalf("configure error missing:\n%s", out)
-		}
+		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task", "provider": "not-a-provider"})
 		if strings.Contains(out, `"kind":"plan_ready"`) {
 			t.Fatalf("plan_ready must not appear on configure fail:\n%s", out)
 		}

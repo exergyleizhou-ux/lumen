@@ -39,12 +39,12 @@ func TestChatRunLifecycleIncludesRunIDAndSucceeds(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
 
 	runs := runstate.NewManager(nil)
-	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs, LocalConfigPath: filepath.Join(dir, "missing.toml")})
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs, LocalConfigPath: filepath.Join(dir, "lumen.toml")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{
-		"prompt": "finish this task", "api_key": "sk-test", "provider": "deepseek", "mode": "bypass",
+		"prompt": "finish this task", "mode": "bypass",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
@@ -128,11 +128,11 @@ func TestChatConfigureFailureCreatesNoGhostRun(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chdir(wd) })
 	runs := runstate.NewManager(nil)
-	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs, LocalConfigPath: filepath.Join(dir, "missing.toml")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{"prompt": "ping"})
+	body, _ := json.Marshal(map[string]any{"prompt": "ping", "provider": "not-a-provider"})
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	s.handleChat(rec, req)
