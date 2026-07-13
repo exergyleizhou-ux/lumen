@@ -18,6 +18,7 @@ type Record struct {
 	Version     int       `json:"version"`
 	Kind        string    `json:"kind"`
 	SessionID   string    `json:"session_id,omitempty"`
+	RunID       string    `json:"run_id,omitempty"`
 	Model       string    `json:"model,omitempty"`
 	ContentHash string    `json:"content_hash,omitempty"`
 	MCPCalls    []MCPCall `json:"mcp_calls,omitempty"`
@@ -98,7 +99,7 @@ func NextVersion(path string) int {
 }
 
 // RecordWrite builds a record for a workspace file.
-func RecordWrite(projectDir, relPath, sessionID, model string) (Record, error) {
+func RecordWrite(projectDir, relPath, sessionID, runID, model string) (Record, error) {
 	abs := filepath.Join(projectDir, relPath)
 	h, err := HashFile(abs)
 	if err != nil {
@@ -111,6 +112,7 @@ func RecordWrite(projectDir, relPath, sessionID, model string) (Record, error) {
 		Version:     NextVersion(provPath),
 		Kind:        kindFromExt(relPath),
 		SessionID:   sessionID,
+		RunID:       runID,
 		Model:       model,
 		ContentHash: h,
 	}, nil

@@ -219,6 +219,12 @@ function reduceSSE(state, ev) {
   state.tools = state.tools || {};
   state.approvals = state.approvals || [];
   state.errors = state.errors || [];
+  state.lastSeq = state.lastSeq || 0;
+  if (ev.run_id) state.runId = ev.run_id;
+  if (Number.isInteger(ev.seq) && ev.seq > 0) {
+    if (ev.seq <= state.lastSeq) return state;
+    state.lastSeq = ev.seq;
+  }
   var kind = ev.kind || "";
 
   switch (kind) {
@@ -295,6 +301,9 @@ function reduceSSE(state, ev) {
       break;
     case "turn_done":
       state.turn = "done";
+      break;
+    case "stream_done":
+      state.terminal = { ok: ev.ok === true, error: ev.error || "" };
       break;
     case "usage":
       state.usage = {
@@ -651,6 +660,60 @@ function formatToolArgsPreview(args, maxLen) {
   return s;
 }
 
+function buildWorkbenchSnapshot(project, runID, lastSeq, terminal, pendingApprovals) {
+  var projectID = project && typeof project.slug === "string" ? project.slug.trim() : "";
+  var run = typeof runID === "string" ? runID.trim() : "";
+  var seq = Number.isFinite(lastSeq) && lastSeq > 0 ? Math.floor(lastSeq) : 0;
+  var approvals = Number.isFinite(pendingApprovals) && pendingApprovals > 0
+    ? Math.floor(pendingApprovals)
+    : 0;
+  return {
+    kind: "lumen.workbench.snapshot",
+    version: 1,
+    surface: "lab",
+    project: projectID ? { id: projectID, title: String(project.title || projectID) } : null,
+    run: run ? { id: run, last_seq: seq, terminal: terminal === true } : null,
+    pending_approvals: approvals,
+  };
+}
+
+function buildWorkbenchSnapshotV2(project, state) {
+  state = state || {};
+  var projectID = project && typeof project.slug === "string" ? project.slug.trim() : "";
+  var workspaceID = typeof state.workspace_id === "string" ? state.workspace_id.trim() : "";
+  var runID = typeof state.run_id === "string" ? state.run_id.trim() : "";
+  var statuses = ["queued", "running", "waiting_approval", "verifying", "succeeded", "failed", "canceled", "timed_out", "exhausted"];
+  var status = statuses.indexOf(state.status) >= 0 ? state.status : "running";
+  var verifications = ["idle", "running", "passed", "failed", "not_run"];
+  var verification = verifications.indexOf(state.verification) >= 0 ? state.verification : "idle";
+  return {
+    kind: "lumen.workbench.snapshot",
+    version: 2,
+    surface: "lab",
+    workspace: { id: workspaceID },
+    project: projectID ? { id: projectID, title: String(project.title || projectID) } : null,
+    run: runID ? {
+      id: runID,
+      last_seq: Number.isInteger(state.last_seq) && state.last_seq > 0 ? state.last_seq : 0,
+      status: status,
+      terminal: statuses.slice(4).indexOf(status) >= 0,
+    } : null,
+    pending_approvals: Number.isInteger(state.pending_approvals) && state.pending_approvals > 0 ? state.pending_approvals : 0,
+    verification: verification,
+    artifact_count: Number.isInteger(state.artifact_count) && state.artifact_count > 0 ? state.artifact_count : 0,
+  };
+}
+
+function workbenchTargetOrigin() {
+  var configured = typeof window.__LUMEN_WORKBENCH_ORIGIN__ === "string" ? window.__LUMEN_WORKBENCH_ORIGIN__.trim() : "";
+  if (!configured) return window.location.origin;
+  try {
+    var parsed = new URL(configured);
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.origin === configured.replace(/\/$/, "")) return parsed.origin;
+  } catch (_) {}
+  return window.location.origin;
+}
+
 window.LabUI = {
   escHtml: escHtml,
   renderMarkdown: renderMarkdown,
@@ -672,6 +735,9 @@ window.LabUI = {
   buildLangGraphHistoryMarkdown: buildLangGraphHistoryMarkdown,
   buildLangGraphRunNote: buildLangGraphRunNote,
   mergeLangGraphHistoryImport: mergeLangGraphHistoryImport,
+  buildWorkbenchSnapshot: buildWorkbenchSnapshot,
+  buildWorkbenchSnapshotV2: buildWorkbenchSnapshotV2,
+  workbenchTargetOrigin: workbenchTargetOrigin,
 };
 
 /* ── 3. Global state ── */
@@ -679,11 +745,50 @@ var activeProject = null;
 var threads = []; // {id,title,turn_count} from API sessions
 var activeThread = "";
 var currentAbort = null;
+var currentRunId = "";
+var currentRunSeq = 0;
+var workbenchRuntime = { workspace_id: "", run_id: "", last_seq: 0, status: "running", pending_approvals: 0, verification: "idle", artifact_count: 0 };
+var workbenchRefreshRunId = "";
 var fileCwd = ".";
 var sseState = null; // per-turn SSE accumulator
 var turnTasks = []; // this-turn tools for tasks pane
 var skillsCache = [];
 var atMenuState = { active: false, start: -1, items: [], idx: 0 };
+
+function postWorkbenchSnapshot() {
+  if (!window.parent || window.parent === window) return;
+  var pending = 0;
+  try { pending = pendingApprovalCards().length; } catch (_) {}
+  var snapshot = buildWorkbenchSnapshot(
+    activeProject,
+    currentRunId,
+    currentRunSeq,
+    !!(sseState && sseState.terminal),
+    pending,
+  );
+  var targetOrigin = workbenchTargetOrigin();
+  window.parent.postMessage(snapshot, targetOrigin);
+  window.parent.postMessage(buildWorkbenchSnapshotV2(activeProject, workbenchRuntime), targetOrigin);
+}
+
+async function refreshWorkbenchRuntime() {
+  if (!currentRunId) return;
+  try {
+    var response = await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId) + "/workbench-snapshot"), { cache: "no-store" });
+    if (!response.ok) return;
+    var value = await response.json();
+    workbenchRuntime = {
+      workspace_id: typeof value.workspace_id === "string" ? value.workspace_id : "",
+      run_id: typeof value.run_id === "string" ? value.run_id : "",
+      last_seq: Number.isInteger(value.last_seq) ? value.last_seq : 0,
+      status: typeof value.status === "string" ? value.status : "running",
+      pending_approvals: Number.isInteger(value.pending_approvals) ? value.pending_approvals : 0,
+      verification: typeof value.verification === "string" ? value.verification : "idle",
+      artifact_count: Number.isInteger(value.artifact_count) ? value.artifact_count : 0,
+    };
+    postWorkbenchSnapshot();
+  } catch (_) {}
+}
 
 /* ── 4. API functions ── */
 
@@ -873,6 +978,7 @@ async function loadProjects() {
       btn.addEventListener("click", function () {
         saveComposerDraft();
         activeProject = p;
+        postWorkbenchSnapshot();
         touchProjectRecent(p.slug);
         activeThread = "";
         loadProjects();
@@ -942,6 +1048,7 @@ async function loadProjects() {
       if (nm0) nm0.textContent = "未选择";
       if (mt0) mt0.textContent = "";
     }
+    postWorkbenchSnapshot();
   } catch (e) {
     var nav = $("projectList");
     if (nav) nav.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";
@@ -1744,6 +1851,24 @@ function addErrorBubble(toolLog, message) {
 
 function handleSSEEvent(ev, state, bubble) {
   state = reduceSSE(state, ev);
+  if (state.runId) {
+    currentRunId = state.runId;
+    currentRunSeq = state.lastSeq || currentRunSeq;
+    workbenchRuntime.run_id = currentRunId;
+    workbenchRuntime.last_seq = currentRunSeq;
+    if (workbenchRefreshRunId !== currentRunId) {
+      workbenchRefreshRunId = currentRunId;
+      refreshWorkbenchRuntime();
+    }
+    if (ev.kind === "approval_request") workbenchRuntime.status = "waiting_approval";
+    else if (ev.kind === "verify_started") { workbenchRuntime.status = "verifying"; workbenchRuntime.verification = "running"; }
+    else if (ev.kind === "verify_result") workbenchRuntime.verification = ev.level === "info" && String(ev.text || "").indexOf("skipped") < 0 ? "passed" : "failed";
+    else if (ev.kind === "stream_done") workbenchRuntime.status = ev.ok === true ? "succeeded" : "failed";
+    else if (workbenchRuntime.status === "running") workbenchRuntime.status = "running";
+    try {
+      sessionStorage.setItem("lumen_lab_active_run", JSON.stringify({ runId: currentRunId, lastSeq: currentRunSeq }));
+    } catch (_) {}
+  }
   var kind = ev.kind || "";
 
   // Update reasoning (think block)
@@ -1817,6 +1942,7 @@ function handleSSEEvent(ev, state, bubble) {
     renderApprovalCard(bubble.toolLog, ev);
     focusActivityPane("tasks");
     updateApprovalBanner();
+    refreshWorkbenchRuntime();
     try {
       if (typeof Notification !== "undefined" && Notification.permission === "granted") {
         new Notification("Lumen Lab · 需要批准工具", {
@@ -1855,6 +1981,9 @@ function handleSSEEvent(ev, state, bubble) {
     }
   }
 
+  if (kind === "stream_done") refreshWorkbenchRuntime();
+
+  postWorkbenchSnapshot();
   return state;
 }
 
@@ -1980,7 +2109,12 @@ async function streamChat(prompt, mode) {
   var bubble = createAgentBubble();
 
   // Reset state
-  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null };
+  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null, lastSeq: 0 };
+  currentRunId = "";
+  currentRunSeq = 0;
+  workbenchRefreshRunId = "";
+  workbenchRuntime = { workspace_id: workbenchRuntime.workspace_id, run_id: "", last_seq: 0, status: "running", pending_approvals: 0, verification: "idle", artifact_count: 0 };
+  postWorkbenchSnapshot();
   turnTasks = [];
   renderTasksPane();
   setRunStatus(true);
@@ -2037,6 +2171,9 @@ async function streamChat(prompt, mode) {
       bubble.textDiv.innerHTML = '<span class="error-text">错误: ' + escHtml(e.message) + "</span>";
     }
   } finally {
+    if (sseState && sseState.terminal) {
+      try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (_) {}
+    }
     setRunStatus(false);
     // Remove cursor
     if (bubble.textDiv) {
@@ -2045,9 +2182,65 @@ async function streamChat(prompt, mode) {
     }
     currentAbort = null;
     try { await refreshFiles(); } catch (_) {}
+    postWorkbenchSnapshot();
   }
 
   $("chatScroll").scrollTop = $("chatScroll").scrollHeight;
+}
+
+function labRunTerminal(status) {
+  return ["succeeded", "failed", "canceled", "timed_out", "exhausted"].indexOf(status) >= 0;
+}
+
+async function restoreStoredLabRun() {
+  var raw;
+  try { raw = sessionStorage.getItem("lumen_lab_active_run"); } catch (_) { return; }
+  if (!raw) return;
+  var saved;
+  try { saved = JSON.parse(raw); } catch (_) {
+    try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (__) {}
+    return;
+  }
+  if (!saved || !saved.runId) return;
+
+  currentRunId = saved.runId;
+  currentRunSeq = 0;
+  sseState = { text: "", reasoning: "", tools: {}, approvals: [], errors: [], turn: null, lastSeq: 0 };
+  var bubble = createAgentBubble();
+  setRunStatus(true);
+  try {
+    while (true) {
+      var eventsRes = await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId) + "/events?after=" + currentRunSeq), { cache: "no-store" });
+      if (!eventsRes.ok) throw new Error("无法读取科研 Run 事件");
+      var eventsBody = await eventsRes.json();
+      var events = Array.isArray(eventsBody.events) ? eventsBody.events : [];
+      for (var i = 0; i < events.length; i++) {
+        sseState = handleSSEEvent(events[i], sseState, bubble);
+        currentRunSeq = sseState.lastSeq || currentRunSeq;
+      }
+
+      var runRes = await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId)), { cache: "no-store" });
+      if (!runRes.ok) throw new Error("无法读取科研 Run 状态");
+      var runBody = await runRes.json();
+      var run = runBody.run || {};
+      if (labRunTerminal(run.status)) {
+        sseState.terminal = { ok: run.status === "succeeded", error: run.error || run.stop_reason || "" };
+        if (!sseState.text && bubble.textDiv) bubble.textDiv.innerHTML = renderMarkdown("Run " + currentRunId + "：" + run.status);
+        if (run.status !== "succeeded" && bubble.textDiv) {
+          bubble.textDiv.innerHTML += '<div class="stop-notice">' + escHtml(run.error || run.stop_reason || run.status) + "</div>";
+        }
+        try { sessionStorage.removeItem("lumen_lab_active_run"); } catch (_) {}
+        postWorkbenchSnapshot();
+        break;
+      }
+      await new Promise(function (resolve) { setTimeout(resolve, 1000); });
+    }
+  } catch (e) {
+    if (bubble.textDiv) bubble.textDiv.innerHTML += '<div class="stop-notice">' + escHtml(e.message || "恢复失败") + "</div>";
+  } finally {
+    setRunStatus(false);
+    try { await refreshFiles(); } catch (_) {}
+  }
 }
 
 /* ── 8. Approval card (editable args applied on allow) ── */
@@ -2075,6 +2268,7 @@ function updateApprovalBanner() {
     if (hint && /批准|等待工具/.test(hint.textContent || "")) {
       hint.textContent = "就绪 · Agent 模式写文件/bash 需批准";
     }
+    postWorkbenchSnapshot();
     return;
   }
   banner.hidden = false;
@@ -2088,6 +2282,7 @@ function updateApprovalBanner() {
       : ("需要确认: " + tool + (sum ? " — " + sum : ""));
   }
   if (hint) hint.textContent = "等待工具批准… 允许后 Agent 继续";
+  postWorkbenchSnapshot();
 }
 
 function replyLatestPendingApproval(allow) {
@@ -3056,7 +3251,12 @@ $("btnRerun") && $("btnRerun").addEventListener("click", function () { rerunLast
 })();
 
 // Stop button
-$("btnStop") && $("btnStop").addEventListener("click", function () {
+$("btnStop") && $("btnStop").addEventListener("click", async function () {
+  if (currentRunId) {
+    try {
+      await fetch(labPath("/api/lab/runs/" + encodeURIComponent(currentRunId) + "/cancel"), { method: "POST" });
+    } catch (_) {}
+  }
   if (currentAbort) {
     currentAbort.abort();
     currentAbort = null;
@@ -5715,6 +5915,8 @@ document.addEventListener("click", function (e) {
     } else {
       renderThreadTabs();
     }
+    await restoreStoredLabRun();
+    postWorkbenchSnapshot();
   } catch (e) {
     var ib = $("inspectorBody");
     if (ib) ib.innerHTML = '<div class="ft-err">' + escHtml(e.message) + "</div>";

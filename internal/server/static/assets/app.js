@@ -1,8 +1,10 @@
 // Lumen web UI — goal:d6aa846b round9
 const API_BASE =
-  typeof location !== "undefined" && location.pathname.startsWith("/lumen")
-    ? "/lumen"
-    : "";
+  typeof location !== "undefined" && location.pathname.startsWith("/api/lumen/code")
+    ? "/api/lumen/code"
+    : typeof location !== "undefined" && location.pathname.startsWith("/lumen")
+      ? "/lumen"
+      : "";
 
 const $ = (id) => document.getElementById(id);
 
@@ -52,11 +54,102 @@ function syncModeSelect() {
 }
 
 let pendingApprovalId = null;
+let currentRunId = "";
+let currentRunSeq = 0;
+let workbenchRunStatus = "idle";
+let workbenchVerification = "idle";
+let workbenchArtifactCount = 0;
+let workbenchPendingApprovals = 0;
+let workbenchRefreshRunId = "";
+
+// buildWorkbenchSnapshotV2 is deliberately a strict constructor.  Never spread
+// runtime objects into the cross-frame message: Run and event objects can carry
+// prompts, tool arguments, file content, or provider credentials.
+function buildWorkbenchSnapshotV2(state) {
+  const workspaceID = typeof state?.workspace_id === "string" ? state.workspace_id.trim() : "";
+  const runID = typeof state?.run_id === "string" ? state.run_id.trim() : "";
+  const allowed = ["queued", "running", "waiting_approval", "verifying", "succeeded", "failed", "canceled", "timed_out", "exhausted"];
+  const status = allowed.includes(state?.status) ? state.status : "running";
+  const verificationAllowed = ["idle", "running", "passed", "failed", "not_run"];
+  const verification = verificationAllowed.includes(state?.verification) ? state.verification : "idle";
+  return {
+    kind: "lumen.workbench.snapshot",
+    version: 2,
+    surface: "code",
+    workspace: { id: workspaceID },
+    project: null,
+    run: runID ? {
+      id: runID,
+      last_seq: Number.isInteger(state?.last_seq) && state.last_seq > 0 ? state.last_seq : 0,
+      status,
+      terminal: allowed.slice(4).includes(status),
+    } : null,
+    pending_approvals: Number.isInteger(state?.pending_approvals) && state.pending_approvals > 0 ? state.pending_approvals : 0,
+    verification,
+    artifact_count: Number.isInteger(state?.artifact_count) && state.artifact_count > 0 ? state.artifact_count : 0,
+  };
+}
+
+function postWorkbenchSnapshotV2() {
+  if (!window.parent || window.parent === window) return;
+  window.parent.postMessage(buildWorkbenchSnapshotV2({
+    workspace_id: document.documentElement.dataset.workspaceId || "",
+    run_id: currentRunId,
+    last_seq: currentRunSeq,
+    status: workbenchRunStatus,
+    pending_approvals: workbenchPendingApprovals,
+    verification: workbenchVerification,
+    artifact_count: workbenchArtifactCount,
+  }), workbenchTargetOrigin());
+}
+
+function workbenchTargetOrigin() {
+  const configured = typeof window.__LUMEN_WORKBENCH_ORIGIN__ === "string" ? window.__LUMEN_WORKBENCH_ORIGIN__.trim() : "";
+  if (!configured) return window.location.origin;
+  try {
+    const parsed = new URL(configured);
+    if ((parsed.protocol === "https:" || parsed.protocol === "http:") && parsed.origin === configured.replace(/\/$/, "")) return parsed.origin;
+  } catch (_) {}
+  return window.location.origin;
+}
+
+async function refreshWorkbenchRuntime() {
+  if (!currentRunId) return;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/workbench-snapshot`, { cache: "no-store" });
+    if (!response.ok) return;
+    const value = await response.json();
+    document.documentElement.dataset.workspaceId = typeof value.workspace_id === "string" ? value.workspace_id : "";
+    currentRunSeq = Number.isInteger(value.last_seq) ? value.last_seq : currentRunSeq;
+    workbenchRunStatus = typeof value.status === "string" ? value.status : workbenchRunStatus;
+    workbenchVerification = typeof value.verification === "string" ? value.verification : workbenchVerification;
+    workbenchArtifactCount = Number.isInteger(value.artifact_count) ? value.artifact_count : 0;
+    workbenchPendingApprovals = Number.isInteger(value.pending_approvals) ? value.pending_approvals : 0;
+    if (workbenchPendingApprovals === 0 && workbenchRunStatus !== "waiting_approval") pendingApprovalId = null;
+    postWorkbenchSnapshotV2();
+  } catch (_) {}
+}
+
+// The hosting control plane may start or reconnect to a durable Run outside
+// this document. It can request a refresh by Run ID, but only this Lumen frame
+// fetches the owner-scoped state and constructs the positive snapshot.
+function handleWorkbenchRefreshRequest(event) {
+  if (event.source !== window.parent || event.origin !== workbenchTargetOrigin()) return;
+  const value = event.data;
+  if (!value || value.kind !== "lumen.workbench.refresh" || value.version !== 1 || typeof value.run_id !== "string" || !/^run_[A-Za-z0-9_-]{1,120}$/.test(value.run_id)) return;
+  currentRunId = value.run_id;
+  void refreshWorkbenchRuntime();
+}
+window.addEventListener("message", handleWorkbenchRefreshRequest);
+
+window.CodeUI = { buildWorkbenchSnapshotV2, workbenchTargetOrigin, handleWorkbenchRefreshRequest };
 
 async function respondApproval(allow) {
   if (!pendingApprovalId) return;
   const id = pendingApprovalId;
   pendingApprovalId = null;
+  workbenchPendingApprovals = Math.max(0, workbenchPendingApprovals - 1);
+  postWorkbenchSnapshotV2();
   $("approvalModal")?.close();
   try {
     await fetch(API_BASE + "/v1/approve", {
@@ -168,8 +261,7 @@ function addToolCard(parent, name, state) {
   hd.className = `tool-hd ${state}`;
   const spin = state === "running" ? '<span class="tool-spin"></span>' : "";
   const icon = state === "done-ok" ? "✓" : state === "done-err" ? "✗" : "⚙";
-  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>` +
-    (state === "running" ? '<span class="tool-approve-btn" style="margin-left:auto;font-size:10px;cursor:pointer;padding:2px 8px;border-radius:4px;background:var(--ocs-success, #5b8c7a);color:#fff" onclick="event.stopPropagation();if(window.pendingApprovalId){fetch('/api/approve/'+window.pendingApprovalId,{method:'POST'});this.textContent='已批准';this.style.background='var(--ocs-muted)';?.close();}">✓ 批准</span>' : '');
+  hd.innerHTML = `${spin}<span>${icon}</span><span>${escapeHtml(name)}</span>`;
   card.appendChild(hd);
   parent.querySelector(".msg-body").appendChild(card);
   return hd;
@@ -258,8 +350,8 @@ async function streamWorkflow(action, prompt) {
             hidePlanBar();
           } else if (ev.kind === "approval_request") {
             pendingApprovalId = ev.id;
-            if (typeof showApprovalModal === "function") showApprovalModal(
-              (ev.tool || "工具") + ": " + (ev.summary || ""));
+			$("approvalSummary").textContent = `${ev.tool || "工具"}: ${ev.summary || ""}`;
+			$("approvalModal")?.showModal();
           } else if (ev.kind === "error") {
             const err = document.createElement("div");
             err.className = "msg-error";
@@ -405,6 +497,97 @@ async function send() {
   const { el, bubble } = appendMsg("assistant", "");
   let assistantText = "";
   let thinkEl = null;
+	let terminalOK = null;
+	let terminalError = "";
+	let lastTool = null;
+	currentRunId = "";
+	currentRunSeq = 0;
+
+	const applyRunEvent = (ev) => {
+	  if (ev.run_id) currentRunId = ev.run_id;
+	  if (currentRunId && workbenchRefreshRunId !== currentRunId) {
+	    workbenchRefreshRunId = currentRunId;
+	    refreshWorkbenchRuntime();
+	  }
+	  if (Number.isInteger(ev.seq) && ev.seq > currentRunSeq) currentRunSeq = ev.seq;
+	  if (currentRunId) {
+	    sessionStorage.setItem("lumen_active_run", JSON.stringify({ runId: currentRunId, lastSeq: currentRunSeq }));
+	  }
+	  switch (ev.kind) {
+	    case "text":
+	      assistantText += ev.text || "";
+	      bubble.innerHTML = renderMarkdown(assistantText) + '<span class="cursor-blink"></span>';
+	      scrollChat();
+	      break;
+	    case "reasoning":
+	      if (!thinkEl) {
+	        thinkEl = document.createElement("div");
+	        thinkEl.className = "think-block";
+	        el.querySelector(".msg-body").insertBefore(thinkEl, bubble);
+	      }
+	      thinkEl.textContent = (thinkEl.textContent || "思考中… ") + (ev.text || "");
+	      break;
+	    case "tool_dispatch":
+	      if (ev.tool) lastTool = addToolCard(el, ev.tool.name || "tool", "running");
+	      break;
+	    case "tool_result":
+	      if (lastTool && ev.tool) {
+	        lastTool.className = `tool-hd ${ev.tool.err ? "done-err" : "done-ok"}`;
+	        lastTool.querySelector(".tool-spin")?.remove();
+	      }
+	      break;
+	    case "usage":
+	      if (ev.usage) {
+	        tokensIn += ev.usage.prompt_tokens || ev.usage.cache_miss_tokens || 0;
+	        tokensOut += ev.usage.completion_tokens || 0;
+	        const hit = ev.usage.cache_hit_tokens || 0;
+	        const miss = ev.usage.cache_miss_tokens || ev.usage.prompt_tokens || 0;
+	        const out = ev.usage.completion_tokens || 0;
+	        cost += (miss * 0.14 + hit * 0.014 + out * 0.28) / 1e6;
+	      }
+	      break;
+	    case "notice":
+	    case "error":
+	      if (ev.text) {
+	        const err = document.createElement("div");
+	        err.className = "msg-error";
+	        err.textContent = ev.text;
+	        el.querySelector(".msg-body").appendChild(err);
+	      }
+	      break;
+	    case "approval_request":
+	      pendingApprovalId = ev.id;
+	      workbenchPendingApprovals++;
+	      workbenchRunStatus = "waiting_approval";
+	      $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
+	      $("approvalModal")?.showModal();
+	      break;
+      case "turn_done":
+        turn++;
+        if (ev.stop_reason === "finished") terminalOK = true;
+        if (ev.stop_reason && ev.stop_reason !== "finished") {
+          terminalOK = false;
+          terminalError = terminalFailureMessage("", ev.stop_reason);
+        }
+        break;
+	    case "verify_started":
+	      workbenchRunStatus = "verifying";
+	      workbenchVerification = "running";
+	      break;
+	    case "verify_result":
+	      workbenchVerification = ev.ok === true ? "passed" : "failed";
+	      break;
+      case "stream_done":
+        terminalOK = ev.ok === true;
+        terminalError = terminalFailureMessage(ev.error || "", "");
+	      break;
+	    case "plan_start": onPlanStart(); break;
+	    case "plan_step": onPlanStep(ev.step || ev); break;
+	    case "plan_done": onPlanDone(); break;
+	  }
+	  if (currentRunId && workbenchRunStatus === "idle") workbenchRunStatus = "running";
+	  postWorkbenchSnapshotV2();
+	};
 
   const imgs = pendingImages;
   pendingImages = [];
@@ -441,8 +624,6 @@ async function send() {
     const reader = resp.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";
-    let lastTool = null;
-
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -454,85 +635,45 @@ async function send() {
         if (!line.startsWith("data: ")) continue;
         try {
           const ev = JSON.parse(line.slice(6));
-          switch (ev.kind) {
-            case "text":
-              assistantText += ev.text || "";
-              bubble.innerHTML = renderMarkdown(assistantText) + '<span class="cursor-blink"></span>';
-              scrollChat();
-              break;
-            case "reasoning":
-              if (!thinkEl) {
-                thinkEl = document.createElement("div");
-                thinkEl.className = "think-block";
-                el.querySelector(".msg-body").insertBefore(thinkEl, bubble);
-              }
-              thinkEl.textContent = (thinkEl.textContent || "思考中… ") + (ev.text || "");
-              break;
-            case "tool_dispatch":
-              if (ev.tool) {
-                lastTool = addToolCard(el, ev.tool.name || "tool", "running");
-              }
-              break;
-            case "tool_result":
-              if (lastTool && ev.tool) {
-                lastTool.className = `tool-hd ${ev.tool.err ? "done-err" : "done-ok"}`;
-                lastTool.querySelector(".tool-spin")?.remove();
-              }
-              break;
-            case "usage":
-              if (ev.usage) {
-                tokensIn += ev.usage.prompt_tokens || ev.usage.cache_miss_tokens || 0;
-                tokensOut += ev.usage.completion_tokens || 0;
-                const hit = ev.usage.cache_hit_tokens || 0;
-                const miss = ev.usage.cache_miss_tokens || ev.usage.prompt_tokens || 0;
-                const out = ev.usage.completion_tokens || 0;
-                cost += (miss * 0.14 + hit * 0.014 + out * 0.28) / 1e6;
-              }
-              break;
-            case "notice":
-            case "error":
-              if (ev.text) {
-                const err = document.createElement("div");
-                err.className = "msg-error";
-                err.textContent = ev.text;
-                el.querySelector(".msg-body").appendChild(err);
-              }
-              break;
-            case "approval_request":
-              pendingApprovalId = ev.id;
-              $("approvalSummary").textContent = `${ev.tool}: ${ev.summary || ""}`;
-              $("approvalModal")?.showModal();
-              break;
-            case "turn_done":
-              turn++;
-              break;
-            case "plan_start":
-              onPlanStart(); break;
-            case "plan_step":
-              onPlanStep(ev.step || ev); break;
-            case "plan_done":
-              onPlanDone(); break;
-          }
+		  applyRunEvent(ev);
         } catch (_) {}
       }
     }
 
     if (assistantText) {
       bubble.innerHTML = renderMarkdown(assistantText);
+	} else if (terminalOK === false) {
+	  bubble.remove();
     } else if (!bubble.querySelector(".tool-card")) {
       bubble.innerHTML = "<p>（无文本输出）</p>";
     } else {
       bubble.remove();
     }
+  if (terminalOK === false) {
+	  const err = document.createElement("div");
+	  err.className = "msg-error";
+	  err.textContent = terminalError || "任务未完成";
+	  el.querySelector(".msg-body").appendChild(err);
+	}
+    if (terminalOK !== null) sessionStorage.removeItem("lumen_active_run");
+	if (terminalOK !== null) {
+	  workbenchRunStatus = terminalOK ? "succeeded" : "failed";
+	  if (workbenchVerification === "idle") workbenchVerification = "not_run";
+	  refreshWorkbenchRuntime();
+	  postWorkbenchSnapshotV2();
+	}
     if (thinkEl) thinkEl.textContent = thinkEl.textContent || "（推理完成）";
   } catch (e) {
     if (e.name === "AbortError") {
       bubble.innerHTML = renderMarkdown(assistantText || "（已停止）");
     } else {
-      const err = document.createElement("div");
-      err.className = "msg-error";
-      err.textContent = "连接中断，请重试";
-      el.querySelector(".msg-body").appendChild(err);
+	  const replayed = await replayMissedRunEvents(applyRunEvent);
+	  if (!replayed) {
+	    const err = document.createElement("div");
+	    err.className = "msg-error";
+	    err.textContent = currentRunId ? `连接中断，可重试 Run ${currentRunId}` : "连接中断，请重试";
+	    el.querySelector(".msg-body").appendChild(err);
+	  }
     }
   }
 
@@ -547,7 +688,133 @@ async function send() {
   scrollChat();
 }
 
-function stopGeneration() {
+function terminalFailureMessage(error, stopReason) {
+  if (stopReason === "verification_failed" || stopReason === "verification_incomplete" || error.includes("engineering verification")) {
+    return `修改未通过工程验证${error ? `：${error}` : ""}`;
+  }
+  return error || (stopReason ? `任务未完成：${stopReason}` : "");
+}
+
+async function replayMissedRunEvents(applyRunEvent) {
+  if (!currentRunId) return false;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/events?after=${currentRunSeq}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) return false;
+    const payload = await response.json();
+    const events = Array.isArray(payload.events) ? payload.events : [];
+    if (!events.length) return false;
+    events.forEach(applyRunEvent);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+function runIsTerminal(status) {
+  return ["succeeded", "failed", "canceled", "timed_out", "exhausted"].includes(status);
+}
+
+async function refreshWorkbenchArtifacts() {
+  if (!currentRunId) return;
+  try {
+    const response = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/artifacts`, { cache: "no-store" });
+    if (!response.ok) return;
+    const payload = await response.json();
+    workbenchArtifactCount = Array.isArray(payload.artifacts) ? payload.artifacts.length : 0;
+    postWorkbenchSnapshotV2();
+  } catch (_) {}
+}
+
+async function restoreStoredRun() {
+  const raw = sessionStorage.getItem("lumen_active_run");
+  if (!raw || running) return;
+  let saved;
+  try {
+    saved = JSON.parse(raw);
+  } catch (_) {
+    sessionStorage.removeItem("lumen_active_run");
+    return;
+  }
+  const runId = saved?.runId;
+  if (!runId) {
+    sessionStorage.removeItem("lumen_active_run");
+    return;
+  }
+
+  currentRunId = runId;
+  currentRunSeq = 0;
+  running = true;
+  $("sendBtn").disabled = true;
+  $("stopBtn").hidden = false;
+  setStatus("恢复任务中…", true);
+  const { el, bubble } = appendMsg("assistant", "");
+  let restoredText = "";
+  const notices = [];
+
+  const renderRestoredEvent = (ev) => {
+    if (ev.run_id) currentRunId = ev.run_id;
+    if (Number.isInteger(ev.seq) && ev.seq > currentRunSeq) currentRunSeq = ev.seq;
+    if (ev.kind === "text") restoredText += ev.text || "";
+    if ((ev.kind === "notice" || ev.kind === "error" || ev.kind === "verify_result") && ev.text) notices.push(ev.text);
+    const noteText = notices.length ? `\n\n> ${notices.join("\n> ")}` : "";
+    bubble.innerHTML = renderMarkdown((restoredText || `正在恢复 Run ${runId}…`) + noteText);
+    sessionStorage.setItem("lumen_active_run", JSON.stringify({ runId, lastSeq: currentRunSeq }));
+    scrollChat();
+  };
+
+  try {
+    while (true) {
+      const eventsResponse = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(runId)}/events?after=${currentRunSeq}`, { cache: "no-store" });
+      if (!eventsResponse.ok) throw new Error("无法读取 Run 事件");
+      const eventsPayload = await eventsResponse.json();
+      for (const ev of Array.isArray(eventsPayload.events) ? eventsPayload.events : []) renderRestoredEvent(ev);
+
+      const runResponse = await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(runId)}`, { cache: "no-store" });
+      if (!runResponse.ok) throw new Error("无法读取 Run 状态");
+      const runPayload = await runResponse.json();
+      const run = runPayload.run || {};
+      document.documentElement.dataset.workspaceId = typeof run.workspace_id === "string" ? run.workspace_id : "";
+      workbenchRunStatus = run.status || "running";
+      postWorkbenchSnapshotV2();
+      if (runIsTerminal(run.status)) {
+        if (!restoredText) bubble.innerHTML = renderMarkdown(`Run ${runId}：${run.status}`);
+        if (run.status !== "succeeded") {
+          const err = document.createElement("div");
+          err.className = "msg-error";
+          err.textContent = terminalFailureMessage(run.error || "", run.stop_reason || run.status);
+          el.querySelector(".msg-body").appendChild(err);
+        }
+        sessionStorage.removeItem("lumen_active_run");
+		if (workbenchVerification === "idle") {
+		  workbenchVerification = run.stop_reason === "verification_failed" || run.stop_reason === "verification_incomplete" ? "failed" : "not_run";
+		}
+		refreshWorkbenchRuntime();
+		postWorkbenchSnapshotV2();
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  } catch (error) {
+    const err = document.createElement("div");
+    err.className = "msg-error";
+    err.textContent = `${error.message || "恢复失败"}，稍后可再次恢复 Run ${runId}`;
+    el.querySelector(".msg-body").appendChild(err);
+  } finally {
+    running = false;
+    $("sendBtn").disabled = false;
+    $("stopBtn").hidden = true;
+    setStatus("就绪", false);
+  }
+}
+
+async function stopGeneration() {
+  if (currentRunId) {
+    try {
+      await fetch(`${API_BASE}/v1/runs/${encodeURIComponent(currentRunId)}/cancel`, { method: "POST" });
+    } catch (_) {}
+  }
   abortCtrl?.abort();
 }
 
@@ -918,6 +1185,7 @@ async function init() {
   await setServerMode(permissionMode);
   loadSessions();
   loadMemories();
+  await restoreStoredRun();
 
   if (!currentKey) {
     setTimeout(openSetup, 400);
@@ -1003,7 +1271,7 @@ function renderPlanStep(step){
   card.style.cssText="margin-bottom:8px;padding:10px 12px;border:1px solid var(--ocs-line);border-radius:10px;background:var(--ocs-surface-soft);border-left:4px solid "+(planApproved[step.id]?"var(--ocs-success)":"var(--ocs-accent)");
   var riskColors={low:"#5b8c7a",mid:"#c28b4b",high:"#b42318"};
   var risk=step.risk||"low";
-  card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div style="font-size:12px;font-weight:650;color:var(--ocs-ink)">'+(step.idx||"")+". '+escapeHtml(step.title||"步骤")+'</div><div style="font-size:11px;color:var(--ocs-muted);margin-top:2px">'+escapeHtml(step.desc||"")+'</div>'+
+  card.innerHTML='<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px"><div style="flex:1"><div style="font-size:12px;font-weight:650;color:var(--ocs-ink)">'+(step.idx||"")+". "+escapeHtml(step.title||"步骤")+'</div><div style="font-size:11px;color:var(--ocs-muted);margin-top:2px">'+escapeHtml(step.desc||"")+'</div>'+
     (step.files&&step.files.length?'<div style="margin-top:4px;font-size:10px">'+step.files.map(function(f){return'<span style="color:var(--ocs-accent);cursor:pointer;margin-right:8px">📄 '+escapeHtml(f)+'</span>';}).join("")+'</div>':'')+
     '<div style="display:flex;gap:6px;margin-top:6px"><span style="font-size:10px;padding:1px 6px;border-radius:4px;background:'+(riskColors[risk]||riskColors.low)+'20;color:'+(riskColors[risk]||riskColors.low)+'">'+(step.risk||"低")+'风险</span><span style="font-size:10px;color:var(--ocs-muted)">~'+((step.lines||0)||"?")+' 行</span></div></div>'+
     (planApproved[step.id]?'<span style="color:var(--ocs-success);font-weight:650;font-size:11px">✓ 已批准</span>':'<div style="display:flex;flex-direction:column;gap:3px;flex-shrink:0"><button class="btn sm plan-approve" style="font-size:10px;background:var(--ocs-success);color:#fff;border-color:var(--ocs-success)" data-sid="'+step.id+'">批准</button><button class="btn sm plan-skip" style="font-size:10px;color:var(--ocs-muted)" data-sid="'+step.id+'">跳过</button></div>')+
@@ -1184,32 +1452,6 @@ document.addEventListener("paste", function(e) {
   }
 });
 
-// ── Tool Approval Cards ──
-var pendingApprovalId = null;
-var approveCallback = null;
-
-function showApprovalModal(msg) {
-  pendingApprovalId = msg;
-  var modal = document.createElement("div");
-  modal.className = "modal-overlay";
-  modal.id = "approvalModal";
-  modal.innerHTML = '<div class="modal"><p class="text-sm" style="margin-bottom:16px">工具需要审批</p><p class="font-mono text-xs" style="background:rgb(244 243 239);padding:10px;border-radius:8px;margin-bottom:16px">'+escapeHtml(msg)+'</p><div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-secondary" onclick="rejectApproval()">拒绝</button><button class="btn btn-primary" onclick="approveTool()">批准</button></div></div>';
-  document.body.appendChild(modal);
-}
-function approveTool() {
-  if (pendingApprovalId) {
-    try { fetch("/api/approve/" + pendingApprovalId, { method: "POST" }); } catch (_) {}
-  }
-  var m = document.getElementById("approvalModal");
-  if (m) m.remove();
-  pendingApprovalId = null;
-}
-function rejectApproval() {
-  var m = document.getElementById("approvalModal");
-  if (m) m.remove();
-  pendingApprovalId = null;
-}
-
 // ── Plan Step Cards (SSE: plan_start / plan_step / plan_done) ──
 var planSteps = [];
 var planActive = false;
@@ -1263,7 +1505,7 @@ function showDiff(oldText, newText, path) {
     if (o === n) { lines.push('<div style="color:rgb(24 24 27/.6);padding:1px 8px">  '+escapeHtml(o)+'</div>'); }
     else { lines.push('<div style="background:rgba(220,38,38,.06);padding:1px 8px">- '+escapeHtml(o)+'</div>'); lines.push('<div style="background:rgba(4,120,87,.06);padding:1px 8px">+ '+escapeHtml(n)+'</div>'); }
   }
-  overlay.innerHTML = '<div class="modal" style="max-width:700px;max-height:80vh"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span class="font-mono text-xs">'+escapeHtml(path||"diff")+'</span><button class="btn btn-sm btn-ghost" onclick="this.closest('.modal-overlay').remove()">关闭</button></div><div class="font-mono text-xs" style="overflow-y:auto;max-height:60vh">'+lines.join("\n")+'</div></div>';
+  overlay.innerHTML = `<div class="modal" style="max-width:700px;max-height:80vh"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><span class="font-mono text-xs">${escapeHtml(path||"diff")}</span><button class="btn btn-sm btn-ghost" onclick="this.closest('.modal-overlay').remove()">关闭</button></div><div class="font-mono text-xs" style="overflow-y:auto;max-height:60vh">${lines.join("\n")}</div></div>`;
   document.body.appendChild(overlay);
 }
 

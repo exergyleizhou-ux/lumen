@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"lumen/internal/tool"
 )
 
 func TestRecordAndHasEvidence(t *testing.T) {
@@ -45,10 +47,11 @@ func TestVerifyEvidenceBashMatch(t *testing.T) {
 
 	// Record a bash call
 	l.Record(Receipt{
-		ToolName: "bash",
-		Success:  true,
-		ReadOnly: false,
-		Command:  "go build ./...",
+		ToolName:     "bash",
+		Success:      true,
+		ReadOnly:     false,
+		RunsCommands: true,
+		Command:      "go build ./...",
 	})
 
 	// Verification evidence that cites that exact command
@@ -64,10 +67,11 @@ func TestVerifyEvidenceBashMismatch(t *testing.T) {
 	l := NewLedger()
 
 	l.Record(Receipt{
-		ToolName: "bash",
-		Success:  true,
-		ReadOnly: false,
-		Command:  "go build ./...",
+		ToolName:     "bash",
+		Success:      true,
+		ReadOnly:     false,
+		RunsCommands: true,
+		Command:      "go build ./...",
 	})
 
 	// Cites a different command than what was run
@@ -83,10 +87,11 @@ func TestVerifyEvidenceFileMatch(t *testing.T) {
 	l := NewLedger()
 
 	l.Record(Receipt{
-		ToolName: "write_file",
-		Success:  true,
-		ReadOnly: false,
-		Paths:    []string{"/tmp/test.go"},
+		ToolName:    "write_file",
+		Success:     true,
+		ReadOnly:    false,
+		WritesFiles: true,
+		Paths:       []string{"/tmp/test.go"},
 	})
 
 	ok, msg := l.VerifyEvidence("step2", "wrote file", []EvidenceItem{
@@ -101,10 +106,11 @@ func TestVerifyEvidenceFileMismatch(t *testing.T) {
 	l := NewLedger()
 
 	l.Record(Receipt{
-		ToolName: "edit_file",
-		Success:  true,
-		ReadOnly: false,
-		Paths:    []string{"foo.go"},
+		ToolName:    "edit_file",
+		Success:     true,
+		ReadOnly:    false,
+		WritesFiles: true,
+		Paths:       []string{"foo.go"},
 	})
 
 	ok, msg := l.VerifyEvidence("step2", "edited", []EvidenceItem{
@@ -120,10 +126,11 @@ func TestVerifyEvidenceManual(t *testing.T) {
 
 	// Manual evidence always accepted as long as a writer ran
 	l.Record(Receipt{
-		ToolName: "write_file",
-		Success:  true,
-		ReadOnly: false,
-		Paths:    []string{"main.go"},
+		ToolName:    "write_file",
+		Success:     true,
+		ReadOnly:    false,
+		WritesFiles: true,
+		Paths:       []string{"main.go"},
 	})
 
 	ok, msg := l.VerifyEvidence("step3", "reviewed", []EvidenceItem{
@@ -136,7 +143,7 @@ func TestVerifyEvidenceManual(t *testing.T) {
 
 func TestVerifyEvidenceUnknownKind(t *testing.T) {
 	l := NewLedger()
-	l.Record(Receipt{ToolName: "write_file", Success: true, ReadOnly: false, Paths: []string{"x.go"}})
+	l.Record(Receipt{ToolName: "write_file", Success: true, ReadOnly: false, WritesFiles: true, Paths: []string{"x.go"}})
 
 	ok, _ := l.VerifyEvidence("step", "done", []EvidenceItem{
 		{Kind: "magic", Summary: "magic happened"},
@@ -149,8 +156,8 @@ func TestVerifyEvidenceUnknownKind(t *testing.T) {
 func TestVerifyEvidenceMultipleItems(t *testing.T) {
 	l := NewLedger()
 
-	l.Record(Receipt{ToolName: "bash", Success: true, ReadOnly: false, Command: "go build"})
-	l.Record(Receipt{ToolName: "write_file", Success: true, ReadOnly: false, Paths: []string{"main.go"}})
+	l.Record(Receipt{ToolName: "bash", Success: true, ReadOnly: false, RunsCommands: true, Command: "go build"})
+	l.Record(Receipt{ToolName: "write_file", Success: true, ReadOnly: false, WritesFiles: true, Paths: []string{"main.go"}})
 
 	ok, msg := l.VerifyEvidence("step", "done", []EvidenceItem{
 		{Kind: "verification", Summary: "build ok", Command: "go build"},
@@ -161,9 +168,35 @@ func TestVerifyEvidenceMultipleItems(t *testing.T) {
 	}
 }
 
+func TestWriterEvidenceUsesTypedEffects(t *testing.T) {
+	bashOnly := NewLedger()
+	bashOnly.Record(Receipt{
+		ToolName:     "bash",
+		Success:      true,
+		ReadOnly:     false,
+		RunsCommands: true,
+		Command:      "printf changed",
+		Paths:        []string{"main.go"},
+	})
+	if ok, _ := bashOnly.VerifyEvidence("step", "done", []EvidenceItem{{Kind: "files", Summary: "main", Paths: []string{"main.go"}}}); ok {
+		t.Fatal("a command-only tool must not satisfy file-write evidence")
+	}
+
+	writer := NewLedger()
+	writer.Record(Receipt{
+		ToolName:    "write_file",
+		Success:     true,
+		WritesFiles: true,
+		Paths:       []string{"main.go"},
+	})
+	if ok, msg := writer.VerifyEvidence("step", "done", []EvidenceItem{{Kind: "files", Summary: "main", Paths: []string{"main.go"}}}); !ok {
+		t.Fatalf("typed writer evidence rejected: %s", msg)
+	}
+}
+
 func TestReceiptFromToolCallBash(t *testing.T) {
 	args := json.RawMessage(`{"command":"echo hello","run_in_background":false}`)
-	r := ReceiptFromToolCall("bash", args, true, false)
+	r := ReceiptFromToolCall("bash", args, true, false, tool.Effects{RunsCommands: true})
 
 	if r.Command != "echo hello" {
 		t.Errorf("expected command 'echo hello', got %q", r.Command)
@@ -175,7 +208,7 @@ func TestReceiptFromToolCallBash(t *testing.T) {
 
 func TestReceiptFromToolCallWriteFile(t *testing.T) {
 	args := json.RawMessage(`{"path":"/tmp/x.go","content":"package main"}`)
-	r := ReceiptFromToolCall("write_file", args, true, false)
+	r := ReceiptFromToolCall("write_file", args, true, false, tool.Effects{WritesFiles: true})
 
 	if len(r.Paths) != 1 || r.Paths[0] != "/tmp/x.go" {
 		t.Errorf("expected paths [/tmp/x.go], got %v", r.Paths)
@@ -184,7 +217,7 @@ func TestReceiptFromToolCallWriteFile(t *testing.T) {
 
 func TestReceiptFromToolCallTodoWrite(t *testing.T) {
 	args := json.RawMessage(`{"todos":[{"content":"add tests","status":"in_progress","activeForm":"adding tests","level":0}]}`)
-	r := ReceiptFromToolCall("todo_write", args, true, false)
+	r := ReceiptFromToolCall("todo_write", args, true, false, tool.Effects{})
 
 	if len(r.Todos) != 1 || r.Todos[0].Content != "add tests" {
 		t.Errorf("expected todo 'add tests', got %v", r.Todos)

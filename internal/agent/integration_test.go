@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -266,8 +267,12 @@ func TestMaxStepsEnforcement(t *testing.T) {
 	ag := New(seq, reg, sess, Options{MaxSteps: 2})
 
 	err := ag.Run(context.Background(), "do forever")
-	if err != nil {
-		t.Fatalf("should not error on maxSteps: %v", err)
+	if !errors.Is(err, ErrMaxStepsExhausted) {
+		t.Fatalf("expected ErrMaxStepsExhausted, got %v", err)
+	}
+	var exhausted *MaxStepsError
+	if !errors.As(err, &exhausted) || exhausted.Limit != 2 {
+		t.Fatalf("expected MaxStepsError{Limit:2}, got %#v", err)
 	}
 }
 

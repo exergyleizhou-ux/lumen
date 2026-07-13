@@ -14,6 +14,9 @@ go test ./internal/science/proxy/... -count=1 -short -timeout 60s -run 'E2E|DSML
 echo "▶ science-all: science-check"
 make science-check
 
+echo "▶ science-all: controlled native integration"
+go test -tags=integration -p=2 -count=1 -timeout 180s ./internal/science/native ./internal/science/lab/runtime
+
 echo "▶ science-all: test count gate"
 COUNT=$(grep -r '^func Test' internal/science --include='*_test.go' | wc -l | tr -d ' ')
 if [ "$COUNT" -lt 120 ]; then

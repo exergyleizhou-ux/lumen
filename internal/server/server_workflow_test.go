@@ -108,11 +108,20 @@ func TestWorkflowOutcomeMatrix(t *testing.T) {
 	})
 
 	t.Run("configure_fail_sse_no_plan_ready", func(t *testing.T) {
-		s := withoutDemo(t)
-		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task"})
-		if !strings.Contains(out, "no providers configured") {
-			t.Fatalf("configure error missing:\n%s", out)
+		dir := t.TempDir()
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
 		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(wd) })
+		s, err := New(Config{Addr: ":0", Ctrl: control.New(), LocalConfigPath: filepath.Join(dir, "missing.toml")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task", "provider": "not-a-provider"})
 		if strings.Contains(out, `"kind":"plan_ready"`) {
 			t.Fatalf("plan_ready must not appear on configure fail:\n%s", out)
 		}

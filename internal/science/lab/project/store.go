@@ -4,12 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
+
+	labworkspace "lumen/internal/science/lab/workspace"
 )
 
 var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
@@ -18,12 +21,24 @@ var slugRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 type Store struct {
 	sciDir string
 	root   string
+	guard  *labworkspace.Guard
 }
 
 // NewStore creates a project store at ~/.lumen/science/lab/projects.
 func NewStore(sciDir string) *Store {
-	return &Store{sciDir: sciDir, root: filepath.Join(sciDir, "lab", "projects")}
+	g, _ := labworkspace.NewGuard(sciDir)
+	return &Store{sciDir: sciDir, root: filepath.Join(sciDir, "lab", "projects"), guard: g}
 }
+
+func (s *Store) rel(path string) string           { r, _ := filepath.Rel(s.sciDir, path); return r }
+func (s *Store) mkdir(path string) error          { return s.guard.MkdirAll(s.rel(path), 0o700) }
+func (s *Store) read(path string) ([]byte, error) { return s.guard.ReadFile(s.rel(path)) }
+func (s *Store) write(path string, b []byte) error {
+	return s.guard.AtomicWriteFile(s.rel(path), b, 0o600)
+}
+func (s *Store) entries(path string) ([]os.DirEntry, error) { return s.guard.ReadDir(s.rel(path)) }
+func (s *Store) stat(path string) (os.FileInfo, error)      { return s.guard.Stat(s.rel(path)) }
+func (s *Store) remove(path string) error                   { return s.guard.RemoveAll(s.rel(path)) }
 
 // SciDir returns the science config root.
 func (s *Store) SciDir() string { return s.sciDir }
@@ -74,10 +89,10 @@ func newID(prefix string) string {
 
 // List returns all projects sorted by updated time descending.
 func (s *Store) List() ([]Project, error) {
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
+	if err := s.mkdir(s.root); err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(s.root)
+	entries, err := s.entries(s.root)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +117,7 @@ func (s *Store) List() ([]Project, error) {
 }
 
 func (s *Store) load(dir string) (Project, error) {
-	data, err := os.ReadFile(filepath.Join(dir, "project.json"))
+	data, err := s.read(filepath.Join(dir, "project.json"))
 	if err != nil {
 		return Project{}, err
 	}
@@ -118,7 +133,14 @@ func (s *Store) Get(slug string) (Project, error) {
 	if !slugRe.MatchString(slug) {
 		return Project{}, fmt.Errorf("invalid slug %q", slug)
 	}
-	return s.load(s.projectDir(slug))
+	dir := s.projectDir(slug)
+	if _, err := s.stat(dir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Project{}, os.ErrNotExist
+		}
+		return Project{}, err
+	}
+	return s.load(dir)
 }
 
 // Create adds a new project with workspace scaffolding.
@@ -141,13 +163,13 @@ func (s *Store) Create(title, template string) (Project, error) {
 	if len(slug) > 64 {
 		slug = slug[:64]
 	}
-	if err := os.MkdirAll(s.root, 0o700); err != nil {
+	if err := s.mkdir(s.root); err != nil {
 		return Project{}, err
 	}
 	// Rare collision loop
 	dir := s.projectDir(slug)
 	for n := 0; n < 5; n++ {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
+		if _, err := s.stat(dir); os.IsNotExist(err) {
 			break
 		}
 		slug = base + "-" + newID("x")[2:10]
@@ -166,17 +188,17 @@ func (s *Store) Create(title, template string) (Project, error) {
 		UpdatedAt:    now,
 		WorkspaceRel: "workspace",
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := s.mkdir(dir); err != nil {
 		return Project{}, err
 	}
 	for _, sub := range []string{"workspace", "workspace/data", "workspace/figures", "workspace/reports", "workspace/notebooks", "sessions", ".lumen/skills"} {
-		if err := os.MkdirAll(filepath.Join(dir, sub), 0o700); err != nil {
+		if err := s.mkdir(filepath.Join(dir, sub)); err != nil {
 			return Project{}, err
 		}
 	}
 	provPath := filepath.Join(dir, "provenance.jsonl")
-	if _, err := os.Stat(provPath); os.IsNotExist(err) {
-		if err := os.WriteFile(provPath, nil, 0o600); err != nil {
+	if _, err := s.stat(provPath); os.IsNotExist(err) {
+		if err := s.write(provPath, nil); err != nil {
 			return Project{}, err
 		}
 	}
@@ -197,7 +219,6 @@ func (s *Store) ProjectDir(slug string) (string, error) {
 	}
 	return s.projectDir(slug), nil
 }
-
 
 // Rename updates a project's display title (slug unchanged).
 func (s *Store) Rename(slug, title string) (Project, error) {
@@ -225,7 +246,14 @@ func (s *Store) Delete(slug string) error {
 	if !slugRe.MatchString(slug) {
 		return fmt.Errorf("invalid slug %q", slug)
 	}
-	return os.RemoveAll(s.projectDir(slug))
+	path := s.projectDir(slug)
+	if _, err := s.stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return s.remove(path)
 }
 
 func (s *Store) save(p Project) error {
@@ -234,7 +262,7 @@ func (s *Store) save(p Project) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "project.json"), append(data, '\n'), 0o600)
+	return s.write(filepath.Join(dir, "project.json"), append(data, '\n'))
 }
 
 // WorkspacePath returns the absolute workspace directory for a project slug.
@@ -271,14 +299,14 @@ func (s *Store) CreateSession(slug, title string) (Session, error) {
 		UpdatedAt: now,
 	}
 	dir := filepath.Join(s.projectDir(slug), "sessions")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := s.mkdir(dir); err != nil {
 		return Session{}, err
 	}
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return Session{}, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, sess.ID+".json"), append(data, '\n'), 0o600); err != nil {
+	if err := s.write(filepath.Join(dir, sess.ID+".json"), append(data, '\n')); err != nil {
 		return Session{}, err
 	}
 	p.ActiveSession = sess.ID
@@ -290,7 +318,7 @@ func (s *Store) CreateSession(slug, title string) (Session, error) {
 // ListSessions returns sessions for a project.
 func (s *Store) ListSessions(slug string) ([]Session, error) {
 	dir := filepath.Join(s.projectDir(slug), "sessions")
-	entries, err := os.ReadDir(dir)
+	entries, err := s.entries(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -302,7 +330,7 @@ func (s *Store) ListSessions(slug string) ([]Session, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		data, err := s.read(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -395,7 +423,7 @@ func (s *Store) DeleteSession(slug, sessionID string) error {
 		return fmt.Errorf("invalid session id")
 	}
 	path := filepath.Join(s.projectDir(slug), "sessions", sessionID+".json")
-	if err := os.Remove(path); err != nil {
+	if err := s.remove(path); err != nil {
 		return err
 	}
 	// clear active if needed
@@ -415,7 +443,7 @@ func (s *Store) GetSession(slug, sessionID string) (Session, error) {
 	if sessionID == "" || strings.Contains(sessionID, "/") || strings.Contains(sessionID, "..") {
 		return Session{}, fmt.Errorf("invalid session id")
 	}
-	data, err := os.ReadFile(filepath.Join(s.projectDir(slug), "sessions", sessionID+".json"))
+	data, err := s.read(filepath.Join(s.projectDir(slug), "sessions", sessionID+".json"))
 	if err != nil {
 		return Session{}, err
 	}
@@ -429,14 +457,14 @@ func (s *Store) GetSession(slug, sessionID string) (Session, error) {
 // saveSession writes session JSON.
 func (s *Store) saveSession(slug string, sess Session) error {
 	dir := filepath.Join(s.projectDir(slug), "sessions")
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := s.mkdir(dir); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(sess, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, sess.ID+".json"), append(data, '\n'), 0o600)
+	return s.write(filepath.Join(dir, sess.ID+".json"), append(data, '\n'))
 }
 
 // ImportSession creates a session with optional preloaded turns (e.g. JSON restore).
@@ -501,11 +529,11 @@ func (s *Store) AppendTurns(slug, sessionID string, turns ...Turn) (Session, err
 
 // SessionSearchHit is one turn matching a full-text query.
 type SessionSearchHit struct {
-	SessionID    string `json:"session_id"`
-	SessionTitle string `json:"session_title"`
-	TurnIndex    int    `json:"turn_index"`
-	Role         string `json:"role"`
-	Snippet      string `json:"snippet"`
+	SessionID    string    `json:"session_id"`
+	SessionTitle string    `json:"session_title"`
+	TurnIndex    int       `json:"turn_index"`
+	Role         string    `json:"role"`
+	Snippet      string    `json:"snippet"`
 	At           time.Time `json:"at,omitempty"`
 }
 
@@ -523,7 +551,7 @@ func (s *Store) SearchSessions(slug, query string, limit int) ([]SessionSearchHi
 	}
 	// Load full sessions (with turns) from disk
 	dir := filepath.Join(s.projectDir(slug), "sessions")
-	entries, err := os.ReadDir(dir)
+	entries, err := s.entries(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -535,7 +563,7 @@ func (s *Store) SearchSessions(slug, query string, limit int) ([]SessionSearchHi
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		data, err := s.read(filepath.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -632,7 +660,7 @@ func (s *Store) LoadEnabledSkills(slug string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
+	data, err := s.read(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -654,12 +682,12 @@ func (s *Store) SaveEnabledSkills(slug string, enabled []string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := s.mkdir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(map[string]any{"enabled": enabled}, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return s.write(path, append(data, '\n'))
 }

@@ -9,10 +9,10 @@ import (
 
 // historySink records text/tools for session persistence while forwarding to inner.
 type historySink struct {
-	mu       sync.Mutex
-	inner    event.Sink
-	text     string
-	tools    map[string]project.ToolSummary
+	mu        sync.Mutex
+	inner     event.Sink
+	text      string
+	tools     map[string]project.ToolSummary
 	toolOrder []string
 }
 

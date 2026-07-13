@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,8 +19,16 @@ import (
 
 	"sync/atomic"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
+	"lumen/internal/config"
 	"lumen/internal/event"
+	"lumen/internal/hostedauth"
+	"lumen/internal/lumenstore"
 	"lumen/internal/permission"
+	"lumen/internal/quota"
+	"lumen/internal/runstate"
+	"lumen/internal/runtimeevidence"
 	"lumen/internal/science/lab/compute"
 	"lumen/internal/science/lab/jupyter"
 	"lumen/internal/science/lab/langgraph"
@@ -32,52 +41,97 @@ import (
 	"lumen/internal/science/paths"
 	"lumen/internal/science/research"
 	"lumen/internal/skill"
+	"lumen/internal/usage"
 )
 
 // API hosts lab REST + SSE handlers.
 type API struct {
-	sciDir     string
-	version    string
-	listenPort int
-	projects   *project.Store
-	fleet      *labruntime.FleetManager
-	local      LocalConfig
-	turns      *turnPool
-	ctrls      *controllerPool
-	approvals  *approvalHub
+	sciDir           string
+	version          string
+	listenPort       int
+	projects         *project.Store
+	fleet            *labruntime.FleetManager
+	local            LocalConfig
+	turns            *turnPool
+	ctrls            *controllerPool
+	approvals        *approvalHub
+	runs             *runstate.Manager
+	usage            usage.Store
+	quota            quota.Store
+	approvalStore    approvalstate.Store
+	artifactStore    artifact.Store
+	evidence         runtimeevidence.Service
+	platformProvider *config.ProviderConfig
+	activeRuns       *sync.Map // run_id -> labActiveRun
+	auth             *hostedauth.Verifier
+	tenants          *tenantRegistry
 	// activeMode is read by approval hub during a turn.
-	modeMu     sync.Mutex
+	modeMu     *sync.Mutex
 	activeMode permission.Mode
+	ownerModes map[runstate.Owner]permission.Mode
 	startedAt  time.Time
 	// metrics
-	turnsTotal   atomic.Uint64
-	turnsFailed  atomic.Uint64
-	approvalsTot atomic.Uint64
+	turnsTotal   *atomic.Uint64
+	turnsFailed  *atomic.Uint64
+	approvalsTot *atomic.Uint64
+}
+
+type labActiveRun struct {
+	Owner  runstate.Owner
+	Cancel context.CancelFunc
+}
+
+func labOwner(r *http.Request) runstate.Owner {
+	if id, ok := hostedauth.FromContext(r.Context()); ok {
+		return runstate.Owner{UserID: id.UserID, WorkspaceID: id.WorkspaceID}
+	}
+	return runstate.LocalOwner
 }
 
 // NewAPI builds the lab API.
-func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort int) *API {
+func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort int, runs *runstate.Manager) *API {
 	if listenPort == 0 {
 		listenPort = DefaultPort
 	}
+	if runs == nil {
+		runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+	}
+	var usageStore usage.Store = usage.NewMemoryStore()
+	var approvalStore approvalstate.Store = approvalstate.NewMemoryStore()
+	var artifactStore artifact.Store = artifact.NewMemoryStore()
 	store := project.NewStore(sciDir)
 	api := &API{
-		sciDir:      sciDir,
-		version:     version,
-		listenPort:  listenPort,
-		projects:    store,
-		fleet:       fleet,
-		local:       loadLocalConfig(sciDir),
-		turns:      newTurnPool(MaxConcurrentTurns),
-		ctrls:      newControllerPool(sciDir, fleet, store, MaxControllers),
-		activeMode: permission.ModeDefault,
-		startedAt:  time.Now(),
+		sciDir:        sciDir,
+		version:       version,
+		listenPort:    listenPort,
+		projects:      store,
+		fleet:         fleet,
+		local:         loadLocalConfig(sciDir),
+		turns:         newTurnPool(MaxConcurrentTurns),
+		ctrls:         newControllerPool(sciDir, fleet, store, MaxControllers),
+		runs:          runs,
+		usage:         usageStore,
+		approvalStore: approvalStore,
+		artifactStore: artifactStore,
+		activeRuns:    new(sync.Map),
+		activeMode:    permission.ModeDefault,
+		modeMu:        new(sync.Mutex),
+		ownerModes:    make(map[runstate.Owner]permission.Mode),
+		startedAt:     time.Now(),
+		turnsTotal:    new(atomic.Uint64),
+		turnsFailed:   new(atomic.Uint64),
+		approvalsTot:  new(atomic.Uint64),
+	}
+	if ur, ok := api.usage.(runtimeevidence.UsageReader); ok {
+		api.evidence = runtimeevidence.Service{Runs: runs, Approvals: api.approvalStore, Artifacts: api.artifactStore, Usage: ur}
 	}
 	api.approvals = newApprovalHub(func() permission.Mode {
 		api.modeMu.Lock()
 		defer api.modeMu.Unlock()
 		return api.activeMode
 	})
+	api.approvals.ownerModeFunc = api.ownerMode
+	api.approvals.store = api.approvalStore
 	return api
 }
 
@@ -85,32 +139,358 @@ func NewAPI(sciDir, version string, fleet *labruntime.FleetManager, listenPort i
 func (a *API) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/api/lab/health", a.handleHealth)
 	mux.HandleFunc("/api/lab/readyz", a.handleReadyz)
-	mux.HandleFunc("/api/lab/projects", a.handleProjects)
-	mux.HandleFunc("/api/lab/projects/", a.handleProjectSub)
-	mux.HandleFunc("/api/lab/skills", a.handleSkills)
-	mux.HandleFunc("/api/lab/skills/", a.handleSkillsSub)
-	mux.HandleFunc("/api/lab/config", a.handleConfig)
-	mux.HandleFunc("/api/lab/chat", a.handleChat)
-	mux.HandleFunc("/api/lab/approve", a.handleApprove)
-	mux.HandleFunc("/api/lab/brief", a.handleBrief)
-	mux.HandleFunc("/api/lab/artifacts", a.handleArtifacts)
-	mux.HandleFunc("/api/lab/files", a.handleFiles)
-	mux.HandleFunc("/api/lab/files/", a.handleFiles)
-	mux.HandleFunc("/api/lab/provenance", a.handleProvenance)
-	mux.HandleFunc("/api/lab/compute/ssh-hosts", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/ssh-hosts/", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/hosts", a.handleComputeSSHHosts) // alias
-	mux.HandleFunc("/api/lab/compute/hosts/", a.handleComputeSSHHosts)
-	mux.HandleFunc("/api/lab/compute/jobs", a.handleComputeJobs)
-	mux.HandleFunc("/api/lab/compute/jobs/", a.handleComputeJob)
-	mux.HandleFunc("/api/lab/c2d/algorithms", a.handleC2DAlgorithms)
-	mux.HandleFunc("/api/lab/bridge/open", a.handleBridgeOpen)
-	mux.HandleFunc("/api/lab/notebooks", a.handleNotebooks)
-	mux.HandleFunc("/api/lab/notebooks/", a.handleNotebooks)
-	mux.HandleFunc("/api/lab/langgraph/run", a.handleLangGraphRun)
-	mux.HandleFunc("/api/lab/langgraph/history", a.handleLangGraphHistory)
-	mux.HandleFunc("/api/lab/onlyoffice/callback", a.handleOnlyOfficeCallback)
-	mux.HandleFunc("/api/lab/onlyoffice/session", a.handleOnlyOfficeSession)
+	register := func(pattern string, handler func(*API, http.ResponseWriter, *http.Request)) {
+		if a.auth != nil {
+			wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				owner := labOwner(r)
+				tenant, err := a.tenants.acquire(owner)
+				if err != nil {
+					w.Header().Set("Retry-After", "2")
+					writeErr(w, http.StatusServiceUnavailable, fmt.Errorf("tenant capacity reached; next_action=retry with backoff"))
+					return
+				}
+				defer a.tenants.release(owner)
+				r = r.WithContext(context.WithValue(r.Context(), tenantContextKey{}, tenant))
+				// Keep the mature Lab handlers unchanged while binding every mutable
+				// resource they use to this request's authenticated tenant. The copy
+				// is request-local; shared concurrency/run coordination stays shared.
+				scoped := *a
+				scoped.sciDir = tenant.Root
+				scoped.projects = tenant.Projects
+				scoped.ctrls = tenant.Controllers
+				scoped.local = loadLocalConfig(tenant.Root)
+				handler(&scoped, w, r)
+			})
+			mux.Handle(pattern, a.auth.RequireFor(labPermission)(wrapped))
+			return
+		}
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) { handler(a, w, r) })
+	}
+	register("/api/lab/projects", (*API).handleProjects)
+	register("/api/lab/projects/", (*API).handleProjectSub)
+	register("/api/lab/skills", (*API).handleSkills)
+	register("/api/lab/skills/", (*API).handleSkillsSub)
+	register("/api/lab/config", (*API).handleConfig)
+	register("/api/lab/chat", (*API).handleChat)
+	register("/api/lab/runs/", (*API).handleRuns)
+	register("/api/lab/approve", (*API).handleApprove)
+	register("/api/lab/brief", (*API).handleBrief)
+	register("/api/lab/artifacts", (*API).handleArtifacts)
+	register("/api/lab/files", (*API).handleFiles)
+	register("/api/lab/files/", (*API).handleFiles)
+	register("/api/lab/provenance", (*API).handleProvenance)
+	register("/api/lab/compute/ssh-hosts", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/ssh-hosts/", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/hosts", (*API).handleComputeSSHHosts) // alias
+	register("/api/lab/compute/hosts/", (*API).handleComputeSSHHosts)
+	register("/api/lab/compute/jobs", (*API).handleComputeJobs)
+	register("/api/lab/compute/jobs/", (*API).handleComputeJob)
+	register("/api/lab/c2d/algorithms", (*API).handleC2DAlgorithms)
+	register("/api/lab/bridge/open", (*API).handleBridgeOpen)
+	register("/api/lab/notebooks", (*API).handleNotebooks)
+	register("/api/lab/notebooks/", (*API).handleNotebooks)
+	register("/api/lab/langgraph/run", (*API).handleLangGraphRun)
+	register("/api/lab/langgraph/history", (*API).handleLangGraphHistory)
+	register("/api/lab/onlyoffice/callback", (*API).handleOnlyOfficeCallback)
+	register("/api/lab/onlyoffice/session", (*API).handleOnlyOfficeSession)
+}
+
+type tenantContextKey struct{}
+
+func tenantFromRequest(r *http.Request) *tenantResources {
+	t, _ := r.Context().Value(tenantContextKey{}).(*tenantResources)
+	return t
+}
+
+func labPermission(r *http.Request) string {
+	path := r.URL.Path
+	if strings.HasPrefix(path, "/api/lab/runs/") {
+		if strings.HasSuffix(path, "/cancel") {
+			return "run:cancel"
+		}
+		if strings.Contains(path, "/artifacts/") && strings.HasSuffix(path, "/download") {
+			return "artifact:read"
+		}
+		return "run:read"
+	}
+	if path == "/api/lab/approve" {
+		return "approval:decide"
+	}
+	if strings.HasPrefix(path, "/api/lab/artifacts") || strings.HasPrefix(path, "/api/lab/files") || strings.HasPrefix(path, "/api/lab/provenance") {
+		if r.Method == http.MethodGet {
+			return "artifact:read"
+		}
+	}
+	return "lab:run"
+}
+
+func (a *API) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	ctx = runstate.WithRunID(ctx, runID)
+	a.activeRuns.Store(runID, labActiveRun{Owner: owner, Cancel: cancel})
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			a.activeRuns.Delete(runID)
+			cancel()
+		})
+	}
+	return ctx, cleanup
+}
+
+func (a *API) cancelActiveRun(owner runstate.Owner, runID string) bool {
+	value, ok := a.activeRuns.Load(runID)
+	if !ok {
+		return false
+	}
+	active, ok := value.(labActiveRun)
+	if !ok || active.Owner != owner {
+		return false
+	}
+	a.activeRuns.Delete(runID)
+	active.Cancel()
+	return true
+}
+
+func (a *API) handleRuns(w http.ResponseWriter, r *http.Request) {
+	owner := labOwner(r)
+	rel := strings.TrimPrefix(r.URL.Path, "/api/lab/runs/")
+	if rel == "" || strings.Contains(rel, "..") {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
+		return
+	}
+	parts := strings.Split(rel, "/")
+	if len(parts) == 1 && parts[0] != "" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		run, err := a.runs.GetOwned(owner, parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"run": run})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		var after uint64
+		if raw := r.URL.Query().Get("after"); raw != "" {
+			value, err := strconv.ParseUint(raw, 10, 64)
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, fmt.Errorf("after must be a non-negative integer"))
+				return
+			}
+			after = value
+		}
+		events, err := a.runs.EventsOwned(owner, parts[0], after)
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"events": events, "run_id": parts[0], "after": after})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "artifacts" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		if items == nil {
+			items = []artifact.Record{}
+		}
+		writeJSON(w, 200, map[string]any{"artifacts": items})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "approvals" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.approvalStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		safe := make([]map[string]any, 0, len(items))
+		for _, item := range items {
+			safe = append(safe, safeLabApprovalReview(item))
+		}
+		writeJSON(w, 200, map[string]any{"approvals": safe})
+		return
+	}
+	if len(parts) == 4 && parts[0] != "" && parts[1] == "artifacts" && parts[2] != "" && parts[3] == "download" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		items, err := a.artifactStore.ListRun(owner, parts[0])
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		var found *artifact.Record
+		for i := range items {
+			if items[i].ID == parts[2] {
+				found = &items[i]
+				break
+			}
+		}
+		if found == nil {
+			writeErr(w, 404, fmt.Errorf("artifact not found"))
+			return
+		}
+		body, err := a.artifactStore.Open(r.Context(), owner, *found)
+		if err != nil {
+			writeErr(w, 404, fmt.Errorf("artifact not found"))
+			return
+		}
+		defer body.Close()
+		name := artifact.SafeName(found.Name)
+		if name == "" {
+			name = "artifact"
+		}
+		w.Header().Set("Content-Type", found.MIME)
+		w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		_, _ = io.Copy(w, body)
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "workbench-snapshot" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		run, err := a.runs.GetOwned(owner, parts[0])
+		if err != nil {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		events, err := a.runs.EventsOwned(owner, run.ID, 0)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		approvals, err := a.approvalStore.ListRun(owner, run.ID)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		artifacts, err := a.artifactStore.ListRun(owner, run.ID)
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		pending := 0
+		for _, approval := range approvals {
+			if approval.Decision == nil && time.Now().UTC().Before(approval.ExpiresAt) {
+				pending++
+			}
+		}
+		var lastSeq uint64
+		if len(events) > 0 {
+			lastSeq = events[len(events)-1].Seq
+		}
+		writeJSON(w, 200, map[string]any{"workspace_id": run.WorkspaceID, "run_id": run.ID, "last_seq": lastSeq, "status": run.Status, "terminal": run.Status.Terminal(), "pending_approvals": pending, "verification": labWorkbenchVerification(events, run), "artifact_count": len(artifacts)})
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "evidence" {
+		if r.Method != http.MethodGet {
+			writeErr(w, 405, fmt.Errorf("method not allowed"))
+			return
+		}
+		bundle, err := a.evidence.Build(r.Context(), owner, parts[0])
+		if errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, 404, fmt.Errorf("run not found"))
+			return
+		}
+		if err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+parts[0]+`-evidence.zip"`)
+		w.Write(bundle)
+		return
+	}
+	if len(parts) == 2 && parts[0] != "" && parts[1] == "cancel" {
+		if r.Method != http.MethodPost {
+			writeErr(w, http.StatusMethodNotAllowed, fmt.Errorf("method not allowed"))
+			return
+		}
+		if _, err := a.runs.GetOwned(owner, parts[0]); errors.Is(err, runstate.ErrRunNotFound) {
+			writeErr(w, http.StatusNotFound, fmt.Errorf("run not found"))
+			return
+		} else if err != nil {
+			writeErr(w, http.StatusInternalServerError, err)
+			return
+		}
+		if !a.cancelActiveRun(owner, parts[0]) {
+			writeErr(w, http.StatusConflict, fmt.Errorf("run is not active"))
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "run_id": parts[0]})
+		return
+	}
+	writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid run path"))
+}
+
+func safeLabApprovalReview(item approvalstate.Approval) map[string]any {
+	return map[string]any{"id": item.ID, "run_id": item.RunID, "step_id": item.StepID, "tool_call_id": item.ToolCallID, "risk_level": item.RiskLevel, "effects": item.Effects, "estimated_cost_micros": item.EstimatedCostMicros, "created_at": item.CreatedAt, "expires_at": item.ExpiresAt, "decision": item.Decision, "execution_state": item.ExecutionState}
+}
+
+func labWorkbenchVerification(events []event.Event, run runstate.Run) string {
+	state := "idle"
+	for _, ev := range events {
+		switch ev.Kind {
+		case event.VerifyStarted:
+			state = "running"
+		case event.VerifyResult:
+			if strings.Contains(ev.Text, "skipped") {
+				state = "not_run"
+			} else if ev.Level == event.LevelInfo {
+				state = "passed"
+			} else {
+				state = "failed"
+			}
+		}
+	}
+	if run.StopReason == "verification_failed" || run.StopReason == "verification_incomplete" {
+		return "failed"
+	}
+	if state == "idle" && run.Status.Terminal() {
+		return "not_run"
+	}
+	return state
 }
 
 func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -123,10 +503,6 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 	rep := research.Report{}
 	if rrep, err := research.Scan(paths.DataDir(a.sciDir)); err == nil {
 		rep = rrep
-	}
-	fleetSt := map[string]any{}
-	if a.fleet != nil {
-		fleetSt = a.fleet.Status()
 	}
 	ctrlTotal, ctrlBusy := a.ctrls.stats()
 	ketcherDir := resolveKetcherDir(a.sciDir)
@@ -147,21 +523,20 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"domains":       len(rep.Domains),
 			"seed_examples": rep.SeedExamples,
 		},
-		"fleet": fleetSt,
+		"fleet_available": a.fleet != nil,
 		"provider": map[string]any{
 			"set":     masked != "" && masked != "—",
-			"masked":  masked,
 			"adapter": adapter,
 		},
 		"capacity": map[string]any{
-			"turns_active":    a.turns.active(),
-			"turns_capacity":  a.turns.capacity(),
-			"controllers":     ctrlTotal,
+			"turns_active":     a.turns.active(),
+			"turns_capacity":   a.turns.capacity(),
+			"controllers":      ctrlTotal,
 			"controllers_busy": ctrlBusy,
-			"max_controllers": MaxControllers,
-			"turns_total":     a.turnsTotal.Load(),
-			"turns_failed":    a.turnsFailed.Load(),
-			"approvals_total": a.approvalsTot.Load(),
+			"max_controllers":  MaxControllers,
+			"turns_total":      a.turnsTotal.Load(),
+			"turns_failed":     a.turnsFailed.Load(),
+			"approvals_total":  a.approvalsTot.Load(),
 		},
 		"limits": map[string]any{
 			"max_concurrent_turns": MaxConcurrentTurns,
@@ -177,7 +552,7 @@ func (a *API) handleHealth(w http.ResponseWriter, r *http.Request) {
 			"available": jupyterOK,
 		},
 		"onlyoffice": onlyoffice.Health(strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL"))),
-		"langgraph": langgraph.Health(),
+		"langgraph":  a.langGraphHealth(),
 	})
 }
 
@@ -241,6 +616,14 @@ func (a *API) handleProjectSub(w http.ResponseWriter, r *http.Request) {
 	slug := parts[0]
 	if len(parts) == 1 {
 		if r.Method == http.MethodDelete {
+			if _, err := a.projects.Get(slug); err != nil {
+				if os.IsNotExist(err) {
+					writeErr(w, http.StatusNotFound, fmt.Errorf("project not found"))
+					return
+				}
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
 			if err := a.projects.Delete(slug); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
@@ -584,20 +967,28 @@ func (a *API) handleConfig(w http.ResponseWriter, r *http.Request) {
 			model = m
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"default_mode":  cfg.DefaultMode,
-			"tool_profile":  cfg.ToolProfile,
-			"default_port":  cfg.DefaultPort,
-			"model_hint":    model,
-			"version":       a.version,
-			"modes":         []string{"agent", "plan", "bypass", "default"},
+			"default_mode": cfg.DefaultMode,
+			"tool_profile": cfg.ToolProfile,
+			"default_port": cfg.DefaultPort,
+			"model_hint":   model,
+			"version":      a.version,
+			"modes":        []string{"agent", "plan", "bypass", "default"},
 		})
 	case http.MethodPut, http.MethodPost:
 		var body struct {
 			DefaultMode string `json:"default_mode"`
 			ToolProfile string `json:"tool_profile"`
+			APIKey      string `json:"api_key"`
+			BaseURL     string `json:"base_url"`
+			Model       string `json:"model"`
+			Provider    string `json:"provider"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid body"))
+			return
+		}
+		if a.auth != nil && (body.APIKey != "" || body.BaseURL != "" || body.Model != "" || body.Provider != "") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"code": "provider_config_forbidden", "error": "hosted provider configuration is startup-only"})
 			return
 		}
 		cfg := loadLocalConfig(a.sciDir)
@@ -642,19 +1033,24 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
 		return
 	}
-	if p, err := a.projects.Get(slug); err == nil {
+	projects := a.projects
+	if tenant := tenantFromRequest(r); tenant != nil {
+		projects = tenant.Projects
+	}
+	if p, err := projects.Get(slug); err == nil {
 		slug = p.Slug
 	}
-	projDir, err := a.projects.ProjectDir(slug)
+	projDir, err := projects.ProjectDir(slug)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	destDir := filepath.Join(projDir, ".lumen", "skills")
-	if err := os.MkdirAll(destDir, 0o700); err != nil {
+	g, err := workspace.NewGuard(projDir)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
+	const destDir = ".lumen/skills"
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<20)
 	if err := r.ParseMultipartForm(16 << 20); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("upload too large or bad form"))
@@ -696,8 +1092,7 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 			}
 			body, _ := io.ReadAll(io.LimitReader(rc, 1<<20))
 			_ = rc.Close()
-			dst := filepath.Join(destDir, base)
-			if err := os.WriteFile(dst, body, 0o600); err == nil {
+			if err := g.WriteFile(filepath.Join(destDir, base), body, 0o600); err == nil {
 				written = append(written, base)
 			}
 		}
@@ -707,7 +1102,7 @@ func (a *API) handleSkillsImport(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(strings.ToLower(base), ".md") {
 			base = base + ".md"
 		}
-		if err := os.WriteFile(filepath.Join(destDir, base), data, 0o600); err != nil {
+		if err := g.WriteFile(filepath.Join(destDir, base), data, 0o600); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -829,13 +1224,12 @@ func (a *API) handleBrief(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	outPath, err := g.Resolve(filepath.Join("reports", "brief.md"))
-	if err != nil {
+	const briefPath = "reports/brief.md"
+	if err := g.WriteFile(briefPath, []byte(res.Markdown), 0o600); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	_ = os.MkdirAll(filepath.Dir(outPath), 0o700)
-	_ = os.WriteFile(outPath, []byte(res.Markdown), 0o600)
+	outPath, _ := g.Resolve(briefPath)
 	if projDir, err := a.projects.ProjectDir(slug); err == nil {
 		rec, _ := provenance.NewRecorder(projDir, "", os.Getenv("LUMEN_SCIENCE_MODEL"))
 		_ = rec.RecordArtifact(outPath)
@@ -865,19 +1259,11 @@ func (a *API) handleArtifacts(w http.ResponseWriter, r *http.Request) {
 	}
 	var artifacts []map[string]any
 	for _, sub := range []string{"reports", "figures", "data", "notebooks", "imports"} {
-		dir, err := g.Resolve(sub)
-		if err != nil {
-			continue
-		}
-		_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		_ = g.Walk(sub, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
-			rel, err := filepath.Rel(ws, path)
-			if err != nil {
-				return nil
-			}
-			rel = filepath.ToSlash(rel)
+			rel := filepath.ToSlash(path)
 			artifacts = append(artifacts, map[string]any{
 				"path":        rel,
 				"name":        filepath.Base(rel),
@@ -916,13 +1302,18 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		SessionID string `json:"session_id"`
 		Prompt    string `json:"prompt"`
 		Mode      string `json:"mode"`
+		ParentID  string `json:"parent_run_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Prompt) == "" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("prompt required"))
 		return
 	}
+	projects, ctrls := a.projects, a.ctrls
+	if tenant := tenantFromRequest(r); tenant != nil {
+		projects, ctrls = tenant.Projects, tenant.Controllers
+	}
 	slug := req.ProjectID
-	if p, err := a.projects.Get(slug); err == nil {
+	if p, err := projects.Get(slug); err == nil {
 		slug = p.Slug
 	} else if slug == "" {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("project_id required"))
@@ -936,19 +1327,18 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer a.turns.release()
 
-	ctrl, err := a.ctrls.acquire(slug)
+	ctrl, err := ctrls.acquire(slug)
 	if err != nil {
 		w.Header().Set("Retry-After", "1")
 		writeErr(w, http.StatusConflict, err)
 		return
 	}
-	defer a.ctrls.release(slug)
+	defer ctrls.release(slug)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -961,14 +1351,14 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 	if mode == "" {
 		mode = a.local.DefaultMode
 	}
-	a.setActiveMode(mode)
+	a.setOwnerMode(labOwner(r), mode)
 
 	// Persist session id (create if missing / unknown)
-	if sess, err := a.projects.EnsureSession(slug, req.SessionID, ""); err == nil {
+	if sess, err := projects.EnsureSession(slug, req.SessionID, ""); err == nil {
 		req.SessionID = sess.ID
 		// Tell client the canonical session id early
 		sse.emitPayload("session", map[string]any{"id": sess.ID, "title": sess.Title})
-		_, _ = a.projects.AppendTurns(slug, sess.ID, project.Turn{
+		_, _ = projects.AppendTurns(slug, sess.ID, project.Turn{
 			Role: "user",
 			Text: req.Prompt,
 			Mode: mode,
@@ -986,11 +1376,12 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 				done <- fmt.Errorf("configure panic: %v", rec)
 			}
 		}()
-		done <- ctrl.Configure(slug, req.SessionID, hist, a.makeApprover(sse.emitPayload))
+		done <- ctrl.Configure(slug, req.SessionID, hist, a.makeOwnedApprover(labOwner(r), sse.emitPayload))
 	}()
 	select {
 	case err := <-done:
 		if err != nil {
+			ctrls.discard(slug, ctrl)
 			a.turnsFailed.Add(1)
 			sse.emit("error", err.Error())
 			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
@@ -998,6 +1389,7 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case <-cfgCtx.Done():
+		ctrls.discard(slug, ctrl)
 		a.turnsFailed.Add(1)
 		sse.emit("error", "配置超时，请刷新页面重试")
 		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
@@ -1005,11 +1397,100 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), DefaultTurnTimeout)
-	defer cancel()
+	owner := labOwner(r)
+	if req.ParentID != "" {
+		if _, parentErr := a.runs.ValidateRetryParent(owner, req.ParentID); parentErr != nil {
+			a.turnsFailed.Add(1)
+			sse.emit("error", "parent run must be an owned terminal run")
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		}
+	}
+	limits := quota.LocalLimits()
+	startedAt := time.Now().UTC()
+	runID := ""
+	var admission quota.Admission
+	if a.auth != nil {
+		runID, err = runstate.NewRunID()
+		if err != nil {
+			sse.emit("error", err.Error())
+			return
+		}
+		if a.quota == nil {
+			err = &quota.Error{Code: quota.CodeUnavailable, Message: "quota service unavailable", NextAction: "retry_later"}
+		} else {
+			admission = quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt}
+			limits, err = a.quota.Admit(r.Context(), admission)
+		}
+		if err != nil {
+			var qe *quota.Error
+			if errors.As(err, &qe) {
+				sse.emitPayload("error", map[string]any{"code": qe.Code, "error": qe.Message, "next_action": qe.NextAction})
+			} else {
+				sse.emit("error", err.Error())
+			}
+			fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+			flusher.Flush()
+			return
+		}
+	}
+	var run runstate.Run
+	if a.auth != nil {
+		run, err = a.runs.StartOwnedID(owner, runID, req.SessionID, "lab", summarizeScienceRunTitle(req.Prompt), req.ParentID, startedAt)
+	} else {
+		run, err = a.runs.StartOwned(owner, req.SessionID, "lab", summarizeScienceRunTitle(req.Prompt), req.ParentID)
+	}
+	if err != nil {
+		if a.auth != nil && a.quota != nil {
+			_ = a.quota.Complete(context.Background(), quota.Completion{RunID: runID, IdempotencyKey: runID + ":complete", Owner: owner, Status: "failed", CompletedAt: time.Now().UTC()})
+		}
+		a.turnsFailed.Add(1)
+		sse.emit("error", err.Error())
+		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
+		flusher.Flush()
+		return
+	}
+	computeStartedAt := time.Now()
+	completionStatus := "failed"
+	ctrl.SetMaxSteps(limits.MaxSteps)
+	pc := ctrl.ProviderConfig()
+	pricing := usage.Pricing{}
+	providerName, modelName := "", ""
+	if pc != nil {
+		providerName, modelName = pc.Name, pc.Model
+		if pc.Pricing != nil {
+			pricing = usage.Pricing{Input: pc.Pricing.Input, Output: pc.Pricing.Output, CacheHit: pc.Pricing.CacheHit}
+		}
+	}
+	timeout := limits.MaxWallTime
+	if timeout <= 0 {
+		timeout = DefaultTurnTimeout
+	}
+	ctx, cleanupRun := a.beginActiveRun(r.Context(), owner, run.ID, timeout)
+	defer cleanupRun()
+	var runFailure quota.Failure
+	stopLease := quota.MaintainLease(ctx, a.quota, admission, limits.HeartbeatInterval, func(e error) {
+		runFailure.Set(e)
+		a.cancelActiveRun(owner, run.ID)
+	})
+	defer stopLease()
+	artifactCapture := &artifact.CapturingSink{Context: ctx, Store: a.artifactStore, Owner: owner, RunID: run.ID, Model: modelName, Workspace: ctrl.WorkspaceContext(), Next: hist, Failure: func(e error) {
+		runFailure.Set(fmt.Errorf("artifact persistence failed: %w", e))
+		a.cancelActiveRun(owner, run.ID)
+	}}
+	usageStore := a.usage
+	if a.auth != nil {
+		usageStore = quota.UsageStore{Usage: a.usage, Quota: a.quota}
+	}
+	capture := usage.CapturingSink{Store: usageStore, Owner: owner, Provider: providerName, Model: modelName, Pricing: pricing, Next: artifactCapture, Failure: func(e error) {
+		runFailure.Set(fmt.Errorf("usage persistence failed: %w", e))
+		a.cancelActiveRun(owner, run.ID)
+	}}
+	limited := &quota.Sink{Limits: limits, Next: a.runs.WrapSink(run.ID, capture), Failure: func(e error) { runFailure.Set(e); a.cancelActiveRun(owner, run.ID) }}
+	ctrl.BindRun(run.ID, limited)
 
 	a.turnsTotal.Add(1)
-	sse.emit("turn_started", "")
 	runErr := func() (err error) {
 		defer func() {
 			if rec := recover(); rec != nil {
@@ -1018,6 +1499,28 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 		}()
 		return ctrl.Run(ctx, req.Prompt, mode)
 	}()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		runErr = &quota.Error{Code: quota.CodeWallTime, Message: "run wall time quota exceeded", NextAction: "start_new_run"}
+	} else if failure := runFailure.Err(); failure != nil {
+		runErr = failure
+	}
+	if runErr == nil {
+		completionStatus = "succeeded"
+	} else if errors.Is(ctx.Err(), context.Canceled) && runFailure.Err() == nil {
+		completionStatus = "canceled"
+	}
+	stopLease()
+	if a.auth != nil && a.quota != nil {
+		if completeErr := a.quota.Complete(context.Background(), quota.Completion{RunID: run.ID, IdempotencyKey: run.ID + ":complete", Owner: owner, Status: completionStatus, ComputeMillis: time.Since(computeStartedAt).Milliseconds(), CompletedAt: time.Now().UTC()}); completeErr != nil && runErr == nil {
+			runErr = fmt.Errorf("quota completion failed: %w", completeErr)
+		}
+	}
+	if _, finishErr := a.runs.Finish(run.ID, runErr); finishErr != nil {
+		if runErr == nil {
+			runErr = finishErr
+		}
+		sse.emit("error", "finish run: "+finishErr.Error())
+	}
 	if runErr != nil {
 		a.turnsFailed.Add(1)
 		sse.emit("error", runErr.Error())
@@ -1033,9 +1536,23 @@ func (a *API) handleChat(w http.ResponseWriter, r *http.Request) {
 			_, _ = a.projects.AppendTurns(slug, req.SessionID, asst)
 		}
 	}
-	sse.emit("turn_done", "")
+	terminal := map[string]any{"ok": runErr == nil, "run_id": run.ID}
+	if runErr != nil {
+		terminal["error"] = runErr.Error()
+	}
+	sse.emitPayload("stream_done", terminal)
 	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
 	flusher.Flush()
+}
+
+func summarizeScienceRunTitle(prompt string) string {
+	title := strings.TrimSpace(prompt)
+	const maxRunes = 120
+	runes := []rune(title)
+	if len(runes) > maxRunes {
+		title = string(runes[:maxRunes])
+	}
+	return title
 }
 
 func (a *API) setActiveMode(mode string) {
@@ -1053,15 +1570,46 @@ func (a *API) setActiveMode(mode string) {
 	a.modeMu.Unlock()
 }
 
+func (a *API) setOwnerMode(owner runstate.Owner, mode string) {
+	m := parseLabMode(mode)
+	a.modeMu.Lock()
+	a.ownerModes[owner] = m
+	a.modeMu.Unlock()
+}
+
+func (a *API) ownerMode(owner runstate.Owner) permission.Mode {
+	a.modeMu.Lock()
+	defer a.modeMu.Unlock()
+	if m, ok := a.ownerModes[owner]; ok {
+		return m
+	}
+	return permission.ModeDefault
+}
+
+func (a *API) forgetOwnerMode(owner runstate.Owner) {
+	a.modeMu.Lock()
+	delete(a.ownerModes, owner)
+	a.modeMu.Unlock()
+}
+
+func parseLabMode(mode string) permission.Mode {
+	switch mode {
+	case "bypass", "accept-edits":
+		return permission.ModeBypass
+	case "plan":
+		return permission.ModePlan
+	default:
+		return permission.ModeDefault
+	}
+}
+
 type sseSink struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 }
 
 func (s sseSink) Emit(e event.Event) {
-	data, _ := json.Marshal(map[string]any{
-		"kind": e.Kind, "text": e.Text, "tool": e.Tool,
-	})
+	data, _ := json.Marshal(e)
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	s.flusher.Flush()
 }
@@ -1175,7 +1723,7 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 	var nFiles int
 	var total int64
 	seen := map[string]bool{}
-	addFile := func(rel, abs string, size int64) error {
+	addFile := func(rel string, size int64) error {
 		rel = filepath.ToSlash(rel)
 		if seen[rel] {
 			return nil
@@ -1186,7 +1734,7 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 		if nFiles >= maxFiles || total >= maxTotal {
 			return fmt.Errorf("limit")
 		}
-		data, err := os.ReadFile(abs)
+		data, err := g.ReadFile(rel)
 		if err != nil {
 			return nil
 		}
@@ -1205,39 +1753,24 @@ func (a *API) handleFilesZip(w http.ResponseWriter, r *http.Request, g *workspac
 		if p == "" || p == "." || strings.HasPrefix(p, "..") {
 			continue
 		}
-		abs, err := g.Resolve(p)
-		if err != nil {
-			continue
-		}
-		info, err := os.Stat(abs)
+		info, err := g.Stat(p)
 		if err != nil {
 			continue
 		}
 		if !info.IsDir() {
-			_ = addFile(p, abs, info.Size())
+			_ = addFile(p, info.Size())
 			continue
 		}
 		// walk directory
-		_ = filepath.Walk(abs, func(path string, fi os.FileInfo, err error) error {
+		_ = g.Walk(p, func(path string, fi os.FileInfo, err error) error {
 			if err != nil || fi.IsDir() {
 				return nil
 			}
 			if nFiles >= maxFiles || total >= maxTotal {
 				return filepath.SkipAll
 			}
-			rel, err := filepath.Rel(filepath.Dir(abs), path)
-			if err != nil {
-				return nil
-			}
-			// keep parent folder name in zip
-			rel = filepath.ToSlash(filepath.Join(filepath.Base(abs), rel))
-			// better: relative to workspace
-			if root, e2 := g.Resolve("."); e2 == nil {
-				if r2, e3 := filepath.Rel(root, path); e3 == nil {
-					rel = filepath.ToSlash(r2)
-				}
-			}
-			_ = addFile(rel, path, fi.Size())
+			rel := filepath.ToSlash(path)
+			_ = addFile(rel, fi.Size())
 			return nil
 		})
 	}
@@ -1256,17 +1789,12 @@ func (a *API) handleFileStats(w http.ResponseWriter, r *http.Request, g *workspa
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
 	var files, dirs int
 	var bytes int64
 	var newest time.Time
 	const maxWalk = 5000
 	n := 0
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -1275,11 +1803,11 @@ func (a *API) handleFileStats(w http.ResponseWriter, r *http.Request, g *workspa
 		}
 		base := info.Name()
 		if base == ".git" || base == "node_modules" || base == ".lumen" {
-			if info.IsDir() && path != root {
+			if info.IsDir() && path != "." {
 				return filepath.SkipDir
 			}
 		}
-		if path == root {
+		if path == "." {
 			return nil
 		}
 		n++
@@ -1324,29 +1852,16 @@ func (a *API) handleFileWrite(w http.ResponseWriter, r *http.Request, g *workspa
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
 		return
 	}
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
 	// cap 8 MiB text writes
 	if len(body.Content) > 8<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
 		return
 	}
-	if err := os.WriteFile(abs, []byte(body.Content), 0o600); err != nil {
+	if err := g.WriteFile(rel, []byte(body.Content), 0o600); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	st, _ := os.Stat(abs)
 	size := int64(len(body.Content))
-	if st != nil {
-		size = st.Size()
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": rel, "size": size, "previewKind": previewKind(rel),
 	})
@@ -1372,29 +1887,20 @@ func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid path"))
 		return
 	}
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
 	if len(body.Content) > 8<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("content too large"))
 		return
 	}
 	// existing size + append must stay under 16 MiB
 	var existing int64
-	if st, err := os.Stat(abs); err == nil {
+	if st, err := g.Stat(rel); err == nil {
 		existing = st.Size()
 	}
 	if existing+int64(len(body.Content)) > 16<<20 {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("file would exceed 16MB after append"))
 		return
 	}
-	f, err := os.OpenFile(abs, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	f, err := g.OpenFile(rel, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -1405,11 +1911,7 @@ func (a *API) handleFileAppend(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
-	st, _ := os.Stat(abs)
 	size := existing + int64(n)
-	if st != nil {
-		size = st.Size()
-	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "path": rel, "size": size, "appended": n, "previewKind": previewKind(rel),
 	})
@@ -1428,22 +1930,12 @@ func (a *API) handleFileDiff(w http.ResponseWriter, r *http.Request, g *workspac
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("a and b paths required"))
 		return
 	}
-	absA, err := g.Resolve(pa)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	absB, err := g.Resolve(pb)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	dataA, err := os.ReadFile(absA)
+	dataA, err := g.ReadFile(pa)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
-	dataB, err := os.ReadFile(absB)
+	dataB, err := g.ReadFile(pb)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -1462,8 +1954,8 @@ func (a *API) handleFileDiff(w http.ResponseWriter, r *http.Request, g *workspac
 	diffText := simpleLineDiff(pa, pb, string(dataA), string(dataB))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"a": pa, "b": pb,
-		"diff":     diffText,
-		"identical": string(dataA) == string(dataB),
+		"diff":        diffText,
+		"identical":   string(dataA) == string(dataB),
 		"truncated_a": truncA,
 		"truncated_b": truncB,
 	})
@@ -1565,12 +2057,7 @@ func (a *API) handleFileMkdir(w http.ResponseWriter, r *http.Request, g *workspa
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	abs, err := g.Resolve(p)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := os.MkdirAll(abs, 0o700); err != nil {
+	if err := g.MkdirAll(p, 0o700); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -1602,29 +2089,15 @@ func (a *API) handleFileRename(w http.ResponseWriter, r *http.Request, g *worksp
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
 		return
 	}
-	src, err := g.Resolve(from)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	dst, err := g.Resolve(to)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	if _, err := os.Stat(src); err != nil {
+	if _, err := g.Stat(from); err != nil {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
 		return
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := g.Stat(to); err == nil {
 		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	if err := os.Rename(src, dst); err != nil {
+	if err := g.Rename(from, to); err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -1656,27 +2129,39 @@ func (a *API) handleFileCopy(w http.ResponseWriter, r *http.Request, g *workspac
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("to: %w", err))
 		return
 	}
-	src, err := g.Resolve(from)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	dst, err := g.Resolve(to)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, err)
-		return
-	}
-	info, err := os.Stat(src)
+	info, err := g.Stat(from)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, fmt.Errorf("source not found: %w", err))
 		return
 	}
-	if _, err := os.Stat(dst); err == nil {
+	if _, err := g.Stat(to); err == nil {
 		writeErr(w, http.StatusConflict, fmt.Errorf("destination exists: %s", to))
 		return
 	}
 	if info.IsDir() {
-		if err := copyDirLimited(src, dst, 500, 32<<20); err != nil {
+		var files int
+		var bytes int64
+		if err := g.Walk(from, func(_ string, st os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if st.IsDir() {
+				return nil
+			}
+			files++
+			bytes += st.Size()
+			if files > 500 {
+				return fmt.Errorf("too many files (max 500)")
+			}
+			if bytes > 32<<20 {
+				return fmt.Errorf("directory too large to copy")
+			}
+			return nil
+		}); err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		if err := g.Copy(from, to); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
@@ -1685,59 +2170,12 @@ func (a *API) handleFileCopy(w http.ResponseWriter, r *http.Request, g *workspac
 			writeErr(w, http.StatusBadRequest, fmt.Errorf("file too large to copy (max 32MB)"))
 			return
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		data, err := os.ReadFile(src)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, err)
-			return
-		}
-		if err := os.WriteFile(dst, data, 0o600); err != nil {
+		if err := g.Copy(from, to); err != nil {
 			writeErr(w, http.StatusInternalServerError, err)
 			return
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "from": from, "to": to})
-}
-
-// copyDirLimited copies a directory tree with file/byte caps.
-func copyDirLimited(src, dst string, maxFiles int, maxBytes int64) error {
-	var n int
-	var total int64
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0o700)
-		}
-		if n >= maxFiles {
-			return fmt.Errorf("too many files (max %d)", maxFiles)
-		}
-		if total+info.Size() > maxBytes {
-			return fmt.Errorf("directory too large to copy")
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, data, 0o600); err != nil {
-			return err
-		}
-		n++
-		total += int64(len(data))
-		return nil
-	})
 }
 
 // handleFilesDelete removes workspace files/dirs (POST {paths:[]}).
@@ -1765,12 +2203,7 @@ func (a *API) handleFilesDelete(w http.ResponseWriter, r *http.Request, g *works
 			failed = append(failed, map[string]string{"path": p, "error": "invalid path"})
 			continue
 		}
-		abs, err := g.Resolve(p)
-		if err != nil {
-			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
-			continue
-		}
-		if err := os.RemoveAll(abs); err != nil {
+		if err := g.RemoveAll(p); err != nil {
 			failed = append(failed, map[string]string{"path": p, "error": err.Error()})
 			continue
 		}
@@ -1844,14 +2277,7 @@ func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *w
 			continue
 		}
 		rel := filepath.ToSlash(filepath.Join(destPrefix, name))
-		abs, err := g.Resolve(rel)
-		if err != nil {
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(abs), 0o700); err != nil {
-			continue
-		}
-		if err := os.WriteFile(abs, body, 0o600); err != nil {
+		if err := g.WriteFile(rel, body, 0o600); err != nil {
 			continue
 		}
 		written = append(written, rel)
@@ -1859,12 +2285,12 @@ func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *w
 		total += int64(len(body))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":      true,
-		"files":   written,
-		"count":   len(written),
-		"dest":    destPrefix,
-		"zip":     header.Filename,
-		"bytes":   total,
+		"ok":    true,
+		"files": written,
+		"count": len(written),
+		"dest":  destPrefix,
+		"zip":   header.Filename,
+		"bytes": total,
 	})
 }
 
@@ -1872,11 +2298,6 @@ func (a *API) handleWorkspaceImport(w http.ResponseWriter, r *http.Request, g *w
 func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
 		return
 	}
 	slug := r.URL.Query().Get("project_id")
@@ -1892,7 +2313,7 @@ func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *w
 	const maxTotal = 64 << 20 // 64 MiB
 	var nFiles int
 	var total int64
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -1906,15 +2327,11 @@ func (a *API) handleWorkspaceExport(w http.ResponseWriter, r *http.Request, g *w
 		if nFiles >= maxFiles || total >= maxTotal {
 			return filepath.SkipAll
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		rel := filepath.ToSlash(path)
 		if info.Size() > 8<<20 {
 			return nil // skip huge single files
 		}
-		data, err := os.ReadFile(path)
+		data, err := g.ReadFile(rel)
 		if err != nil {
 			return nil
 		}
@@ -1949,12 +2366,7 @@ func (a *API) handleFileTree(w http.ResponseWriter, r *http.Request, g *workspac
 	if maxDepth > 8 {
 		maxDepth = 8
 	}
-	abs, err := g.Resolve(rootRel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	tree, err := buildFileTree(abs, rootRel, 0, maxDepth, 500)
+	tree, err := buildFileTree(g, rootRel, 0, maxDepth, 500)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -1971,12 +2383,12 @@ type fileTreeNode struct {
 	Children    []fileTreeNode `json:"children,omitempty"`
 }
 
-func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, error) {
-	st, err := os.Stat(abs)
+func buildFileTree(g *workspace.Guard, rel string, depth, maxDepth, budget int) (fileTreeNode, error) {
+	st, err := g.Stat(rel)
 	if err != nil {
 		return fileTreeNode{}, err
 	}
-	name := filepath.Base(abs)
+	name := filepath.Base(rel)
 	if rel == "." || rel == "" {
 		name = "."
 	}
@@ -1991,7 +2403,7 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 	if depth >= maxDepth || budget <= 0 {
 		return node, nil
 	}
-	entries, err := os.ReadDir(abs)
+	entries, err := g.ReadDir(rel)
 	if err != nil {
 		return node, err
 	}
@@ -2008,8 +2420,7 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 		if rel != "" && rel != "." {
 			childRel = filepath.ToSlash(filepath.Join(rel, base))
 		}
-		childAbs := filepath.Join(abs, base)
-		child, err := buildFileTree(childAbs, childRel, depth+1, maxDepth, left-1)
+		child, err := buildFileTree(g, childRel, depth+1, maxDepth, left-1)
 		if err != nil {
 			continue
 		}
@@ -2026,11 +2437,6 @@ func buildFileTree(abs, rel string, depth, maxDepth, budget int) (fileTreeNode, 
 func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
 		return
 	}
 	limit := 40
@@ -2051,7 +2457,7 @@ func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *worksp
 		PreviewKind string    `json:"previewKind"`
 	}
 	var all []entry
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	_ = g.Walk(".", func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			if info != nil && info.IsDir() {
 				base := info.Name()
@@ -2061,11 +2467,7 @@ func (a *API) handleFileRecent(w http.ResponseWriter, r *http.Request, g *worksp
 			}
 			return nil
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return nil
-		}
-		rel = filepath.ToSlash(rel)
+		rel := filepath.ToSlash(path)
 		all = append(all, entry{
 			Name: filepath.Base(rel), Path: rel, Size: info.Size(),
 			Mtime: info.ModTime().UTC(), PreviewKind: previewKind(rel),
@@ -2102,16 +2504,11 @@ func (a *API) handleFileSearch(w http.ResponseWriter, r *http.Request, g *worksp
 		writeJSON(w, http.StatusOK, map[string]any{"hits": []any{}, "count": 0, "q": q})
 		return
 	}
-	root, err := g.Resolve(".")
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		fmt.Sscanf(v, "%d", &limit)
 	}
-	hits, err := SearchWorkspace(root, q, limit)
+	hits, err := SearchWorkspaceGuarded(g, q, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2129,12 +2526,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 		return
 	}
 
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	st, err := os.Stat(abs)
+	st, err := g.Stat(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -2144,7 +2536,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 		return
 	}
 
-	data, err := os.ReadFile(abs)
+	data, err := g.ReadFile(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -2199,12 +2591,7 @@ func (a *API) handleFileContent(w http.ResponseWriter, r *http.Request, g *works
 }
 
 func (a *API) writeDirListing(w http.ResponseWriter, g *workspace.Guard, rel string) {
-	root, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	entries, err := os.ReadDir(root)
+	entries, err := g.ReadDir(rel)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2229,7 +2616,7 @@ func (a *API) writeDirListing(w http.ResponseWriter, g *workspace.Guard, rel str
 		}
 		files = append(files, entry)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"files": files, "path": rel, "root": root})
+	writeJSON(w, http.StatusOK, map[string]any{"files": files, "path": rel, "root": "."})
 }
 
 func previewKind(name string) string {
@@ -2259,18 +2646,13 @@ func previewKind(name string) string {
 
 func (a *API) handleFileDownload(w http.ResponseWriter, r *http.Request, g *workspace.Guard) {
 	rel := r.URL.Query().Get("path")
-	abs, err := g.Resolve(rel)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	data, err := os.ReadFile(abs)
+	data, err := g.ReadFile(rel)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(abs)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filepath.Base(rel)))
 	_, _ = w.Write(data)
 }
 
@@ -2294,17 +2676,7 @@ func (a *API) handleFileUpload(w http.ResponseWriter, r *http.Request, g *worksp
 	defer file.Close()
 
 	// Resolve safe path inside workspace
-	abs, err := g.Resolve(header.Filename)
-	if err != nil {
-		writeErr(w, http.StatusForbidden, err)
-		return
-	}
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(abs), 0755); err != nil {
-		writeErr(w, http.StatusInternalServerError, err)
-		return
-	}
-	dst, err := os.Create(abs)
+	dst, err := g.OpenFile(header.Filename, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -2337,8 +2709,12 @@ func (a *API) handleProvenance(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
-	provPath := filepath.Join(projectDir, "provenance.jsonl")
-	data, err := os.ReadFile(provPath)
+	g, guardErr := workspace.NewGuard(projectDir)
+	if guardErr != nil {
+		writeErr(w, http.StatusInternalServerError, guardErr)
+		return
+	}
+	data, err := g.ReadFile("provenance.jsonl")
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"records": []any{}, "count": 0})
 		return
@@ -2781,22 +3157,31 @@ func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, 
 		}
 	}
 	if src == "" && j.WorkDir != "" {
-		cand := filepath.Join(j.WorkDir, outPath)
-		if st, e := os.Stat(cand); e == nil && !st.IsDir() {
-			src = cand
-			size = st.Size()
-		}
+		src = filepath.Join(j.WorkDir, outPath)
 	}
 	if src == "" {
 		return "", 0, fmt.Errorf("output not found or not harvested: %s", outPath)
 	}
-	srcAbs, _ := filepath.Abs(src)
-	projAbs, _ := filepath.Abs(projectDir)
-	if !strings.HasPrefix(srcAbs, projAbs+string(os.PathSeparator)) &&
-		!(j.WorkDir != "" && strings.HasPrefix(srcAbs, filepath.Clean(j.WorkDir)+string(os.PathSeparator))) {
-		if !strings.HasPrefix(srcAbs, projAbs) {
-			return "", 0, fmt.Errorf("source outside project")
+	var data []byte
+	for _, root := range []string{projectDir, j.WorkDir} {
+		if root == "" {
+			continue
 		}
+		relSrc, relErr := filepath.Rel(root, src)
+		if relErr != nil || relSrc == ".." || strings.HasPrefix(relSrc, ".."+string(os.PathSeparator)) || filepath.IsAbs(relSrc) {
+			continue
+		}
+		srcGuard, guardErr := workspace.NewGuard(root)
+		if guardErr != nil {
+			continue
+		}
+		data, err = srcGuard.ReadFile(relSrc)
+		if err == nil {
+			break
+		}
+	}
+	if err != nil || data == nil {
+		return "", 0, fmt.Errorf("source outside project or unsafe: %s", outPath)
 	}
 	ws, err := a.projects.WorkspacePath(slug)
 	if err != nil {
@@ -2807,18 +3192,7 @@ func (a *API) copyJobOutputToWorkspace(slug, projectDir string, j *compute.Job, 
 		return "", 0, err
 	}
 	rel = filepath.ToSlash(filepath.Join("imports", jobID, filepath.Base(src)))
-	dst, err := g.Resolve(rel)
-	if err != nil {
-		return "", 0, err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
-		return "", 0, err
-	}
-	data, err := os.ReadFile(src)
-	if err != nil {
-		return "", 0, err
-	}
-	if err := os.WriteFile(dst, data, 0o600); err != nil {
+	if err := g.WriteFile(rel, data, 0o600); err != nil {
 		return "", 0, err
 	}
 	if size == 0 {
@@ -2889,30 +3263,33 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		if sub == "" || sub == "list" {
-			notebooks, err := jupyter.ListNotebooks(ws)
+			notebooks, err := jupyter.ListNotebooksGuarded(g)
 			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"notebooks":       notebooks,
-				"count":           len(notebooks),
+				"notebooks":         notebooks,
+				"count":             len(notebooks),
 				"jupyter_available": jupyter.IsAvailable(),
 			})
 			return
 		}
 		// Get cell content
-		name := strings.TrimPrefix(sub, "cells/")
-		path := filepath.Join(ws, "notebooks", name)
-		nb, err := jupyter.Load(path)
+		name, err := notebookName(strings.TrimPrefix(sub, "cells/"))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err)
+			return
+		}
+		nb, err := jupyter.LoadGuarded(g, filepath.Join("notebooks", name))
 		if err != nil {
 			writeErr(w, http.StatusNotFound, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"name":  name,
-			"cells": nb.Cells,
-			"count": len(nb.Cells),
+			"name":     name,
+			"cells":    nb.Cells,
+			"count":    len(nb.Cells),
 			"markdown": nb.ToMarkdown(),
 		})
 	case http.MethodPost:
@@ -2929,34 +3306,42 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			if !strings.HasSuffix(body.Name, ".ipynb") {
 				body.Name += ".ipynb"
 			}
-			nb := jupyter.New(strings.TrimSuffix(body.Name, ".ipynb"))
-			path, err := g.Resolve(filepath.Join("notebooks", body.Name))
+			name, err := notebookName(body.Name)
 			if err != nil {
-				writeErr(w, http.StatusForbidden, err)
+				writeErr(w, http.StatusBadRequest, err)
 				return
 			}
-			if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			body.Name = name
+			nb := jupyter.New(strings.TrimSuffix(body.Name, ".ipynb"))
+			rel := filepath.ToSlash(filepath.Join("notebooks", body.Name))
+			nb.Normalize()
+			data, err := json.MarshalIndent(nb, "", "  ")
+			if err == nil {
+				data = append(data, '\n')
+				err = g.WriteFile(rel, data, 0o600)
+			}
+			if err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
-			if err := nb.Save(path); err != nil {
-				writeErr(w, http.StatusInternalServerError, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "path": path})
+			writeJSON(w, http.StatusOK, map[string]any{"name": body.Name, "path": rel})
 			return
 		}
 		if strings.HasPrefix(sub, "execute/") {
 			// Execute notebook
-			name := strings.TrimPrefix(sub, "execute/")
-			path := filepath.Join(ws, "notebooks", name)
-			nb, err := jupyter.Load(path)
+			name, err := notebookName(strings.TrimPrefix(sub, "execute/"))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			rel := filepath.Join("notebooks", name)
+			nb, err := jupyter.LoadGuarded(g, rel)
 			if err != nil {
 				writeErr(w, http.StatusNotFound, err)
 				return
 			}
 			python := labruntime.ResolvePython(paths.DataDir(a.sciDir))
-			if err := nb.Execute(path, python); err != nil {
+			if err := nb.ExecuteGuarded(g, rel, python); err != nil {
 				writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error(), "cells": nb.Cells})
 				return
 			}
@@ -2965,9 +3350,13 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 		}
 		// Append cell
 		if strings.HasPrefix(sub, "cell/") {
-			name := strings.TrimPrefix(sub, "cell/")
-			path := filepath.Join(ws, "notebooks", name)
-			nb, err := jupyter.Load(path)
+			name, err := notebookName(strings.TrimPrefix(sub, "cell/"))
+			if err != nil {
+				writeErr(w, http.StatusBadRequest, err)
+				return
+			}
+			rel := filepath.Join("notebooks", name)
+			nb, err := jupyter.LoadGuarded(g, rel)
 			if err != nil {
 				writeErr(w, http.StatusNotFound, err)
 				return
@@ -2975,7 +3364,7 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 			if body.Source != "" {
 				nb.AddCode(body.Source)
 			}
-			if err := nb.Save(path); err != nil {
+			if err := nb.SaveGuarded(g, rel); err != nil {
 				writeErr(w, http.StatusInternalServerError, err)
 				return
 			}
@@ -2988,6 +3377,14 @@ func (a *API) handleNotebooks(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func notebookName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" || name != filepath.Base(name) || strings.ContainsAny(name, `/\\`) || !strings.HasSuffix(name, ".ipynb") {
+		return "", fmt.Errorf("invalid notebook name")
+	}
+	return name, nil
+}
+
 // ── LangGraph sidecar ──
 
 func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
@@ -2995,15 +3392,12 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	// Ensure science provider keys are in env for optional LLM synthesize.
-	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
-		_, _, _ = ApplyScienceProfile(sciCfg)
-	}
 	var req langgraph.RunRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body: " + err.Error()})
 		return
 	}
+	req.Provider = a.langGraphProvider()
 	// Resolve workspace from project slug when client did not supply an absolute path.
 	// project_id is the project slug (frontend activeProject.slug), not proj_* id.
 	if strings.TrimSpace(req.Workspace) == "" && strings.TrimSpace(req.ProjectID) != "" && a.projects != nil {
@@ -3035,6 +3429,29 @@ func (a *API) handleLangGraphRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (a *API) langGraphProvider() *langgraph.ProviderConfig {
+	if a.auth != nil {
+		if a.platformProvider == nil {
+			return nil
+		}
+		pc := *a.platformProvider
+		return &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: pc.Kind}
+	}
+	if sciCfg, err := scienceConfig(a.sciDir); err == nil {
+		if pc, _, adapter, err := ScienceProviderConfig(sciCfg); err == nil {
+			return &langgraph.ProviderConfig{APIKey: pc.APIKey, BaseURL: pc.BaseURL, Model: pc.Model, Adapter: adapter}
+		}
+	}
+	return nil
+}
+
+func (a *API) langGraphHealth() map[string]any {
+	if a.auth != nil {
+		return langgraph.HealthWithProvider(a.langGraphProvider())
+	}
+	return langgraph.Health()
 }
 
 // handleLangGraphHistory lists server-persisted sidecar runs for a project.
@@ -3111,12 +3528,17 @@ func (a *API) handleOnlyOfficeSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, onlyoffice.Session{OK: false, Error: "invalid project"})
 		return
 	}
+	g, err := workspace.NewGuard(ws)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, onlyoffice.Session{OK: false, Error: "workspace unavailable"})
+		return
+	}
 	base := onlyoffice.PublicBaseFromRequest(r)
 	if base == "" {
 		// Fall back to local listen address
 		base = fmt.Sprintf("http://127.0.0.1:%d", a.listenPort)
 	}
-	sess := onlyoffice.BuildSession(base, slug, path, mode, ws)
+	sess := onlyoffice.BuildSessionGuarded(base, slug, path, mode, g)
 	if !sess.OK {
 		writeJSON(w, http.StatusBadRequest, sess)
 		return

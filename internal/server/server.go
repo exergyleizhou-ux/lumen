@@ -10,12 +10,17 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -24,18 +29,41 @@ import (
 	"sync/atomic"
 	"time"
 
+	"lumen/internal/approvalstate"
+	"lumen/internal/artifact"
 	"lumen/internal/config"
 	"lumen/internal/control"
 	"lumen/internal/event"
+	"lumen/internal/hostedauth"
+	"lumen/internal/lumenstore"
 	"lumen/internal/memory"
 	"lumen/internal/permission"
+	"lumen/internal/quota"
+	"lumen/internal/runstate"
+	"lumen/internal/runstate/pgstore"
+	"lumen/internal/runtimeevidence"
+	"lumen/internal/usage"
 )
 
 // Config holds the server configuration.
 type Config struct {
-	Addr   string // listen address, e.g. ":8080"
-	Ctrl   *control.Controller
-	Static string // path to static files (empty = use embedded)
+	Addr               string // listen address, e.g. ":8080"
+	Ctrl               *control.Controller
+	Static             string // path to static files (empty = use embedded)
+	LocalConfigPath    string // optional explicit config path; empty uses normal discovery
+	Runs               *runstate.Manager
+	Hosted             bool
+	WorkbenchJWTSecret string
+	// HostedProviders is the startup-resolved provider/model allowlist. API keys
+	// are never accepted from requests.
+	HostedProviders     []config.ProviderConfig
+	Usage               usage.Store
+	Quota               quota.Store
+	Approvals           approvalstate.Store
+	Artifacts           artifact.Store
+	ArtifactObjects     artifact.ObjectBackend
+	HostedWorkspaceRoot string
+	WorkbenchOrigin     string // exact http(s) Oasis parent origin; empty means same-origin
 }
 
 // Server wraps the HTTP server.
@@ -51,16 +79,287 @@ type Server struct {
 	planMu sync.Mutex
 	plan   planState
 
-	approvals   sync.Map
-	approvalSeq atomic.Uint64
+	approvals       sync.Map
+	approvalSeq     atomic.Uint64
+	runs            *runstate.Manager
+	auth            *hostedauth.Verifier
+	activeRuns      sync.Map // run_id -> activeRun
+	controllers     *serverControllerPool
+	hostedProviders map[string]config.ProviderConfig
+	hostedDefault   *config.ProviderConfig
+	usage           usage.Store
+	quota           quota.Store
+	approvalStore   approvalstate.Store
+	artifactStore   artifact.Store
+	evidence        runtimeevidence.Service
+	readinessDB     *sql.DB
+	readinessObject string
+}
+
+type activeRun struct {
+	Owner  runstate.Owner
+	Cancel context.CancelFunc
+}
+
+func ownerFromRequest(r *http.Request) runstate.Owner {
+	if id, ok := hostedauth.FromContext(r.Context()); ok {
+		return runstate.Owner{UserID: id.UserID, WorkspaceID: id.WorkspaceID}
+	}
+	return runstate.LocalOwner
+}
+
+func (s *Server) requestProvider(apiKey, providerName, model string) (*config.ProviderConfig, error) {
+	if s.auth != nil {
+		if providerName == "" && model == "" && s.hostedDefault != nil {
+			copy := *s.hostedDefault
+			return &copy, nil
+		}
+		var match *config.ProviderConfig
+		for _, pc := range s.hostedProviders {
+			if providerName != "" && pc.Name != providerName && pc.Kind != providerName {
+				continue
+			}
+			if model != "" && pc.Model != model {
+				continue
+			}
+			if match != nil {
+				return nil, fmt.Errorf("provider and model selection is ambiguous")
+			}
+			copy := pc
+			match = &copy
+		}
+		if match == nil {
+			return nil, fmt.Errorf("provider/model is not in the hosted allowlist")
+		}
+		return match, nil
+	}
+	if apiKey == "" && providerName == "" && model == "" {
+		return nil, nil
+	}
+	var base *config.ProviderConfig
+	if s.cfg.Ctrl != nil {
+		base = s.cfg.Ctrl.ProviderConfig()
+	}
+	if base == nil {
+		base = &config.ProviderConfig{}
+	}
+	if providerName != "" && providerName != base.Name && providerName != base.Kind {
+		preset := config.FindPreset(providerName)
+		if preset == nil {
+			for _, candidate := range config.ModelPresets() {
+				if candidate.Provider == providerName {
+					copy := candidate
+					preset = &copy
+					break
+				}
+			}
+		}
+		if preset == nil {
+			return nil, fmt.Errorf("provider %q not found", providerName)
+		}
+		base.Name, base.Kind, base.BaseURL, base.Model = preset.Name, preset.Kind, preset.BaseURL, preset.Model
+	}
+	if model != "" {
+		base.Model = model
+	}
+	if base.Name == "" {
+		base.Name, base.Kind, base.Model = "request", "openai", model
+	}
+	if apiKey != "" {
+		base.APIKey = apiKey
+		base.APIKeyEnv = ""
+	}
+	return base, nil
+}
+
+func (s *Server) beginActiveRun(parent context.Context, owner runstate.Owner, runID string, timeout time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
+	s.activeRuns.Store(runID, activeRun{Owner: owner, Cancel: cancel})
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			s.activeRuns.Delete(runID)
+			cancel()
+		})
+	}
+	return ctx, cleanup
+}
+
+func (s *Server) cancelActiveRun(owner runstate.Owner, runID string) bool {
+	value, ok := s.activeRuns.Load(runID)
+	if !ok {
+		return false
+	}
+	active, ok := value.(activeRun)
+	if !ok || active.Owner != owner {
+		return false
+	}
+	s.activeRuns.Delete(runID)
+	active.Cancel()
+	return true
 }
 
 // New creates a new Server.
 func New(cfg Config) (*Server, error) {
-	s := &Server{cfg: cfg, mux: http.NewServeMux()}
+	if cfg.WorkbenchOrigin == "" {
+		cfg.WorkbenchOrigin = os.Getenv("WORKBENCH_PARENT_ORIGIN")
+	}
+	if cfg.Hosted && cfg.Runs == nil && os.Getenv("WORKBENCH_DATABASE_URL") == "" {
+		return nil, errors.New("WORKBENCH_DATABASE_URL required in hosted mode")
+	}
+	if cfg.HostedWorkspaceRoot == "" {
+		cfg.HostedWorkspaceRoot = os.Getenv("HOSTED_WORKSPACE_ROOT")
+	}
+	var verifier *hostedauth.Verifier
+	if cfg.Hosted {
+		var err error
+		verifier, err = hostedauth.NewVerifier(cfg.WorkbenchJWTSecret)
+		if err != nil {
+			return nil, fmt.Errorf("hosted auth: %w", err)
+		}
+	}
+	runs := cfg.Runs
+	var readinessDB *sql.DB
+	readinessObject := ""
+	if runs == nil {
+		if raw := os.Getenv("WORKBENCH_DATABASE_URL"); cfg.Hosted && raw != "" {
+			if cfg.ArtifactObjects == nil {
+				root := os.Getenv("WORKBENCH_OBJECT_DIR")
+				if root == "" {
+					return nil, errors.New("WORKBENCH_OBJECT_DIR required in hosted mode")
+				}
+				backend, backendErr := artifact.NewLocalBackend(root)
+				if backendErr != nil {
+					return nil, backendErr
+				}
+				cfg.ArtifactObjects = backend
+			}
+			store, err := pgstore.Open(raw)
+			if err != nil {
+				return nil, err
+			}
+			runs = runstate.NewManager(store)
+			readinessDB = store.DB()
+			readinessObject = os.Getenv("WORKBENCH_OBJECT_DIR")
+			if cfg.Usage == nil {
+				cfg.Usage = usage.PostgresStore{DB: store.DB()}
+			}
+			if cfg.Approvals == nil {
+				cfg.Approvals = approvalstate.PostgresStore{DB: store.DB()}
+			}
+			if cfg.Artifacts == nil {
+				cfg.Artifacts = artifact.PostgresStore{DB: store.DB(), Objects: cfg.ArtifactObjects}
+			}
+		} else {
+			runs = runstate.NewManager(runstate.NewSQLiteStore(lumenstore.Default()))
+		}
+	}
+	allowed := make(map[string]config.ProviderConfig)
+	var hostedDefault *config.ProviderConfig
+	for _, pc := range cfg.HostedProviders {
+		allowed[pc.Name+"\x00"+pc.Model] = pc
+		if hostedDefault == nil {
+			copy := pc
+			hostedDefault = &copy
+		}
+	}
+	if cfg.Hosted && len(allowed) == 0 && cfg.Ctrl != nil {
+		if pc := cfg.Ctrl.ProviderConfig(); pc != nil {
+			allowed[pc.Name+"\x00"+pc.Model] = *pc
+			hostedDefault = pc
+		}
+	}
+	usageStore := cfg.Usage
+	if usageStore == nil {
+		usageStore = usage.NewMemoryStore()
+	}
+	approvalStore := cfg.Approvals
+	if approvalStore == nil {
+		approvalStore = approvalstate.NewMemoryStore()
+	}
+	artifactStore := cfg.Artifacts
+	if artifactStore == nil {
+		artifactStore = artifact.NewMemoryStore()
+	}
+	if cfg.Hosted && cfg.Quota != nil {
+		artifactStore = quota.ArtifactStore{Store: artifactStore, Quota: cfg.Quota}
+	}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore, quota: cfg.Quota, approvalStore: approvalStore, artifactStore: artifactStore, readinessDB: readinessDB, readinessObject: readinessObject}
+	if ur, ok := usageStore.(runtimeevidence.UsageReader); ok {
+		s.evidence = runtimeevidence.Service{Runs: runs, Approvals: approvalStore, Artifacts: artifactStore, Usage: ur}
+	}
 	s.memDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
 	s.routes()
 	return s, nil
+}
+
+func (s *Server) handleBusiness(pattern string, handler http.HandlerFunc) {
+	if s.auth != nil {
+		s.mux.Handle(pattern, s.auth.RequireFor(codePermission)(s.hostedBodyLimit(handler)))
+		return
+	}
+	s.mux.HandleFunc(pattern, handler)
+}
+
+const hostedJSONBodyMax = int64(2 << 20)
+
+func (s *Server) hostedBodyLimit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodPut && r.Method != http.MethodPatch {
+			next(w, r)
+			return
+		}
+		limit := hostedJSONBodyMax
+		multipart := strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data")
+		if multipart {
+			limit = 64 << 20
+		}
+		if r.ContentLength > limit {
+			jsonCodeErr(w, "request_too_large", "request body exceeds hosted limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		if multipart {
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
+			next(w, r)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil {
+			jsonErr(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		if int64(len(body)) > limit {
+			jsonCodeErr(w, "request_too_large", "request body exceeds hosted limit", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		next(w, r)
+	}
+}
+
+func codePermission(r *http.Request) string {
+	if strings.HasPrefix(r.URL.Path, "/v1/runs/") {
+		if strings.HasSuffix(r.URL.Path, "/cancel") {
+			return "run:cancel"
+		}
+		if strings.Contains(r.URL.Path, "/artifacts/") && strings.HasSuffix(r.URL.Path, "/download") {
+			return "artifact:read"
+		}
+		return "run:read"
+	}
+	if r.URL.Path == "/v1/approve" {
+		return "approval:decide"
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/files") {
+		if r.Method == http.MethodGet {
+			return "artifact:read"
+		}
+		return "code:run"
+	}
+	if r.URL.Path == "/v1/chat" || r.URL.Path == "/v1/command" || r.URL.Path == "/v1/mode" || r.URL.Path == "/v1/rewind" || r.URL.Path == "/v1/workflow" {
+		return "code:run"
+	}
+	return "run:read"
 }
 
 // ListenAndServe starts the HTTP server. Blocks until error.
@@ -74,15 +373,17 @@ func (s *Server) ListenAndServe() error {
 // ── Routes ──────────────────────────────────────────────────
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/readyz", s.handleReadyz)
 	s.mountStatic()
 	s.routesAPI()
 	s.mux.HandleFunc("/", s.handleIndex)
-	s.mux.HandleFunc("/v1/chat", s.handleChat)
-	s.mux.HandleFunc("/v1/models", s.handleModels)
-	s.mux.HandleFunc("/v1/status", s.handleStatus)
-	s.mux.HandleFunc("/v1/sessions", s.handleSessions)
-	s.mux.HandleFunc("/v1/memories", s.handleMemories)
-	s.mux.HandleFunc("/v1/workflow", s.handleWorkflow)
+	s.handleBusiness("/v1/chat", s.handleChat)
+	s.handleBusiness("/v1/models", s.handleModels)
+	s.handleBusiness("/v1/status", s.handleStatus)
+	s.handleBusiness("/v1/sessions", s.handleSessions)
+	s.handleBusiness("/v1/memories", s.handleMemories)
+	s.handleBusiness("/v1/workflow", s.handleWorkflow)
 }
 
 // ── Web UI (embedded static — Claude Code–grade panel) ───────
@@ -110,10 +411,46 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "ui missing", http.StatusInternalServerError)
 		return
 	}
+	if raw, marshalErr := json.Marshal(cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin)); marshalErr == nil {
+		data = bytes.Replace(data, []byte("</head>"), append(append([]byte(`<script>window.__LUMEN_WORKBENCH_ORIGIN__=`), raw...), []byte(`;</script></head>`)...), 1)
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz")
+	ancestors := "frame-ancestors 'self'"
+	if origin := cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin); origin != "" {
+		ancestors += " " + origin
+	} else if s.auth == nil {
+		ancestors += " https://demo.oasisdata2026.xyz https://*.oasisdata2026.xyz"
+	}
+	w.Header().Set("Content-Security-Policy", ancestors)
 	w.Write(data)
+}
+
+func cfgWorkbenchOrigin(value string) string {
+	value = strings.TrimSuffix(strings.TrimSpace(value), "/")
+	if value == "" {
+		return ""
+	}
+	u, err := url.Parse(value)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		return ""
+	}
+	return u.String()
+}
+
+// setSSECORS keeps legacy local clients permissive while hosted mode only
+// reflects the exact configured Oasis parent. Tokens must never be exposed to
+// an arbitrary web origin via a wildcard response.
+func (s *Server) setSSECORS(w http.ResponseWriter, r *http.Request) {
+	if s.auth == nil {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		return
+	}
+	allowed := cfgWorkbenchOrigin(s.cfg.WorkbenchOrigin)
+	if allowed != "" && r.Header.Get("Origin") == allowed {
+		w.Header().Set("Access-Control-Allow-Origin", allowed)
+		w.Header().Set("Vary", "Origin")
+	}
 }
 
 // ── SSE Chat ────────────────────────────────────────────────
@@ -131,33 +468,30 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		Provider string   `json:"provider,omitempty"`
 		Model    string   `json:"model,omitempty"`
 		Mode     string   `json:"mode,omitempty"` // agent · plan · bypass · default · accept-edits
+		ParentID string   `json:"parent_run_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 		http.Error(w, `{"error":"prompt required"}`, http.StatusBadRequest)
 		return
 	}
 
-	// Allow runtime key like Lumen Science GUI: set env so Configure picks it up
-	if req.APIKey != "" {
-		envVar := "DEEPSEEK_API_KEY"
-		if req.Provider == "qwen" {
-			envVar = "DASHSCOPE_API_KEY"
-		} else if req.Provider == "moonshot" {
-			envVar = "MOONSHOT_API_KEY"
-		} else if req.Provider == "zhipu" {
-			envVar = "ZHIPU_API_KEY"
-		}
-		os.Setenv(envVar, req.APIKey)
-		if req.Model != "" {
-			// Note: full model override would require more ctrl changes; UI shows it
-		}
+	// Request credentials must never mutate process state. Hosted credentials and
+	// model routing are configured in the tenant Controller's immutable config.
+	if s.auth != nil && req.APIKey != "" {
+		jsonCodeErr(w, "provider_key_forbidden", "request provider keys are forbidden", http.StatusBadRequest)
+		return
+	}
+	pc, err := s.requestProvider(req.APIKey, req.Provider, req.Model)
+	if err != nil {
+		jsonCodeErr(w, "provider_not_allowed", err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	// SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
+	s.setSSECORS(w, r)
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -166,12 +500,27 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// SSE sink — emits each event as an SSE data frame
 	sink := sseSink{w: w, flusher: flusher}
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	rt.provider = pc
+	owner, ctrl := rt.owner, rt.ctrl
+	if req.ParentID != "" {
+		if _, parentErr := s.runs.ValidateRetryParent(owner, req.ParentID); parentErr != nil {
+			jsonCodeErr(w, "invalid_parent_run", "parent run must be an owned terminal run", http.StatusConflict)
+			return
+		}
+	}
 
 	// Serialize turns: the shared Controller/Agent/Session is not safe for
 	// concurrent Configure+Run. One chat at a time (acceptable for a single-
 	// session agent); concurrent requests queue here rather than corrupt state.
-	s.turnMu.Lock()
-	defer s.turnMu.Unlock()
+	if s.auth == nil {
+		s.turnMu.Lock()
+		defer s.turnMu.Unlock()
+	}
 
 	if os.Getenv("LUMEN_DEMO") == "1" && req.APIKey == "" { // goal:d6aa846b round9
 		// Demo echo only when no runtime API key — browser-local keys still hit the real provider.
@@ -181,44 +530,142 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			sink.emit("text", " (with "+strconv.Itoa(len(req.Images))+" image(s))")
 		}
 		sink.emit("turn_done", "")
-		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-		flusher.Flush()
+		sink.done("", nil)
 		return
 	}
 
-	if err := s.cfg.Ctrl.Configure(sink, nil, ""); err != nil {
+	configureErr := s.configureRuntime(rt, sink, "")
+	if configureErr != nil {
+		if rt.entry != nil {
+			s.controllers.discard(owner, rt.session, ctrl)
+		}
 		sink.emit("turn_started", "")
-		sink.emit("error", err.Error())
+		sink.emit("error", configureErr.Error())
 		sink.emit("turn_done", "")
-		fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-		flusher.Flush()
+		sink.done("", configureErr)
 		return
 	}
-
-	s.cfg.Ctrl.SetApprover(s.webApprover(func(kind string, payload map[string]any) {
-		sink.emitPayload(kind, payload)
-	}))
 
 	if req.Mode != "" {
-		s.cfg.Ctrl.SetPermissionMode(parseUIMode(req.Mode))
+		ctrl.SetPermissionMode(parseUIMode(req.Mode))
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
-	defer cancel()
-
-	sink.emit("turn_started", "")
-	if s.cfg.Ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
-		if err := s.cfg.Ctrl.Plan(ctx, req.Prompt); err != nil {
+	sessionID := ""
+	if sess := ctrl.Session(); sess != nil && sess.Path != "" {
+		sessionID = lumenstore.SessionIDFromPath(sess.Path)
+	}
+	limits := quota.LocalLimits()
+	startedAt := time.Now().UTC()
+	runID := ""
+	var admission quota.Admission
+	if s.auth != nil {
+		runID, err = runstate.NewRunID()
+		if err != nil {
 			sink.emit("error", err.Error())
+			sink.done("", err)
+			return
 		}
-	} else if err := s.cfg.Ctrl.Run(ctx, req.Prompt); err != nil {
-		sink.emit("error", err.Error())
+		if s.quota == nil {
+			err = &quota.Error{Code: quota.CodeUnavailable, Message: "quota service unavailable", NextAction: "retry_later"}
+		} else {
+			admission = quota.Admission{RunID: runID, IdempotencyKey: runID + ":admit", Owner: owner, StartedAt: startedAt}
+			limits, err = s.quota.Admit(r.Context(), admission)
+		}
+		if err != nil {
+			var qerr *quota.Error
+			if errors.As(err, &qerr) {
+				sink.emitPayload("error", map[string]any{"code": qerr.Code, "error": qerr.Message, "next_action": qerr.NextAction})
+			} else {
+				sink.emit("error", err.Error())
+			}
+			sink.done(runID, err)
+			return
+		}
 	}
-	sink.emit("turn_done", "")
+	var run runstate.Run
+	if s.auth != nil {
+		run, err = s.runs.StartOwnedID(owner, runID, sessionID, "code", summarizeRunTitle(req.Prompt), req.ParentID, startedAt)
+	} else {
+		run, err = s.runs.StartOwned(owner, sessionID, "code", summarizeRunTitle(req.Prompt), req.ParentID)
+	}
+	if err != nil {
+		if s.auth != nil && s.quota != nil {
+			_ = s.quota.Complete(context.Background(), quota.Completion{RunID: runID, IdempotencyKey: runID + ":complete", Owner: owner, Status: "failed", CompletedAt: time.Now().UTC()})
+		}
+		sink.emit("error", err.Error())
+		sink.done(runID, err)
+		return
+	}
+	computeStartedAt := time.Now()
+	completionStatus := "failed"
+	ctrl.SetMaxSteps(limits.MaxSteps)
+	ctrl.SetApprover(s.webApprover(owner, run.ID, func(kind string, payload map[string]any) { sink.emitPayload(kind, payload) }))
+	timeout := limits.MaxWallTime
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	ctx, cleanupRun := s.beginActiveRun(r.Context(), owner, run.ID, timeout)
+	defer cleanupRun()
+	var runFailure quota.Failure
+	stopLease := quota.MaintainLease(ctx, s.quota, admission, limits.HeartbeatInterval, func(e error) {
+		runFailure.Set(e)
+		s.cancelActiveRun(owner, run.ID)
+	})
+	defer stopLease()
+	pricing := usage.Pricing{}
+	if active := ctrl.ProviderConfig(); active != nil && active.Pricing != nil {
+		pricing = usage.Pricing{Input: active.Pricing.Input, Output: active.Pricing.Output, CacheHit: active.Pricing.CacheHit}
+	}
+	artifactCapture := &artifact.CapturingSink{Context: ctx, Store: s.artifactStore, Owner: owner, RunID: run.ID, Model: ctrl.ModelName(), Workspace: rt.ws, Next: sink, Failure: func(e error) {
+		runFailure.Set(fmt.Errorf("artifact persistence failed: %w", e))
+		s.cancelActiveRun(owner, run.ID)
+	}}
+	usageStore := s.usage
+	if s.auth != nil {
+		usageStore = quota.UsageStore{Usage: s.usage, Quota: s.quota}
+	}
+	capture := usage.CapturingSink{Store: usageStore, Owner: owner, Provider: ctrl.ProviderName(), Model: ctrl.ModelName(), Pricing: pricing, Next: artifactCapture, Failure: func(e error) {
+		runFailure.Set(fmt.Errorf("usage persistence failed: %w", e))
+		s.cancelActiveRun(owner, run.ID)
+	}}
+	limited := &quota.Sink{Limits: limits, Next: s.runs.WrapSink(run.ID, capture), Failure: func(e error) { runFailure.Set(e); s.cancelActiveRun(owner, run.ID) }}
+	ctrl.SetSink(limited)
 
-	// Send terminal event
-	fmt.Fprintf(w, "event: done\ndata: {}\n\n")
-	flusher.Flush()
+	var runErr error
+	if ctrl.PermissionMode() == permission.ModePlan || req.Mode == "plan" {
+		runErr = ctrl.Plan(ctx, req.Prompt)
+		if runErr != nil {
+			sink.emit("error", runErr.Error())
+		}
+	} else {
+		runErr = ctrl.Run(ctx, req.Prompt)
+		if runErr != nil {
+			sink.emit("error", runErr.Error())
+		}
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		runErr = &quota.Error{Code: quota.CodeWallTime, Message: "run wall time quota exceeded", NextAction: "start_new_run"}
+	} else if failure := runFailure.Err(); failure != nil {
+		runErr = failure
+	}
+	if runErr == nil {
+		completionStatus = "succeeded"
+	} else if errors.Is(ctx.Err(), context.Canceled) && runFailure.Err() == nil {
+		completionStatus = "canceled"
+	}
+	stopLease()
+	if s.auth != nil && s.quota != nil {
+		if completeErr := s.quota.Complete(context.Background(), quota.Completion{RunID: run.ID, IdempotencyKey: run.ID + ":complete", Owner: owner, Status: completionStatus, ComputeMillis: time.Since(computeStartedAt).Milliseconds(), CompletedAt: time.Now().UTC()}); completeErr != nil && runErr == nil {
+			runErr = fmt.Errorf("quota completion failed: %w", completeErr)
+		}
+	}
+	if _, err := s.runs.Finish(run.ID, runErr); err != nil {
+		sink.emit("error", "finish run: "+err.Error())
+		if runErr == nil {
+			runErr = err
+		}
+	}
+	sink.done(run.ID, runErr)
 }
 
 type sseSink struct {
@@ -227,15 +674,34 @@ type sseSink struct {
 }
 
 func (s sseSink) Emit(e event.Event) {
-	data, _ := json.Marshal(map[string]any{
-		"kind":      e.Kind,
-		"text":      e.Text,
-		"tool":      e.Tool,
-		"usage":     e.Usage,
-		"timestamp": e.Timestamp,
-	})
+	data, err := json.Marshal(e)
+	if err != nil {
+		s.emit("error", "encode event: "+err.Error())
+		return
+	}
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	s.flusher.Flush()
+}
+
+func (s sseSink) done(runID string, err error) {
+	terminal := map[string]any{"kind": "stream_done", "ok": err == nil}
+	if runID != "" {
+		terminal["run_id"] = runID
+	}
+	if err != nil {
+		terminal["error"] = err.Error()
+	}
+	data, _ := json.Marshal(terminal)
+	fmt.Fprintf(s.w, "event: done\ndata: %s\n\n", data)
+	s.flusher.Flush()
+}
+
+func summarizeRunTitle(prompt string) string {
+	runes := []rune(strings.TrimSpace(prompt))
+	if len(runes) > 120 {
+		runes = runes[:120]
+	}
+	return string(runes)
 }
 
 func (s sseSink) emit(kind, text string) {
@@ -256,8 +722,13 @@ func (s sseSink) emitPayload(kind string, payload map[string]any) {
 
 // ── REST ────────────────────────────────────────────────────
 
-func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	ctrl := s.cfg.Ctrl
+func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	ctrl := rt.ctrl
 	jsonOK(w, map[string]any{
 		"provider": ctrl.ProviderName(),
 		"model":    ctrl.ModelName(),
@@ -267,16 +738,29 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
 	jsonOK(w, map[string]any{
 		"status": "ok",
 		"time":   time.Now().Format(time.RFC3339),
-		"agent":  s.statusData(),
+		"agent":  statusData(rt.ctrl),
 	})
 }
 
-func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
-	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+func (s *Server) handleSessions(w http.ResponseWriter, r *http.Request) {
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	histDir := filepath.Join(rt.ws.Root, ".lumen", "history")
+	if s.auth == nil {
+		histDir = filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	}
 	entries, _ := os.ReadDir(histDir)
 	var sessions []map[string]any
 	for _, e := range entries {
@@ -294,7 +778,16 @@ func (s *Server) handleSessions(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleMemories(w http.ResponseWriter, r *http.Request) {
-	store, err := memory.NewStore(s.memDir)
+	rt := s.runtimeOrError(w, r)
+	if rt == nil {
+		return
+	}
+	defer s.releaseRuntime(rt)
+	memDir := filepath.Join(rt.ws.Root, ".lumen", "memories")
+	if s.auth == nil {
+		memDir = s.memDir
+	}
+	store, err := memory.NewStore(memDir)
 	if err != nil {
 		jsonErr(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -347,5 +840,10 @@ func jsonErr(w http.ResponseWriter, msg string, code int) {
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// ── Embedded web UI ─────────────────────────────────────────
+func jsonCodeErr(w http.ResponseWriter, stableCode, msg string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg, "code": stableCode})
+}
 
+// ── Embedded web UI ─────────────────────────────────────────

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"lumen/internal/config"
 	"lumen/internal/science/lab/project"
 	labruntime "lumen/internal/science/lab/runtime"
 )
@@ -51,8 +52,18 @@ type controllerPool struct {
 	sciDir   string
 	fleet    *labruntime.FleetManager
 	projects *project.Store
+	provider *config.ProviderConfig
+	basePATH string
 	items    map[string]*poolEntry
 	max      int
+}
+
+func (p *controllerPool) setPlatformProvider(pc *config.ProviderConfig, basePATH string) {
+	if pc != nil {
+		copy := *pc
+		p.provider = &copy
+	}
+	p.basePATH = basePATH
 }
 
 type poolEntry struct {
@@ -102,9 +113,10 @@ func (p *controllerPool) acquire(slug string) (*Controller, error) {
 		if oldestKey == "" {
 			return nil, fmt.Errorf("controller pool full (%d busy)", p.max)
 		}
+		p.items[oldestKey].ctrl.Close()
 		delete(p.items, oldestKey)
 	}
-	c := NewController(p.sciDir, p.fleet, p.projects)
+	c := newControllerWithPlatformProvider(p.sciDir, p.fleet, p.projects, p.provider, p.basePATH)
 	p.items[slug] = &poolEntry{ctrl: c, lastUsed: time.Now(), busy: true}
 	return c, nil
 }
@@ -115,6 +127,27 @@ func (p *controllerPool) release(slug string) {
 	if e, ok := p.items[slug]; ok {
 		e.busy = false
 		e.lastUsed = time.Now()
+	}
+}
+
+// discard removes a poisoned controller (for example, after Configure timed
+// out). The identity check prevents an old goroutine from deleting a newer
+// replacement for the same project.
+func (p *controllerPool) discard(slug string, ctrl *Controller) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if e := p.items[slug]; e != nil && e.ctrl == ctrl {
+		delete(p.items, slug)
+		go e.ctrl.Close()
+	}
+}
+
+func (p *controllerPool) close() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, e := range p.items {
+		e.ctrl.Close()
+		delete(p.items, key)
 	}
 }
 

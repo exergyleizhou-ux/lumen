@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	labworkspace "lumen/internal/science/lab/workspace"
 )
 
 const (
@@ -62,17 +64,23 @@ type SubmitOpts struct {
 // Store manages job state on disk.
 type Store struct {
 	mu      sync.Mutex
+	wg      sync.WaitGroup
 	root    string
+	guard   *labworkspace.Guard
 	cancels map[string]context.CancelFunc
 }
 
 // NewStore creates a job store under the project .lumen/compute directory.
 func NewStore(projectDir string) (*Store, error) {
 	root := filepath.Join(projectDir, ".lumen", "compute")
-	if err := os.MkdirAll(root, 0o700); err != nil {
+	g, err := labworkspace.NewGuard(projectDir)
+	if err != nil {
 		return nil, err
 	}
-	return &Store{root: root, cancels: make(map[string]context.CancelFunc)}, nil
+	if err := g.MkdirAll(filepath.Join(".lumen", "compute"), 0o700); err != nil {
+		return nil, err
+	}
+	return &Store{root: root, guard: g, cancels: make(map[string]context.CancelFunc)}, nil
 }
 
 func (s *Store) jobPath(id string) string {
@@ -126,7 +134,8 @@ func (s *Store) SubmitOpts(host, command, workDir string, opts SubmitOpts) (*Job
 	localDir := opts.LocalHarvestDir
 	s.mu.Unlock()
 
-	go s.run(id, host, command, workDir, timeout, globs, localDir)
+	s.wg.Add(1)
+	go func() { defer s.wg.Done(); s.run(id, host, command, workDir, timeout, globs, localDir) }()
 	return j, nil
 }
 
@@ -141,6 +150,7 @@ func (s *Store) Cancel(id string) (*Job, error) {
 	if ok && cancel != nil {
 		cancel()
 	}
+	s.wg.Wait()
 	// Mark cancelled if still pending/running
 	s.patch(id, func(j *Job) {
 		if j.Status == "pending" || j.Status == "running" {
@@ -474,7 +484,7 @@ func (s *Store) Get(id string) (*Job, error) {
 func (s *Store) List() ([]*Job, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	entries, err := os.ReadDir(s.root)
+	entries, err := s.guard.ReadDir(filepath.Join(".lumen", "compute"))
 	if err != nil {
 		return nil, err
 	}
@@ -494,7 +504,7 @@ func (s *Store) List() ([]*Job, error) {
 }
 
 func (s *Store) loadLocked(id string) (*Job, error) {
-	data, err := os.ReadFile(s.jobPath(id))
+	data, err := s.guard.ReadFile(filepath.Join(".lumen", "compute", id+".json"))
 	if err != nil {
 		return nil, err
 	}
@@ -510,7 +520,7 @@ func (s *Store) saveLocked(j *Job) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(s.jobPath(j.ID), append(data, '\n'), 0o600)
+	return s.guard.AtomicWriteFile(filepath.Join(".lumen", "compute", j.ID+".json"), append(data, '\n'), 0o600)
 }
 
 func (s *Store) patch(id string, fn func(*Job)) {

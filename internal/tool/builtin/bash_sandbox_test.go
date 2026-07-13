@@ -6,9 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
+	"lumen/internal/jobs"
 	"lumen/internal/sandbox"
+	runworkspace "lumen/internal/workspace"
 )
 
 // TestBashSandboxAutoByDefault: unset env uses auto — direct path when no backend.
@@ -24,6 +27,64 @@ func TestBashSandboxAutoByDefault(t *testing.T) {
 	}
 	if !strings.Contains(out, "hello-auto") {
 		t.Errorf("unexpected output: %q", out)
+	}
+}
+
+func TestBashUsesWorkspaceRootAndEnvironment(t *testing.T) {
+	t.Setenv(sandbox.EnvBashSandbox, "off")
+	type run struct {
+		root   string
+		marker string
+	}
+	runs := []run{{t.TempDir(), "alpha"}, {t.TempDir(), "beta"}}
+	var wg sync.WaitGroup
+	for _, tc := range runs {
+		tc := tc
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ws, err := runworkspace.NewLocal(tc.marker, tc.root, "", map[string]string{"RUN_MARKER": tc.marker})
+			if err != nil {
+				t.Errorf("workspace: %v", err)
+				return
+			}
+			ctx := runworkspace.WithContext(context.Background(), ws)
+			out, err := (&BashTool{}).Execute(ctx, json.RawMessage(`{"command":"pwd; printf ':%s' \"$RUN_MARKER\""}`))
+			if err != nil {
+				t.Errorf("bash %s: %v", tc.marker, err)
+				return
+			}
+			if out != ws.Root+"\n:"+tc.marker {
+				t.Errorf("bash %s crossed workspace: %q", tc.marker, out)
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func TestBackgroundBashPreservesWorkspaceContext(t *testing.T) {
+	t.Setenv(sandbox.EnvBashSandbox, "off")
+	ws, err := runworkspace.NewLocal("background", t.TempDir(), "", map[string]string{"RUN_MARKER": "background"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := jobs.NewManager()
+	ctx := jobs.WithManager(runworkspace.WithContext(context.Background(), ws), manager)
+	started, err := (&BashTool{}).Execute(ctx, json.RawMessage(`{"command":"pwd; printf ':%s' \"$RUN_MARKER\"","run_in_background":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := strings.Fields(started)
+	if len(fields) < 4 {
+		t.Fatalf("unexpected start response: %q", started)
+	}
+	waitArgs, _ := json.Marshal(map[string]any{"job_ids": []string{fields[3]}, "timeout_seconds": 2})
+	out, err := (&WaitTool{}).Execute(ctx, waitArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, ws.Root+"\n:background") {
+		t.Fatalf("background bash lost workspace: %q", out)
 	}
 }
 

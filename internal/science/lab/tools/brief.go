@@ -58,6 +58,18 @@ func (t *BriefGenerateTool) Execute(ctx context.Context, args json.RawMessage) (
 	if err != nil {
 		return "", err
 	}
+	if t.Guard != nil {
+		if err := t.Guard.MkdirAll(filepath.Dir(rel), 0o700); err != nil {
+			return "", err
+		}
+		if err := t.Guard.AtomicWriteFile(rel, []byte(res.Markdown), 0o600); err != nil {
+			return "", err
+		}
+		if t.OnWrite != nil {
+			t.OnWrite(outPath)
+		}
+		return fmt.Sprintf("Brief saved to %s (%d bytes)", rel, len(res.Markdown)), nil
+	}
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o700); err != nil {
 		return "", err
 	}

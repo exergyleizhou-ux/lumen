@@ -144,8 +144,8 @@ func TestNormalize(t *testing.T) {
 		Nbformat:      4,
 		NbformatMinor: 5,
 		Cells: []Cell{
-			{CellType: "markdown", Source: []string{"# hi"}},                     // no metadata
-			{CellType: "code", Source: []string{"1+1"}},                          // no metadata, no outputs, no execution_count
+			{CellType: "markdown", Source: []string{"# hi"}},                                             // no metadata
+			{CellType: "code", Source: []string{"1+1"}},                                                  // no metadata, no outputs, no execution_count
 			{CellType: "code", Source: []string{"2+2"}, Metadata: map[string]any{"tags": []any{"test"}}}, // partial metadata
 		},
 	}

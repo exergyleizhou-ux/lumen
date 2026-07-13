@@ -25,9 +25,11 @@ import (
 	"lumen/internal/guard"
 	"lumen/internal/jobs"
 	"lumen/internal/perf"
+	"lumen/internal/permission"
 	"lumen/internal/provider"
 	"lumen/internal/render"
 	"lumen/internal/tool"
+	runworkspace "lumen/internal/workspace"
 )
 
 // DefaultSystemPrompt is the base system message sent to every model.
@@ -152,6 +154,16 @@ type Agent struct {
 	repairCycle     int
 	verifyExhausted bool
 	faultRollback   map[string]int // file → consecutive failure count (R6)
+	completion      engineeringCompletion
+}
+
+type engineeringCompletion struct {
+	wroteFiles           bool
+	verificationRequired bool
+	verificationRan      bool
+	verificationPassed   bool
+	verificationFailed   bool
+	failedStep           string
 }
 
 // changeVerifier runs verification (build/vet/test) over the files changed in a
@@ -162,18 +174,18 @@ type changeVerifier interface {
 
 // Options configures a new Agent.
 type Options struct {
-	MaxSteps          int
-	Temperature       float64
-	Pricing           *provider.Pricing
-	ContextWindow     int
-	SoftCompactRatio  float64
-	CompactRatio      float64
-	RecentKeep        int
-	Sink              event.Sink
-	Gate              Gate
-	Asker             Asker
-	MemoryPrompt      string        // injected after system prompt (persistent user memories)
-	TurnTimeout       time.Duration // per-turn wall; zero = 5m default
+	MaxSteps         int
+	Temperature      float64
+	Pricing          *provider.Pricing
+	ContextWindow    int
+	SoftCompactRatio float64
+	CompactRatio     float64
+	RecentKeep       int
+	Sink             event.Sink
+	Gate             Gate
+	Asker            Asker
+	MemoryPrompt     string        // injected after system prompt (persistent user memories)
+	TurnTimeout      time.Duration // per-turn wall; zero = 5m default
 }
 
 // New creates an Agent.
@@ -194,21 +206,21 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 		opts.TurnTimeout = 5 * time.Minute
 	}
 	a := &Agent{
-		prov:              prov,
-		tools:             tools,
-		session:           session,
-		maxSteps:          opts.MaxSteps,
-		temperature:       opts.Temperature,
-		pricing:           opts.Pricing,
-		gate:              opts.Gate,
-		asker:             opts.Asker,
-		memoryPrompt:      opts.MemoryPrompt,
-		contextWindow:     opts.ContextWindow,
-		softCompactRatio:  opts.SoftCompactRatio,
-		compactRatio:      opts.CompactRatio,
-		turnTimeout:       opts.TurnTimeout,
-		recentKeep:        opts.RecentKeep,
-		cache:             newCacheTracker(),
+		prov:             prov,
+		tools:            tools,
+		session:          session,
+		maxSteps:         opts.MaxSteps,
+		temperature:      opts.Temperature,
+		pricing:          opts.Pricing,
+		gate:             opts.Gate,
+		asker:            opts.Asker,
+		memoryPrompt:     opts.MemoryPrompt,
+		contextWindow:    opts.ContextWindow,
+		softCompactRatio: opts.SoftCompactRatio,
+		compactRatio:     opts.CompactRatio,
+		turnTimeout:      opts.TurnTimeout,
+		recentKeep:       opts.RecentKeep,
+		cache:            newCacheTracker(),
 	}
 	a.SetSink(opts.Sink)
 	return a
@@ -217,6 +229,14 @@ func New(prov provider.Provider, tools *tool.Registry, session *Session, opts Op
 // SetPlanMode flips the read-only gate. While true, executeOne refuses any
 // non-ReadOnly tool. Cache-friendly — nothing changes in the prompt.
 func (a *Agent) SetPlanMode(v bool) { a.planMode.Store(v) }
+
+// SetMaxSteps applies a per-run hard ceiling. Controllers are tenant/run
+// scoped before this is called, so the policy cannot leak between owners.
+func (a *Agent) SetMaxSteps(v int) {
+	if v > 0 && (a.maxSteps <= 0 || v < a.maxSteps) {
+		a.maxSteps = v
+	}
+}
 
 // IsPlanMode reports whether the agent is currently in plan mode.
 func (a *Agent) IsPlanMode() bool { return a.planMode.Load() }
@@ -333,6 +353,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 	a.streamRecoveryCount = 0
 	a.repairCycle = 0
 	a.verifyExhausted = false
+	a.completion = engineeringCompletion{}
 	// The auto-compaction circuit breaker is a per-turn guard (its warning says
 	// "this turn"). Reset it so a long, healthy multi-turn session that compacts
 	// a few times over its life doesn't permanently disable compaction.
@@ -450,7 +471,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			case provider.ChunkToolCallStart:
 				// Dispatch the start of a tool call (ID + Name, no args yet)
 				a.Sink().Emit(event.Event{
-					Kind: event.ToolDispatch,
+					Kind: event.ToolDispatch, StepID: chunk.ToolCall.ID, ToolCallID: chunk.ToolCall.ID,
 					Tool: event.Tool{
 						ID:       chunk.ToolCall.ID,
 						Name:     chunk.ToolCall.Name,
@@ -540,6 +561,10 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			if !a.finalAnswerReady(text) {
 				continue // retry with a prompt to finish
 			}
+			if completionErr := a.engineeringCompletionError(); completionErr != nil {
+				a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: verificationStopReason(completionErr), Timestamp: time.Now()})
+				return completionErr
+			}
 			a.session.Add(provider.Message{
 				Role:             provider.RoleAssistant,
 				Content:          text,
@@ -547,6 +572,18 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 			})
 			a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "finished", Timestamp: time.Now()})
 			return nil
+		}
+
+		// Publish the finalized call before execution. Streaming providers first
+		// announce a call with only its ID and name, then deliver its complete
+		// arguments at EOF. Event-bound consumers (artifact/provenance capture,
+		// approvals and durable timelines) must see that authoritative shape.
+		for _, tc := range toolCalls {
+			a.Sink().Emit(event.Event{
+				Kind: event.ToolDispatch, StepID: tc.ID, ToolCallID: tc.ID,
+				Tool:      event.Tool{ID: tc.ID, Name: tc.Name, Args: tc.Arguments, ReadOnly: a.toolReadOnly(tc.Name)},
+				Timestamp: time.Now(),
+			})
 		}
 
 		// 6. Record assistant message with tool calls
@@ -580,12 +617,18 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 				tc := batch.calls[i]
 				if outcome.wroteFile {
 					stepWrote = true
+					a.completion.wroteFiles = true
+					a.completion.verificationRequired = a.verifier != nil && a.verifyCfg.Enabled
+					a.completion.verificationRan = false
+					a.completion.verificationPassed = false
+					a.completion.verificationFailed = false
+					a.completion.failedStep = ""
 					if outcome.changedPath != "" {
 						stepChanged = append(stepChanged, outcome.changedPath)
 					}
 				}
 				ev := event.Event{
-					Kind: event.ToolResult,
+					Kind: event.ToolResult, StepID: tc.ID, ToolCallID: tc.ID,
 					Tool: event.Tool{
 						ID:        tc.ID,
 						Name:      tc.Name,
@@ -629,7 +672,7 @@ func (a *Agent) Run(ctx context.Context, input string) error {
 		Timestamp: time.Now(),
 	})
 	a.Sink().Emit(event.Event{Kind: event.TurnDone, StopReason: "max_steps", Timestamp: time.Now()})
-	return nil
+	return &MaxStepsError{Limit: a.maxSteps}
 }
 
 // ── Tool execution ────────────────────────────────────────
@@ -673,6 +716,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 			errMsg: fmt.Sprintf("unknown tool %q", call.Name),
 		}
 	}
+	effects := tool.EffectsOf(t)
+	execution := &permission.Execution{}
+	ctx = permission.WithReview(ctx, permission.Review{StepID: call.ID, ToolCallID: call.ID, Effects: effects, Execution: execution})
 
 	// Plan mode gate: refuse writer tools without changing the prompt
 	if a.planMode.Load() && !t.ReadOnly() {
@@ -715,9 +761,9 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	// (previewing afterward would diff against the already-modified file). Used
 	// for both the diff preview event and the verify-after-edit changeset.
 	var changedPath string
-	if !t.ReadOnly() {
+	if effects.WritesFiles {
 		if pv, ok := t.(tool.Previewer); ok {
-			if change, err := pv.Preview(execArgs); err == nil {
+			if change, err := pv.Preview(ctx, execArgs); err == nil {
 				changedPath = change.Path
 				if a.onPreEdit != nil {
 					a.onPreEdit(change)
@@ -734,9 +780,14 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	}
 
 	result, err := t.Execute(ctx, execArgs)
+	if execution.Complete != nil {
+		if completeErr := execution.Complete(err == nil); completeErr != nil && err == nil {
+			err = fmt.Errorf("persist tool execution outcome: %w", completeErr)
+		}
+	}
 	// Record evidence receipt for host-observable validation
 	if a.evidence != nil {
-		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly())
+		rec := evidence.ReceiptFromToolCall(call.Name, execArgs, err == nil, t.ReadOnly(), effects)
 		a.evidence.Record(rec)
 	}
 	// Audit trail: one disk-backed line per tool call so `audit_query` can later
@@ -768,7 +819,7 @@ func (a *Agent) executeOne(ctx context.Context, call provider.ToolCall) toolOutc
 	return toolOutcome{
 		output:      body,
 		truncated:   truncMsg != "",
-		wroteFile:   !t.ReadOnly(),
+		wroteFile:   effects.WritesFiles,
 		changedPath: changedPath,
 	}
 }
@@ -783,10 +834,15 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	// Quick skip: if none of the changed files are in the workspace root,
 	// go build won't help — the model was editing something outside the project.
 	// Avoids 2-5s of silent go build on every external file write.
-	workspaceRoot, _ := os.Getwd()
+	workspaceRoot := ""
+	if ws, ok := runworkspace.FromContext(ctx); ok {
+		workspaceRoot = ws.Root
+	} else {
+		workspaceRoot, _ = os.Getwd()
+	}
 	anyInWorkspace := false
 	for _, f := range changed {
-		if strings.HasPrefix(f, workspaceRoot) || !filepath.IsAbs(f) {
+		if pathWithinWorkspace(f, workspaceRoot) {
 			anyInWorkspace = true
 			break
 		}
@@ -810,6 +866,8 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	// build would otherwise be reported as broken, burning a repair cycle (and
 	// previously triggering rollback) for an edit that may be entirely correct.
 	if verifyCtx.Err() == context.DeadlineExceeded && ctx.Err() == nil {
+		a.completion.verificationRan = false
+		a.completion.verificationPassed = false
 		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
 			Level:     event.LevelWarn,
@@ -826,6 +884,12 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 		text := "✓"
 		if res.Ran == 0 {
 			text = "↷ verify skipped — no build/test toolchain ran"
+			a.completion.verificationRan = false
+			a.completion.verificationPassed = false
+		} else {
+			a.completion.verificationRan = true
+			a.completion.verificationPassed = true
+			a.completion.verificationFailed = false
 		}
 		a.Sink().Emit(event.Event{
 			Kind:      event.VerifyResult,
@@ -837,6 +901,9 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	}
 
 	a.repairCycle++
+	a.completion.verificationRan = res.Ran > 0
+	a.completion.verificationPassed = false
+	a.completion.verificationFailed = true
 	max := a.verifyCfg.MaxRepairCycles
 	if max <= 0 {
 		max = 3
@@ -846,6 +913,7 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	if res.Failed != nil {
 		failName = res.Failed.Name
 	}
+	a.completion.failedStep = failName
 	a.Sink().Emit(event.Event{
 		Kind:      event.VerifyResult,
 		Level:     event.LevelWarn,
@@ -860,6 +928,34 @@ func (a *Agent) verifyAfterEdits(ctx context.Context, changed []string) string {
 	}
 
 	return editverify.FormatFeedback(res, a.repairCycle, max)
+}
+
+func pathWithinWorkspace(path, root string) bool {
+	if path == "" || root == "" {
+		return false
+	}
+	if !filepath.IsAbs(path) {
+		return true
+	}
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
+}
+
+func (a *Agent) engineeringCompletionError() error {
+	state := a.completion
+	if !state.wroteFiles || !state.verificationRequired {
+		return nil
+	}
+	if state.verificationFailed {
+		return &VerificationFailedError{Step: state.failedStep}
+	}
+	if !state.verificationRan || !state.verificationPassed {
+		return &VerificationIncompleteError{Reason: "file changes were not checked by an available build/test command"}
+	}
+	return nil
 }
 
 // checkFaultRollback flags a .go file that has failed verify repeatedly so the

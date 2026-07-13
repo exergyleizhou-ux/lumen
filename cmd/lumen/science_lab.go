@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"lumen/internal/quota"
 	"lumen/internal/science/lab"
 )
 
@@ -45,12 +46,24 @@ func runScienceLab(args []string) {
 	if addr == "" {
 		addr = fmt.Sprintf("127.0.0.1:%d", port)
 	}
+	var quotaStore quota.Store
+	var err error
+	if os.Getenv("LUMEN_HOSTED") == "true" {
+		quotaStore, err = quota.NewHTTPStore(os.Getenv("WORKBENCH_CONTROL_PLANE_URL"), os.Getenv("WORKBENCH_RUNTIME_INGEST_SECRET"), nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "quota: %v\n", err)
+			os.Exit(1)
+		}
+	}
 	srv, err := lab.New(lab.Config{
-		SciDir:    scienceDir(),
-		LumenCfg:  lumenCfg(),
-		Addr:      addr,
-		Version:   resolveVersion(),
-		OpenPanel: openPanel,
+		SciDir:             scienceDir(),
+		LumenCfg:           lumenCfg(),
+		Addr:               addr,
+		Version:            resolveVersion(),
+		OpenPanel:          openPanel,
+		Hosted:             os.Getenv("LUMEN_HOSTED") == "true",
+		WorkbenchJWTSecret: os.Getenv("WORKBENCH_JWT_SECRET"),
+		Quota:              quotaStore,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "science lab: %v\n", err)

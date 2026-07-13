@@ -38,7 +38,7 @@ func IsAvailable() bool {
 	}
 	// Quick check: can we import langgraph?
 	cmd := exec.Command(python, "-c", "import langgraph")
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = sanitizedEnv(nil)
 	err := cmd.Run()
 	return err == nil
 }
@@ -65,8 +65,13 @@ type RunRequest struct {
 	Prompt    string `json:"prompt"`
 	// Workspace is an absolute path to the project workspace directory.
 	// Usually filled by the lab API from project slug; clients may omit it.
-	Workspace string `json:"workspace,omitempty"`
+	Workspace string          `json:"workspace,omitempty"`
+	Provider  *ProviderConfig `json:"-"`
 }
+
+// ProviderConfig is immutable per invocation and is only inherited by the
+// spawned sidecar process.
+type ProviderConfig struct{ APIKey, BaseURL, Model, Adapter string }
 
 // RunResponse is the output from the LangGraph run endpoint.
 type RunResponse struct {
@@ -111,7 +116,7 @@ func Run(ctx context.Context, req RunRequest) RunResponse {
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, python, args...)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = sanitizedEnv(req.Provider)
 	cmd.Stderr = &stderr
 
 	out, err := cmd.Output()
@@ -131,6 +136,32 @@ func Run(ctx context.Context, req RunRequest) RunResponse {
 	return resp
 }
 
+var providerEnvNames = map[string]bool{"DEEPSEEK_API_KEY": true, "OPENAI_API_KEY": true, "MOONSHOT_API_KEY": true, "DASHSCOPE_API_KEY": true, "ZHIPU_API_KEY": true, "OPENAI_BASE_URL": true, "LUMEN_LANGGRAPH_BASE_URL": true, "LUMEN_SCIENCE_MODEL": true, "LUMEN_LANGGRAPH_MODEL": true, "DEEPSEEK_MODEL": true}
+
+// sanitizedEnv preserves operating-system/runtime variables but removes every
+// provider selector and credential before injecting exactly one chosen provider.
+func sanitizedEnv(p *ProviderConfig) []string {
+	out := make([]string, 0, len(os.Environ())+8)
+	for _, entry := range os.Environ() {
+		name := entry
+		if i := strings.IndexByte(entry, '='); i >= 0 {
+			name = entry[:i]
+		}
+		if !providerEnvNames[name] {
+			out = append(out, entry)
+		}
+	}
+	out = append(out, "PYTHONUNBUFFERED=1")
+	if p != nil {
+		adapter := strings.TrimSpace(p.Adapter)
+		if adapter == "" {
+			adapter = "openai"
+		}
+		out = append(out, "LUMEN_LANGGRAPH_PROVIDER_ONLY=1", "LUMEN_LANGGRAPH_SELECTED_PROVIDER="+adapter, "LUMEN_LANGGRAPH_SELECTED_API_KEY="+p.APIKey, "LUMEN_LANGGRAPH_SELECTED_BASE_URL="+p.BaseURL, "LUMEN_LANGGRAPH_SELECTED_MODEL="+p.Model) // gitleaks:allow -- forwards a runtime value; no credential is embedded here.
+	}
+	return out
+}
+
 // LLMReady reports whether an API key is present for optional LLM synthesize.
 func LLMReady() bool {
 	if os.Getenv("LUMEN_LANGGRAPH_LLM") == "0" {
@@ -144,12 +175,27 @@ func LLMReady() bool {
 	return false
 }
 
+func LLMReadyWithProvider(p *ProviderConfig) bool {
+	return p != nil && strings.TrimSpace(p.APIKey) != "" && os.Getenv("LUMEN_LANGGRAPH_LLM") != "0"
+}
+
 // Health returns the langgraph section for the lab health endpoint.
 func Health() map[string]any {
+	return health(nil, false)
+}
+
+// HealthWithProvider reports hosted readiness from the immutable platform
+// provider rather than unrelated process credentials.
+func HealthWithProvider(p *ProviderConfig) map[string]any { return health(p, true) }
+func health(p *ProviderConfig, explicit bool) map[string]any {
 	available := IsAvailable()
+	ready := LLMReady()
+	if explicit {
+		ready = LLMReadyWithProvider(p)
+	}
 	hint := "设置 LUMEN_LANGGRAPH=1 并安装 langgraph (pip install langgraph langchain-core)"
 	if available {
-		if LLMReady() {
+		if ready {
 			hint = "LangGraph 旁路可用（LLM 合成已就绪）"
 		} else {
 			hint = "LangGraph 旁路可用（启发式；配置科学模型密钥可启用 LLM）"
@@ -157,7 +203,7 @@ func Health() map[string]any {
 	}
 	return map[string]any{
 		"available": available,
-		"llm":       available && LLMReady(),
+		"llm":       available && ready,
 		"hint":      hint,
 	}
 }

@@ -29,6 +29,7 @@ import (
 	"lumen/internal/timeline"
 	"lumen/internal/tool"
 	"lumen/internal/tool/builtin"
+	runworkspace "lumen/internal/workspace"
 
 	// Side-effect: register builtin providers
 	_ "lumen/internal/provider/openai"
@@ -77,6 +78,8 @@ type Controller struct {
 	tl                *timeline.Recorder // session timeline for replay + change inbox
 	memStore          *memory.Store      // persistent user memories
 	extraMemoryPrompt string             // appended to memory block (e.g. science lab system context)
+	workspace         runworkspace.Context
+	timelinePath      string
 
 	// Sub-agent deps (shared by run_skill / task tools)
 	subDeps agent.SubagentDeps
@@ -87,6 +90,24 @@ type Controller struct {
 // New creates an unconfigured Controller. Call Configure() before use.
 func New() *Controller {
 	return &Controller{}
+}
+
+// ConfigureOptions supplies immutable run-scoped dependencies that must not be
+// derived from process-global environment in multi-project frontends.
+type ConfigureOptions struct {
+	Workspace    runworkspace.Context
+	ToolsProfile string
+	// Provider, when non-nil, is an immutable run-scoped provider selection.
+	// It avoids translating request-level credentials through process globals.
+	Provider *config.ProviderConfig
+	// DataRoot scopes sessions, memories and timeline. Empty preserves CLI paths.
+	DataRoot string
+	// ProcessEnvImmutable prevents request-time dotenv loading. Hosted servers
+	// resolve platform credentials once at startup and pass Provider explicitly.
+	ProcessEnvImmutable bool
+	// ProviderOnly disables every config-file fallback backend. Hosted runtimes
+	// must set this with Provider so failover cannot escape the startup allowlist.
+	ProviderOnly bool
 }
 
 // sink returns the current event sink (never nil).
@@ -109,6 +130,20 @@ func (c *Controller) storeSink(s event.Sink) {
 // creates the agent. Sink receives all agent events; Asker handles interactive
 // questions (nil for headless runs). Call once, before Run/Chat/Plan.
 func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("workspace: %w", err)
+	}
+	ws, err := runworkspace.NewLocal("local", wd, "", nil)
+	if err != nil {
+		return fmt.Errorf("workspace: %w", err)
+	}
+	return c.ConfigureWithOptions(sink, asker, cfgPath, ConfigureOptions{Workspace: ws})
+}
+
+// ConfigureWithOptions configures a controller without reading mutable
+// workspace/tool-profile state from process globals.
+func (c *Controller) ConfigureWithOptions(sink event.Sink, asker agent.Asker, cfgPath string, opts ConfigureOptions) error {
 	if sink == nil {
 		sink = event.Discard
 	}
@@ -118,23 +153,50 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	sink = event.NewSyncSink(sink)
 	c.storeSink(sink)
 	c.asker = asker
+	if opts.Workspace.Backend == nil || opts.Workspace.Root == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		ws, err := runworkspace.NewLocal("local", wd, "", nil)
+		if err != nil {
+			return fmt.Errorf("workspace: %w", err)
+		}
+		opts.Workspace = ws
+	}
+	c.workspace = opts.Workspace
 
 	// 1. Load config
 	path := cfgPath
 	if path == "" {
 		path = config.FindConfig()
 	}
-	cfg, err := config.LoadWithEnv(path, config.FindDotEnv())
+	var cfg *config.File
+	var err error
+	if opts.ProcessEnvImmutable {
+		cfg, err = config.Load(path)
+	} else {
+		cfg, err = config.LoadWithEnv(path, config.FindDotEnv())
+	}
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	c.cfg = cfg
 
 	// 2. Resolve default provider
-	if len(cfg.Providers) == 0 {
+	if len(cfg.Providers) == 0 && opts.Provider == nil {
 		return fmt.Errorf("no providers configured — add one in lumen.toml or run 'lumen setup'")
 	}
-	provCfg, matched := resolveProvider(cfg.Providers, cfg.DefaultModel)
+	var provCfg *config.ProviderConfig
+	matched := false
+	if len(cfg.Providers) > 0 {
+		provCfg, matched = resolveProvider(cfg.Providers, cfg.DefaultModel)
+	}
+	if opts.Provider != nil {
+		copy := *opts.Provider
+		provCfg = &copy
+		matched = true
+	}
 	if !matched && cfg.DefaultModel != "" {
 		sink.Emit(event.Event{
 			Kind: event.Notice, Level: event.LevelWarn,
@@ -159,20 +221,22 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 
 	// 2b. Build fallback providers from remaining configs
 	backends := []modelpool.Backend{{Name: provCfg.Name, Provider: prov, IsLocal: isLoopbackURL(provCfg.BaseURL)}}
-	for i := range cfg.Providers {
-		if cfg.Providers[i].Name == provCfg.Name {
-			continue
-		}
-		fb, err := provider.New(cfg.Providers[i].Kind, provider.Config{
-			Name:    cfg.Providers[i].Name,
-			BaseURL: cfg.Providers[i].BaseURL,
-			Model:   cfg.Providers[i].Model,
-			APIKey:  cfg.Providers[i].APIKey,
-			Timeout: c.turnTimeout,
-		})
-		if err == nil {
-			c.fallbacks = append(c.fallbacks, fb)
-			backends = append(backends, modelpool.Backend{Name: cfg.Providers[i].Name, Provider: fb, IsLocal: isLoopbackURL(cfg.Providers[i].BaseURL)})
+	if !opts.ProviderOnly {
+		for i := range cfg.Providers {
+			if cfg.Providers[i].Name == provCfg.Name {
+				continue
+			}
+			fb, err := provider.New(cfg.Providers[i].Kind, provider.Config{
+				Name:    cfg.Providers[i].Name,
+				BaseURL: cfg.Providers[i].BaseURL,
+				Model:   cfg.Providers[i].Model,
+				APIKey:  cfg.Providers[i].APIKey,
+				Timeout: c.turnTimeout,
+			})
+			if err == nil {
+				c.fallbacks = append(c.fallbacks, fb)
+				backends = append(backends, modelpool.Backend{Name: cfg.Providers[i].Name, Provider: fb, IsLocal: isLoopbackURL(cfg.Providers[i].BaseURL)})
+			}
 		}
 	}
 
@@ -189,7 +253,9 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	// 3. Build tool registry — honoring [tools] profile (default "full"; "core"
 	// offers only the coding set so the model isn't handed ~116 tools per turn).
 	toolProfile := cfg.Tools.Profile
-	if v := strings.TrimSpace(os.Getenv("LUMEN_TOOLS_PROFILE")); v != "" {
+	if v := strings.TrimSpace(opts.ToolsProfile); v != "" {
+		toolProfile = v
+	} else if v := strings.TrimSpace(os.Getenv("LUMEN_TOOLS_PROFILE")); v != "" {
 		toolProfile = v
 	}
 	reg := tool.NewRegistry()
@@ -198,7 +264,7 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	}
 
 	// 4. Build skill store
-	wd, _ := os.Getwd()
+	wd := c.workspace.Root
 	c.skillStore = skill.New(skillOptionsFromConfig(cfg, wd))
 	skills := c.skillStore.List()
 	_ = skills
@@ -250,7 +316,12 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	}, maxParallel)
 
 	// 8. Init timeline recorder (session replay + change inbox)
-	tl, err := timeline.NewRecorder(".lumen/timeline.jsonl")
+	timelinePath := filepath.Join(".lumen", "timeline.jsonl")
+	if opts.DataRoot != "" {
+		timelinePath = filepath.Join(opts.DataRoot, "timeline.jsonl")
+	}
+	c.timelinePath = timelinePath
+	tl, err := timeline.NewRecorder(timelinePath)
 	if err != nil {
 		c.logf("timeline: %v (replay disabled)", err)
 	} else {
@@ -265,6 +336,9 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	// Large sessions (>30 messages) are not reused to avoid context window overflow
 	// on the first turn of a new run.
 	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	if opts.DataRoot != "" {
+		histDir = filepath.Join(opts.DataRoot, "history")
+	}
 	os.MkdirAll(histDir, 0700)
 	sessPath := filepath.Join(histDir, time.Now().Format("2006-01-02-150405")+".jsonl")
 
@@ -281,6 +355,9 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 
 	// 10. Init persistent memory store (~/.lumen/memories/)
 	memDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "memories")
+	if opts.DataRoot != "" {
+		memDir = filepath.Join(opts.DataRoot, "memories")
+	}
 	memStore, err := memory.NewStore(memDir)
 	if err != nil {
 		c.logf("memory: %v (disabled)", err)
@@ -334,6 +411,19 @@ func (c *Controller) Configure(sink event.Sink, asker agent.Asker, cfgPath strin
 	return nil
 }
 
+// ProviderConfig returns a defensive copy of the active immutable selection.
+func (c *Controller) ProviderConfig() *config.ProviderConfig {
+	if c == nil || c.provCfg == nil {
+		return nil
+	}
+	copy := *c.provCfg
+	if c.provCfg.Pricing != nil {
+		p := *c.provCfg.Pricing
+		copy.Pricing = &p
+	}
+	return &copy
+}
+
 // setupEditVerify installs the verify-after-edit verifier when verification is
 // enabled and wd is a recognized project (Go / JS-TS / Python). Detect chooses
 // the commands per changed file and the runner skips uninstalled tools, so it
@@ -356,6 +446,8 @@ func (c *Controller) setupEditVerify(wd string, cfg editverify.Config) bool {
 // Run executes a one-shot task and returns the agent's final answer.
 // On failure, automatically tries fallback providers if configured.
 func (c *Controller) Run(ctx context.Context, prompt string) error {
+	ctx = c.withWorkspace(ctx)
+	c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · executing"})
 	err := c.ag.Run(ctx, prompt)
 	if err != nil && len(c.fallbacks) > 0 {
@@ -413,7 +505,9 @@ func (c *Controller) emitError(err error) {
 
 // Plan runs in read-only mode and returns the agent's plan.
 func (c *Controller) Plan(ctx context.Context, prompt string) error {
+	ctx = c.withWorkspace(ctx)
 	c.ag.SetPlanMode(true)
+	defer c.ag.SetPlanMode(false)
 	c.sink().Emit(event.Event{Kind: event.Phase, Text: c.prov.Name() + " · planning (read-only)"})
 	err := c.ag.Run(ctx, prompt)
 	if err != nil {
@@ -427,10 +521,30 @@ func (c *Controller) Chat(ctx context.Context, prompt string) error {
 	return c.Run(ctx, prompt)
 }
 
+func (c *Controller) withWorkspace(ctx context.Context) context.Context {
+	if c.workspace.Backend == nil || c.workspace.Root == "" {
+		return ctx
+	}
+	return runworkspace.WithContext(ctx, c.workspace)
+}
+
+// WorkspaceContext returns a defensive copy of the configured workspace.
+func (c *Controller) WorkspaceContext() runworkspace.Context {
+	ctx := runworkspace.WithContext(context.Background(), c.workspace)
+	ws, _ := runworkspace.FromContext(ctx)
+	return ws
+}
+
 // ── Accessors ──────────────────────────────────────────────
 
 // Agent returns the underlying agent (for direct access when needed).
 func (c *Controller) Agent() *agent.Agent { return c.ag }
+
+func (c *Controller) SetMaxSteps(v int) {
+	if c.ag != nil {
+		c.ag.SetMaxSteps(v)
+	}
+}
 
 // Session returns the agent's session.
 func (c *Controller) Session() *agent.Session { return c.sess }
@@ -469,10 +583,20 @@ func (c *Controller) warn(text string) {
 // configured (the cost readout then uses the built-in default).
 func (c *Controller) Pricing() *provider.Pricing { return c.pricing }
 
-func (c *Controller) ProviderName() string { return c.provCfg.Name }
+func (c *Controller) ProviderName() string {
+	if c == nil || c.provCfg == nil {
+		return "unconfigured"
+	}
+	return c.provCfg.Name
+}
 
 // ModelName returns the active model ID.
-func (c *Controller) ModelName() string { return c.provCfg.Model }
+func (c *Controller) ModelName() string {
+	if c == nil || c.provCfg == nil {
+		return "unconfigured"
+	}
+	return c.provCfg.Model
+}
 
 // PermissionMode returns the resolved permission mode.
 func (c *Controller) PermissionMode() permission.Mode { return c.permMode }
@@ -579,13 +703,20 @@ func (c *Controller) approveCallback() permission.Asker {
 // LoadSession switches the active conversation to a persisted JSONL history file.
 // The name must be a bare filename (e.g. "2026-07-03-194241.jsonl").
 func (c *Controller) LoadSession(name string) error {
+	return c.LoadSessionFromDir(filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history"), name)
+}
+
+// LoadSessionFromDir switches to a session inside the caller's guarded history directory.
+func (c *Controller) LoadSessionFromDir(histDir, name string) error {
 	if strings.Contains(name, "/") || strings.Contains(name, "..") {
 		return fmt.Errorf("invalid session name")
 	}
 	if !strings.HasSuffix(name, ".jsonl") {
 		name += ".jsonl"
 	}
-	histDir := filepath.Join(os.ExpandEnv("$HOME"), ".lumen", "history")
+	if err := os.MkdirAll(histDir, 0700); err != nil {
+		return fmt.Errorf("session directory: %w", err)
+	}
 	path := filepath.Join(histDir, name)
 	if _, err := os.Stat(path); err != nil {
 		return fmt.Errorf("session not found: %s", name)
@@ -619,7 +750,7 @@ func (c *Controller) TimelinePath() string {
 	if c.tl == nil {
 		return ""
 	}
-	return ".lumen/timeline.jsonl"
+	return c.timelinePath
 }
 
 // Close shuts down infrastructure (timeline, jobs, etc).

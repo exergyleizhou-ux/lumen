@@ -23,7 +23,7 @@ func testLabServer(t *testing.T) (*httptest.Server, string) {
 	if err := os.MkdirAll(sci, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := New(Config{SciDir: sci, Version: "test"})
+	srv, err := New(Config{SciDir: sci, Version: "test", DisableFleetAutoConnect: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1039,6 +1039,38 @@ func TestSkillsImportMD(t *testing.T) {
 	pd, _ := store.ProjectDir(slug)
 	if _, err := os.Stat(filepath.Join(pd, ".lumen", "skills", "my-skill.md")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSkillsImportRejectsSymlinkDestination(t *testing.T) {
+	ts, sci := testLabServer(t)
+	slug := createProject(t, ts, "Skill Swap")
+	store := project.NewStore(sci)
+	pd, _ := store.ProjectDir(slug)
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pd, ".lumen"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(pd, ".lumen", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(pd, ".lumen", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, _ := mw.CreateFormFile("file", "escape.md")
+	_, _ = part.Write([]byte("outside"))
+	_ = mw.Close()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/lab/skills/import?project_id="+slug, &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if _, err := os.Stat(filepath.Join(outside, "escape.md")); !os.IsNotExist(err) {
+		t.Fatalf("skill import escaped: %v", err)
 	}
 }
 

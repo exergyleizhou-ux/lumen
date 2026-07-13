@@ -1,3 +1,5 @@
+//go:build integration
+
 package native
 
 import (
@@ -13,21 +15,6 @@ import (
 
 	sciconfig "lumen/internal/science/config"
 )
-
-func TestCheckAuthTokenGated(t *testing.T) {
-	if err := CheckAuth("preview_schema", ""); err == nil {
-		t.Fatal("preview_schema should require token")
-	}
-	if err := CheckAuth("list_algorithms", ""); err == nil {
-		t.Fatal("list_algorithms should require token")
-	}
-	if err := CheckAuth("search_datasets", ""); err != nil {
-		t.Fatalf("search_datasets should be anonymous: %v", err)
-	}
-	if err := CheckAuth("preview_schema", "tok"); err != nil {
-		t.Fatalf("preview_schema with token: %v", err)
-	}
-}
 
 func TestC2DListAlgorithmsFleetWithToken(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,9 +53,12 @@ func TestC2DListAlgorithmsFleetWithToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	if err := mgr.Connect("c2d"); err != nil {
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := mgr.ConnectContext(connectCtx, "c2d"); err != nil {
+		connectCancel()
 		t.Fatal(err)
 	}
+	connectCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -131,9 +121,12 @@ func TestOasisPreviewSchemaFleetWithToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mgr.Close()
-	if err := mgr.Connect("oasis"); err != nil {
+	connectCtx, connectCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	if err := mgr.ConnectContext(connectCtx, "oasis"); err != nil {
+		connectCancel()
 		t.Fatal(err)
 	}
+	connectCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

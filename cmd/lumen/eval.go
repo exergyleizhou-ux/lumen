@@ -15,6 +15,7 @@ import (
 	"lumen/internal/eval"
 	"lumen/internal/event"
 	"lumen/internal/provider"
+	runworkspace "lumen/internal/workspace"
 )
 
 // runEval drives the coding-quality harness: each task's broken workspace is
@@ -147,7 +148,17 @@ func runOneTask(task eval.Task, cfgPath, orig string, keep bool, meta cellMeta) 
 	start := time.Now()
 	_ = os.Chdir(ws)
 	ctrl := control.New()
-	cerr := ctrl.Configure(evalSink(ctr, coll), nil, cfgPath)
+	workspaceCtx, workspaceErr := runworkspace.NewLocal("eval", ws, "", nil)
+	var cerr error
+	if workspaceErr != nil {
+		cerr = workspaceErr
+	} else {
+		cerr = ctrl.ConfigureWithOptions(evalSink(ctr, coll), nil, cfgPath, control.ConfigureOptions{
+			Workspace:           workspaceCtx,
+			DataRoot:            filepath.Join(ws, ".lumen"),
+			ProcessEnvImmutable: true,
+		})
+	}
 	var rerr error
 	if cerr == nil {
 		rerr = ctrl.Run(context.Background(), task.Prompt)

@@ -253,10 +253,11 @@ func TestCompleteStepWithLedger(t *testing.T) {
 	// Create a ledger with a successful bash receipt
 	l := evidence.NewLedger()
 	l.Record(evidence.Receipt{
-		ToolName: "bash",
-		Success:  true,
-		ReadOnly: false,
-		Command:  "go test ./...",
+		ToolName:     "bash",
+		Success:      true,
+		ReadOnly:     false,
+		RunsCommands: true,
+		Command:      "go test ./...",
 	})
 
 	ctx := evidence.WithLedger(context.Background(), l)

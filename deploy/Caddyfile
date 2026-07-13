@@ -1,0 +1,39 @@
+{
+	auto_https off
+	admin off
+	servers {
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	@code host {$LUMEN_CODE_HOST}
+	handle @code {
+		reverse_proxy code:8080 {
+			flush_interval -1
+			transport http {
+				response_header_timeout 24h
+			}
+			header_up Host {host}
+			header_up Origin {header.Origin}
+			header_up Cookie {header.Cookie}
+			header_up X-Request-ID {http.request.uuid}
+		}
+	}
+
+	@lab host {$LUMEN_LAB_HOST}
+	handle @lab {
+		reverse_proxy lab:4310 {
+			flush_interval -1
+			transport http {
+				response_header_timeout 24h
+			}
+			header_up Host {host}
+			header_up Origin {header.Origin}
+			header_up Cookie {header.Cookie}
+			header_up X-Request-ID {http.request.uuid}
+		}
+	}
+
+	respond "unknown host" 404
+}

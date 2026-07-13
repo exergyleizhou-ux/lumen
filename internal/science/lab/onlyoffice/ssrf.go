@@ -36,10 +36,10 @@ func ValidateDownloadURL(raw string) error {
 	}
 
 	allowed := map[string]bool{
-		"localhost":             true,
-		"127.0.0.1":             true,
-		"::1":                   true,
-		"host.docker.internal":  true,
+		"localhost":            true,
+		"127.0.0.1":            true,
+		"::1":                  true,
+		"host.docker.internal": true,
 	}
 	if ds := strings.TrimSpace(os.Getenv("LUMEN_ONLYOFFICE_URL")); ds != "" {
 		if du, err := url.Parse(ds); err == nil && du.Hostname() != "" {

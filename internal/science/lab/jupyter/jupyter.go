@@ -13,15 +13,17 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	labworkspace "lumen/internal/science/lab/workspace"
 )
 
 // Cell represents a notebook cell (nbformat 4.x compatible).
 type Cell struct {
-	CellType       string   `json:"cell_type"`                 // code | markdown
-	Metadata       map[string]any `json:"metadata"`            // at minimum {}
-	Source         []string `json:"source"`
-	ExecutionCount *int     `json:"execution_count"`           // null for unexecuted code cells
-	Outputs        []Output `json:"outputs"` // always present for code cells ([]); nil for markdown (null)
+	CellType       string         `json:"cell_type"` // code | markdown
+	Metadata       map[string]any `json:"metadata"`  // at minimum {}
+	Source         []string       `json:"source"`
+	ExecutionCount *int           `json:"execution_count"` // null for unexecuted code cells
+	Outputs        []Output       `json:"outputs"`         // always present for code cells ([]); nil for markdown (null)
 }
 
 // Output is one cell execution output.
@@ -105,6 +107,31 @@ func Load(path string) (*Notebook, error) {
 	nb.Path = path
 	nb.Normalize()
 	return &nb, nil
+}
+
+// LoadGuarded reads a notebook through a directory-fd rooted workspace guard.
+func LoadGuarded(g *labworkspace.Guard, rel string) (*Notebook, error) {
+	data, err := g.ReadFile(rel)
+	if err != nil {
+		return nil, err
+	}
+	var nb Notebook
+	if err := json.Unmarshal(data, &nb); err != nil {
+		return nil, err
+	}
+	nb.Path = rel
+	nb.Normalize()
+	return &nb, nil
+}
+
+func (nb *Notebook) SaveGuarded(g *labworkspace.Guard, rel string) error {
+	nb.Normalize()
+	data, err := json.MarshalIndent(nb, "", "  ")
+	if err != nil {
+		return err
+	}
+	nb.Path = rel
+	return g.AtomicWriteFile(rel, append(data, '\n'), 0o600)
 }
 
 // Save writes to a .ipynb file.
@@ -267,6 +294,25 @@ func (nb *Notebook) Execute(path, python string) error {
 	return nil
 }
 
+// ExecuteGuarded executes a trusted temporary copy and atomically publishes
+// the result through g, so nbconvert never opens a tenant-controlled path.
+func (nb *Notebook) ExecuteGuarded(g *labworkspace.Guard, rel, python string) error {
+	f, err := os.CreateTemp("", "lumen-notebook-*.ipynb")
+	if err != nil {
+		return err
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	defer os.Remove(path)
+	if err := nb.Execute(path, python); err != nil {
+		return err
+	}
+	return nb.SaveGuarded(g, rel)
+}
+
 // ToMarkdown renders notebook as markdown for chat display.
 func (nb *Notebook) ToMarkdown() string {
 	var b strings.Builder
@@ -327,6 +373,34 @@ func ListNotebooks(workspace string) ([]NotebookInfo, error) {
 			ni.Cells = len(nb.Cells)
 		}
 		out = append(out, ni)
+	}
+	return out, nil
+}
+
+// ListNotebooksGuarded lists and loads only no-follow notebook entries.
+func ListNotebooksGuarded(g *labworkspace.Guard) ([]NotebookInfo, error) {
+	entries, err := g.ReadDir("notebooks")
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []NotebookInfo
+	for _, e := range entries {
+		if e.IsDir() || e.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(e.Name(), ".ipynb") {
+			continue
+		}
+		rel := filepath.Join("notebooks", e.Name())
+		info, err := g.Stat(rel)
+		if err != nil {
+			continue
+		}
+		nb, err := LoadGuarded(g, rel)
+		if err != nil {
+			continue
+		}
+		out = append(out, NotebookInfo{Name: e.Name(), Path: filepath.ToSlash(rel), Size: info.Size(), Modified: info.ModTime(), Cells: len(nb.Cells)})
 	}
 	return out, nil
 }

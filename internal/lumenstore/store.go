@@ -86,11 +86,54 @@ func (s *Store) migrate() error {
 			updated_at TEXT NOT NULL,
 			payload TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS runs (
+			id TEXT PRIMARY KEY,
+			user_id TEXT NOT NULL DEFAULT 'local',
+			workspace_id TEXT NOT NULL DEFAULT 'local',
+			session_id TEXT,
+			parent_run_id TEXT,
+			profile TEXT NOT NULL,
+			title TEXT NOT NULL,
+			status TEXT NOT NULL,
+			stop_reason TEXT,
+			error TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT,
+			version INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_runs_session_updated ON runs(session_id, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS run_events (
+			run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+			seq INTEGER NOT NULL,
+			event_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			PRIMARY KEY(run_id, seq),
+			UNIQUE(event_id)
+		)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
 			return fmt.Errorf("migrate: %w", err)
 		}
+	}
+	// Upgrade databases created before tenant ownership was persisted.
+	for _, col := range []struct{ name, ddl string }{{"user_id", "ALTER TABLE runs ADD COLUMN user_id TEXT NOT NULL DEFAULT 'local'"}, {"workspace_id", "ALTER TABLE runs ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'local'"}} {
+		var n int
+		if err := s.db.QueryRow(`SELECT count(*) FROM pragma_table_info('runs') WHERE name=?`, col.name).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := s.db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("migrate %s: %w", col.name, err)
+			}
+		}
+	}
+	if _, err := s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_runs_owner_id ON runs(user_id, workspace_id, id)`); err != nil {
+		return err
 	}
 	return nil
 }

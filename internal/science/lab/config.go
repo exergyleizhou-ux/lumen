@@ -2,10 +2,10 @@ package lab
 
 import (
 	"encoding/json"
-	"os"
 	"path/filepath"
 
 	sciconfig "lumen/internal/science/config"
+	labworkspace "lumen/internal/science/lab/workspace"
 )
 
 const defaultToolProfile = "full_science"
@@ -28,7 +28,14 @@ func localConfigPath(sciDir string) string {
 func loadLocalConfig(sciDir string) LocalConfig {
 	// Default agent so tool calls + approval path are exercised (plan never runs tools).
 	cfg := LocalConfig{DefaultPort: DefaultPort, ToolProfile: defaultToolProfile, DefaultMode: "agent"}
-	data, err := os.ReadFile(localConfigPath(sciDir))
+	g, gerr := labworkspace.NewGuard(sciDir)
+	if gerr != nil {
+		return cfg
+	}
+	if g.MkdirAll("lab", 0o700) != nil {
+		return cfg
+	}
+	data, err := g.ReadFile(filepath.Join("lab", "lab.json"))
 	if err != nil {
 		return cfg
 	}
@@ -61,15 +68,18 @@ func saveLocalConfig(sciDir string, cfg LocalConfig) error {
 	default:
 		cfg.DefaultMode = "agent"
 	}
-	path := localConfigPath(sciDir)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	g, err := labworkspace.NewGuard(sciDir)
+	if err != nil {
+		return err
+	}
+	if err := g.MkdirAll("lab", 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return g.AtomicWriteFile(filepath.Join("lab", "lab.json"), append(data, '\n'), 0o600)
 }
 
 func scienceConfig(sciDir string) (sciconfig.File, error) {

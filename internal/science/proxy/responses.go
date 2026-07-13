@@ -253,4 +253,3 @@ func ResponsesToAnthropic(resp map[string]any, modelID string) map[string]any {
 		},
 	}
 }
-

@@ -26,3 +26,6 @@ jobs:
 
       - name: Test (race)
         run: GOTOOLCHAIN=local go test -race -count=1 -timeout=90s ./...
+
+      - name: Test controlled native integration
+        run: GOTOOLCHAIN=local go test -tags=integration -p=2 -count=1 -timeout=180s ./internal/science/native ./internal/science/lab/runtime

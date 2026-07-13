@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+deploy/.env.production
+work/
+outputs/
+data/
+*.db
+*.db-*
+coverage*
+dist/
+node_modules/
+bin/

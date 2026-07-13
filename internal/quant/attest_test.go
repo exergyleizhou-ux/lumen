@@ -47,7 +47,11 @@ func TestTamperedClaimBreaksSignature(t *testing.T) {
 	}
 
 	bad2 := att
-	bad2.Signature = att.Signature[:len(att.Signature)-2] + "00"
+	replacement := byte('0')
+	if att.Signature[0] == replacement {
+		replacement = '1'
+	}
+	bad2.Signature = string(replacement) + att.Signature[1:]
 	if VerifyAttestationSig(bad2) {
 		t.Error("a mangled signature must not verify")
 	}

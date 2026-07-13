@@ -1,13 +1,18 @@
 package langgraph
 
 import (
-	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	labworkspace "lumen/internal/science/lab/workspace"
 )
+
+var historyMu sync.Mutex
 
 // HistoryEntry is one sidecar run persisted per project.
 type HistoryEntry struct {
@@ -22,8 +27,8 @@ type HistoryEntry struct {
 }
 
 const (
-	historyFileName = "langgraph-history.jsonl"
-	historyMaxLines = 100
+	historyFileName  = "langgraph-history.jsonl"
+	historyMaxLines  = 100
 	historyMaxResult = 12000
 )
 
@@ -34,10 +39,13 @@ func HistoryPath(projectDir string) string {
 
 // AppendHistory appends one entry and trims the file to historyMaxLines.
 func AppendHistory(projectDir string, e HistoryEntry) error {
+	historyMu.Lock()
+	defer historyMu.Unlock()
 	if strings.TrimSpace(projectDir) == "" {
 		return nil
 	}
-	if err := os.MkdirAll(projectDir, 0o700); err != nil {
+	g, err := labworkspace.NewGuard(projectDir)
+	if err != nil {
 		return err
 	}
 	if e.ID == "" {
@@ -52,41 +60,45 @@ func AppendHistory(projectDir string, e HistoryEntry) error {
 	if len(e.Prompt) > 2000 {
 		e.Prompt = e.Prompt[:2000]
 	}
-	path := HistoryPath(projectDir)
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	data, err := g.ReadFile(historyFileName)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	line, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
-	enc := json.NewEncoder(f)
-	if err := enc.Encode(e); err != nil {
-		f.Close()
-		return err
+	lines := bytes.Split(bytes.TrimSpace(append(data, append(line, '\n')...)), []byte{'\n'})
+	if len(lines) > historyMaxLines {
+		lines = lines[len(lines)-historyMaxLines:]
 	}
-	f.Close()
-	return trimHistoryFile(path, historyMaxLines)
+	return g.AtomicWriteFile(historyFileName, append(bytes.Join(lines, []byte{'\n'}), '\n'), 0o600)
 }
 
 // ListHistory returns newest-first entries (up to limit).
 func ListHistory(projectDir string, limit int) ([]HistoryEntry, error) {
+	historyMu.Lock()
+	defer historyMu.Unlock()
+	return listHistory(projectDir, limit)
+}
+func listHistory(projectDir string, limit int) ([]HistoryEntry, error) {
 	if limit <= 0 {
 		limit = 40
 	}
-	path := HistoryPath(projectDir)
-	f, err := os.Open(path)
+	g, err := labworkspace.NewGuard(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	data, err := g.ReadFile(historyFileName)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	defer f.Close()
 	var all []HistoryEntry
-	sc := bufio.NewScanner(f)
-	// raise token size for long results
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, 2*1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
+	for _, raw := range bytes.Split(data, []byte{'\n'}) {
+		line := strings.TrimSpace(string(raw))
 		if line == "" {
 			continue
 		}
@@ -103,7 +115,7 @@ func ListHistory(projectDir string, limit int) ([]HistoryEntry, error) {
 	if len(all) > limit {
 		all = all[:limit]
 	}
-	return all, sc.Err()
+	return all, nil
 }
 
 func trimHistoryFile(path string, max int) error {

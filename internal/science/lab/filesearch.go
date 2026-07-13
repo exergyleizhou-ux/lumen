@@ -5,7 +5,73 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"lumen/internal/science/lab/workspace"
 )
+
+func SearchWorkspaceGuarded(g *workspace.Guard, query string, limit int) ([]FileSearchHit, error) {
+	q := strings.TrimSpace(strings.ToLower(query))
+	if q == "" {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	var hits []FileSearchHit
+	err := g.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if len(hits) >= limit {
+			return filepath.SkipAll
+		}
+		base := info.Name()
+		if base == ".git" || base == "node_modules" || base == ".lumen" {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+		}
+		if path == "." {
+			return nil
+		}
+		rel := filepath.ToSlash(path)
+		if strings.Contains(strings.ToLower(base), q) || strings.Contains(strings.ToLower(rel), q) {
+			h := FileSearchHit{Path: rel, Name: base, IsDir: info.IsDir(), PreviewKind: previewKind(base), Match: "name"}
+			if !info.IsDir() {
+				h.Size = info.Size()
+			}
+			hits = append(hits, h)
+			return nil
+		}
+		if info.IsDir() || info.Size() > 256*1024 {
+			return nil
+		}
+		pk := previewKind(base)
+		if pk != "text" && pk != "markdown" {
+			return nil
+		}
+		data, e := g.ReadFile(rel)
+		if e != nil || !utf8.Valid(data) {
+			return nil
+		}
+		if strings.Contains(string(data[:min(len(data), 512)]), "\x00") {
+			return nil
+		}
+		idx := strings.Index(strings.ToLower(string(data)), q)
+		if idx < 0 {
+			return nil
+		}
+		hits = append(hits, FileSearchHit{Path: rel, Name: base, PreviewKind: pk, Match: "content", Snippet: snippetAround(string(data), idx, len(q), 80), Size: info.Size()})
+		return nil
+	})
+	if err == filepath.SkipAll {
+		err = nil
+	}
+	return hits, err
+}
 
 // FileSearchHit is one match under the project workspace.
 type FileSearchHit struct {

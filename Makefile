@@ -4,7 +4,7 @@
 export GOTOOLCHAIN := local
 export GOFLAGS := -mod=mod
 
-.PHONY: check build vet test race lint clean facts eval goal-all-verify science-check science-fmt science-vet science-test-quick science-test-all science-full-verify
+.PHONY: check build vet test test-unit test-integration test-live race lint clean facts eval model-eval model-eval-live goal-all-verify science-check science-fmt science-vet science-test-quick science-test-all science-full-verify
 
 science-fmt:
 	@test -z "$$(gofmt -l internal/science)" || (gofmt -l internal/science && exit 1)
@@ -42,6 +42,15 @@ check: build vet test
 eval: bin
 	./bin/lumen eval
 
+## model-eval: deterministic, network-free 10 Code + 10 Lab production gate.
+model-eval: bin
+	./bin/lumen model-eval
+
+## model-eval-live: deliberately separate paid/networked gate. Requires
+## LUMEN_MODEL_EVAL_LIVE=1, a provider key, adapter and explicit current prices.
+model-eval-live: bin
+	./bin/lumen model-eval --live
+
 ## facts: print the real, script-generated repo counts. Docs cite this, not
 ## hand-typed numbers that drift (and have drifted) from reality.
 facts:
@@ -59,9 +68,19 @@ build:
 vet:
 	go vet ./...
 
-## test: run the full test suite.
-test:
+## test-unit: deterministic default suite; no real network services.
+test: test-unit
+
+test-unit:
 	go test ./...
+
+## test-integration: controlled native MCP subprocesses backed by httptest.
+test-integration:
+	go test -tags=integration -p=2 -count=1 -timeout=180s ./internal/science/native ./internal/science/lab/runtime
+
+## test-live: explicit real-service smoke probes; never part of the PR gate.
+test-live:
+	go test -tags=live -count=1 -timeout=120s ./internal/science/native ./internal/science/lab/runtime ./internal/provider/anthro ./internal/provider/gemini -run 'Live'
 
 ## race: run the full suite under the race detector (this is a concurrent agent).
 race:

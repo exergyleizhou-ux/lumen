@@ -2,10 +2,66 @@ package workspace
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 )
+
+var atomicWriteSeq atomic.Uint64
+
+// AtomicWriteFile replaces rel without ever following a caller-controlled
+// symlink. Both the temporary creation and rename are rooted at directory fds.
+func (g *Guard) AtomicWriteFile(rel string, data []byte, perm os.FileMode) error {
+	tmp := fmt.Sprintf("%s.lumen-tmp-%d", rel, atomicWriteSeq.Add(1))
+	if err := g.WriteFile(tmp, data, perm); err != nil {
+		return err
+	}
+	if err := g.Replace(tmp, rel); err != nil {
+		_ = g.RemoveAll(tmp)
+		return err
+	}
+	return nil
+}
+
+// Walk traverses without exposing host absolute paths. Platform primitives
+// re-open every component with no-follow semantics on Unix.
+func (g *Guard) Walk(rel string, fn func(string, fs.FileInfo, error) error) error {
+	if rel == "" {
+		rel = "."
+	}
+	st, err := g.Stat(rel)
+	if err != nil {
+		return fn(rel, nil, err)
+	}
+	if err = fn(filepath.ToSlash(rel), st, nil); err != nil {
+		if err == filepath.SkipDir {
+			return nil
+		}
+		return err
+	}
+	if !st.IsDir() {
+		return nil
+	}
+	entries, err := g.ReadDir(rel)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		child := e.Name()
+		if rel != "." {
+			child = filepath.Join(rel, child)
+		}
+		if err = g.Walk(child, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Guard ensures paths stay within a project workspace root.
 type Guard struct {
@@ -17,6 +73,16 @@ func NewGuard(root string) (*Guard, error) {
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
+	}
+	if err := os.MkdirAll(abs, 0o700); err != nil {
+		return nil, err
+	}
+	fi, err := os.Lstat(abs)
+	if err != nil {
+		return nil, err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 || !fi.IsDir() {
+		return nil, fmt.Errorf("guard root must be a real directory")
 	}
 	return &Guard{root: abs}, nil
 }
@@ -45,8 +111,23 @@ func (g *Guard) Resolve(rel string) (string, error) {
 	if !strings.HasPrefix(abs, g.root+string(os.PathSeparator)) && abs != g.root {
 		return "", fmt.Errorf("path escapes workspace")
 	}
-	if fi, err := os.Lstat(abs); err == nil && fi.Mode()&os.ModeSymlink != 0 {
-		return "", fmt.Errorf("symlinks not allowed")
+	// Reject a symlink in any existing component, not only at the leaf. A
+	// writable endpoint may target a missing leaf below a symlinked directory.
+	current := g.root
+	if relFromRoot, err := filepath.Rel(g.root, abs); err == nil && relFromRoot != "." {
+		for _, component := range strings.Split(relFromRoot, string(os.PathSeparator)) {
+			current = filepath.Join(current, component)
+			fi, err := os.Lstat(current)
+			if err != nil {
+				if os.IsNotExist(err) {
+					break
+				}
+				return "", err
+			}
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return "", fmt.Errorf("symlinks not allowed")
+			}
+		}
 	}
 	return abs, nil
 }

@@ -20,10 +20,11 @@ if (cut < 0) {
 
 function loadLabUI() {
   const sandbox = {
-    window: {},
+    window: { location: { origin: "https://lab.test" } },
     document: { getElementById: () => null },
     location: { pathname: "/" },
     console,
+    URL,
   };
   vm.createContext(sandbox);
   vm.runInContext(src.slice(0, cut), sandbox);
@@ -43,6 +44,52 @@ function runOnce(runLabel) {
   assert(typeof L.escHtml === "function", "escHtml is function");
   assert(typeof L.renderMarkdown === "function", "renderMarkdown is function");
   assert(typeof L.reduceSSE === "function", "reduceSSE is function");
+  assert(typeof L.buildWorkbenchSnapshot === "function", "buildWorkbenchSnapshot is function");
+  assert(typeof L.buildWorkbenchSnapshotV2 === "function", "buildWorkbenchSnapshotV2 is function");
+  assert(typeof L.workbenchTargetOrigin === "function", "workbenchTargetOrigin is function");
+
+  const workbenchSnapshot = L.buildWorkbenchSnapshot(
+    { slug: "project-a", title: "Project A" },
+    "run_1",
+    7,
+    false,
+    2,
+  );
+  assert(
+    JSON.stringify(workbenchSnapshot) === JSON.stringify({
+      kind: "lumen.workbench.snapshot",
+      version: 1,
+      surface: "lab",
+      project: { id: "project-a", title: "Project A" },
+      run: { id: "run_1", last_seq: 7, terminal: false },
+      pending_approvals: 2,
+    }),
+    "workbench snapshot shape: " + JSON.stringify(workbenchSnapshot),
+  );
+  const emptyWorkbenchSnapshot = L.buildWorkbenchSnapshot(null, "", -1, true, -4);
+  assert(emptyWorkbenchSnapshot.project === null, "empty snapshot project null");
+  assert(emptyWorkbenchSnapshot.run === null, "empty snapshot run null");
+  assert(emptyWorkbenchSnapshot.pending_approvals === 0, "empty snapshot approvals clamped");
+  console.log("OK workbench snapshot is versioned and minimal");
+
+  const v2 = L.buildWorkbenchSnapshotV2(
+    { slug: "project-a", title: "Project A", prompt: "SECRET" },
+    { workspace_id: "workspace-a", run_id: "run_1", last_seq: 9, status: "verifying", pending_approvals: 2, verification: "running", artifact_count: 3, args: "SECRET", content: "SECRET" },
+  );
+  assert(JSON.stringify(v2) === JSON.stringify({
+    kind: "lumen.workbench.snapshot",
+    version: 2,
+    surface: "lab",
+    workspace: { id: "workspace-a" },
+    project: { id: "project-a", title: "Project A" },
+    run: { id: "run_1", last_seq: 9, status: "verifying", terminal: false },
+    pending_approvals: 2,
+    verification: "running",
+    artifact_count: 3,
+  }), "v2 strict shape: " + JSON.stringify(v2));
+  ["prompt", "reasoning", "args", "key", "content"].forEach((secret) => assert(!JSON.stringify(v2).includes(secret), "v2 excludes " + secret));
+  console.log("OK workbench v2 strict whitelist");
+  assert(L.workbenchTargetOrigin() === "https://lab.test", "same-origin target fallback");
 
   // escHtml
   const esc = L.escHtml('<script>alert(1)</script> & "x"');
@@ -283,6 +330,13 @@ function runOnce(runLabel) {
   s = L.reduceSSE(s, { kind: "reasoning", text: "think" });
   assert(s.reasoning === "think", "reasoning: " + s.reasoning);
   console.log("OK text/reasoning accumulate");
+
+  let replay = L.reduceSSE(null, { kind: "text", text: "once", run_id: "run-1", seq: 1 });
+  replay = L.reduceSSE(replay, { kind: "text", text: "duplicate", run_id: "run-1", seq: 1 });
+  replay = L.reduceSSE(replay, { kind: "text", text: " twice", run_id: "run-1", seq: 2 });
+  assert(replay.text === "once twice", "run replay deduplicates seq: " + replay.text);
+  assert(replay.runId === "run-1" && replay.lastSeq === 2, "run replay cursor: " + JSON.stringify(replay));
+  console.log("OK run replay deduplicates seq");
 
   console.log("PASS " + runLabel + " all assertions");
   return true;

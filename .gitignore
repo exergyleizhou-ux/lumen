@@ -2,6 +2,7 @@
 .DS_Store
 .env
 .gstack/
+.worktrees/
 .lumen/
 .science-rm-scratch/
 *.log
@@ -14,3 +15,5 @@ openai.test
 third_party/ketcher-standalone/
 .acceptance-logs/
 Thumbs.db
+# Production secrets are injected at deploy time.
+deploy/.env.production

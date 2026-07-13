@@ -13,6 +13,7 @@ import (
 	"lumen/internal/jobs"
 	"lumen/internal/sandbox"
 	"lumen/internal/tool"
+	runworkspace "lumen/internal/workspace"
 )
 
 // bashCmd builds the *exec.Cmd that runs a shell command, routing it through an
@@ -21,15 +22,24 @@ import (
 // exists; set `off` for direct `sh -c` execution. The API-key scrub
 // is applied either way. See internal/sandbox/runner.go and docs/sandbox.md.
 func bashCmd(ctx context.Context, command string) (*exec.Cmd, error) {
+	workdir := ""
+	environ := os.Environ()
+	if ws, ok := runworkspace.FromContext(ctx); ok {
+		workdir = ws.Root
+		environ = ws.Environment(environ)
+	}
 	runner, required := sandbox.ForBash()
 	if runner != nil {
-		wd, _ := os.Getwd()
+		wd := workdir
+		if wd == "" {
+			wd, _ = os.Getwd()
+		}
 		cmd, err := runner.Command(ctx, command, sandbox.RunOptions{
 			Workdir: wd,
 			Network: sandbox.BashNetwork(),
 		})
 		if err == nil {
-			cmd.Env = scrubSecrets(os.Environ())
+			cmd.Env = scrubSecrets(environ)
 			return cmd, nil
 		}
 		if required {
@@ -40,7 +50,8 @@ func bashCmd(ctx context.Context, command string) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("bash sandbox required (%s) but no sandbox backend is available on this platform", sandbox.EnvBashSandbox)
 	}
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Env = scrubSecrets(os.Environ()) // don't leak the agent's API keys to model-run commands
+	cmd.Dir = workdir
+	cmd.Env = scrubSecrets(environ) // don't leak the agent's API keys to model-run commands
 	return cmd, nil
 }
 
@@ -59,8 +70,9 @@ func init() {
 // with kill_shell.
 type BashTool struct{}
 
-func (t *BashTool) Name() string     { return "bash" }
-func (t *BashTool) ReadOnly() bool   { return false }
+func (t *BashTool) Name() string          { return "bash" }
+func (t *BashTool) ReadOnly() bool        { return false }
+func (t *BashTool) Effects() tool.Effects { return tool.Effects{RunsCommands: true} }
 
 func (t *BashTool) Description() string {
 	return "Execute a command in the shell and return combined stdout/stderr. Use for builds, tests, git, package managers, etc. To search/read/list/edit files, prefer the dedicated tools (grep, read_file, ls, glob, edit_file) over shell grep/cat/ls/find/sed — they behave identically on every OS. For symbol search, call graphs, or architecture questions, use codegraph tools instead of grep."
@@ -99,7 +111,7 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 		if len(label) > 60 {
 			label = cutRunes(label, 57) + "..."
 		}
-		job := jm.Start("bash", label, func(bgCtx context.Context) (string, error) {
+		job := jm.StartContext(ctx, "bash", label, func(bgCtx context.Context) (string, error) {
 			cmd, err := bashCmd(bgCtx, p.Command)
 			if err != nil {
 				return "", err
@@ -147,8 +159,8 @@ func (t *BashTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 // BashOutputTool reads new output from a background bash job.
 type BashOutputTool struct{}
 
-func (t *BashOutputTool) Name() string     { return "bash_output" }
-func (t *BashOutputTool) ReadOnly() bool   { return true }
+func (t *BashOutputTool) Name() string   { return "bash_output" }
+func (t *BashOutputTool) ReadOnly() bool { return true }
 
 func (t *BashOutputTool) Description() string {
 	return "Read new output from a background job started with bash(run_in_background=true) or task(run_in_background=true). Returns the output produced since the last bash_output call for that job, plus its status (running/done/failed/killed). Does not block."
@@ -228,8 +240,8 @@ func filterLines(output, filter string) string {
 // WaitTool blocks until a background job finishes.
 type WaitTool struct{}
 
-func (t *WaitTool) Name() string     { return "wait" }
-func (t *WaitTool) ReadOnly() bool   { return true }
+func (t *WaitTool) Name() string   { return "wait" }
+func (t *WaitTool) ReadOnly() bool { return true }
 
 func (t *WaitTool) Description() string {
 	return "Block until background jobs finish, then return each job's status and final output/answer. Use to collect the result of a task(run_in_background) or bash(run_in_background) before continuing. Omit job_ids to wait for every running job."
@@ -294,8 +306,9 @@ func (t *WaitTool) Execute(ctx context.Context, args json.RawMessage) (string, e
 // KillShellTool terminates a running background job.
 type KillShellTool struct{}
 
-func (t *KillShellTool) Name() string     { return "kill_shell" }
-func (t *KillShellTool) ReadOnly() bool   { return false }
+func (t *KillShellTool) Name() string          { return "kill_shell" }
+func (t *KillShellTool) ReadOnly() bool        { return false }
+func (t *KillShellTool) Effects() tool.Effects { return tool.Effects{RunsCommands: true} }
 
 func (t *KillShellTool) Description() string {
 	return "Terminate a running background job (bash or task) started with run_in_background. A no-op if the job has already finished or the id is unknown."

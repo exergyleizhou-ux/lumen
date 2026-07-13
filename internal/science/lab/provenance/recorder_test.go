@@ -1,6 +1,8 @@
 package provenance
 
 import (
+	"bufio"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +25,49 @@ func TestRecorderMCPImmediate(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "pubmed/search_articles") {
 		t.Fatalf("missing tool: %s", data)
+	}
+}
+
+func TestRecorderRunIDLinksMCPAndArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	artifact := filepath.Join(dir, "result.csv")
+	if err := os.WriteFile(artifact, []byte("x\n1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := NewRecorder(dir, "sess_test", "deepseek")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.SetRunID("run_first")
+	rec.RecordMCP("pubmed", "search_articles", `{"query":"aspirin"}`)
+	if err := rec.RecordArtifact(artifact); err != nil {
+		t.Fatal(err)
+	}
+	rec.SetRunID("run_second")
+	rec.RecordMCP("chembl", "search", `{}`)
+
+	f, err := os.Open(filepath.Join(dir, "provenance.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	var records []Record
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		var record Record
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 3 {
+		t.Fatalf("records=%#v", records)
+	}
+	if records[0].RunID != "run_first" || records[1].RunID != "run_first" || records[2].RunID != "run_second" {
+		t.Fatalf("run linkage=%#v", records)
 	}
 }
 

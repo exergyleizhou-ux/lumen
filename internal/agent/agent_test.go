@@ -77,6 +77,49 @@ func TestRunReturnsErrorOnEmptyStream(t *testing.T) {
 	}
 }
 
+type streamingToolProvider struct{ calls int }
+
+func (p *streamingToolProvider) Name() string { return "streaming-tool" }
+func (p *streamingToolProvider) Stream(context.Context, provider.Request) (<-chan provider.Chunk, error) {
+	p.calls++
+	ch := make(chan provider.Chunk, 3)
+	if p.calls == 1 {
+		call := &provider.ToolCall{ID: "call-1", Name: "write_test", Arguments: `{}`}
+		ch <- provider.Chunk{Type: provider.ChunkToolCallStart, ToolCall: &provider.ToolCall{ID: call.ID, Name: call.Name}}
+		ch <- provider.Chunk{Type: provider.ChunkToolCall, ToolCall: call}
+	} else {
+		ch <- provider.Chunk{Type: provider.ChunkText, Text: "done"}
+	}
+	close(ch)
+	return ch, nil
+}
+
+func TestRunEmitsFinalizedToolDispatchAndStableResultIdentity(t *testing.T) {
+	p := &streamingToolProvider{}
+	a := New(p, testRegistry(), NewSession(""), Options{MaxSteps: 3})
+	var events []event.Event
+	a.SetSink(event.FuncSink(func(e event.Event) { events = append(events, e) }))
+	if err := a.Run(context.Background(), "write"); err != nil {
+		t.Fatal(err)
+	}
+	var finalized, result *event.Event
+	for i := range events {
+		e := &events[i]
+		if e.Kind == event.ToolDispatch && e.Tool.Args == `{}` {
+			finalized = e
+		}
+		if e.Kind == event.ToolResult {
+			result = e
+		}
+	}
+	if finalized == nil || finalized.StepID != "call-1" || finalized.ToolCallID != "call-1" {
+		t.Fatalf("finalized dispatch=%+v events=%+v", finalized, events)
+	}
+	if result == nil || result.StepID != "call-1" || result.ToolCallID != "call-1" || result.Tool.ID != "call-1" {
+		t.Fatalf("result=%+v events=%+v", result, events)
+	}
+}
+
 // interruptThenOKProvider interrupts the first stream mid-output, then succeeds.
 type interruptThenOKProvider struct{ calls int }
 
@@ -186,6 +229,17 @@ func (t *testFailingTool) Execute(ctx context.Context, args json.RawMessage) (st
 	return "", errors.New("simulated failure")
 }
 
+type testCommandTool struct{}
+
+func (t *testCommandTool) Name() string            { return "command_test" }
+func (t *testCommandTool) Description() string     { return "test command tool" }
+func (t *testCommandTool) ReadOnly() bool          { return false }
+func (t *testCommandTool) Schema() json.RawMessage { return json.RawMessage(`{}`) }
+func (t *testCommandTool) Effects() tool.Effects   { return tool.Effects{RunsCommands: true} }
+func (t *testCommandTool) Execute(ctx context.Context, args json.RawMessage) (string, error) {
+	return "command ok", nil
+}
+
 // ── Test agent helpers ─────────────────────────────────────
 
 func testRegistry() *tool.Registry {
@@ -217,6 +271,19 @@ func TestExecuteOneUnknownTool(t *testing.T) {
 	})
 	if outcome.errMsg == "" {
 		t.Error("unknown tool should return error")
+	}
+}
+
+func TestCommandEffectDoesNotReportFileWrite(t *testing.T) {
+	reg := tool.NewRegistry()
+	reg.Add(&testCommandTool{})
+	a := New(&mockProvider{name: "test"}, reg, NewSession(""), Options{MaxSteps: 3})
+	outcome := a.executeOne(context.Background(), provider.ToolCall{ID: "command-1", Name: "command_test", Arguments: "{}"})
+	if outcome.errMsg != "" {
+		t.Fatalf("command failed: %s", outcome.errMsg)
+	}
+	if outcome.wroteFile {
+		t.Fatal("command-only effects must not trigger edit verification")
 	}
 }
 

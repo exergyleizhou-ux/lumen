@@ -10,10 +10,49 @@ import (
 	"strings"
 	"testing"
 
+	"lumen/internal/agent"
 	"lumen/internal/control"
+	"lumen/internal/event"
+	"lumen/internal/runstate"
 )
 
+func TestSSESinkPreservesStopReason(t *testing.T) {
+	rec := httptest.NewRecorder()
+	sink := sseSink{w: rec, flusher: rec}
+	sink.Emit(event.Event{Kind: event.TurnDone, StopReason: "max_steps"})
+
+	out := rec.Body.String()
+	if !strings.Contains(out, `"stop_reason":"max_steps"`) {
+		t.Fatalf("missing max_steps terminal reason:\n%s", out)
+	}
+}
+
+func TestVerificationFailurePropagatesToRunAndSSE(t *testing.T) {
+	runs := runstate.NewManager(nil)
+	run, err := runs.Start("session", "code", "verification", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	runErr := &agent.VerificationFailedError{Step: "test"}
+	finished, err := runs.Finish(run.ID, runErr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finished.Status != runstate.StatusFailed || finished.StopReason != "verification_failed" {
+		t.Fatalf("terminal run=%#v", finished)
+	}
+
+	rec := httptest.NewRecorder()
+	sink := sseSink{w: rec, flusher: rec}
+	sink.done(run.ID, runErr)
+	out := rec.Body.String()
+	if !strings.Contains(out, `"ok":false`) || !strings.Contains(out, `"run_id":"`+run.ID+`"`) || !strings.Contains(out, "engineering verification failed") {
+		t.Fatalf("verification SSE=%s", out)
+	}
+}
+
 func TestHandleChatDemoSkipsWhenAPIKeyPresent(t *testing.T) {
+	beforeKey := os.Getenv("DEEPSEEK_API_KEY")
 	os.Setenv("LUMEN_DEMO", "1")
 	defer os.Unsetenv("LUMEN_DEMO")
 
@@ -36,8 +75,8 @@ func TestHandleChatDemoSkipsWhenAPIKeyPresent(t *testing.T) {
 	if strings.Contains(out, "[Demo mode] You said:") {
 		t.Fatalf("demo echo should not run when api_key is set:\n%s", out)
 	}
-	if !strings.Contains(out, "no providers configured") {
-		t.Fatalf("expected configure error via SSE, got:\n%s", out)
+	if got := os.Getenv("DEEPSEEK_API_KEY"); got != beforeKey {
+		t.Fatalf("request key leaked to environment: %q", got)
 	}
 }
 
@@ -59,5 +98,28 @@ func TestHandleChatDemoEchoWithoutAPIKey(t *testing.T) {
 	out := rec.Body.String()
 	if !strings.Contains(out, "[Demo mode] You said: ping") {
 		t.Fatalf("expected demo echo without api_key:\n%s", out)
+	}
+	if !strings.Contains(out, `"kind":"stream_done"`) || !strings.Contains(out, `"ok":true`) {
+		t.Fatalf("demo terminal frame must report success:\n%s", out)
+	}
+}
+
+func TestHandleChatConfigureFailureReportsCompletionFailure(t *testing.T) {
+	t.Setenv("LUMEN_DEMO", "0")
+
+	ctrl := control.New()
+	s, err := New(Config{Addr: ":0", Ctrl: ctrl})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]any{"prompt": "ping"})
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	s.handleChat(rec, req)
+
+	out := rec.Body.String()
+	if !strings.Contains(out, `"kind":"stream_done"`) || !strings.Contains(out, `"ok":false`) {
+		t.Fatalf("configure failure terminal frame must report failure:\n%s", out)
 	}
 }
