@@ -90,7 +90,7 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 			hasRecentTool := false
 			for i := len(req.Messages) - 1; i >= 0; i-- {
 				m := req.Messages[i]
-				if prompt == "" && m.Role == provider.RoleUser {
+				if prompt == "" && m.Role == provider.RoleUser && !strings.HasPrefix(strings.TrimSpace(m.Content), "⚠ verify failed") {
 					prompt = m.Content
 				}
 				if fallbackPrompt == "" && m.Role == provider.RoleSystem {

@@ -100,10 +100,10 @@ api_key = "TEST_E2E_SUCCESS"
 				t.Fatal(err)
 			}
 			if sum.Total != 6 {
-				t.Fatalf("run %d total=%d want 6", i, sum.Total)
+				t.Fatalf("run %d total=%d want 6\n%s", i, sum.Total, evalOut)
 			}
 			if sum.Passed < 5 {
-				t.Fatalf("run %d passed=%d <5", i, sum.Passed)
+				t.Fatalf("run %d passed=%d <5\n%s", i, sum.Passed, evalOut)
 			}
 			if i == 1 {
 				prev = sum
