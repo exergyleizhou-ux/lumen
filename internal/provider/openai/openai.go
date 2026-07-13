@@ -86,15 +86,22 @@ func (p *Provider) Stream(ctx context.Context, req provider.Request) (<-chan pro
 		go func() {
 			defer close(ch)
 			prompt := ""
+			fallbackPrompt := ""
 			hasRecentTool := false
 			for i := len(req.Messages) - 1; i >= 0; i-- {
 				m := req.Messages[i]
-				if prompt == "" && (m.Role == "user" || m.Role == "system") {
+				if prompt == "" && m.Role == provider.RoleUser {
 					prompt = m.Content
+				}
+				if fallbackPrompt == "" && m.Role == provider.RoleSystem {
+					fallbackPrompt = m.Content
 				}
 				if m.Role == "tool" {
 					hasRecentTool = true
 				}
+			}
+			if prompt == "" {
+				prompt = fallbackPrompt
 			}
 			path, content := chooseTestFix(prompt)
 			if hasRecentTool {

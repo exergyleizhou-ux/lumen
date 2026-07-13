@@ -157,7 +157,7 @@ func sanitizedEnv(p *ProviderConfig) []string {
 		if adapter == "" {
 			adapter = "openai"
 		}
-		out = append(out, "LUMEN_LANGGRAPH_PROVIDER_ONLY=1", "LUMEN_LANGGRAPH_SELECTED_PROVIDER="+adapter, "LUMEN_LANGGRAPH_SELECTED_API_KEY="+p.APIKey, "LUMEN_LANGGRAPH_SELECTED_BASE_URL="+p.BaseURL, "LUMEN_LANGGRAPH_SELECTED_MODEL="+p.Model)
+		out = append(out, "LUMEN_LANGGRAPH_PROVIDER_ONLY=1", "LUMEN_LANGGRAPH_SELECTED_PROVIDER="+adapter, "LUMEN_LANGGRAPH_SELECTED_API_KEY="+p.APIKey, "LUMEN_LANGGRAPH_SELECTED_BASE_URL="+p.BaseURL, "LUMEN_LANGGRAPH_SELECTED_MODEL="+p.Model) // gitleaks:allow -- forwards a runtime value; no credential is embedded here.
 	}
 	return out
 }
