@@ -36,6 +36,7 @@ private. Correlate Run state with durable Postgres rows, not browser state.
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml ps
 docker compose --env-file deploy/.env.production -f deploy/docker-compose.prod.yml logs --since=15m code lab caddy
 LUMEN_ENV_FILE=deploy/.env.production scripts/deploy-lumen-vps.sh smoke
+curl -fsS -H "Host: $LUMEN_CODE_HOST" "http://127.0.0.1:${LUMEN_PROXY_PORT:-8088}/readyz"
 ```
 
 For SSE incidents, confirm proxy `flush_interval -1`, the 24-hour response-header

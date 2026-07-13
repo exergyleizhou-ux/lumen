@@ -10,12 +10,19 @@ RUN go mod download
 COPY . .
 ARG VERSION=dev
 ARG COMMIT=unknown
+ARG SOURCE=https://github.com/example/lumen
+ARG CREATED=unknown
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
     -o /lumen ./cmd/lumen
 
 # Runtime stage
 FROM alpine:3.20
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+ARG SOURCE=https://github.com/example/lumen
+ARG CREATED=unknown
 
 RUN apk add --no-cache ca-certificates git github-cli curl bash
 
@@ -25,7 +32,11 @@ RUN adduser -D -h /home/lumen lumen
 COPY --from=builder /lumen /usr/local/bin/lumen
 
 LABEL org.opencontainers.image.title="Lumen" \
-      org.opencontainers.image.description="Lumen hosted Code and Science Lab runtime"
+      org.opencontainers.image.description="Lumen hosted Code and Science Lab runtime" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="${SOURCE}" \
+      org.opencontainers.image.created="${CREATED}"
 
 WORKDIR /workspace
 USER lumen

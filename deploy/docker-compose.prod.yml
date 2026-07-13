@@ -43,11 +43,23 @@ services:
     <<: *runtime
     command: ["serve", "--addr", "0.0.0.0:8080"]
     expose: ["8080"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
 
   lab:
     <<: *runtime
     command: ["science", "lab", "--addr", "0.0.0.0:4310", "--no-browser"]
     expose: ["4310"]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:4310/api/lab/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 15s
 
   caddy:
     image: caddy:2.8.4-alpine

@@ -12,6 +12,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,6 +91,8 @@ type Server struct {
 	approvalStore   approvalstate.Store
 	artifactStore   artifact.Store
 	evidence        runtimeevidence.Service
+	readinessDB     *sql.DB
+	readinessObject string
 }
 
 type activeRun struct {
@@ -215,6 +218,8 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 	runs := cfg.Runs
+	var readinessDB *sql.DB
+	readinessObject := ""
 	if runs == nil {
 		if raw := os.Getenv("WORKBENCH_DATABASE_URL"); cfg.Hosted && raw != "" {
 			if cfg.ArtifactObjects == nil {
@@ -233,6 +238,8 @@ func New(cfg Config) (*Server, error) {
 				return nil, err
 			}
 			runs = runstate.NewManager(store)
+			readinessDB = store.DB()
+			readinessObject = os.Getenv("WORKBENCH_OBJECT_DIR")
 			if cfg.Usage == nil {
 				cfg.Usage = usage.PostgresStore{DB: store.DB()}
 			}
@@ -276,7 +283,7 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Hosted && cfg.Quota != nil {
 		artifactStore = quota.ArtifactStore{Store: artifactStore, Quota: cfg.Quota}
 	}
-	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore, quota: cfg.Quota, approvalStore: approvalStore, artifactStore: artifactStore}
+	s := &Server{cfg: cfg, mux: http.NewServeMux(), runs: runs, auth: verifier, controllers: newServerControllerPool(controllerLimits{}), hostedProviders: allowed, hostedDefault: hostedDefault, usage: usageStore, quota: cfg.Quota, approvalStore: approvalStore, artifactStore: artifactStore, readinessDB: readinessDB, readinessObject: readinessObject}
 	if ur, ok := usageStore.(runtimeevidence.UsageReader); ok {
 		s.evidence = runtimeevidence.Service{Runs: runs, Approvals: approvalStore, Artifacts: artifactStore, Usage: ur}
 	}
@@ -365,6 +372,8 @@ func (s *Server) ListenAndServe() error {
 // ── Routes ──────────────────────────────────────────────────
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+	s.mux.HandleFunc("/readyz", s.handleReadyz)
 	s.mountStatic()
 	s.routesAPI()
 	s.mux.HandleFunc("/", s.handleIndex)

@@ -35,15 +35,26 @@ record schema version, old/new image digests, operator, timestamp, and ticket.
 
 1. Starting hosted Code or Lab without JWT, database, object directory,
    control-plane or provider secrets fails closed.
-2. Lab `/api/lab/health` proves liveness and `/api/lab/readyz` proves capacity.
-   Code root is the current liveness probe; an authenticated `/v1/status` is the
-   functional readiness probe until the dedicated Code readiness endpoint ships.
+2. Code `/healthz` proves process liveness and `/readyz` checks Postgres, writable
+   object storage, Oasis quota control plane, and configured provider without
+   returning dependency URLs or secrets. Lab uses `/api/lab/health` and
+   `/api/lab/readyz`.
 3. Mint a real short-lived token through Oasis. Through the proxy, run one Code
    edit/verification and one Lab project/artifact flow; reconnect each SSE stream,
    cancel a disposable run, and download its owner-scoped evidence bundle.
 4. Confirm the Oasis quota reservation/debit/completion records, Postgres Run
    rows, object bytes and SHA-256 metadata agree.
 5. Keep the old image and DB snapshot until the observation window closes.
+
+The replayable joint smoke is:
+
+```bash
+WORKBENCH_TOKEN_FILE=/secure/tmp/workbench.jwt \
+LUMEN_CODE_URL=http://127.0.0.1:19080 \
+LUMEN_LAB_URL=http://127.0.0.1:19410 \
+WORKBENCH_PARENT_ORIGIN=https://workbench.example.com \
+scripts/smoke-lumen-hosted.sh
+```
 
 Never publish ports 8080 or 4310. Compose exposes them only on its internal
 network and binds Caddy to host loopback.
