@@ -50,6 +50,7 @@ type Config struct {
 	Addr               string // listen address, e.g. ":8080"
 	Ctrl               *control.Controller
 	Static             string // path to static files (empty = use embedded)
+	LocalConfigPath    string // optional explicit config path; empty uses normal discovery
 	Runs               *runstate.Manager
 	Hosted             bool
 	WorkbenchJWTSecret string

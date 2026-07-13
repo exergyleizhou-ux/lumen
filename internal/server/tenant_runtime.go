@@ -36,6 +36,9 @@ func (s *Server) configureRuntime(rt *requestRuntime, sink event.Sink, cfgPath s
 	if rt.configureTest != nil {
 		rt.configureTest()
 	}
+	if cfgPath == "" && rt.entry == nil && s.cfg.LocalConfigPath != "" {
+		cfgPath = s.cfg.LocalConfigPath
+	}
 	if rt.entry == nil {
 		if rt.provider == nil && cfgPath == "" && rt.ctrl.ProviderConfig() != nil {
 			rt.ctrl.SetSink(sink)

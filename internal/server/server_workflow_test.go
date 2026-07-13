@@ -117,7 +117,10 @@ func TestWorkflowOutcomeMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chdir(wd) })
-		s := withoutDemo(t)
+		s, err := New(Config{Addr: ":0", Ctrl: control.New(), LocalConfigPath: filepath.Join(dir, "missing.toml")})
+		if err != nil {
+			t.Fatal(err)
+		}
 		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task"})
 		if !strings.Contains(out, "no providers configured") {
 			t.Fatalf("configure error missing:\n%s", out)

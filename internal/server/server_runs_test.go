@@ -39,7 +39,7 @@ func TestChatRunLifecycleIncludesRunIDAndSucceeds(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "sk-test")
 
 	runs := runstate.NewManager(nil)
-	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
+	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs, LocalConfigPath: filepath.Join(dir, "missing.toml")})
 	if err != nil {
 		t.Fatal(err)
 	}
