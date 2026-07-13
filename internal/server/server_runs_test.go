@@ -118,6 +118,15 @@ func TestRunCancelAPI(t *testing.T) {
 
 func TestChatConfigureFailureCreatesNoGhostRun(t *testing.T) {
 	t.Setenv("LUMEN_DEMO", "0")
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(wd) })
 	runs := runstate.NewManager(nil)
 	s, err := New(Config{Addr: ":0", Ctrl: control.New(), Runs: runs})
 	if err != nil {

@@ -108,6 +108,15 @@ func TestWorkflowOutcomeMatrix(t *testing.T) {
 	})
 
 	t.Run("configure_fail_sse_no_plan_ready", func(t *testing.T) {
+		dir := t.TempDir()
+		wd, err := os.Getwd()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(wd) })
 		s := withoutDemo(t)
 		out := postWorkflowSSE(t, s, map[string]string{"action": "workflow", "prompt": "task"})
 		if !strings.Contains(out, "no providers configured") {
