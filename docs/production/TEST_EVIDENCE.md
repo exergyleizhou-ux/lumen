@@ -40,3 +40,10 @@ evaluation harness only. A live Qwen or DeepSeek capability baseline was not run
 because it requires an operator-approved provider key, current prices, and paid
 network calls. No fixture metric is represented as real-model performance. See
 `MODEL_EVAL.md` for the exact four-part opt-in and command.
+
+## Release-candidate worktree
+
+`git status --short` is empty at final handoff. Five unrelated user-owned
+`cmd/lumen` changes were preserved verbatim in the local stash named
+`preserve user cmd UI changes before Lumen production RC handoff`; the stash is
+not part of this branch and can be restored later with `git stash pop`.

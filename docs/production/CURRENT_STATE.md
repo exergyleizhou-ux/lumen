@@ -148,7 +148,7 @@ The Go test output was served from the build cache.
   credential, current pricing, and paid network access.
 - No remote push, merge to `main`, public production deploy, production data
   mutation, credential rotation, or paid provider call was performed.
-- Worktree cleanliness has one precise external exception: five pre-existing
-  user-owned modifications under `cmd/lumen` are not part of the feature
-  branch's `main...HEAD` Go changes and were not formatted, staged, or committed
-  during Phase 10.
+- The release-candidate worktree is clean. Five unrelated user-owned
+  `cmd/lumen` modifications were preserved verbatim in the local stash named
+  `preserve user cmd UI changes before Lumen production RC handoff`; they were
+  never formatted, staged into, or committed on this branch.

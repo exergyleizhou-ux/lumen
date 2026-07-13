@@ -20,8 +20,9 @@
 6. **Local mode is intentionally less restrictive.** Desktop SQLite and local
    provider configuration remain supported. They are not a substitute for the
    hosted JWT, Postgres, object store, quota, and platform-provider boundaries.
-7. **A user-owned working-tree exception exists at finalization time.** Five
+7. **Unrelated user changes are preserved outside the release candidate.** Five
    pre-existing modified `cmd/lumen` files are outside this feature branch's
-   `main...HEAD` Go diff and are neither staged nor committed by Phase 10. The
-   release-candidate branch itself is fully committed; a literally clean shared
-   worktree requires the owner to resolve those unrelated files.
+   `main...HEAD` Go diff. They are preserved verbatim in the local stash named
+   `preserve user cmd UI changes before Lumen production RC handoff`, leaving
+   the release-candidate worktree clean. Restore them with `git stash pop` only
+   when returning to that separate UI task.
