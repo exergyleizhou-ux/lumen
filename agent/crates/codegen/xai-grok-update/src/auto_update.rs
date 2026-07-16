@@ -56,6 +56,14 @@ pub struct UpdateStatus {
     pub error: Option<String>,
 }
 
+/// Effective auto-update flag for Lumen.
+///
+/// `None` (unset config) defaults to **false** so first-run does not hit x.ai
+/// install endpoints. Explicit `Some(true)` still enables updates.
+pub fn effective_auto_update(configured: Option<bool>) -> bool {
+    configured.unwrap_or(false)
+}
+
 /// Format and print an [`UpdateStatus`] to stdout.
 pub fn print_update_status(status: &UpdateStatus, json: bool) -> anyhow::Result<()> {
     if json {
@@ -483,13 +491,13 @@ pub async fn run_update_if_available(
         return Ok(false);
     }
 
-    // Resolve effective auto_update: None defaults to true (first-run).
-    let auto_update = current_config.cli.auto_update.unwrap_or(true);
+    // Resolve effective auto_update via shared Lumen default (false when unset).
+    let auto_update = effective_auto_update(current_config.cli.auto_update);
 
     if current_config.cli.auto_update.is_none()
         && let Err(e) = config::update_config(|st| {
             if st.cli.auto_update.is_none() {
-                st.cli.auto_update = Some(true);
+                st.cli.auto_update = Some(false);
             }
         })
         .await
@@ -4648,5 +4656,12 @@ mod tests {
             agent_old.exists(),
             "other executables' leftovers must be untouched"
         );
+    }
+
+    #[test]
+    fn lumen_auto_update_defaults_off_when_unset() {
+        assert!(!effective_auto_update(None));
+        assert!(!effective_auto_update(Some(false)));
+        assert!(effective_auto_update(Some(true)));
     }
 }

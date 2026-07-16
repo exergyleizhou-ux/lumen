@@ -68,3 +68,31 @@ pub fn default_session_summary_model() -> &'static str {
         .as_deref()
         .unwrap_or(&DEFAULTS.default)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lumen_default_model_is_deepseek_chat() {
+        assert_eq!(
+            default_model(),
+            "deepseek-chat",
+            "embedded default_models.json must default to DeepSeek for Lumen"
+        );
+    }
+
+    #[test]
+    fn lumen_default_models_json_lists_deepseek() {
+        let v: serde_json::Value =
+            serde_json::from_str(DEFAULT_MODELS_JSON).expect("default_models.json parses");
+        assert_eq!(v["default"], "deepseek-chat");
+        let models = v["models"].as_array().expect("models array");
+        assert!(
+            models
+                .iter()
+                .any(|m| m["model"] == "deepseek-chat"),
+            "models[] must include deepseek-chat entry"
+        );
+    }
+}

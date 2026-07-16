@@ -1,0 +1,16 @@
+# Lumen example config — DeepSeek first-class wiring (copy to ~/.grok/config.toml
+# or the product config path after home-dir migration).
+# API key: set DEEPSEEK_API_KEY in the environment (preferred) rather than this file.
+
+[models]
+default = "deepseek-chat"
+
+[model.deepseek-chat]
+model = "deepseek-chat"
+name = "DeepSeek Chat"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+# Optional: api_key = "sk-..."  (prefer env DEEPSEEK_API_KEY)
+
+[cli]
+auto_update = false
