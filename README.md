@@ -13,18 +13,20 @@ export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
 export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 export DEEPSEEK_API_KEY='你的key'   # 勿提交到 git
 
-# 构建（首次较久）
-cd agent && cargo build -p xai-grok-pager-bin --release
-./target/release/lumen --version
-./target/release/lumen --help
+# 构建并安装到 ~/.local/bin
+./scripts/install-local.sh
+lumen --version
+lumen --help
 
 # 交互（在项目目录）
 cd /path/to/your/project
-~/code/lumen/agent/target/release/lumen
+lumen
 
 # 单轮 headless
-~/code/lumen/agent/target/release/lumen --single "修 README 里的笔误" --always-approve
+lumen --single "修 README 里的笔误" --always-approve
 ```
+
+自用日记（15 日门禁）：复制 `journal/TEMPLATE-productivity-day.md` → `journal/YYYY-MM-DD.md`。
 
 ## 默认行为
 

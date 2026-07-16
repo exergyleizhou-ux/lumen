@@ -686,13 +686,13 @@ pub struct PagerArgs {
     /// into the terminal's native scrollback (use the terminal's own scroll /
     /// selection); a small pinned region holds the prompt + running turn.
     /// Sticky: records `[ui] screen_mode = "minimal"` in ~/.grok/config.toml
-    /// so future plain `grok` invocations open in minimal mode too.
+    /// so future plain `lumen` invocations open in minimal mode too.
     #[arg(long = "minimal")]
     pub minimal: bool,
     /// Open in the standard fullscreen TUI, overriding a sticky minimal
     /// preference. Sticky counterpart of --minimal: records
     /// `[ui] screen_mode = "fullscreen"` in ~/.grok/config.toml so future
-    /// plain `grok` invocations open fullscreen again. Fullscreen-vs-inline
+    /// plain `lumen` invocations open fullscreen again. Fullscreen-vs-inline
     /// still follows the alt-screen policy (--no-alt-screen, [terminal]
     /// alt_screen, terminal auto-detection).
     #[arg(long = "fullscreen", conflicts_with = "minimal")]
@@ -712,7 +712,7 @@ pub struct PagerArgs {
     /// Run standalone even when leader mode is configured.
     #[arg(long, conflicts_with = "leader", hide = true)]
     pub no_leader: bool,
-    /// Initial prompt for the interactive session, e.g. `grok "fix the bug"` or `grok --worktree=feat "create this feature"`.
+    /// Initial prompt for the interactive session, e.g. `lumen "fix the bug"` or `lumen --worktree=feat "create this feature"`.
     #[arg(
         value_name = "PROMPT",
         conflicts_with_all = &["single",
