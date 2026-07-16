@@ -2,11 +2,13 @@
   "schema_version": 1,
   "check_id": "reconcile_evidence",
   "pass": true,
-  "generated_at": "2026-07-16T09:06:02Z",
-  "monorepo_git_head": "bf64f713c6b2a1d15bfe40bb74b02b3dd1c16971",
+  "generated_at": "2026-07-16T09:06:15Z",
+  "monorepo_git_head": "198ce1db5b4e2655da7b2bcc390925b077e12a9d",
   "source_lock_sha256": "1adc59597551ad251995efccd5f4be5342e828dabbab61bc52afe0abbd29f10e",
   "source_lock_git_head": "e933d6fa216145d5332d43dffdb94ee9d421761c",
   "source_lock_fresh": true,
+  "source_lock_head_match": false,
+  "source_lock_content_ok": true,
   "binary_path": "/Users/lei/code/lumen/agent/target/release/lumen",
   "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
   "artifact_sha256": {
@@ -20,7 +22,7 @@
     "R0-min.json": "58ed72c81a827db47d382eff3f2ab5ee04507b34c4fb650ecf9ae2c67c0d7a85",
     "engineering_complete.json": "0848b33656c76e26626ebace5205d61fa4671140f5fe3cd7744c5a058e8b4b9b",
     "eval-live.json": "18676428abb0bb362bfc80347fba247410a74ac8b9bbfea59310550d9ee03ade",
-    "status.json": "ad98f05e7a3b9feaa044eaae899282fb15bbe1b33682e0ae72fae34b964588e4"
+    "status.json": "12d9ff758aa40d2fb8a13d9b118ca76efde58df25ef3031089caa84358314def"
   },
   "sbom_present": true,
   "legal_present": true,

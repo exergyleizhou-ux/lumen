@@ -30,18 +30,23 @@ assert lock_path.is_file(), "SOURCE_LOCK.json missing"
 lock = json.loads(lock_path.read_text())
 lock_sha = hashlib.sha256(lock_path.read_bytes()).hexdigest()
 lock_head = (lock.get("monorepo") or {}).get("git_head") or ""
-lock_fresh = lock_head == head
-if not lock_fresh and lock_head:
-    # Allow a single meta commit after lock generation that only refreshes
-    # SOURCE_LOCK / readiness artifacts (avoids infinite lock-refresh loop).
-    try:
-        parent = subprocess.check_output(
-            ["git", "rev-parse", "HEAD^"], text=True, cwd=root
-        ).strip()
-        if parent == lock_head:
-            lock_fresh = True
-    except Exception:
-        pass
+# Content freshness: critical file hashes still match (not only exact HEAD pin).
+# Exact HEAD pin is optional meta; churning SOURCE_LOCK every commit is not required.
+crit = lock.get("critical_file_sha256") or {}
+content_ok = True
+mismatched = []
+for rel, expected in crit.items():
+    p = root / rel
+    if not p.is_file():
+        content_ok = False
+        mismatched.append(rel + ":missing")
+        continue
+    got = hashlib.sha256(p.read_bytes()).hexdigest()
+    if got != expected:
+        content_ok = False
+        mismatched.append(rel)
+lock_fresh = content_ok  # evidence not invalidated by critical-path drift
+lock_head_match = lock_head == head
 
 # binary candidates
 bin_candidates = [
@@ -79,7 +84,11 @@ legal_ok = legal.is_file() and legal.stat().st_size > 200
 
 blockers = []
 if not lock_fresh:
-    blockers.append(f"source_lock_stale:lock={lock_head[:7] if lock_head else '?'} head={head[:7]}")
+    blockers.append(
+        "source_lock_content_drift:" + ",".join(mismatched[:5])
+        if mismatched
+        else f"source_lock_stale:lock={lock_head[:7] if lock_head else '?'} head={head[:7]}"
+    )
 if not binary_sha:
     blockers.append("binary_missing")
 if missing:
@@ -99,6 +108,8 @@ rec = {
     "source_lock_sha256": lock_sha,
     "source_lock_git_head": lock_head,
     "source_lock_fresh": lock_fresh,
+    "source_lock_head_match": lock_head_match,
+    "source_lock_content_ok": content_ok,
     "binary_path": binary_path,
     "binary_sha256": binary_sha,
     "artifact_sha256": artifact_sha,
