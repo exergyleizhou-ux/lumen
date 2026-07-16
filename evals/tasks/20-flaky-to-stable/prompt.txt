@@ -1,0 +1,1 @@
+The `Ticker` in `ticker/tick.go` uses `time.Sleep(10ms)` in a loop and the test sometimes fails because of timing. Fix `Ticker` to use `time.Ticker` (the standard library type) instead of `time.Sleep` in a goroutine, so the test is deterministic. Do not modify the tests.

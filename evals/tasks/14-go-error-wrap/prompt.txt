@@ -1,0 +1,1 @@
+Fix `OpenDB` in package `dbutil`: when `sql.Open` returns an error, it should wrap the error with fmt.Errorf("dbutil: %w", err) instead of returning a bare "database error" string. The test checks for unwrapping via errors.Is. Do not modify the tests.
