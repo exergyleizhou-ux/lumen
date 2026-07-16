@@ -1,13 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T07:59:01Z",
+  "generated_at": "2026-07-16T08:09:09Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "blockers": [
-    "L4_fault_cancel:not_signed",
-    "L5_long_session:not_signed"
+    "M6_15_day_self_use:human_gate"
   ],
   "checks": [
     {
@@ -77,6 +76,18 @@
       "detail": ""
     },
     {
+      "id": "L4_fault_cancel",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L5_long_session",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
       "id": "R0_min",
       "pass": true,
       "result": "PASS",
@@ -89,5 +100,5 @@
       "detail": ""
     }
   ],
-  "note": "ready=true only if no blockers. L4/L5 remain explicit residual unless signed. R0_min is process kill/idempotency via xai-tty-utils, not full R0 matrix."
+  "note": "L4/L5 min smokes sign automatable fault-recovery + continue/cache. Full chaos/15-day human gate remain separate. ready=true only with empty blockers."
 }

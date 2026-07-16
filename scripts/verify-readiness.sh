@@ -49,11 +49,15 @@ if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
   run_script L1_tool_calls "$ROOT/scripts/smoke-deepseek-agent.sh"
   run_script L2_min_e2e "$ROOT/scripts/smoke-deepseek-l2.sh"
   run_script L3_multi_tool "$ROOT/scripts/smoke-deepseek-l3.sh"
+  run_script L4_fault_cancel "$ROOT/scripts/smoke-deepseek-l4.sh"
+  run_script L5_long_session "$ROOT/scripts/smoke-deepseek-l5.sh"
 else
   record L0_connect SKIP "no DEEPSEEK_API_KEY"
   record L1_tool_calls SKIP "no DEEPSEEK_API_KEY"
   record L2_min_e2e SKIP "no DEEPSEEK_API_KEY"
   record L3_multi_tool SKIP "no DEEPSEEK_API_KEY"
+  record L4_fault_cancel SKIP "no DEEPSEEK_API_KEY"
+  record L5_long_session SKIP "no DEEPSEEK_API_KEY"
 fi
 
 run_script R0_min "$ROOT/scripts/smoke-r0-min.sh"
@@ -84,17 +88,17 @@ for line in rows:
 can_tool = any(c["id"] == "L1_tool_calls" and c["pass"] for c in checks)
 l0 = any(c["id"] == "L0_connect" and c["pass"] for c in checks)
 
-# Residual FINAL-2.0 levels not fully automated as L4/L5 chaos/long-session
-for missing in ("L4_fault_cancel", "L5_long_session"):
-    if not any(c["id"] == missing and c["pass"] for c in checks):
-        blockers.append(f"{missing}:not_signed")
-
 # R0_full_suite superseded by R0_min when R0_min passes
 if any(c["id"] == "R0_min" and c["pass"] for c in checks):
     blockers = [b for b in blockers if not b.startswith("R0_full_suite")]
 else:
     if not any(b.startswith("R0") for b in blockers):
         blockers.append("R0_min:not_signed")
+
+# Human / non-automatable residual (never silent)
+for missing in ("M6_15_day_self_use",):
+    if not any(c["id"] == missing and c["pass"] for c in checks):
+        blockers.append(f"{missing}:human_gate")
 
 seen = set()
 blockers = [b for b in blockers if not (b in seen or seen.add(b))]
@@ -108,7 +112,7 @@ status = {
     "l0_pass": l0,
     "blockers": blockers,
     "checks": checks,
-    "note": "ready=true only if no blockers. L4/L5 remain explicit residual unless signed. R0_min is process kill/idempotency via xai-tty-utils, not full R0 matrix.",
+    "note": "L4/L5 min smokes sign automatable fault-recovery + continue/cache. Full chaos/15-day human gate remain separate. ready=true only with empty blockers.",
 }
 Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
 print()

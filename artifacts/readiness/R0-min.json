@@ -12,6 +12,6 @@
     "R6 kill -9 whole agent process recovery e2e",
     "R7 full UI reconcile"
   ],
-  "generated_at": "2026-07-16T07:59:01Z",
+  "generated_at": "2026-07-16T08:09:09Z",
   "note": "R0_min signs cancel/idempotent process teardown via real xai-tty-utils; not full R0 matrix"
 }
