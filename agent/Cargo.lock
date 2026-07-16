@@ -5940,6 +5940,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumen-verify"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "which",
+]
+
+[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
