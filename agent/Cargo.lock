@@ -5944,11 +5944,13 @@ name = "lumen-verify"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dunce",
  "nix 0.30.1",
  "regex",
  "serde",
  "serde_json",
  "tempfile",
+ "toml",
  "wait-timeout",
  "which",
 ]

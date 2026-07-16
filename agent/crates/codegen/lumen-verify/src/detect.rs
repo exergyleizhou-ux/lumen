@@ -19,10 +19,10 @@ pub fn detect_languages(changed_files: &[impl AsRef<Path>]) -> Vec<String> {
     let mut langs = BTreeSet::new();
     for f in changed_files {
         let p = f.as_ref();
-        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-            if let Some(lang) = classify(ext) {
-                langs.insert(lang.to_string());
-            }
+        if let Some(ext) = p.extension().and_then(|e| e.to_str())
+            && let Some(lang) = classify(ext)
+        {
+            langs.insert(lang.to_string());
         }
     }
     langs.into_iter().collect()

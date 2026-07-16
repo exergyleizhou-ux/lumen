@@ -1592,17 +1592,34 @@ impl FinalizedToolset {
     ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
         let output = (output_converter)(value)
             .map_err(|e| xai_tool_runtime::ToolError::custom("output_decoding", e.to_string()))?;
-        let workspace_root = if let Some(cwd) = cwd_override {
-            Some(cwd)
-        } else {
-            self.resources
-                .lock()
-                .await
-                .get::<Cwd>()
-                .map(|cwd| cwd.0.clone())
+        let (workspace_root, verify_session_id, verify_state) = {
+            let mut resources = self.resources.lock().await;
+            let workspace_root =
+                cwd_override.or_else(|| resources.get::<Cwd>().map(|cwd| cwd.0.clone()));
+            let verify_session_id = resources
+                .get::<crate::types::resources::OwnerSessionId>()
+                .map(|owner| format!("owner:{}", owner.0))
+                .or_else(|| {
+                    resources
+                        .get::<crate::types::resources::SessionFolder>()
+                        .map(|folder| format!("folder:{}", folder.0.display()))
+                })
+                .unwrap_or_else(|| "session:anonymous".to_string());
+            let verify_state = resources
+                .get_or_default::<crate::verify_after_edit::VerifyAfterEditState>()
+                .clone();
+            (workspace_root, verify_session_id, verify_state)
         };
         let verify_feedback = match workspace_root {
-            Some(root) => crate::verify_after_edit::feedback_for_output(root, &output).await,
+            Some(root) => {
+                crate::verify_after_edit::feedback_for_output(
+                    root,
+                    verify_session_id,
+                    verify_state,
+                    &output,
+                )
+                .await
+            }
             None => None,
         };
         let reminders_enabled;
@@ -4164,9 +4181,16 @@ mod tests {
             ],
             behavior_preset: None,
         };
-        crate::bridge::ToolBridge::finalize_builder(builder, config, test_session_context(tmp))
-            .await
-            .expect("finalize")
+        let bridge =
+            crate::bridge::ToolBridge::finalize_builder(builder, config, test_session_context(tmp))
+                .await
+                .expect("finalize");
+        bridge
+            .update_resource(crate::verify_after_edit::VerifyAfterEditState::with_config(
+                lumen_verify::config::Config::default(),
+            ))
+            .await;
+        bridge
     }
     async fn opencode_write_bridge(tmp: &TempDir) -> crate::bridge::ToolBridge {
         let builder = ToolRegistryBuilder::new();
@@ -4174,9 +4198,16 @@ mod tests {
             tools: vec![ToolConfig::for_tool::<opencode::OpenCodeWriteTool>()],
             behavior_preset: None,
         };
-        crate::bridge::ToolBridge::finalize_builder(builder, config, test_session_context(tmp))
-            .await
-            .expect("finalize")
+        let bridge =
+            crate::bridge::ToolBridge::finalize_builder(builder, config, test_session_context(tmp))
+                .await
+                .expect("finalize");
+        bridge
+            .update_resource(crate::verify_after_edit::VerifyAfterEditState::with_config(
+                lumen_verify::config::Config::default(),
+            ))
+            .await;
+        bridge
     }
     /// list_dir through the hub dispatch path returns valid output.
     #[tokio::test]

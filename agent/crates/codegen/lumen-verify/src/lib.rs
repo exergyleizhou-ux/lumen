@@ -116,11 +116,9 @@ pub fn run_after_edit(
         return Ok(None);
     }
 
-    let workspace_root = workspace_root
-        .canonicalize()
+    let workspace_root = dunce::canonicalize(workspace_root)
         .with_context(|| format!("canonicalize workspace {}", workspace_root.display()))?;
-    let changed_file = changed_file
-        .canonicalize()
+    let changed_file = dunce::canonicalize(changed_file)
         .with_context(|| format!("canonicalize changed file {}", changed_file.display()))?;
     if !changed_file.starts_with(&workspace_root) {
         bail!(
