@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Generate SPDX 2.3 SBOM for Lumen monorepo (agent Cargo packages + root notices).
-# No third-party SBOM CLI required — uses cargo metadata + filesystem hashes.
+# Generate SPDX 2.3 SBOM for the Rust agent, standalone Go modules, and notices.
+# No third-party SBOM CLI required — uses cargo metadata, go list, and hashes.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 OUT="$ROOT/SBOM.spdx.json"
 META="$(mktemp)"
-trap 'rm -f "$META"' EXIT
+GO_META="$(mktemp)"
+trap 'rm -f "$META" "$GO_META"' EXIT
 cd "$ROOT/agent"
 
 echo "=== generate-sbom ==="
@@ -14,8 +15,11 @@ echo "=== generate-sbom ==="
 if ! cargo metadata --format-version 1 >"$META" 2>/dev/null; then
   cargo metadata --format-version 1 --no-deps >"$META"
 fi
+if [[ -f "$ROOT/packs/science/standalone/go.mod" ]]; then
+  (cd "$ROOT/packs/science/standalone" && go list -m -json all >"$GO_META")
+fi
 
-python3 - "$ROOT" "$OUT" "$META" <<'PY'
+python3 - "$ROOT" "$OUT" "$META" "$GO_META" <<'PY'
 import hashlib, json, sys, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +27,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 out = Path(sys.argv[2])
 meta = json.loads(Path(sys.argv[3]).read_text())
+go_meta_text = Path(sys.argv[4]).read_text()
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
 
@@ -86,8 +91,54 @@ for p in meta.get("packages", []):
         "relatedSpdxElement": pid,
     })
 
+# `go list -m -json all` emits a stream of JSON objects rather than one array.
+decoder = json.JSONDecoder()
+offset = 0
+go_modules = []
+while offset < len(go_meta_text):
+    while offset < len(go_meta_text) and go_meta_text[offset].isspace():
+        offset += 1
+    if offset >= len(go_meta_text):
+        break
+    module, offset = decoder.raw_decode(go_meta_text, offset)
+    go_modules.append(module)
+
+for module in go_modules:
+    path = module.get("Path") or "unknown-go-module"
+    version = module.get("Version") or (head[:7] if module.get("Main") else "0")
+    key = f"go:{path}@{version}"
+    if key in seen:
+        continue
+    seen.add(key)
+    pid = spdx_id(f"go-{path}-{version}")
+    package = {
+        "SPDXID": pid,
+        "name": path,
+        "versionInfo": version,
+        "downloadLocation": "NOASSERTION",
+        "filesAnalyzed": False,
+        "licenseConcluded": "Apache-2.0" if module.get("Main") else "NOASSERTION",
+        "licenseDeclared": "Apache-2.0" if module.get("Main") else "NOASSERTION",
+        "copyrightText": "See NOTICE and LEGAL.md" if module.get("Main") else "NOASSERTION",
+        "supplier": "Organization: Lumen authors" if module.get("Main") else "NOASSERTION",
+        "externalRefs": [{
+            "referenceCategory": "PACKAGE-MANAGER",
+            "referenceType": "purl",
+            "referenceLocator": f"pkg:golang/{path}@{version}",
+        }],
+    }
+    packages.append(package)
+    relationships.append({
+        "spdxElementId": root_pkg_id,
+        "relationshipType": "CONTAINS" if module.get("Main") else "DEPENDS_ON",
+        "relatedSpdxElement": pid,
+    })
+
 file_hashes = {}
-for rel in ["NOTICE", "LEGAL.md", "agent/LICENSE", "agent/THIRD-PARTY-NOTICES", "SOURCE_LOCK.json"]:
+for rel in [
+    "NOTICE", "LEGAL.md", "agent/LICENSE", "agent/THIRD-PARTY-NOTICES",
+    "SOURCE_LOCK.json", "packs/science/standalone/go.mod",
+]:
     p = root / rel
     if p.is_file():
         file_hashes[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
@@ -113,7 +164,8 @@ doc = {
             "monorepo_git_head": head,
             "package_count": len(packages),
             "file_sha256": file_hashes,
-            "generator": "cargo metadata + root legal files",
+            "go_module_count": len(go_modules),
+            "generator": "cargo metadata + go list -m + root legal files",
         }),
     }],
 }

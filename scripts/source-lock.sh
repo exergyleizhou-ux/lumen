@@ -18,6 +18,11 @@ paths = [
     "agent/crates/codegen/lumen-discipline/src/lib.rs",
     "scripts/eval-coding.sh",
     "scripts/smoke-deepseek-agent.sh",
+    "scripts/verify-readiness.sh",
+    "scripts/install-local.sh",
+    "scripts/probe-local.sh",
+    "scripts/doctor-verticals.sh",
+    "scripts/generate-sbom.sh",
     "docs/masterplan/09-FINAL-2.0-执行路径.md",
     "docs/masterplan/00A-来源锁与运行合同.md",
 ]

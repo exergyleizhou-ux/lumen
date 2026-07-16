@@ -188,9 +188,19 @@ for i in auto_required:
 
 eng_ok = len(auto_blockers) == 0
 
-# ready requires no FAIL blockers at all (including M6); SKIP eval_live OK for ready? No — publish wants live.
-# Keep ready = no FAIL blockers only (SKIP allowed). User can set EVAL_LIVE.
-ready = len(blockers) == 0
+# Publish readiness is stricter than engineering_complete: every automated
+# requirement, the live eval, and the human M6 gate must be PASS in this
+# aggregate. A SKIP may explain an unconfigured developer machine, but it must
+# never become READY merely because it is not a FAIL.
+publish_blockers = list(blockers)
+for required_id in sorted(auto_required | {"eval_live", "M6_15_day_self_use"}):
+    if check_ok(required_id):
+        continue
+    if any(b.startswith(required_id + ":") for b in publish_blockers):
+        continue
+    state = next((c["result"] for c in checks if c["id"] == required_id), "MISSING")
+    publish_blockers.append(f"{required_id}:{state}")
+ready = len(publish_blockers) == 0
 
 # hashes
 root = Path(sys.argv[2]).resolve().parent.parent  # artifacts/readiness -> repo? 
@@ -199,6 +209,8 @@ art_dir = Path(sys.argv[2]).resolve().parent
 repo = art_dir.parent.parent if art_dir.name == "readiness" else art_dir.parent
 lock_p = repo / "SOURCE_LOCK.json"
 lock_sha = hashlib.sha256(lock_p.read_bytes()).hexdigest() if lock_p.is_file() else None
+reconcile_p = art_dir / "reconcile.json"
+reconcile = json.loads(reconcile_p.read_text()) if reconcile_p.is_file() else {}
 bin_sha = None
 for cand in [repo / "agent" / "target" / "release" / "lumen", Path.home() / ".local" / "bin" / "lumen"]:
     if cand.is_file():
@@ -215,9 +227,11 @@ status = {
     "engineering_complete": eng_ok,
     "source_lock_sha256": lock_sha,
     "binary_sha256": bin_sha,
-    "blockers": blockers,
+    "blockers": publish_blockers,
     "checks": checks,
-    "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
+    "reconcile_pass": bool(reconcile.get("pass")),
+    "reconciled_at": reconcile.get("generated_at"),
+    "note": "ready=true only when every publish gate is PASS, including live eval and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass.",
 }
 Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
 
@@ -236,7 +250,7 @@ Path(sys.argv[3]).write_text(json.dumps(eng, indent=2) + "\n")
 
 print()
 print(f"state={status['state']} ready={status['ready']} can_tool_call={status['can_tool_call']} engineering_complete={eng_ok}")
-print("blockers:", blockers if blockers else "[]")
+print("blockers:", publish_blockers if publish_blockers else "[]")
 print("auto_blockers:", auto_blockers if auto_blockers else "[]")
 print("wrote", sys.argv[2])
 print("wrote", sys.argv[3], "pass=", eng_ok)
