@@ -1,23 +1,25 @@
 package dbutil
 
 import (
-	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 )
 
 func TestOpenDBWrapsError(t *testing.T) {
 	_, err := OpenDB("invalid-dsn")
 	if err == nil {
-		t.Skip("sql.Open accepted DSN")
+		t.Fatal("expected OpenDB to return an error for invalid open")
 	}
-	// Should be able to unwrap to the original sql error
-	var sqlErr *sql.DBStats // just to check errors.Is works
-	_ = sqlErr
-	if !errors.Is(err, sql.ErrConnDone) {
-		// Accept any wrapped error — just check it's not a bare string
-	}
+	// Bare "database error" is the buggy implementation.
 	if err.Error() == "database error" {
-		t.Error("error should wrap the original, not be bare string")
+		t.Fatal(`error should wrap the original (fmt.Errorf("dbutil: %w", err)), not be bare "database error"`)
+	}
+	if !strings.HasPrefix(err.Error(), "dbutil:") {
+		t.Fatalf("wrapped error should start with %q, got %q", "dbutil:", err.Error())
+	}
+	// Must be unwrappable (not a bare string error).
+	if errors.Unwrap(err) == nil {
+		t.Fatal("error must wrap an underlying error via %w")
 	}
 }

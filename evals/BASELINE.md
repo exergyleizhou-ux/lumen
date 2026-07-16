@@ -33,7 +33,8 @@
 
 | Model | Date | Pass | Total | Notes |
 |-------|------|------|-------|-------|
-| — | — | — | 20 | No live agent run yet (harness-only verification) |
+| — | 2026-07-16 | 0/20 (harness) | 20 | Harness-only: all 20 workspaces intentionally broken (no live agent) |
+| harness | 2026-07-16 | n/a | 20 | `eval-coding.sh` macOS-safe; FAIL if any task unexpectedly PASSes |
 
 ## Harness Verification
 

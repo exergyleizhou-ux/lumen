@@ -11,14 +11,12 @@ func TestTickerFires(t *testing.T) {
 
 	count := 0
 	timeout := time.After(200 * time.Millisecond)
-loop:
 	for count < 3 {
 		select {
 		case <-tk.C:
 			count++
 		case <-timeout:
-			t.Fatalf("only got %d ticks before timeout", count)
-			break loop
+			t.Fatalf("only got %d ticks before timeout (Ticker must actually fire)", count)
 		}
 	}
 	if count < 3 {
