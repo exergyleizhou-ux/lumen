@@ -10,8 +10,10 @@ cd "$ROOT"
 
 echo "=== reconcile-evidence ==="
 
-# Refresh SOURCE_LOCK to current HEAD
-"$ROOT/scripts/source-lock.sh"
+# Optionally refresh SOURCE_LOCK (default: use existing to avoid lock↔commit churn).
+if [[ "${REFRESH_SOURCE_LOCK:-0}" == "1" ]] || [[ ! -f "$ROOT/SOURCE_LOCK.json" ]]; then
+  "$ROOT/scripts/source-lock.sh"
+fi
 
 python3 - "$ROOT" "$ART" <<'PY'
 import hashlib, json, subprocess, sys

@@ -2,8 +2,8 @@
   "schema_version": 1,
   "check_id": "reconcile_evidence",
   "pass": true,
-  "generated_at": "2026-07-16T09:05:46Z",
-  "monorepo_git_head": "e933d6fa216145d5332d43dffdb94ee9d421761c",
+  "generated_at": "2026-07-16T09:06:02Z",
+  "monorepo_git_head": "bf64f713c6b2a1d15bfe40bb74b02b3dd1c16971",
   "source_lock_sha256": "1adc59597551ad251995efccd5f4be5342e828dabbab61bc52afe0abbd29f10e",
   "source_lock_git_head": "e933d6fa216145d5332d43dffdb94ee9d421761c",
   "source_lock_fresh": true,
@@ -18,9 +18,9 @@
     "M6-productivity.json": "6f6a4b145d21b8b83d03c5f5ecfb36c1d7e853f4e730a52c2135799371dff27c",
     "R0-full.json": "387eacc3838f9c7e13bd37bd2c3e47cec056f3938e5540f4e3c8af22d0437653",
     "R0-min.json": "58ed72c81a827db47d382eff3f2ab5ee04507b34c4fb650ecf9ae2c67c0d7a85",
-    "engineering_complete.json": "6087d25a1bbef5d597ec876fe7d5506da8614a2923444cb85f8dce827a099539",
+    "engineering_complete.json": "0848b33656c76e26626ebace5205d61fa4671140f5fe3cd7744c5a058e8b4b9b",
     "eval-live.json": "18676428abb0bb362bfc80347fba247410a74ac8b9bbfea59310550d9ee03ade",
-    "status.json": "427518aee3e27a897a0b405c0d9ba069a64da609b8a6e757e82645cc28d4436f"
+    "status.json": "ad98f05e7a3b9feaa044eaae899282fb15bbe1b33682e0ae72fae34b964588e4"
   },
   "sbom_present": true,
   "legal_present": true,

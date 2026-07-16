@@ -141,5 +141,5 @@
   ],
   "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
   "reconcile_pass": true,
-  "reconciled_at": "2026-07-16T09:05:46Z"
+  "reconciled_at": "2026-07-16T09:06:02Z"
 }
