@@ -1,42 +1,40 @@
 # Lumen Masterplan（最终极致方案）
 
-> **唯一开工文档集。** 不计成本、允许回炉、只做真生产力。  
-> 桌面 Word 汇总版：`~/Desktop/Lumen Masterplan.docx`
+> **方案权威（桌面）：** `Lumen Masterplan FINAL-2.0 - 生产级执行方案.docx`  
+> **内容基线：** FINAL-1.1（`Lumen Masterplan.docx`）；**Blueprint 不作依据**  
+> **仓库 SSOT：** 本目录 + `policy/` + 根 `SOURCE_LOCK.json`  
+> **怎么走：** [09-FINAL-2.0-执行路径.md](./09-FINAL-2.0-执行路径.md) — **保留已完成 M0–M4，按 2.0 补缺口**
 
 ## 阅读顺序
 
 | # | 文件 | 内容 |
 |---|------|------|
 | 0 | [00-终极决议.md](./00-终极决议.md) | 战略写死、产品定义、禁止项 |
-| 1 | [01-注入地图-Grok真实路径.md](./01-注入地图-Grok真实路径.md) | **精确到 crate 的落点**（非 claw 路径） |
-| 2 | [02-安全规格-Lumen基因.md](./02-安全规格-Lumen基因.md) | 5+1 / 零宽 / writepath / smoke |
-| 3 | [03-阶段路线图-16周.md](./03-阶段路线图-16周.md) | M0–M6 周计划与门禁 |
+| 0A | [00A-来源锁与运行合同.md](./00A-来源锁与运行合同.md) | 源锁 · readiness · run 合同 |
+| 1 | [01-注入地图-Grok真实路径.md](./01-注入地图-Grok真实路径.md) | 精确到 crate 的落点 |
+| 2 | [02-安全规格-Lumen基因.md](./02-安全规格-Lumen基因.md) | 5+1 / 零宽 / writepath |
+| 3 | [03-阶段路线图-16周.md](./03-阶段路线图-16周.md) | M0–M6 周计划 |
 | 4 | [04-自修与循环-设计.md](./04-自修与循环-设计.md) | Storm / verify / delivery / goal |
-| 5 | [05-Day0开战.md](./05-Day0开战.md) | **今天复制执行的命令** |
-| 6 | [06-验收与门禁.md](./06-验收与门禁.md) | UX / DoD / 玩具判定 |
-| 7 | [07-资产清单与取舍.md](./07-资产清单与取舍.md) | 四源怎么用、怎么弃 |
-| 8 | [policy/CC_PARITY.md](./policy/CC_PARITY.md) | **前 10 条已填**的行为对照模板 |
-| 9 | [policy/EVAL_BASELINE.md](./policy/EVAL_BASELINE.md) | **eval≥20 任务来源写死** |
+| 5 | [05-Day0开战.md](./05-Day0开战.md) | Day0（完成后勿整仓重导） |
+| 6 | [06-验收与门禁.md](./06-验收与门禁.md) | UX / DoD |
+| 7 | [07-资产清单与取舍.md](./07-资产清单与取舍.md) | 四源取舍 |
+| 8 | [08-M2-循环纪律.md](./08-M2-循环纪律.md) | M2 对照 |
+| 9 | [09-FINAL-2.0-执行路径.md](./09-FINAL-2.0-执行路径.md) | **当前执行路径** |
 
-## 一句话架构
+## 常用门禁
 
+```bash
+./scripts/verify-readiness.sh          # 汇总（诚实 blockers）
+./scripts/smoke-deepseek.sh            # L0
+./scripts/smoke-deepseek-agent.sh      # L1 tool_calls（需有效 DEEPSEEK_API_KEY）
+./scripts/source-lock.sh               # 刷新 SOURCE_LOCK.json
 ```
-lumen (用户只看见一个产品)
-├── agent/   = Grok Build fork     → 体验身体
-├── policy/  = 安全+Reasonix+Claw  → 纪律与验收
-└── packs/   = Lumen 垂直 Go       → 不对称优势
-```
 
-## 立刻开始
+## 与旧文档
 
-打开 **05-Day0开战.md**，从第 1 节执行。  
-未过 M0 门禁前：不做垂直重写、不全局 rename crate、不换 claw 底盘。
-
-## 与旧文档关系
-
-| 旧文档 | 状态 |
-|--------|------|
-| 详细1 | 安全细节已吸收 → 02/04 |
-| Lumen Blueprint | 骨架/门禁已吸收 → 00/03/06 |
-| 详细详细123 | 融合决议已吸收 → 00/03 |
-| 本 Masterplan | **现行唯一主方案** |
+| 文档 | 状态 |
+|------|------|
+| FINAL-2.0 Word | **现行方案权威** |
+| FINAL-1.1 Word | 内容基线 |
+| Blueprint | 历史骨架，不作依据 |
+| 本目录 | 执行与代码同步的 SSOT |

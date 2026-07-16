@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-16T07:52:07Z",
+  "ready": false,
+  "state": "BLOCKED",
+  "can_tool_call": true,
+  "blockers": [
+    "L2_min_e2e:not_signed",
+    "L3_multi_tool:not_signed",
+    "L4_fault_cancel:not_signed",
+    "L5_long_session:not_signed",
+    "R0_full_suite:not_signed"
+  ],
+  "checks": [
+    {
+      "id": "defaults",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "security",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "m2",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "parity",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_harness",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verify_cli",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verticals",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L0_connect",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L1_tool_calls",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "R_struct_session",
+      "pass": true,
+      "result": "PASS",
+      "detail": "structural only; full R0 pending S2"
+    },
+    {
+      "id": "source_lock",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    }
+  ],
+  "note": "can_tool_call=L1 only. ready=true requires L0-L5 + R0 (FINAL-2.0). Re-run verify-readiness.sh after S2-S5."
+}

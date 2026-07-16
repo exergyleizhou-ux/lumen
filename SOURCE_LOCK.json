@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-16T07:49:56Z",
+  "monorepo": {
+    "git_head": "46f940a2da54b9ad5f7b0740c3c392c1282f4ed0",
+    "git_short": "46f940a"
+  },
+  "upstream_pin": {
+    "doc": "agent/UPSTREAM.md",
+    "source": "xai-org/grok-build (local Desktop pin)",
+    "policy": "PINNED; security-only cherry-picks"
+  },
+  "masterplan_authority": {
+    "desktop": "Lumen Masterplan FINAL-2.0 - \u751f\u4ea7\u7ea7\u6267\u884c\u65b9\u6848.docx",
+    "baseline": "Lumen Masterplan.docx FINAL-1.1",
+    "repo": "docs/masterplan/"
+  },
+  "critical_file_sha256": {
+    "agent/crates/codegen/xai-grok-models/default_models.json": "356c134963e1def8a03db9a00cc2397e30674ac3c538ac48cef052323bd54a1e",
+    "agent/crates/codegen/lumen-guard/src/lib.rs": "bff1ddabcfd576565002f6413b82fa3d04cd23e632af7a82ad67320fe943eaee",
+    "agent/crates/codegen/lumen-discipline/src/lib.rs": "17ea5168d58364f66817402eedbac164d24a8b78fd661d8bc7350040dd4aad4a",
+    "scripts/eval-coding.sh": "60780441fa7297713eab67b88cec58cebbe72137070151f8eaffe259160b1ae2",
+    "scripts/smoke-deepseek-agent.sh": "556a704b68559f42bed650ceb8a6dd4d3c92f68571d314900a3f3c2cf6829991",
+    "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "a3f04c9ae685e52661d0076aba8d8763351bb8ae10e36eb07d44b263a1874e9d",
+    "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
+  },
+  "aggregate_critical_sha256": "1e4a3863af0093e522a76d8f06c0f4b2aeb3506e8c1c4b2cb34d62ba6bcbe0eb"
+}
