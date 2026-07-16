@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T09:04:56Z",
+  "generated_at": "2026-07-16T12:23:40Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": true,
-  "source_lock_sha256": "1adc59597551ad251995efccd5f4be5342e828dabbab61bc52afe0abbd29f10e",
-  "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
+  "source_lock_sha256": "d4f3192f5d68ec750a0995ced389117faa2e144fb8e1354c91271be3ed8af97b",
+  "binary_sha256": "05d1f53dd3e915be2d60f48d83e9fe914be4214000d41ef660115bb355a22501",
   "blockers": [
     "M6_15_day_self_use:human_gate count_lt_15"
   ],
@@ -139,7 +139,7 @@
       "detail": "human_gate count_lt_15"
     }
   ],
-  "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
   "reconcile_pass": true,
-  "reconciled_at": "2026-07-16T09:06:15Z"
+  "reconciled_at": "2026-07-16T12:23:39Z",
+  "note": "ready=true only when every publish gate is PASS, including live eval and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

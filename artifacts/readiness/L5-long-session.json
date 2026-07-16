@@ -7,18 +7,18 @@
     0
   ],
   "session_file_ok": true,
-  "marker": "L5_SESSION_1784192674",
+  "marker": "L5_SESSION_1784204499",
   "cache_read_tokens_samples": [
-    9216,
-    9216,
-    9216,
-    9216,
-    9216,
-    9216,
-    9216,
-    9216,
-    37248,
-    9216
+    9344,
+    9344,
+    9344,
+    9344,
+    9344,
+    9344,
+    9344,
+    9344,
+    37504,
+    9344
   ],
   "cache_visible": true,
   "turn2_tools": [
@@ -26,7 +26,7 @@
     "run_terminal_command"
   ],
   "scope": "minimal multi-turn + continue + cache field; not full hour-long chaos",
-  "generated_at": "2026-07-16T09:04:46Z",
-  "out1_snippet": "L5_SESSION_1784192674\n",
-  "out2_snippet": "L5_SESSION_1784192674\nL5_RESUMED\n"
+  "generated_at": "2026-07-16T12:22:00Z",
+  "out1_snippet": "\u001b[2m2026-07-16T12:21:39.875651Z\u001b[0m \u001b[33m WARN\u001b[0m Failed to fetch models: Auth(\"No auth credentials for cli-chat-proxy\")\n\u001b[2m2026-07-16T12:21:39.875713Z\u001b[0m \u001b[33m WARN\u001b[0m model refresh failed, leaving existing models unchanged\n\u001b[2m2026-07-16T12:21:40.297072Z\u001b[0m \u001b[33m WARN\u001b[0m skill name does not ",
+  "out2_snippet": "\u001b[2m2026-07-16T12:21:50.435285Z\u001b[0m \u001b[33m WARN\u001b[0m Failed to fetch models: Auth(\"No auth credentials for cli-chat-proxy\")\n\u001b[2m2026-07-16T12:21:50.435327Z\u001b[0m \u001b[33m WARN\u001b[0m model refresh failed, leaving existing models unchanged\n\u001b[2m2026-07-16T12:21:50.634077Z\u001b[0m \u001b[33m WARN\u001b[0m extract_initial_toke"
 }

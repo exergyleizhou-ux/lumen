@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T09:05:46Z",
+  "generated_at": "2026-07-16T12:20:08Z",
   "monorepo": {
-    "git_head": "e933d6fa216145d5332d43dffdb94ee9d421761c",
-    "git_short": "e933d6f"
+    "git_head": "b16ee44650fa914784f3f221fd2812c132cab51e",
+    "git_short": "b16ee44"
   },
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
@@ -16,13 +16,18 @@
     "repo": "docs/masterplan/"
   },
   "critical_file_sha256": {
-    "agent/crates/codegen/xai-grok-models/default_models.json": "356c134963e1def8a03db9a00cc2397e30674ac3c538ac48cef052323bd54a1e",
+    "agent/crates/codegen/xai-grok-models/default_models.json": "bf6f0d66f0f2da085090d66917b830e39d99279857e9bb02c070e5fc13201a93",
     "agent/crates/codegen/lumen-guard/src/lib.rs": "bff1ddabcfd576565002f6413b82fa3d04cd23e632af7a82ad67320fe943eaee",
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "17ea5168d58364f66817402eedbac164d24a8b78fd661d8bc7350040dd4aad4a",
     "scripts/eval-coding.sh": "60780441fa7297713eab67b88cec58cebbe72137070151f8eaffe259160b1ae2",
     "scripts/smoke-deepseek-agent.sh": "556a704b68559f42bed650ceb8a6dd4d3c92f68571d314900a3f3c2cf6829991",
+    "scripts/verify-readiness.sh": "0cab4529f13432b571d533bff3953d26f17ebdb602523e7b06a7c6c024169879",
+    "scripts/install-local.sh": "047a1dbe15105ea900baadd51ab49e9ad2b04de8b5abe2994ea2bace366cb67c",
+    "scripts/probe-local.sh": "91e5f27e53a5f4d29768afc9fd1ffca74f390b28af5dcc20110fd02c41cc5876",
+    "scripts/doctor-verticals.sh": "8455b4f9dc5fd50a40c336009f6271f1e467a0a0873161f16080f349e2712d79",
+    "scripts/generate-sbom.sh": "4950fdcea1c1d790edc598bd9c798e9a43cba4060ead369a7ace96047445aeb0",
     "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
   },
-  "aggregate_critical_sha256": "d957ae4eca75b1c4cbf8a16bf0d159881655425e922a243fafb36a3796bc5024"
+  "aggregate_critical_sha256": "a6b010a3b91ee74f078b67fa3af31adb095a8c42f6f2f2b85e08a459f60a9b3e"
 }
