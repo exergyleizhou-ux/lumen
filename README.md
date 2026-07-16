@@ -1,47 +1,66 @@
 # Lumen
 
-Terminal coding agent monorepo: **Grok Build** fork as `agent/`, plus Masterplan docs and packs.
+终端 coding agent：**Grok Build 体验身体** + **DeepSeek 默认** + Lumen 安全/纪律/自修。
 
-## Build requirements
+- 方案：`docs/masterplan/`（权威：桌面 FINAL-2.0）
+- 运行时：`agent/`（Grok pin，~135 万行 Rust）
+- 二进制：`lumen`（UI/交互仍是 Grok TUI，产品名 Lumen）
 
-```bash
-# Required for proto codegen crates
-export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
-# Install once if missing:
-#   brew install protobuf
-```
-
-## Build release `lumen`
+## 快速开始
 
 ```bash
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:/opt/homebrew/bin:$PATH"
 export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
-cd agent
-cargo build -p xai-grok-pager-bin --release
+export DEEPSEEK_API_KEY='你的key'   # 勿提交到 git
+
+# 构建（首次较久）
+cd agent && cargo build -p xai-grok-pager-bin --release
 ./target/release/lumen --version
 ./target/release/lumen --help
+
+# 交互（在项目目录）
+cd /path/to/your/project
+~/code/lumen/agent/target/release/lumen
+
+# 单轮 headless
+~/code/lumen/agent/target/release/lumen --single "修 README 里的笔误" --always-approve
 ```
 
-## Defaults (Lumen product)
+## 默认行为
 
-- Default model: **deepseek-chat** (`agent/crates/codegen/xai-grok-models/default_models.json`)
-- Example endpoint wiring: `config/lumen.example.toml` (`base_url = https://api.deepseek.com/v1`)
-- Mixpanel telemetry: **off** by default
-- Auto-update to x.ai: **off** by default
+| 项 | 值 |
+|----|-----|
+| 默认模型 | `deepseek-chat`（BYOK → `api.deepseek.com`） |
+| 遥测 Mixpanel | 默认关 |
+| auto_update | 默认关 |
+| 安全 | hard-deny（YOLO 也拦） |
 
-## Scripts
+配置示例：`config/lumen.example.toml`（可拷到 `GROK_HOME`/`~/.grok` 的 config）。
 
-| Script | Purpose |
-|--------|---------|
-| `scripts/verify-day0.sh` | Layout + git foundation gates |
-| `scripts/assert-defaults.sh` | DeepSeek default + bin name + example base_url |
-| `scripts/smoke-deepseek.sh` | Live DeepSeek smoke **or** honest SKIP without key |
+## 门禁脚本
 
 ```bash
-./scripts/verify-day0.sh
+cd ~/code/lumen
 ./scripts/assert-defaults.sh
-./scripts/smoke-deepseek.sh   # set DEEPSEEK_API_KEY for live call
+./scripts/smoke-security.sh
+./scripts/smoke-deepseek.sh          # L0
+./scripts/smoke-deepseek-agent.sh    # L1 tool
+./scripts/verify-readiness.sh        # 汇总 readiness（需 key 跑 live 项）
 ```
 
-## Plan
+| 脚本 | 作用 |
+|------|------|
+| `smoke-deepseek-l2/l3/l4/l5.sh` | Agent readiness 分层 |
+| `eval-coding.sh` | 20 题 broken harness |
+| `smoke-verify.sh` | 改后自修 CLI |
+| `parity-run.sh` | CC 行为对照 |
 
-See `docs/masterplan/` for the full execution plan. M0 = shippable local body; M1+ security/verticals follow.
+## 体验说明
+
+- **UI / 快捷键 / 审批 / session**：Grok Build TUI（未自建第二套界面）
+- **品牌**：`--version` / `--help` 显示 **Lumen**；内部 crate 名仍可能带 `xai-grok-*`（后期 rename 可选）
+- **ready**：`artifacts/readiness/status.json`；全自动门禁过后仍可能因 **15 日自用** 等人的门禁保持 BLOCKED
+
+## 法律
+
+Apache-2.0 衍生自 SpaceXAI Grok Build 开源树。见 `NOTICE`、`LEGAL.md`、`agent/UPSTREAM.md`。

@@ -382,9 +382,9 @@ fn version_with_channel() -> &'static str {
 }
 #[derive(Debug, Clone, Parser)]
 #[command(
-    name = "grok",
+    name = "lumen",
     version = version_with_channel(),
-    about = "Grok Build TUI",
+    about = "Lumen TUI (Grok Build derivative · DeepSeek-first)",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
@@ -748,14 +748,15 @@ pub enum ResumeTarget {
 impl PagerArgs {
     /// Parse CLI arguments and apply `--cwd` if provided.
     pub fn parse_and_apply_cwd() -> anyhow::Result<Self> {
+        // Accept product names: lumen (Lumen), grok/agent (upstream aliases).
         let bin_name = std::env::args()
             .next()
             .as_deref()
             .map(std::path::Path::new)
             .and_then(|p| p.file_name())
             .and_then(|n| n.to_str())
-            .filter(|n| *n == "grok" || *n == "agent")
-            .unwrap_or("grok")
+            .filter(|n| *n == "lumen" || *n == "grok" || *n == "agent")
+            .unwrap_or("lumen")
             .to_owned();
         let mut args = Self::parse_from(std::iter::once(bin_name).chain(std::env::args().skip(1)));
         if let Some(socket) = args.leader_socket.take() {

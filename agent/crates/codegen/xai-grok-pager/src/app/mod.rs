@@ -1689,9 +1689,9 @@ mod tests {
         assert!(!args.no_alt_screen);
     }
     #[test]
-    fn cli_command_name_is_grok() {
+    fn cli_command_name_is_lumen() {
         use clap::CommandFactory;
-        assert_eq!(PagerArgs::command().get_name(), "grok");
+        assert_eq!(PagerArgs::command().get_name(), "lumen");
     }
     #[test]
     fn cli_help_output_header() {
@@ -1701,9 +1701,9 @@ mod tests {
         assert_eq!(
             first_5,
             vec![
-                "Grok Build TUI",
+                "Lumen TUI (Grok Build derivative · DeepSeek-first)",
                 "",
-                "Usage: grok [OPTIONS] [PROMPT] [COMMAND]",
+                "Usage: lumen [OPTIONS] [PROMPT] [COMMAND]",
                 "",
                 "Arguments:",
             ]
