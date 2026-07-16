@@ -5924,6 +5924,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumen-guard"
+version = "0.1.0"
+dependencies = [
+ "once_cell",
+ "regex",
+]
+
+[[package]]
 name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14063,6 +14071,7 @@ dependencies = [
  "indexmap",
  "infer 0.19.0",
  "libc",
+ "lumen-guard",
  "md5",
  "nohash-hasher",
  "nucleo",
