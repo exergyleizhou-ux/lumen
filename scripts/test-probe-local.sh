@@ -41,7 +41,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         length = int(self.headers.get("Content-Length", "0"))
-        json.loads(self.rfile.read(length))
+        request_body = json.loads(self.rfile.read(length))
+        if request_body.get("max_tokens") != 2048:
+            self.send_error(422, "probe token cap must remain 2048 for thinking models")
+            return
         if mode == "tool":
             message = {
                 "role": "assistant",
@@ -54,6 +57,37 @@ class Handler(BaseHTTPRequestHandler):
                         "arguments": "{\"path\":\"main.go\",\"line\":3,\"text\":\"hello\"}",
                     },
                 }],
+            }
+        elif mode == "invalid":
+            message = {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": "call_wrong_name",
+                        "type": "function",
+                        "function": {
+                            "name": "wrong_tool",
+                            "arguments": "{\"path\":\"main.go\",\"line\":3,\"text\":\"hello\"}",
+                        },
+                    },
+                    {
+                        "id": "call_bad_arguments",
+                        "type": "function",
+                        "function": {
+                            "name": "edit_file",
+                            "arguments": "{\"path\":\"main.go\",\"line\":true}",
+                        },
+                    },
+                    {
+                        "id": "call_malformed_json",
+                        "type": "function",
+                        "function": {
+                            "name": "edit_file",
+                            "arguments": "{",
+                        },
+                    },
+                ],
             }
         else:
             message = {"role": "assistant", "content": "I would edit the file."}
@@ -99,8 +133,11 @@ start_fixture tool
 TOOL_PORT="$STARTED_PORT"
 start_fixture prose
 PROSE_PORT="$STARTED_PORT"
+start_fixture invalid
+INVALID_PORT="$STARTED_PORT"
 run_probe 0 "$TMP/tool.json" --base-url "http://127.0.0.1:$TOOL_PORT/v1" --timeout 2
 run_probe 1 "$TMP/prose.json" --base-url "http://127.0.0.1:$PROSE_PORT/v1" --timeout 2
+run_probe 1 "$TMP/invalid.json" --base-url "http://127.0.0.1:$INVALID_PORT/v1" --timeout 2
 
 UNUSED_PORT="$(python3 - <<'PY'
 import socket
@@ -112,17 +149,21 @@ PY
 )"
 run_probe 2 "$TMP/unreachable.json" --base-url "http://127.0.0.1:$UNUSED_PORT/v1" --timeout 0.2
 
-python3 - "$TMP/tool.json" "$TMP/prose.json" "$TMP/unreachable.json" <<'PY'
+python3 - "$TMP/tool.json" "$TMP/prose.json" "$TMP/invalid.json" "$TMP/unreachable.json" <<'PY'
 import json
 import sys
 
-tool, prose, unreachable = [json.load(open(path, encoding="utf-8"))["results"][0] for path in sys.argv[1:]]
+tool, prose, invalid, unreachable = [json.load(open(path, encoding="utf-8"))["results"][0] for path in sys.argv[1:]]
 assert tool["can_tool_call"] is True
 assert tool["tool_names"] == ["edit_file"]
+assert tool["rejected_tool_names"] == []
 assert prose["reachable"] is True and prose["chat_ok"] is True
 assert prose["can_tool_call"] is False and prose["text_reply_excerpt"]
+assert invalid["reachable"] is True and invalid["chat_ok"] is True
+assert invalid["can_tool_call"] is False
+assert invalid["rejected_tool_names"] == ["wrong_tool", "edit_file", "edit_file"]
 assert unreachable["reachable"] is False and unreachable["can_tool_call"] is False
-assert all(not result.get("api_key_env_used") for result in (tool, prose, unreachable))
+assert all(not result.get("api_key_env_used") for result in (tool, prose, invalid, unreachable))
 PY
 
 echo "OK: probe-local distinguishes tool_call, prose-only, and unreachable endpoints"

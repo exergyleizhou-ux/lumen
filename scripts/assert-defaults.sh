@@ -34,7 +34,7 @@ grep -q 'api.mimo.run' "$MODELS" || fail "default_models.json missing legacy-tru
 if grep -q 'api.xiaomimimo.com' "$MODELS"; then
   fail "default_models.json still contains stale MiMo URL api.xiaomimimo.com"
 fi
-grep -q '"model": "qwen2.5-coder"' "$MODELS" || fail "Ollama default model is not qwen2.5-coder"
+grep -q '"model": "qwen3:4b"' "$MODELS" || fail "Ollama default model is not qwen3:4b"
 for port in 1234 11434 8000 52415; do
   grep -q "$port" "$MODELS" || fail "default_models.json missing local endpoint port $port"
 done
@@ -69,7 +69,7 @@ for model_id in [
 
 assert by_id["minimax-m3"]["base_url"] == "https://api.minimaxi.com/anthropic/v1"
 assert by_id["mimo-chat"]["base_url"] == "https://api.mimo.run/v1"
-assert by_id["ollama"]["model"] == "qwen2.5-coder"
+assert by_id["ollama"]["model"] == "qwen3:4b"
 assert not any(m["id"].startswith("gemini") for m in models)
 for model_id, port in {
     "lmstudio": "1234", "ollama": "11434", "vllm": "8000", "exo": "52415"
@@ -89,7 +89,7 @@ grep -q 'auto_update = false' "$EXAMPLE" || fail "example missing auto_update = 
 for id in openai-gpt4o claude-sonnet kimi-k2 moonshot-v1 qwen-plus glm-4 mimo-chat minimax-m3 lmstudio ollama vllm exo; do
   grep -Fq "[model.$id]" "$EXAMPLE" || fail "example missing [model.$id]"
 done
-grep -Fq 'model = "qwen2.5-coder"' "$EXAMPLE" || fail "example Ollama model is not qwen2.5-coder"
+grep -Fq 'model = "qwen3:4b"' "$EXAMPLE" || fail "example Ollama model is not qwen3:4b"
 for port in 1234 11434 8000 52415; do
   grep -q "$port" "$EXAMPLE" || fail "example missing local endpoint port $port"
 done

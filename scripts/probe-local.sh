@@ -117,6 +117,25 @@ def served_models(base_url, timeout, api_key):
     return models
 
 
+def is_expected_edit_call(function):
+    if not isinstance(function, dict) or function.get("name") != "edit_file":
+        return False
+    arguments = function.get("arguments")
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return False
+    if not isinstance(arguments, dict):
+        return False
+    return (
+        arguments.get("path") == "main.go"
+        and type(arguments.get("line")) is int
+        and arguments["line"] == 3
+        and arguments.get("text") == "hello"
+    )
+
+
 def probe(entry, args):
     base_url = entry["base_url"].rstrip("/")
     api_key, key_env = key_for(entry, args.api_key_env)
@@ -153,7 +172,10 @@ def probe(entry, args):
             }
         ],
         "temperature": 0,
-        "max_tokens": 256,
+        # Thinking-capable local models can consume a few hundred reasoning
+        # tokens before emitting the tool call. A tiny cap creates a false
+        # prose/empty failure even when the endpoint supports tools.
+        "max_tokens": 2048,
         "stream": False,
     }
     start = time.monotonic()
@@ -165,6 +187,7 @@ def probe(entry, args):
     )
     elapsed_ms = round((time.monotonic() - start) * 1000)
     tool_calls = []
+    rejected_tool_calls = []
     text_reply = ""
     usage = {}
     if isinstance(data, dict):
@@ -178,8 +201,10 @@ def probe(entry, args):
                         if not isinstance(call, dict):
                             continue
                         function = call.get("function", {})
-                        if isinstance(function, dict) and function.get("name"):
+                        if is_expected_edit_call(function):
                             tool_calls.append(function["name"])
+                        elif isinstance(function, dict) and function.get("name"):
+                            rejected_tool_calls.append(function["name"])
                 content = message.get("content")
                 if isinstance(content, str):
                     text_reply = content.strip()[:300]
@@ -195,6 +220,7 @@ def probe(entry, args):
         "chat_ok": chat_ok,
         "can_tool_call": bool(tool_calls),
         "tool_names": tool_calls,
+        "rejected_tool_names": rejected_tool_calls,
         "elapsed_ms": elapsed_ms,
         "usage": usage,
         "text_reply_excerpt": text_reply,
@@ -209,6 +235,8 @@ def print_human(results):
         detail = ""
         if result["can_tool_call"]:
             detail = ",".join(result["tool_names"])
+        elif result["rejected_tool_names"]:
+            detail = "invalid tool_calls: " + ",".join(result["rejected_tool_names"])
         elif result["chat_ok"]:
             detail = "prose only"
         else:

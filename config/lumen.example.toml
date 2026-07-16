@@ -199,10 +199,10 @@ base_url = "http://127.0.0.1:1234/v1"
 api_backend = "chat_completions"
 env_key = ["LMSTUDIO_API_KEY", "LOCAL_API_KEY"]
 
-# Ollama: `ollama pull qwen2.5-coder && ollama serve`, then
+# Ollama: `ollama pull qwen3:4b && ollama serve`, then
 # `lumen -m ollama` or `/model ollama`.
 [model.ollama]
-model = "qwen2.5-coder"
+model = "qwen3:4b"
 name = "Ollama"
 base_url = "http://127.0.0.1:11434/v1"
 api_backend = "chat_completions"

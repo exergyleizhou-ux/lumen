@@ -209,6 +209,6 @@ mod tests {
                 "{id} base_url must contain port {port}"
             );
         }
-        assert_eq!(model_by_id(models, "ollama")["model"], "qwen2.5-coder");
+        assert_eq!(model_by_id(models, "ollama")["model"], "qwen3:4b");
     }
 }

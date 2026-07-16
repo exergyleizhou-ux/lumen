@@ -51,7 +51,7 @@ lumen -m ollama          # 本地 ollama serve
 
 ```bash
 ./scripts/probe-local.sh --list
-./scripts/probe-local.sh --preset ollama --model qwen2.5-coder
+./scripts/probe-local.sh --preset ollama --model qwen3:4b
 ```
 
 详见 `docs/user/local-models.md`；普通聊天成功不能当作 agent-ready。

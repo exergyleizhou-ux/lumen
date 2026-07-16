@@ -16,12 +16,12 @@ cd ~/code/lumen
 ./scripts/probe-local.sh
 
 # 只测 Ollama，或指定实际模型名
-./scripts/probe-local.sh --preset ollama --model qwen2.5-coder
+./scripts/probe-local.sh --preset ollama --model qwen3:4b
 
 # 测一个自定义 localhost 端点并保存机器可读证据
 ./scripts/probe-local.sh \
   --base-url http://127.0.0.1:1234/v1 \
-  --model qwen2.5-coder \
+  --model qwen3:4b \
   --json > probe-local.json
 ```
 
@@ -42,10 +42,10 @@ cd ~/code/lumen
 ## Ollama 示例
 
 ```bash
-ollama pull qwen2.5-coder
+ollama pull qwen3:4b
 ollama serve
 export OLLAMA_API_KEY=ollama  # 只有端点要求非空 Authorization 时才需要
-./scripts/probe-local.sh --preset ollama --model qwen2.5-coder
+./scripts/probe-local.sh --preset ollama --model qwen3:4b
 
 # 通过后才进入真实 agent smoke
 lumen -m ollama --single "读取 README.md，并用工具报告第一行" --always-approve
@@ -53,3 +53,7 @@ lumen -m ollama --single "读取 README.md，并用工具报告第一行" --alwa
 
 不要把探测脚本的 fixture 测试当成模型 live 证据。fixture 只验证解析器能区分
 tool-call、prose-only 和 unreachable；真实模型结论必须来自上述 localhost 探测。
+
+当前默认使用 Ollama 官方标注支持 tools 的 `qwen3:4b`。若其他模型（例如某些
+`qwen2.5-coder` 量化版本）只把函数名和参数打印成普通 JSON 文本，探测会保持失败；
+这种输出不能直接驱动 Agent，也不能手工改成绿色证据。

@@ -21,7 +21,7 @@ internal/oasis / quant         →    packs/oasis · packs/quant
 internal/eval · evals/         →    evals/ + scripts/eval-coding*.sh
 skills / MCP cmds              →    skills/ · packs · Grok MCP
 internal/modelpool             →    暂不整迁；靠多 preset + 用户 -m 切换
-localprobe / ollama 矩阵       →    docs/user + 本地 preset；探测脚本可后补
+localprobe / ollama 矩阵       →    docs/user + 本地 preset + scripts/probe-local.sh
 Python 科研/脚本               →    外围工具，不当 agent runtime
 ```
 
