@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T08:07:34Z",
+  "generated_at": "2026-07-16T09:05:10Z",
   "monorepo": {
-    "git_head": "cd242420fd425db553dbf4f42b4d935dd191e346",
-    "git_short": "cd24242"
+    "git_head": "20d5fe2a4d10d8fc458420b048d8f533827fef7c",
+    "git_short": "20d5fe2"
   },
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
@@ -21,8 +21,8 @@
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "17ea5168d58364f66817402eedbac164d24a8b78fd661d8bc7350040dd4aad4a",
     "scripts/eval-coding.sh": "60780441fa7297713eab67b88cec58cebbe72137070151f8eaffe259160b1ae2",
     "scripts/smoke-deepseek-agent.sh": "556a704b68559f42bed650ceb8a6dd4d3c92f68571d314900a3f3c2cf6829991",
-    "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "a3f04c9ae685e52661d0076aba8d8763351bb8ae10e36eb07d44b263a1874e9d",
+    "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
   },
-  "aggregate_critical_sha256": "1e4a3863af0093e522a76d8f06c0f4b2aeb3506e8c1c4b2cb34d62ba6bcbe0eb"
+  "aggregate_critical_sha256": "d957ae4eca75b1c4cbf8a16bf0d159881655425e922a243fafb36a3796bc5024"
 }

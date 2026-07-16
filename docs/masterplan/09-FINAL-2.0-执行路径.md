@@ -43,6 +43,10 @@
 | L0–L5 readiness 签出 | ✅ live smokes（有效 DEEPSEEK key） | S1 |
 | R0 run/effect/cancel | ✅ R0-min kill_all smoke | S2 |
 | engineering_complete | ✅ 仅剩 M6 人类门禁 | S0–S5 auto |
+| SBOM + LEGAL 终检 | ✅ `SBOM.spdx.json` + `LEGAL.md` | S5 |
+| reconcile-evidence | ✅ `scripts/reconcile-evidence.sh` + status sha | S0/R7 |
+| eval live ≥18/20 | ✅ 20/20 DeepSeek live (`eval-live.json`) | S5 |
+| R0 full R4/R6/R7 | ✅ `smoke-r0.sh` binary e2e | S2 |
 | status READY | `ready=false`；blockers=`M6_15_day_self_use` | S4–S5 真人 15 日 |
 
 ---
@@ -86,7 +90,8 @@ cd ~/code/lumen
 ## 5. 下一刀（执行优先级）
 
 1. ~~S0：00A + SOURCE_LOCK + readiness 骨架 + agent smoke 脚本~~  
-2. ~~有效 DEEPSEEK_API_KEY → L0–L5 + R0-min 全绿~~  
+2. ~~有效 DEEPSEEK_API_KEY → L0–L5 + R0 full 全绿~~  
 3. ~~engineering_complete + productivity-gate（诚实 M6，不伪造日记）~~  
-4. **人类：** 按 `journal/TEMPLATE-productivity-day.md` 真实自用 ≥15 日 → 清 M6 → `ready=true`  
-5. S5 余量：eval live ≥18/20、LEGAL/SBOM、private beta 单垂直深做（非本轮工程门禁） 
+4. ~~SBOM / LEGAL 终检 / reconcile-evidence / eval live 20/20~~  
+5. **人类唯一残留：** 按 `journal/TEMPLATE-productivity-day.md` 真实自用 ≥15 日 → 清 M6 → `ready=true`  
+

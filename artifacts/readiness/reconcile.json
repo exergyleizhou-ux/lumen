@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "check_id": "reconcile_evidence",
+  "pass": true,
+  "generated_at": "2026-07-16T09:05:10Z",
+  "monorepo_git_head": "20d5fe2a4d10d8fc458420b048d8f533827fef7c",
+  "source_lock_sha256": "1a0a455de48287cdf26ed04d594be23e5ba0d8e27c6b448f87cf0145280bb3ea",
+  "source_lock_git_head": "20d5fe2a4d10d8fc458420b048d8f533827fef7c",
+  "source_lock_fresh": true,
+  "binary_path": "/Users/lei/code/lumen/agent/target/release/lumen",
+  "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
+  "artifact_sha256": {
+    "L1-tool-calls.json": "9797874aefd95db6d31742dc0224d9f7fae9e18cc138ba33b186837862b2c580",
+    "L2-min-e2e.json": "1905b0ab3b35b83e62664c04bfa5c4359eea22ecd46e950bc1903d991565f50e",
+    "L3-multi-tool.json": "87433ab1df0f669beba01d693f26c940bf3cf9afb8479f34f786d4caf4049982",
+    "L4-fault-cancel.json": "79ffad3fe43390f050fbc6c01daae6bfca3ddbfebb50e39ba22f9a82267d6424",
+    "L5-long-session.json": "22af92db319e090a1faddb7e180d780f284e374d865304eb8bca5191cc1d5b87",
+    "M6-productivity.json": "6f6a4b145d21b8b83d03c5f5ecfb36c1d7e853f4e730a52c2135799371dff27c",
+    "R0-full.json": "387eacc3838f9c7e13bd37bd2c3e47cec056f3938e5540f4e3c8af22d0437653",
+    "R0-min.json": "58ed72c81a827db47d382eff3f2ab5ee04507b34c4fb650ecf9ae2c67c0d7a85",
+    "engineering_complete.json": "38b148ec5978daa0002b32ecf18284ca9217204e7a24eb88cb4f302277eb4b3a",
+    "eval-live.json": "18676428abb0bb362bfc80347fba247410a74ac8b9bbfea59310550d9ee03ade",
+    "status.json": "b979c19bf15d0a6d4e4bf98e07d3efd8217b39024a98204f194316fd0b0866d9"
+  },
+  "sbom_present": true,
+  "legal_present": true,
+  "blockers": [],
+  "note": "R7: run/event/effect/UI evidence tuple reconciles to current source + binary"
+}

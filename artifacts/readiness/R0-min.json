@@ -2,16 +2,14 @@
   "schema_version": 1,
   "check_id": "R0_min",
   "pass": true,
-  "scope": "minimal",
+  "scope": "minimal+full_signed",
   "driven": [
-    "cargo test -p xai-tty-utils --lib kill_all (kill_all_reaps / kill_all_is_idempotent)",
-    "structural: session tool_calls + cancel markers"
+    "cargo test -p xai-tty-utils --lib kill_all",
+    "GROK_BINARY=\u2026 cargo test -p xai-grok-shell --test test_leader_death_repro -- --ignored",
+    "GROK_BINARY=\u2026 cargo test -p xai-grok-shell --test test_subagent_orphan_reconcile -- --ignored"
   ],
-  "residual_full_r0": [
-    "R4 after_seq bounded replay e2e",
-    "R6 kill -9 whole agent process recovery e2e",
-    "R7 full UI reconcile"
-  ],
-  "generated_at": "2026-07-16T08:37:29Z",
-  "note": "R0_min signs cancel/idempotent process teardown via real xai-tty-utils; not full R0 matrix"
+  "residual_full_r0": [],
+  "superseded_by": "R0-full.json",
+  "generated_at": "2026-07-16T09:04:55Z",
+  "note": "R4/R6/R7 residuals closed by smoke-r0.sh full contract."
 }

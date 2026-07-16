@@ -7,7 +7,7 @@
     0
   ],
   "session_file_ok": true,
-  "marker": "L5_SESSION_1784191037",
+  "marker": "L5_SESSION_1784192674",
   "cache_read_tokens_samples": [
     9216,
     9216,
@@ -26,7 +26,7 @@
     "run_terminal_command"
   ],
   "scope": "minimal multi-turn + continue + cache field; not full hour-long chaos",
-  "generated_at": "2026-07-16T08:37:28Z",
-  "out1_snippet": "L5_SESSION_1784191037\n",
-  "out2_snippet": "L5_SESSION_1784191037\nL5_RESUMED\n"
+  "generated_at": "2026-07-16T09:04:46Z",
+  "out1_snippet": "L5_SESSION_1784192674\n",
+  "out2_snippet": "L5_SESSION_1784192674\nL5_RESUMED\n"
 }

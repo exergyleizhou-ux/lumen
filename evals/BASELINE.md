@@ -33,8 +33,8 @@
 
 | Model | Date | Pass | Total | Notes |
 |-------|------|------|-------|-------|
-| — | 2026-07-16 | 0/20 (harness) | 20 | Harness-only: all 20 workspaces intentionally broken (no live agent) |
-| harness | 2026-07-16 | n/a | 20 | `eval-coding.sh` macOS-safe; FAIL if any task unexpectedly PASSes |
+| harness | 2026-07-16 | 0/20 (broken OK) | 20 | Harness-only: all 20 workspaces intentionally broken |
+| deepseek-chat live | 2026-07-16 | **20/20** | 20 | `./scripts/eval-coding-live.sh` → `artifacts/readiness/eval-live.json`; silent_corruption=0; gate ≥18/20 |
 
 ## Harness Verification
 
@@ -43,3 +43,12 @@
 ```
 
 All 20 broken workspaces should report BROKEN (test failure detected), proving the harness correctly identifies unfixed tasks.
+
+## Live agent Verification
+
+```bash
+export DEEPSEEK_API_KEY=…
+./scripts/eval-coding-live.sh   # writes artifacts/readiness/eval-live.json
+```
+
+Gate: `pass_count >= 18` and `silent_corruption == 0` (PASS requires deterministic tests after agent edit — not self-report).

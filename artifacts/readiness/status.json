@@ -1,11 +1,13 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T08:37:29Z",
+  "generated_at": "2026-07-16T09:04:56Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": true,
+  "source_lock_sha256": "1a0a455de48287cdf26ed04d594be23e5ba0d8e27c6b448f87cf0145280bb3ea",
+  "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
   "blockers": [
     "M6_15_day_self_use:human_gate count_lt_15"
   ],
@@ -89,7 +91,37 @@
       "detail": ""
     },
     {
+      "id": "R0_full",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
       "id": "R0_min",
+      "pass": true,
+      "result": "PASS",
+      "detail": "via R0_full"
+    },
+    {
+      "id": "sbom",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "legal",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_live",
+      "pass": true,
+      "result": "PASS",
+      "detail": "prior artifact"
+    },
+    {
+      "id": "reconcile",
       "pass": true,
       "result": "PASS",
       "detail": ""
@@ -107,5 +139,7 @@
       "detail": "human_gate count_lt_15"
     }
   ],
-  "note": "ready=true only when ALL gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains."
+  "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
+  "reconcile_pass": true,
+  "reconciled_at": "2026-07-16T09:05:10Z"
 }

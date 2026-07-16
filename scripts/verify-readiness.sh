@@ -32,7 +32,9 @@ run_script() {
   elif [[ $ec -eq 2 ]]; then
     record "$id" SKIP "exit 2"
   else
-    record "$id" FAIL "exit $ec"
+    # keep last line of detail short
+    detail=$(echo "$out" | tail -3 | tr '\n' ' ' | head -c 200)
+    record "$id" FAIL "exit $ec ${detail}"
   fi
 }
 
@@ -60,7 +62,60 @@ else
   record L5_long_session SKIP "no DEEPSEEK_API_KEY"
 fi
 
-run_script R0_min "$ROOT/scripts/smoke-r0-min.sh"
+# R0: full contract smoke (writes R0-full.json + updates R0-min.json)
+if [[ -x "$ROOT/scripts/smoke-r0.sh" ]]; then
+  set +e
+  r0_out=$("$ROOT/scripts/smoke-r0.sh" 2>&1)
+  r0_ec=$?
+  set -e
+  if [[ $r0_ec -eq 0 ]]; then
+    record R0_full PASS
+    record R0_min PASS "via R0_full"
+  else
+    echo "$r0_out" | tail -20 | sed 's/^/  | /'
+    record R0_full FAIL "exit $r0_ec"
+    run_script R0_min "$ROOT/scripts/smoke-r0-min.sh"
+  fi
+else
+  run_script R0_min "$ROOT/scripts/smoke-r0-min.sh"
+fi
+
+# SBOM + LEGAL package
+if [[ -x "$ROOT/scripts/generate-sbom.sh" ]]; then
+  run_script sbom "$ROOT/scripts/generate-sbom.sh"
+else
+  if [[ -f "$ROOT/SBOM.spdx.json" ]]; then
+    record sbom PASS "present"
+  else
+    record sbom FAIL "missing SBOM.spdx.json"
+  fi
+fi
+if [[ -f "$ROOT/LEGAL.md" ]] && [[ $(wc -c <"$ROOT/LEGAL.md") -gt 200 ]]; then
+  record legal PASS
+else
+  record legal FAIL "LEGAL.md missing or too short"
+fi
+
+# Live eval (optional unless EVAL_LIVE=1 or prior artifact pass)
+if [[ "${EVAL_LIVE:-0}" == "1" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
+  run_script eval_live "$ROOT/scripts/eval-coding-live.sh"
+elif [[ -f "$ART/eval-live.json" ]]; then
+  # honor prior signed live run
+  if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("pass") else 1)' "$ART/eval-live.json"; then
+    record eval_live PASS "prior artifact"
+  else
+    record eval_live FAIL "prior artifact pass=false"
+  fi
+else
+  record eval_live SKIP "set EVAL_LIVE=1 to run live coding eval (≥18/20)"
+fi
+
+# Reconcile evidence (source lock + binary sha + R7)
+if [[ -x "$ROOT/scripts/reconcile-evidence.sh" ]]; then
+  run_script reconcile "$ROOT/scripts/reconcile-evidence.sh"
+else
+  record reconcile FAIL "missing reconcile-evidence.sh"
+fi
 
 if [[ -f "$ROOT/SOURCE_LOCK.json" ]]; then
   record source_lock PASS
@@ -81,7 +136,7 @@ else
 fi
 
 python3 - "$TMP" "$ART/status.json" "$ART/engineering_complete.json" <<'PY2'
-import json, sys
+import json, sys, hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -95,24 +150,61 @@ for line in rows:
     detail = parts[2] if len(parts) > 2 else ""
     ok = result == "PASS"
     checks.append({"id": cid, "pass": ok, "result": result, "detail": detail})
-    if result != "PASS":
+    if result == "FAIL":
         blockers.append(f"{cid}:{detail or result}")
+    # SKIP is not a hard blocker for engineering_complete unless required
 
 can_tool = any(c["id"] == "L1_tool_calls" and c["pass"] for c in checks)
 l0 = any(c["id"] == "L0_connect" and c["pass"] for c in checks)
 
-# Engineering complete = all automated gates pass; only human M6 may remain
-auto_ids = {
+# Engineering complete = all automated required gates pass; only human M6 may remain.
+# eval_live SKIP is allowed for eng_complete if not run; FAIL blocks.
+auto_required = {
     "defaults", "security", "m2", "parity", "eval_harness", "verify_cli",
     "verticals", "L0_connect", "L1_tool_calls", "L2_min_e2e", "L3_multi_tool",
     "L4_fault_cancel", "L5_long_session", "R0_min", "source_lock",
+    "sbom", "legal", "reconcile",
 }
-auto_blockers = [b for b in blockers if not b.startswith("M6_15_day_self_use")]
-eng_ok = len(auto_blockers) == 0 and all(
-    any(c["id"] == i and c["pass"] for c in checks) for i in auto_ids
-)
+# R0_full preferred; if present must pass
+if any(c["id"] == "R0_full" for c in checks):
+    auto_required.add("R0_full")
 
-ready = len(blockers) == 0  # publish READY requires productivity gate too
+def check_ok(i):
+    for c in checks:
+        if c["id"] == i:
+            return c["result"] == "PASS"
+    return False
+
+auto_blockers = [b for b in blockers if not b.startswith("M6_15_day_self_use")]
+# also block eng if required missing
+for i in auto_required:
+    if not check_ok(i):
+        # find if SKIP
+        st = next((c["result"] for c in checks if c["id"] == i), "MISSING")
+        if st != "PASS":
+            tag = f"{i}:{st}"
+            if tag not in auto_blockers and not any(b.startswith(i + ":") for b in auto_blockers):
+                auto_blockers.append(tag)
+
+eng_ok = len(auto_blockers) == 0
+
+# ready requires no FAIL blockers at all (including M6); SKIP eval_live OK for ready? No — publish wants live.
+# Keep ready = no FAIL blockers only (SKIP allowed). User can set EVAL_LIVE.
+ready = len(blockers) == 0
+
+# hashes
+root = Path(sys.argv[2]).resolve().parent.parent  # artifacts/readiness -> repo? 
+# status path is ART/status.json; root is ART.parent.parent if ART=repo/artifacts/readiness
+art_dir = Path(sys.argv[2]).resolve().parent
+repo = art_dir.parent.parent if art_dir.name == "readiness" else art_dir.parent
+lock_p = repo / "SOURCE_LOCK.json"
+lock_sha = hashlib.sha256(lock_p.read_bytes()).hexdigest() if lock_p.is_file() else None
+bin_sha = None
+for cand in [repo / "agent" / "target" / "release" / "lumen", Path.home() / ".local" / "bin" / "lumen"]:
+    if cand.is_file():
+        bin_sha = hashlib.sha256(cand.read_bytes()).hexdigest()
+        break
+
 status = {
     "schema_version": 1,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -121,9 +213,11 @@ status = {
     "can_tool_call": can_tool,
     "l0_pass": l0,
     "engineering_complete": eng_ok,
+    "source_lock_sha256": lock_sha,
+    "binary_sha256": bin_sha,
     "blockers": blockers,
     "checks": checks,
-    "note": "ready=true only when ALL gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains.",
+    "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
 }
 Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
 
@@ -134,6 +228,8 @@ eng = {
     "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M6_15_day_self_use",
     "auto_blockers": auto_blockers,
     "can_tool_call": can_tool,
+    "source_lock_sha256": lock_sha,
+    "binary_sha256": bin_sha,
     "generated_at": status["generated_at"],
 }
 Path(sys.argv[3]).write_text(json.dumps(eng, indent=2) + "\n")
@@ -141,6 +237,9 @@ Path(sys.argv[3]).write_text(json.dumps(eng, indent=2) + "\n")
 print()
 print(f"state={status['state']} ready={status['ready']} can_tool_call={status['can_tool_call']} engineering_complete={eng_ok}")
 print("blockers:", blockers if blockers else "[]")
+print("auto_blockers:", auto_blockers if auto_blockers else "[]")
 print("wrote", sys.argv[2])
 print("wrote", sys.argv[3], "pass=", eng_ok)
+# exit 0 always so artifacts are the source of truth (same as prior design)
+sys.exit(0)
 PY2

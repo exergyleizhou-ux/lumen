@@ -12,6 +12,6 @@
   "failure_evidence_in_debug": true,
   "process_kill_suite": "xai-tty-utils kill_all (ran)",
   "scope": "minimal \u2014 not full 429/partition chaos matrix",
-  "generated_at": "2026-07-16T08:37:17Z",
+  "generated_at": "2026-07-16T09:04:34Z",
   "output_snippet": "L4_RECOVER_OK\n"
 }

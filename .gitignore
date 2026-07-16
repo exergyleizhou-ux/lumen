@@ -3,3 +3,6 @@
 *.log
 journal/artifacts/
 node_modules/
+
+# Live eval scratch workspaces (keep eval-live.json only)
+artifacts/readiness/eval-live/
