@@ -2,6 +2,8 @@
 **/.DS_Store
 *.log
 journal/artifacts/
+SCRATCH/
+packs/science/lumen-science
 node_modules/
 
 # Live eval scratch workspaces (keep eval-live.json only)

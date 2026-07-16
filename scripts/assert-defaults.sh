@@ -119,6 +119,9 @@ grep -q 'Gemini.*后置' "$DOC" || fail "docs must state native Gemini is deferr
 for key in DEEPSEEK_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY MOONSHOT_API_KEY DASHSCOPE_API_KEY ZHIPU_API_KEY MIMO_API_KEY MINIMAX_API_KEY; do
   grep -q "$key" "$DOC" || fail "docs missing environment variable $key"
 done
+test -x "$ROOT/scripts/probe-local.sh" || fail "missing executable scripts/probe-local.sh"
+test -x "$ROOT/scripts/test-probe-local.sh" || fail "missing executable scripts/test-probe-local.sh"
+test -f "$ROOT/docs/user/local-models.md" || fail "missing docs/user/local-models.md"
 
 # Registry + update crate must agree: auto_update default false.
 REG="$ROOT/agent/crates/codegen/xai-grok-pager/src/settings/registry.rs"

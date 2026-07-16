@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install release `lumen` to ~/.local/bin for PATH use.
+# Build the current source commit and atomically install `lumen` to ~/.local/bin.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
@@ -8,18 +8,44 @@ export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 BIN_SRC="$ROOT/agent/target/release/lumen"
 DEST_DIR="${LUMEN_INSTALL_DIR:-$HOME/.local/bin}"
 DEST="$DEST_DIR/lumen"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
 
-if [[ ! -x "$BIN_SRC" ]]; then
-  echo "Building release lumen..."
+if [[ "${LUMEN_SKIP_BUILD:-0}" != "1" ]]; then
+  echo "Building release lumen from source commit $SOURCE_COMMIT..."
   (cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo build -p xai-grok-pager-bin --release)
+else
+  echo "LUMEN_SKIP_BUILD=1: verifying existing release binary against $SOURCE_COMMIT..."
 fi
 test -x "$BIN_SRC"
 
+VERSION_LINE="$($BIN_SRC --version)"
+case "$VERSION_LINE" in
+  *"($SOURCE_COMMIT)"*) ;;
+  *)
+    echo "FAIL: release binary is stale: expected commit $SOURCE_COMMIT, got: $VERSION_LINE" >&2
+    echo "Unset LUMEN_SKIP_BUILD and rebuild." >&2
+    exit 1
+    ;;
+esac
+
 mkdir -p "$DEST_DIR"
-cp -f "$BIN_SRC" "$DEST"
-chmod +x "$DEST"
+TMP_DEST="$DEST.tmp.$$"
+trap 'rm -f "$TMP_DEST"' EXIT
+cp "$BIN_SRC" "$TMP_DEST"
+chmod +x "$TMP_DEST"
+mv -f "$TMP_DEST" "$DEST"
+trap - EXIT
+
+SRC_SHA="$(shasum -a 256 "$BIN_SRC" | awk '{print $1}')"
+DEST_SHA="$(shasum -a 256 "$DEST" | awk '{print $1}')"
+if [[ "$SRC_SHA" != "$DEST_SHA" ]]; then
+  echo "FAIL: installed binary checksum mismatch" >&2
+  exit 1
+fi
 
 echo "Installed: $DEST"
+echo "source_commit=$SOURCE_COMMIT"
+echo "binary_sha256=$DEST_SHA"
 "$DEST" --version
 echo ""
 echo "Ensure PATH includes: $DEST_DIR"

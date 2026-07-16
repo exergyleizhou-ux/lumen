@@ -63,4 +63,24 @@ if [[ "$sci" -lt 10 ]]; then
 fi
 
 echo "OK: all vertical packs present (science go files=$sci)"
+
+# The default private-beta vertical must have a real, independently buildable
+# path. This is intentionally scoped to standalone/ because the staged legacy
+# proxy/Lab sources still depend on shared packages in the old Go repository.
+SCI_STANDALONE="$ROOT/packs/science/standalone"
+if [[ ! -f "$SCI_STANDALONE/go.mod" ]]; then
+  echo "FAIL: packs/science/standalone/go.mod missing" >&2
+  exit 1
+fi
+if ! command -v go >/dev/null 2>&1; then
+  echo "FAIL: Go is required to verify the Science private-beta path" >&2
+  exit 1
+fi
+SCI_TMP="$(mktemp -d)"
+trap 'rm -rf "$SCI_TMP"' EXIT
+echo "Checking Science standalone module..."
+go test -C "$SCI_STANDALONE" ./...
+go build -C "$SCI_STANDALONE" -o "$SCI_TMP/lumen-science" ./cmd/science
+"$SCI_TMP/lumen-science" doctor --root "$ROOT/packs/science"
+echo "OK: Science standalone build + doctor pass"
 exit 0

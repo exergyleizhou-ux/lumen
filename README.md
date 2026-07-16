@@ -47,6 +47,18 @@ lumen -m ollama          # 本地 ollama serve
 
 配置示例：`config/lumen.example.toml` · 说明：`docs/user/multi-provider.md`。
 
+本地模型必须先证明能发出真实工具调用：
+
+```bash
+./scripts/probe-local.sh --list
+./scripts/probe-local.sh --preset ollama --model qwen2.5-coder
+```
+
+详见 `docs/user/local-models.md`；普通聊天成功不能当作 agent-ready。
+
+Private beta 证据路径：Science 三步实跑见 `scripts/dogfood-science.sh`，首次用户
+10 分钟路径见 `docs/user/10-minute-onboarding-evidence.md`。模板本身不算真人证据。
+
 ## 门禁脚本
 
 ```bash

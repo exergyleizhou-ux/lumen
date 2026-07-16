@@ -1,16 +1,45 @@
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn main() {
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-env-changed=GROK_VERSION");
-
-    let commit = Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
+fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
+    Command::new("git")
+        .arg("-C")
+        .arg(manifest_dir)
+        .args(args)
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|output| output.trim().to_owned())
+        .filter(|output| !output.is_empty())
+}
+
+fn watch_git_path(manifest_dir: &Path, git_path: &str) {
+    let path = PathBuf::from(git_path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        manifest_dir.join(path)
+    };
+    println!("cargo:rerun-if-changed={}", path.display());
+}
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=GROK_VERSION");
+    let manifest_dir = PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
+    );
+
+    if let Some(head_path) = git_output(&manifest_dir, &["rev-parse", "--git-path", "HEAD"]) {
+        watch_git_path(&manifest_dir, &head_path);
+    }
+    if let Some(head_ref) = git_output(&manifest_dir, &["symbolic-ref", "-q", "HEAD"]) {
+        if let Some(ref_path) = git_output(&manifest_dir, &["rev-parse", "--git-path", &head_ref]) {
+            watch_git_path(&manifest_dir, &ref_path);
+        }
+    }
+
+    let commit = git_output(&manifest_dir, &["rev-parse", "--short", "HEAD"])
         .unwrap_or_else(|| "unknown".to_string());
 
     let version = std::env::var("GROK_VERSION")
