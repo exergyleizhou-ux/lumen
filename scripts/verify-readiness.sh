@@ -21,10 +21,12 @@ record() {
   esac
 }
 
-run_script() {
-  local id="$1" script="$2"
+run_command() {
+  local id="$1"
+  shift
+  local out ec detail
   set +e
-  out=$("$script" 2>&1)
+  out=$("$@" 2>&1)
   ec=$?
   set -e
   if [[ $ec -eq 0 ]]; then
@@ -38,6 +40,36 @@ run_script() {
   fi
 }
 
+run_script() {
+  local id="$1" script="$2"
+  run_command "$id" "$script"
+}
+
+# Release and installed paths must be one immutable build of current HEAD.
+BINARY_TUPLE_PRE_OK=0
+BINARY_PRE_SHA=""
+set +e
+binary_pre_out=$("$ROOT/scripts/check-binary-tuple.sh" 2>&1)
+binary_pre_ec=$?
+set -e
+if [[ $binary_pre_ec -eq 0 ]]; then
+  BINARY_PRE_SHA=$(printf '%s\n' "$binary_pre_out" | sed -n 's/^binary_sha256=//p' | head -1)
+  if [[ -n "$BINARY_PRE_SHA" ]]; then
+    BINARY_TUPLE_PRE_OK=1
+    record binary_tuple_pre PASS "sha256=${BINARY_PRE_SHA:0:12}"
+  else
+    record binary_tuple_pre FAIL "binary tuple checker omitted sha256"
+  fi
+else
+  detail=$(printf '%s\n' "$binary_pre_out" | tail -3 | tr '\n' ' ' | head -c 200)
+  record binary_tuple_pre FAIL "exit $binary_pre_ec $detail"
+fi
+
+# Required release secret scan. Exact historical fixture fingerprints belong in
+# .gitleaksignore; missing gitleaks or a new finding is a hard failure.
+run_command gitleaks gitleaks git --redact=100 --no-banner \
+  --gitleaks-ignore-path "$ROOT/.gitleaksignore" "$ROOT"
+
 run_script defaults "$ROOT/scripts/assert-defaults.sh"
 run_script security "$ROOT/scripts/smoke-security.sh"
 run_script m2 "$ROOT/scripts/smoke-m2.sh"
@@ -46,24 +78,34 @@ run_script eval_harness "$ROOT/scripts/eval-coding.sh"
 run_script verify_cli "$ROOT/scripts/smoke-verify.sh"
 run_script verticals "$ROOT/scripts/doctor-verticals.sh"
 
-if [[ -n "${DEEPSEEK_API_KEY:-}" ]]; then
+if [[ -n "${DEEPSEEK_API_KEY:-}" && $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
   run_script L0_connect "$ROOT/scripts/smoke-deepseek.sh"
   run_script L1_tool_calls "$ROOT/scripts/smoke-deepseek-agent.sh"
   run_script L2_min_e2e "$ROOT/scripts/smoke-deepseek-l2.sh"
   run_script L3_multi_tool "$ROOT/scripts/smoke-deepseek-l3.sh"
   run_script L4_fault_cancel "$ROOT/scripts/smoke-deepseek-l4.sh"
   run_script L5_long_session "$ROOT/scripts/smoke-deepseek-l5.sh"
-else
+elif [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
   record L0_connect SKIP "no DEEPSEEK_API_KEY"
   record L1_tool_calls SKIP "no DEEPSEEK_API_KEY"
   record L2_min_e2e SKIP "no DEEPSEEK_API_KEY"
   record L3_multi_tool SKIP "no DEEPSEEK_API_KEY"
   record L4_fault_cancel SKIP "no DEEPSEEK_API_KEY"
   record L5_long_session SKIP "no DEEPSEEK_API_KEY"
+else
+  record L0_connect SKIP "binary tuple preflight failed"
+  record L1_tool_calls SKIP "binary tuple preflight failed"
+  record L2_min_e2e SKIP "binary tuple preflight failed"
+  record L3_multi_tool SKIP "binary tuple preflight failed"
+  record L4_fault_cancel SKIP "binary tuple preflight failed"
+  record L5_long_session SKIP "binary tuple preflight failed"
 fi
 
 # R0: full contract smoke (writes R0-full.json + updates R0-min.json)
-if [[ -x "$ROOT/scripts/smoke-r0.sh" ]]; then
+if [[ $BINARY_TUPLE_PRE_OK -ne 1 ]]; then
+  record R0_full SKIP "binary tuple preflight failed"
+  record R0_min SKIP "binary tuple preflight failed"
+elif [[ -x "$ROOT/scripts/smoke-r0.sh" ]]; then
   set +e
   r0_out=$("$ROOT/scripts/smoke-r0.sh" 2>&1)
   r0_ec=$?
@@ -96,25 +138,25 @@ else
   record legal FAIL "LEGAL.md missing or too short"
 fi
 
-# Live eval (optional unless EVAL_LIVE=1 or prior artifact pass)
-if [[ "${EVAL_LIVE:-0}" == "1" && -n "${DEEPSEEK_API_KEY:-}" ]]; then
+# Live eval is current-run evidence only. Old pass artifacts are never reused.
+if [[ "${EVAL_LIVE:-0}" == "1" && -n "${DEEPSEEK_API_KEY:-}" && $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
   run_script eval_live "$ROOT/scripts/eval-coding-live.sh"
-elif [[ -f "$ART/eval-live.json" ]]; then
-  # honor prior signed live run
-  if python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("pass") else 1)' "$ART/eval-live.json"; then
-    record eval_live PASS "prior artifact"
-  else
-    record eval_live FAIL "prior artifact pass=false"
-  fi
+elif [[ "${EVAL_LIVE:-0}" == "1" ]]; then
+  record eval_live FAIL "EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple"
 else
   record eval_live SKIP "set EVAL_LIVE=1 to run live coding eval (≥18/20)"
 fi
 
-# Reconcile evidence (source lock + binary sha + R7)
-if [[ -x "$ROOT/scripts/reconcile-evidence.sh" ]]; then
-  run_script reconcile "$ROOT/scripts/reconcile-evidence.sh"
+# Verify that no gate mutated or replaced either binary.
+set +e
+binary_post_out=$(LUMEN_EXPECTED_BINARY_SHA="$BINARY_PRE_SHA" "$ROOT/scripts/check-binary-tuple.sh" 2>&1)
+binary_post_ec=$?
+set -e
+if [[ $binary_post_ec -eq 0 && $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
+  record binary_tuple_post PASS "sha256=${BINARY_PRE_SHA:0:12}"
 else
-  record reconcile FAIL "missing reconcile-evidence.sh"
+  detail=$(printf '%s\n' "$binary_post_out" | tail -3 | tr '\n' ' ' | head -c 200)
+  record binary_tuple_post FAIL "exit $binary_post_ec $detail"
 fi
 
 if [[ -f "$ROOT/SOURCE_LOCK.json" ]]; then
@@ -135,6 +177,7 @@ else
   record M6_15_day_self_use FAIL "human_gate count_lt_15"
 fi
 
+write_status() {
 python3 - "$TMP" "$ART/status.json" "$ART/engineering_complete.json" <<'PY2'
 import json, sys, hashlib
 from datetime import datetime, timezone
@@ -157,13 +200,12 @@ for line in rows:
 can_tool = any(c["id"] == "L1_tool_calls" and c["pass"] for c in checks)
 l0 = any(c["id"] == "L0_connect" and c["pass"] for c in checks)
 
-# Engineering complete = all automated required gates pass; only human M6 may remain.
-# eval_live SKIP is allowed for eng_complete if not run; FAIL blocks.
+# Engineering complete = every automated evidence gate passes; only human M6 may remain.
 auto_required = {
-    "defaults", "security", "m2", "parity", "eval_harness", "verify_cli",
+    "binary_tuple_pre", "gitleaks", "defaults", "security", "m2", "parity", "eval_harness", "verify_cli",
     "verticals", "L0_connect", "L1_tool_calls", "L2_min_e2e", "L3_multi_tool",
-    "L4_fault_cancel", "L5_long_session", "R0_min", "source_lock",
-    "sbom", "legal", "reconcile",
+    "L4_fault_cancel", "L5_long_session", "R0_min", "eval_live", "binary_tuple_post",
+    "source_lock", "sbom", "legal", "reconcile",
 }
 # R0_full preferred; if present must pass
 if any(c["id"] == "R0_full" for c in checks):
@@ -257,3 +299,14 @@ print("wrote", sys.argv[3], "pass=", eng_ok)
 # exit 0 always so artifacts are the source of truth (same as prior design)
 sys.exit(0)
 PY2
+}
+
+# Reconcile must parse this run's status, not a tracked status from a previous
+# run. Write a preliminary aggregate, reconcile it, then write the final one.
+write_status
+if [[ -x "$ROOT/scripts/reconcile-evidence.sh" ]]; then
+  run_script reconcile "$ROOT/scripts/reconcile-evidence.sh"
+else
+  record reconcile FAIL "missing reconcile-evidence.sh"
+fi
+write_status

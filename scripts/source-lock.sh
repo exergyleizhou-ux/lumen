@@ -13,29 +13,48 @@ from pathlib import Path
 root = Path(".")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 paths = [
+    ".gitleaksignore",
     "agent/crates/codegen/xai-grok-models/default_models.json",
     "agent/crates/codegen/lumen-guard/src/lib.rs",
     "agent/crates/codegen/lumen-discipline/src/lib.rs",
+    "scripts/assert-defaults.sh",
+    "scripts/check-binary-tuple.sh",
     "scripts/eval-coding.sh",
-    "scripts/smoke-deepseek-agent.sh",
-    "scripts/verify-readiness.sh",
+    "scripts/eval-coding-live.sh",
+    "scripts/generate-sbom.sh",
     "scripts/install-local.sh",
+    "scripts/productivity-gate.sh",
+    "scripts/reconcile-evidence.sh",
+    "scripts/source-lock.sh",
+    "scripts/smoke-deepseek.sh",
+    "scripts/smoke-deepseek-agent.sh",
+    "scripts/smoke-deepseek-l2.sh",
+    "scripts/smoke-deepseek-l3.sh",
+    "scripts/smoke-deepseek-l4.sh",
+    "scripts/smoke-deepseek-l5.sh",
+    "scripts/smoke-r0-min.sh",
+    "scripts/smoke-r0.sh",
+    "scripts/test-readiness-contract.sh",
+    "scripts/verify-readiness.sh",
     "scripts/probe-local.sh",
     "scripts/doctor-verticals.sh",
-    "scripts/generate-sbom.sh",
     "docs/masterplan/09-FINAL-2.0-执行路径.md",
     "docs/masterplan/00A-来源锁与运行合同.md",
 ]
 files = {}
 h = hashlib.sha256()
+missing = []
 for rel in paths:
     p = root / rel
-    if not p.exists():
+    if not p.is_file():
+        missing.append(rel)
         continue
     b = p.read_bytes()
     files[rel] = hashlib.sha256(b).hexdigest()
     h.update(rel.encode())
     h.update(b)
+if missing:
+    raise SystemExit("FAIL: critical source-lock files missing: " + ", ".join(missing))
 
 lock = {
     "schema_version": 1,

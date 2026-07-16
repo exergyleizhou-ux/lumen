@@ -5,6 +5,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 
+# A binary stamped with HEAD cannot truthfully identify uncommitted source.
+# Ignored scratch output is harmless, but tracked or untracked source can alter
+# Cargo auto-discovery/build-script inputs and is rejected unless explicitly
+# overridden.
+if [[ "${LUMEN_ALLOW_DIRTY:-0}" != "1" ]]; then
+  if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
+    echo "FAIL: refusing to build/install from a dirty tree." >&2
+    echo "Commit source first, or set LUMEN_ALLOW_DIRTY=1 explicitly." >&2
+    git -C "$ROOT" status --short >&2
+    exit 1
+  fi
+fi
+
 BIN_SRC="$ROOT/agent/target/release/lumen"
 DEST_DIR="${LUMEN_INSTALL_DIR:-$HOME/.local/bin}"
 DEST="$DEST_DIR/lumen"
