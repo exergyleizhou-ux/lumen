@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "check_id": "R0_min",
+  "pass": true,
+  "scope": "minimal",
+  "driven": [
+    "cargo test -p xai-tty-utils --lib kill_all (kill_all_reaps / kill_all_is_idempotent)",
+    "structural: session tool_calls + cancel markers"
+  ],
+  "residual_full_r0": [
+    "R4 after_seq bounded replay e2e",
+    "R6 kill -9 whole agent process recovery e2e",
+    "R7 full UI reconcile"
+  ],
+  "generated_at": "2026-07-16T07:59:01Z",
+  "note": "R0_min signs cancel/idempotent process teardown via real xai-tty-utils; not full R0 matrix"
+}

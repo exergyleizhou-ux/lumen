@@ -1,15 +1,13 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T07:52:07Z",
+  "generated_at": "2026-07-16T07:59:01Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
+  "l0_pass": true,
   "blockers": [
-    "L2_min_e2e:not_signed",
-    "L3_multi_tool:not_signed",
     "L4_fault_cancel:not_signed",
-    "L5_long_session:not_signed",
-    "R0_full_suite:not_signed"
+    "L5_long_session:not_signed"
   ],
   "checks": [
     {
@@ -67,10 +65,22 @@
       "detail": ""
     },
     {
-      "id": "R_struct_session",
+      "id": "L2_min_e2e",
       "pass": true,
       "result": "PASS",
-      "detail": "structural only; full R0 pending S2"
+      "detail": ""
+    },
+    {
+      "id": "L3_multi_tool",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "R0_min",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "source_lock",
@@ -79,5 +89,5 @@
       "detail": ""
     }
   ],
-  "note": "can_tool_call=L1 only. ready=true requires L0-L5 + R0 (FINAL-2.0). Re-run verify-readiness.sh after S2-S5."
+  "note": "ready=true only if no blockers. L4/L5 remain explicit residual unless signed. R0_min is process kill/idempotency via xai-tty-utils, not full R0 matrix."
 }

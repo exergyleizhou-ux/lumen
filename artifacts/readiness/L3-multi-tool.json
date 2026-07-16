@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "check_id": "L3",
+  "pass": true,
+  "exit_code": 0,
+  "tool_request_count": 2,
+  "tools": [
+    "run_terminal_command",
+    "run_terminal_command"
+  ],
+  "call_ids": [
+    "call_00_bMNjyPXV4RX14OnI2tFn9554",
+    "call_00_GqqwFqeUPhNMm0SjCOFR7877"
+  ],
+  "generated_at": "2026-07-16T07:59:00Z",
+  "output_snippet": "L3_STEP_A L3_STEP_B\n"
+}

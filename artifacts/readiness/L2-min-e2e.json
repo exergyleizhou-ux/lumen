@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "check_id": "L2",
+  "pass": true,
+  "exit_code": 0,
+  "file_answer_ok": true,
+  "tool_count": 4,
+  "tools": [
+    "read_file",
+    "read_file",
+    "search_replace",
+    "run_terminal_command"
+  ],
+  "had_read_like": true,
+  "had_write_like": true,
+  "had_bash_like": true,
+  "generated_at": "2026-07-16T07:58:53Z",
+  "output_snippet": "Let me start by reading the input file.I see `L2_SEED_VALUE`. Now let me read the answer.txt file to see its current content.Now I'll replace `PLACEHOLDER_UNSET` with `L2_ANSWER=ok`.Now let me run `cat answer.txt`.L2_ANSWER=ok\n",
+  "answer_txt": "L2_ANSWER=ok\n"
+}
