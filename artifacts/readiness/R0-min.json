@@ -10,6 +10,6 @@
   ],
   "residual_full_r0": [],
   "superseded_by": "R0-full.json",
-  "generated_at": "2026-07-16T12:23:39Z",
+  "generated_at": "2026-07-16T17:01:17Z",
   "note": "R4/R6/R7 residuals closed by smoke-r0.sh full contract."
 }

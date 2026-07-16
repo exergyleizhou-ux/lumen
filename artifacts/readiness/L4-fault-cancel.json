@@ -1,17 +1,65 @@
 {
   "schema_version": 1,
-  "check_id": "L4_min",
+  "check_id": "L4_full",
   "pass": true,
-  "exit_code": 0,
-  "tool_count": 2,
-  "tools": [
-    "run_terminal_command",
-    "run_terminal_command"
-  ],
-  "recover_marker": true,
-  "failure_evidence_in_debug": true,
-  "process_kill_suite": "xai-tty-utils kill_all (ran)",
-  "scope": "minimal \u2014 not full 429/partition chaos matrix",
-  "generated_at": "2026-07-16T12:21:39Z",
-  "output_snippet": "\u001b[2m2026-07-16T12:21:30.249361Z\u001b[0m \u001b[33m WARN\u001b[0m Failed to fetch models: Auth(\"No auth credentials for cli-chat-proxy\")\n\u001b[2m2026-07-16T12:21:30.249415Z\u001b[0m \u001b[33m WARN\u001b[0m model refresh failed, leaving existing models unchanged\n\u001b[2m2026-07-16T12:21:30.844508Z\u001b[0m \u001b[33m WARN\u001b[0m skill name does not match expected name from path \u001b[3mpath\u001b[0m\u001b[2m=\u001b[0m/Users/lei/.agents/skills/claude-mem/plugin/skills/version-bump/SKILL.md \u001b[3mdeclared_name\u001b[0m\u001b[2m=\u001b[0mcodex-plugin-release \u001b[3mexpected_name\u001b[0m\u001b[2m"
+  "scope": "full_contract_short",
+  "binary": "/Users/lei/code/lumen/agent/target/release/lumen",
+  "binary_sha256": "65a3f6948bdd0598a19b88444f1fb1e9bf620658d5df3393db90156ed7e54bdd",
+  "scenarios": {
+    "429": {
+      "pass": true,
+      "agent_request_count": 3,
+      "response_kinds": [
+        "aux_text",
+        "fault_429",
+        "tool_call",
+        "final"
+      ],
+      "effect_count": 1
+    },
+    "500": {
+      "pass": true,
+      "agent_request_count": 3,
+      "response_kinds": [
+        "aux_text",
+        "fault_500",
+        "tool_call",
+        "final"
+      ],
+      "effect_count": 1
+    },
+    "disconnect": {
+      "pass": true,
+      "agent_request_count": 3,
+      "response_kinds": [
+        "aux_text",
+        "fault_disconnect",
+        "tool_call",
+        "final"
+      ],
+      "effect_count": 1
+    },
+    "timeout": {
+      "pass": true,
+      "agent_request_count": 1,
+      "response_kinds": [
+        "aux_text",
+        "fault_timeout"
+      ],
+      "effect_count": 0
+    },
+    "cancel": {
+      "pass": true,
+      "agent_request_count": 1,
+      "response_kinds": [
+        "aux_text",
+        "fault_cancel"
+      ],
+      "effect_count": 0
+    }
+  },
+  "retry_policy": "429, 5xx, and interrupted SSE retry; IdleTimeout is terminal by shipped policy",
+  "side_effect_invariant": "retry-success cases execute exactly one effect; timeout/cancel execute zero",
+  "process_tree_suite": "cargo test -p xai-tty-utils --lib kill_all",
+  "generated_at": "2026-07-16T16:59:30Z"
 }
