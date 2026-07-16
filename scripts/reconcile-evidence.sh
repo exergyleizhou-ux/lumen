@@ -119,13 +119,26 @@ rec = {
     "blockers": blockers,
     "note": "R7: run/event/effect/UI evidence tuple reconciles to current source + binary",
 }
-(art / "reconcile.json").write_text(json.dumps(rec, indent=2) + "\n")
+out = art / "reconcile.json"
+# Idempotent write: keep prior generated_at / monorepo_git_head if material fields match
+if out.is_file():
+    prev = json.loads(out.read_text())
+    material_keys = [
+        "pass", "source_lock_sha256", "source_lock_git_head", "source_lock_fresh",
+        "source_lock_content_ok", "binary_sha256", "artifact_sha256",
+        "sbom_present", "legal_present", "blockers",
+    ]
+    if all(prev.get(k) == rec.get(k) for k in material_keys):
+        print(f"pass={ok} (unchanged) source_lock_sha256={lock_sha[:12]}…")
+        print(f"lock_fresh={lock_fresh} content_ok={content_ok} head_match={lock_head_match}")
+        print(f"blockers={blockers or []}")
+        print(f"kept {out}")
+        sys.exit(0 if ok else 1)
 
+out.write_text(json.dumps(rec, indent=2) + "\n")
 print(f"pass={ok} source_lock_sha256={lock_sha[:12]}… binary_sha256={(binary_sha or 'none')[:12]}…")
 print(f"lock_fresh={lock_fresh} content_ok={content_ok} head_match={lock_head_match}")
 print(f"blockers={blockers or []}")
-print(f"wrote {art / 'reconcile.json'}")
-if not ok:
-    sys.exit(1)
-sys.exit(0)
+print(f"wrote {out}")
+sys.exit(0 if ok else 1)
 PY
