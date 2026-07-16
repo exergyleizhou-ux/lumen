@@ -72,6 +72,18 @@ pub fn default_session_summary_model() -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
+
+    fn embedded_catalog() -> Value {
+        serde_json::from_str(DEFAULT_MODELS_JSON).expect("embedded default_models.json parses")
+    }
+
+    fn model_by_id<'a>(models: &'a [Value], id: &str) -> &'a Value {
+        models
+            .iter()
+            .find(|m| m.get("id").and_then(Value::as_str) == Some(id))
+            .unwrap_or_else(|| panic!("embedded catalog missing model id={id}"))
+    }
 
     #[test]
     fn lumen_default_model_is_deepseek_chat() {
@@ -83,67 +95,120 @@ mod tests {
     }
 
     #[test]
-    fn lumen_default_models_json_lists_deepseek() {
-        let v: serde_json::Value =
-            serde_json::from_str(DEFAULT_MODELS_JSON).expect("default_models.json parses");
+    fn lumen_default_models_json_keeps_deepseek_byok_for_all_default_roles() {
+        let v = embedded_catalog();
         assert_eq!(v["default"], "deepseek-chat");
+        assert_eq!(v["web_search"], "deepseek-chat");
+        assert_eq!(v["image_description"], "deepseek-chat");
+        assert_eq!(v["session_summary"], "deepseek-chat");
         let models = v["models"].as_array().expect("models array");
-        assert!(
-            models
-                .iter()
-                .any(|m| m["model"] == "deepseek-chat"),
-            "models[] must include deepseek-chat entry"
-        );
+        let deepseek = model_by_id(models, "deepseek-chat");
+        assert_eq!(deepseek["model"], "deepseek-chat");
+        assert_eq!(deepseek["base_url"], "https://api.deepseek.com/v1");
+        assert_eq!(deepseek["env_key"], "DEEPSEEK_API_KEY");
+        assert_eq!(deepseek["byok"], true);
     }
 
-    /// Multi-provider catalog: DeepSeek is preferred default, not exclusive.
     #[test]
-    fn lumen_catalog_includes_mainstream_providers() {
-        let v: serde_json::Value =
-            serde_json::from_str(DEFAULT_MODELS_JSON).expect("default_models.json parses");
+    fn lumen_catalog_covers_legacy_go_families_and_science_minimax() {
+        let v = embedded_catalog();
         let models = v["models"].as_array().expect("models array");
-        let ids: Vec<String> = models
+        assert!(
+            models.len() >= 29,
+            "legacy-complete catalog should contain at least 29 entries; got {}",
+            models.len()
+        );
+        let ids: Vec<&str> = models
             .iter()
-            .map(|m| {
-                m.get("id")
-                    .and_then(|x| x.as_str())
-                    .or_else(|| m.get("model").and_then(|x| x.as_str()))
-                    .unwrap_or("")
-                    .to_string()
-            })
+            .map(|m| m["id"].as_str().expect("every catalog entry has an id"))
             .collect();
         for need in [
             "deepseek-chat",
+            "deepseek-reasoner",
             "openai-gpt4o",
+            "openai-gpt4o-mini",
+            "openai-gpt41",
+            "openai-o3-mini",
+            "openai-o4-mini",
             "claude-sonnet",
+            "claude-opus",
+            "claude-3.5-sonnet",
+            "claude-3.5-haiku",
             "xai-grok",
-            "glm-4",
+            "grok-3-mini",
+            "kimi-k2",
+            "moonshot-v1",
+            "qwen-max",
             "qwen-plus",
-            "mimo",
+            "qwen-turbo",
+            "qwen-coder",
+            "glm-4",
+            "glm-4-flash",
+            "glm-4-plus",
+            "mimo-chat",
+            "minimax-m3",
+            "lmstudio",
             "ollama",
+            "vllm",
+            "exo",
+            "local-openai",
         ] {
             assert!(
-                ids.iter().any(|id| id == need),
+                ids.contains(&need),
                 "catalog missing provider preset id={need}; have {ids:?}"
             );
         }
-        // Anthropic must use Messages backend; OpenAI-family use chat_completions.
-        let claude = models
-            .iter()
-            .find(|m| m.get("id").and_then(|x| x.as_str()) == Some("claude-sonnet"))
-            .expect("claude-sonnet");
-        assert_eq!(claude["api_backend"], "messages");
-        let ollama = models
-            .iter()
-            .find(|m| m.get("id").and_then(|x| x.as_str()) == Some("ollama"))
-            .expect("ollama");
-        assert_eq!(ollama["api_backend"], "chat_completions");
-        assert!(
-            ollama["base_url"]
-                .as_str()
-                .unwrap_or("")
-                .contains("11434"),
-            "ollama preset should point at default Ollama port"
+    }
+
+    #[test]
+    fn lumen_catalog_uses_correct_protocols_and_legacy_true_endpoints() {
+        let v = embedded_catalog();
+        let models = v["models"].as_array().expect("models array");
+
+        for id in [
+            "claude-sonnet",
+            "claude-opus",
+            "claude-3.5-sonnet",
+            "claude-3.5-haiku",
+            "minimax-m3",
+        ] {
+            assert_eq!(model_by_id(models, id)["api_backend"], "messages", "{id}");
+        }
+        assert_eq!(
+            model_by_id(models, "minimax-m3")["base_url"],
+            "https://api.minimaxi.com/anthropic/v1"
         );
+        assert_eq!(
+            model_by_id(models, "mimo-chat")["base_url"],
+            "https://api.mimo.run/v1"
+        );
+        assert!(
+            !DEFAULT_MODELS_JSON.contains("api.xiaomimimo.com"),
+            "stale MiMo endpoint must not remain in embedded JSON"
+        );
+    }
+
+    #[test]
+    fn lumen_local_catalog_has_expected_ports_and_agent_candidate_model() {
+        let v = embedded_catalog();
+        let models = v["models"].as_array().expect("models array");
+
+        for (id, port) in [
+            ("lmstudio", "1234"),
+            ("ollama", "11434"),
+            ("vllm", "8000"),
+            ("exo", "52415"),
+        ] {
+            let model = model_by_id(models, id);
+            assert_eq!(model["api_backend"], "chat_completions", "{id}");
+            assert!(
+                model["base_url"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains(port),
+                "{id} base_url must contain port {port}"
+            );
+        }
+        assert_eq!(model_by_id(models, "ollama")["model"], "qwen2.5-coder");
     }
 }

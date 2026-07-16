@@ -1,90 +1,109 @@
 # 多模型适配（Multi-provider）
 
-Lumen **不是**只能用 DeepSeek。  
-**默认**选 DeepSeek，是为了长会话 **prompt cache 命中率高**（Reasonix 纪律），你自己现在主力也可以是 DeepSeek——但引擎按 **BYOK + 多后端** 设计。
+Lumen 的内置目录是多厂商 BYOK，不是 DeepSeek 单厂商产品。默认仍为
+`deepseek-chat`，因为长会话保持稳定前缀时，DeepSeek 的 prompt cache 命中率高，
+更适合作为低成本的默认路径。用户可以随时用 `-m`、`/model` 或 Ctrl+M 切换。
 
-## 支持的协议
+真实 API key 只放环境变量，不写进配置文件或 git。
 
-| `api_backend` | 协议 | 典型厂商 |
-|---------------|------|----------|
-| `chat_completions`（默认） | OpenAI `/v1/chat/completions` | OpenAI、DeepSeek、xAI、GLM、Qwen、Ollama、vLLM… |
-| `messages` | Anthropic Messages | Claude |
-| `responses` | OpenAI Responses | 部分 OpenAI 新路径 |
+## 协议边界
 
-自定义任意厂商：在 `~/.grok/config.toml` 写 `[model.xxx]`，填 `base_url` + `model` + `env_key`。
+| `api_backend` | 协议 | 内置厂商 |
+|---|---|---|
+| `chat_completions` | OpenAI 兼容的 `/v1/chat/completions` | DeepSeek、OpenAI、xAI、Kimi/Moonshot、Qwen、GLM、MiMo、本地端点 |
+| `messages` | Anthropic Messages | Claude、MiniMax Anthropic 兼容口 |
+| `responses` | OpenAI Responses | 引擎可用，但本次旧表迁移没有强行改用 |
 
-## 内置目录（`default_models.json`）
+旧 Go Lumen 还有原生 Gemini wire kind；当前 Rust 目录没有等价的原生 Gemini
+backend，因此 Gemini 明确后置，未写入 `default_models.json`。这不是原生 Gemini
+已对齐，也不应把实验性的 OpenAI 兼容入口描述成完整等价实现。
 
-| ID | 厂商 | 环境变量（示例） |
-|----|------|------------------|
-| `deepseek-chat` / `deepseek-reasoner` | DeepSeek | `DEEPSEEK_API_KEY` |
-| `openai-gpt4o` / `openai-gpt4o-mini` | OpenAI | `OPENAI_API_KEY` |
-| `claude-sonnet` / `claude-opus` | Anthropic | `ANTHROPIC_API_KEY` |
-| `xai-grok` | xAI | `XAI_API_KEY` |
-| `glm-4` | 智谱 | `ZHIPUAI_API_KEY` |
-| `qwen-plus` / `qwen-max` | 通义 | `DASHSCOPE_API_KEY` |
-| `mimo` | 小米 MiMo | `MIMO_API_KEY` |
-| `ollama` | 本地 Ollama | 可选 `OLLAMA_API_KEY` |
-| `local-openai` | vLLM / llama.cpp 等 | `LOCAL_API_KEY` |
+## 内置目录
 
-完整示例：`config/lumen.example.toml`。
+`agent/crates/codegen/xai-grok-models/default_models.json` 是编译进二进制的目录真源。
+`config/lumen.example.toml` 给出相同家族的可复制配置。
 
-## 怎么切换
+| ID | API model / 家族 | Backend | 环境变量 |
+|---|---|---|---|
+| `deepseek-chat`, `deepseek-reasoner` | DeepSeek | `chat_completions` | `DEEPSEEK_API_KEY` |
+| `openai-gpt4o`, `openai-gpt4o-mini`, `openai-gpt41` | GPT-4o / GPT-4.1 | `chat_completions` | `OPENAI_API_KEY` |
+| `openai-o3-mini`, `openai-o4-mini` | o3-mini / o4-mini | `chat_completions` | `OPENAI_API_KEY` |
+| `claude-sonnet`, `claude-opus` | Claude 4 | `messages` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` |
+| `claude-3.5-sonnet`, `claude-3.5-haiku` | Claude 3.5 | `messages` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN` |
+| `xai-grok`, `grok-3-mini` | Grok 3 | `chat_completions` | `XAI_API_KEY`, `GROK_CODE_XAI_API_KEY`, `GROK_API_KEY` |
+| `kimi-k2`, `moonshot-v1` | Kimi / Moonshot | `chat_completions` | `MOONSHOT_API_KEY` |
+| `qwen-max`, `qwen-plus`, `qwen-turbo`, `qwen-coder` | Qwen / DashScope | `chat_completions` | `DASHSCOPE_API_KEY` |
+| `glm-4`, `glm-4-flash`, `glm-4-plus` | Zhipu GLM | `chat_completions` | `ZHIPU_API_KEY`, `ZHIPUAI_API_KEY`, `BIGMODEL_API_KEY`, `GLM_API_KEY` |
+| `mimo-chat` | MiMo (`https://api.mimo.run/v1`) | `chat_completions` | `MIMO_API_KEY` |
+| `minimax-m3` | MiniMax-M3 | `messages` | `MINIMAX_API_KEY` |
+| `lmstudio`, `ollama`, `vllm`, `exo`, `local-openai` | 本地 OpenAI 兼容 | `chat_completions` | 可选的本地占位 key，见下表 |
+
+## 选择模型
 
 ```bash
-# 会话默认仍是 deepseek-chat；临时换模型：
-lumen -m openai-gpt4o "fix the flaky test"
-lumen -m claude-sonnet
+# 当前调用
+lumen -m openai-gpt41 "fix the flaky test"
+lumen -m kimi-k2
+lumen -m minimax-m3
 lumen -m ollama
-lumen -m qwen-plus
 
 # TUI 内
 /model claude-sonnet
-# 或 Ctrl+M 打开 model picker
+/model lmstudio
 ```
 
-持久默认（例如你主力改成 Claude）：
+持久默认可以在配置里覆盖；内置出厂默认仍是 DeepSeek：
 
 ```toml
 [models]
 default = "claude-sonnet"
 ```
 
-## Ollama 本地开源模型
-
-```bash
-ollama pull qwen2.5-coder
-ollama serve
-export OLLAMA_API_KEY=ollama   # 若端点要求非空 key
-lumen -m ollama
-```
-
-在 config 里把 `model = "qwen2.5-coder"` 改成你 `ollama list` 里的名字。
-
-## 加一个新厂商（三分钟）
+自定义厂商或租户端点：
 
 ```toml
 [model.my-provider]
 model = "their-model-id"
 name = "My Provider"
 base_url = "https://api.example.com/v1"
-api_backend = "chat_completions"   # Claude 用 "messages"
+api_backend = "chat_completions"
 env_key = "MY_PROVIDER_API_KEY"
 ```
 
+## 本地模型
+
+所有内置本地端点都走 OpenAI 兼容协议。端口与旧 Go Lumen 预设一致：
+
+| ID | 默认 base URL | 默认 model | 环境变量 |
+|---|---|---|---|
+| `lmstudio` | `http://127.0.0.1:1234/v1` | `local-model` | `LMSTUDIO_API_KEY` 或 `LOCAL_API_KEY` |
+| `ollama` | `http://127.0.0.1:11434/v1` | `qwen2.5-coder` | `OLLAMA_API_KEY` |
+| `vllm` | `http://127.0.0.1:8000/v1` | `local-model` | `LOCAL_API_KEY` |
+| `exo` | `http://127.0.0.1:52415/v1` | `local-model` | `LOCAL_API_KEY` |
+| `local-openai` | `http://127.0.0.1:8000/v1` | `local-model` | `LOCAL_API_KEY` |
+
+例如 Ollama：
+
 ```bash
-export MY_PROVIDER_API_KEY=...
-lumen -m my-provider
+ollama pull qwen2.5-coder
+ollama serve
+export OLLAMA_API_KEY=ollama  # 仅在客户端/端点要求非空值时需要
+lumen -m ollama
 ```
 
-## 和「DeepSeek 第一公民」的关系
+### 能聊天不等于能驱动 agent
 
-- **默认 ID** = `deepseek-chat`：冷启动、新手路径、cache 演示走这条。  
-- **能力** = 全目录 + 任意 OpenAI/Anthropic 兼容端点。  
-- Reasonix **cache 可见 / 前缀稳定** 对 DeepSeek 优化最深；换别的模型同样能干活，cache 统计取决于该厂商是否返回 `cached_tokens`。
+Lumen 的 agent 循环依赖模型真正发出 OpenAI 风格的 `tool_call`，例如
+`read_file`、`edit_file` 和 `run_bash`。只返回自然语言的模型即使能聊天，也不能
+完成文件修改或命令执行。对本地模型应把真实 tool-call 探测作为可用门槛，不能把
+端口可达或普通聊天成功冒充 agent-ready。
 
-## 安全提醒
+如果本地服务暴露的模型名不是 `local-model`，请在用户配置中覆盖 `model`。不要在
+文档或目录中预先声称未经实测的本地模型具备 tool-call 能力。
 
-- Key 放环境变量，不要写进 git。  
-- 各厂商 tool-calling 质量不同；Critical-0 安全轨在 agent 侧，与模型无关。  
-- 换模型后建议再跑：`./scripts/smoke-deepseek-agent.sh` 的同类检查（或对该 key 做一次 `-p` + 工具任务）。
+## 安全与验证
+
+- Key 放环境变量；提交前检查没有 `sk-...` 一类真实密钥。
+- 切换厂商后至少做一个需要工具调用的最小任务，不能只测普通聊天。
+- 目录结构门禁：`./scripts/assert-defaults.sh`。
+- 编译时目录单测：在 `agent/` 下运行 `cargo test -p xai-grok-models --lib`。

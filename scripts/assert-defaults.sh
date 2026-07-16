@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Structural proof: DeepSeek-preferred default + multi-provider catalog + lumen bin.
+# Structural proof: DeepSeek-preferred default + legacy-complete provider catalog.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -8,6 +8,7 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 MODELS="$ROOT/agent/crates/codegen/xai-grok-models/default_models.json"
 BIN_TOML="$ROOT/agent/crates/codegen/xai-grok-pager-bin/Cargo.toml"
 EXAMPLE="$ROOT/config/lumen.example.toml"
+DOC="$ROOT/docs/user/multi-provider.md"
 
 test -f "$MODELS" || fail "missing $MODELS"
 grep -q '"default": "deepseek-chat"' "$MODELS" || fail "default_models.json default is not deepseek-chat"
@@ -16,12 +17,66 @@ grep -q '"model": "deepseek-chat"' "$MODELS" || fail "default_models.json missin
 grep -q '"base_url": "https://api.deepseek.com/v1"' "$MODELS" || fail "default_models.json missing DeepSeek base_url"
 grep -q '"env_key": "DEEPSEEK_API_KEY"' "$MODELS" || fail "default_models.json missing env_key DEEPSEEK_API_KEY"
 grep -q '"byok": true' "$MODELS" || fail "default_models.json missing byok true"
-# Multi-provider catalog (DeepSeek preferred, not exclusive)
-for id in openai-gpt4o claude-sonnet xai-grok glm-4 qwen-plus mimo ollama; do
+
+# Full legacy Go catalog plus MiniMax from the Science provider table.
+for id in \
+  deepseek-chat deepseek-reasoner \
+  openai-gpt4o openai-gpt4o-mini openai-gpt41 openai-o3-mini openai-o4-mini \
+  claude-sonnet claude-opus claude-3.5-sonnet claude-3.5-haiku \
+  xai-grok grok-3-mini kimi-k2 moonshot-v1 \
+  qwen-max qwen-plus qwen-turbo qwen-coder \
+  glm-4 glm-4-flash glm-4-plus mimo-chat minimax-m3 \
+  lmstudio ollama vllm exo local-openai; do
   grep -q "\"id\": \"$id\"" "$MODELS" || fail "default_models.json missing provider id=$id"
 done
 grep -q '"api_backend": "messages"' "$MODELS" || fail "default_models.json missing Anthropic messages backend"
-grep -q '11434' "$MODELS" || fail "default_models.json missing Ollama base_url port"
+grep -q 'api.mimo.run' "$MODELS" || fail "default_models.json missing legacy-true MiMo URL api.mimo.run"
+if grep -q 'api.xiaomimimo.com' "$MODELS"; then
+  fail "default_models.json still contains stale MiMo URL api.xiaomimimo.com"
+fi
+grep -q '"model": "qwen2.5-coder"' "$MODELS" || fail "Ollama default model is not qwen2.5-coder"
+for port in 1234 11434 8000 52415; do
+  grep -q "$port" "$MODELS" || fail "default_models.json missing local endpoint port $port"
+done
+
+python3 - "$MODELS" <<'PY' || fail "default_models.json structural audit failed"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    root = json.load(f)
+
+assert root["default"] == "deepseek-chat"
+assert root["web_search"] == "deepseek-chat"
+assert root["image_description"] == "deepseek-chat"
+assert root["session_summary"] == "deepseek-chat"
+models = root["models"]
+assert len(models) >= 29, len(models)
+by_id = {m["id"]: m for m in models}
+assert len(by_id) == len(models), "duplicate or missing ids"
+
+deepseek = by_id["deepseek-chat"]
+assert deepseek["model"] == "deepseek-chat"
+assert deepseek["base_url"] == "https://api.deepseek.com/v1"
+assert deepseek["env_key"] == "DEEPSEEK_API_KEY"
+assert deepseek["byok"] is True
+
+for model_id in [
+    "claude-sonnet", "claude-opus", "claude-3.5-sonnet",
+    "claude-3.5-haiku", "minimax-m3",
+]:
+    assert by_id[model_id]["api_backend"] == "messages", model_id
+
+assert by_id["minimax-m3"]["base_url"] == "https://api.minimaxi.com/anthropic/v1"
+assert by_id["mimo-chat"]["base_url"] == "https://api.mimo.run/v1"
+assert by_id["ollama"]["model"] == "qwen2.5-coder"
+assert not any(m["id"].startswith("gemini") for m in models)
+for model_id, port in {
+    "lmstudio": "1234", "ollama": "11434", "vllm": "8000", "exo": "52415"
+}.items():
+    assert port in by_id[model_id]["base_url"], model_id
+    assert by_id[model_id]["api_backend"] == "chat_completions", model_id
+PY
 
 test -f "$BIN_TOML" || fail "missing pager-bin Cargo.toml"
 grep -q 'name = "lumen"' "$BIN_TOML" || fail "binary name is not lumen"
@@ -31,9 +86,39 @@ test -f "$EXAMPLE" || fail "missing config/lumen.example.toml"
 grep -q 'base_url = "https://api.deepseek.com/v1"' "$EXAMPLE" || fail "example missing DeepSeek base_url"
 grep -q 'default = "deepseek-chat"' "$EXAMPLE" || fail "example missing default deepseek-chat"
 grep -q 'auto_update = false' "$EXAMPLE" || fail "example missing auto_update = false"
-grep -q '\[model.openai-gpt4o\]' "$EXAMPLE" || fail "example missing OpenAI preset"
-grep -q '\[model.claude-sonnet\]' "$EXAMPLE" || fail "example missing Claude preset"
-grep -q '\[model.ollama\]' "$EXAMPLE" || fail "example missing Ollama preset"
+for id in openai-gpt4o claude-sonnet kimi-k2 moonshot-v1 qwen-plus glm-4 mimo-chat minimax-m3 lmstudio ollama vllm exo; do
+  grep -Fq "[model.$id]" "$EXAMPLE" || fail "example missing [model.$id]"
+done
+grep -Fq 'model = "qwen2.5-coder"' "$EXAMPLE" || fail "example Ollama model is not qwen2.5-coder"
+for port in 1234 11434 8000 52415; do
+  grep -q "$port" "$EXAMPLE" || fail "example missing local endpoint port $port"
+done
+
+python3 - "$EXAMPLE" <<'PY' || fail "config/lumen.example.toml parse/catalog audit failed"
+import sys
+try:
+    import tomllib
+except ModuleNotFoundError:  # macOS system Python < 3.11
+    import tomli as tomllib
+
+with open(sys.argv[1], "rb") as f:
+    cfg = tomllib.load(f)
+assert cfg["models"]["default"] == "deepseek-chat"
+models = cfg["model"]
+for model_id in [
+    "deepseek-chat", "openai-gpt41", "claude-3.5-sonnet", "grok-3-mini",
+    "kimi-k2", "qwen-coder", "glm-4-flash", "mimo-chat", "minimax-m3",
+    "lmstudio", "ollama", "vllm", "exo",
+]:
+    assert model_id in models, model_id
+PY
+
+test -f "$DOC" || fail "missing docs/user/multi-provider.md"
+grep -q '能聊天不等于能驱动 agent' "$DOC" || fail "docs missing chat-vs-tool_call warning"
+grep -q 'Gemini.*后置' "$DOC" || fail "docs must state native Gemini is deferred"
+for key in DEEPSEEK_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY MOONSHOT_API_KEY DASHSCOPE_API_KEY ZHIPU_API_KEY MIMO_API_KEY MINIMAX_API_KEY; do
+  grep -q "$key" "$DOC" || fail "docs missing environment variable $key"
+done
 
 # Registry + update crate must agree: auto_update default false.
 REG="$ROOT/agent/crates/codegen/xai-grok-pager/src/settings/registry.rs"
@@ -43,4 +128,4 @@ grep -q 'auto_update.unwrap_or(false)' "$REG" || fail "registry auto_update must
 grep -q 'SettingKind::Bool { default: false }' "$DEFS" || fail "defs auto_update default must be false"
 grep -q 'configured.unwrap_or(false)' "$UPD" || fail "effective_auto_update must unwrap_or(false)"
 
-echo "OK: defaults structural checks pass (DeepSeek BYOK + auto_update=false)"
+echo "OK: defaults structural checks pass (29-model legacy catalog + DeepSeek default)"

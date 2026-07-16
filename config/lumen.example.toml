@@ -1,21 +1,18 @@
 # Lumen example config — multi-provider BYOK catalog.
-# Copy to ~/.grok/config.toml (or product config path after home-dir migration).
+# Copy to ~/.grok/config.toml (or the product config path after home migration).
 #
-# Philosophy:
-#   - Default stays DeepSeek for high prompt-cache hit rate (Reasonix discipline).
-#   - Any mainstream provider can be selected: -m <id> / /model / Ctrl+M.
-#   - Keys live in the environment (preferred), not in this file.
+# DeepSeek stays the default because stable long-session prefixes produce high
+# prompt-cache hit rates. Switch per invocation with `lumen -m <id>` or inside
+# the TUI with `/model <id>` (Ctrl+M opens the picker).
 #
-# Switch examples:
-#   lumen -m openai-gpt4o "fix the bug"
-#   lumen -m claude-sonnet
-#   lumen -m ollama
-#   lumen -m qwen-plus
+# Keep real keys in environment variables. Local servers may accept a harmless
+# placeholder, but a model that can chat still must emit tool_calls to drive the
+# agent loop.
 
 [models]
 default = "deepseek-chat"
 
-# ── DeepSeek (preferred default — cache-friendly) ──────────────────────────
+# ── DeepSeek (preferred default) ────────────────────────────────────────────
 [model.deepseek-chat]
 model = "deepseek-chat"
 name = "DeepSeek Chat"
@@ -30,7 +27,7 @@ base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
 
-# ── OpenAI ─────────────────────────────────────────────────────────────────
+# ── OpenAI ──────────────────────────────────────────────────────────────────
 [model.openai-gpt4o]
 model = "gpt-4o"
 name = "OpenAI GPT-4o"
@@ -45,45 +42,87 @@ base_url = "https://api.openai.com/v1"
 api_backend = "chat_completions"
 env_key = "OPENAI_API_KEY"
 
-# ── Anthropic Claude (Messages API) ────────────────────────────────────────
+[model.openai-gpt41]
+model = "gpt-4.1"
+name = "OpenAI GPT-4.1"
+base_url = "https://api.openai.com/v1"
+api_backend = "chat_completions"
+env_key = "OPENAI_API_KEY"
+
+[model.openai-o3-mini]
+model = "o3-mini"
+name = "OpenAI o3-mini"
+base_url = "https://api.openai.com/v1"
+api_backend = "chat_completions"
+env_key = "OPENAI_API_KEY"
+
+[model.openai-o4-mini]
+model = "o4-mini"
+name = "OpenAI o4-mini"
+base_url = "https://api.openai.com/v1"
+api_backend = "chat_completions"
+env_key = "OPENAI_API_KEY"
+
+# ── Anthropic Claude (Messages API) ─────────────────────────────────────────
 [model.claude-sonnet]
 model = "claude-sonnet-4-20250514"
-name = "Claude Sonnet"
+name = "Claude Sonnet 4"
 base_url = "https://api.anthropic.com"
 api_backend = "messages"
 env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 
 [model.claude-opus]
 model = "claude-opus-4-20250514"
-name = "Claude Opus"
+name = "Claude Opus 4"
 base_url = "https://api.anthropic.com"
 api_backend = "messages"
 env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 
-# ── xAI Grok ───────────────────────────────────────────────────────────────
+[model."claude-3.5-sonnet"]
+model = "claude-3-5-sonnet-20241022"
+name = "Claude 3.5 Sonnet"
+base_url = "https://api.anthropic.com"
+api_backend = "messages"
+env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+
+[model."claude-3.5-haiku"]
+model = "claude-3-5-haiku-20241022"
+name = "Claude 3.5 Haiku"
+base_url = "https://api.anthropic.com"
+api_backend = "messages"
+env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+
+# ── xAI Grok ────────────────────────────────────────────────────────────────
 [model.xai-grok]
 model = "grok-3"
-name = "xAI Grok"
+name = "xAI Grok 3"
 base_url = "https://api.x.ai/v1"
 api_backend = "chat_completions"
-env_key = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"]
+env_key = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_API_KEY"]
 
-# ── 智谱 GLM ───────────────────────────────────────────────────────────────
-[model.glm-4]
-model = "glm-4-plus"
-name = "GLM-4 (Zhipu)"
-base_url = "https://open.bigmodel.cn/api/paas/v4"
+[model.grok-3-mini]
+model = "grok-3-mini"
+name = "xAI Grok 3 mini"
+base_url = "https://api.x.ai/v1"
 api_backend = "chat_completions"
-env_key = ["ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"]
+env_key = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_API_KEY"]
 
-# ── 通义千问 Qwen (DashScope compatible-mode) ──────────────────────────────
-[model.qwen-plus]
-model = "qwen-plus"
-name = "Qwen Plus"
-base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# ── Kimi / Moonshot ─────────────────────────────────────────────────────────
+[model.kimi-k2]
+model = "kimi-k2-0711-preview"
+name = "Kimi K2"
+base_url = "https://api.moonshot.cn/v1"
 api_backend = "chat_completions"
-env_key = "DASHSCOPE_API_KEY"
+env_key = "MOONSHOT_API_KEY"
 
+[model.moonshot-v1]
+model = "moonshot-v1-8k"
+name = "Moonshot V1 8K"
+base_url = "https://api.moonshot.cn/v1"
+api_backend = "chat_completions"
+env_key = "MOONSHOT_API_KEY"
+
+# ── Qwen / DashScope ────────────────────────────────────────────────────────
 [model.qwen-max]
 model = "qwen-max"
 name = "Qwen Max"
@@ -91,32 +130,107 @@ base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_backend = "chat_completions"
 env_key = "DASHSCOPE_API_KEY"
 
-# ── 小米 MiMo (override base_url/model if your tenant differs) ─────────────
-[model.mimo]
-model = "mimo-v2-flash"
-name = "MiMo"
-base_url = "https://api.xiaomimimo.com/v1"
+[model.qwen-plus]
+model = "qwen-plus"
+name = "Qwen Plus"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 api_backend = "chat_completions"
-env_key = ["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY"]
+env_key = "DASHSCOPE_API_KEY"
 
-# ── Ollama (local open-source models) ──────────────────────────────────────
-# ollama pull llama3.2   # or qwen2.5-coder, deepseek-r1, etc.
-# ollama serve
+[model.qwen-turbo]
+model = "qwen-turbo"
+name = "Qwen Turbo"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_backend = "chat_completions"
+env_key = "DASHSCOPE_API_KEY"
+
+[model.qwen-coder]
+model = "qwen-coder-plus"
+name = "Qwen Coder Plus"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_backend = "chat_completions"
+env_key = "DASHSCOPE_API_KEY"
+
+# ── Zhipu GLM ───────────────────────────────────────────────────────────────
+[model.glm-4]
+model = "glm-4"
+name = "GLM-4"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_backend = "chat_completions"
+env_key = ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"]
+
+[model.glm-4-flash]
+model = "glm-4-flash"
+name = "GLM-4 Flash"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_backend = "chat_completions"
+env_key = ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"]
+
+[model.glm-4-plus]
+model = "glm-4-plus"
+name = "GLM-4 Plus"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_backend = "chat_completions"
+env_key = ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"]
+
+# ── MiMo ────────────────────────────────────────────────────────────────────
+[model.mimo-chat]
+model = "mimo-chat"
+name = "MiMo Chat"
+base_url = "https://api.mimo.run/v1"
+api_backend = "chat_completions"
+env_key = "MIMO_API_KEY"
+
+# ── MiniMax (Anthropic-compatible Messages API) ─────────────────────────────
+# The sampler appends /messages to this base URL.
+[model.minimax-m3]
+model = "MiniMax-M3"
+name = "MiniMax M3"
+base_url = "https://api.minimaxi.com/anthropic/v1"
+api_backend = "messages"
+env_key = "MINIMAX_API_KEY"
+
+# ── Local OpenAI-compatible endpoints ───────────────────────────────────────
+# LM Studio: start the local server, then `lumen -m lmstudio`.
+[model.lmstudio]
+model = "local-model"
+name = "LM Studio"
+base_url = "http://127.0.0.1:1234/v1"
+api_backend = "chat_completions"
+env_key = ["LMSTUDIO_API_KEY", "LOCAL_API_KEY"]
+
+# Ollama: `ollama pull qwen2.5-coder && ollama serve`, then
+# `lumen -m ollama` or `/model ollama`.
 [model.ollama]
-model = "llama3.2"
-name = "Ollama (local)"
+model = "qwen2.5-coder"
+name = "Ollama"
 base_url = "http://127.0.0.1:11434/v1"
 api_backend = "chat_completions"
-# Ollama often ignores auth; any non-empty value works if required
 env_key = "OLLAMA_API_KEY"
 
-# ── Generic local / vLLM / llama.cpp ───────────────────────────────────────
-[model.local-openai]
+[model.vllm]
 model = "local-model"
-name = "Local OpenAI-compatible"
+name = "vLLM"
 base_url = "http://127.0.0.1:8000/v1"
 api_backend = "chat_completions"
 env_key = "LOCAL_API_KEY"
+
+[model.exo]
+model = "local-model"
+name = "exo"
+base_url = "http://127.0.0.1:52415/v1"
+api_backend = "chat_completions"
+env_key = "LOCAL_API_KEY"
+
+[model.local-openai]
+model = "local-model"
+name = "Generic local OpenAI-compatible"
+base_url = "http://127.0.0.1:8000/v1"
+api_backend = "chat_completions"
+env_key = "LOCAL_API_KEY"
+
+# Native Gemini wire support is intentionally not claimed here: the old Go
+# catalog had a gemini backend, while this Rust catalog currently does not.
 
 [cli]
 auto_update = false
