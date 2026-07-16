@@ -31,6 +31,7 @@ pub mod retry;
 pub mod tool_taxonomy;
 pub mod types;
 pub mod util;
+mod verify_after_edit;
 pub mod versions;
 
 pub use attribution::{

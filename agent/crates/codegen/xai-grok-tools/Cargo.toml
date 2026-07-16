@@ -19,6 +19,7 @@ xai-grok-config = { path = "../xai-grok-config" }
 xai-grok-tools-api = { path = "../xai-grok-tools-api" }
 # Lumen M2: goal incomplete-todo hard gate (SoftOnce).
 lumen-discipline = { path = "../lumen-discipline" }
+lumen-verify = { path = "../lumen-verify" }
 xai-grok-workspace-types = { path = "../xai-grok-workspace-types" }
 xai-grok-version = { workspace = true }
 xai-interjection-core = { workspace = true }

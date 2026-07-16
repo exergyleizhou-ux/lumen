@@ -13,7 +13,7 @@ use crate::{
         output::{ToolOutput, ToolRunResult},
         params_validation::{ParamValidationError, validate_params_json},
         requirements::{EvalContext, Expr, ProposedTool, ToolRequirement},
-        resources::{InnerDispatch, Resources, SharedResources},
+        resources::{Cwd, InnerDispatch, Resources, SharedResources},
         template_renderer::TemplateRenderer,
         tool::{Reminder, ToolKind, ToolNamespace},
         tool_metadata::ToolMetadata,
@@ -361,6 +361,9 @@ struct DispatchParts {
     output_converter: OutputConverter,
     /// `use_tool` target tool name, surfaced in the final `ToolRunResult`.
     effective_tool_name: Option<String>,
+    /// Per-call cwd override, retained for post-tool verification. `None`
+    /// means the session `Cwd` resource is authoritative.
+    cwd_override: Option<PathBuf>,
 }
 /// Per-tool metadata + instance stored in the builder.
 ///
@@ -1483,7 +1486,7 @@ impl FinalizedToolset {
             tool_call_id, cwd_override,) { Ok(parts) => parts, Err(e) => { yield
             xai_tool_runtime::ToolStreamItem::Terminal(Err(e)); return; } }; let
             DispatchParts { lr_handle, ctx, canonical_params, output_converter,
-            effective_tool_name, } = parts; let mut inner = lr_handle.execute(ctx,
+            effective_tool_name, cwd_override, } = parts; let mut inner = lr_handle.execute(ctx,
             canonical_params). await; while let Some(item) = inner.next(). await {
             match item { xai_tool_runtime::ToolStreamItem::Progress(p) => { yield
             xai_tool_runtime::ToolStreamItem::Progress(p); }
@@ -1491,7 +1494,7 @@ impl FinalizedToolset {
             xai_tool_runtime::ToolStreamItem::Terminal(Err(e)); return; }
             xai_tool_runtime::ToolStreamItem::Terminal(Ok(typed)) => { let run_result
             = this.finalize_output(typed.value, & output_converter,
-            effective_tool_name). await; yield
+            effective_tool_name, cwd_override). await; yield
             xai_tool_runtime::ToolStreamItem::Terminal(run_result); return; } } }
             yield
             xai_tool_runtime::ToolStreamItem::Terminal(Err(stream_no_terminal_error()));
@@ -1542,7 +1545,7 @@ impl FinalizedToolset {
         let mut ctx = xai_tool_runtime::ToolCallContext::new(rt_call_id);
         ctx.extensions.insert(self.resources.clone());
         ctx.extensions.insert_arc(Arc::clone(&self.renderer));
-        if let Some(cwd) = cwd_override {
+        if let Some(cwd) = cwd_override.clone() {
             ctx.extensions.insert(xai_tool_runtime::Cwd(cwd));
         }
         if let Some(ref version) = contract_version {
@@ -1571,6 +1574,7 @@ impl FinalizedToolset {
             canonical_params,
             output_converter,
             effective_tool_name,
+            cwd_override,
         })
     }
     /// Post-dispatch tail shared by [`call`] / [`call_streaming`].
@@ -1584,9 +1588,23 @@ impl FinalizedToolset {
         value: serde_json::Value,
         output_converter: &OutputConverter,
         effective_tool_name: Option<String>,
+        cwd_override: Option<PathBuf>,
     ) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
         let output = (output_converter)(value)
             .map_err(|e| xai_tool_runtime::ToolError::custom("output_decoding", e.to_string()))?;
+        let workspace_root = if let Some(cwd) = cwd_override {
+            Some(cwd)
+        } else {
+            self.resources
+                .lock()
+                .await
+                .get::<Cwd>()
+                .map(|cwd| cwd.0.clone())
+        };
+        let verify_feedback = match workspace_root {
+            Some(root) => crate::verify_after_edit::feedback_for_output(root, &output).await,
+            None => None,
+        };
         let reminders_enabled;
         {
             reminders_enabled = self
@@ -1608,7 +1626,11 @@ impl FinalizedToolset {
         } else {
             Vec::new()
         };
-        let prompt_text = output.to_prompt_format();
+        let mut prompt_text = output.to_prompt_format();
+        if let Some(feedback) = verify_feedback {
+            prompt_text.push_str("\n\n");
+            prompt_text.push_str(&feedback);
+        }
         let prompt_text = crate::reminders::format_with_reminders(
             prompt_text,
             reminders,
@@ -1987,6 +2009,7 @@ fn requirement_error_from_param_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::output::SearchReplaceOutput;
     use std::sync::Arc;
     use tempfile::TempDir;
     /// Build a `SessionContext` for tests using a temp dir and real local
@@ -4145,6 +4168,16 @@ mod tests {
             .await
             .expect("finalize")
     }
+    async fn opencode_write_bridge(tmp: &TempDir) -> crate::bridge::ToolBridge {
+        let builder = ToolRegistryBuilder::new();
+        let config = ToolServerConfig {
+            tools: vec![ToolConfig::for_tool::<opencode::OpenCodeWriteTool>()],
+            behavior_preset: None,
+        };
+        crate::bridge::ToolBridge::finalize_builder(builder, config, test_session_context(tmp))
+            .await
+            .expect("finalize")
+    }
     /// list_dir through the hub dispatch path returns valid output.
     #[tokio::test]
     async fn hub_dispatch_list_dir() {
@@ -4244,6 +4277,115 @@ mod tests {
         );
         let contents = std::fs::read_to_string(&file).unwrap();
         assert_eq!(contents, "goodbye world");
+    }
+    /// FINAL-2.0 M4: a real search_replace result must carry automatic Go
+    /// verification failure back to the model, then turn green after repair.
+    #[tokio::test]
+    async fn hub_dispatch_search_replace_auto_verifies_broken_then_fixed_go() {
+        if which::which("go").is_err() {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("go.mod"),
+            "module example.com/toolverify\n",
+        )
+        .unwrap();
+        let file = tmp.path().join("main.go");
+        std::fs::write(&file, "package main\n\nfunc main() {}\n").unwrap();
+        let bridge = grok_build_bridge(&tmp).await;
+        bridge
+            .call(
+                "read_file",
+                serde_json::json!({ "target_file" : file.to_str().unwrap() }),
+                "read-go-call",
+            )
+            .await
+            .expect("read_file");
+
+        let broken = bridge
+            .call(
+                "search_replace",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "old_string": "func main() {}",
+                    "new_string": "func main() { missingSymbol() }"
+                }),
+                "break-go-call",
+            )
+            .await
+            .expect("breaking edit still returns its tool result");
+        assert!(broken.prompt_text.contains("[verify-after-edit] FAILED"));
+        assert!(broken.prompt_text.contains("missingSymbol"));
+        match &broken.output {
+            ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(applied)) => assert!(
+                !applied.tool_output_for_prompt.contains("verify-after-edit"),
+                "verification belongs only in model prompt_text"
+            ),
+            other => panic!("expected structured edit output, got {other:?}"),
+        }
+
+        let fixed = bridge
+            .call(
+                "search_replace",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "old_string": "missingSymbol()",
+                    "new_string": "println(\"fixed\")"
+                }),
+                "fix-go-call",
+            )
+            .await
+            .expect("repair edit should succeed");
+        assert!(
+            fixed.prompt_text.contains("[verify-after-edit] PASS"),
+            "fixed edit should carry green verification: {}",
+            fixed.prompt_text
+        );
+    }
+
+    /// The OpenCode whole-file writer shares the same registry tail, so it
+    /// cannot bypass verify-after-edit.
+    #[tokio::test]
+    async fn hub_dispatch_write_auto_verifies_go_output() {
+        if which::which("go").is_err() {
+            return;
+        }
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("go.mod"),
+            "module example.com/writeverify\n",
+        )
+        .unwrap();
+        let file = tmp.path().join("main.go");
+        let bridge = opencode_write_bridge(&tmp).await;
+
+        let broken = bridge
+            .call(
+                "write",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "content": "package main\n\nfunc main() { missingFromWrite() }\n"
+                }),
+                "write-go-call",
+            )
+            .await
+            .expect("write tool result");
+        assert!(broken.prompt_text.contains("[verify-after-edit] FAILED"));
+        assert!(broken.prompt_text.contains("missingFromWrite"));
+
+        let fixed = bridge
+            .call(
+                "write",
+                serde_json::json!({
+                    "file_path": file.to_str().unwrap(),
+                    "content": "package main\n\nfunc main() {}\n"
+                }),
+                "rewrite-go-call",
+            )
+            .await
+            .expect("fixed write tool result");
+        assert!(fixed.prompt_text.contains("[verify-after-edit] PASS"));
     }
     /// bash (run_terminal_cmd) works through hub dispatch.
     #[tokio::test]

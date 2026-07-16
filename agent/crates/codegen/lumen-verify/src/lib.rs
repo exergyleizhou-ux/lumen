@@ -19,7 +19,7 @@ pub mod repair;
 pub mod runner;
 pub mod steps;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// Full result of a verification run.
@@ -44,6 +44,10 @@ pub struct StepResult {
     pub diagnostics: Vec<Diagnostic>,
     /// Duration in milliseconds.
     pub duration_ms: u64,
+    /// True when the executable was unavailable and the step was intentionally skipped.
+    pub skipped: bool,
+    /// True when the verifier killed the command after its configured deadline.
+    pub timed_out: bool,
 }
 
 /// A parsed diagnostic (compiler / linter message).
@@ -61,6 +65,13 @@ pub struct Diagnostic {
 /// Returns `VerifyResult`.  If `max_repair` cycles have been exhausted the
 /// `repair_cycle` field will equal `max_repair`.
 pub fn run(root: &Path, changed_files: &[PathBuf], cfg: &config::Config) -> Result<VerifyResult> {
+    if !cfg.enabled {
+        return Ok(VerifyResult {
+            ok: true,
+            step_results: vec![],
+            repair_cycle: 0,
+        });
+    }
     let languages = detect::detect_languages(changed_files);
     if languages.is_empty() {
         return Ok(VerifyResult {
@@ -70,7 +81,7 @@ pub fn run(root: &Path, changed_files: &[PathBuf], cfg: &config::Config) -> Resu
         });
     }
 
-    let all_steps = steps::generate_steps(root, &languages, cfg);
+    let all_steps = steps::generate_steps(root, changed_files, &languages, cfg);
     let mut step_results = Vec::new();
     let mut all_ok = true;
 
@@ -87,6 +98,57 @@ pub fn run(root: &Path, changed_files: &[PathBuf], cfg: &config::Config) -> Resu
         step_results,
         repair_cycle: 0, // caller increments
     })
+}
+
+/// Run the automatic, writer-triggered verifier for one changed file.
+///
+/// This entry point is deliberately narrower than the standalone CLI. The
+/// agent hook currently auto-runs only for Go files inside the active
+/// workspace and only when a nearest `go.mod` can be found. That keeps the
+/// automatic path on a fixed build/vet/test allowlist and avoids running a
+/// package manager such as `npx` merely because a file was edited.
+pub fn run_after_edit(
+    workspace_root: &Path,
+    changed_file: &Path,
+    cfg: &config::Config,
+) -> Result<Option<VerifyResult>> {
+    if !cfg.enabled || changed_file.extension().and_then(|ext| ext.to_str()) != Some("go") {
+        return Ok(None);
+    }
+
+    let workspace_root = workspace_root
+        .canonicalize()
+        .with_context(|| format!("canonicalize workspace {}", workspace_root.display()))?;
+    let changed_file = changed_file
+        .canonicalize()
+        .with_context(|| format!("canonicalize changed file {}", changed_file.display()))?;
+    if !changed_file.starts_with(&workspace_root) {
+        bail!(
+            "refusing to verify edited file outside workspace: {}",
+            changed_file.display()
+        );
+    }
+
+    let Some(project_root) = nearest_go_module(&workspace_root, &changed_file) else {
+        return Ok(None);
+    };
+    run(&project_root, &[changed_file], cfg).map(Some)
+}
+
+fn nearest_go_module(workspace_root: &Path, changed_file: &Path) -> Option<PathBuf> {
+    let mut dir = changed_file.parent()?;
+    loop {
+        if dir.join("go.mod").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        if dir == workspace_root {
+            return None;
+        }
+        dir = dir.parent()?;
+        if !dir.starts_with(workspace_root) {
+            return None;
+        }
+    }
 }
 
 /// Format diagnostics into a human-readable string suitable for model feedback.
@@ -158,6 +220,8 @@ mod tests {
             output: String::new(),
             diagnostics: vec![],
             duration_ms: 123,
+            skipped: false,
+            timed_out: false,
         }];
         let s = format_diagnostics(&results);
         assert!(s.contains("passed"));
@@ -178,10 +242,69 @@ mod tests {
                 message: "undefined: foo".into(),
             }],
             duration_ms: 234,
+            skipped: false,
+            timed_out: false,
         }];
         let s = format_diagnostics(&results);
         assert!(s.contains("FAILED"));
         assert!(s.contains("main.go:10:5"));
         assert!(s.contains("undefined: foo"));
+    }
+
+    #[test]
+    fn automatic_go_verify_runs_broken_then_fixed_cycle() {
+        if which::which("go").is_err() {
+            return;
+        }
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join("go.mod"),
+            "module example.com/verifyfixture\n",
+        )
+        .unwrap();
+        let main = tmp.path().join("main.go");
+        std::fs::write(&main, "package main\n\nfunc main() { missingSymbol() }\n").unwrap();
+
+        let cfg = config::Config {
+            timeout_secs: 15,
+            ..config::Config::default()
+        };
+        let broken = run_after_edit(tmp.path(), &main, &cfg)
+            .unwrap()
+            .expect("Go module should trigger automatic verification");
+        assert!(!broken.ok);
+        assert!(format_diagnostics(&broken.step_results).contains("missingSymbol"));
+
+        std::fs::write(&main, "package main\n\nfunc main() {}\n").unwrap();
+        let fixed = run_after_edit(tmp.path(), &main, &cfg)
+            .unwrap()
+            .expect("Go module should still trigger verification");
+        assert!(fixed.ok, "fixed Go fixture should pass: {fixed:#?}");
+        assert!(fixed.step_results.iter().all(|step| step.ok));
+    }
+
+    #[test]
+    fn automatic_verify_refuses_go_file_outside_workspace() {
+        let workspace = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        std::fs::write(outside.path().join("go.mod"), "module example.com/outside\n").unwrap();
+        let changed = outside.path().join("main.go");
+        std::fs::write(&changed, "package main\nfunc main() {}\n").unwrap();
+
+        let error = run_after_edit(workspace.path(), &changed, &config::Config::default())
+            .expect_err("outside-workspace verification must fail closed");
+        assert!(error.to_string().contains("outside workspace"));
+    }
+
+    #[test]
+    fn automatic_verify_ignores_non_go_file_without_running_commands() {
+        let workspace = tempfile::TempDir::new().unwrap();
+        let changed = workspace.path().join("notes.txt");
+        std::fs::write(&changed, "not source code\n").unwrap();
+        assert!(
+            run_after_edit(workspace.path(), &changed, &config::Config::default())
+                .unwrap()
+                .is_none()
+        );
     }
 }
