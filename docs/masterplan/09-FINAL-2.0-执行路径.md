@@ -39,10 +39,11 @@
 | eval 20 harness | ✅ eval-coding | S5 live 跑分 |
 | lumen-verify | ✅ smoke-verify | — |
 | packs 三垂直 | ✅ doctor | S4 一个深做 |
-| SOURCE_LOCK / ledger | 本提交补 | S0 |
-| L0–L5 readiness 签出 | 脚本骨架；live L1 需有效 key | S1 |
-| R0 run/effect/cancel | 文档 + 结构探测；确定性测试后续 | S2 |
-| status READY | artifacts/readiness/status.json 诚实 BLOCKED | S0–S5 |
+| SOURCE_LOCK / ledger | ✅ | S0 |
+| L0–L5 readiness 签出 | ✅ live smokes（有效 DEEPSEEK key） | S1 |
+| R0 run/effect/cancel | ✅ R0-min kill_all smoke | S2 |
+| engineering_complete | ✅ 仅剩 M6 人类门禁 | S0–S5 auto |
+| status READY | `ready=false`；blockers=`M6_15_day_self_use` | S4–S5 真人 15 日 |
 
 ---
 
@@ -84,8 +85,8 @@ cd ~/code/lumen
 
 ## 5. 下一刀（执行优先级）
 
-1. ~~S0：00A + SOURCE_LOCK + readiness 骨架 + agent smoke 脚本~~（本变更）  
-2. **用户换有效 DEEPSEEK_API_KEY** → 跑通 smoke-deepseek-agent 签 L1  
-3. S2：R0 最小测试（cancel/crash）挂在 shell session 合同测试  
-4. S3：Critical-0 清单与 smoke 对齐 3 连绿  
-5. S4：自用日记 + 一个垂直 3 步真打通  
+1. ~~S0：00A + SOURCE_LOCK + readiness 骨架 + agent smoke 脚本~~  
+2. ~~有效 DEEPSEEK_API_KEY → L0–L5 + R0-min 全绿~~  
+3. ~~engineering_complete + productivity-gate（诚实 M6，不伪造日记）~~  
+4. **人类：** 按 `journal/TEMPLATE-productivity-day.md` 真实自用 ≥15 日 → 清 M6 → `ready=true`  
+5. S5 余量：eval live ≥18/20、LEGAL/SBOM、private beta 单垂直深做（非本轮工程门禁） 

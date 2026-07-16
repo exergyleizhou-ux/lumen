@@ -1,12 +1,13 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T08:09:09Z",
+  "generated_at": "2026-07-16T08:37:29Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
+  "engineering_complete": true,
   "blockers": [
-    "M6_15_day_self_use:human_gate"
+    "M6_15_day_self_use:human_gate count_lt_15"
   ],
   "checks": [
     {
@@ -98,7 +99,13 @@
       "pass": true,
       "result": "PASS",
       "detail": ""
+    },
+    {
+      "id": "M6_15_day_self_use",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate count_lt_15"
     }
   ],
-  "note": "L4/L5 min smokes sign automatable fault-recovery + continue/cache. Full chaos/15-day human gate remain separate. ready=true only with empty blockers."
+  "note": "ready=true only when ALL gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains."
 }

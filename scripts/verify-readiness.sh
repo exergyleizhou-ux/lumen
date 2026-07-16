@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FINAL-2.0 readiness aggregator — honest blockers.
+# FINAL-2.0 readiness aggregator — honest blockers + engineering_complete.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
@@ -68,10 +68,23 @@ else
   record source_lock FAIL "run scripts/source-lock.sh"
 fi
 
-python3 - "$TMP" "$ART/status.json" <<'PY2'
+# Human productivity gate (must fail until ≥15 real journals)
+set +e
+pg_out=$("$ROOT/scripts/productivity-gate.sh" 2>&1)
+pg_ec=$?
+set -e
+echo "$pg_out" | sed 's/^/  | /'
+if [[ $pg_ec -eq 0 ]]; then
+  record M6_15_day_self_use PASS
+else
+  record M6_15_day_self_use FAIL "human_gate count_lt_15"
+fi
+
+python3 - "$TMP" "$ART/status.json" "$ART/engineering_complete.json" <<'PY2'
 import json, sys
 from datetime import datetime, timezone
 from pathlib import Path
+
 rows = Path(sys.argv[1]).read_text().strip().splitlines()
 checks, blockers = [], []
 for line in rows:
@@ -88,21 +101,18 @@ for line in rows:
 can_tool = any(c["id"] == "L1_tool_calls" and c["pass"] for c in checks)
 l0 = any(c["id"] == "L0_connect" and c["pass"] for c in checks)
 
-# R0_full_suite superseded by R0_min when R0_min passes
-if any(c["id"] == "R0_min" and c["pass"] for c in checks):
-    blockers = [b for b in blockers if not b.startswith("R0_full_suite")]
-else:
-    if not any(b.startswith("R0") for b in blockers):
-        blockers.append("R0_min:not_signed")
+# Engineering complete = all automated gates pass; only human M6 may remain
+auto_ids = {
+    "defaults", "security", "m2", "parity", "eval_harness", "verify_cli",
+    "verticals", "L0_connect", "L1_tool_calls", "L2_min_e2e", "L3_multi_tool",
+    "L4_fault_cancel", "L5_long_session", "R0_min", "source_lock",
+}
+auto_blockers = [b for b in blockers if not b.startswith("M6_15_day_self_use")]
+eng_ok = len(auto_blockers) == 0 and all(
+    any(c["id"] == i and c["pass"] for c in checks) for i in auto_ids
+)
 
-# Human / non-automatable residual (never silent)
-for missing in ("M6_15_day_self_use",):
-    if not any(c["id"] == missing and c["pass"] for c in checks):
-        blockers.append(f"{missing}:human_gate")
-
-seen = set()
-blockers = [b for b in blockers if not (b in seen or seen.add(b))]
-ready = len(blockers) == 0
+ready = len(blockers) == 0  # publish READY requires productivity gate too
 status = {
     "schema_version": 1,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -110,13 +120,27 @@ status = {
     "state": "READY" if ready else "BLOCKED",
     "can_tool_call": can_tool,
     "l0_pass": l0,
+    "engineering_complete": eng_ok,
     "blockers": blockers,
     "checks": checks,
-    "note": "L4/L5 min smokes sign automatable fault-recovery + continue/cache. Full chaos/15-day human gate remain separate. ready=true only with empty blockers.",
+    "note": "ready=true only when ALL gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains.",
 }
 Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
+
+eng = {
+    "schema_version": 1,
+    "check_id": "engineering_complete",
+    "pass": eng_ok,
+    "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M6_15_day_self_use",
+    "auto_blockers": auto_blockers,
+    "can_tool_call": can_tool,
+    "generated_at": status["generated_at"],
+}
+Path(sys.argv[3]).write_text(json.dumps(eng, indent=2) + "\n")
+
 print()
-print(f"state={status['state']} ready={status['ready']} can_tool_call={status['can_tool_call']}")
+print(f"state={status['state']} ready={status['ready']} can_tool_call={status['can_tool_call']} engineering_complete={eng_ok}")
 print("blockers:", blockers if blockers else "[]")
 print("wrote", sys.argv[2])
+print("wrote", sys.argv[3], "pass=", eng_ok)
 PY2
