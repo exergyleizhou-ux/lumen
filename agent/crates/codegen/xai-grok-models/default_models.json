@@ -12,7 +12,10 @@
       "temperature": 0.0,
       "top_p": 1.0,
       "api_backend": "chat_completions",
-      "supported_in_api": true
+      "supported_in_api": true,
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "byok": true
     }
   ]
 }

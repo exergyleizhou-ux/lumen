@@ -3345,6 +3345,16 @@ struct DefaultModelJson {
     compaction_at_tokens: Option<CompactionAtTokens>,
     #[serde(default)]
     show_model_fingerprint: bool,
+    /// Optional third-party / BYOK inference base URL (e.g. DeepSeek).
+    /// When set, replaces the xAI proxy base URL for this default model.
+    #[serde(default)]
+    base_url: Option<String>,
+    /// Optional env var name(s) holding the API key for this model.
+    #[serde(default)]
+    env_key: Option<EnvKeys>,
+    /// When true with `base_url`, clear `api_base_url` so all auth uses base_url.
+    #[serde(default)]
+    byok: bool,
 }
 fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryConfig> {
     let root: serde_json::Value = serde_json::from_str(crate::models::DEFAULT_MODELS_JSON)
@@ -3371,11 +3381,28 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let context_window = m
                 .context_window
                 .unwrap_or_else(|| NonZeroU64::new(200_000).expect("200000 is non-zero"));
+            // Lumen BYOK defaults (e.g. deepseek-chat): honor embedded base_url/env_key
+            // instead of routing through the xAI cli-chat-proxy.
+            let (base_url, api_base_url, env_key) = if let Some(ref byok_url) = m.base_url {
+                let url = byok_url.trim().to_owned();
+                let api = if m.byok || m.env_key.is_some() {
+                    None
+                } else {
+                    Some(endpoints.xai_api_base_url.clone())
+                };
+                (url, api, m.env_key)
+            } else {
+                (
+                    endpoints.resolve_inference_base_url(),
+                    Some(endpoints.xai_api_base_url.clone()),
+                    None,
+                )
+            };
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
-                base_url: endpoints.resolve_inference_base_url(),
-                api_base_url: Some(endpoints.xai_api_base_url.clone()),
+                base_url,
+                api_base_url,
                 name: m.name,
                 description: m.description,
                 context_window,
@@ -3390,7 +3417,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 inference_idle_timeout_secs: m.inference_idle_timeout_secs,
                 max_retries: None,
                 api_key: None,
-                env_key: None,
+                env_key,
                 extra_headers: IndexMap::new(),
                 use_concise: false,
                 hidden: m.hidden,
@@ -5463,6 +5490,8 @@ reasoning_effort = "low"
         let endpoints = EndpointsConfig::default();
         for (model_id, entry) in default_model_entries(&endpoints) {
             if entry.api_base_url.is_none() {
+                // Lumen BYOK defaults (e.g. deepseek-chat) intentionally clear
+                // api_base_url so all auth uses the third-party base_url.
                 continue;
             }
             let session_creds = resolve_credentials(&entry, Some("tok"));
@@ -5484,6 +5513,45 @@ reasoning_effort = "low"
                 api_key_creds.base_url, endpoints.xai_api_base_url,
                 "{model_id}: ExternalApiKey must route to api.x.ai"
             );
+        }
+    }
+
+    /// Lumen: embedded deepseek-chat default must be pure BYOK — DeepSeek URL,
+    /// DEEPSEEK_API_KEY env_key, no xAI api_base_url dual-route.
+    #[test]
+    #[serial]
+    fn default_models_deepseek_byok_routing() {
+        let endpoints = EndpointsConfig::default();
+        let models = default_model_entries(&endpoints);
+        let deepseek = models
+            .get("deepseek-chat")
+            .expect("default_models.json must include deepseek-chat");
+        assert_eq!(
+            deepseek.info().base_url,
+            "https://api.deepseek.com/v1",
+            "deepseek-chat base_url must be DeepSeek, not cli-chat-proxy"
+        );
+        assert!(
+            deepseek.api_base_url.is_none(),
+            "deepseek-chat must not dual-route to api.x.ai (byok)"
+        );
+        assert_eq!(
+            deepseek.env_key.as_ref().map(|k| k.names()),
+            Some(vec!["DEEPSEEK_API_KEY"]),
+            "deepseek-chat env_key must be DEEPSEEK_API_KEY"
+        );
+        // With env set, own credential wins and stays on DeepSeek base_url.
+        let env_name = "DEEPSEEK_API_KEY";
+        // SAFETY: test-only env mutation; restored below.
+        let prev = std::env::var(env_name).ok();
+        unsafe { std::env::set_var(env_name, "sk-test-deepseek-byok") };
+        let creds = resolve_credentials(deepseek, Some("session-token-should-not-win"));
+        assert_eq!(creds.auth_type, xai_chat_state::AuthType::ApiKey);
+        assert_eq!(creds.api_key.as_deref(), Some("sk-test-deepseek-byok"));
+        assert_eq!(creds.base_url, "https://api.deepseek.com/v1");
+        match prev {
+            Some(v) => unsafe { std::env::set_var(env_name, v) },
+            None => unsafe { std::env::remove_var(env_name) },
         }
     }
     #[test]

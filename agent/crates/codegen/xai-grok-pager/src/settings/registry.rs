@@ -257,7 +257,7 @@ pub struct PagerLocalSnapshot {
     pub plan_mode_active: bool,
     /// `[cli].show_tips` mirror. `None` = no TOML override → default `true`.
     pub show_tips: Option<bool>,
-    /// `[cli].auto_update` mirror. `None` = no TOML override → default `true`.
+    /// `[cli].auto_update` mirror. `None` = no TOML override → default `false` (Lumen).
     pub auto_update: Option<bool>,
     /// Process-wide vim-mode scrollback flag. Mirrors
     /// `appearance::cache::load_vim_mode()` at snapshot time.
@@ -636,9 +636,9 @@ pub fn current_value_for(
         "plan_mode" => Some(SettingValue::Enum(
             crate::app::actions::PlanModeKind::from_bool(pager.plan_mode_active).as_canonical(),
         )),
-        // CLI batch: snapshot mirrors; `None` → effective default `true`.
+        // CLI batch: snapshot mirrors; show_tips None → true; auto_update None → false (Lumen).
         "show_tips" => Some(SettingValue::Bool(pager.show_tips.unwrap_or(true))),
-        "auto_update" => Some(SettingValue::Bool(pager.auto_update.unwrap_or(true))),
+        "auto_update" => Some(SettingValue::Bool(pager.auto_update.unwrap_or(false))),
         // fork_secondary_model: baseline value folds to empty string.
         "fork_secondary_model" => Some(SettingValue::String({
             let baseline = xai_grok_shell::models::default_model();
@@ -849,9 +849,9 @@ mod tests {
                 }
                 ("auto_update", SettingKind::Bool { default }) => {
                     assert!(
-                        *default,
-                        "auto_update registry default must be true \
-                         (matches auto_update.rs's `.unwrap_or(true)`)"
+                        !*default,
+                        "auto_update registry default must be false \
+                         (Lumen: matches effective_auto_update(None)==false)"
                     );
                 }
                 // vim_mode: Option<bool>; None → false.
