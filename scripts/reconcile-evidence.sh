@@ -61,10 +61,11 @@ for c in bin_candidates:
         binary_sha = hashlib.sha256(c.read_bytes()).hexdigest()
         break
 
-# readiness artifact digests
+# readiness artifact digests (stable subset; skip self + frequently rewritten status)
 artifact_sha = {}
+skip = {"reconcile.json", "status.json", "engineering_complete.json", "M6-productivity.json"}
 for p in sorted(art.glob("*.json")):
-    if p.name == "reconcile.json":
+    if p.name in skip:
         continue
     artifact_sha[p.name] = hashlib.sha256(p.read_bytes()).hexdigest()
 
