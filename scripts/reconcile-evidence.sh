@@ -120,18 +120,9 @@ rec = {
 }
 (art / "reconcile.json").write_text(json.dumps(rec, indent=2) + "\n")
 
-# Patch status.json with sha fields if it exists
-status_path = art / "status.json"
-if status_path.is_file():
-    status = json.loads(status_path.read_text())
-    status["source_lock_sha256"] = lock_sha
-    status["binary_sha256"] = binary_sha
-    status["reconcile_pass"] = ok
-    status["reconciled_at"] = now
-    status_path.write_text(json.dumps(status, indent=2) + "\n")
-
 print(f"pass={ok} source_lock_sha256={lock_sha[:12]}… binary_sha256={(binary_sha or 'none')[:12]}…")
-print(f"lock_fresh={lock_fresh} blockers={blockers or []}")
+print(f"lock_fresh={lock_fresh} content_ok={content_ok} head_match={lock_head_match}")
+print(f"blockers={blockers or []}")
 print(f"wrote {art / 'reconcile.json'}")
 if not ok:
     sys.exit(1)
