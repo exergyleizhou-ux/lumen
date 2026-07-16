@@ -1,6 +1,6 @@
 # Lumen
 
-终端 coding agent：**Grok Build 体验身体** + **DeepSeek 默认** + Lumen 安全/纪律/自修。
+终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
 
 - 方案：`docs/masterplan/`（权威：桌面 FINAL-2.0）
 - 运行时：`agent/`（Grok pin，~135 万行 Rust）
@@ -32,12 +32,20 @@ lumen --single "修 README 里的笔误" --always-approve
 
 | 项 | 值 |
 |----|-----|
-| 默认模型 | `deepseek-chat`（BYOK → `api.deepseek.com`） |
+| 默认模型 | `deepseek-chat`（**优先**默认，为高 prompt-cache；不是唯一后端） |
+| 其它预设 | OpenAI / Claude / xAI / GLM / Qwen / MiMo / Ollama / 本地 OpenAI 兼容 |
 | 遥测 Mixpanel | 默认关 |
 | auto_update | 默认关 |
 | 安全 | hard-deny（YOLO 也拦） |
 
-配置示例：`config/lumen.example.toml`（可拷到 `GROK_HOME`/`~/.grok` 的 config）。
+```bash
+lumen -m openai-gpt4o "..."
+lumen -m claude-sonnet
+lumen -m ollama          # 本地 ollama serve
+# TUI: /model 或 Ctrl+M
+```
+
+配置示例：`config/lumen.example.toml` · 说明：`docs/user/multi-provider.md`。
 
 ## 门禁脚本
 

@@ -1,15 +1,21 @@
-# Lumen example config — DeepSeek first-class wiring (copy to ~/.grok/config.toml
-# or the product config path after home-dir migration).
-# API key: set DEEPSEEK_API_KEY in the environment (preferred) rather than this file.
+# Lumen example config — multi-provider BYOK catalog.
+# Copy to ~/.grok/config.toml (or product config path after home-dir migration).
 #
-# Presets (M2):
-#   deepseek-chat     — default fast coding
-#   deepseek-reasoner — deeper reasoning (switch: lumen -m deepseek-reasoner)
-#   local-openai      — hidden local OpenAI-compatible (ollama etc.)
+# Philosophy:
+#   - Default stays DeepSeek for high prompt-cache hit rate (Reasonix discipline).
+#   - Any mainstream provider can be selected: -m <id> / /model / Ctrl+M.
+#   - Keys live in the environment (preferred), not in this file.
+#
+# Switch examples:
+#   lumen -m openai-gpt4o "fix the bug"
+#   lumen -m claude-sonnet
+#   lumen -m ollama
+#   lumen -m qwen-plus
 
 [models]
 default = "deepseek-chat"
 
+# ── DeepSeek (preferred default — cache-friendly) ──────────────────────────
 [model.deepseek-chat]
 model = "deepseek-chat"
 name = "DeepSeek Chat"
@@ -24,15 +30,93 @@ base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
 
-# Uncomment for local inference:
-# [model.local-openai]
-# model = "llama3.2"
-# base_url = "http://127.0.0.1:11434/v1"
-# env_key = "LOCAL_API_KEY"
+# ── OpenAI ─────────────────────────────────────────────────────────────────
+[model.openai-gpt4o]
+model = "gpt-4o"
+name = "OpenAI GPT-4o"
+base_url = "https://api.openai.com/v1"
+api_backend = "chat_completions"
+env_key = "OPENAI_API_KEY"
+
+[model.openai-gpt4o-mini]
+model = "gpt-4o-mini"
+name = "OpenAI GPT-4o mini"
+base_url = "https://api.openai.com/v1"
+api_backend = "chat_completions"
+env_key = "OPENAI_API_KEY"
+
+# ── Anthropic Claude (Messages API) ────────────────────────────────────────
+[model.claude-sonnet]
+model = "claude-sonnet-4-20250514"
+name = "Claude Sonnet"
+base_url = "https://api.anthropic.com"
+api_backend = "messages"
+env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+
+[model.claude-opus]
+model = "claude-opus-4-20250514"
+name = "Claude Opus"
+base_url = "https://api.anthropic.com"
+api_backend = "messages"
+env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
+
+# ── xAI Grok ───────────────────────────────────────────────────────────────
+[model.xai-grok]
+model = "grok-3"
+name = "xAI Grok"
+base_url = "https://api.x.ai/v1"
+api_backend = "chat_completions"
+env_key = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY"]
+
+# ── 智谱 GLM ───────────────────────────────────────────────────────────────
+[model.glm-4]
+model = "glm-4-plus"
+name = "GLM-4 (Zhipu)"
+base_url = "https://open.bigmodel.cn/api/paas/v4"
+api_backend = "chat_completions"
+env_key = ["ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"]
+
+# ── 通义千问 Qwen (DashScope compatible-mode) ──────────────────────────────
+[model.qwen-plus]
+model = "qwen-plus"
+name = "Qwen Plus"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_backend = "chat_completions"
+env_key = "DASHSCOPE_API_KEY"
+
+[model.qwen-max]
+model = "qwen-max"
+name = "Qwen Max"
+base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+api_backend = "chat_completions"
+env_key = "DASHSCOPE_API_KEY"
+
+# ── 小米 MiMo (override base_url/model if your tenant differs) ─────────────
+[model.mimo]
+model = "mimo-v2-flash"
+name = "MiMo"
+base_url = "https://api.xiaomimimo.com/v1"
+api_backend = "chat_completions"
+env_key = ["MIMO_API_KEY", "XIAOMI_MIMO_API_KEY"]
+
+# ── Ollama (local open-source models) ──────────────────────────────────────
+# ollama pull llama3.2   # or qwen2.5-coder, deepseek-r1, etc.
+# ollama serve
+[model.ollama]
+model = "llama3.2"
+name = "Ollama (local)"
+base_url = "http://127.0.0.1:11434/v1"
+api_backend = "chat_completions"
+# Ollama often ignores auth; any non-empty value works if required
+env_key = "OLLAMA_API_KEY"
+
+# ── Generic local / vLLM / llama.cpp ───────────────────────────────────────
+[model.local-openai]
+model = "local-model"
+name = "Local OpenAI-compatible"
+base_url = "http://127.0.0.1:8000/v1"
+api_backend = "chat_completions"
+env_key = "LOCAL_API_KEY"
 
 [cli]
 auto_update = false
-
-# Delivery / Goal (M2) — incomplete todos SoftOnce gate is always on in tool path.
-# Strictness for turn-end writer-without-verify nudge is host-side (lumen-discipline).
-

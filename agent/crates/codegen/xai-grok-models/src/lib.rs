@@ -95,4 +95,55 @@ mod tests {
             "models[] must include deepseek-chat entry"
         );
     }
+
+    /// Multi-provider catalog: DeepSeek is preferred default, not exclusive.
+    #[test]
+    fn lumen_catalog_includes_mainstream_providers() {
+        let v: serde_json::Value =
+            serde_json::from_str(DEFAULT_MODELS_JSON).expect("default_models.json parses");
+        let models = v["models"].as_array().expect("models array");
+        let ids: Vec<String> = models
+            .iter()
+            .map(|m| {
+                m.get("id")
+                    .and_then(|x| x.as_str())
+                    .or_else(|| m.get("model").and_then(|x| x.as_str()))
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect();
+        for need in [
+            "deepseek-chat",
+            "openai-gpt4o",
+            "claude-sonnet",
+            "xai-grok",
+            "glm-4",
+            "qwen-plus",
+            "mimo",
+            "ollama",
+        ] {
+            assert!(
+                ids.iter().any(|id| id == need),
+                "catalog missing provider preset id={need}; have {ids:?}"
+            );
+        }
+        // Anthropic must use Messages backend; OpenAI-family use chat_completions.
+        let claude = models
+            .iter()
+            .find(|m| m.get("id").and_then(|x| x.as_str()) == Some("claude-sonnet"))
+            .expect("claude-sonnet");
+        assert_eq!(claude["api_backend"], "messages");
+        let ollama = models
+            .iter()
+            .find(|m| m.get("id").and_then(|x| x.as_str()) == Some("ollama"))
+            .expect("ollama");
+        assert_eq!(ollama["api_backend"], "chat_completions");
+        assert!(
+            ollama["base_url"]
+                .as_str()
+                .unwrap_or("")
+                .contains("11434"),
+            "ollama preset should point at default Ollama port"
+        );
+    }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Structural proof: DeepSeek default + example base_url + bin name lumen.
+# Structural proof: DeepSeek-preferred default + multi-provider catalog + lumen bin.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -16,6 +16,12 @@ grep -q '"model": "deepseek-chat"' "$MODELS" || fail "default_models.json missin
 grep -q '"base_url": "https://api.deepseek.com/v1"' "$MODELS" || fail "default_models.json missing DeepSeek base_url"
 grep -q '"env_key": "DEEPSEEK_API_KEY"' "$MODELS" || fail "default_models.json missing env_key DEEPSEEK_API_KEY"
 grep -q '"byok": true' "$MODELS" || fail "default_models.json missing byok true"
+# Multi-provider catalog (DeepSeek preferred, not exclusive)
+for id in openai-gpt4o claude-sonnet xai-grok glm-4 qwen-plus mimo ollama; do
+  grep -q "\"id\": \"$id\"" "$MODELS" || fail "default_models.json missing provider id=$id"
+done
+grep -q '"api_backend": "messages"' "$MODELS" || fail "default_models.json missing Anthropic messages backend"
+grep -q '11434' "$MODELS" || fail "default_models.json missing Ollama base_url port"
 
 test -f "$BIN_TOML" || fail "missing pager-bin Cargo.toml"
 grep -q 'name = "lumen"' "$BIN_TOML" || fail "binary name is not lumen"
@@ -25,6 +31,9 @@ test -f "$EXAMPLE" || fail "missing config/lumen.example.toml"
 grep -q 'base_url = "https://api.deepseek.com/v1"' "$EXAMPLE" || fail "example missing DeepSeek base_url"
 grep -q 'default = "deepseek-chat"' "$EXAMPLE" || fail "example missing default deepseek-chat"
 grep -q 'auto_update = false' "$EXAMPLE" || fail "example missing auto_update = false"
+grep -q '\[model.openai-gpt4o\]' "$EXAMPLE" || fail "example missing OpenAI preset"
+grep -q '\[model.claude-sonnet\]' "$EXAMPLE" || fail "example missing Claude preset"
+grep -q '\[model.ollama\]' "$EXAMPLE" || fail "example missing Ollama preset"
 
 # Registry + update crate must agree: auto_update default false.
 REG="$ROOT/agent/crates/codegen/xai-grok-pager/src/settings/registry.rs"
