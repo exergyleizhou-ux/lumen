@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T09:05:10Z",
+  "generated_at": "2026-07-16T09:05:28Z",
   "monorepo": {
-    "git_head": "20d5fe2a4d10d8fc458420b048d8f533827fef7c",
-    "git_short": "20d5fe2"
+    "git_head": "d0b0f9a8b4fe051cfe25416a65d218092cebef2c",
+    "git_short": "d0b0f9a"
   },
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",

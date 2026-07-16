@@ -6,7 +6,7 @@
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": true,
-  "source_lock_sha256": "1a0a455de48287cdf26ed04d594be23e5ba0d8e27c6b448f87cf0145280bb3ea",
+  "source_lock_sha256": "90ef04ae82e4f13ab2ce61c2a540dd8de5bcb9e286b4da0545c0f05727205120",
   "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
   "blockers": [
     "M6_15_day_self_use:human_gate count_lt_15"
@@ -141,5 +141,5 @@
   ],
   "note": "ready=true only when ALL non-SKIP gates pass including 15 productivity days. engineering_complete=true when only M6 human gate remains among required auto gates.",
   "reconcile_pass": true,
-  "reconciled_at": "2026-07-16T09:05:10Z"
+  "reconciled_at": "2026-07-16T09:05:28Z"
 }

@@ -5,7 +5,7 @@
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M6_15_day_self_use",
   "auto_blockers": [],
   "can_tool_call": true,
-  "source_lock_sha256": "1a0a455de48287cdf26ed04d594be23e5ba0d8e27c6b448f87cf0145280bb3ea",
+  "source_lock_sha256": "90ef04ae82e4f13ab2ce61c2a540dd8de5bcb9e286b4da0545c0f05727205120",
   "binary_sha256": "caac91883b494fff65e2108291b4694b3acbff195690506f8ab5de1b39ff4413",
   "generated_at": "2026-07-16T09:04:56Z"
 }
