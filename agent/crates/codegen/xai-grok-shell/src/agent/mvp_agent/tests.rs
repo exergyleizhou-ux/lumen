@@ -2135,49 +2135,6 @@ fn write_updates(dir: &std::path::Path, lines: &[&str]) -> PathBuf {
     std::fs::write(&path, lines.join("\n")).unwrap();
     path
 }
-#[test]
-fn no_replay_state_restore_reseeds_event_counter() {
-    let observed: u64 = crate::util::event_id::generate_event_id("pre-restore-observation")
-        .rsplit('-')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
-    let persisted_highwater = observed
-        .checked_add(1_000_000)
-        .expect("test event counter is too close to u64::MAX");
-    let highwater_line = format!(
-        r#"{{"timestamp":2,"method":"_x.ai/session/update","params":{{"sessionId":"session-with-dashes","update":{{"sessionUpdate":"turn_completed"}},"_meta":{{"eventId":"session-with-dashes-{persisted_highwater}"}}}}}}"#
-    );
-    let lower_tail_line = format!(
-        r#"{{"timestamp":3,"method":"session/update","params":{{"sessionId":"session-with-dashes","update":{{"sessionUpdate":"agent_message_chunk","content":{{"type":"text","text":"lower tail"}}}},"_meta":{{"eventId":"session-with-dashes-{}"}}}}}}"#,
-        persisted_highwater - 1
-    );
-    let tmp = tempfile::tempdir().unwrap();
-    let path = write_updates(
-        tmp.path(),
-        &[
-            r#"{"timestamp":1,"method":"session/update","params":{"sessionId":"session-with-dashes","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a"}},"_meta":{"eventId":"session-with-dashes-17"}}}"#,
-            &highwater_line,
-            &lower_tail_line,
-            r#"{"timestamp":4,"method":"session/update","params":{"sessionId":"session-with-dashes","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"not metadata eventId-999999"}}}}"#,
-        ],
-    );
-
-    let restored = MvpAgent::restore_no_replay_event_counter(&Some(path));
-
-    assert_eq!(restored, Some(persisted_highwater));
-    let next: u64 = crate::util::event_id::generate_event_id("session-with-dashes")
-        .rsplit('-')
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
-    assert!(
-        next > persisted_highwater,
-        "post-resume event id {next} must exceed persisted highwater {persisted_highwater}"
-    );
-}
 fn bg_line(task_id: &str) -> String {
     format!(
         r#"{{"timestamp":1,"method":"_x.ai/session/update","params":{{"sessionId":"s","update":{{"sessionUpdate":"task_backgrounded","task_id":"{task_id}","command":"sleep 99","cwd":"/tmp"}}}}}}"#

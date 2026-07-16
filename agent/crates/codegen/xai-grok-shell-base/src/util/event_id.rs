@@ -4,6 +4,8 @@
 //! used for deduplication in the relay. The counter is monotonically increasing
 //! across the entire agent process, ensuring event IDs are always comparable.
 
+use std::io::BufRead;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Global counter for event ID generation.
@@ -83,6 +85,39 @@ pub fn ensure_event_counter_at_least(next: u64) {
     EVENT_COUNTER.fetch_max(next, Ordering::SeqCst);
 }
 
+/// Restore the process-global event counter from a persisted `updates.jsonl`.
+///
+/// `session/load` normally replays persisted updates and observes their event
+/// IDs. A `noReplay` load deliberately skips that path, so a fresh process must
+/// scan the durable file before it can mint new IDs. Only `_meta.eventId`
+/// values in the notification params count; prose containing `eventId-*` is
+/// ignored. Malformed lines are skipped so one partial tail write cannot reset
+/// an otherwise valid high-water mark.
+pub fn restore_event_counter_from_updates(updates_path: Option<&Path>) -> Option<u64> {
+    let file = std::fs::File::open(updates_path?).ok()?;
+    let mut max_event_seq = None;
+    for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
+        };
+        let params = value.get("params").unwrap_or(&value);
+        let Some(seq) = params
+            .get("_meta")
+            .and_then(|meta| meta.get("eventId"))
+            .and_then(|event_id| event_id.as_str())
+            .and_then(|event_id| event_id.rsplit('-').next())
+            .and_then(|suffix| suffix.parse::<u64>().ok())
+        else {
+            continue;
+        };
+        max_event_seq = Some(max_event_seq.map_or(seq, |max: u64| max.max(seq)));
+    }
+    if let Some(max_seq) = max_event_seq {
+        ensure_event_counter_at_least(max_seq.saturating_add(1));
+    }
+    max_event_seq
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -124,6 +159,57 @@ mod tests {
         assert!(
             counter2 > counter1,
             "a lower floor must not reset the counter: {counter2} !> {counter1}"
+        );
+    }
+
+    #[test]
+    fn restore_from_updates_reseeds_above_dynamic_highwater() {
+        let observed: u64 = generate_event_id("pre-restore-observation")
+            .rsplit('-')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let persisted_highwater = observed
+            .checked_add(1_000_000)
+            .expect("test event counter is too close to u64::MAX");
+        let tmp = tempfile::tempdir().unwrap();
+        let updates = tmp.path().join("updates.jsonl");
+        let lines = [
+            serde_json::json!({
+                "method": "session/update",
+                "params": {"_meta": {"eventId": "session-with-dashes-17"}}
+            })
+            .to_string(),
+            serde_json::json!({
+                "method": "_x.ai/session/update",
+                "params": {"_meta": {"eventId": format!("session-with-dashes-{persisted_highwater}")}}
+            })
+            .to_string(),
+            serde_json::json!({
+                "method": "session/update",
+                "params": {
+                    "_meta": {"eventId": format!("session-with-dashes-{}", persisted_highwater - 1)},
+                    "update": {"content": {"text": "prose eventId-999999999999"}}
+                }
+            })
+            .to_string(),
+            "malformed tail".to_string(),
+        ];
+        std::fs::write(&updates, lines.join("\n")).unwrap();
+
+        let restored = restore_event_counter_from_updates(Some(&updates));
+
+        assert_eq!(restored, Some(persisted_highwater));
+        let next: u64 = generate_event_id("session-with-dashes")
+            .rsplit('-')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!(
+            next > persisted_highwater,
+            "post-resume event id {next} must exceed persisted highwater {persisted_highwater}"
         );
     }
 

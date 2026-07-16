@@ -126,8 +126,8 @@ artifact_specs = {
     "L1-tool-calls.json": {"L1"},
     "L2-min-e2e.json": {"L2"},
     "L3-multi-tool.json": {"L3"},
-    "L4-fault-cancel.json": {"L4", "L4_min"},
-    "L5-long-session.json": {"L5", "L5_min"},
+    "L4-fault-cancel.json": {"L4_full"},
+    "L5-long-session.json": {"L5_full"},
     "R0-full.json": {"R0_full"},
     "R0-min.json": {"R0_min"},
     "eval-live.json": {"eval_live"},
@@ -178,6 +178,69 @@ if eval_doc is not None:
     if not isinstance(eval_binary, str) or Path(eval_binary).expanduser() != installed_path:
         blockers.append("eval_live_binary_path_mismatch")
 
+# M5 is a human publish gate, not an automated engineering gate. If a passing
+# artifact exists, validate its identity and core semantics; absence is allowed
+# here because status.json carries the honest FAIL row until a real session is
+# observed. This keeps reconciliation useful without fabricating human proof.
+m5_path = art / "M5-onboarding.json"
+m5_doc = load_json(m5_path, "M5-onboarding", blockers) if m5_path.is_file() else None
+if m5_doc is not None:
+    elapsed = m5_doc.get("elapsed_seconds")
+    steps = m5_doc.get("steps")
+    required_m5_steps = {
+        "install", "configure_deepseek_key", "edit_file",
+        "tool_calls_visible", "security_feedback_visible", "verify_feedback_visible",
+    }
+    m5_ok = (
+        m5_doc.get("check_id") == "M5_10_min_stranger"
+        and m5_doc.get("pass") is True
+        and type(elapsed) is int
+        and 1 <= elapsed <= 600
+        and isinstance(steps, dict)
+        and set(steps) == required_m5_steps
+        and all(isinstance(row, dict) and row.get("pass") is True for row in steps.values())
+    )
+    if not m5_ok:
+        blockers.append("m5_onboarding_semantics_invalid")
+
+l4_doc = artifact_docs.get("L4-fault-cancel.json")
+if l4_doc is not None:
+    scenarios = l4_doc.get("scenarios")
+    if l4_doc.get("scope") != "full_contract_short" or not isinstance(scenarios, dict):
+        blockers.append("l4_full_semantics_invalid")
+    else:
+        expected = {
+            "429": (3, 1),
+            "500": (3, 1),
+            "disconnect": (3, 1),
+            "timeout": (1, 0),
+            "cancel": (1, 0),
+        }
+        for name, (requests, effects) in expected.items():
+            row = scenarios.get(name)
+            if not isinstance(row, dict) or row.get("pass") is not True or row.get("agent_request_count") != requests or row.get("effect_count") != effects:
+                blockers.append(f"l4_scenario_invalid:{name}")
+
+l5_doc = artifact_docs.get("L5-long-session.json")
+if l5_doc is not None:
+    soak = l5_doc.get("soak") or {}
+    l5_ok = (
+        l5_doc.get("scope") == "full_contract_soak"
+        and l5_doc.get("resume_same_session") is True
+        and l5_doc.get("compaction_persisted") is True
+        and l5_doc.get("cache_visible") is True
+        and type(l5_doc.get("update_event_id_count")) is int
+        and l5_doc["update_event_id_count"] > 0
+        and l5_doc.get("update_event_ids_unique") is True
+        and soak.get("executed") is True
+        and type(soak.get("elapsed_seconds")) is int
+        and soak["elapsed_seconds"] >= 3600
+        and type(soak.get("resume_turns")) is int
+        and soak["resume_turns"] > 0
+    )
+    if not l5_ok:
+        blockers.append("l5_full_soak_semantics_invalid")
+
 r0_full = artifact_docs.get("R0-full.json")
 if r0_full is not None:
     if r0_full.get("binary_sha256") != release_sha:
@@ -205,6 +268,7 @@ status_required = {
     "L3_multi_tool",
     "L4_fault_cancel",
     "L5_long_session",
+    "L5_one_hour_soak",
     "R0_full",
     "R0_min",
     "sbom",
@@ -227,6 +291,13 @@ if status is not None:
         check = by_id.get(check_id)
         if not check or check.get("result") != "PASS" or check.get("pass") is not True:
             blockers.append(f"status_check_not_pass:{check_id}")
+    for human_id in ("M5_10_min_stranger", "M6_15_day_self_use"):
+        check = by_id.get(human_id)
+        if not check or check.get("result") not in {"PASS", "FAIL"}:
+            blockers.append(f"status_human_gate_missing:{human_id}")
+    m5_status = by_id.get("M5_10_min_stranger") or {}
+    if m5_status.get("result") == "PASS" and m5_doc is None:
+        blockers.append("m5_onboarding_pass_without_artifact")
     if status.get("source_lock_sha256") != lock_sha:
         blockers.append("status_source_lock_sha256_mismatch")
     if status.get("binary_sha256") != release_sha:

@@ -262,9 +262,7 @@ impl xai_tool_runtime::Tool for UpdateGoalTool {
         let sender = {
             let mut res = resources.lock().await;
             if input.completed == Some(true) {
-                if let Err(e) = lumen_goal_incomplete_gate(&mut res) {
-                    return Err(e);
-                }
+                lumen_goal_incomplete_gate(&mut res)?;
             }
             res.get::<GoalUpdateHandle>()
                 .ok_or_else(|| {

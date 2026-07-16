@@ -13,6 +13,26 @@ echo "=== lumen-verify unit tests ==="
   cargo test -p lumen-verify --lib --quiet
 )
 
+echo "=== event sequence restore unit tests ==="
+(
+  cd "$ROOT/agent"
+  cargo test -p xai-grok-shell-base --lib util::event_id::tests --quiet
+)
+
+echo "=== M5 onboarding evidence contract ==="
+"$ROOT/scripts/test-onboarding-gate.sh"
+
+echo "=== real agent writer -> verify feedback -> repair registry tests ==="
+(
+  cd "$ROOT/agent"
+  cargo test -p xai-grok-tools \
+    registry::types::tests::hub_dispatch_search_replace_auto_verifies_broken_then_fixed_go \
+    -- --exact --quiet
+  cargo test -p xai-grok-tools \
+    registry::types::tests::hub_dispatch_write_auto_verifies_go_output \
+    -- --exact --quiet
+)
+
 echo "=== build lumen-verify CLI ==="
 (
   cd "$ROOT/agent"
@@ -70,5 +90,5 @@ if [[ $ec -ne 0 ]]; then
   exit 1
 fi
 echo "OK: fixed Go → exit 0"
-echo "OK: smoke-verify passed (bad→fail, good→ok)"
+echo "OK: smoke-verify passed (CLI bad→fail/good→ok + real writer feedback→repair)"
 exit 0

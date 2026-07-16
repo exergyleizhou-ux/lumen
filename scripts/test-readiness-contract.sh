@@ -68,9 +68,11 @@ for required in \
   .gitleaksignore \
   scripts/check-binary-tuple.sh \
   scripts/install-local.sh \
+  scripts/onboarding-gate.sh \
   scripts/reconcile-evidence.sh \
   scripts/source-lock.sh \
   scripts/test-readiness-contract.sh \
+  scripts/test-onboarding-gate.sh \
   scripts/verify-readiness.sh
 do
   grep -Fq "\"$required\"" "$ROOT/scripts/source-lock.sh" || \
@@ -117,7 +119,23 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 python3 - "$ROOT/artifacts/readiness/{filename}" <<'PY2'
 import json, sys
 from pathlib import Path
-Path(sys.argv[1]).write_text(json.dumps({{"schema_version": 1, "check_id": "{check_id}", "pass": True, "generated_at": "fixture"}}, indent=2) + "\\n")
+doc = {{"schema_version": 1, "check_id": "{check_id}", "pass": True, "generated_at": "fixture"}}
+if "{check_id}" == "L4_full":
+    doc.update({{"scope": "full_contract_short", "scenarios": {{
+        "429": {{"pass": True, "agent_request_count": 3, "effect_count": 1}},
+        "500": {{"pass": True, "agent_request_count": 3, "effect_count": 1}},
+        "disconnect": {{"pass": True, "agent_request_count": 3, "effect_count": 1}},
+        "timeout": {{"pass": True, "agent_request_count": 1, "effect_count": 0}},
+        "cancel": {{"pass": True, "agent_request_count": 1, "effect_count": 0}},
+    }}}})
+if "{check_id}" == "L5_full":
+    doc.update({{
+        "scope": "full_contract_soak", "resume_same_session": True,
+        "compaction_persisted": True, "cache_visible": True,
+        "update_event_id_count": 8, "update_event_ids_unique": True,
+        "soak": {{"executed": True, "elapsed_seconds": 3600, "resume_turns": 2}},
+    }})
+Path(sys.argv[1]).write_text(json.dumps(doc, indent=2) + "\\n")
 PY2
 ''')
 PY
@@ -127,8 +145,8 @@ PY
 make_layer_script smoke-deepseek-agent.sh L1-tool-calls.json L1
 make_layer_script smoke-deepseek-l2.sh L2-min-e2e.json L2
 make_layer_script smoke-deepseek-l3.sh L3-multi-tool.json L3
-make_layer_script smoke-deepseek-l4.sh L4-fault-cancel.json L4_min
-make_layer_script smoke-deepseek-l5.sh L5-long-session.json L5_min
+make_layer_script smoke-deepseek-l4.sh L4-fault-cancel.json L4_full
+make_layer_script smoke-deepseek-l5.sh L5-long-session.json L5_full
 
 python3 - "$FIX/scripts/smoke-r0.sh" <<'PY'
 from pathlib import Path
@@ -194,6 +212,8 @@ chmod +x "$FIX/scripts/generate-sbom.sh"
 
 printf '#!/bin/sh\nexit 1\n' >"$FIX/scripts/productivity-gate.sh"
 chmod +x "$FIX/scripts/productivity-gate.sh"
+printf '#!/bin/sh\nexit 1\n' >"$FIX/scripts/onboarding-gate.sh"
+chmod +x "$FIX/scripts/onboarding-gate.sh"
 
 # source-lock is intentionally fail-closed on a missing critical file. Populate
 # inert placeholders for critical paths that are irrelevant to this isolated
@@ -269,7 +289,10 @@ assert rec["status_semantics_ok"] is True
 assert rec["sbom_semantics_ok"] is True
 assert status["engineering_complete"] is True, status["blockers"]
 assert status["ready"] is False
-assert status["blockers"] == ["M6_15_day_self_use:human_gate count_lt_15"]
+assert status["blockers"] == [
+    "M5_10_min_stranger:human_gate missing_or_invalid",
+    "M6_15_day_self_use:human_gate count_lt_15",
+]
 PY
 
 # Materially identical reconcile keeps its old timestamp.

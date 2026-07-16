@@ -29,9 +29,7 @@ pub fn format_cache_line(u: CacheUsage) -> String {
 }
 
 fn fmt_k(n: u64) -> String {
-    if n >= 10_000 {
-        format!("{:.1}k", n as f64 / 1000.0)
-    } else if n >= 1000 {
+    if n >= 1000 {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         n.to_string()
@@ -58,5 +56,12 @@ mod tests {
     fn zero_input_no_div0() {
         let line = format_cache_line(CacheUsage::default());
         assert!(line.contains("(0%)"), "{line}");
+    }
+
+    #[test]
+    fn thousands_use_one_decimal_without_duplicate_ranges() {
+        assert_eq!(fmt_k(999), "999");
+        assert_eq!(fmt_k(1_000), "1.0k");
+        assert_eq!(fmt_k(10_000), "10.0k");
     }
 }

@@ -45,6 +45,33 @@ run_script() {
   run_command "$id" "$script"
 }
 
+record_l5_soak_contract() {
+  if python3 - "$ART/L5-long-session.json" <<'PY'
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except (OSError, json.JSONDecodeError):
+    raise SystemExit(1)
+soak = doc.get("soak") or {}
+ok = (
+    doc.get("pass") is True
+    and doc.get("check_id") == "L5_full"
+    and doc.get("scope") == "full_contract_soak"
+    and soak.get("executed") is True
+    and type(soak.get("elapsed_seconds")) is int
+    and soak["elapsed_seconds"] >= 3600
+    and type(soak.get("resume_turns")) is int
+    and soak["resume_turns"] > 0
+)
+raise SystemExit(0 if ok else 1)
+PY
+  then
+    record L5_one_hour_soak PASS "elapsed>=3600 and resume_turns>0"
+  else
+    record L5_one_hour_soak FAIL "explicit one-hour soak evidence missing"
+  fi
+}
+
 # Release and installed paths must be one immutable build of current HEAD.
 BINARY_TUPLE_PRE_OK=0
 BINARY_PRE_SHA=""
@@ -85,6 +112,7 @@ if [[ -n "${DEEPSEEK_API_KEY:-}" && $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
   run_script L3_multi_tool "$ROOT/scripts/smoke-deepseek-l3.sh"
   run_script L4_fault_cancel "$ROOT/scripts/smoke-deepseek-l4.sh"
   run_script L5_long_session "$ROOT/scripts/smoke-deepseek-l5.sh"
+  record_l5_soak_contract
 elif [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
   record L0_connect SKIP "no DEEPSEEK_API_KEY"
   record L1_tool_calls SKIP "no DEEPSEEK_API_KEY"
@@ -92,6 +120,7 @@ elif [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
   record L3_multi_tool SKIP "no DEEPSEEK_API_KEY"
   record L4_fault_cancel SKIP "no DEEPSEEK_API_KEY"
   record L5_long_session SKIP "no DEEPSEEK_API_KEY"
+  record L5_one_hour_soak SKIP "no DEEPSEEK_API_KEY"
 else
   record L0_connect SKIP "binary tuple preflight failed"
   record L1_tool_calls SKIP "binary tuple preflight failed"
@@ -99,6 +128,7 @@ else
   record L3_multi_tool SKIP "binary tuple preflight failed"
   record L4_fault_cancel SKIP "binary tuple preflight failed"
   record L5_long_session SKIP "binary tuple preflight failed"
+  record L5_one_hour_soak SKIP "binary tuple preflight failed"
 fi
 
 # R0: full contract smoke (writes R0-full.json + updates R0-min.json)
@@ -165,6 +195,18 @@ else
   record source_lock FAIL "run scripts/source-lock.sh"
 fi
 
+# Human onboarding gate (must fail until one real stranger completes the path).
+set +e
+m5_out=$("$ROOT/scripts/onboarding-gate.sh" 2>&1)
+m5_ec=$?
+set -e
+echo "$m5_out" | sed 's/^/  | /'
+if [[ $m5_ec -eq 0 ]]; then
+  record M5_10_min_stranger PASS
+else
+  record M5_10_min_stranger FAIL "human_gate missing_or_invalid"
+fi
+
 # Human productivity gate (must fail until ≥15 real journals)
 set +e
 pg_out=$("$ROOT/scripts/productivity-gate.sh" 2>&1)
@@ -204,7 +246,7 @@ l0 = any(c["id"] == "L0_connect" and c["pass"] for c in checks)
 auto_required = {
     "binary_tuple_pre", "gitleaks", "defaults", "security", "m2", "parity", "eval_harness", "verify_cli",
     "verticals", "L0_connect", "L1_tool_calls", "L2_min_e2e", "L3_multi_tool",
-    "L4_fault_cancel", "L5_long_session", "R0_min", "eval_live", "binary_tuple_post",
+    "L4_fault_cancel", "L5_long_session", "L5_one_hour_soak", "R0_min", "eval_live", "binary_tuple_post",
     "source_lock", "sbom", "legal", "reconcile",
 }
 # R0_full preferred; if present must pass
@@ -217,7 +259,8 @@ def check_ok(i):
             return c["result"] == "PASS"
     return False
 
-auto_blockers = [b for b in blockers if not b.startswith("M6_15_day_self_use")]
+human_gate_prefixes = ("M5_10_min_stranger:", "M6_15_day_self_use:")
+auto_blockers = [b for b in blockers if not b.startswith(human_gate_prefixes)]
 # also block eng if required missing
 for i in auto_required:
     if not check_ok(i):
@@ -235,7 +278,7 @@ eng_ok = len(auto_blockers) == 0
 # aggregate. A SKIP may explain an unconfigured developer machine, but it must
 # never become READY merely because it is not a FAIL.
 publish_blockers = list(blockers)
-for required_id in sorted(auto_required | {"eval_live", "M6_15_day_self_use"}):
+for required_id in sorted(auto_required | {"eval_live", "M5_10_min_stranger", "M6_15_day_self_use"}):
     if check_ok(required_id):
         continue
     if any(b.startswith(required_id + ":") for b in publish_blockers):
@@ -273,7 +316,7 @@ status = {
     "checks": checks,
     "reconcile_pass": bool(reconcile.get("pass")),
     "reconciled_at": reconcile.get("generated_at"),
-    "note": "ready=true only when every publish gate is PASS, including live eval and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass.",
+    "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass.",
 }
 Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
 
@@ -281,7 +324,7 @@ eng = {
     "schema_version": 1,
     "check_id": "engineering_complete",
     "pass": eng_ok,
-    "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M6_15_day_self_use",
+    "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
     "auto_blockers": auto_blockers,
     "can_tool_call": can_tool,
     "source_lock_sha256": lock_sha,

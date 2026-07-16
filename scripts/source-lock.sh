@@ -14,6 +14,7 @@ root = Path(".")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
 paths = [
     ".gitleaksignore",
+    "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs",
     "agent/crates/codegen/xai-grok-models/default_models.json",
     "agent/crates/codegen/lumen-guard/src/lib.rs",
     "agent/crates/codegen/lumen-discipline/src/lib.rs",
@@ -23,6 +24,7 @@ paths = [
     "scripts/eval-coding-live.sh",
     "scripts/generate-sbom.sh",
     "scripts/install-local.sh",
+    "scripts/onboarding-gate.sh",
     "scripts/productivity-gate.sh",
     "scripts/reconcile-evidence.sh",
     "scripts/source-lock.sh",
@@ -34,11 +36,14 @@ paths = [
     "scripts/smoke-deepseek-l5.sh",
     "scripts/smoke-r0-min.sh",
     "scripts/smoke-r0.sh",
+    "scripts/smoke-verify.sh",
     "scripts/test-readiness-contract.sh",
+    "scripts/test-onboarding-gate.sh",
     "scripts/verify-readiness.sh",
     "scripts/probe-local.sh",
     "scripts/doctor-verticals.sh",
     "docs/masterplan/09-FINAL-2.0-执行路径.md",
+    "docs/masterplan/M5-onboarding-evidence.template.json",
     "docs/masterplan/00A-来源锁与运行合同.md",
 ]
 files = {}
