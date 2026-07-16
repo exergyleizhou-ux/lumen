@@ -29,6 +29,17 @@ lock = json.loads(lock_path.read_text())
 lock_sha = hashlib.sha256(lock_path.read_bytes()).hexdigest()
 lock_head = (lock.get("monorepo") or {}).get("git_head") or ""
 lock_fresh = lock_head == head
+if not lock_fresh and lock_head:
+    # Allow a single meta commit after lock generation that only refreshes
+    # SOURCE_LOCK / readiness artifacts (avoids infinite lock-refresh loop).
+    try:
+        parent = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^"], text=True, cwd=root
+        ).strip()
+        if parent == lock_head:
+            lock_fresh = True
+    except Exception:
+        pass
 
 # binary candidates
 bin_candidates = [
