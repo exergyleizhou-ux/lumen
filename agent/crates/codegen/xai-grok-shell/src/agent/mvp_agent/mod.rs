@@ -1757,6 +1757,37 @@ impl MvpAgent {
         }
         result
     }
+    /// Restore the process-global event counter from a persisted session when
+    /// `session/load` intentionally skips transcript replay (`noReplay`).
+    pub(super) fn restore_no_replay_event_counter(
+        updates_file_path: &Option<PathBuf>,
+    ) -> Option<u64> {
+        use std::io::BufRead;
+
+        let updates_path = updates_file_path.as_ref()?;
+        let file = std::fs::File::open(updates_path).ok()?;
+        let mut max_event_seq = None;
+        for line in std::io::BufReader::new(file).lines().map_while(Result::ok) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+                continue;
+            };
+            let params = value.get("params").unwrap_or(&value);
+            let Some(seq) = params
+                .get("_meta")
+                .and_then(|meta| meta.get("eventId"))
+                .and_then(|event_id| event_id.as_str())
+                .and_then(|event_id| event_id.rsplit('-').next())
+                .and_then(|suffix| suffix.parse::<u64>().ok())
+            else {
+                continue;
+            };
+            max_event_seq = Some(max_event_seq.map_or(seq, |max: u64| max.max(seq)));
+        }
+        if let Some(max_seq) = max_event_seq {
+            crate::util::event_id::ensure_event_counter_at_least(max_seq.saturating_add(1));
+        }
+        max_event_seq
+    }
     /// Check whether the user has access via remote settings `allow_access`.
     ///
     /// Non-xAI auth (API keys, enterprise) always passes. For xAI OAuth2

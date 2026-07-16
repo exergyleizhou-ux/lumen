@@ -175,25 +175,25 @@ impl Drop for SystemAppearanceWatcher {
 
 // -- Test support ----------------------------------------------------------
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Mutex;
 
 /// Mock override for `detect()`. When set to `Some(value)`, `detect()`
 /// returns the mock value instead of calling `dark_light::detect()`.
 /// This ensures the `SystemAppearanceWatcher` polling loop (which calls
 /// `detect()` directly) is also controllable from tests.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 static MOCK_APPEARANCE: Mutex<Option<Option<SystemAppearance>>> = Mutex::new(None);
 
 /// Override `detect()` for tests. Set to `Some(value)` to mock a specific
 /// appearance, or `None` to mock detection failure.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn set_mock(value: Option<SystemAppearance>) {
     *MOCK_APPEARANCE.lock().unwrap_or_else(|e| e.into_inner()) = Some(value);
 }
 
 /// Clear the mock override, restoring real detection behavior.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn clear_mock() {
     *MOCK_APPEARANCE.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }

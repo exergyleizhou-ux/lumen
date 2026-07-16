@@ -1487,8 +1487,11 @@ impl acp::Agent for MvpAgent {
             }
         };
         let (initial_total_tokens, delta_completions, unfinished_subagents) = if no_replay {
+            let restored_event_seq =
+                Self::restore_no_replay_event_counter(&updates_file_path);
             tracing::info!(
                 session_id = % session_id.0,
+                restored_event_seq = ?restored_event_seq,
                 "Skipping session replay (noReplay flag set by relay)"
             );
             (

@@ -880,7 +880,7 @@ pub fn system_clipboard_get_image() -> Option<ImageData> {
 /// (the off-thread probe reads the REAL pasteboard there), so tests exercise
 /// deferral by asserting the enqueued effect and then driving
 /// `complete_clipboard_attachment_paste` directly with a canned outcome.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use super::{ClipboardProbeError, ClipboardTextReadError, ImageData};
     use std::cell::{Cell, RefCell};
@@ -1039,9 +1039,9 @@ pub mod test_support {
     }
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(all(any(test, feature = "test-support"), target_os = "linux"))]
 pub use test_support::primary_selection_read_call_count;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use test_support::{
     ClipboardProbeHook, clear_clipboard_probe_hook, clipboard_probe_call_count,
     set_clipboard_probe_hook,
