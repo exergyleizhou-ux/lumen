@@ -258,8 +258,14 @@ impl xai_tool_runtime::Tool for UpdateGoalTool {
 
         // Clone the sender out of resources so we don't hold the
         // resources mutex across the channel write.
+        // Lumen M2: gate completed:true against incomplete todos (SoftOnce).
         let sender = {
-            let res = resources.lock().await;
+            let mut res = resources.lock().await;
+            if input.completed == Some(true) {
+                if let Err(e) = lumen_goal_incomplete_gate(&mut res) {
+                    return Err(e);
+                }
+            }
             res.get::<GoalUpdateHandle>()
                 .ok_or_else(|| {
                     xai_tool_runtime::ToolError::custom(
@@ -299,6 +305,53 @@ impl xai_tool_runtime::Tool for UpdateGoalTool {
             }
         };
         render_ack_into_output(ack)
+    }
+}
+
+/// Session-local SoftOnce arm for incomplete-todo goal gate.
+#[derive(Debug, Default)]
+pub struct LumenGoalTodoGateState {
+    pub delivery: lumen_discipline::DeliverySessionState,
+}
+
+/// Lumen M2 hard gate: reject `completed: true` while todos are open (SoftOnce).
+fn lumen_goal_incomplete_gate(
+    res: &mut crate::types::resources::Resources,
+) -> Result<(), xai_tool_runtime::ToolError> {
+    use crate::implementations::grok_build::todo::{TodoState, TodoStatus};
+    use crate::types::resources::State;
+    use lumen_discipline::{
+        gate_goal_complete, GoalGate, GoalIncompletePolicy, TodoSnapshot,
+    };
+
+    let snapshots: Vec<TodoSnapshot> = res
+        .get::<State<TodoState>>()
+        .map(|st| {
+            st.todo_items_with_ids()
+                .map(|(id, item)| TodoSnapshot {
+                    id: id.clone(),
+                    open: matches!(item.status, TodoStatus::Pending | TodoStatus::InProgress),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if snapshots.is_empty() || snapshots.iter().all(|t| !t.open) {
+        return Ok(());
+    }
+
+    let gate_state = res.get_or_default::<LumenGoalTodoGateState>();
+    match gate_goal_complete(
+        &snapshots,
+        &mut gate_state.delivery,
+        GoalIncompletePolicy::SoftOnce,
+        true,
+    ) {
+        GoalGate::Allow => Ok(()),
+        GoalGate::Reject { reason, detail } => Err(xai_tool_runtime::ToolError::custom(
+            reason,
+            detail,
+        )),
     }
 }
 

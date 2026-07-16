@@ -7,7 +7,7 @@
     {
       "model": "deepseek-chat",
       "name": "DeepSeek Chat",
-      "description": "DeepSeek first-class default for Lumen coding sessions",
+      "description": "DeepSeek chat preset — fast coding default (Lumen)",
       "context_window": 128000,
       "temperature": 0.0,
       "top_p": 1.0,
@@ -15,6 +15,36 @@
       "supported_in_api": true,
       "base_url": "https://api.deepseek.com/v1",
       "env_key": "DEEPSEEK_API_KEY",
+      "byok": true
+    },
+    {
+      "id": "deepseek-reasoner",
+      "model": "deepseek-reasoner",
+      "name": "DeepSeek Reasoner",
+      "description": "DeepSeek reasoner preset — deeper planning / hard bugs (Lumen)",
+      "context_window": 128000,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "api_backend": "chat_completions",
+      "supported_in_api": true,
+      "supports_reasoning_effort": true,
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "byok": true
+    },
+    {
+      "id": "local-openai",
+      "model": "local-model",
+      "name": "Local OpenAI-compatible",
+      "description": "Local preset — point base_url at ollama/vLLM/llama.cpp (override in config.toml)",
+      "context_window": 128000,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "api_backend": "chat_completions",
+      "supported_in_api": true,
+      "hidden": true,
+      "base_url": "http://127.0.0.1:11434/v1",
+      "env_key": "LOCAL_API_KEY",
       "byok": true
     }
   ]

@@ -58,6 +58,7 @@ members = [
     "crates/codegen/xai-hooks-plugins-types",
     "crates/codegen/xai-hunk-tracker",
     "crates/codegen/lumen-guard",
+    "crates/codegen/lumen-discipline",
     "crates/codegen/xai-mixpanel",
     "crates/codegen/xai-prompt-queue",
     "crates/codegen/xai-ratatui-inline",

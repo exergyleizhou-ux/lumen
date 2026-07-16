@@ -267,12 +267,19 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
         cost_is_partial,
         cost_missing_calls: _, // internal partiality count; the flag suffices
     } = usage.totals;
+    // Lumen M2: human-readable cache line for headless / tooling (DeepSeek cache visibility).
+    let cache_line = lumen_discipline::format_cache_line(lumen_discipline::CacheUsage {
+        input_tokens,
+        cache_read_tokens: cached_read_tokens,
+        output_tokens,
+    });
     result["usage"] = serde_json::json!({
         "input_tokens": uncached_input_tokens(input_tokens, cached_read_tokens),
         "cache_read_input_tokens": cached_read_tokens,
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
+        "cache_line": cache_line,
     });
     result["num_turns"] = usage.num_turns.into();
     if usage.usage_is_incomplete {

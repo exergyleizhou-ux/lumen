@@ -135,6 +135,7 @@ xai-sqlite-journal = { workspace = true }
 xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-tools = { path = "../xai-grok-tools" }
+lumen-discipline = { path = "../lumen-discipline" }
 xai-tty-utils = { workspace = true }
 xai-system-power = { workspace = true }
 xai-grok-workspace = { workspace = true }

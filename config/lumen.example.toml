@@ -1,6 +1,11 @@
 # Lumen example config — DeepSeek first-class wiring (copy to ~/.grok/config.toml
 # or the product config path after home-dir migration).
 # API key: set DEEPSEEK_API_KEY in the environment (preferred) rather than this file.
+#
+# Presets (M2):
+#   deepseek-chat     — default fast coding
+#   deepseek-reasoner — deeper reasoning (switch: lumen -m deepseek-reasoner)
+#   local-openai      — hidden local OpenAI-compatible (ollama etc.)
 
 [models]
 default = "deepseek-chat"
@@ -11,7 +16,23 @@ name = "DeepSeek Chat"
 base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
-# Optional: api_key = "sk-..."  (prefer env DEEPSEEK_API_KEY)
+
+[model.deepseek-reasoner]
+model = "deepseek-reasoner"
+name = "DeepSeek Reasoner"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+
+# Uncomment for local inference:
+# [model.local-openai]
+# model = "llama3.2"
+# base_url = "http://127.0.0.1:11434/v1"
+# env_key = "LOCAL_API_KEY"
 
 [cli]
 auto_update = false
+
+# Delivery / Goal (M2) — incomplete todos SoftOnce gate is always on in tool path.
+# Strictness for turn-end writer-without-verify nudge is host-side (lumen-discipline).
+

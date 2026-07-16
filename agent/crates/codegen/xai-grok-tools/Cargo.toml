@@ -17,6 +17,8 @@ async-openai = { workspace = true }
 xai-tty-utils = { workspace = true }
 xai-grok-config = { path = "../xai-grok-config" }
 xai-grok-tools-api = { path = "../xai-grok-tools-api" }
+# Lumen M2: goal incomplete-todo hard gate (SoftOnce).
+lumen-discipline = { path = "../lumen-discipline" }
 xai-grok-workspace-types = { path = "../xai-grok-workspace-types" }
 xai-grok-version = { workspace = true }
 xai-interjection-core = { workspace = true }
