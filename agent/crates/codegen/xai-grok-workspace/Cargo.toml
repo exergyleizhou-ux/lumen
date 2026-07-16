@@ -73,6 +73,8 @@ glob = "0.3"
 xai-grok-sandbox = { path = "../xai-grok-sandbox", default-features = false }
 xai-grok-hooks = { path = "../xai-grok-hooks" }
 xai-hunk-tracker = { path = "../xai-hunk-tracker" }
+# Lumen hard-deny guards (bash L0–L2 + writepath L3); deny always wins over YOLO.
+lumen-guard = { path = "../lumen-guard" }
 # `metrics` enables the SDK's metric-donation client (periodic Prometheus
 # registry gather → OTLP → hub donation pump); see metric_donation_reporter.
 xai-computer-hub-sdk = { workspace = true, features = ["metrics"] }

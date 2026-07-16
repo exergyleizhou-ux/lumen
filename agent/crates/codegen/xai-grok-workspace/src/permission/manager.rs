@@ -28,6 +28,8 @@ mod reasons {
     pub const YOLO: &str = "yolo";
     pub const POLICY_ALLOW: &str = "policy_allow";
     pub const POLICY_DENY: &str = "policy_deny";
+    /// Lumen hard-deny (lumen-guard); enforced before YOLO / bypass.
+    pub const LUMEN_GUARD_DENY: &str = "lumen_guard_deny";
     pub const POLICY_ASK: &str = "policy_ask";
     pub const AUTO_FAST_PATH: &str = "auto_fast_path";
     pub const AUTO_CLASSIFIER_ALLOW: &str = "auto_classifier_allow";
@@ -661,6 +663,20 @@ fn clamp_yolo(requested: bool, yolo_pin: Option<&'static str>) -> bool {
     requested && yolo_pin.is_none()
 }
 
+/// Lumen hard-deny (bash L0–L2 + writepath L3). Returns a reason when blocked.
+/// Enforced for every permission mode including YOLO / always-approve.
+fn lumen_guard_deny(access: &AccessKind) -> Option<String> {
+    match access {
+        AccessKind::Bash(cmd) => lumen_guard::check_bash(cmd)
+            .deny_reason()
+            .map(|r| r.to_owned()),
+        AccessKind::Edit(path) => lumen_guard::check_write_path(path)
+            .deny_reason()
+            .map(|r| r.to_owned()),
+        _ => None,
+    }
+}
+
 /// Whether an auto-forced prompt must neutralize a pre-decided `Allow`. True for
 /// every non-bash access. Session grants short-circuit before classify, so this
 /// is defense-in-depth for leftover non-grant Allows. Bash is carved out — its
@@ -1160,6 +1176,27 @@ fn spawn_permission_manager_with_pin(
                     // Auto-mode reason a prompt was forced, so the prompt-path event
                     // records why it reached the user.
                     let mut auto_prompt_reason: Option<&'static str> = None;
+
+                    // Lumen L0–L3 hard-deny: runs before managed policy YOLO path.
+                    // Bypass / always-approve / YOLO cannot skip these checks.
+                    if let Some(reason) = lumen_guard_deny(&access) {
+                        tracing::info!(
+                            tool = ?tool_name,
+                            source = "lumen_guard",
+                            %reason,
+                            "lumen-guard deny (enforced before YOLO/bypass)"
+                        );
+                        let decision = Decision::PolicyDeny(format!("lumen-guard: {reason}"));
+                        emit_event(
+                            &decision,
+                            false,
+                            false,
+                            None,
+                            Some(reasons::LUMEN_GUARD_DENY),
+                        );
+                        let _ = respond_to.send(decision);
+                        continue;
+                    }
 
                     if let Some(Decision::Reject(reason)) = policy_decision {
                         tracing::info!(
