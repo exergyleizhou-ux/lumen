@@ -25,7 +25,7 @@ fn opaque_id(value: &str) -> String {
 
 /// Keep reports copy-safe even when runtime errors or commands contain URLs,
 /// credential-looking tokens, control sequences, or `key=value` secrets.
-fn redacted_text(value: &str) -> String {
+pub(crate) fn redacted_text(value: &str) -> String {
     const SECRET_KEYS: &[&str] = &[
         "api_key",
         "apikey",
@@ -222,8 +222,9 @@ pub fn redacted_report(snapshot: &TruthSnapshot, now: SystemTime) -> String {
             )
         }
     };
+    let recovery = crate::views::readiness::recovery_report(snapshot);
     format!(
-        "Lumen status\n\nProduct      {product}\nProvider     {provider}\nModel        {model}\nCapability   {capability}\nPermission   {permission}\nCache        {cache}\nVerification {verification}\nCaptured     {}",
+        "Lumen status\n\nProduct      {product}\nProvider     {provider}\nModel        {model}\nCapability   {capability}\nPermission   {permission}\nCache        {cache}\nVerification {verification}\nCaptured     {}\n\n{recovery}",
         age(snapshot.captured_at, now)
     )
 }

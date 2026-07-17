@@ -258,9 +258,14 @@ impl AgentView {
 
     /// User-visible recovery copy when chat-only blocks an edit.
     pub fn chat_only_edit_block_message() -> &'static str {
-        "Edit blocked: capability is chat-only. Re-run a real tool probe for the \
-         current provider/model binding (see /status). Tool-ready is never inferred \
-         from the model name or success colours."
+        "Edit blocked: capability is chat-only. Run /probe, switch to a tool-capable \
+         model (/model), then complete a real tool_call (or scripts/probe-local.sh). \
+         See /status. Tool-ready is never inferred from the model name or success colours."
+    }
+
+    /// Full recovery block for the current snapshot (chat-only / failed / unknown).
+    pub fn truth_recovery_report(&self) -> String {
+        crate::views::readiness::recovery_report(self.display_truth_snapshot())
     }
 
     /// Bind this view to a root session id, resetting the per-session

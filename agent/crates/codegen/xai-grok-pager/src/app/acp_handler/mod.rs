@@ -77,6 +77,58 @@ use session_notification::{
 pub(crate) use queue::PendingRunningAdoption;
 use queue::{handle_prompt_complete, handle_queue_changed};
 
+/// From a completed tool-call update, extract execute command + exit if present.
+/// Used only for truth verification freshness — not for inventing Tool-ready.
+fn truth_exec_from_update(
+    tcu: &acp::ToolCallUpdate,
+) -> Option<(String, String, i32)> {
+    let raw = tcu.fields.raw_output.as_ref()?;
+    // ToolOutput::Bash shape used by the shell (`exit_code` + optional command).
+    let exit = raw
+        .get("exit_code")
+        .or_else(|| raw.get("exitCode"))
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32)
+        .or_else(|| {
+            // Nested ToolOutput enum encoding: { "Bash": { "exit_code": … } }
+            raw.get("Bash")
+                .and_then(|b| b.get("exit_code").or_else(|| b.get("exitCode")))
+                .and_then(|v| v.as_i64())
+                .map(|n| n as i32)
+        })?;
+    let command = tcu
+        .fields
+        .title
+        .clone()
+        .or_else(|| {
+            tcu.fields
+                .raw_input
+                .as_ref()
+                .and_then(|v| {
+                    v.get("command")
+                        .or_else(|| v.get("cmd"))
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_owned())
+                })
+        })
+        .unwrap_or_else(|| "execute".to_owned());
+    // Only treat shell-like executes as verification candidates (not every tool).
+    let looks_like_shell = tcu.fields.kind == Some(acp::ToolKind::Execute)
+        || command.contains("test")
+        || command.contains("cargo")
+        || command.contains("npm")
+        || command.contains("pytest")
+        || command.contains("make ")
+        || raw.get("Bash").is_some()
+        || raw.get("exit_code").is_some()
+        || raw.get("exitCode").is_some();
+    if !looks_like_shell {
+        return None;
+    }
+    let run_id = tcu.tool_call_id.0.to_string();
+    Some((command, run_id, exit))
+}
+
 use background::{
     derive_child_cwd, handle_git_head_changed, handle_monitor_event, handle_scheduled_task_created,
     handle_scheduled_task_deleted, handle_scheduled_task_fired,
@@ -416,6 +468,29 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                                 %err,
                                 "truth snapshot refresh after live tool_call failed"
                             );
+                        }
+                        // Successful execute completion → verification Passed for current seq.
+                        if !meta.is_replay
+                            && let acp::SessionUpdate::ToolCallUpdate(ref tcu) =
+                                notif.request.update
+                            && matches!(
+                                tcu.fields.status,
+                                Some(acp::ToolCallStatus::Completed)
+                            )
+                        {
+                            if let Some((cmd, run_id, exit)) = truth_exec_from_update(tcu) {
+                                if exit == 0 {
+                                    let _ = agent.note_truth_verification_passed(cmd, run_id);
+                                } else {
+                                    agent.truth_session.verification =
+                                        crate::ui_contract::VerificationSummary::Failed {
+                                            command: cmd,
+                                            run_id,
+                                            exit_code: exit,
+                                        };
+                                    let _ = agent.refresh_truth_snapshot();
+                                }
+                            }
                         }
 
                         let had_activity_before = agent.session.tracker.activity().is_some();

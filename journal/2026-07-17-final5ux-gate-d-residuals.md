@@ -1,23 +1,31 @@
-# FINAL-5UX Gate D residuals (`codex/final-5ux-gate-d`)
+# FINAL-5UX Gate D–F engineering residuals (`codex/final-5ux-gate-d`)
 
-Honest inventory after Gate D UI + runtime refresh. **Not** a ready claim.
+Honest inventory for handoff. **Not** a product `ready=true` claim.
 
-## Explicitly blocked (missing runtime / human gates)
+## Human gates only (cannot automate)
 
-| Residual | Why blocked |
-|----------|-------------|
-| Interactive readiness wizard (provider → probe → trust UI) | No TUI runtime wizard surface; would be fake without multi-step probe API + isolation. CLI `scripts/probe-local.sh` remains external. |
-| Startup auto-probe without live tool_call | Until a first real ACP tool_call or an external `apply_truth_probe`, capability stays `Unknown` (honest). |
-| Provider-reported cache auto-feed | No stable TUI event carrying `CacheSource::ProviderReported` metrics; `note_truth_cache` API ready for a future sink. |
-| Auto verification pass from agent goals | Goal verify fields are display-only; wiring without command/run_id would fabricate Passed. Manual/`note_truth_verification_passed` only. |
-| Full interactive PTY color matrix 80×24 / 120×40 / 180×50 × truecolor/256/16/NO_COLOR | Environment/harness not driven in this pass; unit width matrix covers load-bearing truth-bar copy only. |
-| Exhaustive Grok Build string deletion in docs/billing SuperGrok commerce | Non-goal; legal/upstream/billing/xAI product paths retained. |
-| M5 onboarding + M6 productivity | Human gates; `ready` must stay false. |
+| Residual | Why |
+|----------|-----|
+| M5 onboarding (≤10 min human path + evidence) | Requires a real human run + gate artifacts |
+| M6 productivity (15-day self-use) | Human diary / productivity gate |
 
-## Implemented in this branch (do not re-list as open)
+## Engineering still limited by environment / external systems
 
-- Shared `Arc<TruthSnapshot>` + `truth_bar` / redacted `/status` / dashboard parity
-- Runtime refresh: model switch, live tool_call, edit→stale verify, permission sync
-- Chat-only edit block on permission path
-- Static welcome logo + idle `TickDemand::None`
+| Residual | Status |
+|----------|--------|
+| Interactive multi-step first-run wizard (provider picker walkthrough) | In-session recovery is shipped (`/probe`, `/status` Recovery, chat-only block). Full first-run chrome wizard still depends on auth/startup surfaces outside this package. |
+| Isolated HTTP capability probe without a live turn | `/probe` → Checking; Tool-ready from live ACP tool_call or external `scripts/probe-local.sh` / `apply_truth_probe`. No fake Tool-ready. |
+| Provider cache auto-feed | `note_truth_cache` ready; session meta still lacks stable provider cache hit ratio on the TUI path. |
+| Full interactive PTY color matrix (truecolor/256/16/NO_COLOR × sizes) | Unit matrix 80/120/180 drives shipped `truth_bar::line` + status Recovery; full PTY harness is env/auth gated (`--ignored`). |
+| Exhaustive docs/billing SuperGrok string deletion | Legal/upstream/xAI commerce paths retained by design. |
+
+## Implemented on this branch
+
+- Shared `Arc<TruthSnapshot>` + truth bar (fullscreen / minimal / dashboard)
+- Redacted `/status` + Recovery section; click ≡ `/status` ≡ dashboard path
+- `/probe` → Checking + recovery (never invents Tool-ready)
+- Runtime: model switch, live tool_call, execute→verification, edit→stale, permission sync
+- Chat-only edit block + recovery report on permission path
+- Static welcome logo; idle welcome `TickDemand::None`
 - Contract-gated `install_truth_snapshot`
+- Colour-independent size matrix tests (80×24 / 120×40 / 180×50 semantics)

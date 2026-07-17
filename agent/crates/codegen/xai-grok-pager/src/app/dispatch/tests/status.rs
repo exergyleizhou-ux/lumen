@@ -1018,3 +1018,23 @@ fn dashboard_show_truth_status_uses_same_redacted_report() {
         "dashboard /status click-equivalent must write redacted report, got: {text:?}; effects={effects:?}"
     );
 }
+
+#[test]
+fn begin_truth_probe_sets_checking_and_prints_recovery() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let effects = dispatch(Action::BeginTruthProbe, &mut app);
+    assert!(effects.is_empty());
+    let agent = app.agents.get(&id).unwrap();
+    assert!(matches!(
+        agent.display_truth_snapshot().capability,
+        crate::ui_contract::CapabilityState::Checking
+    ));
+    assert!(!agent.truth_is_tool_ready());
+    let text = last_system_text(&app, id);
+    assert!(
+        text.contains("Checking") || text.contains("probe"),
+        "got: {text}"
+    );
+    assert!(text.contains("Recovery") || text.contains("/status") || text.contains("tool_call"));
+}

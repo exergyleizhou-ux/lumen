@@ -493,4 +493,61 @@ mod tests {
             );
         }
     }
+
+    /// Gate F / E matrix: at FINAL-5UX sizes, semantics are carried in text
+    /// (works under NO_COLOR / 16-colour) and match status recovery keywords.
+    #[test]
+    fn final5ux_size_matrix_semantics_are_colour_independent() {
+        use crate::views::status_detail::redacted_report;
+        let now = SystemTime::UNIX_EPOCH + Duration::from_secs(60);
+        let cases: [(u16, u16); 3] = [(80, 24), (120, 40), (180, 50)];
+        for capability in [
+            CapabilityState::ToolReady {
+                fingerprint: "fp".into(),
+                checked_at: Some(SystemTime::UNIX_EPOCH),
+                evidence_id: "e".into(),
+            },
+            CapabilityState::ChatOnly {
+                evidence_id: "e".into(),
+            },
+            CapabilityState::Unknown {
+                reason: "not probed".into(),
+            },
+        ] {
+            let mut snap = snapshot();
+            snap.capability = capability;
+            let report = redacted_report(&snap, now);
+            for (w, _h) in cases {
+                let bar = line(&snap, w, now);
+                assert!(bar.text.width() <= usize::from(w));
+                // Text markers (not colour) encode state for low-colour terminals.
+                match &snap.capability {
+                    CapabilityState::ToolReady { .. } => {
+                        assert!(
+                            bar.text.contains("Tool-ready")
+                                || bar.text.contains("✓ tools")
+                                || bar.text.contains("tools"),
+                            "{}",
+                            bar.text
+                        );
+                    }
+                    CapabilityState::ChatOnly { .. } => {
+                        assert!(bar.text.to_ascii_lowercase().contains("chat-only"));
+                        assert_eq!(bar.tone, TruthTone::Blocker);
+                        assert!(report.to_ascii_lowercase().contains("chat-only"));
+                        assert!(report.contains("Recovery"));
+                    }
+                    CapabilityState::Unknown { .. } => {
+                        assert!(
+                            bar.text.contains('?') || bar.text.to_ascii_lowercase().contains("unknown"),
+                            "{}",
+                            bar.text
+                        );
+                        assert!(report.contains("Recovery"));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }

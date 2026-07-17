@@ -633,6 +633,8 @@ pub enum Action {
     ShowTruthStatus,
     /// Dashboard truth-bar click for the selected local session.
     DashboardShowTruthStatus,
+    /// `/probe`: mark capability Checking and print recovery (no fake Tool-ready).
+    BeginTruthProbe,
     /// Show credit usage via /usage command.
     ShowUsage,
     /// Commit a read-only list of the queued prompts as a system block

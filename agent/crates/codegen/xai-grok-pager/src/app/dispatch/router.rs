@@ -93,10 +93,10 @@ use super::settings::ui::{
     dispatch_toggle_vim_mode,
 };
 use super::status::{
-    dispatch_copy_session_id, dispatch_open_gboom, dispatch_share_session,
-    dispatch_show_context_info, dispatch_show_privacy_info, dispatch_show_queue,
-    dispatch_show_release_notes, dispatch_show_session_info, dispatch_show_tasks,
-    dispatch_show_truth_status, dispatch_show_usage, set_coding_data_sharing,
+    dispatch_begin_truth_probe, dispatch_copy_session_id, dispatch_open_gboom,
+    dispatch_share_session, dispatch_show_context_info, dispatch_show_privacy_info,
+    dispatch_show_queue, dispatch_show_release_notes, dispatch_show_session_info,
+    dispatch_show_tasks, dispatch_show_truth_status, dispatch_show_usage, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -881,6 +881,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::RenameSession { title } => dispatch_rename_session(app, title),
         Action::ShowContextInfo => dispatch_show_context_info(app),
         Action::ShowTruthStatus => dispatch_show_truth_status(app),
+        Action::BeginTruthProbe => dispatch_begin_truth_probe(app),
         Action::ShowUsage => dispatch_show_usage(app),
         Action::ShowQueue => dispatch_show_queue(app),
         Action::ShowTasks => dispatch_show_tasks(app),

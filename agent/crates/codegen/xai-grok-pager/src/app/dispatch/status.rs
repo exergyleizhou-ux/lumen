@@ -23,6 +23,34 @@ pub(super) fn dispatch_show_truth_status(app: &mut AppView) -> Vec<Effect> {
     vec![]
 }
 
+/// `/probe`: surface Checking + recovery. Tool-ready still requires real tool_call.
+pub(super) fn dispatch_begin_truth_probe(app: &mut AppView) -> Vec<Effect> {
+    use super::ctx::get_active_agent_mut;
+    let Some(agent) = get_active_agent_mut(app) else {
+        return vec![];
+    };
+    if let Err(err) = agent.begin_truth_probe() {
+        let msg = format!("Could not start capability probe: {err}");
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(msg));
+        return vec![];
+    }
+    let mut body = String::from(
+        "Capability probe started (Checking).\n\
+         Tool-ready is not set from the model name — it updates when a real \
+         agent tool_call is observed for this binding, or when external probe \
+         evidence is applied (e.g. scripts/probe-local.sh for local endpoints).\n\n",
+    );
+    body.push_str(&crate::views::readiness::recovery_report(
+        agent.display_truth_snapshot(),
+    ));
+    agent
+        .scrollback
+        .push_block(crate::scrollback::block::RenderBlock::system(body));
+    vec![]
+}
+
 /// Toggle YOLO mode (auto-approve all permissions).
 ///
 /// When turning ON: auto-approve all currently queued permissions and
