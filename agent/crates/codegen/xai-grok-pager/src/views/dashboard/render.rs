@@ -129,6 +129,32 @@ pub fn render_dashboard(
     );
     state.reanchor_selection(&rows);
 
+    // The dashboard paints the selected local session's exact `Arc` snapshot;
+    // it does not reclassify the row into a second success/failure vocabulary.
+    let selected_truth = match state.selected.as_ref() {
+        Some(super::state::DashboardRowId::TopLevel(id)) => {
+            agents.get(id).map(AgentView::display_truth_snapshot)
+        }
+        _ => None,
+    };
+    let area = if let Some(snapshot) = selected_truth
+        && area.height > 1
+    {
+        let truth_area = Rect::new(area.x, area.y, area.width, 1);
+        state.truth_bar_hit.rect = crate::views::truth_bar::render(
+            buf,
+            truth_area,
+            snapshot,
+            std::time::SystemTime::now(),
+            &theme,
+            state.truth_bar_hit.hovered,
+        );
+        Rect::new(area.x, area.y + 1, area.width, area.height - 1)
+    } else {
+        state.truth_bar_hit.clear();
+        area
+    };
+
     // DO NOT GC pinned/reorder at render time. The old
     // code built the alive-set from the *post-filter* row list, so a
     // user-typed filter that hid a pinned row would (a) remove the

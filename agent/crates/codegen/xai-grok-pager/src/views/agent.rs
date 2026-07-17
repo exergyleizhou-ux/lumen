@@ -102,6 +102,8 @@ pub fn effective_compact(user_compact: bool, terminal_rows: u16) -> bool {
 /// prompt height + todo height. Shared widgets use these rects to render into.
 pub struct AgentViewLayout {
     pub status_bar: Rect,
+    /// FINAL-5UX provider/capability/permission/cache/verification truth.
+    pub truth_bar: Rect,
     /// Startup terminal-warning banner (between status bar and bg tasks/scrollback).
     pub startup_warnings: Rect,
     pub tasks: Rect,
@@ -189,7 +191,7 @@ impl AgentViewLayout {
             bottom_vpad,
         ));
         let inner_area = outer_block.inner(area);
-        let mut constraints = vec![Constraint::Length(1)];
+        let mut constraints = vec![Constraint::Length(1), Constraint::Length(1)];
         if startup_warning_height > 0 {
             constraints.push(Constraint::Length(startup_warning_height));
         }
@@ -248,6 +250,8 @@ impl AgentViewLayout {
         let chunks = Layout::vertical(constraints).split(inner_area);
         let mut i = 0;
         let status_bar = chunks[i];
+        i += 1;
+        let truth_bar = chunks[i];
         i += 1;
         let startup_warnings = if startup_warning_height > 0 {
             let r = chunks[i];
@@ -360,6 +364,7 @@ impl AgentViewLayout {
         };
         Self {
             status_bar,
+            truth_bar,
             startup_warnings,
             tasks,
             catalog,

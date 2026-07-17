@@ -9,6 +9,20 @@ use crate::app::app_view::{ActiveView, AppView};
 use crate::notifications::{NotificationEvent, NotificationEventKind};
 use crate::scrollback::block::RenderBlock;
 
+/// Show a synchronous, redacted report from the exact snapshot painted by the
+/// truth bar. No provider call is made, so click and `/status` are identical.
+pub(super) fn dispatch_show_truth_status(app: &mut AppView) -> Vec<Effect> {
+    let Some(agent) = get_active_agent(app) else {
+        return vec![];
+    };
+    let text = crate::views::status_detail::redacted_report(
+        agent.display_truth_snapshot(),
+        std::time::SystemTime::now(),
+    );
+    push_system_to_any_agent(app, &text);
+    vec![]
+}
+
 /// Toggle YOLO mode (auto-approve all permissions).
 ///
 /// When turning ON: auto-approve all currently queued permissions and
@@ -358,7 +372,7 @@ pub(super) fn notify_session_ready(
 ) {
     notification_service.notify(NotificationEvent {
         kind: NotificationEventKind::SessionReady,
-        title: "Grok".into(),
+        title: "Lumen".into(),
         body: NotificationEventKind::SessionReady.as_str().into(),
         session_id: agent.session.session_id.as_ref().map(|s| s.0.to_string()),
     });

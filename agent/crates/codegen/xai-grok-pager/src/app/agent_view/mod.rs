@@ -147,6 +147,7 @@ use ratatui::style::Style;
 use ratatui::text::Line;
 use ratatui::widgets::Widget;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 mod cta;
 mod input;
@@ -706,6 +707,12 @@ impl ParkedMarkerSlot {
 pub struct AgentView {
     pub session: AgentSession,
     pub scrollback: ScrollbackState,
+    /// Session-side truth assembly state (Gate C). Mutations re-run
+    /// `assemble_truth_snapshot` into [`Self::truth_snapshot`].
+    pub truth_session: crate::truth_assembly::TruthSessionState,
+    /// Cached, validated display truth installed by Gate C assembly. All UI
+    /// surfaces borrow or clone this same `Arc`; renderers never infer truth.
+    pub truth_snapshot: Arc<crate::ui_contract::TruthSnapshot>,
     pub prompt: PromptWidget,
     /// Sticky: once the user types in the prompt, hide the tip for the session.
     pub tip_typing_dismissed: bool,
@@ -1032,6 +1039,8 @@ pub struct AgentView {
     pub hit_badge: HitArea,
     pub hit_context: HitArea,
     pub hit_credits: HitArea,
+    /// Shared truth bar (click opens the same details as `/status`).
+    pub hit_truth_bar: HitArea,
     pub hit_todo_close: HitArea,
     pub hit_bg_close: HitArea,
     pub hit_subagent_close: HitArea,

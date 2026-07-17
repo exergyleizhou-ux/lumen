@@ -18,9 +18,10 @@ use super::dashboard::{
     dispatch_dashboard_peek_cycle_mode, dispatch_dashboard_peek_reply,
     dispatch_dashboard_permission_followup, dispatch_dashboard_permission_select,
     dispatch_dashboard_question_answer, dispatch_dashboard_reorder, dispatch_dashboard_select,
-    dispatch_dashboard_stop, dispatch_dashboard_toggle_auto_approve,
-    dispatch_dashboard_toggle_grouping, dispatch_dashboard_toggle_pin,
-    dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard, dispatch_open_dashboard,
+    dispatch_dashboard_show_truth_status, dispatch_dashboard_stop,
+    dispatch_dashboard_toggle_auto_approve, dispatch_dashboard_toggle_grouping,
+    dispatch_dashboard_toggle_pin, dispatch_dashboard_toggle_worktree, dispatch_exit_dashboard,
+    dispatch_open_dashboard,
 };
 use super::import_claude::{
     dispatch_dismiss_claude_import, dispatch_import_claude, dispatch_import_claude_cancel,
@@ -95,7 +96,7 @@ use super::status::{
     dispatch_copy_session_id, dispatch_open_gboom, dispatch_share_session,
     dispatch_show_context_info, dispatch_show_privacy_info, dispatch_show_queue,
     dispatch_show_release_notes, dispatch_show_session_info, dispatch_show_tasks,
-    dispatch_show_usage, set_coding_data_sharing,
+    dispatch_show_truth_status, dispatch_show_usage, set_coding_data_sharing,
 };
 use super::task_result::{dispatch_task_result, unregister_all_active_sessions};
 use super::transcript::{
@@ -879,6 +880,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         }
         Action::RenameSession { title } => dispatch_rename_session(app, title),
         Action::ShowContextInfo => dispatch_show_context_info(app),
+        Action::ShowTruthStatus => dispatch_show_truth_status(app),
         Action::ShowUsage => dispatch_show_usage(app),
         Action::ShowQueue => dispatch_show_queue(app),
         Action::ShowTasks => dispatch_show_tasks(app),
@@ -1128,6 +1130,7 @@ pub(crate) fn dispatch(action: Action, app: &mut AppView) -> Vec<Effect> {
         Action::OpenDashboard => dispatch_open_dashboard(app),
         Action::ExitDashboard => dispatch_exit_dashboard(app),
         Action::DashboardAttach(id) => dispatch_dashboard_attach(app, id),
+        Action::DashboardShowTruthStatus => dispatch_dashboard_show_truth_status(app),
         Action::DashboardDispatch { text, attach } => {
             dispatch_dashboard_dispatch(app, text, attach)
         }

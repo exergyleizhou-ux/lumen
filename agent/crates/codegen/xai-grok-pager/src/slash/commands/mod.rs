@@ -54,6 +54,7 @@ pub mod scroll_debug;
 pub mod session_info;
 pub mod settings_cmd;
 pub mod share;
+pub mod status;
 pub mod tasks;
 pub mod terminal_setup;
 pub mod theme;
@@ -102,6 +103,7 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(plugin::SkillsCommand),
         Arc::new(share::ShareCommand),
         Arc::new(session_info::SessionInfoCommand),
+        Arc::new(status::StatusCommand),
         Arc::new(rename::RenameCommand),
         Arc::new(dashboard::DashboardCommand),
         Arc::new(cd::CdCommand),

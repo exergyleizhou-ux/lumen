@@ -203,15 +203,14 @@ pub enum ActiveView {
 pub enum TickDemand {
     /// Nothing animates or polls: the event loop parks (zero wakeups).
     None,
-    /// Only low-frequency work is pending (welcome logo shimmer at ~12fps,
-    /// the macOS Cmd link-hover poll): tick at [`SLOW_TICK_INTERVAL`].
+    /// Only low-frequency work is pending (the macOS Cmd link-hover poll):
+    /// tick at [`SLOW_TICK_INTERVAL`].
     Slow,
     /// Real animation is on screen: tick at the configured animation fps.
     Fast,
 }
-/// Tick cadence for [`TickDemand::Slow`] (~12fps). Matches the welcome logo's
-/// `SHIMMER_FPS` so slow ticks sample every shimmer frame, and bounds the
-/// latency of the macOS Cmd link-hover underline.
+/// Tick cadence for [`TickDemand::Slow`]. Bounds the latency of the macOS Cmd
+/// link-hover underline without waking an otherwise idle application.
 pub const SLOW_TICK_INTERVAL: Duration = Duration::from_millis(83);
 /// Which prompt box in-flight voice dictation appends its finalized text to.
 /// Captured when recording **starts** so a trailing STT final still lands where
@@ -844,9 +843,6 @@ pub struct AppView {
     pub session_picker_entries_query: Option<String>,
     /// Tick counter for welcome screen spinner animation.
     pub welcome_tick: u64,
-    /// Last shimmer frame drawn on the welcome screen. Lets `tick` throttle the
-    /// wall-clock logo animation to a few fps instead of the full tick rate.
-    pub welcome_shimmer_frame: u64,
     /// CLI model override (`-m` / `--model`). Seeded into every new
     /// `AgentSession.deferred_model_switch` so the model is applied once
     /// the session is created.
@@ -1247,7 +1243,6 @@ impl AppView {
             session_picker_detail_generation: 0,
             session_picker_entries_query: None,
             welcome_tick: 0,
-            welcome_shimmer_frame: 0,
             cli_model_override: None,
             cli_effort_token: None,
             default_yolo: false,
@@ -4494,12 +4489,6 @@ impl AppView {
             self.welcome_tick = self.welcome_tick.wrapping_add(1);
             if self.session_picker_content_loading {
                 needs_redraw = true;
-            } else {
-                let frame = crate::views::welcome::shimmer_frame();
-                if frame != self.welcome_shimmer_frame {
-                    self.welcome_shimmer_frame = frame;
-                    needs_redraw = true;
-                }
             }
         }
         if matches!(self.active_view, ActiveView::AgentDashboard)
@@ -4783,10 +4772,8 @@ impl AppView {
     /// What tick cadence the current view state demands.
     ///
     /// [`TickDemand::Fast`] runs at the configured animation fps (default
-    /// 30). [`TickDemand::Slow`] runs at [`SLOW_TICK_INTERVAL`] and is used
-    /// when the only reasons to tick are low-frequency by construction —
-    /// the ~12fps welcome logo shimmer and the macOS Cmd link-hover poll —
-    /// so an app that *looks* idle doesn't spin a 30fps loop for them.
+    /// 30). [`TickDemand::Slow`] runs at [`SLOW_TICK_INTERVAL`] for the macOS
+    /// Cmd link-hover poll. The static welcome screen demands no ticks.
     pub fn tick_demand(&self) -> TickDemand {
         if self.pending_action.is_some() {
             return TickDemand::Fast;
@@ -4908,7 +4895,7 @@ impl AppView {
                     TickDemand::None
                 }
             }
-            ActiveView::Welcome => TickDemand::Slow,
+            ActiveView::Welcome => TickDemand::None,
         }
     }
     /// Update the terminal tab title and OSC 9;4 progress bar.
@@ -5174,7 +5161,6 @@ pub(crate) mod tests {
             session_picker_detail_generation: 0,
             session_picker_entries_query: None,
             welcome_tick: 0,
-            welcome_shimmer_frame: 0,
             startup_warnings: Vec::new(),
             is_api_key_auth: false,
             pending_update_version: None,
@@ -5606,15 +5592,14 @@ pub(crate) mod tests {
             "closing the search stops the animation ticks"
         );
     }
-    /// The welcome screen shimmer only advances ~12fps, so a resting welcome
-    /// screen must demand Slow ticks — not a 30fps loop; the deep-search
-    /// spinner upgrades it to Fast while loading.
+    /// FINAL-5UX defaults motion off: an idle welcome screen parks completely;
+    /// the deep-search spinner upgrades it to Fast only while loading.
     #[test]
-    fn tick_demand_welcome_is_slow_unless_loading() {
+    fn tick_demand_welcome_is_none_unless_loading() {
         let mut app = test_app();
         assert_eq!(app.active_view, ActiveView::Welcome);
-        assert_eq!(app.tick_demand(), TickDemand::Slow);
-        assert!(app.needs_animation(), "slow still counts as animating");
+        assert_eq!(app.tick_demand(), TickDemand::None);
+        assert!(!app.needs_animation(), "idle welcome must not animate");
         app.session_picker_content_loading = true;
         assert_eq!(app.tick_demand(), TickDemand::Fast);
     }

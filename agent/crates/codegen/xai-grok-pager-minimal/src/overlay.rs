@@ -296,7 +296,9 @@ fn compute_target(app: &mut AppView, term_h: u16, width: u16) -> u16 {
     // Below the prompt sits either the dropdown overlay or the 1-row info bar
     // (model · context usage · turn time/tokens); reserve at least the info row
     // when no dropdown is open so it isn't clipped / doesn't scroll content.
-    let below_h = overlay_h.max(1);
+    // No dropdown: reserve both the shared truth row and the existing
+    // model/context/transcript row. A dropdown temporarily owns this band.
+    let below_h = if overlay_h > 0 { overlay_h } else { 2 };
     content_target(tail_h, todos_h, below_h, prompt_h, ceiling)
 }
 

@@ -26,6 +26,9 @@ impl AgentView {
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 self.left_mouse_down = true;
+                if self.hit_truth_bar.contains(mouse.column, mouse.row) {
+                    return InputOutcome::Action(Action::ShowTruthStatus);
+                }
                 if self.hit_todo_close.contains(mouse.column, mouse.row) {
                     self.todo.overlay.escape();
                     self.todo.on_state_change();
@@ -931,6 +934,7 @@ impl AgentView {
                 changed |= self.hit_badge.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_context.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_credits.update_hover(mouse.column, mouse.row);
+                changed |= self.hit_truth_bar.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_todo_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_queue_close.update_hover(mouse.column, mouse.row);
                 changed |= self.hit_queue_badge.update_hover(mouse.column, mouse.row);
