@@ -56,6 +56,8 @@ pub mod wrap_clipboard_image;
 pub mod wrap_cmd;
 
 pub mod tool_usage;
+pub mod truth_assembly;
+// ui_contract is declared above (Gate A); truth_assembly builds snapshots on top.
 
 // Presentation-primitives layer extracted into the sibling crate
 // `xai-grok-pager-render`. Re-exported at the crate root so existing

@@ -23,9 +23,9 @@
 
 | Gate | 主题 | 对照 21ef079 | 状态 |
 |------|------|--------------|------|
-| **A** | UI contract / TruthSnapshot / 不变量测试 | 无 `ui_contract.rs`；无统一 TruthSnapshot | ❌ 未开工 |
-| **B** | Lumen 身份 + LUMEN_HOME + legacy 迁移 | 品牌 CLI 有；主 chrome 仍大量 Grok 文案；默认 `~/.grok` | 🟡 部分 |
-| **C** | Provider / probe / trust 旅程 | `probe-local.sh` 有；**未**进 TUI 首启旅程 | 🟡 部分 |
+| **A** | UI contract / TruthSnapshot / 不变量测试 | `ui_contract.rs`（`e301b99`） | ✅ |
+| **B** | Lumen 身份 + LUMEN_HOME + legacy 迁移 | `a4412ec`：`lumen_home`/`migration`/title/welcome/auth | ✅ 核心完成 |
+| **C** | Provider / probe / trust 旅程 | CLI `probe-local` + **`truth_assembly` 数据层**；TUI wizard 仍未做 | 🟡 数据 ✅ / UI 待 Codex |
 | **D** | Truth bar / phase / verify freshness | agent_status 等有片段；无 truth bar 合同 | ❌ 未达标 |
 | **E** | 键盘可达 / 对比度 / motion off | 部分 Grok 能力；welcome/键盘 parity 未按 5UX 验收 | 🟡 未知/未证 |
 | **F** | Cutover 删旧壳 + PTY matrix + M5 | 未 cutover；M5 仅模板+gate | ❌ |
