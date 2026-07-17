@@ -294,6 +294,16 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if let Some(tokens) = meta.total_tokens {
                             confirm_context_used(agent, tokens);
                         }
+                        // Mid-turn cache auto-feed (shell stamps cacheHitRatio on updates).
+                        if let Some(ratio) = meta.cache_hit_ratio {
+                            let summary = crate::ui_contract::CacheSummary {
+                                hit_ratio: Some(ratio.clamp(0.0, 1.0)),
+                                source: Some(crate::ui_contract::CacheSource::ProviderReported),
+                            };
+                            if let Err(err) = agent.note_truth_cache(summary) {
+                                tracing::debug!(error = %err, "mid-turn truth cache feed skipped");
+                            }
+                        }
                         if let Some(ts) = meta.turn_start_ms {
                             agent.turn_start_ms = Some(ts);
                             // A wake turn's end marker derives elapsed from its

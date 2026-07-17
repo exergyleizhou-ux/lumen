@@ -44,6 +44,8 @@ pub struct NotificationMeta {
     /// pager keeps a highwater and drops anything `<=` it. `None` when the agent
     /// didn't stamp an `eventId` (older shell) — such updates always apply.
     pub event_seq: Option<u64>,
+    /// Provider-reported last-turn cache hit ratio (`cacheHitRatio`).
+    pub cache_hit_ratio: Option<f64>,
 }
 
 /// Serializable counterpart of the replay stamp the agent injects on
@@ -122,6 +124,10 @@ impl NotificationMeta {
             is_replay: m.get("isReplay").and_then(|v| v.as_bool()).unwrap_or(false),
             event_id,
             event_seq,
+            cache_hit_ratio: m
+                .get("cacheHitRatio")
+                .and_then(|v| v.as_f64())
+                .or_else(|| m.get("cacheHitRatio").and_then(|v| v.as_u64()).map(|n| n as f64)),
         }
     }
 }

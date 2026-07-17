@@ -17,6 +17,7 @@ mod cache;
 mod cache_shape;
 mod delivery;
 mod provider_strategy;
+mod request_prefix;
 mod session_cache;
 mod storm;
 
@@ -32,6 +33,7 @@ pub use delivery::{
 pub use provider_strategy::{
     CacheMechanism, CacheProfile, CacheValue, allows_definitive_display, profile_for_model,
 };
+pub use request_prefix::{join_system_texts, shape_from_parts, tools_fingerprint_json};
 pub use session_cache::{SessionCacheSnapshot, SessionCacheTracker};
 pub use storm::{
     RepeatSuccessAction, RepeatSuccessGuard, StormAction, StormBreaker, error_signature,

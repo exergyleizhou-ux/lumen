@@ -45,10 +45,14 @@ API: `lumen_discipline::profile_for_model(model_id, base_url)`.
 
 ## Code map
 
-- `agent/crates/codegen/lumen-discipline/src/cache*.rs` — format, shape, session tracker
-- `agent/crates/codegen/lumen-discipline/src/provider_strategy.rs` — matrix
-- `xai-grok-pager/.../dispatch/prompt.rs` — `feed_truth_cache_from_prompt_meta`
-- Shell `PromptResponseMeta.cached_read_tokens` / headless `usage.cache_line`
+- `lumen-discipline` — format, shape, session tracker, multi-provider matrix, request_prefix
+- `xai-grok-shell/session/prompt_cache_registry.rs` — per-session observe/bump (no Actor field)
+- `turn.rs` — observe every model call (system+tools shape + usage)
+- `compaction.rs` — `bump_log_rewrite` on compact
+- `updates.rs` — mid-turn `cacheHitRatio` / profile on session notifications
+- `SessionInfoData` — cache_hit_ratio / stability / profile / cache_line for `/session-info`
+- Messages API — system last block + **last tool** `cache_control: ephemeral`
+- Pager — PromptResponse meta + mid-turn meta → `note_truth_cache`; `/session-info` prints cache line
 
 ## PR hygiene
 

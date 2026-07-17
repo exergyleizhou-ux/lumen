@@ -7,6 +7,7 @@ description = "Lumen loop discipline: Storm, Delivery/Goal, DeepSeek-first promp
 
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
 sha2 = { workspace = true, features = ["force-soft"] }
 
 [dev-dependencies]

@@ -2026,6 +2026,68 @@ impl SessionActor {
                 );
             }
             self.record_response_token_usage(&response, Some(model_duration_ms));
+            // Prompt-cache stack: shape + rolling hit (DeepSeek-first multi-provider).
+            {
+                let systems: Vec<&str> = request
+                    .items
+                    .iter()
+                    .filter_map(|it| match it {
+                        ConversationItem::System(s) => Some(s.content.as_ref()),
+                        _ => None,
+                    })
+                    .collect();
+                let system_text = lumen_discipline::join_system_texts(systems);
+                let tools: Vec<(String, String)> = request
+                    .tools
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.name.clone(),
+                            serde_json::to_string(&t.parameters).unwrap_or_else(|_| "{}".into()),
+                        )
+                    })
+                    .collect();
+                let model_id = if let Some(m) = request.model.clone() {
+                    m
+                } else {
+                    self.current_model_id().await
+                };
+                let base_url = self
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .map(|c| c.base_url);
+                let (prompt_tok, hit_tok, out_tok) = response
+                    .usage
+                    .as_ref()
+                    .map(|u| {
+                        (
+                            u64::from(u.prompt_tokens),
+                            u64::from(u.cached_prompt_tokens),
+                            u64::from(u.completion_tokens),
+                        )
+                    })
+                    .unwrap_or((0, 0, 0));
+                let snap = crate::session::prompt_cache_registry::observe_call(
+                    self.session_info.id.0.as_ref(),
+                    &model_id,
+                    base_url.as_deref(),
+                    &system_text,
+                    &tools,
+                    prompt_tok,
+                    hit_tok,
+                    out_tok,
+                );
+                tracing::debug!(
+                    target: "lumen.prompt_cache",
+                    session = %self.session_info.id.0,
+                    stability = snap.stability_score,
+                    streak = snap.stable_streak,
+                    profile = snap.profile_label,
+                    line = %snap.cache_line,
+                    "prompt cache session snapshot"
+                );
+            }
             if let Some(pt) = prompt_timing.take() {
                 let mcp_count = self.mcp_state.lock().await.configs.len() as u32;
                 let mcp_tools = self
