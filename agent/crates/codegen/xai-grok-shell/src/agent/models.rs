@@ -1715,6 +1715,16 @@ pub(crate) fn resolve_default_model(
 
     match &model_pref {
         None => {
+            // Product default (embedded default_models.json → deepseek-chat) beats
+            // "first visible catalog key", which is often the only remote/session
+            // entry (e.g. grok-4.5) when OIDC models_cache polluted the catalog.
+            let product_default = crate::models::default_model();
+            if let Some((key, entry)) = visible
+                .get_key_value(product_default)
+                .or_else(|| visible.iter().find(|(_, m)| m.model == product_default))
+            {
+                return (key.clone(), entry.clone(), config::ConfigSource::Default);
+            }
             let (key, first) = first_or_fallback();
             (key, first, config::ConfigSource::Default)
         }
@@ -3054,6 +3064,40 @@ mod tests {
             "beta",
             "a non-campaign preferred change must reselect"
         );
+    }
+
+    /// With no CLI/env/config preference, pick the product bundled default
+    /// (deepseek-chat) when it is in the catalog — not the first remote/session
+    /// row (often grok-4.5 from OIDC models_cache).
+    #[test]
+    fn resolve_default_model_prefers_product_default_over_first_catalog_entry() {
+        let mut catalog = IndexMap::new();
+        catalog.insert(
+            "grok-4.5".to_string(),
+            ModelEntry {
+                info: config::ModelInfo::fallback("grok-4.5"),
+                api_key: None,
+                env_key: None,
+                api_base_url: None,
+            },
+        );
+        let product = crate::models::default_model().to_string();
+        catalog.insert(
+            product.clone(),
+            ModelEntry {
+                info: config::ModelInfo::fallback(&product),
+                api_key: None,
+                env_key: None,
+                api_base_url: None,
+            },
+        );
+        // First key is grok-4.5 — without product-default preference, first_or_fallback
+        // would return it.
+        assert_eq!(catalog.keys().next().map(String::as_str), Some("grok-4.5"));
+        let cfg = config::Config::default();
+        let (key, _, src) = resolve_default_model(&cfg, &catalog, true);
+        assert_eq!(key, product, "must select product default, not first catalog key");
+        assert_eq!(src, config::ConfigSource::Default);
     }
 
     /// A campaign default missing from the catalog falls back to

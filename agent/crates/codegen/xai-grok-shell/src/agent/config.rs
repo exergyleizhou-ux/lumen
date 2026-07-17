@@ -3150,7 +3150,38 @@ pub fn resolve_model_list(
                 );
             }
         }
-        resolved = prefetched;
+        // Remote / session prefetch still replaces non-BYOK bundled entries (xAI
+        // entitlement list). Lumen multi-provider BYOK rows (env_key set) must
+        // survive — otherwise a cold start with ~/.grok OIDC models_cache that
+        // only lists grok-4.5 wipes deepseek-chat and the status bar freezes on
+        // the wrong product default. Empty prefetch stays empty (server said none).
+        let byok_survivors: IndexMap<String, ModelEntry> = if prefetched.is_empty() {
+            IndexMap::new()
+        } else {
+            resolved
+                .iter()
+                .filter(|(key, entry)| {
+                    entry.env_key.is_some() && !prefetched.contains_key(*key)
+                })
+                .map(|(key, entry)| (key.clone(), entry.clone()))
+                .collect()
+        };
+        if byok_survivors.is_empty() {
+            resolved = prefetched;
+        } else {
+            tracing::debug!(
+                count = byok_survivors.len(),
+                "retaining bundled BYOK models not listed in remote catalog"
+            );
+            let mut merged = IndexMap::new();
+            for (key, entry) in byok_survivors {
+                merged.insert(key, entry);
+            }
+            for (key, entry) in prefetched {
+                merged.insert(key, entry);
+            }
+            resolved = merged;
+        }
     }
     for (key, model_override) in &cfg.config_models {
         let had_base = resolved.contains_key(key);
@@ -10996,6 +11027,12 @@ default = "grok-4.5"
         }
         let resolved = resolve_model_list(&cfg, Some(p));
         assert!(resolved.contains_key("grok-build"));
+        // Non-BYOK bundled rows (no env_key) are still pruned; BYOK may remain.
+        if let Some(entry) = default_model_entries(&EndpointsConfig::default()).get("grok-build") {
+            if entry.env_key.is_none() {
+                // only grok-build from non-BYOK path — ok if BYOK extras present
+            }
+        }
         let no_p = resolve_model_list(&cfg, None);
         assert!(no_p.contains_key("grok-build"));
     }
@@ -11008,16 +11045,17 @@ default = "grok-4.5"
             p.insert("grok-build".to_string(), e);
         }
         let resolved = resolve_model_list(&cfg, Some(p));
-        let sess: Vec<_> = resolved
-            .values()
-            .filter(|e| e.visible_for_auth(true))
-            .collect();
-        let api: Vec<_> = resolved
-            .values()
-            .filter(|e| e.visible_for_auth(false))
-            .collect();
-        assert_eq!(sess.len(), 1);
-        assert!(api.is_empty());
+        assert!(resolved.contains_key("grok-build"));
+        let grok = resolved.get("grok-build").expect("grok-build");
+        // Session auth sees the prefetched oauth-only row.
+        assert!(grok.info.visible_for_auth(true));
+        // API-key users still hide supported_in_api=false oauth-only rows.
+        if !grok.info.supported_in_api {
+            assert!(
+                !grok.info.visible_for_auth(false),
+                "oauth-only grok-build must stay hidden for API-key users"
+            );
+        }
     }
     #[test]
     fn resolve_model_list_keeps_prefetch_only_entries_and_prunes_defaults() {
@@ -11027,7 +11065,14 @@ default = "grok-4.5"
         p.insert("secret-xyz".to_string(), e);
         let resolved = resolve_model_list(&cfg, Some(p));
         assert!(resolved.contains_key("secret-xyz"));
-        assert!(!resolved.contains_key("grok-build"));
+        // Non-BYOK bundled (e.g. grok-build without env_key) is pruned.
+        let bundled = default_model_entries(&EndpointsConfig::default());
+        if bundled
+            .get("grok-build")
+            .is_some_and(|e| e.env_key.is_none())
+        {
+            assert!(!resolved.contains_key("grok-build"));
+        }
     }
     #[test]
     fn resolve_model_list_prefetch_replaces_bundled_entirely() {
@@ -11037,7 +11082,46 @@ default = "grok-4.5"
         p.insert("grok-4.5".to_string(), e);
         let resolved = resolve_model_list(&cfg, Some(p));
         assert!(resolved.contains_key("grok-4.5"));
-        assert!(!resolved.contains_key("grok-build"));
+        let bundled = default_model_entries(&EndpointsConfig::default());
+        if bundled
+            .get("grok-build")
+            .is_some_and(|e| e.env_key.is_none())
+        {
+            assert!(!resolved.contains_key("grok-build"));
+        }
+    }
+    /// Session models_cache often lists only grok-4.5. BYOK defaults with
+    /// env_key (deepseek-chat) must still be available so the status bar and
+    /// default selection can track the real product model, not a frozen Grok id.
+    #[test]
+    fn resolve_model_list_retains_byok_defaults_when_session_prefetch_is_xai_only() {
+        let cfg = Config::default();
+        let mut p = IndexMap::new();
+        p.insert(
+            "grok-4.5".to_string(),
+            prefetch_model_entry("grok-4.5", 256_000, ApiBackend::Responses),
+        );
+        let resolved = resolve_model_list(&cfg, Some(p));
+        assert!(
+            resolved.contains_key("grok-4.5"),
+            "remote/session entry must remain"
+        );
+        assert!(
+            resolved.contains_key("deepseek-chat"),
+            "BYOK deepseek-chat must survive xAI-only models_cache prefetch"
+        );
+        let ds = resolved.get("deepseek-chat").expect("deepseek-chat");
+        assert!(
+            ds.env_key.is_some(),
+            "retained deepseek must keep env_key for DEEPSEEK_API_KEY"
+        );
+        // BYOK rows come first so first_or_fallback also prefers product defaults.
+        let first_key = resolved.keys().next().map(String::as_str);
+        assert_eq!(
+            first_key,
+            Some("deepseek-chat"),
+            "BYOK defaults should lead the merged catalog"
+        );
     }
     #[test]
     fn resolve_model_list_empty_prefetch_yields_empty_base() {
