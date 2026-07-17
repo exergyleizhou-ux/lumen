@@ -28,7 +28,7 @@ const LOGO_H_PAD: u16 = 3;
 /// message never paints over the button.
 const UPGRADE_CTA_ROWS: u16 = 2;
 
-const HERO_SUBTITLE: &str = "Thanks for trying Lumen — feedback: /feedback";
+const HERO_SUBTITLE: &str = "In the data desert, we build a pure oasis.  在数据荒漠中，我们筑起一片纯净绿洲。";
 
 use super::{PROMPT_HEIGHT, VERSION_GAP};
 

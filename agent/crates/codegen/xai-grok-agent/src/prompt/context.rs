@@ -150,7 +150,7 @@ pub struct PromptContext {
     pub system_prompt_label: String,
 }
 /// Default identity on trim-tool-descriptions (`You are Grok released by xAI`).
-pub const DEFAULT_SYSTEM_PROMPT_LABEL: &str = "Grok";
+pub const DEFAULT_SYSTEM_PROMPT_LABEL: &str = "Lumen";
 fn default_system_prompt_label() -> String {
     DEFAULT_SYSTEM_PROMPT_LABEL.to_string()
 }

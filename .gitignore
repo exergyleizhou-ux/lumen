@@ -11,3 +11,4 @@ artifacts/readiness/eval-live/
 artifacts/readiness/L4-full-cases/
 artifacts/readiness/L5-full-case*/
 artifacts/readiness/L5-long-session-short.json
+__pycache__/
