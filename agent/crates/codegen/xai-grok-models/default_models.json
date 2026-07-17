@@ -8,28 +8,53 @@
       "id": "deepseek-chat",
       "model": "deepseek-chat",
       "name": "DeepSeek Chat",
-      "description": "Preferred default for its high prompt-cache hit rate; set DEEPSEEK_API_KEY",
+      "description": "DeepSeek V3 — 128K context, 99%+ prompt-cache hit rate, $0.014/M cached input",
       "context_window": 128000,
+      "max_completion_tokens": 8192,
       "temperature": 0.0,
       "top_p": 1.0,
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "https://api.deepseek.com/v1",
       "env_key": "DEEPSEEK_API_KEY",
-      "byok": true
+      "byok": true,
+      "auto_compact_threshold_percent": 80,
+      "compaction_at_tokens": true,
+      "show_model_fingerprint": true,
+      "stream_tool_calls": true,
+      "laziness_detector": {
+        "enabled": true,
+        "max_nudges_per_session": 3,
+        "idle_threshold_ms": 8000,
+        "min_confidence": 0.7
+      },
+      "pricing": {
+        "input": 0.27,
+        "cache_read": 0.014,
+        "output": 1.10,
+        "currency": "USD"
+      }
     },
     {
       "id": "deepseek-reasoner",
       "model": "deepseek-reasoner",
       "name": "DeepSeek Reasoner",
-      "description": "DeepSeek reasoning model; set DEEPSEEK_API_KEY",
+      "description": "DeepSeek R1 reasoning — chain-of-thought for complex analysis; $0.55/M input",
       "context_window": 128000,
+      "max_completion_tokens": 8192,
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "supports_reasoning_effort": true,
+      "reasoning_efforts": [
+        {"id": "low",  "value": "low",  "label": "Low Effort",  "description": "Quick reasoning",       "default": false},
+        {"id": "medium","value": "medium","label": "Medium Effort","description": "Standard depth",        "default": false},
+        {"id": "high",  "value": "high",  "label": "High Effort",  "description": "Deep chain-of-thought", "default": true}
+      ],
       "base_url": "https://api.deepseek.com/v1",
       "env_key": "DEEPSEEK_API_KEY",
-      "byok": true
+      "byok": true,
+      "auto_compact_threshold_percent": 85,
+      "show_model_fingerprint": true
     },
     {
       "id": "openai-gpt4o",
