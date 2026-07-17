@@ -51,6 +51,7 @@ pub mod share_cmd;
 pub mod slash;
 pub mod startup;
 pub mod tips;
+pub mod ui_contract;
 pub mod wrap_clipboard_image;
 pub mod wrap_cmd;
 
