@@ -15,7 +15,7 @@ Honest inventory for handoff. **Not** a product `ready=true` claim.
 |----------|--------|
 | Interactive multi-step first-run wizard (provider picker walkthrough) | In-session recovery is shipped (`/probe`, `/status` Recovery, chat-only block). Full first-run chrome wizard still depends on auth/startup surfaces outside this package. |
 | Isolated HTTP capability probe without a live turn | `/probe` → Checking; Tool-ready from live ACP tool_call or external `scripts/probe-local.sh` / `apply_truth_probe`. No fake Tool-ready. |
-| Provider cache auto-feed | `note_truth_cache` ready; session meta still lacks stable provider cache hit ratio on the TUI path. |
+| Provider cache auto-feed | **Shipped**: PromptResponse `_meta` → `feed_truth_cache_from_prompt_meta` → truth bar; `lumen-discipline` SessionCacheTracker + multi-provider matrix (`policy/LUMEN_CACHE.md`). Mid-turn session/update meta still optional. |
 | Full interactive PTY color matrix (truecolor/256/16/NO_COLOR × sizes) | Unit matrix 80/120/180 drives shipped `truth_bar::line` + status Recovery; full PTY harness is env/auth gated (`--ignored`). |
 | Exhaustive docs/billing SuperGrok string deletion | Legal/upstream/xAI commerce paths retained by design. |
 
