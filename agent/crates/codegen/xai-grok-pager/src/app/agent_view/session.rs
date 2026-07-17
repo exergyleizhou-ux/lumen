@@ -142,6 +142,38 @@ impl AgentView {
         self.refresh_truth_snapshot()
     }
 
+    /// Session-local evidence: the model emitted a real ACP tool_call.
+    ///
+    /// This is the live equivalent of a Gate C tool probe — never based on
+    /// model name or UI colour. Non-agent kinds (`Other`, …) are ignored.
+    pub fn note_truth_live_tool_call_observed(
+        &mut self,
+        kind: agent_client_protocol::ToolKind,
+        tool_call_id: &str,
+    ) -> Result<(), String> {
+        use agent_client_protocol as acp;
+        if !matches!(
+            kind,
+            acp::ToolKind::Edit
+                | acp::ToolKind::Execute
+                | acp::ToolKind::Read
+                | acp::ToolKind::Search
+                | acp::ToolKind::Delete
+        ) {
+            return Ok(());
+        }
+        if tool_call_id.trim().is_empty() {
+            return Err("live tool_call_id must not be empty".to_owned());
+        }
+        let evidence = crate::truth_assembly::ProbeEvidence {
+            outcome: crate::truth_assembly::ProbeOutcome::ToolCallObserved,
+            evidence_id: format!("live-tool:{tool_call_id}"),
+            checked_at: std::time::SystemTime::now(),
+            fingerprint_input: self.truth_fingerprint_from_session(),
+        };
+        self.apply_truth_probe(evidence)
+    }
+
     /// Model/provider binding changed — drops ToolReady until re-probed.
     pub fn note_truth_binding_changed(
         &mut self,
@@ -1564,7 +1596,7 @@ mod status_window_tests {
 
 #[cfg(test)]
 mod truth_runtime_tests {
-    use super::super::test_agent_view;
+    use super::super::{AgentView, test_agent_view};
     use crate::truth_assembly::{ProbeEvidence, ProbeOutcome};
     use crate::ui_contract::{
         CapabilityFingerprintInput, CapabilityState, PermissionSummary, ProductIdentity,
@@ -1694,5 +1726,68 @@ mod truth_runtime_tests {
         let b: Arc<_> = Arc::clone(&agent.truth_snapshot);
         assert!(Arc::ptr_eq(&a, &b));
         assert_eq!(a.as_ref(), agent.display_truth_snapshot());
+    }
+
+    #[test]
+    fn live_tool_call_observation_is_only_path_to_tool_ready_without_external_probe() {
+        use agent_client_protocol as acp;
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        assert!(!agent.truth_is_tool_ready());
+
+        // Non-agent kinds must not claim Tool-ready.
+        agent
+            .note_truth_live_tool_call_observed(acp::ToolKind::Other, "other-1")
+            .unwrap();
+        assert!(!agent.truth_is_tool_ready());
+
+        // Real agent tool kinds produce ToolCallObserved evidence.
+        agent
+            .note_truth_live_tool_call_observed(acp::ToolKind::Edit, "edit-1")
+            .unwrap();
+        assert!(agent.truth_is_tool_ready());
+        match &agent.display_truth_snapshot().capability {
+            CapabilityState::ToolReady {
+                evidence_id,
+                fingerprint,
+                checked_at,
+            } => {
+                assert!(evidence_id.contains("edit-1") || evidence_id.starts_with("live-tool:"));
+                assert!(!fingerprint.is_empty());
+                assert!(checked_at.is_some());
+            }
+            other => panic!("expected ToolReady, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_only_blocks_edit_flow_and_exposes_recovery_copy() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        agent
+            .apply_truth_probe(ProbeEvidence {
+                outcome: ProbeOutcome::ChatOnly,
+                evidence_id: "ev-chat-only".into(),
+                checked_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                fingerprint_input: fp("deepseek-chat"),
+            })
+            .unwrap();
+        assert!(agent.blocks_edit_flow());
+        let msg = AgentView::chat_only_edit_block_message();
+        assert!(msg.contains("chat-only"));
+        assert!(msg.contains("/status"));
+        assert!(!msg.to_ascii_lowercase().contains("tool-ready is automatic"));
+    }
+
+    #[test]
+    fn model_name_alone_never_sets_tool_ready() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        // Fingerprint binding update with a "capable-looking" model id.
+        agent
+            .note_truth_binding_changed(fp("deepseek-chat-tool-capable-sounding"))
+            .unwrap();
+        assert!(!agent.truth_is_tool_ready());
+        assert!(matches!(
+            agent.display_truth_snapshot().capability,
+            CapabilityState::Unknown { .. }
+        ));
     }
 }

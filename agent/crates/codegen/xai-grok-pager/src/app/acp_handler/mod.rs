@@ -403,6 +403,21 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         plan_mode_modal_refresh_needed |=
                             detect_plan_mode_change(&notif.request.update, agent);
 
+                        // Live tool_call → real Tool-ready evidence (not model-name inference).
+                        if !meta.is_replay
+                            && let acp::SessionUpdate::ToolCall(ref tc) = notif.request.update
+                            && let Err(err) = agent.note_truth_live_tool_call_observed(
+                                tc.kind,
+                                tc.tool_call_id.0.as_ref(),
+                            )
+                        {
+                            tracing::warn!(
+                                target: "truth",
+                                %err,
+                                "truth snapshot refresh after live tool_call failed"
+                            );
+                        }
+
                         let had_activity_before = agent.session.tracker.activity().is_some();
                         agent.session.handle_update(
                             notif.request.update,
