@@ -1701,7 +1701,7 @@ mod tests {
         assert_eq!(
             first_5,
             vec![
-                "Lumen TUI (Grok Build derivative · DeepSeek-first)",
+                "Lumen TUI (DeepSeek-first · built on Grok Build engine)",
                 "",
                 "Usage: lumen [OPTIONS] [PROMPT] [COMMAND]",
                 "",

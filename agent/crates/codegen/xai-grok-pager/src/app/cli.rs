@@ -7,9 +7,9 @@ use std::path::PathBuf;
 /// Top-level commands for the pager binary.
 #[derive(Debug, Clone, Subcommand)]
 pub enum Command {
-    /// Run Grok without the interactive UI
+    /// Run Lumen without the interactive UI
     Agent(Box<AgentArgs>),
-    /// Show the configuration Grok discovers for this directory
+    /// Show the configuration Lumen discovers for this directory
     Inspect {
         /// Emit machine-readable JSON output.
         #[arg(long)]
@@ -17,7 +17,7 @@ pub enum Command {
     },
     /// Sign out and clear cached credentials
     Logout,
-    /// Sign in to Grok
+    /// Sign in / authenticate (xAI OAuth when using xAI models)
     Login {
         /// Ignored (kept for backwards compatibility). OAuth2 is now the only auth method.
         #[arg(long, hide = true)]
@@ -384,7 +384,7 @@ fn version_with_channel() -> &'static str {
 #[command(
     name = "lumen",
     version = version_with_channel(),
-    about = "Lumen TUI (DeepSeek-first · Grok Build engine)",
+    about = "Lumen TUI (DeepSeek-first · built on Grok Build engine)",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\
