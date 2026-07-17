@@ -1,9 +1,12 @@
-//! Config file loading for Grok.
+//! Config file loading for Lumen (Grok Build derivative).
+//!
+//! Primary user config home (FINAL-5UX Gate B): `$LUMEN_HOME` or `~/.lumen`.
+//! Legacy `$GROK_HOME` / `~/.grok` is still readable for migration and tools.
 //!
 //! Merge order (lowest → highest priority):
 //! 1. `/etc/grok/managed_config.toml`
-//! 2. `$GROK_HOME/managed_config.toml`
-//! 3. `$GROK_HOME/config.toml`
+//! 2. `$LUMEN_HOME/managed_config.toml` (user managed; was historically under `$GROK_HOME`)
+//! 3. `$LUMEN_HOME/config.toml`
 //! 4. `$GROK_HOME/requirements.toml` (cloud cache; Ed25519-signed at rest once a
 //!    key is embedded — see [`signed_policy`] — below the OS-protected layers)
 //! 5. `/etc/grok/requirements.toml`
@@ -19,6 +22,7 @@ mod fs_atomic;
 mod loader;
 mod macos_managed;
 mod managed_cache;
+pub mod migration;
 mod paths;
 pub mod shell;
 pub mod signed_policy;
@@ -44,10 +48,16 @@ pub use managed_cache::{
     managed_config_identity_changed, managed_deployment_id, managed_policy_compromised_for,
     mark_managed_config_synced,
 };
+pub use migration::{
+    MIGRATABLE_RELATIVE_PATHS, MigrationError, MigrationFilePlan, MigrationPlan, MigrationReceipt,
+    apply_migration, dry_run, plan_migration,
+};
 pub use paths::{
-    claude_managed_settings_path, claude_managed_settings_probe_path, decode_cwd_from_dirname,
-    default_grok_home, encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application, grok_home,
-    sessions_cwd_dir, system_config_dir, user_grok_home,
+    claude_managed_settings_path, claude_managed_settings_probe_path, config_home,
+    decode_cwd_from_dirname, default_grok_home, default_legacy_grok_home, default_lumen_home,
+    encode_cwd_dirname, ensure_sessions_cwd_dir, grok_application, grok_home, legacy_grok_home,
+    lumen_home, resolve_legacy_grok_home, resolve_lumen_home, sessions_cwd_dir, system_config_dir,
+    user_config_home, user_grok_home, user_lumen_home,
 };
 pub use validation::{
     RequirementsError, RequirementsLayer, RequirementsSource, fail_closed_flag_from_str,

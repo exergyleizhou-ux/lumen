@@ -1,9 +1,14 @@
-//! Filesystem locations for grok config files and binaries.
+//! Filesystem locations for Lumen (and legacy Grok) config files and binaries.
+//!
+//! FINAL-5UX Gate B: primary user config home is `$LUMEN_HOME` or `~/.lumen`.
+//! `$GROK_HOME` / `~/.grok` remain available as **legacy** sources for migration
+//! and upstream tooling — not the default write target for new Lumen runs.
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
 static GROK_HOME: OnceLock<PathBuf> = OnceLock::new();
+static LUMEN_HOME: OnceLock<PathBuf> = OnceLock::new();
 
 #[cfg(target_os = "macos")]
 const CLAUDE_MANAGED_SETTINGS_PATH: &str =
@@ -31,7 +36,11 @@ pub fn default_grok_home() -> PathBuf {
     dunce::canonicalize(&home).unwrap_or(home).join(".grok")
 }
 
-/// Per-user config directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+/// Per-user **legacy** Grok directory: `$GROK_HOME` or `~/.grok`. Created if needed.
+///
+/// Prefer [`lumen_home`] / [`config_home`] for Lumen product config. This path
+/// remains for official Grok client data, migration sources, and callers that
+/// still target the historical layout.
 pub fn grok_home() -> PathBuf {
     GROK_HOME
         .get_or_init(|| {
@@ -44,6 +53,69 @@ pub fn grok_home() -> PathBuf {
             grok_home
         })
         .clone()
+}
+
+/// Alias for [`default_grok_home`] — explicit FINAL-5UX naming for legacy source.
+pub fn default_legacy_grok_home() -> PathBuf {
+    default_grok_home()
+}
+
+/// Resolve legacy Grok home without using the process-wide cache (test-friendly).
+pub fn resolve_legacy_grok_home(grok_home_env: Option<&str>) -> PathBuf {
+    match grok_home_env {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => default_grok_home(),
+    }
+}
+
+/// Alias for [`grok_home`] — legacy source root for migration.
+pub fn legacy_grok_home() -> PathBuf {
+    grok_home()
+}
+
+/// Default user Lumen directory (`~/.lumen`, canonicalized) when `LUMEN_HOME` is unset.
+pub fn default_lumen_home() -> PathBuf {
+    #[allow(deprecated)]
+    let home = std::env::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    dunce::canonicalize(&home).unwrap_or(home).join(".lumen")
+}
+
+/// Resolve Lumen config home without process-wide cache (test-friendly).
+///
+/// Precedence: non-empty `lumen_home_env` → otherwise [`default_lumen_home`].
+pub fn resolve_lumen_home(lumen_home_env: Option<&str>) -> PathBuf {
+    match lumen_home_env {
+        Some(v) if !v.is_empty() => PathBuf::from(v),
+        _ => default_lumen_home(),
+    }
+}
+
+/// Per-user Lumen config directory: `$LUMEN_HOME` or `~/.lumen`. Created if needed.
+pub fn lumen_home() -> PathBuf {
+    LUMEN_HOME
+        .get_or_init(|| {
+            let path = resolve_lumen_home(std::env::var("LUMEN_HOME").ok().as_deref());
+            let _ = std::fs::create_dir_all(&path);
+            path
+        })
+        .clone()
+}
+
+/// User-global Lumen home when one can be resolved (env or `$HOME`).
+pub fn user_lumen_home() -> Option<PathBuf> {
+    #[allow(deprecated)]
+    let resolvable = std::env::var_os("LUMEN_HOME").is_some() || std::env::home_dir().is_some();
+    resolvable.then(lumen_home)
+}
+
+/// Primary product config home for Lumen (FINAL-5UX): same as [`lumen_home`].
+pub fn config_home() -> PathBuf {
+    lumen_home()
+}
+
+/// User-global primary config home when resolvable.
+pub fn user_config_home() -> Option<PathBuf> {
+    user_lumen_home()
 }
 
 /// The user-global grok home, but only when one genuinely resolves: `Some` when
@@ -308,6 +380,51 @@ mod tests {
         let home = default_grok_home();
         assert!(!home.to_string_lossy().starts_with(r"\\?\"));
         assert!(home.ends_with(".grok"));
+    }
+
+    #[test]
+    fn default_lumen_home_ends_with_dot_lumen() {
+        let home = default_lumen_home();
+        assert!(!home.to_string_lossy().starts_with(r"\\?\"));
+        assert!(
+            home.ends_with(".lumen"),
+            "default Lumen home must be ~/.lumen, got {}",
+            home.display()
+        );
+    }
+
+    #[test]
+    fn resolve_lumen_home_prefers_env_override() {
+        let tmp = TempDir::new().unwrap();
+        let custom = tmp.path().join("custom-lumen");
+        let resolved = resolve_lumen_home(Some(custom.to_str().unwrap()));
+        assert_eq!(resolved, custom);
+    }
+
+    #[test]
+    fn resolve_lumen_home_falls_back_to_default_when_env_empty() {
+        let resolved = resolve_lumen_home(Some(""));
+        assert_eq!(resolved, default_lumen_home());
+        assert!(resolved.ends_with(".lumen"));
+    }
+
+    #[test]
+    fn lumen_and_legacy_default_homes_are_distinct() {
+        assert_ne!(
+            default_lumen_home(),
+            default_legacy_grok_home(),
+            "Lumen and legacy Grok homes must not collapse to the same path"
+        );
+    }
+
+    #[test]
+    fn resolve_legacy_grok_home_prefers_env() {
+        let tmp = TempDir::new().unwrap();
+        let custom = tmp.path().join("custom-grok");
+        assert_eq!(
+            resolve_legacy_grok_home(Some(custom.to_str().unwrap())),
+            custom
+        );
     }
 
     #[test]
