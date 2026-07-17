@@ -185,6 +185,7 @@ run_lumen() {
   (
     export HOME="$CASE_DIR/home"
     export GROK_HOME="$CASE_DIR/grok-home"
+    export LUMEN_HOME="$CASE_DIR/grok-home"
     export LUMEN_FIXTURE_API_KEY="fixture-not-a-secret"
     export GROK_DISABLE_AUTOUPDATER=1
     export GROK_TELEMETRY_ENABLED=false

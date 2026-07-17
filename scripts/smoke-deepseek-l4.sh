@@ -170,6 +170,7 @@ spawn_lumen() {
   (
     export HOME="$case_dir/home"
     export GROK_HOME="$case_dir/grok-home"
+    export LUMEN_HOME="$case_dir/grok-home"
     export LUMEN_FIXTURE_API_KEY="fixture-not-a-secret"
     export GROK_DISABLE_AUTOUPDATER=1
     export GROK_TELEMETRY_ENABLED=false
