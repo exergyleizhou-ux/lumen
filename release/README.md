@@ -6,9 +6,9 @@ yet. Publishing a valid release therefore does not by itself complete the user
 update loop.
 
 The release workflow has one canonical version source: the repository-root
-`VERSION` file. `scripts/release_version.py` requires the seven versioned Lumen
-crates and `agent/Cargo.lock` to match it exactly. A release tag must be exactly
-`v<version>`.
+`VERSION` file. `scripts/release_version.py` requires the eight versioned Lumen
+crates (including `xai-grok-version`) and `agent/Cargo.lock` to match it exactly.
+A release tag must be exactly `v<version>`.
 
 Release files are signed with Minisign's prehashed Ed25519 format under the
 stable identity `lumen-release-v1`. The signed manifest binds the tag, full git

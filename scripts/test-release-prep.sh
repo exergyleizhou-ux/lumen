@@ -10,7 +10,7 @@ cp "$ROOT/scripts/release_version.py" "$ROOT/scripts/update-changelog.py" "$FIXT
 printf '1.2.3-alpha.4\n' >"$FIXTURE/VERSION"
 
 packages=(
-  xai-grok-pager xai-grok-pager-bin xai-grok-shell xai-grok-tools
+  xai-grok-version xai-grok-pager xai-grok-pager-bin xai-grok-shell xai-grok-tools
   xai-grok-tools-api xai-grok-update xai-grok-workspace
 )
 for package in "${packages[@]}"; do
@@ -45,8 +45,8 @@ git -C "$FIXTURE" commit --allow-empty -qm 'fix(release): keep versions synchron
 [[ "$(python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" next prerelease)" == 1.2.3-alpha.5 ]]
 python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" set 1.2.3 >/dev/null
 [[ "$(python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" check)" == 1.2.3 ]]
-[[ "$(grep -R 'version = "1.2.3"' "$FIXTURE/agent/crates/codegen" -l | wc -l | tr -d ' ')" == 7 ]]
-[[ "$(grep -c 'version = "1.2.3"' "$FIXTURE/agent/Cargo.lock")" == 7 ]]
+[[ "$(grep -R 'version = "1.2.3"' "$FIXTURE/agent/crates/codegen" -l | wc -l | tr -d ' ')" == 8 ]]
+[[ "$(grep -c 'version = "1.2.3"' "$FIXTURE/agent/Cargo.lock")" == 8 ]]
 
 python3 "$FIXTURE/scripts/update-changelog.py" --root "$FIXTURE" --date 2026-07-18 1.2.3
 grep -Fq '## [1.2.3] - 2026-07-18' "$FIXTURE/CHANGELOG.md"

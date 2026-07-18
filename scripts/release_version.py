@@ -14,6 +14,7 @@ from pathlib import Path
 
 VERSION_FILE = Path("VERSION")
 MANIFESTS = (
+    Path("agent/crates/codegen/xai-grok-version/Cargo.toml"),
     Path("agent/crates/codegen/xai-grok-pager/Cargo.toml"),
     Path("agent/crates/codegen/xai-grok-pager-bin/Cargo.toml"),
     Path("agent/crates/codegen/xai-grok-shell/Cargo.toml"),

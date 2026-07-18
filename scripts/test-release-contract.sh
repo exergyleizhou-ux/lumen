@@ -394,22 +394,27 @@ refresh_manifest_sbom_hash
 rm "$DIST/lumen-macos-arm64.spdx.json" "$DIST/lumen-macos-arm64.spdx.json.minisig"
 expect_fail asset-sbom-not-one-to-one "SBOM target/hash/size/name mismatch" "${verify[@]}"
 
+# SBOM generator preflights against the live repo VERSION + tag; keep them matched.
+LIVE_VERSION="$(tr -d '[:space:]' <"$ROOT/VERSION")"
+LIVE_TAG="v${LIVE_VERSION}"
 printf 'release sbom fixture binary\n' >"$TMP/lumen-linux-amd64"
 SOURCE_DATE_EPOCH=1721260800 \
   "$ROOT/scripts/generate-release-sbom.sh" \
   lumen-linux-amd64 x86_64-unknown-linux-gnu \
-  "$TMP/lumen-linux-amd64.spdx.json" v0.1.220-alpha.4
-python3 - "$TMP/lumen-linux-amd64.spdx.json" <<'PY'
+  "$TMP/lumen-linux-amd64.spdx.json" "$LIVE_TAG"
+python3 - "$TMP/lumen-linux-amd64.spdx.json" "$LIVE_VERSION" "$LIVE_TAG" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 document = json.loads(Path(sys.argv[1]).read_text())
+version = sys.argv[2]
+tag = sys.argv[3]
 assert document["dataLicense"] == "CC0-1.0"
 assert document["SPDXID"] == "SPDXRef-DOCUMENT"
-assert document["documentNamespace"] == "https://lumen.local/spdx/v0.1.220-alpha.4/x86_64-unknown-linux-gnu"
+assert document["documentNamespace"] == f"https://lumen.local/spdx/{tag}/x86_64-unknown-linux-gnu"
 assert document["files"][0]["fileName"] == "./lumen-linux-amd64"
-assert document["packages"][0]["versionInfo"] == "0.1.220-alpha.4"
+assert document["packages"][0]["versionInfo"] == version
 assert {item["algorithm"] for item in document["files"][0]["checksums"]} == {"SHA1", "SHA256"}
 components = document["packages"][2:]
 assert any(package["name"] == "xai-grok-pager-bin" for package in components)

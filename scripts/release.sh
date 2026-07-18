@@ -97,6 +97,7 @@ VERSION_PATHS=(
   VERSION
   CHANGELOG.md
   agent/Cargo.lock
+  agent/crates/codegen/xai-grok-version/Cargo.toml
   agent/crates/codegen/xai-grok-pager/Cargo.toml
   agent/crates/codegen/xai-grok-pager-bin/Cargo.toml
   agent/crates/codegen/xai-grok-shell/Cargo.toml
@@ -108,6 +109,7 @@ VERSION_PATHS=(
 while IFS= read -r changed_path; do
   case "$changed_path" in
     VERSION|CHANGELOG.md|agent/Cargo.lock|\
+    agent/crates/codegen/xai-grok-version/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
     agent/crates/codegen/xai-grok-shell/Cargo.toml|\
