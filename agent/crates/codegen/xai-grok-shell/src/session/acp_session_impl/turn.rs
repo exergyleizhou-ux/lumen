@@ -1698,6 +1698,8 @@ impl SessionActor {
         json_schema: Option<serde_json::Value>,
     ) -> Result<TurnOutcome, acp::Error> {
         let conv_turn_start = std::time::Instant::now();
+        // Begin new turn for delivery tracking
+        self.delivery_state.borrow_mut().begin_turn();
         self.maybe_refresh_model_metadata_on_resume().await;
         self.maybe_compact_on_model_switch().await;
         self.chat_state_handle
@@ -2241,6 +2243,14 @@ impl SessionActor {
                     );
                     continue;
                 }
+                // Delivery gate: check if writer tools ran without verify
+                let delivery_action = lumen_discipline::on_turn_end(
+                    &mut self.delivery_state.borrow_mut(),
+                    lumen_discipline::DeliveryStrictness::Soft,
+                );
+                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                    self.push_system_reminder(reminder);
+                }
                 let structured_output = match (
                     structured_output_validator.as_ref(),
                     final_answer_text.as_ref(),
@@ -2277,6 +2287,14 @@ impl SessionActor {
                                 model_fingerprint.clone(),
                             )
                             .await;
+                        // Delivery gate: check if writer tools ran without verify
+                        let delivery_action = lumen_discipline::on_turn_end(
+                            &mut self.delivery_state.borrow_mut(),
+                            lumen_discipline::DeliveryStrictness::Soft,
+                        );
+                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                            self.push_system_reminder(reminder);
+                        }
                         return Ok(TurnOutcome::Completed {
                             snapshot: Box::new(snapshot),
                             tools_called: turn_tools_called,

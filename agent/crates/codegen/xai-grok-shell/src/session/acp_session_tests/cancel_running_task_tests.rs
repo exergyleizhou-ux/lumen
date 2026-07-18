@@ -224,6 +224,9 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 goal_turn_task_ids: parking_lot::Mutex::new(std::collections::HashSet::new()),
                 goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
                 goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
+                storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
+                repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
+                delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
@@ -680,6 +683,9 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 goal_turn_task_ids: parking_lot::Mutex::new(std::collections::HashSet::new()),
                 goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
                 goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
+                storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
+                repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
+                delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
