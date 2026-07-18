@@ -9,6 +9,48 @@ use crate::app::app_view::{ActiveView, AppView};
 use crate::notifications::{NotificationEvent, NotificationEventKind};
 use crate::scrollback::block::RenderBlock;
 
+/// Show a synchronous, redacted report from the exact snapshot painted by the
+/// truth bar. No provider call is made, so click and `/status` are identical.
+pub(super) fn dispatch_show_truth_status(app: &mut AppView) -> Vec<Effect> {
+    let Some(agent) = get_active_agent(app) else {
+        return vec![];
+    };
+    let text = crate::views::status_detail::redacted_report(
+        agent.display_truth_snapshot(),
+        std::time::SystemTime::now(),
+    );
+    push_system_to_any_agent(app, &text);
+    vec![]
+}
+
+/// `/probe`: surface Checking + recovery. Tool-ready still requires real tool_call.
+pub(super) fn dispatch_begin_truth_probe(app: &mut AppView) -> Vec<Effect> {
+    use super::ctx::get_active_agent_mut;
+    let Some(agent) = get_active_agent_mut(app) else {
+        return vec![];
+    };
+    if let Err(err) = agent.begin_truth_probe() {
+        let msg = format!("Could not start capability probe: {err}");
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(msg));
+        return vec![];
+    }
+    let mut body = String::from(
+        "Capability probe started (Checking).\n\
+         Tool-ready is not set from the model name — it updates when a real \
+         agent tool_call is observed for this binding, or when external probe \
+         evidence is applied (e.g. scripts/probe-local.sh for local endpoints).\n\n",
+    );
+    body.push_str(&crate::views::readiness::recovery_report(
+        agent.display_truth_snapshot(),
+    ));
+    agent
+        .scrollback
+        .push_block(crate::scrollback::block::RenderBlock::system(body));
+    vec![]
+}
+
 /// Toggle YOLO mode (auto-approve all permissions).
 ///
 /// When turning ON: auto-approve all currently queued permissions and
@@ -358,7 +400,7 @@ pub(super) fn notify_session_ready(
 ) {
     notification_service.notify(NotificationEvent {
         kind: NotificationEventKind::SessionReady,
-        title: "Grok".into(),
+        title: "Lumen".into(),
         body: NotificationEventKind::SessionReady.as_str().into(),
         session_id: agent.session.session_id.as_ref().map(|s| s.0.to_string()),
     });

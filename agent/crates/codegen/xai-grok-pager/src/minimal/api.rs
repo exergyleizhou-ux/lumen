@@ -349,6 +349,12 @@ pub fn rewind_state(v: &AgentView) -> Option<&RewindState> {
     v.rewind_state.as_ref()
 }
 
+/// Shared Gate D truth snapshot. Minimal must consume this exact value rather
+/// than reconstructing provider/capability/verification copy.
+pub fn truth_snapshot(v: &AgentView) -> &crate::ui_contract::TruthSnapshot {
+    v.display_truth_snapshot()
+}
+
 // ── AgentView method wrappers ────────────────────────────────────────────────
 
 /// [`AgentView::resolve_turn_activity`].

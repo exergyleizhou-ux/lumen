@@ -1066,6 +1066,14 @@ pub(in crate::app::dispatch) fn handle_switch_model_complete(
                         format!("Switched to {display_name}")
                     };
                     agent.scrollback.push_block(RenderBlock::system(msg));
+                    // Drop Tool-ready until a real probe re-proves the new binding.
+                    if let Err(err) = agent.note_truth_model_binding_from_session() {
+                        tracing::warn!(
+                            target: "truth",
+                            %err,
+                            "truth snapshot refresh after model switch failed"
+                        );
+                    }
                 }
                 if unchanged {
                     vec![]

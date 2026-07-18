@@ -4199,11 +4199,33 @@ fn format_session_info(
         .filter(|id| !id.is_empty())
         .map(|id| format!("\n  Conversation ID: {id}"))
         .unwrap_or_default();
+    let cache_line = {
+        let mut parts = Vec::new();
+        if let Some(line) = info.data.cache_line.as_deref() {
+            parts.push(line.to_string());
+        } else if let Some(r) = info.data.cache_hit_ratio {
+            parts.push(format!("cache last {:.0}%", r * 100.0));
+        }
+        if let Some(r) = info.data.cache_session_hit_ratio {
+            parts.push(format!("session {:.0}%", r * 100.0));
+        }
+        if let Some(s) = info.data.cache_stability_score {
+            parts.push(format!("stability {s}"));
+        }
+        if let Some(p) = info.data.cache_profile.as_deref() {
+            parts.push(p.to_string());
+        }
+        if parts.is_empty() {
+            String::new()
+        } else {
+            format!("\n  Prompt cache: {}", parts.join(" · "))
+        }
+    };
     let version_display = xai_grok_version::display_version(
         xai_grok_update::channel_label(),
     );
     format!(
-        "{title_line}  Shell version: {version_display}\n  Session ID: {session_id}{conversation_line}\n  Working directory: {cwd}\n  Model: {model_display}{model_hash_line}{backend_line}{sandbox_line}{turn_line}\n  Context: {used} / {total} tokens ({pct}%)"
+        "{title_line}  Shell version: {version_display}\n  Session ID: {session_id}{conversation_line}\n  Working directory: {cwd}\n  Model: {model_display}{model_hash_line}{backend_line}{sandbox_line}{turn_line}\n  Context: {used} / {total} tokens ({pct}%){cache_line}"
     )
 }
 /// Build the single text content block for a plain `Effect::SendPrompt`.

@@ -340,6 +340,13 @@ pub(super) fn set_yolo_mode_inner(app: &mut AppView, new: bool) {
             trigger: xai_grok_telemetry::events::YoloTrigger::Pager,
         });
         tracing::info!(target: "settings", key = "permission_mode", value = new, "setting changed");
+        if let Err(err) = agent.sync_truth_permission_from_session() {
+            tracing::warn!(
+                target: "truth",
+                %err,
+                "truth snapshot refresh after permission mode change failed"
+            );
+        }
     }
 }
 
@@ -463,6 +470,17 @@ pub(super) fn set_permission_mode(
     // (`kind` was already degraded to Ask when the gate is off, so a remaining
     // Auto here means the gate passed).
     sync_active_auto_flag(app);
+
+    // Reflect Ask / Auto / Always-approve in the shared truth snapshot.
+    if let Some(agent) = app.agents.get_mut(&id)
+        && let Err(err) = agent.sync_truth_permission_from_session()
+    {
+        tracing::warn!(
+            target: "truth",
+            %err,
+            "truth snapshot refresh after set_permission_mode failed"
+        );
+    }
 
     // Toast on every save (plan-aware for AlwaysApprove, mirroring
     // `set_yolo_mode` — the plan edit gate stays binding under yolo).

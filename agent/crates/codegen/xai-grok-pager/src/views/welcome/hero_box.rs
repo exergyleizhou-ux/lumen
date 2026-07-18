@@ -28,11 +28,25 @@ const LOGO_H_PAD: u16 = 3;
 /// message never paints over the button.
 const UPGRADE_CTA_ROWS: u16 = 2;
 
-const HERO_SUBTITLE: &str = "In the data desert, we build a pure oasis.  在数据荒漠中，我们筑起一片纯净绿洲。";
+const HERO_SUBTITLE: &str = "你是我绿洲里的光！";
 
 use super::{PROMPT_HEIGHT, VERSION_GAP};
 
-/// Rows the "thanks" subtitle occupies. Hidden when the in-box info slot
+#[cfg(test)]
+mod subtitle_tests {
+    use super::HERO_SUBTITLE;
+
+    #[test]
+    fn welcome_subtitle_is_oasis_light_not_grok_thanks() {
+        assert_eq!(HERO_SUBTITLE, "你是我绿洲里的光！");
+        let lower = HERO_SUBTITLE.to_ascii_lowercase();
+        assert!(!lower.contains("thanks"));
+        assert!(!lower.contains("grok"));
+        assert!(!HERO_SUBTITLE.contains("Grok"));
+    }
+}
+
+/// Rows the welcome subtitle occupies. Hidden when the in-box info slot
 /// (changelog / announcement) is shown, to keep the box compact.
 fn subtitle_rows(info_height: u16) -> u16 {
     if info_height > 0 { 0 } else { 1 }

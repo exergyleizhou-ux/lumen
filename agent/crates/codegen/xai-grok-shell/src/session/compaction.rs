@@ -817,6 +817,8 @@ impl SessionActor {
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("compaction_tokens_before", tokens_before as i64);
         self.signals_handle().record_compaction(tokens_before);
+        // Compaction rewrites history prefix → bust automatic prompt cache.
+        crate::session::prompt_cache_registry::bump_log_rewrite(self.session_info.id.0.as_ref());
         let trigger_str = match trigger {
             xai_grok_telemetry::events::CompactionTrigger::Manual => "manual",
             xai_grok_telemetry::events::CompactionTrigger::Auto => "auto",

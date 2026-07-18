@@ -2516,8 +2516,8 @@ fn schedule_tick(tick_at: &mut Option<Instant>, app: &AppView, interval: Duratio
                 Some(ceiling) => interval.min(ceiling),
                 None => interval,
             },
-            // Only low-frequency work (welcome shimmer, Cmd link poll):
-            // don't spin the full 30fps loop for it.
+            // Only low-frequency work (Cmd link poll): don't spin the full
+            // 30fps loop for it.
             crate::app::app_view::TickDemand::Slow => {
                 interval.max(crate::app::app_view::SLOW_TICK_INTERVAL)
             }

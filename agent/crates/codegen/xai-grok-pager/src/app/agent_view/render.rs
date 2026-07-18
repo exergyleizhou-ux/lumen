@@ -1098,6 +1098,14 @@ impl AgentView {
                 .saturating_sub(search_reserved_rows);
         }
         agent::fill_background(buf, area, layout_cfg, compact, &theme);
+        self.hit_truth_bar.rect = crate::views::truth_bar::render(
+            buf,
+            layout.truth_bar,
+            self.display_truth_snapshot(),
+            std::time::SystemTime::now(),
+            &theme,
+            self.hit_truth_bar.hovered,
+        );
         use crate::views::agent_status::AgentStatusBar;
         use crate::views::context_bar;
         let mut status = AgentStatusBar::new(&theme);

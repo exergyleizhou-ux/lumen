@@ -389,6 +389,28 @@ pub(super) fn dispatch_dashboard_attach(
     vec![]
 }
 
+/// Dashboard truth-bar click: materialize the same redacted `/status` report
+/// in the selected session and enter that session, where the report is fully
+/// readable and remains in scrollback.
+pub(super) fn dispatch_dashboard_show_truth_status(app: &mut AppView) -> Vec<Effect> {
+    use crate::views::dashboard::DashboardRowId;
+    let selected = app.dashboard.as_ref().and_then(|d| d.selected.clone());
+    let Some(DashboardRowId::TopLevel(agent_id)) = selected else {
+        return vec![];
+    };
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    let report = crate::views::status_detail::redacted_report(
+        agent.display_truth_snapshot(),
+        std::time::SystemTime::now(),
+    );
+    agent
+        .scrollback
+        .push_block(crate::scrollback::block::RenderBlock::system(report));
+    dispatch_dashboard_attach(app, DashboardRowId::TopLevel(agent_id))
+}
+
 /// Exit the dashboard's session-overlay: dismiss the bordered
 /// chrome and return to the dashboard view. Mirrors the popup
 /// `[✗]` close from the older design but applied to the new

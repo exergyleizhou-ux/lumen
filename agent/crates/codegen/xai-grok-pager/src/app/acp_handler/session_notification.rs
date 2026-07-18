@@ -870,6 +870,14 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                     model_id, effort = ? resolved_effort,
                     "ModelChanged broadcast applied (remote switch)"
                 );
+                // Invalidate Tool-ready for the new binding; never infer from model name.
+                if let Err(err) = agent.note_truth_model_binding_from_session() {
+                    tracing::warn!(
+                        target: "truth",
+                        %err,
+                        "truth snapshot refresh after ModelChanged failed"
+                    );
+                }
             }
             actually_changed
         }

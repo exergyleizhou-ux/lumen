@@ -195,7 +195,7 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
         let overlay_h = super::overlay::overlay_rows(&agent.prompt, area.width)
             .min(area.height.saturating_sub(status_h + 1));
         let info_h = if overlay_h == 0 {
-            1u16.min(area.height.saturating_sub(status_h + 1))
+            2u16.min(area.height.saturating_sub(status_h + 1))
         } else {
             0
         };
@@ -289,26 +289,33 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
                 &theme,
             );
         } else if info_h > 0 {
-            let info_area = inset_left(
+            let truth_area = inset_left(
                 Rect {
                     x: area.x,
                     y: prompt_area.y + prompt_h,
                     width: area.width,
-                    height: info_h,
+                    height: 1,
                 },
                 row_inset,
             );
-            if let Some(hint) = &pending_hint {
-                render_exit_hint(frame.buffer_mut(), info_area, &theme, hint);
-            } else {
-                render_prompt_info(
-                    frame.buffer_mut(),
-                    info_area,
-                    agent,
-                    queued,
-                    transcript_hint,
-                    &theme,
-                );
+            render_minimal_truth(frame.buffer_mut(), truth_area, agent, &theme);
+            if info_h > 1 {
+                let info_area = Rect {
+                    y: truth_area.y + 1,
+                    ..truth_area
+                };
+                if let Some(hint) = &pending_hint {
+                    render_exit_hint(frame.buffer_mut(), info_area, &theme, hint);
+                } else {
+                    render_prompt_info(
+                        frame.buffer_mut(),
+                        info_area,
+                        agent,
+                        queued,
+                        transcript_hint,
+                        &theme,
+                    );
+                }
             }
         }
         let result = agent
@@ -321,6 +328,36 @@ pub fn draw_live(app: &mut AppView, terminal: &mut PagerTerminal) {
                 .map(xai_grok_pager::terminal::overlay::PostFlush::from),
         )
     });
+}
+
+fn render_minimal_truth(
+    buf: &mut Buffer,
+    area: Rect,
+    agent: &xai_grok_pager::app::agent_view::AgentView,
+    theme: &Theme,
+) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+    let rendered = xai_grok_pager::views::truth_bar::line(
+        minimal_api::truth_snapshot(agent),
+        area.width,
+        std::time::SystemTime::now(),
+    );
+    let fg = match rendered.tone {
+        xai_grok_pager::views::truth_bar::TruthTone::Passive => theme.gray,
+        xai_grok_pager::views::truth_bar::TruthTone::Success => theme.accent_success,
+        xai_grok_pager::views::truth_bar::TruthTone::Caution => theme.warning,
+        xai_grok_pager::views::truth_bar::TruthTone::Blocker => theme.accent_error,
+    };
+    let style = Style::default().fg(fg).bg(Color::Reset);
+    buf.set_style(area, Style::default().bg(Color::Reset));
+    buf.set_span(
+        area.x,
+        area.y,
+        &Span::styled(rendered.text, style),
+        area.width,
+    );
 }
 fn live_tail_renderer<'a>(
     entry: &'a xai_grok_pager::scrollback::entry::ScrollbackEntry,

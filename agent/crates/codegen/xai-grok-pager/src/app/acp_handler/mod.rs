@@ -77,6 +77,58 @@ use session_notification::{
 pub(crate) use queue::PendingRunningAdoption;
 use queue::{handle_prompt_complete, handle_queue_changed};
 
+/// From a completed tool-call update, extract execute command + exit if present.
+/// Used only for truth verification freshness — not for inventing Tool-ready.
+fn truth_exec_from_update(
+    tcu: &acp::ToolCallUpdate,
+) -> Option<(String, String, i32)> {
+    let raw = tcu.fields.raw_output.as_ref()?;
+    // ToolOutput::Bash shape used by the shell (`exit_code` + optional command).
+    let exit = raw
+        .get("exit_code")
+        .or_else(|| raw.get("exitCode"))
+        .and_then(|v| v.as_i64())
+        .map(|n| n as i32)
+        .or_else(|| {
+            // Nested ToolOutput enum encoding: { "Bash": { "exit_code": … } }
+            raw.get("Bash")
+                .and_then(|b| b.get("exit_code").or_else(|| b.get("exitCode")))
+                .and_then(|v| v.as_i64())
+                .map(|n| n as i32)
+        })?;
+    let command = tcu
+        .fields
+        .title
+        .clone()
+        .or_else(|| {
+            tcu.fields
+                .raw_input
+                .as_ref()
+                .and_then(|v| {
+                    v.get("command")
+                        .or_else(|| v.get("cmd"))
+                        .and_then(|c| c.as_str())
+                        .map(|s| s.to_owned())
+                })
+        })
+        .unwrap_or_else(|| "execute".to_owned());
+    // Only treat shell-like executes as verification candidates (not every tool).
+    let looks_like_shell = tcu.fields.kind == Some(acp::ToolKind::Execute)
+        || command.contains("test")
+        || command.contains("cargo")
+        || command.contains("npm")
+        || command.contains("pytest")
+        || command.contains("make ")
+        || raw.get("Bash").is_some()
+        || raw.get("exit_code").is_some()
+        || raw.get("exitCode").is_some();
+    if !looks_like_shell {
+        return None;
+    }
+    let run_id = tcu.tool_call_id.0.to_string();
+    Some((command, run_id, exit))
+}
+
 use background::{
     derive_child_cwd, handle_git_head_changed, handle_monitor_event, handle_scheduled_task_created,
     handle_scheduled_task_deleted, handle_scheduled_task_fired,
@@ -242,6 +294,16 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if let Some(tokens) = meta.total_tokens {
                             confirm_context_used(agent, tokens);
                         }
+                        // Mid-turn cache auto-feed (shell stamps cacheHitRatio on updates).
+                        if let Some(ratio) = meta.cache_hit_ratio {
+                            let summary = crate::ui_contract::CacheSummary {
+                                hit_ratio: Some(ratio.clamp(0.0, 1.0)),
+                                source: Some(crate::ui_contract::CacheSource::ProviderReported),
+                            };
+                            if let Err(err) = agent.note_truth_cache(summary) {
+                                tracing::debug!(error = %err, "mid-turn truth cache feed skipped");
+                            }
+                        }
                         if let Some(ts) = meta.turn_start_ms {
                             agent.turn_start_ms = Some(ts);
                             // A wake turn's end marker derives elapsed from its
@@ -403,6 +465,44 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         plan_mode_modal_refresh_needed |=
                             detect_plan_mode_change(&notif.request.update, agent);
 
+                        // Live tool_call → real Tool-ready evidence (not model-name inference).
+                        if !meta.is_replay
+                            && let acp::SessionUpdate::ToolCall(ref tc) = notif.request.update
+                            && let Err(err) = agent.note_truth_live_tool_call_observed(
+                                tc.kind,
+                                tc.tool_call_id.0.as_ref(),
+                            )
+                        {
+                            tracing::warn!(
+                                target: "truth",
+                                %err,
+                                "truth snapshot refresh after live tool_call failed"
+                            );
+                        }
+                        // Successful execute completion → verification Passed for current seq.
+                        if !meta.is_replay
+                            && let acp::SessionUpdate::ToolCallUpdate(ref tcu) =
+                                notif.request.update
+                            && matches!(
+                                tcu.fields.status,
+                                Some(acp::ToolCallStatus::Completed)
+                            )
+                        {
+                            if let Some((cmd, run_id, exit)) = truth_exec_from_update(tcu) {
+                                if exit == 0 {
+                                    let _ = agent.note_truth_verification_passed(cmd, run_id);
+                                } else {
+                                    agent.truth_session.verification =
+                                        crate::ui_contract::VerificationSummary::Failed {
+                                            command: cmd,
+                                            run_id,
+                                            exit_code: exit,
+                                        };
+                                    let _ = agent.refresh_truth_snapshot();
+                                }
+                            }
+                        }
+
                         let had_activity_before = agent.session.tracker.activity().is_some();
                         agent.session.handle_update(
                             notif.request.update,
@@ -453,8 +553,20 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if let Some(tools) = agent.session.tracker.take_pending_acp_tools() {
                             agent.session.available_tools = Some(tools.into_iter().collect());
                         }
-                        for entry_id in agent.session.tracker.take_pending_edit_hl() {
+                        let pending_edit_hl = agent.session.tracker.take_pending_edit_hl();
+                        let workspace_mutated = !pending_edit_hl.is_empty();
+                        for entry_id in pending_edit_hl {
                             agent.submit_edit_highlight(entry_id);
+                        }
+                        // Real edit completion → bump change seq / stale verify.
+                        if workspace_mutated
+                            && let Err(err) = agent.note_truth_workspace_change()
+                        {
+                            tracing::warn!(
+                                target: "truth",
+                                %err,
+                                "truth snapshot refresh after workspace edit failed"
+                            );
                         }
 
                         // Viewer chrome (leader / multi-client). A viewer has no
@@ -548,8 +660,19 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             &meta,
                             &mut child_view.scrollback,
                         );
-                        for entry_id in child_view.session.tracker.take_pending_edit_hl() {
+                        let pending_edit_hl = child_view.session.tracker.take_pending_edit_hl();
+                        let workspace_mutated = !pending_edit_hl.is_empty();
+                        for entry_id in pending_edit_hl {
                             child_view.submit_edit_highlight(entry_id);
+                        }
+                        if workspace_mutated
+                            && let Err(err) = child_view.note_truth_workspace_change()
+                        {
+                            tracing::warn!(
+                                target: "truth",
+                                %err,
+                                "truth snapshot refresh after child workspace edit failed"
+                            );
                         }
                         subagent_activity_label(child_view)
                     };

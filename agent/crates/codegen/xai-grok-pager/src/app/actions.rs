@@ -629,6 +629,12 @@ pub enum Action {
     },
     /// Show detailed context usage (progress bar, token breakdown, stats).
     ShowContextInfo,
+    /// Show the redacted FINAL-5UX truth report (`/status` or truth-bar click).
+    ShowTruthStatus,
+    /// Dashboard truth-bar click for the selected local session.
+    DashboardShowTruthStatus,
+    /// `/probe`: mark capability Checking and print recovery (no fake Tool-ready).
+    BeginTruthProbe,
     /// Show credit usage via /usage command.
     ShowUsage,
     /// Commit a read-only list of the queued prompts as a system block

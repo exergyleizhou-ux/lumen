@@ -40,6 +40,19 @@ pub(super) fn handle_permission_request(
         return false;
     };
 
+    // Gate C: chat-only must not enter the edit flow (including YOLO auto-allow).
+    // Recovery is explicit; Tool-ready is never inferred from model names.
+    if agent.blocks_edit_flow() && is_edit_permission(&perm.request) {
+        let mut msg = AgentView::chat_only_edit_block_message().to_owned();
+        msg.push_str("\n\n");
+        msg.push_str(&agent.truth_recovery_report());
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(msg));
+        cancel_permission(perm);
+        return is_active;
+    }
+
     // 2. YOLO mode: auto-approve immediately on the owning agent so background
     //    turns aren't blocked waiting for the user to switch back.
     //
@@ -74,7 +87,7 @@ pub(super) fn handle_permission_request(
     {
         app.notification_service.notify(NotificationEvent {
             kind: NotificationEventKind::ApprovalRequired,
-            title: "Grok".into(),
+            title: "Lumen".into(),
             body: NotificationEventKind::ApprovalRequired.as_str().into(),
             session_id: Some(perm.request.session_id.0.to_string()),
         });

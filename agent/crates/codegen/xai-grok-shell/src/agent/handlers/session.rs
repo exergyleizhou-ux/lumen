@@ -122,6 +122,11 @@ async fn handle_session_info(
                 crate::util::config::DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT,
             ..ContextInfo::default()
         },
+        cache_hit_ratio: None,
+        cache_session_hit_ratio: None,
+        cache_stability_score: None,
+        cache_profile: None,
+        cache_line: None,
     });
 
     // Calculate the model's display name.

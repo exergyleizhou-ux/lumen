@@ -17,8 +17,257 @@ use crate::views::tasks_pane::TasksPane;
 use crate::views::todo_pane::TodoPane;
 use ratatui::layout::Rect;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 impl AgentView {
+    fn initial_truth_pair(
+        session: &AgentSession,
+    ) -> (
+        crate::truth_assembly::TruthSessionState,
+        Arc<crate::ui_contract::TruthSnapshot>,
+    ) {
+        use crate::truth_assembly::{TruthSessionState, assemble_truth_snapshot};
+        use crate::ui_contract::{CapabilityFingerprintInput, PermissionSummary, ProductIdentity};
+
+        let model_id = session
+            .models
+            .current_model_name()
+            .unwrap_or_else(|| "unknown".to_owned());
+        let version = xai_grok_version::VERSION.to_owned();
+        let release_channel = version
+            .split_once('-')
+            .and_then(|(_, suffix)| suffix.split('.').next())
+            .filter(|value| !value.is_empty())
+            .unwrap_or("release")
+            .to_owned();
+        let mut state = TruthSessionState::new(
+            ProductIdentity {
+                display_name: "Lumen".to_owned(),
+                version,
+                release_channel,
+            },
+            CapabilityFingerprintInput {
+                provider_id: "unknown".to_owned(),
+                model_id: model_id.clone(),
+                base_url: "unknown".to_owned(),
+                tool_schema_hash: "unknown".to_owned(),
+                binary_id: xai_grok_version::VERSION.to_owned(),
+            },
+        );
+        state.model_id = (model_id != "unknown").then_some(model_id);
+        state.permission = if session.is_yolo() || session.is_auto() {
+            PermissionSummary::AutoApproved
+        } else {
+            PermissionSummary::AskBeforeChanges
+        };
+        let snapshot = Arc::new(
+            assemble_truth_snapshot(&state, std::time::SystemTime::now())
+                .expect("conservative initial truth snapshot must satisfy UI contract"),
+        );
+        (state, snapshot)
+    }
+
+    /// Build fingerprint inputs from the live session binding.
+    ///
+    /// Does **not** claim Tool-ready — only identity fields for invalidation
+    /// and future probe assembly. Unknown provider/base_url stay explicit.
+    pub fn truth_fingerprint_from_session(&self) -> crate::ui_contract::CapabilityFingerprintInput {
+        let model_id = self
+            .session
+            .models
+            .current_model_name()
+            .unwrap_or_else(|| "unknown".to_owned());
+        let provider_id = self
+            .truth_session
+            .provider_id
+            .clone()
+            .filter(|p| !p.is_empty() && p != "unknown")
+            .unwrap_or_else(|| "unknown".to_owned());
+        crate::ui_contract::CapabilityFingerprintInput {
+            provider_id,
+            model_id,
+            base_url: self.truth_session.fingerprint_input.base_url.clone(),
+            tool_schema_hash: self.truth_session.fingerprint_input.tool_schema_hash.clone(),
+            binary_id: xai_grok_version::VERSION.to_owned(),
+        }
+    }
+
+    /// Install a snapshot only after Gate C contract validation.
+    ///
+    /// Prefer [`Self::refresh_truth_snapshot`] or the apply_* helpers so the
+    /// shared Arc always comes from `assemble_truth_snapshot`. Direct install
+    /// is accepted only for pre-assembled, contract-valid snapshots and never
+    /// mutates `truth_session` (session facts remain the assembly source).
+    pub fn install_truth_snapshot(
+        &mut self,
+        snapshot: crate::ui_contract::TruthSnapshot,
+        last_change_seq: u64,
+    ) -> Result<(), String> {
+        crate::ui_contract::validate_truth_snapshot(&snapshot, last_change_seq)
+            .map_err(|e| e.to_string())?;
+        // Refuse install when caller seq disagrees with session truth — keeps
+        // display Arc aligned with Gate C assembly invariants.
+        if last_change_seq != self.truth_session.last_change_seq {
+            return Err(format!(
+                "install_truth_snapshot: last_change_seq {last_change_seq} != session {}",
+                self.truth_session.last_change_seq
+            ));
+        }
+        self.truth_snapshot = Arc::new(snapshot);
+        Ok(())
+    }
+
+    /// Re-assemble from the in-view Gate C session state (single source of truth).
+    pub fn refresh_truth_snapshot(&mut self) -> Result<(), String> {
+        let snapshot = crate::truth_assembly::assemble_truth_snapshot(
+            &self.truth_session,
+            std::time::SystemTime::now(),
+        )?;
+        self.truth_snapshot = Arc::new(snapshot);
+        Ok(())
+    }
+
+    /// Record a real capability probe. Never infers Tool-ready from model names.
+    pub fn apply_truth_probe(
+        &mut self,
+        evidence: crate::truth_assembly::ProbeEvidence,
+    ) -> Result<(), String> {
+        crate::truth_assembly::apply_probe_evidence(&mut self.truth_session, evidence)?;
+        self.refresh_truth_snapshot()
+    }
+
+    /// Surface "Checking" while a real probe is in flight (no Tool-ready claim).
+    pub fn begin_truth_probe(&mut self) -> Result<(), String> {
+        crate::truth_assembly::begin_capability_probe(&mut self.truth_session);
+        self.refresh_truth_snapshot()
+    }
+
+    /// Session-local evidence: the model emitted a real ACP tool_call.
+    ///
+    /// This is the live equivalent of a Gate C tool probe — never based on
+    /// model name or UI colour. Non-agent kinds (`Other`, …) are ignored.
+    pub fn note_truth_live_tool_call_observed(
+        &mut self,
+        kind: agent_client_protocol::ToolKind,
+        tool_call_id: &str,
+    ) -> Result<(), String> {
+        use agent_client_protocol as acp;
+        if !matches!(
+            kind,
+            acp::ToolKind::Edit
+                | acp::ToolKind::Execute
+                | acp::ToolKind::Read
+                | acp::ToolKind::Search
+                | acp::ToolKind::Delete
+        ) {
+            return Ok(());
+        }
+        if tool_call_id.trim().is_empty() {
+            return Err("live tool_call_id must not be empty".to_owned());
+        }
+        let evidence = crate::truth_assembly::ProbeEvidence {
+            outcome: crate::truth_assembly::ProbeOutcome::ToolCallObserved,
+            evidence_id: format!("live-tool:{tool_call_id}"),
+            checked_at: std::time::SystemTime::now(),
+            fingerprint_input: self.truth_fingerprint_from_session(),
+        };
+        self.apply_truth_probe(evidence)
+    }
+
+    /// Model/provider binding changed — drops ToolReady until re-probed.
+    pub fn note_truth_binding_changed(
+        &mut self,
+        input: crate::ui_contract::CapabilityFingerprintInput,
+    ) -> Result<(), String> {
+        crate::truth_assembly::on_binding_changed(&mut self.truth_session, input)?;
+        self.refresh_truth_snapshot()
+    }
+
+    /// Current model/provider identity changed from a live runtime event.
+    pub fn note_truth_model_binding_from_session(&mut self) -> Result<(), String> {
+        let input = self.truth_fingerprint_from_session();
+        self.note_truth_binding_changed(input)
+    }
+
+    /// Workspace edit observed — stales a previously Passed verification.
+    pub fn note_truth_workspace_change(&mut self) -> Result<(), String> {
+        crate::truth_assembly::note_workspace_change(&mut self.truth_session);
+        self.refresh_truth_snapshot()
+    }
+
+    /// Verification run finished successfully for the current tree seq.
+    pub fn note_truth_verification_passed(
+        &mut self,
+        command: impl Into<String>,
+        run_id: impl Into<String>,
+    ) -> Result<(), String> {
+        crate::truth_assembly::note_verification_passed(
+            &mut self.truth_session,
+            command,
+            run_id,
+            std::time::SystemTime::now(),
+        );
+        self.refresh_truth_snapshot()
+    }
+
+    /// Permission mode changed (yolo / ask / auto) — never invents capability.
+    pub fn sync_truth_permission_from_session(&mut self) -> Result<(), String> {
+        use crate::ui_contract::PermissionSummary;
+        self.truth_session.permission = if self.session.is_yolo() || self.session.is_auto() {
+            PermissionSummary::AutoApproved
+        } else {
+            PermissionSummary::AskBeforeChanges
+        };
+        self.refresh_truth_snapshot()
+    }
+
+    /// Provider-reported or estimated cache metrics (source required by contract).
+    pub fn note_truth_cache(
+        &mut self,
+        cache: crate::ui_contract::CacheSummary,
+    ) -> Result<(), String> {
+        crate::ui_contract::validate_cache(&cache).map_err(|e| e.to_string())?;
+        self.truth_session.cache = cache;
+        self.refresh_truth_snapshot()
+    }
+
+    pub fn display_truth_snapshot(&self) -> &crate::ui_contract::TruthSnapshot {
+        self.truth_snapshot.as_ref()
+    }
+
+    /// True when the installed snapshot is chat-only (must not enter edit flow).
+    pub fn truth_is_chat_only(&self) -> bool {
+        matches!(
+            self.display_truth_snapshot().capability,
+            crate::ui_contract::CapabilityState::ChatOnly { .. }
+        )
+    }
+
+    /// True when tools were proven for the current binding.
+    pub fn truth_is_tool_ready(&self) -> bool {
+        matches!(
+            self.display_truth_snapshot().capability,
+            crate::ui_contract::CapabilityState::ToolReady { .. }
+        )
+    }
+
+    /// Block agent edit/tool mutations when capability is chat-only.
+    pub fn blocks_edit_flow(&self) -> bool {
+        self.truth_is_chat_only()
+    }
+
+    /// User-visible recovery copy when chat-only blocks an edit.
+    pub fn chat_only_edit_block_message() -> &'static str {
+        "Edit blocked: capability is chat-only. Run /probe, switch to a tool-capable \
+         model (/model), then complete a real tool_call (or scripts/probe-local.sh). \
+         See /status. Tool-ready is never inferred from the model name or success colours."
+    }
+
+    /// Full recovery block for the current snapshot (chat-only / failed / unknown).
+    pub fn truth_recovery_report(&self) -> String {
+        crate::views::readiness::recovery_report(self.display_truth_snapshot())
+    }
+
     /// Bind this view to a root session id, resetting the per-session
     /// reconnect cursor and both dedup highwaters (ACP + xAI) when the id
     /// actually changes — all three are meaningless against another session's
@@ -58,9 +307,12 @@ impl AgentView {
     /// The prompt widget is initialized with the session's working directory.
     pub fn new(session: AgentSession, scrollback: ScrollbackState) -> Self {
         let prompt = PromptWidget::new_with_cwd(&session.cwd);
+        let (truth_session, truth_snapshot) = Self::initial_truth_pair(&session);
         let mut view = Self {
             session,
             scrollback,
+            truth_session,
+            truth_snapshot,
             prompt,
             tip_typing_dismissed: false,
             todo: TodoPane::new(),
@@ -153,6 +405,7 @@ impl AgentView {
             hit_badge: Default::default(),
             hit_context: Default::default(),
             hit_credits: Default::default(),
+            hit_truth_bar: Default::default(),
             hit_todo_close: Default::default(),
             hit_bg_close: Default::default(),
             hit_subagent_close: Default::default(),
@@ -1343,5 +1596,203 @@ mod status_window_tests {
             !agent.end_work_announced,
             "a replay window closes the between-turns status window"
         );
+    }
+}
+
+#[cfg(test)]
+mod truth_runtime_tests {
+    use super::super::{AgentView, test_agent_view};
+    use crate::truth_assembly::{ProbeEvidence, ProbeOutcome};
+    use crate::ui_contract::{
+        CapabilityFingerprintInput, CapabilityState, PermissionSummary, ProductIdentity,
+        TruthSnapshot, VerificationSummary, WorkPhase,
+    };
+    use std::sync::Arc;
+    use std::time::{Duration, SystemTime};
+
+    fn fp(model: &str) -> CapabilityFingerprintInput {
+        CapabilityFingerprintInput {
+            provider_id: "deepseek".to_owned(),
+            model_id: model.to_owned(),
+            base_url: "https://api.deepseek.com/v1".to_owned(),
+            tool_schema_hash: "schema-v1".to_owned(),
+            binary_id: xai_grok_version::VERSION.to_owned(),
+        }
+    }
+
+    #[test]
+    fn install_truth_snapshot_rejects_invalid_and_seq_mismatch() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        let bad = TruthSnapshot {
+            product: ProductIdentity {
+                display_name: "Grok Build".into(),
+                version: "1".into(),
+                release_channel: "alpha".into(),
+            },
+            provider: crate::ui_contract::ProviderState::Unknown,
+            model: crate::ui_contract::ModelState::Unknown,
+            capability: CapabilityState::Unknown {
+                reason: "x".into(),
+            },
+            permission: PermissionSummary::Unknown,
+            cache: crate::ui_contract::CacheSummary {
+                hit_ratio: None,
+                source: None,
+            },
+            verification: VerificationSummary::NotRun,
+            phase: WorkPhase::Idle,
+            captured_at: SystemTime::UNIX_EPOCH,
+        };
+        assert!(agent.install_truth_snapshot(bad, 0).is_err());
+
+        // Valid product identity but wrong last_change_seq vs session.
+        let ok_snap = agent.display_truth_snapshot().clone();
+        assert!(agent.install_truth_snapshot(ok_snap, 99).is_err());
+    }
+
+    #[test]
+    fn probe_and_binding_refresh_same_arc_source_without_model_name_inference() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        // Model name alone never yields Tool-ready.
+        assert!(!agent.truth_is_tool_ready());
+        assert!(matches!(
+            agent.display_truth_snapshot().capability,
+            CapabilityState::Unknown { .. }
+        ));
+
+        agent
+            .apply_truth_probe(ProbeEvidence {
+                outcome: ProbeOutcome::ChatOnly,
+                evidence_id: "ev-chat".into(),
+                checked_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                fingerprint_input: fp("deepseek-chat"),
+            })
+            .unwrap();
+        assert!(agent.truth_is_chat_only());
+        assert!(agent.blocks_edit_flow());
+        assert!(!agent.truth_is_tool_ready());
+
+        agent
+            .apply_truth_probe(ProbeEvidence {
+                outcome: ProbeOutcome::ToolCallObserved,
+                evidence_id: "ev-tool".into(),
+                checked_at: SystemTime::UNIX_EPOCH + Duration::from_secs(2),
+                fingerprint_input: fp("deepseek-chat"),
+            })
+            .unwrap();
+        assert!(agent.truth_is_tool_ready());
+        assert!(!agent.blocks_edit_flow());
+
+        // Binding change drops Tool-ready even if the model string looks capable.
+        agent
+            .note_truth_binding_changed(fp("deepseek-reasoner"))
+            .unwrap();
+        assert!(!agent.truth_is_tool_ready());
+        assert!(matches!(
+            agent.display_truth_snapshot().capability,
+            CapabilityState::Unknown { .. }
+        ));
+    }
+
+    #[test]
+    fn workspace_edit_stales_verification_on_agent_view() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        agent
+            .note_truth_verification_passed("cargo test", "run-1")
+            .unwrap();
+        assert!(matches!(
+            agent.display_truth_snapshot().verification,
+            VerificationSummary::Passed { .. }
+        ));
+        agent.note_truth_workspace_change().unwrap();
+        assert!(matches!(
+            agent.display_truth_snapshot().verification,
+            VerificationSummary::Stale { .. }
+        ));
+    }
+
+    #[test]
+    fn permission_sync_reflects_yolo_without_touching_capability() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        let before_cap = agent.display_truth_snapshot().capability.clone();
+        agent.session.yolo_mode = true;
+        agent.sync_truth_permission_from_session().unwrap();
+        assert!(matches!(
+            agent.display_truth_snapshot().permission,
+            PermissionSummary::AutoApproved
+        ));
+        assert_eq!(agent.display_truth_snapshot().capability, before_cap);
+    }
+
+    #[test]
+    fn shared_arc_identity_stable_across_display_reads() {
+        let agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        let a: Arc<_> = Arc::clone(&agent.truth_snapshot);
+        let b: Arc<_> = Arc::clone(&agent.truth_snapshot);
+        assert!(Arc::ptr_eq(&a, &b));
+        assert_eq!(a.as_ref(), agent.display_truth_snapshot());
+    }
+
+    #[test]
+    fn live_tool_call_observation_is_only_path_to_tool_ready_without_external_probe() {
+        use agent_client_protocol as acp;
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        assert!(!agent.truth_is_tool_ready());
+
+        // Non-agent kinds must not claim Tool-ready.
+        agent
+            .note_truth_live_tool_call_observed(acp::ToolKind::Other, "other-1")
+            .unwrap();
+        assert!(!agent.truth_is_tool_ready());
+
+        // Real agent tool kinds produce ToolCallObserved evidence.
+        agent
+            .note_truth_live_tool_call_observed(acp::ToolKind::Edit, "edit-1")
+            .unwrap();
+        assert!(agent.truth_is_tool_ready());
+        match &agent.display_truth_snapshot().capability {
+            CapabilityState::ToolReady {
+                evidence_id,
+                fingerprint,
+                checked_at,
+            } => {
+                assert!(evidence_id.contains("edit-1") || evidence_id.starts_with("live-tool:"));
+                assert!(!fingerprint.is_empty());
+                assert!(checked_at.is_some());
+            }
+            other => panic!("expected ToolReady, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn chat_only_blocks_edit_flow_and_exposes_recovery_copy() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        agent
+            .apply_truth_probe(ProbeEvidence {
+                outcome: ProbeOutcome::ChatOnly,
+                evidence_id: "ev-chat-only".into(),
+                checked_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
+                fingerprint_input: fp("deepseek-chat"),
+            })
+            .unwrap();
+        assert!(agent.blocks_edit_flow());
+        let msg = AgentView::chat_only_edit_block_message();
+        assert!(msg.contains("chat-only"));
+        assert!(msg.contains("/status"));
+        assert!(!msg.to_ascii_lowercase().contains("tool-ready is automatic"));
+    }
+
+    #[test]
+    fn model_name_alone_never_sets_tool_ready() {
+        let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
+        // Fingerprint binding update with a "capable-looking" model id.
+        agent
+            .note_truth_binding_changed(fp("deepseek-chat-tool-capable-sounding"))
+            .unwrap();
+        assert!(!agent.truth_is_tool_ready());
+        assert!(matches!(
+            agent.display_truth_snapshot().capability,
+            CapabilityState::Unknown { .. }
+        ));
     }
 }

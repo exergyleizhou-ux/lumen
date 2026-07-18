@@ -1881,6 +1881,11 @@ fn make_session_info(
                 auto_compact_threshold_percent: 85,
                 ..Default::default()
             },
+            cache_hit_ratio: None,
+            cache_session_hit_ratio: None,
+            cache_stability_score: None,
+            cache_profile: None,
+            cache_line: None,
         },
     }
 }

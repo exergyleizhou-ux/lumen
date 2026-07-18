@@ -3188,34 +3188,45 @@ pub fn build_messages_request(req: &ConversationRequest) -> crate::messages::Mes
     flush_assistant(&mut pending_assistant, &mut messages);
     flush_tool_results(&mut pending_tool_results, &mut messages);
 
-    // Attach cache_control: {type: "ephemeral"} to last system block
+    // Anthropic-style breakpoints: mark the last system block so the full
+    // system prefix is an ephemeral cache unit (Lumen multi-provider upgrade).
     if let Some(last) = system_blocks.last_mut() {
         last.cache_control = Some(CacheControl {
             r#type: "ephemeral".to_string(),
         });
     }
 
-    // Build system param
+    // Build system param — always Blocks when we attached cache_control so the
+    // breakpoint is not dropped by the plain-text form.
     let system: Option<SystemParam> = if system_blocks.is_empty() {
         None
     } else if system_blocks.len() == 1 && system_blocks[0].cache_control.is_none() {
-        // Single block without cache_control - can use text form
         Some(SystemParam::Text(system_blocks[0].text.clone()))
     } else {
         Some(SystemParam::Blocks(system_blocks))
     };
 
-    // Build tools
+    // Build tools — attach cache_control on the **last** tool so the tools
+    // list is a second cacheable breakpoint after system (Anthropic docs).
     let tools: Option<Vec<ToolParam>> = if req.tools.is_empty() {
         None
     } else {
+        let n = req.tools.len();
         Some(
             req.tools
                 .iter()
-                .map(|t| ToolParam {
+                .enumerate()
+                .map(|(i, t)| ToolParam {
                     name: t.name.clone(),
                     description: t.description.clone(),
                     input_schema: t.parameters.clone(),
+                    cache_control: if i + 1 == n {
+                        Some(CacheControl {
+                            r#type: "ephemeral".to_string(),
+                        })
+                    } else {
+                        None
+                    },
                 })
                 .collect(),
         )
@@ -3713,6 +3724,46 @@ mod tests {
         assert!(
             msgs.thinking.is_some(),
             "thinking set when effort is present"
+        );
+    }
+
+    /// Lumen multi-provider: system last block + last tool get ephemeral cache_control.
+    #[test]
+    fn build_messages_request_attaches_cache_control_to_system_and_last_tool() {
+        let mut req = ConversationRequest::from_items(vec![
+            ConversationItem::system("stable system prefix"),
+            ConversationItem::user("hi"),
+        ]);
+        req.tools = vec![
+            crate::ToolSpec {
+                name: "a".into(),
+                description: None,
+                parameters: serde_json::json!({}),
+            },
+            crate::ToolSpec {
+                name: "b".into(),
+                description: None,
+                parameters: serde_json::json!({}),
+            },
+        ];
+        let msgs = build_messages_request(&req);
+        match msgs.system.expect("system present") {
+            crate::messages::SystemParam::Blocks(blocks) => {
+                let last = blocks.last().expect("system block");
+                assert_eq!(
+                    last.cache_control.as_ref().map(|c| c.r#type.as_str()),
+                    Some("ephemeral")
+                );
+            }
+            crate::messages::SystemParam::Text(_) => {
+                panic!("system with cache_control must use Blocks form")
+            }
+        }
+        let tools = msgs.tools.expect("tools");
+        assert!(tools[0].cache_control.is_none());
+        assert_eq!(
+            tools[1].cache_control.as_ref().map(|c| c.r#type.as_str()),
+            Some("ephemeral")
         );
     }
 

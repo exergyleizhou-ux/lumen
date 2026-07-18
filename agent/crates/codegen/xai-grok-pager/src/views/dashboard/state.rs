@@ -620,6 +620,8 @@ pub struct DashboardState {
     /// Hit area for the header's promo upgrade CTA `[label]` button (click →
     /// `AnnouncementsOpenCta(Dashboard)`). `None` when no CTA is shown.
     pub upgrade_cta_hit: crate::app::agent_view::HitArea,
+    /// Selected session's shared truth snapshot row. Click opens `/status`.
+    pub truth_bar_hit: crate::app::agent_view::HitArea,
     /// A pinned (non-dismissible) promo CTA is live this frame (cached by
     /// `render_dashboard`); `Ctrl+O` opens it instead of falling through.
     pub pinned_upgrade_cta_live: bool,
@@ -1292,6 +1294,7 @@ impl DashboardState {
             location_picker: None,
             location_hit: crate::app::agent_view::HitArea::default(),
             upgrade_cta_hit: crate::app::agent_view::HitArea::default(),
+            truth_bar_hit: crate::app::agent_view::HitArea::default(),
             pinned_upgrade_cta_live: false,
             dispatch_worktree: false,
             cwd_has_git_ancestor: false,
@@ -3388,6 +3391,7 @@ impl DashboardState {
                 .update_hover(mouse.column, mouse.row);
             changed |= self.location_hit.update_hover(mouse.column, mouse.row);
             changed |= self.upgrade_cta_hit.update_hover(mouse.column, mouse.row);
+            changed |= self.truth_bar_hit.update_hover(mouse.column, mouse.row);
 
             // Slash / @-file dropdown hover wins over row hover so the
             // completion list tracks the pointer while open (mirrors
@@ -3651,6 +3655,10 @@ impl DashboardState {
                 self.focus_new_agent_button();
                 self.manual_scroll_active = false;
                 return InputOutcome::Action(Action::DashboardCreateNewAgentWithDetail);
+            }
+
+            if self.truth_bar_hit.contains(mouse.column, mouse.row) {
+                return InputOutcome::Action(Action::DashboardShowTruthStatus);
             }
 
             // Click on the header upgrade CTA `[label]` → open the promo url

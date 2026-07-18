@@ -517,6 +517,21 @@ pub struct SessionInfoData {
     #[serde(default)]
     pub turn_index: u64,
     pub context: ContextInfo,
+    /// Last-turn prompt-cache hit ratio (0.0..=1.0) when provider-reported.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hit_ratio: Option<f64>,
+    /// Session rolling cache hit ratio when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_session_hit_ratio: Option<f64>,
+    /// Prefix stability score 0..=100 (Lumen SessionCacheTracker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_stability_score: Option<u8>,
+    /// Provider cache profile label (e.g. "DeepSeek auto-prefix").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_profile: Option<String>,
+    /// Human-readable cache line (same as headless usage.cache_line).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_line: Option<String>,
 }
 
 /// Whether this model slug supports showing checkpoint identity (resolved model ID, fingerprint).

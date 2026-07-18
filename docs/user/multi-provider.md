@@ -1,8 +1,15 @@
 # 多模型适配（Multi-provider）
 
 Lumen 的内置目录是多厂商 BYOK，不是 DeepSeek 单厂商产品。默认仍为
-`deepseek-chat`，因为长会话保持稳定前缀时，DeepSeek 的 prompt cache 命中率高，
-更适合作为低成本的默认路径。用户可以随时用 `-m`、`/model` 或 Ctrl+M 切换。
+`deepseek-chat`，因为长会话保持稳定前缀时，DeepSeek 的 **automatic prefix cache**
+命中率高，更适合作为低成本的默认路径。用户可以随时用 `-m`、`/model` 或 Ctrl+M 切换。
+
+### Prompt cache 是否「全模型同等」？
+
+**否。** 前缀稳定纪律对所有模型有益；**账单级高命中**主要在 DeepSeek（以及部分
+OpenAI 兼容自动缓存模型）。Claude 等需要显式 breakpoint；本地模型通常没有云端
+prompt cache。完整矩阵与纪律见 `policy/LUMEN_CACHE.md`（Reasonix 级 shape 诊断 +
+多厂商适配，实现于 `lumen-discipline`）。
 
 真实 API key 只放环境变量，不写进配置文件或 git。
 

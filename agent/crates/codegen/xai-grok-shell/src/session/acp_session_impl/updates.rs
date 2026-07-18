@@ -145,6 +145,29 @@ impl SessionActor {
         if let Some(ms) = turn_start_ms {
             obj.insert("turnStartMs".to_string(), ms.into());
         }
+        // Mid-turn / stream meta: surface last provider cache snapshot for truth bar.
+        if let Some(snap) =
+            crate::session::prompt_cache_registry::last_snapshot(self.session_info.id.0.as_ref())
+        {
+            if let Some(r) = snap.last_hit_ratio {
+                obj.insert("cacheHitRatio".to_string(), serde_json::json!(r));
+            }
+            if let Some(r) = snap.session_hit_ratio {
+                obj.insert("cacheSessionHitRatio".to_string(), serde_json::json!(r));
+            }
+            obj.insert(
+                "cacheStabilityScore".to_string(),
+                serde_json::json!(snap.stability_score),
+            );
+            obj.insert(
+                "cacheProfile".to_string(),
+                serde_json::Value::String(snap.profile_label.to_string()),
+            );
+            obj.insert(
+                "cacheLine".to_string(),
+                serde_json::Value::String(snap.cache_line),
+            );
+        }
         if let Some(update_type) = update_type {
             obj.insert("updateType".to_string(), update_type.into());
         }

@@ -936,6 +936,56 @@ pub(super) fn supersede_open_reload_window(
 
 // TaskResult handlers.
 
+/// Pull provider-reported cache tokens from PromptResponse `_meta` and push
+/// them into the truth bar. Accepts both top-level camelCase fields and the
+/// nested `usage` object the shell may attach.
+fn feed_truth_cache_from_prompt_meta(agent: &mut AgentView, meta: &serde_json::Map<String, serde_json::Value>) {
+    let cached = meta
+        .get("cachedReadTokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            meta.get("usage")
+                .and_then(|u| u.get("cache_read_input_tokens"))
+                .and_then(|v| v.as_u64())
+        })
+        .or_else(|| {
+            meta.get("usage")
+                .and_then(|u| u.get("totals"))
+                .and_then(|t| t.get("cached_read_tokens"))
+                .and_then(|v| v.as_u64())
+        });
+    let input = meta
+        .get("inputTokens")
+        .and_then(|v| v.as_u64())
+        .or_else(|| {
+            meta.get("usage")
+                .and_then(|u| u.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+        })
+        .or_else(|| {
+            meta.get("usage")
+                .and_then(|u| u.get("totals"))
+                .and_then(|t| t.get("input_tokens"))
+                .and_then(|v| v.as_u64())
+        });
+    let Some(cached) = cached else {
+        return;
+    };
+    // Pure cache hit reports (Anthropic): input may be 0 while cache_read > 0.
+    let denom = input.unwrap_or(0).max(cached);
+    if denom == 0 {
+        return;
+    }
+    let ratio = (cached as f64 / denom as f64).clamp(0.0, 1.0);
+    let summary = crate::ui_contract::CacheSummary {
+        hit_ratio: Some(ratio),
+        source: Some(crate::ui_contract::CacheSource::ProviderReported),
+    };
+    if let Err(err) = agent.note_truth_cache(summary) {
+        tracing::debug!(error = %err, "truth cache feed skipped");
+    }
+}
+
 pub(super) fn handle_prompt_response(
     app: &mut AppView,
     agent_id: AgentId,
@@ -1105,6 +1155,15 @@ pub(super) fn handle_prompt_response(
                     "send_now_cancel": send_now_cancel,
                 })),
             );
+        }
+
+        // FINAL-5UX / Reasonix-class: auto-feed provider-reported prompt cache
+        // into the truth bar so cold sessions do not stay on "cache unavailable".
+        // Tokens ride PromptResponse._meta (see shell PromptResponseMeta).
+        if let Ok(pr) = &result
+            && let Some(meta) = pr.meta.as_ref()
+        {
+            feed_truth_cache_from_prompt_meta(agent, meta);
         }
 
         // Stash the complete in-flight prompt before finish_turn clears it.
@@ -1288,7 +1347,7 @@ pub(super) fn handle_prompt_response(
                 // title into the body automatically.
                 let notif_title = session_name
                     .map(|s| s.to_string())
-                    .unwrap_or_else(|| "Grok".into());
+                    .unwrap_or_else(|| "Lumen".into());
 
                 app.deferred_notification = Some((
                     NotificationEvent {
