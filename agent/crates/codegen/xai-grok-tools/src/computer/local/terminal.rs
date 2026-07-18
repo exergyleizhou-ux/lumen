@@ -2701,7 +2701,13 @@ fn spawn_shell_command(
                 format!("{inject}{command}")
             }
         };
-        let mut cmd = tokio::process::Command::new(shell.binary_path());
+        // Match the persistent-shell path: macOS wraps via sandbox-exec when
+        // network is restricted; Linux installs seccomp below in pre_exec.
+        let restrict_network = xai_grok_sandbox::should_restrict_child_network();
+        let mut cmd = tokio::process::Command::from(xai_grok_sandbox::child_net::child_command(
+            shell.binary_path(),
+            restrict_network,
+        ));
         // Non-interactive zsh still defaults to NOMATCH; pass via argv like init's -o extendedglob.
         if matches!(shell, shell_state::ShellKind::Zsh) {
             cmd.arg("-o").arg("nonomatch");
