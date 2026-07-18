@@ -28,6 +28,8 @@ if [[ -f "$LEADER_DST" ]]; then
     chmod 755 "$LEADER_DST" 2>/dev/null || true
 fi
 cp "$HOME/.local/bin/lumen" "$LEADER_DST"
+# macOS code-signing: replace with ad-hoc signature so taskgated doesn't kill us
+codesign --force --sign - "$LEADER_DST" 2>/dev/null || true
 chmod 555 "$LEADER_DST"
 echo "  installed: $LEADER_DST"
 echo "  version:   $($LEADER_DST --version 2>&1)"

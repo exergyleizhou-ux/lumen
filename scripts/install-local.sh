@@ -46,6 +46,8 @@ TMP_DEST="$DEST.tmp.$$"
 trap 'rm -f "$TMP_DEST"' EXIT
 cp "$BIN_SRC" "$TMP_DEST"
 chmod +x "$TMP_DEST"
+# ad-hoc code-sign so macOS taskgated doesn't kill unsigned binaries
+codesign --force --sign - "$TMP_DEST" 2>/dev/null || true
 mv -f "$TMP_DEST" "$DEST"
 trap - EXIT
 
