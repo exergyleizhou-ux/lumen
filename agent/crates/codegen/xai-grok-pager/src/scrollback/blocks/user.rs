@@ -195,7 +195,7 @@ impl UserPromptBlock {
     /// Elevated band behind user-prompt rows so turns are scannable in a long
     /// transcript. Pure band selection (no process-global reads) — unit-tested
     /// without toggling `terminal_native_lock`, which races concurrent
-    /// `Theme::current()` tests that do not hold the theme test mutex.
+    /// `Theme::groknight()` tests that do not hold the theme test mutex.
     ///
     /// - Terminal-native / minimal: ANSI bright black as **background** — dark
     ///   profiles elevate off black, light profiles darken off white (bright-black
@@ -250,8 +250,8 @@ impl UserPromptBlock {
         max_lines: Option<usize>,
         show_prefix: bool,
         is_selected: bool,
+        theme: &Theme,
     ) -> Vec<BlockLine> {
-        let theme = Theme::current();
         // Minimal mode engages this lock; read it here instead of app state.
         let terminal_native = crate::theme::cache::terminal_native_locked();
         let (prefix_style, text_style, skill_style) = Self::prompt_styles(&theme, terminal_native);
@@ -470,6 +470,7 @@ impl BlockContent for UserPromptBlock {
             max_lines,
             prompt_cfg.show_prefix && !compact,
             ctx.is_selected,
+            &Theme::current(),
         );
 
         BlockOutput { lines }
@@ -544,7 +545,7 @@ mod tests {
     #[test]
     fn test_short_prompt_no_truncation() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -554,7 +555,7 @@ mod tests {
     #[test]
     fn test_short_prompt_with_max_lines() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(2), true, false, &Theme::groknight());
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -566,7 +567,7 @@ mod tests {
     #[test]
     fn test_long_prompt_wraps() {
         let block = UserPromptBlock::new("this is a very long prompt that should wrap");
-        let lines = block.wrap_prompt_lines(20, None, true, false);
+        let lines = block.wrap_prompt_lines(20, None, true, false, &Theme::groknight());
 
         assert!(lines.len() > 1, "Should wrap to multiple lines");
         assert!(line_text(&lines[0].content).starts_with(crate::glyphs::prompt_arrow()));
@@ -578,7 +579,7 @@ mod tests {
     fn test_truncation_adds_ellipsis() {
         let block =
             UserPromptBlock::new("this is a very long prompt that should wrap to many lines");
-        let lines = block.wrap_prompt_lines(20, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(20, Some(2), true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 2);
         // Last line should have ellipsis
@@ -595,7 +596,7 @@ mod tests {
         // Create a prompt that wraps to exactly fill lines
         let block = UserPromptBlock::new("aaaa bbbb cccc dddd eeee ffff");
         let width = 15; // Narrow width to force wrapping
-        let lines = block.wrap_prompt_lines(width, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(width, Some(2), true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 2);
 
@@ -619,7 +620,7 @@ mod tests {
     #[test]
     fn test_bash_prompt_prefix() {
         let block = UserPromptBlock::bash("ls -la");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 1);
         assert!(line_text(&lines[0].content).starts_with("$ "));
@@ -628,10 +629,10 @@ mod tests {
     #[test]
     fn skill_with_args_only_command_is_teal() {
         let block = UserPromptBlock::skill("/pr-workflow create a ticket for this");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let spans = &lines[0].content.spans;
         assert_eq!(spans.len(), 3);
         assert_eq!(spans[1].content.as_ref(), "/pr-workflow");
@@ -643,10 +644,10 @@ mod tests {
     #[test]
     fn skill_without_args_all_teal() {
         let block = UserPromptBlock::skill("/pr-workflow");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let spans = &lines[0].content.spans;
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[1].content.as_ref(), "/pr-workflow");
@@ -656,10 +657,10 @@ mod tests {
     #[test]
     fn skill_multiline_only_first_token_teal() {
         let block = UserPromptBlock::skill("/foo bar\nbaz");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 2);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let line0 = &lines[0].content.spans;
         assert_eq!(line0[1].content.as_ref(), "/foo");
         assert_eq!(line0[1].style.fg, Some(theme.accent_skill));
@@ -677,10 +678,10 @@ mod tests {
     fn mid_text_token_only_token_is_teal() {
         let text = "great /pr-workflow all good now";
         let block = UserPromptBlock::with_skill_tokens(text, vec![6..18]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let spans = &lines[0].content.spans;
         assert_eq!(spans.len(), 4);
         assert_eq!(spans[1].content.as_ref(), "great ");
@@ -695,10 +696,10 @@ mod tests {
     fn mid_text_multiple_tokens_each_teal() {
         let text = "run /commit then /review please";
         let block = UserPromptBlock::with_skill_tokens(text, vec![4..11, 17..24]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let teal: Vec<&str> = lines[0]
             .content
             .spans
@@ -714,10 +715,10 @@ mod tests {
         let text = "first line\nthen /model here";
         // "/model" starts after "first line\nthen " = 16 bytes.
         let block = UserPromptBlock::with_skill_tokens(text, vec![16..22]);
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 2);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let line0 = &lines[0].content.spans;
         assert!(
             line0.iter().all(|s| s.style.fg != Some(theme.accent_skill)),
@@ -746,8 +747,8 @@ mod tests {
         );
         assert_eq!(block.skill_token_ranges, vec![7..13]);
 
-        let lines = block.wrap_prompt_lines(80, None, true, false);
-        let theme = Theme::current();
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
+        let theme = Theme::groknight();
         let teal: Vec<&str> = lines[0]
             .content
             .spans
@@ -762,8 +763,8 @@ mod tests {
     fn all_token_ranges_invalid_renders_plain() {
         let block = UserPromptBlock::with_skill_tokens("plain text", vec![100..200]);
         assert!(block.skill_token_ranges.is_empty());
-        let lines = block.wrap_prompt_lines(80, None, true, false);
-        let theme = Theme::current();
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
+        let theme = Theme::groknight();
         assert_eq!(lines[0].content.spans[1].style.fg, Some(theme.text_primary));
     }
 
@@ -785,10 +786,10 @@ mod tests {
         // truncating re-wrap must keep the visible head teal.
         let text = "one\ntwo\n/pr-workflow tail";
         let block = UserPromptBlock::with_skill_tokens(text, vec![8..20]);
-        let lines = block.wrap_prompt_lines(8, Some(3), false, false);
+        let lines = block.wrap_prompt_lines(8, Some(3), false, false, &Theme::groknight());
         assert_eq!(lines.len(), 3);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let last = &lines[2].content;
         assert!(line_text(last).ends_with(" \u{2026}"));
         let teal = teal_text(last, &theme);
@@ -804,10 +805,10 @@ mod tests {
         // the ellipsis-reduced width, so it must survive whole and teal.
         let text = "one\ntwo\n/do-it more words here";
         let block = UserPromptBlock::with_skill_tokens(text, vec![8..14]);
-        let lines = block.wrap_prompt_lines(20, Some(3), false, false);
+        let lines = block.wrap_prompt_lines(20, Some(3), false, false, &Theme::groknight());
         assert_eq!(lines.len(), 3);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let last = &lines[2].content;
         assert!(line_text(last).ends_with(" \u{2026}"));
         assert_eq!(teal_text(last, &theme), "/do-it");
@@ -826,10 +827,10 @@ mod tests {
         // the wrapper splits it mid-token; every piece must stay teal.
         let text = "aa /pr-workflow zz";
         let block = UserPromptBlock::with_skill_tokens(text, vec![3..15]);
-        let lines = block.wrap_prompt_lines(8, None, false, false);
+        let lines = block.wrap_prompt_lines(8, None, false, false, &Theme::groknight());
         assert!(lines.len() >= 2);
 
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let teal_by_line: Vec<String> = lines
             .iter()
             .map(|l| teal_text(&l.content, &theme))
@@ -845,7 +846,7 @@ mod tests {
     #[test]
     fn test_multiline_input() {
         let block = UserPromptBlock::new("line one\nline two\nline three");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 3);
         assert!(line_text(&lines[0].content).starts_with(crate::glyphs::prompt_arrow()));
@@ -856,7 +857,7 @@ mod tests {
     #[test]
     fn test_multiline_truncated() {
         let block = UserPromptBlock::new("line one\nline two\nline three");
-        let lines = block.wrap_prompt_lines(80, Some(2), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(2), true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 2);
         // Last line should have ellipsis since there's more content
@@ -867,7 +868,7 @@ mod tests {
     fn test_exact_fit_no_ellipsis() {
         // If content fits exactly in max_lines, no ellipsis needed
         let block = UserPromptBlock::new("short");
-        let lines = block.wrap_prompt_lines(80, Some(1), true, false);
+        let lines = block.wrap_prompt_lines(80, Some(1), true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 1);
         assert!(!line_text(&lines[0].content).contains('\u{2026}'));
@@ -876,7 +877,7 @@ mod tests {
     #[test]
     fn test_selected_prompt_uses_accent_color() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, true);
+        let lines = block.wrap_prompt_lines(80, None, true, true, &Theme::groknight());
         let expected = format!("{}hello", crate::glyphs::prompt_arrow());
 
         assert_eq!(lines.len(), 1);
@@ -884,7 +885,7 @@ mod tests {
 
         // Prefix always uses accent (or Cyan when accent_user is Reset for
         // terminal-native / NO_COLOR), never dim gray. Bold is minimal-only.
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let prefix_span = &lines[0].content.spans[0];
         let expected_fg = match theme.accent_user {
             ratatui::style::Color::Reset => Some(ratatui::style::Color::Cyan),
@@ -897,13 +898,13 @@ mod tests {
     #[test]
     fn test_unselected_prompt_still_uses_accent_pointer() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
 
         assert_eq!(lines.len(), 1);
 
         // Unselected no longer collapses onto gray_dim — same accent pointer
         // so user turns stay scannable in a long transcript.
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let prefix_span = &lines[0].content.spans[0];
         let expected_fg = match theme.accent_user {
             ratatui::style::Color::Reset => Some(ratatui::style::Color::Cyan),
@@ -924,7 +925,7 @@ mod tests {
     #[test]
     fn test_prompt_lines_have_selection_range() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert!(
             lines
                 .iter()
@@ -935,7 +936,7 @@ mod tests {
     #[test]
     fn test_prompt_prefix_excluded_from_selection() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
         // Prefix is span 0, content starts at span 1
         match &lines[0].selectable {
@@ -949,7 +950,7 @@ mod tests {
     #[test]
     fn test_prompt_no_prefix_all_selectable() {
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, false, false);
+        let lines = block.wrap_prompt_lines(80, None, false, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
         assert!(matches!(lines[0].selectable, Selectable::All));
     }
@@ -957,7 +958,7 @@ mod tests {
     #[test]
     fn test_prompt_wrapped_lines_have_joiners() {
         let block = UserPromptBlock::new("this is a long prompt that should wrap");
-        let lines = block.wrap_prompt_lines(15, None, true, false);
+        let lines = block.wrap_prompt_lines(15, None, true, false, &Theme::groknight());
         assert!(lines.len() > 1);
         // First line: no joiner
         assert!(lines[0].joiner.is_none());
@@ -968,7 +969,7 @@ mod tests {
     #[test]
     fn test_prompt_multiline_joiners() {
         let block = UserPromptBlock::new("line one\nline two");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 2);
         // First line: no joiner
         assert!(lines[0].joiner.is_none());
@@ -979,7 +980,7 @@ mod tests {
     #[test]
     fn test_cron_prompt_prefix() {
         let block = UserPromptBlock::cron("/pr-babysit check");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
         let text = line_text(&lines[0].content);
         assert!(
@@ -992,7 +993,7 @@ mod tests {
     #[test]
     fn test_bash_prefix_excluded_from_selection() {
         let block = UserPromptBlock::bash("ls -la");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 1);
         match &lines[0].selectable {
             Selectable::Spans(range) => {
@@ -1005,7 +1006,7 @@ mod tests {
     #[test]
     fn test_continuation_indent_excluded_from_selection() {
         let block = UserPromptBlock::new("line one\nline two");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert_eq!(lines.len(), 2);
         // Both lines should exclude their prefix/indent
         for line in &lines {
@@ -1087,7 +1088,7 @@ mod tests {
 
     #[test]
     fn user_prompt_bold_only_in_minimal() {
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         let (prefix, body, skill) = UserPromptBlock::prompt_styles(&theme, true);
         assert!(prefix.add_modifier.contains(Modifier::BOLD));
         assert!(body.add_modifier.contains(Modifier::BOLD));
@@ -1100,14 +1101,14 @@ mod tests {
 
         // Default unit-test env is fullscreen (lock off).
         let block = UserPromptBlock::new("hello");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         let spans = &lines[0].content.spans;
         assert!(!spans[0].style.add_modifier.contains(Modifier::BOLD));
         assert!(!spans[1].style.add_modifier.contains(Modifier::BOLD));
     }
 
     /// Pure band logic (no global `terminal_native_lock` — that races other
-    /// tests that call `Theme::current()` without the theme test mutex).
+    /// tests that call `Theme::groknight()` without the theme test mutex).
     #[test]
     fn prompt_band_color_native_vs_rgb() {
         use ratatui::style::Color;
@@ -1144,14 +1145,14 @@ mod tests {
     #[test]
     fn user_prompt_band_is_semantic_not_panel() {
         let block = UserPromptBlock::new("scan me");
-        let lines = block.wrap_prompt_lines(80, None, true, false);
+        let lines = block.wrap_prompt_lines(80, None, true, false, &Theme::groknight());
         assert!(
             !lines[0].background_is_panel,
             "band must be semantic so flat_background keeps it"
         );
-        // Whatever Theme::current() is this moment, wrap used the same source
+        // Whatever Theme::groknight() is this moment, wrap used the same source
         // for band selection (same process, no lock toggle in this test).
-        let theme = Theme::current();
+        let theme = Theme::groknight();
         assert_eq!(
             lines[0].background,
             UserPromptBlock::prompt_band_color_for(

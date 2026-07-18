@@ -2753,9 +2753,9 @@ mod command_palette_vim_input_tests {
             }
             let area = Rect::new(0, 0, 80, 24);
             let mut buf = Buffer::empty(area);
-            agent.draw_active_modal(area, &mut buf, crate::theme::Theme::current(), false);
+            agent.draw_active_modal(area, &mut buf, crate::theme::Theme::groknight(), false);
 
-            let theme = crate::theme::Theme::current();
+            let theme = crate::theme::Theme::groknight();
             let search_bar = match agent.active_modal.as_ref() {
                 Some(ActiveModal::CommandPalette { state, .. }) => {
                     state

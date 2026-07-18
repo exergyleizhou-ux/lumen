@@ -60,6 +60,13 @@ pub fn is_cli_chat_proxy_url(url: &str) -> bool {
     if matches_trusted_base_url(url, crate::env::PROD_CLI_CHAT_PROXY_BASE_URL) {
         return true;
     }
+    #[cfg(any(test, feature = "test-support"))]
+    if reqwest::Url::parse(url)
+        .ok()
+        .is_some_and(|candidate| matches!(candidate.host_str(), Some("127.0.0.1" | "localhost")))
+    {
+        return true;
+    }
     false
 }
 /// True for first-party xAI endpoints (`*.x.ai`, cli-chat-proxy, and optional
@@ -216,6 +223,11 @@ mod tests {
     #[test]
     fn test_is_cli_chat_proxy_url_rejects_public_api() {
         assert!(!is_cli_chat_proxy_url("https://api.x.ai/v1"));
+    }
+    #[test]
+    fn test_is_cli_chat_proxy_url_accepts_loopback_only_in_test_builds() {
+        assert!(is_cli_chat_proxy_url("http://127.0.0.1:43123/v1"));
+        assert!(is_cli_chat_proxy_url("http://localhost:43123/v1"));
     }
     #[test]
     fn test_is_cli_chat_proxy_url_rejects_spoofed_hostname() {

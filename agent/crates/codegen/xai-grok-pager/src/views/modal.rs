@@ -439,6 +439,11 @@ pub fn default_palette_entries(sharing_enabled: bool) -> Vec<PaletteEntry> {
             command: PaletteCommand::SlashCommand("/view-plan".into()),
         },
         PaletteEntry {
+            label: "Autonomous Goal".into(),
+            shortcut: "/goal <objective>".into(),
+            command: PaletteCommand::SlashCommand("/goal ".into()),
+        },
+        PaletteEntry {
             label: "Memory".into(),
             shortcut: "/memory".into(),
             command: PaletteCommand::Memory,

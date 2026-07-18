@@ -33,10 +33,10 @@ fn main() {
     if let Some(head_path) = git_output(&manifest_dir, &["rev-parse", "--git-path", "HEAD"]) {
         watch_git_path(&manifest_dir, &head_path);
     }
-    if let Some(head_ref) = git_output(&manifest_dir, &["symbolic-ref", "-q", "HEAD"]) {
-        if let Some(ref_path) = git_output(&manifest_dir, &["rev-parse", "--git-path", &head_ref]) {
-            watch_git_path(&manifest_dir, &ref_path);
-        }
+    if let Some(head_ref) = git_output(&manifest_dir, &["symbolic-ref", "-q", "HEAD"])
+        && let Some(ref_path) = git_output(&manifest_dir, &["rev-parse", "--git-path", &head_ref])
+    {
+        watch_git_path(&manifest_dir, &ref_path);
     }
 
     let commit = git_output(&manifest_dir, &["rev-parse", "--short", "HEAD"])

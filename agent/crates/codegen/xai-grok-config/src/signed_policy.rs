@@ -52,8 +52,48 @@ const fn const_str_eq(a: &str, b: &str) -> bool {
 }
 /// Run `f` over the trusted key set — the compiled-in [`EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS`],
 /// unless the compile-time-excluded test seam overrides it.
+#[cfg(not(feature = "test-support"))]
 fn with_embedded_keys<R>(f: impl FnOnce(&[(&str, &[u8])]) -> R) -> R {
     f(EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS)
+}
+#[cfg(feature = "test-support")]
+fn with_embedded_keys<R>(f: impl FnOnce(&[(&str, &[u8])]) -> R) -> R {
+    let guard = test_seam::keys()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(keys) = guard.as_ref() else {
+        return f(EMBEDDED_DEPLOYMENT_CONFIG_PUBKEYS);
+    };
+    let borrowed: Vec<(&str, &[u8])> = keys
+        .iter()
+        .map(|(id, key)| (id.as_str(), key.as_slice()))
+        .collect();
+    f(&borrowed)
+}
+
+/// Test-only trusted-key injection for cross-crate signed-policy integration
+/// tests. The feature is enabled only by dev-dependencies; release builds have
+/// no mutable key surface.
+#[cfg(feature = "test-support")]
+pub mod test_seam {
+    use std::sync::{Mutex, OnceLock};
+
+    type OwnedKeys = Vec<(String, Vec<u8>)>;
+
+    pub(super) fn keys() -> &'static Mutex<Option<OwnedKeys>> {
+        static KEYS: OnceLock<Mutex<Option<OwnedKeys>>> = OnceLock::new();
+        KEYS.get_or_init(|| Mutex::new(None))
+    }
+
+    pub fn set_embedded_keys(values: &[(&str, &[u8])]) {
+        let owned = values
+            .iter()
+            .map(|(id, key)| ((*id).to_owned(), (*key).to_vec()))
+            .collect();
+        *keys()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(owned);
+    }
 }
 /// Sidecar persisted next to the policy so the load-time gate can re-verify it offline.
 pub const SIGNATURE_SIDECAR_FILE: &str = "managed_config.sig.json";

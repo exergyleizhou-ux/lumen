@@ -4,7 +4,8 @@
 //! behavior is covered by `team_managed_config.rs`).
 //!
 //! Every test MUST be `#[serial]` and install its own seam keys first: the test
-//! binary shares one process-global `GROK_HOME`, process env, and key override.
+//! binary shares one process-global `LUMEN_HOME`/legacy `GROK_HOME`, process
+//! env, and key override.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -22,15 +23,16 @@ pub const TEST_EXPIRES_AT: u64 = 4_000_000_000;
 /// signs under it, so the two can't drift.
 pub const TEST_KEY_ID: &str = "v1";
 
-/// Shared temp dir used as GROK_HOME for the whole test binary (the grok_home
-/// `OnceLock` only allows one value per process); scrubs the env this suite
-/// depends on before any test thread reads it.
+/// Shared temp dir used as canonical LUMEN_HOME and legacy GROK_HOME for the
+/// whole test binary (the path `OnceLock`s only allow one value per process);
+/// scrubs the env this suite depends on before any test thread reads it.
 pub fn test_home() -> &'static PathBuf {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
         let path = tempfile::TempDir::new().unwrap().keep();
         // SAFETY: set once at init before other threads read the vars.
         unsafe {
+            std::env::set_var("LUMEN_HOME", &path);
             std::env::set_var("GROK_HOME", &path);
             for var in [
                 "GROK_DEPLOYMENT_KEY",

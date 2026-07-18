@@ -384,7 +384,7 @@ fn version_with_channel() -> &'static str {
 #[command(
     name = "lumen",
     version = version_with_channel(),
-    about = "Lumen TUI (DeepSeek-first · single-binary coding agent)",
+    about = "Lumen TUI (DeepSeek-first · multi-model coding agent)",
     disable_version_flag = true,
     next_display_order = None,
     help_template = "\

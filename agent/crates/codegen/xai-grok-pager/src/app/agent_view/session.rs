@@ -87,7 +87,11 @@ impl AgentView {
             provider_id,
             model_id,
             base_url: self.truth_session.fingerprint_input.base_url.clone(),
-            tool_schema_hash: self.truth_session.fingerprint_input.tool_schema_hash.clone(),
+            tool_schema_hash: self
+                .truth_session
+                .fingerprint_input
+                .tool_schema_hash
+                .clone(),
             binary_id: xai_grok_version::VERSION.to_owned(),
         }
     }
@@ -1631,9 +1635,7 @@ mod truth_runtime_tests {
             },
             provider: crate::ui_contract::ProviderState::Unknown,
             model: crate::ui_contract::ModelState::Unknown,
-            capability: CapabilityState::Unknown {
-                reason: "x".into(),
-            },
+            capability: CapabilityState::Unknown { reason: "x".into() },
             permission: PermissionSummary::Unknown,
             cache: crate::ui_contract::CacheSummary {
                 hit_ratio: None,

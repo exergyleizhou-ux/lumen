@@ -85,7 +85,7 @@ thread_local! {
 
 /// Detect and cache the graphics protocol for the current terminal.
 pub fn detect_graphics_protocol() -> GraphicsProtocol {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     if let Some(p) = TEST_PROTOCOL_OVERRIDE.with(|c| c.get()) {
         return p;
     }
