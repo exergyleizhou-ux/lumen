@@ -1,15 +1,15 @@
 {
-  "default": "deepseek-v4-pro",
-  "web_search": "deepseek-v4-pro",
-  "image_description": "deepseek-v4-pro",
-  "session_summary": "deepseek-v4-pro",
+  "default": "deepseek-chat",
+  "web_search": "deepseek-chat",
+  "image_description": "deepseek-chat",
+  "session_summary": "deepseek-chat",
   "models": [
     {
-      "id": "deepseek-v4-pro",
-      "model": "deepseek-v4-pro",
-      "name": "DeepSeek V4 Pro",
-      "description": "DeepSeek V4 Pro — flagship model, 128K context, 99%+ cache hit",
-      "context_window": 1000000,
+      "id": "deepseek-chat",
+      "model": "deepseek-chat",
+      "name": "DeepSeek V4 Flash",
+      "description": "DeepSeek V4 Flash — fast, via deepseek-chat alias, 99%+ cache hit",
+      "context_window": 128000,
       "max_completion_tokens": 8192,
       "temperature": 0.0,
       "top_p": 1.0,
@@ -31,24 +31,42 @@
       "pricing": {
         "input": 0.27,
         "cache_read": 0.014,
-        "output": 1.10,
+        "output": 1.1,
         "currency": "USD"
       }
     },
     {
-      "id": "deepseek-v4-flash",
-      "model": "deepseek-v4-flash",
-      "name": "DeepSeek V4 Flash",
-      "description": "DeepSeek V4 Flash — fast model, ideal for quick tasks",,
-      "context_window": 1000000,
+      "id": "deepseek-reasoner",
+      "model": "deepseek-reasoner",
+      "name": "DeepSeek V4 Pro",
+      "description": "DeepSeek V4 Pro — reasoning, via deepseek-reasoner alias",
+      "context_window": 128000,
       "max_completion_tokens": 8192,
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "supports_reasoning_effort": true,
       "reasoning_efforts": [
-        {"id": "low",  "value": "low",  "label": "Low Effort",  "description": "Quick reasoning",       "default": false},
-        {"id": "medium","value": "medium","label": "Medium Effort","description": "Standard depth",        "default": false},
-        {"id": "high",  "value": "high",  "label": "High Effort",  "description": "Deep chain-of-thought", "default": true}
+        {
+          "id": "low",
+          "value": "low",
+          "label": "Low Effort",
+          "description": "Quick reasoning",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "value": "medium",
+          "label": "Medium Effort",
+          "description": "Standard depth",
+          "default": false
+        },
+        {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "description": "Deep chain-of-thought",
+          "default": true
+        }
       ],
       "base_url": "https://api.deepseek.com/v1",
       "env_key": "DEEPSEEK_API_KEY",
@@ -135,7 +153,10 @@
       "api_backend": "messages",
       "supported_in_api": true,
       "base_url": "https://api.anthropic.com",
-      "env_key": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+      "env_key": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
       "byok": true
     },
     {
@@ -149,7 +170,10 @@
       "api_backend": "messages",
       "supported_in_api": true,
       "base_url": "https://api.anthropic.com",
-      "env_key": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+      "env_key": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
       "byok": true
     },
     {
@@ -163,7 +187,10 @@
       "api_backend": "messages",
       "supported_in_api": true,
       "base_url": "https://api.anthropic.com",
-      "env_key": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+      "env_key": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
       "byok": true
     },
     {
@@ -177,7 +204,10 @@
       "api_backend": "messages",
       "supported_in_api": true,
       "base_url": "https://api.anthropic.com",
-      "env_key": ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"],
+      "env_key": [
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN"
+      ],
       "byok": true
     },
     {
@@ -191,7 +221,11 @@
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "https://api.x.ai/v1",
-      "env_key": ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_API_KEY"],
+      "env_key": [
+        "XAI_API_KEY",
+        "GROK_CODE_XAI_API_KEY",
+        "GROK_API_KEY"
+      ],
       "byok": true
     },
     {
@@ -204,7 +238,11 @@
       "supported_in_api": true,
       "supports_reasoning_effort": true,
       "base_url": "https://api.x.ai/v1",
-      "env_key": ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_API_KEY"],
+      "env_key": [
+        "XAI_API_KEY",
+        "GROK_CODE_XAI_API_KEY",
+        "GROK_API_KEY"
+      ],
       "byok": true
     },
     {
@@ -302,7 +340,12 @@
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "env_key": ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"],
+      "env_key": [
+        "ZHIPU_API_KEY",
+        "ZHIPUAI_API_KEY",
+        "BIGMODEL_API_KEY",
+        "GLM_API_KEY"
+      ],
       "byok": true
     },
     {
@@ -316,7 +359,12 @@
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "env_key": ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"],
+      "env_key": [
+        "ZHIPU_API_KEY",
+        "ZHIPUAI_API_KEY",
+        "BIGMODEL_API_KEY",
+        "GLM_API_KEY"
+      ],
       "byok": true
     },
     {
@@ -330,7 +378,12 @@
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "https://open.bigmodel.cn/api/paas/v4",
-      "env_key": ["ZHIPU_API_KEY", "ZHIPUAI_API_KEY", "BIGMODEL_API_KEY", "GLM_API_KEY"],
+      "env_key": [
+        "ZHIPU_API_KEY",
+        "ZHIPUAI_API_KEY",
+        "BIGMODEL_API_KEY",
+        "GLM_API_KEY"
+      ],
       "byok": true
     },
     {
@@ -372,7 +425,10 @@
       "api_backend": "chat_completions",
       "supported_in_api": true,
       "base_url": "http://127.0.0.1:1234/v1",
-      "env_key": ["LMSTUDIO_API_KEY", "LOCAL_API_KEY"],
+      "env_key": [
+        "LMSTUDIO_API_KEY",
+        "LOCAL_API_KEY"
+      ],
       "byok": true
     },
     {
