@@ -63,6 +63,19 @@ expect_fail install_untracked env LUMEN_SKIP_BUILD=1 LUMEN_INSTALL_DIR="$INSTALL
   "$INSTALL_ROOT/scripts/install-local.sh"
 rm "$INSTALL_ROOT/scratch.txt"
 
+echo "=== self-update always rejects dirty source ==="
+SELF_UPDATE_ROOT="$TMP/self-update"
+mkdir -p "$SELF_UPDATE_ROOT/scripts"
+cp "$ROOT/scripts/self-update.sh" "$SELF_UPDATE_ROOT/scripts/self-update.sh"
+chmod +x "$SELF_UPDATE_ROOT/scripts/self-update.sh"
+init_git "$SELF_UPDATE_ROOT"
+git -C "$SELF_UPDATE_ROOT" add scripts/self-update.sh
+git -C "$SELF_UPDATE_ROOT" commit -qm base
+printf 'uncommitted optimization\n' >"$SELF_UPDATE_ROOT/optimization.rs"
+expect_fail self_update_dirty env HOME="$TMP/self-update-home" \
+  "$SELF_UPDATE_ROOT/scripts/self-update.sh"
+grep -q 'refuses a dirty source tree' "$TMP/self_update_dirty.out"
+
 echo "=== source-lock critical coverage ==="
 for required in \
   .gitleaksignore \
@@ -256,8 +269,9 @@ tasks = [{"task": f"old-{index:02d}", "result": "PASS", "agent_ec": 0} for index
 Path(sys.argv[1]).write_text(json.dumps({"schema_version": 1, "check_id": "eval_live", "pass": True, "pass_count": 20, "fail_count": 0, "total": 20, "min_required": 18, "silent_corruption": 0, "tasks": tasks, "binary": sys.argv[2], "generated_at": "stale"}, indent=2) + "\n")
 PY
 
-HOME="$FIX_HOME" DEEPSEEK_API_KEY=fake \
-  "$FIX/scripts/verify-readiness.sh" >"$TMP/verify-skip.out"
+expect_fail verify_skip_is_not_green env HOME="$FIX_HOME" DEEPSEEK_API_KEY=fake \
+  "$FIX/scripts/verify-readiness.sh"
+cp "$TMP/verify_skip_is_not_green.out" "$TMP/verify-skip.out"
 [[ ! -e "$FIX/eval-called" ]] || fail "old eval path invoked live script"
 python3 - "$FIX/artifacts/readiness/status.json" <<'PY'
 import json, sys

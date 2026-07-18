@@ -1881,6 +1881,12 @@ pub enum Effect {
     /// Schedule `TaskResult::GateVerifyTimeout { generation }` after
     /// [`crate::app::subscription::GATE_VERIFY_TIMEOUT`].
     ScheduleGateVerifyTimeout { generation: u64 },
+    /// Bound a real `/probe` turn. The matching prompt id prevents an old
+    /// timer from cancelling or downgrading a newer probe.
+    ScheduleTruthProbeTimeout {
+        agent_id: AgentId,
+        prompt_id: String,
+    },
     /// Log out then authenticate sequentially in one task.
     SwitchAccount {
         request_seq: u64,
@@ -2563,6 +2569,10 @@ pub enum TaskResult {
     /// The deferred-gate verification window expired.
     GateVerifyTimeout {
         generation: u64,
+    },
+    TruthProbeTimeout {
+        agent_id: AgentId,
+        prompt_id: String,
     },
     /// The 2-second "copied!" display timer expired.
     AuthCopiedTimeout,

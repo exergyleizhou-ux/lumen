@@ -2189,7 +2189,10 @@ pub(crate) async fn run(
                             // load outcomes with the optional mid-turn running
                             // prompt id from each reload response.
                             let ok = tokio::time::timeout(timeout, async {
-                                let init_req = acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_capabilities(acp::ClientCapabilities::new().fs(acp::FileSystemCapabilities::new()).terminal(false)).meta(serde_json::json!({
+                                let init_req = acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_capabilities(acp::ClientCapabilities::new().fs(acp::FileSystemCapabilities::new()).terminal(false).meta(serde_json::json!({
+                                        "x.ai/fs_notify": true,
+                                        "x.ai/gitHeadChanged": true,
+                                    }).as_object().cloned())).meta(serde_json::json!({
                                         "clientType": PAGER_CLIENT_TYPE,
                                         "clientVersion": PAGER_CLIENT_VERSION,
                                     }).as_object().cloned());

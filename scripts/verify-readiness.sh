@@ -189,10 +189,45 @@ else
   record binary_tuple_post FAIL "exit $binary_post_ec $detail"
 fi
 
-if [[ -f "$ROOT/SOURCE_LOCK.json" ]]; then
-  record source_lock PASS
+set +e
+source_lock_out=$(python3 - "$ROOT" <<'PY'
+import hashlib, json, subprocess, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+path = root / "SOURCE_LOCK.json"
+try:
+    lock = json.loads(path.read_text())
+except (OSError, json.JSONDecodeError) as exc:
+    print(f"invalid SOURCE_LOCK.json: {type(exc).__name__}")
+    raise SystemExit(1)
+head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+locked_head = ((lock.get("monorepo") or {}).get("git_head") or "")
+if locked_head != head:
+    print(f"HEAD drift lock={locked_head[:7] or '?'} current={head[:7]}")
+    raise SystemExit(1)
+critical = lock.get("critical_file_sha256")
+if not isinstance(critical, dict) or not critical:
+    print("critical_file_sha256 missing")
+    raise SystemExit(1)
+mismatched = []
+for relative, expected in critical.items():
+    candidate = root / relative
+    actual = hashlib.sha256(candidate.read_bytes()).hexdigest() if candidate.is_file() else None
+    if not isinstance(expected, str) or actual != expected:
+        mismatched.append(relative)
+if mismatched:
+    print("content drift: " + ",".join(mismatched[:8]))
+    raise SystemExit(1)
+print(f"head={head[:7]} files={len(critical)}")
+PY
+)
+source_lock_ec=$?
+set -e
+if [[ $source_lock_ec -eq 0 ]]; then
+  record source_lock PASS "$source_lock_out"
 else
-  record source_lock FAIL "run scripts/source-lock.sh"
+  record source_lock FAIL "$source_lock_out"
 fi
 
 # Human onboarding gate (must fail until one real stranger completes the path).
@@ -353,3 +388,13 @@ else
   record reconcile FAIL "missing reconcile-evidence.sh"
 fi
 write_status
+
+# The aggregate remains useful on failure, but the process exit code must not
+# paint an automated gate green when required engineering evidence is stale or
+# missing. Human publish gates remain represented by status.ready/blockers and
+# do not make an otherwise engineering-complete verification command fail.
+python3 - "$ART/status.json" <<'PY'
+import json, sys
+status = json.load(open(sys.argv[1]))
+raise SystemExit(0 if status.get("engineering_complete") is True else 1)
+PY

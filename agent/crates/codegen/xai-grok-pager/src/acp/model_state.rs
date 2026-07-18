@@ -79,6 +79,20 @@ impl ModelState {
         Some(self.current.as_ref()?.0.as_ref())
     }
 
+    /// Machine-readable provider binding advertised by the shell for truth
+    /// fingerprinting. Missing metadata stays missing; callers must not infer
+    /// provider identity from a display name.
+    pub fn current_truth_binding(&self) -> Option<(String, String, String)> {
+        let model_id = self.current_model_id_str()?.to_owned();
+        let meta = self.available.get(self.current.as_ref()?)?.meta.as_ref()?;
+        let provider_id = meta.get("providerId")?.as_str()?.trim();
+        let base_url = meta.get("baseUrl")?.as_str()?.trim();
+        if provider_id.is_empty() || base_url.is_empty() {
+            return None;
+        }
+        Some((provider_id.to_owned(), model_id, base_url.to_owned()))
+    }
+
     /// Total context window tokens for the current model (if available).
     fn current_context_window_tokens(&self) -> Option<u64> {
         let meta = self.available.get(self.current.as_ref()?)?.meta.as_ref()?;
@@ -356,6 +370,33 @@ mod tests {
     fn test_current_model_name() {
         let state = sample_models();
         assert_eq!(state.current_model_name(), Some("Model A".to_string()));
+    }
+
+    #[test]
+    fn current_truth_binding_requires_machine_metadata() {
+        let id = acp::ModelId::new("deepseek-chat");
+        let mut state = ModelState::default();
+        state.available.insert(
+            id.clone(),
+            acp::ModelInfo::new(id.clone(), "Shared Display Name").meta(Some(
+                serde_json::json!({
+                    "providerId": "api.deepseek.com",
+                    "baseUrl": "https://api.deepseek.com/v1"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )),
+        );
+        state.current = Some(id);
+        assert_eq!(
+            state.current_truth_binding(),
+            Some((
+                "api.deepseek.com".to_owned(),
+                "deepseek-chat".to_owned(),
+                "https://api.deepseek.com/v1".to_owned(),
+            ))
+        );
     }
 
     #[test]

@@ -43,6 +43,13 @@ pub(super) fn handle_models_update(notif: &acp::ExtNotification, app: &mut AppVi
                 .session
                 .models
                 .update_catalog(new_models.available.clone(), shell_fallback_current.clone());
+            if let Err(err) = agent.note_truth_model_binding_from_session() {
+                tracing::warn!(
+                    target: "truth",
+                    %err,
+                    "truth snapshot refresh after model catalog binding change failed"
+                );
+            }
         }
         true
     } else {

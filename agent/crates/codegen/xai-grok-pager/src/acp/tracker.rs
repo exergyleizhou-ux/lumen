@@ -298,6 +298,10 @@ pub struct AcpUpdateTracker {
     /// `handle_update`) so a partial replay can't silently regress the
     /// registry to the unknown-toolset state.
     pending_acp_tools: Option<Vec<String>>,
+    /// BLAKE3 of the full, sorted live tool definitions advertised alongside
+    /// `pending_acp_tools`. Names alone are insufficient: schema changes must
+    /// invalidate Tool-ready evidence even when the names stay the same.
+    pending_tool_schema_hash: Option<String>,
     /// Live Edit completions awaiting full-file HL (drained via [`Self::take_pending_edit_hl`]).
     pending_edit_hl: Vec<EntryId>,
 }
@@ -559,6 +563,9 @@ impl AcpUpdateTracker {
     pub fn take_pending_acp_tools(&mut self) -> Option<Vec<String>> {
         self.pending_acp_tools.take()
     }
+    pub fn take_pending_tool_schema_hash(&mut self) -> Option<String> {
+        self.pending_tool_schema_hash.take()
+    }
     /// Drain Edit entry ids that need a background full-file HL job.
     pub fn take_pending_edit_hl(&mut self) -> Vec<EntryId> {
         std::mem::take(&mut self.pending_edit_hl)
@@ -674,6 +681,9 @@ impl AcpUpdateTracker {
             acp::SessionUpdate::AvailableCommandsUpdate(update) => {
                 if let Some(t) = parse_tools_meta(update.meta.as_ref()) {
                     self.pending_acp_tools = Some(t);
+                }
+                if let Some(hash) = parse_tool_schema_hash(update.meta.as_ref()) {
+                    self.pending_tool_schema_hash = Some(hash);
                 }
                 self.pending_acp_commands = Some(update.available_commands);
                 true
@@ -2269,6 +2279,13 @@ fn parse_tools_meta(meta: Option<&acp::Meta>) -> Option<Vec<String>> {
             .filter_map(|v| v.as_str().map(String::from))
             .collect(),
     )
+}
+
+fn parse_tool_schema_hash(meta: Option<&acp::Meta>) -> Option<String> {
+    meta?.get("toolSchemaHash")?.as_str().and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty() && !value.eq_ignore_ascii_case("unknown")).then(|| value.to_owned())
+    })
 }
 /// Compact one-line description of a `SessionUpdate` for the always-on
 /// `acp_update` log target.

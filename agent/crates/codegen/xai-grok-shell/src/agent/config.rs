@@ -4858,6 +4858,45 @@ pub fn to_acp_model_info(
             let total_context_tokens = info.context_window.get();
             let meta = {
                 let mut map = serde_json::Map::new();
+                let mut endpoint_ids =
+                    [Some(info.base_url.as_str()), model.api_base_url.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|raw| {
+                            let mut url = url::Url::parse(raw).ok()?;
+                            let _ = url.set_username("");
+                            let _ = url.set_password(None);
+                            url.set_query(None);
+                            url.set_fragment(None);
+                            Some(url.to_string().trim_end_matches('/').to_owned())
+                        })
+                        .collect::<Vec<_>>();
+                endpoint_ids.sort();
+                endpoint_ids.dedup();
+                let mut provider_ids = endpoint_ids
+                    .iter()
+                    .filter_map(|endpoint| {
+                        let url = url::Url::parse(endpoint).ok()?;
+                        Some(match url.port() {
+                            Some(port) => format!("{}:{port}", url.host_str()?),
+                            None => url.host_str()?.to_owned(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                provider_ids.sort();
+                provider_ids.dedup();
+                if !endpoint_ids.is_empty() {
+                    map.insert(
+                        "baseUrl".to_string(),
+                        serde_json::Value::String(endpoint_ids.join("|")),
+                    );
+                }
+                if !provider_ids.is_empty() {
+                    map.insert(
+                        "providerId".to_string(),
+                        serde_json::Value::String(provider_ids.join("|")),
+                    );
+                }
                 map.insert(
                     "totalContextTokens".to_string(),
                     serde_json::Value::Number(total_context_tokens.into()),
@@ -6703,6 +6742,33 @@ reasoning_effort = "low"
         let meta = acp_model.meta.as_ref().expect("meta should be present");
         assert_eq!(meta["agentType"], "codex");
         assert_eq!(meta["totalContextTokens"], 256_000);
+    }
+    #[test]
+    fn acp_model_meta_emits_redacted_truth_binding() {
+        let mut models = IndexMap::new();
+        let entry = test_model_entry(
+            "test-model",
+            "https://user:secret@test.api:8443/v1?token=hidden#fragment",
+            None,
+            None,
+            Some("https://test.api:8443/v1"),
+        );
+        models.insert("test-model".to_string(), entry);
+
+        let acp_models = to_acp_model_info(&models);
+        let meta = acp_models
+            .values()
+            .next()
+            .and_then(|model| model.meta.as_ref())
+            .expect("truth binding metadata should be present");
+
+        assert_eq!(meta["providerId"], "test.api:8443");
+        assert_eq!(meta["baseUrl"], "https://test.api:8443/v1");
+        let encoded = serde_json::Value::Object(meta.clone()).to_string();
+        assert!(!encoded.contains("user"));
+        assert!(!encoded.contains("secret"));
+        assert!(!encoded.contains("hidden"));
+        assert!(!encoded.contains("fragment"));
     }
     #[test]
     fn acp_model_meta_always_includes_agent_type() {

@@ -201,9 +201,9 @@ impl SessionActor {
     pub(super) async fn send_available_commands_update(&self) {
         let bridge = self.agent.borrow().tool_bridge().clone();
         let skills = bridge.slash_skills().await;
-        let tool_names: Vec<String> = bridge
-            .tool_definitions()
-            .await
+        let tool_definitions = bridge.tool_definitions().await;
+        let tool_schema_hash = slash_commands::tool_schema_hash(&tool_definitions);
+        let tool_names: Vec<String> = tool_definitions
             .into_iter()
             .map(|td| td.function.name)
             .collect();
@@ -211,10 +211,10 @@ impl SessionActor {
         self.maybe_reconcile_active_goal_without_harness().await;
         self.maybe_reconcile_active_goal_without_plan().await;
         let commands = slash_commands::available_commands(&skills, availability);
-        if commands.is_empty() {
-            return;
-        }
-        let meta = Some(slash_commands::build_tools_meta(&tool_names));
+        let meta = Some(slash_commands::build_tools_meta(
+            &tool_names,
+            &tool_schema_hash,
+        ));
         tracing::info!(
             session_id = % self.session_info.id.0, command_count = commands.len(),
             tool_count = tool_names.len(), "Advertising available slash commands",

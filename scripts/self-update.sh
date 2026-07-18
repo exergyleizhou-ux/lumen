@@ -15,7 +15,13 @@ echo ""
 # ── 1. 编译 ──
 echo "═══ 1/4 编译 ═══"
 cd "$ROOT"
-export LUMEN_ALLOW_DIRTY=1
+if [[ -n "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]]; then
+    echo "FAIL: self-update refuses a dirty source tree." >&2
+    echo "Commit and review the optimization layer before building or installing it." >&2
+    git -C "$ROOT" status --short >&2
+    exit 1
+fi
+unset LUMEN_ALLOW_DIRTY
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
 export LUMEN_SKIP_BUILD=0
 ./scripts/install-local.sh

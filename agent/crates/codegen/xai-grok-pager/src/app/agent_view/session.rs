@@ -29,10 +29,18 @@ impl AgentView {
         use crate::truth_assembly::{TruthSessionState, assemble_truth_snapshot};
         use crate::ui_contract::{CapabilityFingerprintInput, PermissionSummary, ProductIdentity};
 
-        let model_id = session
-            .models
-            .current_model_name()
-            .unwrap_or_else(|| "unknown".to_owned());
+        let (provider_id, model_id, base_url) =
+            session.models.current_truth_binding().unwrap_or_else(|| {
+                (
+                    "unknown".to_owned(),
+                    session
+                        .models
+                        .current_model_id_str()
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    "unknown".to_owned(),
+                )
+            });
         let version = xai_grok_version::VERSION.to_owned();
         let release_channel = version
             .split_once('-')
@@ -47,13 +55,14 @@ impl AgentView {
                 release_channel,
             },
             CapabilityFingerprintInput {
-                provider_id: "unknown".to_owned(),
+                provider_id: provider_id.clone(),
                 model_id: model_id.clone(),
-                base_url: "unknown".to_owned(),
+                base_url,
                 tool_schema_hash: "unknown".to_owned(),
                 binary_id: xai_grok_version::VERSION.to_owned(),
             },
         );
+        state.provider_id = (provider_id != "unknown").then_some(provider_id);
         state.model_id = (model_id != "unknown").then_some(model_id);
         state.permission = if session.is_yolo() || session.is_auto() {
             PermissionSummary::AutoApproved
@@ -72,21 +81,25 @@ impl AgentView {
     /// Does **not** claim Tool-ready — only identity fields for invalidation
     /// and future probe assembly. Unknown provider/base_url stay explicit.
     pub fn truth_fingerprint_from_session(&self) -> crate::ui_contract::CapabilityFingerprintInput {
-        let model_id = self
+        let (provider_id, model_id, base_url) = self
             .session
             .models
-            .current_model_name()
-            .unwrap_or_else(|| "unknown".to_owned());
-        let provider_id = self
-            .truth_session
-            .provider_id
-            .clone()
-            .filter(|p| !p.is_empty() && p != "unknown")
-            .unwrap_or_else(|| "unknown".to_owned());
+            .current_truth_binding()
+            .unwrap_or_else(|| {
+                (
+                    "unknown".to_owned(),
+                    self.session
+                        .models
+                        .current_model_id_str()
+                        .unwrap_or("unknown")
+                        .to_owned(),
+                    "unknown".to_owned(),
+                )
+            });
         crate::ui_contract::CapabilityFingerprintInput {
             provider_id,
             model_id,
-            base_url: self.truth_session.fingerprint_input.base_url.clone(),
+            base_url,
             tool_schema_hash: self
                 .truth_session
                 .fingerprint_input
@@ -154,6 +167,7 @@ impl AgentView {
         &mut self,
         kind: agent_client_protocol::ToolKind,
         tool_call_id: &str,
+        prompt_id: Option<&str>,
     ) -> Result<(), String> {
         use agent_client_protocol as acp;
         if !matches!(
@@ -175,7 +189,62 @@ impl AgentView {
             checked_at: std::time::SystemTime::now(),
             fingerprint_input: self.truth_fingerprint_from_session(),
         };
-        self.apply_truth_probe(evidence)
+        match self.apply_truth_probe(evidence) {
+            Ok(()) => {
+                if prompt_id.is_some_and(|prompt_id| {
+                    self.truth_probe
+                        .as_ref()
+                        .is_some_and(|probe| probe.prompt_id == prompt_id)
+                }) {
+                    self.truth_probe = None;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                if let Some(prompt_id) = prompt_id
+                    && self
+                        .truth_probe
+                        .as_ref()
+                        .is_some_and(|probe| probe.prompt_id == prompt_id)
+                {
+                    self.truth_probe = None;
+                    self.truth_session.capability = crate::ui_contract::CapabilityState::Failed {
+                        reason: err,
+                        evidence_id: Some(format!("probe:{prompt_id}")),
+                    };
+                    self.truth_session.phase = crate::ui_contract::WorkPhase::Blocked;
+                    return self.refresh_truth_snapshot();
+                }
+                Err(err)
+            }
+        }
+    }
+
+    pub fn arm_truth_probe(&mut self, prompt_id: String) {
+        self.truth_probe = Some(super::TruthProbeRun { prompt_id });
+    }
+
+    /// Resolve an active `/probe` that ended before producing a tool call.
+    pub fn finish_truth_probe_without_tool(
+        &mut self,
+        prompt_id: &str,
+        outcome: crate::truth_assembly::ProbeOutcome,
+    ) -> Result<bool, String> {
+        if self
+            .truth_probe
+            .as_ref()
+            .is_none_or(|probe| probe.prompt_id != prompt_id)
+        {
+            return Ok(false);
+        }
+        self.truth_probe = None;
+        self.apply_truth_probe(crate::truth_assembly::ProbeEvidence {
+            outcome,
+            evidence_id: format!("probe:{prompt_id}"),
+            checked_at: std::time::SystemTime::now(),
+            fingerprint_input: self.truth_fingerprint_from_session(),
+        })?;
+        Ok(true)
     }
 
     /// Model/provider binding changed — drops ToolReady until re-probed.
@@ -317,6 +386,7 @@ impl AgentView {
             scrollback,
             truth_session,
             truth_snapshot,
+            truth_probe: None,
             prompt,
             tip_typing_dismissed: false,
             todo: TodoPane::new(),
@@ -1736,20 +1806,46 @@ mod truth_runtime_tests {
     }
 
     #[test]
-    fn live_tool_call_observation_is_only_path_to_tool_ready_without_external_probe() {
+    fn live_tool_call_requires_complete_binding_before_tool_ready() {
         use agent_client_protocol as acp;
         let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
         assert!(!agent.truth_is_tool_ready());
 
         // Non-agent kinds must not claim Tool-ready.
         agent
-            .note_truth_live_tool_call_observed(acp::ToolKind::Other, "other-1")
+            .note_truth_live_tool_call_observed(acp::ToolKind::Other, "other-1", None)
             .unwrap();
         assert!(!agent.truth_is_tool_ready());
 
-        // Real agent tool kinds produce ToolCallObserved evidence.
+        // A real tool call with placeholder binding fields must remain unknown.
+        assert!(
+            agent
+                .note_truth_live_tool_call_observed(acp::ToolKind::Edit, "edit-1", None)
+                .is_err()
+        );
+        assert!(!agent.truth_is_tool_ready());
+
+        // Once the shell has advertised the full provider/model binding and
+        // tool-schema hash, the same real tool evidence is claimable.
+        let model_id = acp::ModelId::new("deepseek-chat");
+        agent.session.models.available.insert(
+            model_id.clone(),
+            acp::ModelInfo::new(model_id.clone(), "DeepSeek Chat").meta(Some(
+                serde_json::json!({
+                    "providerId": "api.deepseek.com",
+                    "baseUrl": "https://api.deepseek.com/v1"
+                })
+                .as_object()
+                .unwrap()
+                .clone(),
+            )),
+        );
+        agent.session.models.current = Some(model_id);
         agent
-            .note_truth_live_tool_call_observed(acp::ToolKind::Edit, "edit-1")
+            .note_truth_binding_changed(fp("deepseek-chat"))
+            .unwrap();
+        agent
+            .note_truth_live_tool_call_observed(acp::ToolKind::Edit, "edit-2", None)
             .unwrap();
         assert!(agent.truth_is_tool_ready());
         match &agent.display_truth_snapshot().capability {
@@ -1758,7 +1854,7 @@ mod truth_runtime_tests {
                 fingerprint,
                 checked_at,
             } => {
-                assert!(evidence_id.contains("edit-1") || evidence_id.starts_with("live-tool:"));
+                assert!(evidence_id.contains("edit-2") || evidence_id.starts_with("live-tool:"));
                 assert!(!fingerprint.is_empty());
                 assert!(checked_at.is_some());
             }

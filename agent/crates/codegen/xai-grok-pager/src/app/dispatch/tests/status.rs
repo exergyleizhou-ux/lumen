@@ -954,8 +954,7 @@ fn show_truth_status_uses_shared_snapshot_and_redacts() {
         agent
             .apply_truth_probe(ProbeEvidence {
                 outcome: ProbeOutcome::Failed {
-                    reason: "Bearer sk-SECRETTOKEN https://api.example.com/v1?api_key=leak"
-                        .into(),
+                    reason: "Bearer sk-SECRETTOKEN https://api.example.com/v1?api_key=leak".into(),
                 },
                 evidence_id: "/tmp/evidence/run-secret-id".into(),
                 checked_at: SystemTime::UNIX_EPOCH + Duration::from_secs(1),
@@ -989,8 +988,14 @@ fn show_truth_status_uses_shared_snapshot_and_redacts() {
     assert!(text.contains("Capability"), "got: {text}");
     assert!(!text.contains("sk-SECRETTOKEN"), "token leaked: {text}");
     assert!(!text.contains("api.example.com"), "url leaked: {text}");
-    assert!(!text.contains("/tmp/evidence/run-secret-id"), "path leaked: {text}");
-    assert!(text.contains("id:"), "evidence should be opaque digest: {text}");
+    assert!(
+        !text.contains("/tmp/evidence/run-secret-id"),
+        "path leaked: {text}"
+    );
+    assert!(
+        text.contains("id:"),
+        "evidence should be opaque digest: {text}"
+    );
 
     // Second dispatch (keyboard/click again) still works from same Arc source.
     let effects2 = dispatch(Action::ShowTruthStatus, &mut app);
@@ -1024,17 +1029,56 @@ fn begin_truth_probe_sets_checking_and_prints_recovery() {
     let mut app = test_app_with_agent();
     let id = AgentId(0);
     let effects = dispatch(Action::BeginTruthProbe, &mut app);
-    assert!(effects.is_empty());
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            Effect::SendPrompt { .. },
+            Effect::ScheduleTruthProbeTimeout { .. }
+        ]
+    ));
     let agent = app.agents.get(&id).unwrap();
     assert!(matches!(
         agent.display_truth_snapshot().capability,
         crate::ui_contract::CapabilityState::Checking
     ));
     assert!(!agent.truth_is_tool_ready());
-    let text = last_system_text(&app, id);
+    let text = system_text_from_end(&app, id, 1);
     assert!(
         text.contains("Checking") || text.contains("probe"),
         "got: {text}"
     );
     assert!(text.contains("Recovery") || text.contains("/status") || text.contains("tool_call"));
+    assert!(agent.truth_probe.is_some());
+}
+
+#[test]
+fn truth_probe_timeout_fails_and_cancels_matching_turn() {
+    let mut app = test_app_with_agent();
+    let id = AgentId(0);
+    let effects = dispatch(Action::BeginTruthProbe, &mut app);
+    let prompt_id = effects
+        .iter()
+        .find_map(|effect| match effect {
+            Effect::SendPrompt { prompt_id, .. } => Some(prompt_id.clone()),
+            _ => None,
+        })
+        .expect("real probe prompt");
+
+    let timeout_effects = dispatch(
+        Action::TaskComplete(TaskResult::TruthProbeTimeout {
+            agent_id: id,
+            prompt_id,
+        }),
+        &mut app,
+    );
+    assert!(matches!(
+        timeout_effects.as_slice(),
+        [Effect::CancelTurn { .. }]
+    ));
+    let agent = &app.agents[&id];
+    assert!(agent.truth_probe.is_none());
+    assert!(matches!(
+        agent.display_truth_snapshot().capability,
+        crate::ui_contract::CapabilityState::Failed { .. }
+    ));
 }

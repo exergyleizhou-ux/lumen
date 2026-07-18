@@ -939,7 +939,10 @@ pub(super) fn supersede_open_reload_window(
 /// Pull provider-reported cache tokens from PromptResponse `_meta` and push
 /// them into the truth bar. Accepts both top-level camelCase fields and the
 /// nested `usage` object the shell may attach.
-fn feed_truth_cache_from_prompt_meta(agent: &mut AgentView, meta: &serde_json::Map<String, serde_json::Value>) {
+fn feed_truth_cache_from_prompt_meta(
+    agent: &mut AgentView,
+    meta: &serde_json::Map<String, serde_json::Value>,
+) {
     let cached = meta
         .get("cachedReadTokens")
         .and_then(|v| v.as_u64())
@@ -1026,6 +1029,20 @@ pub(super) fn handle_prompt_response(
                 .map(str::to_string),
             Err(_) => prompt_id.clone(),
         };
+        if let Some(response_pid) = response_pid.as_deref() {
+            let probe_outcome = match &result {
+                Ok(response) if response.stop_reason == acp::StopReason::Cancelled => {
+                    crate::truth_assembly::ProbeOutcome::Failed {
+                        reason: "capability probe was cancelled".to_owned(),
+                    }
+                }
+                Ok(_) => crate::truth_assembly::ProbeOutcome::ChatOnly,
+                Err(error) => crate::truth_assembly::ProbeOutcome::Failed {
+                    reason: format!("capability probe request failed: {error}"),
+                },
+            };
+            let _ = agent.finish_truth_probe_without_tool(response_pid, probe_outcome);
+        }
         // The turn-end RPC for this prompt arrived — disarm the
         // lost-response reconcile that `handle_prompt_complete` armed
         // for it (the broadcast is emitted before the RPC response, so

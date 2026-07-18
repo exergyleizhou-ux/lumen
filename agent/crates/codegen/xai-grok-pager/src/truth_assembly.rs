@@ -35,6 +35,37 @@ pub struct ProbeEvidence {
     pub fingerprint_input: CapabilityFingerprintInput,
 }
 
+fn fingerprint_value_is_known(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && !value.eq_ignore_ascii_case("unknown")
+}
+
+/// Build a capability fingerprint only when every identity input is real.
+///
+/// `capability_fingerprint` intentionally accepts any non-empty string as a
+/// general hashing primitive. Truth claims are stricter: placeholder values
+/// such as `"unknown"` must never become durable Tool-ready evidence.
+pub fn claimable_capability_fingerprint(
+    input: &CapabilityFingerprintInput,
+) -> Result<String, String> {
+    let fields = [
+        ("provider_id", input.provider_id.as_str()),
+        ("model_id", input.model_id.as_str()),
+        ("base_url", input.base_url.as_str()),
+        ("tool_schema_hash", input.tool_schema_hash.as_str()),
+        ("binary_id", input.binary_id.as_str()),
+    ];
+    if let Some((field, _)) = fields
+        .into_iter()
+        .find(|(_, value)| !fingerprint_value_is_known(value))
+    {
+        return Err(format!(
+            "capability fingerprint {field} is unknown; Tool-ready requires a complete binding"
+        ));
+    }
+    capability_fingerprint(input).map_err(|e| format!("fingerprint: {e}"))
+}
+
 /// Mutable session facts used to rebuild a [`TruthSnapshot`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct TruthSessionState {
@@ -79,9 +110,6 @@ pub fn capability_from_probe(evidence: &ProbeEvidence) -> Result<CapabilityState
     if evidence.evidence_id.trim().is_empty() {
         return Err("probe evidence_id must not be empty".to_owned());
     }
-    let fingerprint = capability_fingerprint(&evidence.fingerprint_input)
-        .map_err(|e| format!("fingerprint: {e}"))?;
-
     let state = match &evidence.outcome {
         ProbeOutcome::Unreachable { reason } => CapabilityState::Failed {
             reason: reason.clone(),
@@ -95,7 +123,7 @@ pub fn capability_from_probe(evidence: &ProbeEvidence) -> Result<CapabilityState
             evidence_id: evidence.evidence_id.clone(),
         },
         ProbeOutcome::ToolCallObserved => CapabilityState::ToolReady {
-            fingerprint,
+            fingerprint: claimable_capability_fingerprint(&evidence.fingerprint_input)?,
             checked_at: Some(evidence.checked_at),
             evidence_id: evidence.evidence_id.clone(),
         },
@@ -116,8 +144,10 @@ pub fn apply_probe_evidence(
     evidence: ProbeEvidence,
 ) -> Result<(), String> {
     state.fingerprint_input = evidence.fingerprint_input.clone();
-    state.provider_id = Some(evidence.fingerprint_input.provider_id.clone());
-    state.model_id = Some(evidence.fingerprint_input.model_id.clone());
+    state.provider_id = fingerprint_value_is_known(&evidence.fingerprint_input.provider_id)
+        .then(|| evidence.fingerprint_input.provider_id.clone());
+    state.model_id = fingerprint_value_is_known(&evidence.fingerprint_input.model_id)
+        .then(|| evidence.fingerprint_input.model_id.clone());
     state.capability = capability_from_probe(&evidence)?;
     if matches!(state.capability, CapabilityState::ToolReady { .. }) {
         if matches!(
@@ -137,13 +167,23 @@ pub fn on_binding_changed(
     state: &mut TruthSessionState,
     new_input: CapabilityFingerprintInput,
 ) -> Result<(), String> {
-    let new_fp =
-        capability_fingerprint(&new_input).map_err(|e| format!("fingerprint: {e}"))?;
-    state.capability =
-        invalidate_capability_if_fingerprint_changed(state.capability.clone(), &new_fp);
+    state.capability = match claimable_capability_fingerprint(&new_input) {
+        Ok(new_fp) => {
+            invalidate_capability_if_fingerprint_changed(state.capability.clone(), &new_fp)
+        }
+        Err(_) if matches!(state.capability, CapabilityState::ToolReady { .. }) => {
+            CapabilityState::Unknown {
+                reason: "provider/model binding is incomplete; re-run capability probe after identity is known"
+                    .to_owned(),
+            }
+        }
+        Err(_) => state.capability.clone(),
+    };
     state.fingerprint_input = new_input;
-    state.provider_id = Some(state.fingerprint_input.provider_id.clone());
-    state.model_id = Some(state.fingerprint_input.model_id.clone());
+    state.provider_id = fingerprint_value_is_known(&state.fingerprint_input.provider_id)
+        .then(|| state.fingerprint_input.provider_id.clone());
+    state.model_id = fingerprint_value_is_known(&state.fingerprint_input.model_id)
+        .then(|| state.fingerprint_input.model_id.clone());
     if matches!(state.capability, CapabilityState::Unknown { .. }) {
         // Re-bind always requires a new probe for tool claims.
         state.capability = CapabilityState::Unknown {
@@ -157,9 +197,7 @@ pub fn on_binding_changed(
 pub fn note_workspace_change(state: &mut TruthSessionState) {
     state.last_change_seq = state.last_change_seq.saturating_add(1);
     if let VerificationSummary::Passed {
-        run_id,
-        source_seq,
-        ..
+        run_id, source_seq, ..
     } = &state.verification
     {
         if *source_seq < state.last_change_seq {
@@ -198,23 +236,31 @@ pub fn assemble_truth_snapshot(
     captured_at: SystemTime,
 ) -> Result<TruthSnapshot, String> {
     let provider = match &state.provider_id {
-        Some(id) if !id.is_empty() => ProviderState::Ready {
+        Some(id) if fingerprint_value_is_known(id) => ProviderState::Ready {
             provider_id: id.clone(),
         },
         _ => ProviderState::Unknown,
     };
     let model = match &state.model_id {
-        Some(id) if !id.is_empty() => ModelState::Selected {
+        Some(id) if fingerprint_value_is_known(id) => ModelState::Selected {
             model_id: id.clone(),
         },
         _ => ModelState::Unknown,
     };
 
     // Drop stale tool claims if fingerprint no longer matches current binding.
-    let current_fp = capability_fingerprint(&state.fingerprint_input)
-        .map_err(|e| format!("fingerprint: {e}"))?;
-    let capability =
-        invalidate_capability_if_fingerprint_changed(state.capability.clone(), &current_fp);
+    let capability = match &state.capability {
+        CapabilityState::ToolReady { .. } => {
+            match claimable_capability_fingerprint(&state.fingerprint_input) {
+                Ok(current_fp) => invalidate_capability_if_fingerprint_changed(
+                    state.capability.clone(),
+                    &current_fp,
+                ),
+                Err(reason) => CapabilityState::Unknown { reason },
+            }
+        }
+        other => other.clone(),
+    };
 
     let mut verification = state.verification.clone();
     if matches!(verification, VerificationSummary::Passed { .. })
@@ -332,6 +378,31 @@ mod tests {
     }
 
     #[test]
+    fn tool_call_with_unknown_binding_cannot_become_tool_ready() {
+        let mut input = fp("deepseek-chat");
+        input.provider_id = "unknown".to_owned();
+        let err = capability_from_probe(&ProbeEvidence {
+            outcome: ProbeOutcome::ToolCallObserved,
+            evidence_id: "probe-unknown".to_owned(),
+            checked_at: SystemTime::UNIX_EPOCH,
+            fingerprint_input: input,
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("provider_id") && err.contains("unknown"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn unknown_provider_is_not_assembled_as_ready() {
+        let mut state = session();
+        state.provider_id = Some("unknown".to_owned());
+        let snapshot = assemble_truth_snapshot(&state, SystemTime::UNIX_EPOCH).unwrap();
+        assert!(matches!(snapshot.provider, ProviderState::Unknown));
+    }
+
+    #[test]
     fn model_change_invalidates_tool_ready() {
         let mut state = session();
         apply_probe_evidence(
@@ -344,7 +415,10 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(matches!(state.capability, CapabilityState::ToolReady { .. }));
+        assert!(matches!(
+            state.capability,
+            CapabilityState::ToolReady { .. }
+        ));
 
         on_binding_changed(&mut state, fp("deepseek-reasoner")).unwrap();
         let snap = assemble_truth_snapshot(&state, SystemTime::UNIX_EPOCH).unwrap();
@@ -358,12 +432,7 @@ mod tests {
     #[test]
     fn workspace_edit_stales_passed_verification() {
         let mut state = session();
-        note_verification_passed(
-            &mut state,
-            "go test ./...",
-            "run-1",
-            SystemTime::UNIX_EPOCH,
-        );
+        note_verification_passed(&mut state, "go test ./...", "run-1", SystemTime::UNIX_EPOCH);
         assert!(verification_is_fresh(
             &state.verification,
             state.last_change_seq
