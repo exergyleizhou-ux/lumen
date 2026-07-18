@@ -13,7 +13,8 @@ import sys
 from pathlib import Path
 
 
-VERSION_SOURCE = Path("agent/crates/codegen/xai-grok-pager-bin/Cargo.toml")
+VERSION_SOURCE = Path("VERSION")
+CARGO_VERSION_SOURCE = Path("agent/crates/codegen/xai-grok-pager-bin/Cargo.toml")
 SIGNING_IDENTITY = "lumen-release-v1"
 PUBLIC_KEY_ASSET = "lumen-release.pub"
 MANIFEST_SIGNATURE = "lumen-release-manifest.json.minisig"
@@ -42,10 +43,20 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def cargo_version(root: Path) -> str:
-    cargo = root / VERSION_SOURCE
+def release_version(root: Path) -> str:
+    version_path = root / VERSION_SOURCE
+    if not version_path.is_file():
+        fail(f"version source missing: {version_path}")
+    raw_version = version_path.read_text(encoding="utf-8")
+    if not raw_version.endswith("\n") or raw_version.count("\n") != 1:
+        fail("VERSION must contain exactly one newline-terminated SemVer")
+    version = raw_version.rstrip("\n")
+    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
+        fail(f"VERSION is not SemVer: {version}")
+
+    cargo = root / CARGO_VERSION_SOURCE
     if not cargo.is_file():
-        fail(f"version source missing: {cargo}")
+        fail(f"Cargo version mirror missing: {cargo}")
     in_package = False
     for raw_line in cargo.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -55,9 +66,12 @@ def cargo_version(root: Path) -> str:
         if in_package:
             match = re.fullmatch(r'version\s*=\s*"([^"]+)"(?:\s*#.*)?', line)
             if match:
-                version = match.group(1)
-                if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version):
-                    fail(f"Cargo package version is not SemVer: {version}")
+                cargo_version = match.group(1)
+                if cargo_version != version:
+                    fail(
+                        f"VERSION/Cargo mismatch: VERSION has {version}, "
+                        f"{CARGO_VERSION_SOURCE} has {cargo_version}"
+                    )
                 return version
     fail(f"[package].version missing from {cargo}")
 
@@ -83,7 +97,7 @@ def git(root: Path, *args: str) -> str:
 
 def preflight(args: argparse.Namespace) -> None:
     root = args.root.resolve()
-    version = cargo_version(root)
+    version = release_version(root)
     validate_tag(args.tag, version)
     if args.require_clean:
         dirty = git(root, "status", "--porcelain", "--untracked-files=all")
@@ -292,7 +306,7 @@ def validate_sbom(
 def assemble(args: argparse.Namespace) -> None:
     root = args.root.resolve()
     dist = args.dist.resolve()
-    version = cargo_version(root)
+    version = release_version(root)
     validate_tag(args.tag, version)
     if not re.fullmatch(r"[0-9a-f]{40}", args.commit):
         fail("release commit must be a full 40-character lowercase git SHA")
@@ -396,7 +410,7 @@ def validate_unsigned_contract(
     *,
     require_unsigned_boundary: bool,
 ) -> tuple[Path, list[Path]]:
-    version = cargo_version(root)
+    version = release_version(root)
     validate_tag(tag, version)
     if not re.fullmatch(r"[0-9a-f]{40}", expected_commit):
         fail("expected commit must be a full 40-character lowercase git SHA")

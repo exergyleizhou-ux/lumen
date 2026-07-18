@@ -5,9 +5,10 @@ Phase A. No current `lumen update` or `lumen upgrade` path consumes these assets
 yet. Publishing a valid release therefore does not by itself complete the user
 update loop.
 
-The release workflow has one version source:
-`agent/crates/codegen/xai-grok-pager-bin/Cargo.toml` `[package].version`.
-A release tag must be exactly `v<version>`.
+The release workflow has one canonical version source: the repository-root
+`VERSION` file. `scripts/release_version.py` requires the seven versioned Lumen
+crates and `agent/Cargo.lock` to match it exactly. A release tag must be exactly
+`v<version>`.
 
 Release files are signed with Minisign's prehashed Ed25519 format under the
 stable identity `lumen-release-v1`. The signed manifest binds the tag, full git
@@ -60,22 +61,22 @@ published state fails closed for manual inspection.
 Run the local contract fixtures without any GitHub secret or user installation:
 
 ```sh
+./scripts/test-release-prep.sh
 ./scripts/test-release-contract.sh
 ```
 
-For an actual release, commit from a clean tree and push an existing tag that
-matches the Cargo package version. The workflow verifies that the tag resolves
-to the checked-out commit. It does not create tags, bump versions, install to a
-user directory, deploy, or publish any non-Lumen asset.
+For an actual release, run `scripts/release.sh BUMP` from a clean, up-to-date
+`main` checkout. The script synchronizes versions, updates `CHANGELOG.md`, runs
+the local release gates, commits the explicit release files, creates and
+verifies a signed tag, and atomically pushes the commit and tag. The workflow
+then verifies that the tag resolves to that commit and publishes only Lumen
+assets.
 
-## Remaining original Phase F scope
+## Remaining external Phase F gates
 
-This foundation deliberately does not implement the original specification's
-automatic version bump, `CHANGELOG.md` generation/update, or a local
-`scripts/release.sh` that creates tags. Those mutations should be designed as a
-separate, explicitly authorized release-preparation flow. Four-platform native
-builds and the real GitHub Release still require a repository run after the
-environment, tag rules, public key variable, and private key secret are set.
+Four-platform native builds and the real GitHub Release still require a
+repository run after the environment, tag rules, public key variable, and
+private key secret are set.
 
 The current macOS artifacts are not Apple Developer ID signed or notarized;
 Minisign authenticates release bytes but does not replace Gatekeeper signing.

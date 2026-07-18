@@ -32,6 +32,8 @@ jobs:
           --require-clean
           --require-head-tag
           --allowed-ref "origin/$DEFAULT_BRANCH"
+      - name: Verify version bump and changelog tooling
+        run: scripts/test-release-prep.sh
 
   build:
     name: Build ${{ matrix.asset }}
@@ -319,7 +321,7 @@ jobs:
               "schemaVersion": 1,
               "product": "lumen",
               "version": version,
-              "versionSource": "agent/crates/codegen/xai-grok-pager-bin/Cargo.toml",
+              "versionSource": "VERSION",
               "tag": tag,
               "commit": commit,
           }

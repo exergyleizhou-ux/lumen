@@ -11,6 +11,7 @@ export HOME
 mkdir -p "$FIXTURE/agent/crates/codegen/xai-grok-pager-bin" "$DIST" "$HOME"
 
 cp "$ROOT/scripts/release_contract.py" "$FIXTURE/release_contract.py"
+printf '1.2.3-alpha.4\n' >"$FIXTURE/VERSION"
 cat >"$FIXTURE/agent/crates/codegen/xai-grok-pager-bin/Cargo.toml" <<'EOF'
 [package]
 name = "fixture"
@@ -44,6 +45,11 @@ expect_fail() {
 
 python3 "$FIXTURE/release_contract.py" preflight \
   --root "$FIXTURE" --tag v1.2.3-alpha.4 --require-clean --require-head-tag --allowed-ref authorized
+cp "$FIXTURE/VERSION" "$TMP/VERSION.valid"
+printf '1.2.4\n' >"$FIXTURE/VERSION"
+expect_fail version-cargo-mismatch "VERSION/Cargo mismatch" python3 "$FIXTURE/release_contract.py" preflight \
+  --root "$FIXTURE" --tag v1.2.4
+cp "$TMP/VERSION.valid" "$FIXTURE/VERSION"
 expect_fail tag-version-mismatch "tag/version mismatch" python3 "$FIXTURE/release_contract.py" preflight \
   --root "$FIXTURE" --tag v1.2.4
 echo dirty >"$FIXTURE/dirty"
@@ -219,7 +225,7 @@ verify=(python3 "$FIXTURE/release_contract.py" verify --root "$FIXTURE" --dist "
 
 cp "$DIST/lumen-release-manifest.json" "$TMP/manifest.valid"
 for field_and_value in \
-  'versionSource|agent/crates/codegen/xai-grok-pager-bin/Other.toml|manifest version source must be' \
+  'versionSource|Other|manifest version source must be' \
   'signing.publicKeyAsset|renamed-release.pub|manifest public key asset must be' \
   'signing.manifestSignature|renamed-manifest.minisig|manifest signature asset must be'
 do
