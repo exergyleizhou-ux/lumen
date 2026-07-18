@@ -1,14 +1,14 @@
 {
-  "default": "deepseek-chat",
-  "web_search": "deepseek-chat",
-  "image_description": "deepseek-chat",
-  "session_summary": "deepseek-chat",
+  "default": "deepseek-v4-pro",
+  "web_search": "deepseek-v4-pro",
+  "image_description": "deepseek-v4-pro",
+  "session_summary": "deepseek-v4-pro",
   "models": [
     {
-      "id": "deepseek-chat",
-      "model": "deepseek-chat",
-      "name": "DeepSeek Chat",
-      "description": "DeepSeek V3 — 1M context, 99%+ prompt-cache hit rate, $0.014/M cached input",
+      "id": "deepseek-v4-pro",
+      "model": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "description": "DeepSeek V4 Pro — flagship model, 128K context, 99%+ cache hit",
       "context_window": 1000000,
       "max_completion_tokens": 8192,
       "temperature": 0.0,
@@ -36,10 +36,10 @@
       }
     },
     {
-      "id": "deepseek-reasoner",
-      "model": "deepseek-reasoner",
-      "name": "DeepSeek Reasoner",
-      "description": "DeepSeek R1 reasoning — chain-of-thought for complex analysis; $0.55/M input",
+      "id": "deepseek-v4-flash",
+      "model": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "description": "DeepSeek V4 Flash — fast model, ideal for quick tasks",,
       "context_window": 1000000,
       "max_completion_tokens": 8192,
       "api_backend": "chat_completions",
