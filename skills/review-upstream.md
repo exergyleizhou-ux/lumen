@@ -1,77 +1,92 @@
 # Lumen Upstream Review Skill
 
-当 Grok Build 上游 (xai-org/grok-build) 有新版本时，按此流程审核。
+当用户说"检查上游更新"、"审核 Grok Build"、"review upstream"时执行。
 
-## 流程
+## 核心原则
+- **绝不自动合并**——生成审核报告，等用户审批
+- **保护我们的三层（guard/discipline/verify）**
+- **保护品牌文件（logo/welcome/label）**
+- **路径映射**：上游 `crates/codegen/xxx` → 我们 `agent/crates/codegen/xxx`
 
-### Step 1: Fetch 上游
-```bash
-cd /Users/lei/code/lumen && git fetch upstream --no-tags
-```
+## 执行流程
 
-### Step 2: 查看上游变更
+### Phase 1: Fetch & Diff
 ```bash
 cd /Users/lei/code/lumen
-# 上游最新提交
-git log upstream/main -10 --oneline
-# 变更文件列表
+git fetch upstream --no-tags
+echo "=== 上游新提交 ==="
+git log upstream/main -5 --oneline --no-decorate
+echo "=== 变更统计 ==="
 git diff --stat upstream/main^^..upstream/main
 ```
 
-### Step 3: 分类审核
-对每个上游变更文件，判断：
+### Phase 2: 逐文件分类
+对上游变更的每个文件，打上标签：
 
-| 分类 | 处理方式 |
-|------|---------|
-| 我们已有的优化（功能重复）| ❌ 跳过 |
-| 与我们的改动有冲突 | ⚠️ 手动合并 |
-| 纯新功能、无冲突 | ✅ 吸收 |
-| 安全修复 | ✅ 优先级吸收 |
-| xAI 品牌/市场相关 | ❌ 跳过 |
-| 模型 catalog 更新 | ⚠️ 只吸收非 xAI 部分 |
+| 标签 | 含义 |
+|------|------|
+| 🟢 SAFE | 新功能，不冲突，可直接吸收 |
+| 🟡 REVIEW | 功能相关但需人工看 |
+| 🔴 CONFLICT | 与我们的改动冲突 |
+| ⚫ SKIP | xAI品牌/市场/文档，跳过 |
+| 🛡️ PROTECTED | 我们的保护区，永不覆盖 |
 
-### Step 4: 冲突检测
-检查上游变更是否触及我们修改过的文件：
+### Phase 3: 生成审核报告
+输出结构化报告给用户：
+
+```
+═══════════════════════════════════
+  Grok Build 上游审核报告
+  上游 commit: <hash>
+  变更文件: N 个
+═══════════════════════════════════
+
+🟢 可安全吸收 (X 个):
+  - crates/xxx → agent/crates/xxx  原因：新工具实现
+
+🟡 需审核 (X 个):
+  - crates/yyy → agent/crates/yyy  原因：涉及 tool dispatch
+
+🔴 冲突 (X 个):
+  - crates/zzz → agent/crates/zzz  原因：我们改了同一函数
+
+⚫ 跳过 (X 个):
+  - docs/xxx  原因：Grok 品牌文档
+
+🛡️ 保护区 (不受影响):
+  - lumen-guard / lumen-discipline / lumen-verify
+  - logo05.txt / logo07.txt / hero_box.rs / context.rs
+═══════════════════════════════════
+建议操作：[逐个列出，等待用户审批]
+═══════════════════════════════════
+```
+
+### Phase 4: 等待用户审批
+用户会回复"吸收 X, Y"或"全部跳过"或"只吸收安全的"。
+
+### Phase 5: 执行吸收
+对每个被批准的 🟢 文件：
+1. 读取上游文件内容
+2. 找到对应我们文件的位置（路径映射：`crates/` → `agent/crates/`）
+3. 手动 patch 变更到我们文件
+4. 确认保护区文件未被修改
+
+对 🟡 文件：分析具体变更，只吸收非冲突部分。
+
+### Phase 6: 验证 & 记录
 ```bash
-cd /Users/lei/code/lumen
-# 我们的改动文件列表
-OUR_FILES=$(git diff --name-only 853a305..HEAD)
-# 上游改动文件列表  
-UP_FILES=$(git diff --name-only upstream/main^^..upstream/main)
-# 交集 = 可能冲突
-comm -12 <(echo "$OUR_FILES" | sort) <(echo "$UP_FILES" | sort)
+cd /Users/lei/code/lumen/agent && cargo test -p lumen-guard -p lumen-discipline -p lumen-verify
+cd /Users/lei/code/lumen && git diff --stat
 ```
-
-### Step 5: 辩证吸收
-- 上游的好功能 → 手动 patch 到对应位置
-- 上游路径 `crates/codegen/xxx` → 我们路径 `agent/crates/codegen/xxx`
-- 我们的 lumen-guard/discipline/verify 三层**绝不让上游覆盖**
-- 品牌文件（logo, welcome text）**绝不让上游覆盖**
-
-### Step 6: 验证
+一切正常后：
 ```bash
-cd /Users/lei/code/lumen/agent && cargo test -p lumen-guard -p lumen-discipline -p lumen-verify 2>&1
-cd /Users/lei/code/lumen && LUMEN_ALLOW_DIRTY=1 ./scripts/install-local.sh
+cd /Users/lei/code/lumen && git add -A && git commit -m "feat(upstream): absorb <具体描述>"
 ```
+更新 `~/.lumen/self-update-memory.json` 的 `upstream_reviews`。
 
-### Step 7: 记录
-更新 `~/.lumen/self-update-memory.json` 的 `upstream_reviews`：
-```json
-{
-  "upstream_commit": "<hash>",
-  "reviewed_at": "<ISO时间>",
-  "files_changed": 42,
-  "absorbed": ["file1.rs", "file2.rs"],
-  "skipped": ["file3.rs - 品牌冲突", "file4.rs - 已有优化"],
-  "conflicts": []
-}
-```
-
-## 我们的保护区（绝不让上游覆盖）
-- `agent/crates/codegen/lumen-guard/`
-- `agent/crates/codegen/lumen-discipline/`
-- `agent/crates/codegen/lumen-verify/`
-- `agent/crates/codegen/xai-grok-pager/assets/logo/logo05.txt`
-- `agent/crates/codegen/xai-grok-pager/assets/logo/logo07.txt`
-- `agent/crates/codegen/xai-grok-agent/src/prompt/context.rs` (DEFAULT_SYSTEM_PROMPT_LABEL)
-- `agent/crates/codegen/xai-grok-pager/src/views/welcome/hero_box.rs` (HERO_SUBTITLE)
+## 注意事项
+- 每次只处理一个上游版本
+- 历史不连通，不要用 git merge
+- 手动 patch 而非自动合并
+- 编译前先检查 `git status` 是否干净
+- 如果用户不想执行，只生成报告并退出
