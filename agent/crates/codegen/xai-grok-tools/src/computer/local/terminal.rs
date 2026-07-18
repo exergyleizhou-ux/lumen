@@ -640,7 +640,11 @@ impl LocalTerminalActor {
             .prepare_command(command, cwd_override, self.search_shadows)
             .map_err(|e| ComputerError::io(format!("prepare persistent command: {e}")))?;
 
-        let mut cmd = tokio::process::Command::new(&prep.binary);
+        let restrict_network = xai_grok_sandbox::should_restrict_child_network();
+        let mut cmd = tokio::process::Command::from(xai_grok_sandbox::child_net::child_command(
+            &prep.binary,
+            restrict_network,
+        ));
         cmd.args(&prep.args)
             .current_dir(&prep.cwd)
             .stdin(Stdio::null())
@@ -668,7 +672,7 @@ impl LocalTerminalActor {
         }
 
         #[cfg(target_os = "linux")]
-        if xai_grok_sandbox::should_restrict_child_network() {
+        if restrict_network {
             unsafe {
                 cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
@@ -2613,7 +2617,11 @@ async fn capture_login_path() -> HashMap<String, String> {
     let script = format!("source \"$HOME/{rc_file}\" 2>/dev/null; printf '\\x01%s\\x01' \"$PATH\"");
 
     let result = tokio::time::timeout(Duration::from_secs(5), async {
-        let mut cmd = tokio::process::Command::new(shell.binary_path());
+        let restrict_network = xai_grok_sandbox::should_restrict_child_network();
+        let mut cmd = tokio::process::Command::from(xai_grok_sandbox::child_net::child_command(
+            shell.binary_path(),
+            restrict_network,
+        ));
         cmd.args(["-lc", &script])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -2732,13 +2740,14 @@ fn spawn_shell_command(
         // /dev/tty and compete with the TUI for terminal input.
         crate::util::detach_command(&mut cmd);
 
-        // If the sandbox profile restricts network, install a seccomp BPF
-        // filter on the child that blocks connect/bind/sendto/listen/accept.
+        // If the sandbox profile restricts network, child construction wraps
+        // the command in sandbox-exec on macOS; Linux installs a seccomp BPF
+        // filter below that blocks connect/bind/sendto/listen/accept.
         // The parent (grok) process retains network for the LLM API.
         // Filesystem restrictions are already inherited from the process-level
         // Landlock/Seatbelt sandbox — no action needed here for FS.
         #[cfg(target_os = "linux")]
-        if xai_grok_sandbox::should_restrict_child_network() {
+        if restrict_network {
             unsafe {
                 cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
