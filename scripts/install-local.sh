@@ -42,12 +42,12 @@ case "$VERSION_LINE" in
 esac
 
 mkdir -p "$DEST_DIR"
+# ad-hoc code-sign BIN_SRC so macOS taskgated won't kill it
+codesign --force --sign - "$BIN_SRC" 2>/dev/null || true
 TMP_DEST="$DEST.tmp.$$"
 trap 'rm -f "$TMP_DEST"' EXIT
 cp "$BIN_SRC" "$TMP_DEST"
 chmod +x "$TMP_DEST"
-# ad-hoc code-sign so macOS taskgated doesn't kill unsigned binaries
-codesign --force --sign - "$TMP_DEST" 2>/dev/null || true
 mv -f "$TMP_DEST" "$DEST"
 trap - EXIT
 
