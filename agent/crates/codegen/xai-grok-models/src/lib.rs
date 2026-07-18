@@ -107,6 +107,11 @@ mod tests {
         assert_eq!(deepseek["base_url"], "https://api.deepseek.com/v1");
         assert_eq!(deepseek["env_key"], "DEEPSEEK_API_KEY");
         assert_eq!(deepseek["byok"], true);
+        assert_eq!(deepseek["context_window"], 1_000_000);
+        assert_eq!(
+            model_by_id(models, "deepseek-reasoner")["context_window"],
+            1_000_000
+        );
     }
 
     #[test]

@@ -548,6 +548,10 @@ impl SessionActor {
                         )
                         .await?;
                     deferred_followups.extend(followups);
+                    // Track writer tools for delivery gate
+                    if matches!(prepared.tool_name.as_str(), "search_replace" | "write") {
+                        self.delivery_state.borrow_mut().on_writer_tool();
+                    }
                     if prepared.tool_name == "search_tool" {
                         let pi = self.chat_state_handle.get_prompt_index().await as i64;
                         self.last_search_prompt_index
@@ -2034,6 +2038,18 @@ impl SessionActor {
             self.signals_handle().record_bare_echo();
         }
         self.record_git_pr_signals(effective_tool_name, &result);
+        // Storm breaker: success resets storm for this tool
+        self.storm_breaker.borrow_mut().on_tool_success(effective_tool_name);
+        // Repeat success guard: detect identical calls
+        let args_str = tool_parsed_args.to_string();
+        if let Some(action) = self.repeat_success_guard.borrow_mut().on_tool_success(effective_tool_name, &args_str) {
+            use lumen_discipline::RepeatSuccessAction;
+            let RepeatSuccessAction::Nudge(ref msg) = action;
+            tracing::warn!(
+                session_id = % self.session_info.id.0, tool_name = effective_tool_name,
+                "repeat-success-guard: {}", msg
+            );
+        }
         let path_rewriter = self.path_rewriter();
         let tool_meta = {
             let state = self.mcp_state.lock().await;
@@ -2257,6 +2273,8 @@ impl SessionActor {
             Some(rw) => rw.rewrite(&err.to_string()),
             None => err.to_string(),
         };
+        // Feed error to storm breaker
+        self.storm_breaker.borrow_mut().on_tool_error(requested_tool_name, &err_str);
         let message = match effective_tool_name {
             Some(effective) if effective != requested_tool_name => {
                 format!("Tool `{effective}` failed via `{requested_tool_name}`: {err_str}")

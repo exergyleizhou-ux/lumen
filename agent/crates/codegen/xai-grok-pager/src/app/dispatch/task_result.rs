@@ -41,7 +41,7 @@ use super::session::load::{
 use super::settings::ui::apply_setting_rollback;
 use super::status::{
     handle_coding_data_sharing_failed, handle_coding_data_sharing_updated,
-    handle_context_info_complete, scrub_error_for_toast,
+    handle_context_info_complete, handle_truth_probe_timeout, scrub_error_for_toast,
 };
 use super::transcript::{
     handle_hooks_list_loaded, handle_marketplace_list_loaded, handle_marketplace_updates_available,
@@ -372,6 +372,10 @@ pub(super) fn dispatch_task_result(result: TaskResult, app: &mut AppView) -> Vec
             http_status,
             prompt_id,
         } => handle_prompt_response(app, agent_id, result, http_status, prompt_id),
+        TaskResult::TruthProbeTimeout {
+            agent_id,
+            prompt_id,
+        } => handle_truth_probe_timeout(app, agent_id, prompt_id),
         TaskResult::SendPromptNowFailed {
             agent_id,
             session_id,

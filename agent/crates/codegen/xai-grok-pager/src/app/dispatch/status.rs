@@ -26,9 +26,28 @@ pub(super) fn dispatch_show_truth_status(app: &mut AppView) -> Vec<Effect> {
 /// `/probe`: surface Checking + recovery. Tool-ready still requires real tool_call.
 pub(super) fn dispatch_begin_truth_probe(app: &mut AppView) -> Vec<Effect> {
     use super::ctx::get_active_agent_mut;
+    const PROBE_PROMPT: &str = "Lumen capability probe: invoke exactly one read-only agent tool against the current workspace, then report that the probe completed. Do not edit files, run destructive commands, or answer without a tool call.";
+
     let Some(agent) = get_active_agent_mut(app) else {
         return vec![];
     };
+    if !agent.session.state.is_idle() {
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(
+            "Capability probe not started: wait for the current turn to finish or cancel it first."
+                .to_owned(),
+        ));
+        return vec![];
+    }
+    if agent.truth_probe.is_some() {
+        agent
+            .scrollback
+            .push_block(crate::scrollback::block::RenderBlock::system(
+                "A capability probe is already running.".to_owned(),
+            ));
+        return vec![];
+    }
     if let Err(err) = agent.begin_truth_probe() {
         let msg = format!("Could not start capability probe: {err}");
         agent
@@ -37,10 +56,9 @@ pub(super) fn dispatch_begin_truth_probe(app: &mut AppView) -> Vec<Effect> {
         return vec![];
     }
     let mut body = String::from(
-        "Capability probe started (Checking).\n\
-         Tool-ready is not set from the model name — it updates when a real \
-         agent tool_call is observed for this binding, or when external probe \
-         evidence is applied (e.g. scripts/probe-local.sh for local endpoints).\n\n",
+        "Capability probe started (Checking). A real read-only tool-call turn is now in flight \
+         with a 30-second timeout; Ctrl+C cancels it. Tool-ready is set only if that turn emits \
+         a structured tool call for a complete provider/model/base-URL/tool-schema binding.\n\n",
     );
     body.push_str(&crate::views::readiness::recovery_report(
         agent.display_truth_snapshot(),
@@ -48,7 +66,69 @@ pub(super) fn dispatch_begin_truth_probe(app: &mut AppView) -> Vec<Effect> {
     agent
         .scrollback
         .push_block(crate::scrollback::block::RenderBlock::system(body));
-    vec![]
+    let agent_id = agent.session.id;
+    let mut effects = super::prompt::dispatch_send_prompt(app, PROBE_PROMPT.to_owned());
+    let prompt_id = effects.iter().find_map(|effect| match effect {
+        Effect::SendPrompt { prompt_id, .. } => Some(prompt_id.clone()),
+        _ => None,
+    });
+    let Some(prompt_id) = prompt_id else {
+        if let Some(agent) = app.agents.get_mut(&agent_id) {
+            let _ = agent.finish_truth_probe_without_tool(
+                "probe-not-sent",
+                crate::truth_assembly::ProbeOutcome::Failed {
+                    reason: "capability probe could not start a prompt turn".to_owned(),
+                },
+            );
+            agent.truth_probe = None;
+            agent.truth_session.capability = crate::ui_contract::CapabilityState::Failed {
+                reason: "capability probe could not start a prompt turn".to_owned(),
+                evidence_id: None,
+            };
+            let _ = agent.refresh_truth_snapshot();
+        }
+        return effects;
+    };
+    if let Some(agent) = app.agents.get_mut(&agent_id) {
+        agent.arm_truth_probe(prompt_id.clone());
+    }
+    effects.push(Effect::ScheduleTruthProbeTimeout {
+        agent_id,
+        prompt_id,
+    });
+    effects
+}
+
+pub(super) fn handle_truth_probe_timeout(
+    app: &mut AppView,
+    agent_id: AgentId,
+    prompt_id: String,
+) -> Vec<Effect> {
+    let Some(agent) = app.agents.get_mut(&agent_id) else {
+        return vec![];
+    };
+    let Ok(true) = agent.finish_truth_probe_without_tool(
+        &prompt_id,
+        crate::truth_assembly::ProbeOutcome::Failed {
+            reason: "capability probe timed out after 30 seconds".to_owned(),
+        },
+    ) else {
+        return vec![];
+    };
+    agent
+        .scrollback
+        .push_block(crate::scrollback::block::RenderBlock::system(
+            "Capability probe timed out and was cancelled.".to_owned(),
+        ));
+    let Some(session_id) = agent.session.session_id.clone() else {
+        return vec![];
+    };
+    vec![Effect::CancelTurn {
+        session_id,
+        cancel_subagents: false,
+        trigger: None,
+        rewind_if_pristine: false,
+    }]
 }
 
 /// Toggle YOLO mode (auto-approve all permissions).

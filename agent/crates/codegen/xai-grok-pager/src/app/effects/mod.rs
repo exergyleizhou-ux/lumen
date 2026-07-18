@@ -106,6 +106,18 @@ pub(crate) fn execute(
                     }
                 });
         }
+        Effect::ScheduleTruthProbeTimeout {
+            agent_id,
+            prompt_id,
+        } => {
+            tasks.spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                TaskResult::TruthProbeTimeout {
+                    agent_id,
+                    prompt_id,
+                }
+            });
+        }
         Effect::SwitchAccount { request_seq, method_id, use_oauth } => {
             let tx = acp_tx.clone();
             let abort_handle = tasks

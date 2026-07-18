@@ -904,23 +904,28 @@ fn spawn_with_argv(
     {
         use process_wrap::tokio::{CommandWrap, KillOnDrop, ProcessSession};
 
-        let mut cmd = CommandWrap::with_new(program, |cmd| {
-            set_argv(cmd);
-            cmd.current_dir(cwd)
-                .envs(env)
-                .envs(crate::terminal::pager_env())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped());
+        let restrict_network = xai_grok_sandbox::should_restrict_child_network();
+        let mut command = tokio::process::Command::from(
+            xai_grok_sandbox::child_net::child_command(program, restrict_network),
+        );
+        set_argv(&mut command);
+        command
+            .current_dir(cwd)
+            .envs(env)
+            .envs(crate::terminal::pager_env())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
-            #[cfg(target_os = "linux")]
-            if xai_grok_sandbox::should_restrict_child_network() {
-                // SAFETY: single prctl syscall (async-signal-safe).
-                unsafe {
-                    cmd.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
-                }
+        #[cfg(target_os = "linux")]
+        if restrict_network {
+            // SAFETY: single prctl syscall (async-signal-safe).
+            unsafe {
+                command.pre_exec(|| xai_grok_sandbox::child_net::install_child_network_filter());
             }
-        });
+        }
+
+        let mut cmd = CommandWrap::from(command);
         // setsid: detach from TTY + new process group for tree teardown.
         cmd.wrap(ProcessSession);
         cmd.wrap(KillOnDrop);

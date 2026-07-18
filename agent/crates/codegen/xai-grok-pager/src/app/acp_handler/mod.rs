@@ -79,9 +79,62 @@ use queue::{handle_prompt_complete, handle_queue_changed};
 
 /// From a completed tool-call update, extract execute command + exit if present.
 /// Used only for truth verification freshness — not for inventing Tool-ready.
-fn truth_exec_from_update(
-    tcu: &acp::ToolCallUpdate,
-) -> Option<(String, String, i32)> {
+fn is_verification_command(command: &str) -> bool {
+    command
+        .split(['\n', ';'])
+        .flat_map(|part| part.split(['&', '|']))
+        .any(|segment| {
+            let mut words = segment.split_whitespace().peekable();
+            while words
+                .peek()
+                .is_some_and(|word| word.contains('=') && !word.starts_with('-'))
+            {
+                words.next();
+            }
+            let Some(mut program) = words.next() else {
+                return false;
+            };
+            while matches!(program, "env" | "sudo" | "command" | "time") {
+                while words.peek().is_some_and(|word| word.starts_with('-')) {
+                    words.next();
+                }
+                let Some(next) = words.next() else {
+                    return false;
+                };
+                program = next;
+            }
+            let program = program.rsplit('/').next().unwrap_or(program);
+            let args = words.collect::<Vec<_>>();
+            let arg = |idx: usize| args.get(idx).copied().unwrap_or("");
+            match program {
+                "cargo" => {
+                    matches!(arg(0), "test" | "check" | "clippy")
+                        || (arg(0) == "fmt" && args.contains(&"--check"))
+                        || (arg(0) == "nextest" && matches!(arg(1), "run" | "list"))
+                }
+                "go" => matches!(arg(0), "test" | "vet"),
+                "pytest" | "py.test" | "eslint" => true,
+                "python" | "python3" => arg(0) == "-m" && arg(1) == "pytest",
+                "npm" | "pnpm" | "yarn" | "bun" => {
+                    matches!(arg(0), "test" | "lint" | "check")
+                        || (arg(0) == "run" && matches!(arg(1), "test" | "lint" | "check"))
+                }
+                "make" | "just" => args.iter().any(|target| {
+                    matches!(*target, "test" | "tests" | "check" | "verify" | "lint")
+                }),
+                "mvn" | "mvnw" | "gradle" | "gradlew" => args
+                    .iter()
+                    .any(|target| matches!(*target, "test" | "check" | "verify")),
+                "dotnet" | "swift" => arg(0) == "test",
+                "xcodebuild" => args.contains(&"test"),
+                "ruff" => arg(0) == "check",
+                "tsc" => args.contains(&"--noEmit") || args.contains(&"--no-emit"),
+                _ => false,
+            }
+        })
+}
+
+fn truth_exec_from_update(tcu: &acp::ToolCallUpdate) -> Option<(String, String, i32)> {
     let raw = tcu.fields.raw_output.as_ref()?;
     // ToolOutput::Bash shape used by the shell (`exit_code` + optional command).
     let exit = raw
@@ -101,28 +154,22 @@ fn truth_exec_from_update(
         .title
         .clone()
         .or_else(|| {
-            tcu.fields
-                .raw_input
-                .as_ref()
-                .and_then(|v| {
-                    v.get("command")
-                        .or_else(|| v.get("cmd"))
-                        .and_then(|c| c.as_str())
-                        .map(|s| s.to_owned())
-                })
+            tcu.fields.raw_input.as_ref().and_then(|v| {
+                v.get("command")
+                    .or_else(|| v.get("cmd"))
+                    .and_then(|c| c.as_str())
+                    .map(|s| s.to_owned())
+            })
         })
         .unwrap_or_else(|| "execute".to_owned());
-    // Only treat shell-like executes as verification candidates (not every tool).
+    // A successful Execute is not automatically verification. Require a known
+    // test/check/lint command; `pwd`, `ls`, and file-writing shell commands
+    // must never paint the UI as Verified merely because they exited zero.
     let looks_like_shell = tcu.fields.kind == Some(acp::ToolKind::Execute)
-        || command.contains("test")
-        || command.contains("cargo")
-        || command.contains("npm")
-        || command.contains("pytest")
-        || command.contains("make ")
         || raw.get("Bash").is_some()
         || raw.get("exit_code").is_some()
         || raw.get("exitCode").is_some();
-    if !looks_like_shell {
+    if !looks_like_shell || !is_verification_command(&command) {
         return None;
     }
     let run_id = tcu.tool_call_id.0.to_string();
@@ -130,8 +177,8 @@ fn truth_exec_from_update(
 }
 
 use background::{
-    derive_child_cwd, handle_git_head_changed, handle_monitor_event, handle_scheduled_task_created,
-    handle_scheduled_task_deleted, handle_scheduled_task_fired,
+    derive_child_cwd, handle_fs_notify, handle_git_head_changed, handle_monitor_event,
+    handle_scheduled_task_created, handle_scheduled_task_deleted, handle_scheduled_task_fired,
     handle_scheduled_task_inject_prompt, handle_task_backgrounded, handle_task_completed,
     route_bg_task_stdout,
 };
@@ -471,6 +518,7 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                             && let Err(err) = agent.note_truth_live_tool_call_observed(
                                 tc.kind,
                                 tc.tool_call_id.0.as_ref(),
+                                meta.prompt_id.as_deref(),
                             )
                         {
                             tracing::warn!(
@@ -483,10 +531,7 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if !meta.is_replay
                             && let acp::SessionUpdate::ToolCallUpdate(ref tcu) =
                                 notif.request.update
-                            && matches!(
-                                tcu.fields.status,
-                                Some(acp::ToolCallStatus::Completed)
-                            )
+                            && matches!(tcu.fields.status, Some(acp::ToolCallStatus::Completed))
                         {
                             if let Some((cmd, run_id, exit)) = truth_exec_from_update(tcu) {
                                 if exit == 0 {
@@ -553,15 +598,26 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         if let Some(tools) = agent.session.tracker.take_pending_acp_tools() {
                             agent.session.available_tools = Some(tools.into_iter().collect());
                         }
+                        if let Some(tool_schema_hash) =
+                            agent.session.tracker.take_pending_tool_schema_hash()
+                        {
+                            let mut binding = agent.truth_fingerprint_from_session();
+                            binding.tool_schema_hash = tool_schema_hash;
+                            if let Err(err) = agent.note_truth_binding_changed(binding) {
+                                tracing::warn!(
+                                    target: "truth",
+                                    %err,
+                                    "truth snapshot refresh after tool schema change failed"
+                                );
+                            }
+                        }
                         let pending_edit_hl = agent.session.tracker.take_pending_edit_hl();
                         let workspace_mutated = !pending_edit_hl.is_empty();
                         for entry_id in pending_edit_hl {
                             agent.submit_edit_highlight(entry_id);
                         }
                         // Real edit completion → bump change seq / stale verify.
-                        if workspace_mutated
-                            && let Err(err) = agent.note_truth_workspace_change()
-                        {
+                        if workspace_mutated && let Err(err) = agent.note_truth_workspace_change() {
                             tracing::warn!(
                                 target: "truth",
                                 %err,
@@ -742,6 +798,7 @@ fn handle_ext_notification(notif: &acp::ExtNotification, app: &mut AppView) -> b
         "x.ai/scheduled_task_inject_prompt" => handle_scheduled_task_inject_prompt(notif, app),
         "x.ai/announcements/update" => handle_announcements_update(notif, app),
         "x.ai/git_head_changed" => handle_git_head_changed(notif, app),
+        "x.ai/fs_notify" => handle_fs_notify(notif, app),
         "x.ai/mcp/init_progress" => handle_mcp_init_progress(notif, app),
         "x.ai/mcp/tools_changed" | "x.ai/mcp_initialized" => handle_mcp_tools_changed(notif, app),
         "x.ai/mcp/server_status" if push_server_status_enabled() => {

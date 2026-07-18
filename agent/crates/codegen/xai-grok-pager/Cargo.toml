@@ -252,3 +252,4 @@ default-bazel = [
 jemalloc = []
 sandbox-enforce = ["xai-grok-sandbox/enforce"]
 release-dist = []
+test-support = ["xai-grok-pager-render/test-support"]

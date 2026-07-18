@@ -3272,6 +3272,17 @@ mod tests {
         assert_eq!(hint, reinstall_hint("internal"));
     }
 
+    #[test]
+    fn unstamped_update_version_matches_shipping_crate_version() {
+        if option_env!("GROK_VERSION").is_none() {
+            assert_eq!(
+                xai_grok_version::VERSION,
+                env!("CARGO_PKG_VERSION"),
+                "the shared version crate must stay lockstepped with the shipping update crate"
+            );
+        }
+    }
+
     // ──────────────────────────────────────────────────────────────────────
     // UpdateStatus serialization (camelCase contract for --json clients)
     // ──────────────────────────────────────────────────────────────────────

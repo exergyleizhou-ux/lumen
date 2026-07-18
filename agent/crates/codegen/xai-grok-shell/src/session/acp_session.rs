@@ -778,6 +778,12 @@ pub(crate) struct SessionActor {
     /// turn completion, goal completion, or goal resume. Only after 3
     /// consecutive blocked attempts does the goal actually pause.
     pub(crate) goal_blocked_streak: std::sync::atomic::AtomicU32,
+    /// Storm breaker: tracks consecutive same-tool + same-error failures.
+    pub(crate) storm_breaker: std::cell::RefCell<lumen_discipline::StormBreaker>,
+    /// Repeat-success guard: detects identical tool calls succeeding repeatedly.
+    pub(crate) repeat_success_guard: std::cell::RefCell<lumen_discipline::RepeatSuccessGuard>,
+    /// Delivery session state: tracks writer tools and verify evidence per turn.
+    pub(crate) delivery_state: std::cell::RefCell<lumen_discipline::DeliverySessionState>,
     /// Receiver for goal-update envelopes from the `update_goal` tool.
     /// Wrapped in `Option` so the drainer task can `.take()` it at
     /// session start; tests put a fresh receiver back via

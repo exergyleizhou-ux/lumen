@@ -430,9 +430,23 @@ impl CommandAvailability {
 /// Takes `&[String]` rather than `&[&str]` because serde_json copies
 /// each entry into the `Value` regardless, so an intermediate
 /// `Vec<&str>` adapter would just waste an allocation.
-pub(crate) fn build_tools_meta(tool_names: &[String]) -> acp::Meta {
+pub(crate) fn tool_schema_hash(
+    tool_definitions: &[crate::sampling::types::ToolDefinition],
+) -> String {
+    let mut ordered = tool_definitions.iter().collect::<Vec<_>>();
+    ordered.sort_by(|a, b| a.function.name.cmp(&b.function.name));
+    let encoded = serde_json::to_vec(&ordered)
+        .expect("tool definitions are serializable for capability fingerprinting");
+    blake3::hash(&encoded).to_hex().to_string()
+}
+
+pub(crate) fn build_tools_meta(tool_names: &[String], tool_schema_hash: &str) -> acp::Meta {
     let mut meta = acp::Meta::new();
     meta.insert("tools".to_owned(), serde_json::json!(tool_names));
+    meta.insert(
+        "toolSchemaHash".to_owned(),
+        serde_json::Value::String(tool_schema_hash.to_owned()),
+    );
     meta
 }
 
@@ -1700,10 +1714,41 @@ mod tests {
     #[test]
     fn build_tools_meta_serialises_tool_names() {
         let names = vec!["scheduler_create".to_string(), "image_gen".to_string()];
-        let v = build_tools_meta(&names);
+        let v = build_tools_meta(&names, "schema-42");
         assert_eq!(
             serde_json::Value::Object(v),
-            serde_json::json!({"tools": ["scheduler_create", "image_gen"]})
+            serde_json::json!({
+                "tools": ["scheduler_create", "image_gen"],
+                "toolSchemaHash": "schema-42"
+            })
+        );
+    }
+
+    #[test]
+    fn tool_schema_hash_is_order_stable_and_schema_sensitive() {
+        use crate::sampling::types::ToolDefinition;
+        let a = ToolDefinition::function(
+            "read_file",
+            None::<String>,
+            serde_json::json!({"type": "object", "properties": {"path": {"type": "string"}}}),
+        );
+        let b = ToolDefinition::function(
+            "search",
+            None::<String>,
+            serde_json::json!({"type": "object", "properties": {"query": {"type": "string"}}}),
+        );
+        assert_eq!(
+            tool_schema_hash(&[a.clone(), b.clone()]),
+            tool_schema_hash(&[b.clone(), a.clone()])
+        );
+        let changed = ToolDefinition::function(
+            "search",
+            None::<String>,
+            serde_json::json!({"type": "object", "required": ["query"]}),
+        );
+        assert_ne!(
+            tool_schema_hash(&[a.clone(), b]),
+            tool_schema_hash(&[a, changed])
         );
     }
 

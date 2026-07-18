@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use crate::paths::{system_config_dir, user_grok_home};
+use crate::paths::system_config_dir;
 use crate::validation::{load_requirements, load_system_requirements};
 use crate::version_overrides::{self, apply_version_overrides};
 

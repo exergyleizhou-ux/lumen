@@ -3160,9 +3160,7 @@ pub fn resolve_model_list(
         } else {
             resolved
                 .iter()
-                .filter(|(key, entry)| {
-                    entry.env_key.is_some() && !prefetched.contains_key(*key)
-                })
+                .filter(|(key, entry)| entry.env_key.is_some() && !prefetched.contains_key(*key))
                 .map(|(key, entry)| (key.clone(), entry.clone()))
                 .collect()
         };
@@ -4334,11 +4332,26 @@ pub(crate) fn first_own_credential(
 /// Priority: model api_key/env_key > session token > XAI_API_KEY.
 ///
 /// When `env_key` lists multiple names, the first set non-empty value is used.
+/// A model with an explicit `env_key` is a BYOK route. If none of those
+/// variables are set, fail closed instead of forwarding a Lumen session token
+/// or an xAI API key to that provider.
 pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> ResolvedCredentials {
     let info = model.info();
     let (api_key, base_url, auth_type) = if let Some(key) = model.own_credential() {
         (
             Some(key),
+            info.base_url.clone(),
+            xai_chat_state::AuthType::ApiKey,
+        )
+    } else if let Some(ref env_keys) = model.env_key
+        && !env_keys.is_empty()
+    {
+        tracing::warn!(
+            model = % info.model, env_key = % env_keys,
+            "BYOK model has no configured provider credential; refusing cross-provider fallback",
+        );
+        (
+            None,
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
         )
@@ -4355,15 +4368,6 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             .unwrap_or_else(|| info.base_url.clone());
         (Some(key), url, xai_chat_state::AuthType::ApiKey)
     } else {
-        if let Some(ref env_keys) = model.env_key
-            && !env_keys.is_empty()
-        {
-            tracing::warn!(
-                model = % info.model, env_key = % env_keys,
-                "model has env_key configured but none of the environment variables are set — \
-                 requests will have no API key",
-            );
-        }
         (
             None,
             info.base_url.clone(),
@@ -4854,6 +4858,45 @@ pub fn to_acp_model_info(
             let total_context_tokens = info.context_window.get();
             let meta = {
                 let mut map = serde_json::Map::new();
+                let mut endpoint_ids =
+                    [Some(info.base_url.as_str()), model.api_base_url.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|raw| {
+                            let mut url = url::Url::parse(raw).ok()?;
+                            let _ = url.set_username("");
+                            let _ = url.set_password(None);
+                            url.set_query(None);
+                            url.set_fragment(None);
+                            Some(url.to_string().trim_end_matches('/').to_owned())
+                        })
+                        .collect::<Vec<_>>();
+                endpoint_ids.sort();
+                endpoint_ids.dedup();
+                let mut provider_ids = endpoint_ids
+                    .iter()
+                    .filter_map(|endpoint| {
+                        let url = url::Url::parse(endpoint).ok()?;
+                        Some(match url.port() {
+                            Some(port) => format!("{}:{port}", url.host_str()?),
+                            None => url.host_str()?.to_owned(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                provider_ids.sort();
+                provider_ids.dedup();
+                if !endpoint_ids.is_empty() {
+                    map.insert(
+                        "baseUrl".to_string(),
+                        serde_json::Value::String(endpoint_ids.join("|")),
+                    );
+                }
+                if !provider_ids.is_empty() {
+                    map.insert(
+                        "providerId".to_string(),
+                        serde_json::Value::String(provider_ids.join("|")),
+                    );
+                }
                 map.insert(
                     "totalContextTokens".to_string(),
                     serde_json::Value::Number(total_context_tokens.into()),
@@ -5571,6 +5614,21 @@ reasoning_effort = "low"
             Some(vec!["DEEPSEEK_API_KEY"]),
             "deepseek-chat env_key must be DEEPSEEK_API_KEY"
         );
+        assert_eq!(
+            deepseek.info().context_window.get(),
+            1_000_000,
+            "deepseek-chat must expose the embedded 1M context window"
+        );
+        assert_eq!(
+            models
+                .get("deepseek-reasoner")
+                .expect("default_models.json must include deepseek-reasoner")
+                .info()
+                .context_window
+                .get(),
+            1_000_000,
+            "deepseek-reasoner must expose the embedded 1M context window"
+        );
         // With env set, own credential wins and stays on DeepSeek base_url.
         let env_name = "DEEPSEEK_API_KEY";
         // SAFETY: test-only env mutation; restored below.
@@ -5711,7 +5769,7 @@ reasoning_effort = "low"
     }
     #[test]
     #[serial]
-    fn resolve_credentials_empty_env_key_falls_through_to_session() {
+    fn resolve_credentials_empty_env_key_does_not_leak_session_token() {
         use xai_chat_state::AuthType;
         use xai_grok_test_support::EnvGuard;
         let primary = "GROK_TEST_EMPTY_ENV_PRIMARY";
@@ -5722,12 +5780,13 @@ reasoning_effort = "low"
         model.env_key = Some(EnvKeys::new([primary, alias]));
         assert!(!model.has_own_credentials());
         let creds = resolve_credentials(&model, Some("session-jwt"));
-        assert_eq!(creds.auth_type, AuthType::SessionToken);
-        assert_eq!(creds.api_key.as_deref(), Some("session-jwt"));
+        assert_eq!(creds.auth_type, AuthType::ApiKey);
+        assert_eq!(creds.api_key, None);
+        assert_eq!(creds.base_url, "https://inference.example/v1");
     }
     #[test]
     #[serial]
-    fn resolve_credentials_empty_env_key_falls_through_to_global_key() {
+    fn resolve_credentials_empty_env_key_does_not_leak_global_xai_key() {
         use crate::agent::auth_method::{LEGACY_XAI_API_KEY_ENV_VAR, XAI_API_KEY_ENV_VAR};
         use xai_chat_state::AuthType;
         use xai_grok_test_support::EnvGuard;
@@ -5743,7 +5802,8 @@ reasoning_effort = "low"
         assert!(!model.has_own_credentials());
         let creds = resolve_credentials(&model, None);
         assert_eq!(creds.auth_type, AuthType::ApiKey);
-        assert_eq!(creds.api_key.as_deref(), Some(sentinel));
+        assert_eq!(creds.api_key, None);
+        assert_eq!(creds.base_url, "https://inference.example/v1");
     }
     #[test]
     fn resolve_credentials_empty_api_key_falls_through_to_session() {
@@ -5975,12 +6035,12 @@ reasoning_effort = "low"
         assert_eq!(info.auth_type, "bearer");
     }
     #[test]
-    fn has_own_credentials_guards_session_vs_external_key() {
+    fn default_models_do_not_embed_literal_api_keys() {
         let endpoints = EndpointsConfig::default();
         for (model_id, entry) in default_model_entries(&endpoints) {
             assert!(
-                !entry.has_own_credentials(),
-                "{model_id}: Default model must not claim own credentials"
+                entry.api_key.is_none(),
+                "{model_id}: bundled defaults must not embed literal credentials"
             );
         }
         let config_model = test_model_entry(
@@ -6029,6 +6089,9 @@ reasoning_effort = "low"
     #[test]
     fn user_override_adds_api_key_to_default_model() {
         let dm = crate::models::default_model();
+        let default = default_model_entries(&EndpointsConfig::default())
+            .shift_remove(dm)
+            .expect("default model entry");
         let raw_config: toml::Value = toml::from_str(&format!(
             r#"
             [model."{dm}"]
@@ -6041,10 +6104,7 @@ reasoning_effort = "low"
         let model = resolved.get(dm).expect("model should exist");
         assert_eq!(model.api_key, Some("user-custom-api-key".to_string()));
         assert_eq!(model.info.model, dm);
-        assert_eq!(
-            model.info.base_url, "https://cli-chat-proxy.grok.com/v1",
-            "base_url should inherit from default, not be stale"
-        );
+        assert_eq!(model.info.base_url, default.info.base_url);
     }
     #[test]
     fn config_override_applies_show_model_fingerprint() {
@@ -6682,6 +6742,33 @@ reasoning_effort = "low"
         let meta = acp_model.meta.as_ref().expect("meta should be present");
         assert_eq!(meta["agentType"], "codex");
         assert_eq!(meta["totalContextTokens"], 256_000);
+    }
+    #[test]
+    fn acp_model_meta_emits_redacted_truth_binding() {
+        let mut models = IndexMap::new();
+        let entry = test_model_entry(
+            "test-model",
+            "https://user:secret@test.api:8443/v1?token=hidden#fragment",
+            None,
+            None,
+            Some("https://test.api:8443/v1"),
+        );
+        models.insert("test-model".to_string(), entry);
+
+        let acp_models = to_acp_model_info(&models);
+        let meta = acp_models
+            .values()
+            .next()
+            .and_then(|model| model.meta.as_ref())
+            .expect("truth binding metadata should be present");
+
+        assert_eq!(meta["providerId"], "test.api:8443");
+        assert_eq!(meta["baseUrl"], "https://test.api:8443/v1");
+        let encoded = serde_json::Value::Object(meta.clone()).to_string();
+        assert!(!encoded.contains("user"));
+        assert!(!encoded.contains("secret"));
+        assert!(!encoded.contains("hidden"));
+        assert!(!encoded.contains("fragment"));
     }
     #[test]
     fn acp_model_meta_always_includes_agent_type() {
@@ -7388,7 +7475,10 @@ reasoning_effort = "low"
         let model = models.get(dm).expect("model should exist");
         assert_eq!(model.info.base_url, "https://my-proxy.example.com/v1");
         assert_eq!(model.api_key.as_deref(), Some("my-custom-api-key"));
-        assert!(model.env_key.is_none());
+        assert!(
+            model.env_key.is_some(),
+            "provider env fallback is inherited"
+        );
         let sampling = resolve_sampling(model, Some("session-token"));
         assert_eq!(
             sampling.api_key.as_deref(),
@@ -7455,31 +7545,31 @@ reasoning_effort = "low"
         assert_eq!(model.info.base_url, "https://inference.example.com/v1");
     }
     #[test]
-    fn e2e_default_model_with_session_routes_to_proxy() {
+    fn e2e_default_byok_model_does_not_forward_session_token() {
         let (_, models) = resolve_models_from_toml("", None);
         let model = models
             .get(crate::models::default_model())
             .expect("default model should exist");
         let sampling = resolve_sampling(model, Some("session-token-123"));
-        assert_eq!(sampling.api_key.as_deref(), Some("session-token-123"));
+        assert_eq!(sampling.api_key, None);
         assert_eq!(
-            sampling.base_url, "https://cli-chat-proxy.grok.com/v1",
-            "session auth should route to cli-chat-proxy, not api.x.ai"
+            sampling.base_url, "https://api.deepseek.com/v1",
+            "missing DeepSeek credentials must stay on the provider route without a session JWT"
         );
     }
     #[test]
     #[serial]
-    fn e2e_default_model_with_external_api_key_routes_to_api_xai() {
+    fn e2e_default_byok_model_does_not_forward_external_xai_key() {
         let (_, models) = resolve_models_from_toml("", None);
         let model = models
             .get(crate::models::default_model())
             .expect("default model should exist");
         unsafe { std::env::set_var("XAI_API_KEY", "xai-external-key") };
         let sampling = resolve_sampling(model, None);
-        assert_eq!(sampling.api_key.as_deref(), Some("xai-external-key"));
+        assert_eq!(sampling.api_key, None);
         assert_eq!(
-            sampling.base_url, "https://api.x.ai/v1",
-            "external API key should route to api.x.ai via api_base_url"
+            sampling.base_url, "https://api.deepseek.com/v1",
+            "xAI credentials must not cross the DeepSeek provider boundary"
         );
         unsafe { std::env::remove_var("XAI_API_KEY") };
     }
@@ -7602,8 +7692,8 @@ reasoning_effort = "low"
         assert_eq!(sampling.api_key.as_deref(), Some("enterprise-key"));
         assert_eq!(sampling.base_url, "https://inference.example.com/v1");
         let sampling = resolve_sampling(default, Some("session-key"));
-        assert_eq!(sampling.api_key.as_deref(), Some("session-key"));
-        assert_eq!(sampling.base_url, "https://cli-chat-proxy.grok.com/v1",);
+        assert_eq!(sampling.api_key, None);
+        assert_eq!(sampling.base_url, "https://api.deepseek.com/v1");
     }
     #[test]
     fn e2e_enterprise_custom_endpoint_skips_xai_defaults() {
@@ -7679,7 +7769,7 @@ reasoning_effort = "low"
         );
     }
     #[test]
-    fn e2e_enterprise_endpoints_plus_partial_model_override() {
+    fn e2e_provider_default_ignores_xai_endpoints_with_partial_override() {
         let dm = crate::models::default_model();
         let (_, models) = resolve_models_from_toml(
             &format!(
@@ -7696,14 +7786,11 @@ reasoning_effort = "low"
         );
         let model = models.get(dm).expect("model should exist");
         assert_eq!(
-            model.info.base_url, "https://enterprise-proxy.acme.com/v1",
-            "base_url must inherit from [endpoints], not stale default"
+            model.info.base_url, "https://api.deepseek.com/v1",
+            "provider BYOK base_url must not inherit xAI endpoint settings"
         );
         assert_eq!(model.api_key.as_deref(), Some("acme-api-key"));
-        assert_eq!(
-            model.api_base_url.as_deref(),
-            Some("https://enterprise-api.acme.com/v1"),
-        );
+        assert_eq!(model.api_base_url, None);
         let sampling = resolve_sampling(model, Some("session-token"));
         assert_eq!(
             sampling.api_key.as_deref(),
@@ -7711,12 +7798,12 @@ reasoning_effort = "low"
             "model's own api_key must beat session token"
         );
         assert_eq!(
-            sampling.base_url, "https://enterprise-proxy.acme.com/v1",
-            "sampling must route to enterprise proxy"
+            sampling.base_url, "https://api.deepseek.com/v1",
+            "sampling must remain on the provider endpoint"
         );
     }
     #[test]
-    fn e2e_enterprise_endpoints_only_no_model_override() {
+    fn e2e_xai_endpoints_do_not_rewrite_provider_defaults() {
         let (_, models) = resolve_models_from_toml(
             r#"
             [endpoints]
@@ -7729,14 +7816,10 @@ reasoning_effort = "low"
             .get(crate::models::default_model())
             .expect("model should exist");
         assert_eq!(
-            model.info.base_url, "https://enterprise-proxy.acme.com/v1",
-            "default model should use enterprise cli_chat_proxy_base_url"
+            model.info.base_url, "https://api.deepseek.com/v1",
+            "DeepSeek default should retain its provider endpoint"
         );
-        assert_eq!(
-            model.api_base_url.as_deref(),
-            Some("https://enterprise-api.acme.com/v1"),
-            "default model should use enterprise xai_api_base_url"
-        );
+        assert_eq!(model.api_base_url, None);
     }
     /// Unset every env var that `EndpointsConfig::default()` reads for endpoints,
     /// so the cli-chat-proxy resolver tests below are deterministic regardless of
@@ -10946,15 +11029,20 @@ default = "grok-4.5"
     fn resolve_model_list_inherits_context_window_from_default_when_prefetched_has_fallback() {
         let cfg = Config::default();
         let default_cw = DEFAULT_CONTEXT_WINDOW;
-        let entry = prefetch_model_entry("grok-build", default_cw, ApiBackend::default());
+        let default_model = crate::models::default_model();
+        let expected_cw = default_model_entries(&EndpointsConfig::default())
+            .get(default_model)
+            .expect("bundled product default")
+            .info
+            .context_window;
+        let entry = prefetch_model_entry(default_model, default_cw, ApiBackend::default());
         let mut prefetched = IndexMap::new();
-        prefetched.insert("grok-build".to_owned(), entry);
+        prefetched.insert(default_model.to_owned(), entry);
         let resolved = resolve_model_list(&cfg, Some(prefetched));
-        let entry = resolved.get("grok-build").expect("model must exist");
-        assert_ne!(
-            entry.info.context_window.get(),
-            default_cw,
-            "context_window should have been inherited from hardcoded default, not left at DEFAULT_CONTEXT_WINDOW"
+        let entry = resolved.get(default_model).expect("model must exist");
+        assert_eq!(
+            entry.info.context_window, expected_cw,
+            "context_window should be inherited from the bundled product default"
         );
     }
     #[test]
@@ -11020,30 +11108,24 @@ default = "grok-4.5"
     #[test]
     fn resolve_model_list_prunes_bundled_entries_not_in_prefetch() {
         let cfg = Config::default();
-        let mut defs = default_model_entries(&EndpointsConfig::default());
         let mut p = IndexMap::new();
-        if let Some(e) = defs.shift_remove("grok-build") {
-            p.insert("grok-build".to_string(), e);
-        }
+        p.insert(
+            "grok-build".to_string(),
+            prefetch_model_entry("grok-build", 256_000, ApiBackend::Responses),
+        );
         let resolved = resolve_model_list(&cfg, Some(p));
         assert!(resolved.contains_key("grok-build"));
-        // Non-BYOK bundled rows (no env_key) are still pruned; BYOK may remain.
-        if let Some(entry) = default_model_entries(&EndpointsConfig::default()).get("grok-build") {
-            if entry.env_key.is_none() {
-                // only grok-build from non-BYOK path — ok if BYOK extras present
-            }
-        }
+        assert!(resolved.contains_key(crate::models::default_model()));
         let no_p = resolve_model_list(&cfg, None);
-        assert!(no_p.contains_key("grok-build"));
+        assert!(no_p.contains_key(crate::models::default_model()));
     }
     #[test]
     fn resolve_model_list_prefetch_visibility_matches_auth_and_server_list() {
         let cfg = Config::default();
-        let mut defs = default_model_entries(&EndpointsConfig::default());
         let mut p = IndexMap::new();
-        if let Some(e) = defs.shift_remove("grok-build") {
-            p.insert("grok-build".to_string(), e);
-        }
+        let mut remote = prefetch_model_entry("grok-build", 256_000, ApiBackend::Responses);
+        remote.info.supported_in_api = false;
+        p.insert("grok-build".to_string(), remote);
         let resolved = resolve_model_list(&cfg, Some(p));
         assert!(resolved.contains_key("grok-build"));
         let grok = resolved.get("grok-build").expect("grok-build");
@@ -11164,7 +11246,11 @@ default = "grok-4.5"
         )
         .unwrap();
         let cfg = Config::new_from_toml_cfg(&raw).expect("config should parse");
-        let resolved = resolve_model_list(&cfg, None);
+        let mut prefetched = IndexMap::new();
+        let mut oauth_only = prefetch_model_entry("grok-build", 256_000, ApiBackend::Responses);
+        oauth_only.info.supported_in_api = false;
+        prefetched.insert("grok-build".to_string(), oauth_only);
+        let resolved = resolve_model_list(&cfg, Some(prefetched));
         let entry = resolved.get("grok-build").expect("grok-build must exist");
         assert!(
             !entry.visible_for_auth(false),

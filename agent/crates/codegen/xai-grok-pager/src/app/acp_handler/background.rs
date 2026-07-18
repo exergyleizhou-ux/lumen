@@ -522,6 +522,12 @@ pub(super) fn handle_git_head_changed(notif: &acp::ExtNotification, app: &mut Ap
         agent.current_branch = params.branch;
         agent.is_worktree = params.is_worktree;
         agent.main_repo = params.main_repo;
+        if matches!(
+            agent.truth_session.verification,
+            crate::ui_contract::VerificationSummary::Passed { .. }
+        ) {
+            let _ = agent.note_truth_workspace_change();
+        }
         return true;
     }
 
@@ -541,10 +547,69 @@ pub(super) fn handle_git_head_changed(notif: &acp::ExtNotification, app: &mut Ap
             child_view.current_branch = params.branch;
             child_view.is_worktree = params.is_worktree;
             child_view.main_repo = params.main_repo;
+            if matches!(
+                child_view.truth_session.verification,
+                crate::ui_contract::VerificationSummary::Passed { .. }
+            ) {
+                let _ = child_view.note_truth_workspace_change();
+            }
             return true;
         }
     }
 
+    false
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FsNotifyParams {
+    session_id: String,
+    event: FsNotifyEvent,
+}
+
+#[derive(serde::Deserialize)]
+struct FsNotifyEvent {
+    kind: String,
+    #[allow(dead_code)]
+    paths: Vec<String>,
+}
+
+/// Any live workspace filesystem mutation invalidates a prior verification.
+/// The shell's watcher observes agent edits, Bash writes, Git operations, and
+/// external editor changes through the same channel.
+pub(super) fn handle_fs_notify(notif: &acp::ExtNotification, app: &mut AppView) -> bool {
+    let Ok(params) = serde_json::from_str::<FsNotifyParams>(notif.params.get()) else {
+        return false;
+    };
+    if !matches!(
+        params.event.kind.as_str(),
+        "Create" | "Modify" | "Remove" | "Rename"
+    ) {
+        return false;
+    }
+
+    if let Some(agent) = app.agents.values_mut().find(|agent| {
+        agent
+            .session
+            .session_id
+            .as_ref()
+            .is_some_and(|id| id.0.as_ref() == params.session_id)
+    }) {
+        let _ = agent.note_truth_workspace_change();
+        return true;
+    }
+    for agent in app.agents.values_mut() {
+        if let Some(child) = agent.subagent_views.values_mut().find(|child| {
+            child
+                .session
+                .session_id
+                .as_ref()
+                .is_some_and(|id| id.0.as_ref() == params.session_id)
+        }) {
+            let _ = child.note_truth_workspace_change();
+            return true;
+        }
+    }
     false
 }
 

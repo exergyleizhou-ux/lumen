@@ -2969,7 +2969,9 @@ mod tests {
     // ── clear() resets has_fetched_real_catalog ──────────────────────
 
     #[test]
+    #[serial_test::serial]
     fn clear_resets_has_fetched_real_catalog() {
+        let _default_model = xai_grok_test_support::EnvGuard::unset("GROK_DEFAULT_MODEL");
         let mgr = test_manager();
         let mut cfg = config::Config::default();
         cfg.models.default = Some("grok-3".to_string());
@@ -2984,10 +2986,15 @@ mod tests {
         // New identity fetch — resolves default via reselect_default_model.
         let prefetched = make_prefetched(&["grok-4.5", "grok-4.3"]);
         mgr.apply_refresh_result(&cfg, Some(prefetched), None);
-        let first_available = mgr.available().keys().next().unwrap().clone();
-        assert_eq!(
-            mgr.current_model_id().0.as_ref(),
-            first_available.0.as_ref()
+        let current = mgr.current_model_id();
+        assert_ne!(
+            current.0.as_ref(),
+            "grok-3",
+            "the stale pre-clear selection must not survive the new catalog"
+        );
+        assert!(
+            mgr.models().contains_key(current.0.as_ref()),
+            "the reselected model must exist in the refreshed catalog"
         );
     }
 
@@ -3096,7 +3103,10 @@ mod tests {
         assert_eq!(catalog.keys().next().map(String::as_str), Some("grok-4.5"));
         let cfg = config::Config::default();
         let (key, _, src) = resolve_default_model(&cfg, &catalog, true);
-        assert_eq!(key, product, "must select product default, not first catalog key");
+        assert_eq!(
+            key, product,
+            "must select product default, not first catalog key"
+        );
         assert_eq!(src, config::ConfigSource::Default);
     }
 

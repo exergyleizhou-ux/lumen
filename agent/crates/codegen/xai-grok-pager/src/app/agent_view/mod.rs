@@ -704,6 +704,11 @@ impl ParkedMarkerSlot {
         }
     }
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TruthProbeRun {
+    pub prompt_id: String,
+}
+
 pub struct AgentView {
     pub session: AgentSession,
     pub scrollback: ScrollbackState,
@@ -713,6 +718,9 @@ pub struct AgentView {
     /// Cached, validated display truth installed by Gate C assembly. All UI
     /// surfaces borrow or clone this same `Arc`; renderers never infer truth.
     pub truth_snapshot: Arc<crate::ui_contract::TruthSnapshot>,
+    /// Active `/probe` turn, correlated by the prompt id echoed on every ACP
+    /// update. Cleared by a real tool call, terminal response, or timeout.
+    pub truth_probe: Option<TruthProbeRun>,
     pub prompt: PromptWidget,
     /// Sticky: once the user types in the prompt, hide the tip for the session.
     pub tip_typing_dismissed: bool,
@@ -3129,7 +3137,7 @@ pub(super) mod test_fixtures {
 /// the lazy Mermaid glue (which needs a session dir) can be exercised from the
 /// `mermaid_worker` test module without duplicating the large `AgentSession`
 /// literal.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn test_agent_view(session_id: Option<&str>, cwd: std::path::PathBuf) -> AgentView {
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     AgentView::new(
