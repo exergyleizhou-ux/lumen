@@ -3,7 +3,7 @@
 > 本文档写给 Codex agent，让它能独立完成每个增强任务。
 > 每个任务包含：目标、参考实现、文件位置、验收标准。
 
-## 当前状态（2026-07-18）— 来自第三方审计
+## 当前状态（2026-07-18）— 更新于 P1 合入后
 
 审计结论：**DONE_WITH_CONCERNS**。29 条验收标准中严格完成 7 条（24.14%）。
 
@@ -22,12 +22,19 @@
 
 | 分支 | commit | 状态 | 说明 |
 |------|--------|------|------|
-| `main` | `b933176` | ✅ 当前运行 | StormBreaker/Delivery 已 wired |
-| `codex/production-ready-p1-rust` | `febb833` | ✅ 已完成，未合入 | truth hardening, 24 files +890/-108（相对 base） |
-| `codex/enhancements-f-release` | `f415354` | ✅ 已有 6 files +2482 实现 | 发布流水线基础设施，未合入 |
+| `main` | `877ecbd` | ✅ 当前运行 | P1 truth hardening 已合入 + StormBreaker/Delivery 保留 |
+| `codex/production-ready-p1-rust` | `febb833` | ✅ 已合入 main | truth hardening 通过 patch 方式合入（排除冲突部分） |
+| `codex/enhancements-f-release` | `f415354` | ✅ 已有 6 files +2482 实现 | 发布流水线基础设施，待合入 |
 
-### 已知问题
-1. `main` 中 3 个测试文件因缺 `delivery_state`/`repeat_success_guard`/`storm_breaker` 字段无法编译（`cancel_running_task_tests.rs:837,1881`、`inline_auto_compact_flow_tests.rs:1259`）
+### 已修复的问题
+1. ~~测试编译失败~~ ✅ 已修复（commit `a74305f`）：3 个测试文件补了 `delivery_state`/`repeat_success_guard`/`storm_breaker` 字段
+2. ~~P1 未合入~~ ✅ 已合入（commit `877ecbd`）：truth hardening 24 文件 +816/-108，编译通过，测试 76/76
+
+### 已知问题（待 Codex 修复）
+1. `lumen update --check --json` 报告 `currentVersion=0.2.0-dev` 与 `lumen --version` 的 `0.1.220-alpha.4` 矛盾
+2. macOS 沙箱网络隔离是 no-op（`xai-grok-sandbox/src/child_net.rs:108-110`）
+3. 无 Lumen 自有发布 remote，唯一 remote 是 `xai-org/grok-build`
+4. F 分支发布基础设施未合入，缺 `scripts/release.sh`、version bump、CHANGELOG 自动更新
 2. `lumen update --check --json` 报告 `currentVersion=0.2.0-dev` 与 `lumen --version` 的 `0.1.220-alpha.4` 矛盾
 3. macOS 沙箱网络隔离是 no-op（`xai-grok-sandbox/src/child_net.rs:108-110`）
 4. 无 Lumen 自有发布 remote，唯一 remote 是 `xai-org/grok-build`
