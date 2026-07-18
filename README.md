@@ -6,6 +6,19 @@
 - 运行时：`agent/`（Grok pin，~135 万行 Rust）
 - 二进制：`lumen`（UI/交互仍是 Grok TUI，产品名 Lumen）
 
+
+
+## Repository history note
+
+This `main` branch is the **Rust** Lumen product (Grok Build derivative).
+
+The earlier **Go** Lumen line that previously occupied GitHub `main` is preserved at:
+
+- branch: `archive/go-main` (tip was `dd8d71c`, includes Go v1.x releases)
+- historical tags such as `v1.1.2` remain available for old release assets
+
+Do not treat Go tags as the current shipping line. Current product version is in root `VERSION` (`0.1.220-alpha.4`).
+
 ## 快速开始
 
 ```bash
