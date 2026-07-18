@@ -4,13 +4,23 @@
 
 ## 核心原则
 - **绝不自动合并**——生成审核报告，等用户审批
+- **硬检查优先**——先跑 `scripts/check-upstream-safety.sh` 做机械验证
+- **AI 做语义分析，脚本做硬约束，人做最终决定**
 - **保护我们的三层（guard/discipline/verify）**
 - **保护品牌文件（logo/welcome/label）**
 - **路径映射**：上游 `crates/codegen/xxx` → 我们 `agent/crates/codegen/xxx`
 
 ## 执行流程
 
-### Phase 1: Fetch & Diff
+### Phase 1: 硬安全检查（脚本，不可跳过）
+```bash
+cd /Users/lei/code/lumen && ./scripts/check-upstream-safety.sh
+```
+- 退出码 0 = 安全，继续
+- 退出码 1 = 保护区告警，**硬阻止，立即报告用户，停止**
+- 退出码 2 = 有冲突，标记后继续
+
+### Phase 2: AI 语义分析（逐文件 diff 阅读）
 ```bash
 cd /Users/lei/code/lumen
 git fetch upstream --no-tags
