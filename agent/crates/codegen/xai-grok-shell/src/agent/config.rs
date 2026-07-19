@@ -3153,7 +3153,7 @@ pub fn resolve_model_list(
         // Remote / session prefetch still replaces non-BYOK bundled entries (xAI
         // entitlement list). Lumen multi-provider BYOK rows (env_key set) must
         // survive — otherwise a cold start with ~/.grok OIDC models_cache that
-        // only lists grok-4.5 wipes deepseek-chat and the status bar freezes on
+        // only lists grok-4.5 wipes deepseek-v4-pro and the status bar freezes on
         // the wrong product default. Empty prefetch stays empty (server said none).
         let byok_survivors: IndexMap<String, ModelEntry> = if prefetched.is_empty() {
             IndexMap::new()
@@ -3343,13 +3343,14 @@ pub fn effective_classifier_supports_re(
 }
 /// JSON-only subset of `ModelEntryConfig`.
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 struct DefaultModelJson {
     id: Option<String>,
     model: String,
     name: Option<String>,
     description: Option<String>,
     context_window: Option<NonZeroU64>,
+    auto_compact_threshold_percent: Option<u8>,
     temperature: Option<f32>,
     top_p: Option<f32>,
     max_completion_tokens: Option<u32>,
@@ -3374,6 +3375,10 @@ struct DefaultModelJson {
     compaction_at_tokens: Option<CompactionAtTokens>,
     #[serde(default)]
     show_model_fingerprint: bool,
+    #[serde(default)]
+    stream_tool_calls: Option<bool>,
+    #[serde(default)]
+    laziness_detector: LazinessDetectorPerModelConfig,
     /// Optional third-party / BYOK inference base URL (e.g. DeepSeek).
     /// When set, replaces the xAI proxy base URL for this default model.
     #[serde(default)]
@@ -3410,7 +3415,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let context_window = m
                 .context_window
                 .unwrap_or_else(|| NonZeroU64::new(200_000).expect("200000 is non-zero"));
-            // Lumen BYOK defaults (e.g. deepseek-chat): honor embedded base_url/env_key
+            // Lumen BYOK defaults (e.g. deepseek-v4-pro): honor embedded base_url/env_key
             // instead of routing through the xAI cli-chat-proxy.
             let (base_url, api_base_url, env_key) = if let Some(ref byok_url) = m.base_url {
                 let url = byok_url.trim().to_owned();
@@ -3435,7 +3440,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 name: m.name,
                 description: m.description,
                 context_window,
-                auto_compact_threshold_percent: None,
+                auto_compact_threshold_percent: m.auto_compact_threshold_percent,
                 system_prompt_label: None,
                 temperature: m.temperature,
                 top_p: m.top_p,
@@ -3458,8 +3463,8 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 compactions_remaining: m.compactions_remaining,
                 compaction_at_tokens: m.compaction_at_tokens,
                 show_model_fingerprint: m.show_model_fingerprint,
-                stream_tool_calls: None,
-                laziness_detector: LazinessDetectorPerModelConfig::default(),
+                stream_tool_calls: m.stream_tool_calls,
+                laziness_detector: m.laziness_detector,
             };
             (key, config)
         })
@@ -5564,7 +5569,7 @@ reasoning_effort = "low"
         let endpoints = EndpointsConfig::default();
         for (model_id, entry) in default_model_entries(&endpoints) {
             if entry.api_base_url.is_none() {
-                // Lumen BYOK defaults (e.g. deepseek-chat) intentionally clear
+                // Lumen BYOK defaults (e.g. deepseek-v4-pro) intentionally clear
                 // api_base_url so all auth uses the third-party base_url.
                 continue;
             }
@@ -5590,7 +5595,7 @@ reasoning_effort = "low"
         }
     }
 
-    /// Lumen: embedded deepseek-chat default must be pure BYOK — DeepSeek URL,
+    /// Lumen: formal DeepSeek V4 models must be pure BYOK — DeepSeek URL,
     /// DEEPSEEK_API_KEY env_key, no xAI api_base_url dual-route.
     #[test]
     #[serial]
@@ -5598,37 +5603,46 @@ reasoning_effort = "low"
         let endpoints = EndpointsConfig::default();
         let models = default_model_entries(&endpoints);
         let deepseek = models
-            .get("deepseek-chat")
-            .expect("default_models.json must include deepseek-chat");
+            .get("deepseek-v4-pro")
+            .expect("default_models.json must include deepseek-v4-pro");
         assert_eq!(
             deepseek.info().base_url,
             "https://api.deepseek.com/v1",
-            "deepseek-chat base_url must be DeepSeek, not cli-chat-proxy"
+            "deepseek-v4-pro base_url must be DeepSeek, not cli-chat-proxy"
         );
         assert!(
             deepseek.api_base_url.is_none(),
-            "deepseek-chat must not dual-route to api.x.ai (byok)"
+            "deepseek-v4-pro must not dual-route to api.x.ai (byok)"
         );
         assert_eq!(
             deepseek.env_key.as_ref().map(|k| k.names()),
             Some(vec!["DEEPSEEK_API_KEY"]),
-            "deepseek-chat env_key must be DEEPSEEK_API_KEY"
+            "deepseek-v4-pro env_key must be DEEPSEEK_API_KEY"
         );
         assert_eq!(
             deepseek.info().context_window.get(),
             1_000_000,
-            "deepseek-chat must expose the embedded 1M context window"
+            "deepseek-v4-pro must expose the embedded 1M context window"
         );
         assert_eq!(
+            deepseek.info().reasoning_effort,
+            Some(ReasoningEffort::High)
+        );
+        assert_eq!(deepseek.info().auto_compact_threshold_percent, Some(85));
+        assert_eq!(deepseek.info().stream_tool_calls, None);
+        assert_eq!(
             models
-                .get("deepseek-reasoner")
-                .expect("default_models.json must include deepseek-reasoner")
+                .get("deepseek-v4-flash")
+                .expect("default_models.json must include deepseek-v4-flash")
                 .info()
                 .context_window
                 .get(),
             1_000_000,
-            "deepseek-reasoner must expose the embedded 1M context window"
+            "deepseek-v4-flash must expose the embedded 1M context window"
         );
+        let flash = models.get("deepseek-v4-flash").expect("deepseek-v4-flash");
+        assert!(flash.info().laziness_detector.enabled);
+        assert_eq!(flash.info().laziness_detector.max_nudges_per_session, 3);
         // With env set, own credential wins and stays on DeepSeek base_url.
         let env_name = "DEEPSEEK_API_KEY";
         // SAFETY: test-only env mutation; restored below.
@@ -11173,7 +11187,7 @@ default = "grok-4.5"
         }
     }
     /// Session models_cache often lists only grok-4.5. BYOK defaults with
-    /// env_key (deepseek-chat) must still be available so the status bar and
+    /// env_key (deepseek-v4-pro) must still be available so the status bar and
     /// default selection can track the real product model, not a frozen Grok id.
     #[test]
     fn resolve_model_list_retains_byok_defaults_when_session_prefetch_is_xai_only() {
@@ -11189,10 +11203,10 @@ default = "grok-4.5"
             "remote/session entry must remain"
         );
         assert!(
-            resolved.contains_key("deepseek-chat"),
-            "BYOK deepseek-chat must survive xAI-only models_cache prefetch"
+            resolved.contains_key("deepseek-v4-pro"),
+            "BYOK deepseek-v4-pro must survive xAI-only models_cache prefetch"
         );
-        let ds = resolved.get("deepseek-chat").expect("deepseek-chat");
+        let ds = resolved.get("deepseek-v4-pro").expect("deepseek-v4-pro");
         assert!(
             ds.env_key.is_some(),
             "retained deepseek must keep env_key for DEEPSEEK_API_KEY"
@@ -11201,7 +11215,7 @@ default = "grok-4.5"
         let first_key = resolved.keys().next().map(String::as_str);
         assert_eq!(
             first_key,
-            Some("deepseek-chat"),
+            Some("deepseek-v4-pro"),
             "BYOK defaults should lead the merged catalog"
         );
     }

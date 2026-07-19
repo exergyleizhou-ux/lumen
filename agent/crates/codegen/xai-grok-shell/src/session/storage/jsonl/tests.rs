@@ -130,6 +130,57 @@ async fn test_jsonl_round_trip() {
     assert_eq!(loaded.updates.len(), 1);
     assert!(loaded.plan_state.is_some());
 }
+#[tokio::test]
+async fn deepseek_v4_tool_reasoning_survives_jsonl_reload_and_next_turn_conversion() {
+    use std::sync::Arc;
+    use crate::sampling::{Role, ToolCall, conversation_to_chat_messages, rs};
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let info = create_test_info();
+    adapter.init_session(&info, acp::ModelId::new("deepseek-v4-pro")).await.unwrap();
+    let items = vec![
+        ConversationItem::user("inspect the file"),
+        ConversationItem::Reasoning(rs::ReasoningItem {
+            id: "deepseek-r1".to_string(),
+            summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                text: "I should read the requested file before answering.".to_string(),
+            })],
+            content: None,
+            encrypted_content: None,
+            status: None,
+        }),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: Arc::<str>::from("call-read-1"),
+            name: "read_file".to_string(),
+            arguments: Arc::<str>::from(r#"{"path":"README.md"}"#),
+        }]),
+        ConversationItem::tool_result("call-read-1", "verified file contents"),
+        ConversationItem::user("now summarize the evidence"),
+    ];
+    for item in &items {
+        adapter.append_chat_message(&info, item).await.unwrap();
+    }
+
+    let chat_path = adapter.chat_file(&info);
+    let raw_jsonl = tokio::fs::read_to_string(&chat_path).await.unwrap();
+    assert_eq!(raw_jsonl.lines().count(), items.len());
+    assert!(raw_jsonl.contains("call-read-1"));
+    assert!(raw_jsonl.contains("verified file contents"));
+
+    let restored = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf())
+        .load_session(&info).await.unwrap().chat_history;
+    let messages = conversation_to_chat_messages(restored);
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[1].text_content(), "");
+    assert_eq!(messages[1].reasoning_content.as_deref(), Some("I should read the requested file before answering."));
+    assert_eq!(messages[1].tool_calls.len(), 1);
+    assert_eq!(messages[1].tool_calls[0].id.as_deref(), Some("call-read-1"));
+    assert_eq!(messages[2].role, Role::Tool);
+    assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-read-1"));
+    assert_eq!(messages[2].text_content(), "verified file contents");
+    assert_eq!(messages[3].role, Role::User);
+}
 /// `load_session_without_updates` always defers rewind points while the full
 /// `load_session` / `load_rewind_points` still return them.
 #[tokio::test]

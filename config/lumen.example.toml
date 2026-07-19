@@ -1,8 +1,8 @@
 # Lumen example config — multi-provider BYOK catalog.
 # Copy to ~/.grok/config.toml (or the product config path after home migration).
 #
-# DeepSeek stays the default because stable long-session prefixes produce high
-# prompt-cache hit rates. Switch per invocation with `lumen -m <id>` or inside
+# DeepSeek V4 Pro is the default coding executor. Stable long-session prefixes
+# also produce high prompt-cache hit rates. Switch per invocation with `lumen -m <id>` or inside
 # the TUI with `/model <id>` (Ctrl+M opens the picker).
 #
 # Keep real keys in environment variables. Local servers may accept a harmless
@@ -10,22 +10,44 @@
 # agent loop.
 
 [models]
-default = "deepseek-chat"
+default = "deepseek-v4-pro"
 
 # ── DeepSeek (preferred default) ────────────────────────────────────────────
-[model.deepseek-chat]
-model = "deepseek-chat"
-name = "DeepSeek Chat"
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
+name = "DeepSeek V4 Pro"
 base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
+
+[model.deepseek-v4-flash]
+model = "deepseek-v4-flash"
+name = "DeepSeek V4 Flash"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
+
+# Legacy migration aliases only. Both route to V4 Flash and retire at
+# 2026-07-24 15:59 UTC; deepseek-reasoner is thinking Flash, never V4 Pro.
+[model.deepseek-chat]
+model = "deepseek-chat"
+name = "DeepSeek V4 Flash (legacy non-thinking alias)"
+base_url = "https://api.deepseek.com/v1"
+api_backend = "chat_completions"
+env_key = "DEEPSEEK_API_KEY"
+hidden = true
 
 [model.deepseek-reasoner]
 model = "deepseek-reasoner"
-name = "DeepSeek Reasoner"
+name = "DeepSeek V4 Flash (legacy thinking alias)"
 base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
+hidden = true
 
 # ── OpenAI ──────────────────────────────────────────────────────────────────
 [model.openai-gpt4o]
@@ -93,6 +115,15 @@ api_backend = "messages"
 env_key = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]
 
 # ── xAI Grok ────────────────────────────────────────────────────────────────
+[model."grok-4.5"]
+model = "grok-4.5"
+name = "Grok 4.5"
+base_url = "https://api.x.ai/v1"
+api_backend = "responses"
+env_key = ["XAI_API_KEY", "GROK_CODE_XAI_API_KEY", "GROK_API_KEY"]
+supports_reasoning_effort = true
+reasoning_effort = "high"
+
 [model.xai-grok]
 model = "grok-3"
 name = "xAI Grok 3"

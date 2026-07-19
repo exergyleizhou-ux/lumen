@@ -86,31 +86,65 @@ mod tests {
     }
 
     #[test]
-    fn lumen_default_model_is_deepseek_chat() {
+    fn lumen_default_model_is_deepseek_v4_pro() {
         assert_eq!(
             default_model(),
-            "deepseek-chat",
-            "embedded default_models.json must default to DeepSeek for Lumen"
+            "deepseek-v4-pro",
+            "embedded default_models.json must default to the formal DeepSeek V4 Pro API ID"
         );
     }
 
     #[test]
-    fn lumen_default_models_json_keeps_deepseek_byok_for_all_default_roles() {
+    fn lumen_default_models_json_uses_formal_role_models() {
         let v = embedded_catalog();
-        assert_eq!(v["default"], "deepseek-chat");
-        assert_eq!(v["web_search"], "deepseek-chat");
+        assert_eq!(v["default"], "deepseek-v4-pro");
+        assert_eq!(v["web_search"], "deepseek-v4-pro");
         assert_eq!(v["image_description"], "deepseek-chat");
-        assert_eq!(v["session_summary"], "deepseek-chat");
+        assert_eq!(v["session_summary"], "deepseek-v4-flash");
         let models = v["models"].as_array().expect("models array");
-        let deepseek = model_by_id(models, "deepseek-chat");
-        assert_eq!(deepseek["model"], "deepseek-chat");
-        assert_eq!(deepseek["base_url"], "https://api.deepseek.com/v1");
-        assert_eq!(deepseek["env_key"], "DEEPSEEK_API_KEY");
-        assert_eq!(deepseek["byok"], true);
-        assert_eq!(deepseek["context_window"], 1_000_000);
-        assert_eq!(
-            model_by_id(models, "deepseek-reasoner")["context_window"],
-            1_000_000
+        for id in ["deepseek-v4-pro", "deepseek-v4-flash"] {
+            let deepseek = model_by_id(models, id);
+            assert_eq!(deepseek["model"], id);
+            assert_eq!(deepseek["base_url"], "https://api.deepseek.com/v1");
+            assert_eq!(deepseek["env_key"], "DEEPSEEK_API_KEY");
+            assert_eq!(deepseek["byok"], true);
+            assert_eq!(deepseek["context_window"], 1_000_000);
+            assert_eq!(deepseek["max_completion_tokens"], 384 * 1024);
+            assert_eq!(deepseek["supports_reasoning_effort"], true);
+            assert_eq!(deepseek["reasoning_effort"], "high");
+            let efforts = deepseek["reasoning_efforts"].as_array().unwrap();
+            assert_eq!(efforts.len(), 2);
+            assert_eq!(efforts[0]["id"], "high");
+            assert_eq!(efforts[1]["id"], "max");
+        }
+
+        let grok = model_by_id(models, "grok-4.5");
+        assert_eq!(grok["model"], "grok-4.5");
+        assert_eq!(grok["base_url"], "https://api.x.ai/v1");
+        assert_eq!(grok["api_backend"], "responses");
+        assert!(models.iter().all(|model| model.get("pricing").is_none()));
+    }
+
+    #[test]
+    fn legacy_deepseek_aliases_are_hidden_and_truthfully_deprecated() {
+        let v = embedded_catalog();
+        let models = v["models"].as_array().expect("models array");
+        let chat = model_by_id(models, "deepseek-chat");
+        let reasoner = model_by_id(models, "deepseek-reasoner");
+
+        for legacy in [chat, reasoner] {
+            assert_eq!(legacy["hidden"], true);
+            let description = legacy["description"].as_str().unwrap();
+            assert!(description.contains("2026-07-24 15:59 UTC"));
+            assert!(description.contains("V4 Flash"));
+        }
+        assert!(reasoner["name"].as_str().unwrap().contains("Flash"));
+        assert!(!reasoner["name"].as_str().unwrap().contains("Pro"));
+        assert!(
+            reasoner["description"]
+                .as_str()
+                .unwrap()
+                .contains("not V4 Pro")
         );
     }
 
@@ -128,8 +162,11 @@ mod tests {
             .map(|m| m["id"].as_str().expect("every catalog entry has an id"))
             .collect();
         for need in [
+            "deepseek-v4-pro",
+            "deepseek-v4-flash",
             "deepseek-chat",
             "deepseek-reasoner",
+            "grok-4.5",
             "openai-gpt4o",
             "openai-gpt4o-mini",
             "openai-gpt41",

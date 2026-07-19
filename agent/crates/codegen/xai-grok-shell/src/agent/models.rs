@@ -1715,7 +1715,7 @@ pub(crate) fn resolve_default_model(
 
     match &model_pref {
         None => {
-            // Product default (embedded default_models.json → deepseek-chat) beats
+            // Product default (embedded default_models.json → deepseek-v4-pro) beats
             // "first visible catalog key", which is often the only remote/session
             // entry (e.g. grok-4.5) when OIDC models_cache polluted the catalog.
             let product_default = crate::models::default_model();
@@ -3074,7 +3074,7 @@ mod tests {
     }
 
     /// With no CLI/env/config preference, pick the product bundled default
-    /// (deepseek-chat) when it is in the catalog — not the first remote/session
+    /// (deepseek-v4-pro) when it is in the catalog — not the first remote/session
     /// row (often grok-4.5 from OIDC models_cache).
     #[test]
     fn resolve_default_model_prefers_product_default_over_first_catalog_entry() {
@@ -3108,6 +3108,44 @@ mod tests {
             "must select product default, not first catalog key"
         );
         assert_eq!(src, config::ConfigSource::Default);
+    }
+
+    #[test]
+    fn e0_embedded_catalog_resolves_formal_executor_and_consultant_ids() {
+        let cfg = config::Config::default();
+        let catalog = resolve_model_catalog(&cfg, None);
+
+        for id in ["deepseek-v4-pro", "deepseek-v4-flash", "grok-4.5"] {
+            let entry = config::find_model_by_id(&catalog, id)
+                .unwrap_or_else(|| panic!("formal E0 model must resolve: {id}"));
+            assert_eq!(entry.model, id, "catalog key and API model must agree");
+        }
+        assert_eq!(
+            catalog["deepseek-v4-pro"].info.api_backend,
+            crate::sampling::ApiBackend::ChatCompletions
+        );
+        assert_eq!(
+            catalog["deepseek-v4-flash"].info.api_backend,
+            crate::sampling::ApiBackend::ChatCompletions
+        );
+        assert_eq!(
+            catalog["grok-4.5"].info.api_backend,
+            crate::sampling::ApiBackend::Responses
+        );
+
+        let (key, entry, source) = resolve_default_model(&cfg, &catalog, false);
+        assert_eq!(key, "deepseek-v4-pro");
+        assert_eq!(entry.model, "deepseek-v4-pro");
+        assert_eq!(source, config::ConfigSource::Default);
+
+        for alias in ["deepseek-chat", "deepseek-reasoner"] {
+            let legacy = config::find_model_by_id(&catalog, alias)
+                .unwrap_or_else(|| panic!("legacy migration alias must still resolve: {alias}"));
+            assert!(
+                legacy.info.hidden,
+                "legacy alias must stay out of normal selection UI"
+            );
+        }
     }
 
     /// A campaign default missing from the catalog falls back to

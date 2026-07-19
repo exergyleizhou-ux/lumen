@@ -45,7 +45,7 @@ lumen --single "修 README 里的笔误" --always-approve
 
 | 项 | 值 |
 |----|-----|
-| 默认模型 | `deepseek-chat`（**优先**默认，为高 prompt-cache；不是唯一后端） |
+| 默认模型 | `deepseek-v4-pro`（正式 API ID；默认编码执行器，不是唯一后端） |
 | 其它预设 | OpenAI / Claude / xAI / GLM / Qwen / MiMo / Ollama / 本地 OpenAI 兼容 |
 | 遥测 Mixpanel | 默认关 |
 | auto_update | 默认关 |
@@ -78,7 +78,7 @@ Private beta 证据路径：Science 三步实跑见 `scripts/dogfood-science.sh`
 cd ~/code/lumen
 ./scripts/assert-defaults.sh
 ./scripts/smoke-security.sh
-./scripts/smoke-deepseek.sh          # L0
+./scripts/smoke-deepseek.sh          # L0；委托 E0 canonical current-checkout harness
 ./scripts/smoke-deepseek-agent.sh    # L1 tool
 ./scripts/verify-readiness.sh        # 汇总 readiness（需 key 跑 live 项）
 ```

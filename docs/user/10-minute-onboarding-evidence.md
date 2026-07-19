@@ -59,7 +59,7 @@ printf 'def add(a, b):\n    return a - b\n' > calc.py
 printf 'from calc import add\nassert add(2, 3) == 5\n' > test_calc.py
 python3 test_calc.py || true
 
-lumen -m deepseek-chat --single \
+lumen -m deepseek-v4-pro --single \
   "读取 calc.py 和 test_calc.py，修复实现，然后实际运行 python3 test_calc.py 验证。" \
   --always-approve --max-turns 8 \
   2>&1 | tee ~/code/lumen/SCRATCH/onboarding/agent.log

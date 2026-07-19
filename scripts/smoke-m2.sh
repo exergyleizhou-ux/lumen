@@ -22,8 +22,8 @@ grep -q 'incomplete_todos\|gate_goal_complete' "$UG" || {
   exit 1
 }
 MODELS="$ROOT/agent/crates/codegen/xai-grok-models/default_models.json"
-grep -q 'deepseek-reasoner' "$MODELS" || {
-  echo "FAIL: deepseek-reasoner preset missing" >&2
+grep -q 'deepseek-v4-pro' "$MODELS" || {
+  echo "FAIL: deepseek-v4-pro formal preset missing" >&2
   exit 1
 }
 grep -q 'local-openai\|local-model' "$MODELS" || {
