@@ -139,13 +139,27 @@ impl ReadonlyToolHost<'_> {
     }
 
     fn resolve_path(&self, relative: &str) -> Option<PathBuf> {
+        use std::path::Component;
         let rel = relative.trim();
-        if rel.is_empty() || rel.starts_with("..") || rel == ".." {
+        if rel.is_empty() {
             return None;
         }
-        let candidate = self.workspace_root.join(rel);
+        let path = Path::new(rel);
+        // Only relative paths; reject absolute and any `..` component.
+        if path.is_absolute() {
+            return None;
+        }
+        if path
+            .components()
+            .any(|c| matches!(c, Component::ParentDir))
+        {
+            return None;
+        }
+        // Canonicalize workspace root so macOS /var -> /private/var matches.
+        let root = std::fs::canonicalize(self.workspace_root).ok()?;
+        let candidate = root.join(path);
         let canonical = std::fs::canonicalize(&candidate).ok()?;
-        if canonical.starts_with(self.workspace_root) {
+        if canonical.starts_with(&root) {
             Some(canonical)
         } else {
             None
