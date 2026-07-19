@@ -281,6 +281,8 @@ pub(super) async fn run_session(
             SessionCommand::Prompt { prompt_id, prompt_blocks, prompt_mode,
             artifact_upload_ctx, client_identifier, screen_mode, verbatim, traceparent,
             json_schema, send_now, respond_to, persist_ack, parsed_prompt_tx } => {
+            let expert_off = crate::session::expert::is_off_command(& prompt_blocks)
+            && session.state.lock().await.expert.is_active();
             session.ensure_prefix_ready(). await; let origin =
             super::PromptOrigin::from_prompt_id(& prompt_id); if ! origin.is_synthetic()
             { let mut state = session.state.lock(). await; state.notifications_suppressed
@@ -297,16 +299,22 @@ pub(super) async fn run_session(
             => (Some(tu.gcs_config), Some(tu.artifact_tracker)), None => (None, None), };
             let cancel_for_send_now = session.queue_input(prompt_blocks, prompt_id,
             prompt_mode, trace_gcs_config, artifact_tracker, client_identifier,
-            screen_mode, verbatim, json_schema, send_now, respond_to, persist_ack,
-            parsed_prompt_tx). await; if cancel_for_send_now { session
-            .cancel_turn_for_send_now(& mut replay_buffer). await; }
+            screen_mode, verbatim, json_schema, send_now || expert_off, respond_to, persist_ack,
+            parsed_prompt_tx). await; if cancel_for_send_now { if expert_off {
+            session.request_expert_disable().await; if let Some(notification) =
+            replay_buffer.flush() { session.emit_buffered(notification).await; }
+            session.pending_interjections.clear(); session.cancel_running_task(false,
+            false, false, Some("expert_off".to_string())).await; let _ = session
+            .restore_disabled_expert().await; session.state.lock().await
+            .notifications_suppressed = false; } else { session
+            .cancel_turn_for_send_now(& mut replay_buffer). await; } }
             SessionActor::maybe_start_running_task(session.clone(), completion_tx
             .clone()). await; } SessionCommand::SessionMode { session_mode, responds_to }
             => { session.handle_session_mode(session_mode). await; let _ = responds_to
             .send(()); } SessionCommand::SetSessionModel { sampling_config, use_concise,
             apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent,
             responds_to } => { let updated_model_id = session
-            .handle_set_session_model(sampling_config, use_concise,
+            .handle_external_set_session_model(sampling_config, use_concise,
             apply_prompt_override, skip_prompt_rewrite, auto_compact_threshold_percent).
             await; let _ = responds_to.send(updated_model_id); }
             SessionCommand::RebuildAgentForDefinition { definition, responds_to } => {

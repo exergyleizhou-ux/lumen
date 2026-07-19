@@ -348,6 +348,15 @@ pub enum PersistenceMsg {
     AnnouncementState(crate::session::announcement_state::AnnouncementState),
     /// Persist goal mode orchestration state.
     GoalModeState(crate::session::goal_tracker::GoalOrchestration),
+    /// Persist the SessionActor-owned Expert policy/task state.
+    ExpertModeState(crate::session::expert::ExpertModeState),
+    /// Persist an Expert snapshot as a true durability barrier.  The response
+    /// carries the storage error so provider calls can fail closed instead of
+    /// treating a channel flush as proof that the state write succeeded.
+    ExpertModeStateAndAck {
+        state: crate::session::expert::ExpertModeState,
+        respond_to: tokio::sync::oneshot::Sender<io::Result<()>>,
+    },
     /// Persist a local feedback entry (user feedback)
     Feedback(LocalFeedbackEntry),
     /// Persist a /btw side question entry
@@ -1636,6 +1645,23 @@ impl SessionPersistence {
                         tracing::warn!(?e, "failed to write goal mode state");
                     }
                 }
+                PersistenceMsg::ExpertModeState(state) => {
+                    if let Err(e) = self
+                        .storage
+                        .write_expert_mode_state(&self.info, &state)
+                        .await
+                    {
+                        tracing::warn!(?e, "failed to write expert mode state");
+                    }
+                }
+                PersistenceMsg::ExpertModeStateAndAck { state, respond_to } => {
+                    self.flush_pending().await;
+                    let result = self
+                        .storage
+                        .write_expert_mode_state(&self.info, &state)
+                        .await;
+                    let _ = respond_to.send(result);
+                }
                 PersistenceMsg::ContentChunk(content_chunks) => {
                     let content_part = content_chunks
                         .content_chunks
@@ -2194,6 +2220,7 @@ pub struct PersistedInfo {
     pub rewind_points: Vec<RewindPoint>,
     /// Persisted session signals (None for old sessions without signals file)
     pub signals: Option<SessionSignals>,
+    pub expert_mode_state: Option<crate::session::expert::ExpertModeState>,
 }
 
 /// Same as PersistedInfo but without updates - for memory efficiency when streaming
@@ -2214,6 +2241,8 @@ pub struct PersistedInfoLight {
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
+    /// Persisted expert state (active snapshots are reconciled fail-closed on resume).
+    pub expert_mode_state: Option<crate::session::expert::ExpertModeState>,
 }
 
 /// On NotFound, try pulling from backend. Returns pulled info or the original error.
@@ -2264,6 +2293,7 @@ pub(crate) async fn load(
         plan_state: persisted.plan_state,
         rewind_points: persisted.rewind_points,
         signals: persisted.signals,
+        expert_mode_state: persisted.expert_mode_state,
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<PersistenceMsg>();
@@ -2349,6 +2379,7 @@ pub(crate) async fn load_light(
         signals: persisted.signals,
         announcement_state: persisted.announcement_state,
         goal_mode_state: persisted.goal_mode_state,
+        expert_mode_state: persisted.expert_mode_state,
     };
 
     let (tx, rx) = mpsc::unbounded_channel::<PersistenceMsg>();
@@ -2736,6 +2767,91 @@ fn cleanup_stale_sessions_inner(root: &Path, ttl_days: u32, skip: Option<&Path>)
 fn is_stale(mtime: std::time::SystemTime, ttl_days: u32) -> bool {
     let ttl = std::time::Duration::from_secs(u64::from(ttl_days) * 86400);
     mtime.elapsed().is_ok_and(|age| age > ttl)
+}
+
+#[cfg(test)]
+mod expert_session_file_lifecycle_tests {
+    use super::*;
+    use crate::session::expert::{DEFAULT_EXECUTOR_MODEL, ExpertMode, ExpertModeState};
+    use crate::session::storage::StorageAdapter as _;
+
+    fn age_tree(path: &Path) {
+        let old = filetime::FileTime::from_unix_time(1, 0);
+        for entry in std::fs::read_dir(path).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                age_tree(&path);
+            } else {
+                filetime::set_file_mtime(path, old).unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn expert_state_is_in_real_snapshot_delete_and_gc_lifecycle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions_root = tmp.path().join("sessions");
+        let session_dir = sessions_root.join("workspace").join("expert-session");
+        let adapter = JsonlStorageAdapter::with_explicit_session_dir(session_dir.clone());
+        let info = Info {
+            id: acp::SessionId::new("expert-session"),
+            cwd: "/workspace".to_owned(),
+        };
+        adapter
+            .init_session(&info, acp::ModelId::new("grok-4.5"))
+            .await
+            .unwrap();
+        let mut state = ExpertModeState::configured();
+        state
+            .start(
+                "production auth migration",
+                ExpertMode::Fast,
+                DEFAULT_EXECUTOR_MODEL,
+            )
+            .unwrap();
+        adapter
+            .write_expert_mode_state(&info, &state)
+            .await
+            .unwrap();
+        adapter.sync_session_files(&info).await.unwrap();
+
+        // This is the production CopyFile collector that feeds the archive
+        // upload path, exercised against the real local JSONL backend.
+        let mut uploaded = Vec::new();
+        collect_session_files_recursive(&session_dir, &session_dir, &mut uploaded);
+        let expert = uploaded
+            .iter()
+            .find(|file| file.name == "expert/state.json")
+            .expect("expert state must ride in the session snapshot");
+        let uploaded_state: ExpertModeState = serde_json::from_slice(&expert.data).unwrap();
+        assert_eq!(uploaded_state.task_id, state.task_id);
+
+        adapter.delete_session(&info).await.unwrap();
+        assert!(
+            !session_dir.exists(),
+            "delete removes expert state with its session"
+        );
+
+        adapter
+            .init_session(&info, acp::ModelId::new("grok-4.5"))
+            .await
+            .unwrap();
+        adapter
+            .write_expert_mode_state(&info, &state)
+            .await
+            .unwrap();
+        age_tree(&session_dir);
+        let stats = cleanup_stale_sessions_inner(&sessions_root, 1, None);
+        assert!(
+            stats.files_deleted >= 2,
+            "summary and expert state were collected"
+        );
+        assert!(
+            !session_dir.join("expert/state.json").exists(),
+            "GC cannot leave expert state orphaned"
+        );
+        assert!(!session_dir.exists(), "GC removes the emptied session tree");
+    }
 }
 
 #[cfg(test)]

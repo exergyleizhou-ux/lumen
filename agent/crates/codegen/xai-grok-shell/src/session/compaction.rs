@@ -2166,6 +2166,7 @@ mod inline_auto_compact_flow_tests {
         let tool_context =
             ToolContext::new(cwd.clone(), None, None, fs, terminal, hunk_tracker_handle);
         let state = TokioMutex::new(State {
+            expert: crate::session::expert::ExpertModeState::default(),
             running_task: None,
             pending_inputs: VecDeque::new(),
             pending_notifications: Vec::new(),
@@ -2300,6 +2301,7 @@ mod inline_auto_compact_flow_tests {
                 )),
             )),
             goal_enabled: false,
+            expert_enabled: true,
             goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
             goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
             goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -2311,8 +2313,12 @@ mod inline_auto_compact_flow_tests {
             goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
             goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
             storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
-            repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
-            delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
+            repeat_success_guard: std::cell::RefCell::new(
+                lumen_discipline::RepeatSuccessGuard::new(3),
+            ),
+            delivery_state: std::cell::RefCell::new(
+                lumen_discipline::DeliverySessionState::default(),
+            ),
             goal_update_rx: std::cell::RefCell::new(Some(tokio::sync::mpsc::unbounded_channel().1)),
             goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
             goal_classifier_enabled: false,

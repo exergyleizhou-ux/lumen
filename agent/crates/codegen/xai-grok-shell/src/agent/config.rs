@@ -1264,6 +1264,9 @@ pub struct Config {
     /// `[goal]` section: canonical `/goal` configuration. See [`GoalConfig`].
     #[serde(default)]
     pub goal: GoalConfig,
+    /// `[expert]` section: bounded single-task Expert policy configuration.
+    #[serde(default)]
+    pub expert: ExpertConfig,
     /// `[doom_loop_recovery]` section: the shared settings struct — ONE type
     /// serves this TOML table and the remote remote settings `doom_loop_recovery`
     /// object. See [`crate::util::config::DoomLoopRecoverySettings`].
@@ -1700,6 +1703,7 @@ impl Default for Config {
         let mut cfg = Self {
             features: Features::default(),
             goal: GoalConfig::default(),
+            expert: ExpertConfig::default(),
             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
             auto_mode: AutoModeConfig::default(),
             config_models: IndexMap::new(),
@@ -4115,6 +4119,70 @@ pub struct GoalConfig {
         skip_serializing_if = "Vec::is_empty"
     )]
     pub skeptic_models: Vec<crate::util::config::GoalRoleModel>,
+}
+/// `[expert]` configuration. E1 consumes the single-task fields; the nested
+/// Goal-composition values are parsed and preserved for E1.5 but have no E1
+/// runtime effect.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExpertConfig {
+    pub enabled: bool,
+    pub default_mode: String,
+    pub executor_model: String,
+    pub consultant_model: String,
+    pub fallback_executor_model: String,
+    pub consult_cap_default: u32,
+    pub consult_cap_deep: u32,
+    pub require_consult_on_medium: bool,
+    pub post_review_on_default: bool,
+    pub post_review_on_deep: bool,
+    pub breakout_on_storm: bool,
+    pub max_consult_output_tokens: u32,
+    pub consult_timeout_secs: u64,
+    pub mutex_independent_goal: bool,
+    pub goal_compose: ExpertGoalComposeConfig,
+}
+
+impl Default for ExpertConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_mode: "default".to_owned(),
+            executor_model: crate::session::expert::DEFAULT_EXECUTOR_MODEL.to_owned(),
+            consultant_model: crate::session::expert::GROK_MODEL.to_owned(),
+            fallback_executor_model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
+            consult_cap_default: crate::session::expert::DEFAULT_CONSULT_CAP,
+            consult_cap_deep: 5,
+            require_consult_on_medium: true,
+            post_review_on_default: false,
+            post_review_on_deep: true,
+            breakout_on_storm: true,
+            max_consult_output_tokens: 1_024,
+            consult_timeout_secs: 60,
+            mutex_independent_goal: true,
+            goal_compose: ExpertGoalComposeConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExpertGoalComposeConfig {
+    pub enabled: bool,
+    pub consult_cap_per_attempt: u32,
+    pub consult_cap_per_goal: u32,
+    pub restore_model_each_attempt: bool,
+}
+
+impl Default for ExpertGoalComposeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            consult_cap_per_attempt: 3,
+            consult_cap_per_goal: 15,
+            restore_model_each_attempt: true,
+        }
+    }
 }
 /// `[auto_mode]` section: server-side configuration for Auto permission mode.
 /// ONE struct serves both the local `[auto_mode]` TOML table and the remote

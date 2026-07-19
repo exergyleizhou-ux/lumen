@@ -35,6 +35,7 @@ async fn create_test_actor(
     );
     let tool_context = ToolContext::new(cwd.clone(), None, None, fs, terminal, hunk_tracker_handle);
     let state = TokioMutex::new(State {
+        expert: crate::session::expert::ExpertModeState::default(),
         running_task: None,
         pending_inputs: VecDeque::new(),
         pending_notifications: Vec::new(),
@@ -169,6 +170,7 @@ async fn create_test_actor(
             )),
         )),
         goal_enabled: false,
+        expert_enabled: true,
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -469,6 +471,7 @@ async fn create_test_actor_with_memory(
         .filter(|mc| mc.enabled)
         .map(|_| crate::session::memory::MemoryStorage::new(&cwd_path, None));
     let state = TokioMutex::new(State {
+        expert: crate::session::expert::ExpertModeState::default(),
         running_task: None,
         pending_inputs: VecDeque::new(),
         pending_notifications: Vec::new(),
@@ -617,6 +620,7 @@ async fn create_test_actor_with_memory(
             )),
         )),
         goal_enabled: false,
+        expert_enabled: true,
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -1223,6 +1227,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
             let tool_context =
                 ToolContext::new(cwd.clone(), None, None, fs, terminal, hunk_tracker_handle);
             let state = TokioMutex::new(State {
+                expert: crate::session::expert::ExpertModeState::default(),
                 running_task: None,
                 pending_inputs: VecDeque::new(),
                 pending_notifications: Vec::new(),
@@ -1377,6 +1382,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                     )),
                 )),
                 goal_enabled: false,
+                expert_enabled: true,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                 goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -1405,8 +1411,12 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 pending_classifier_completions: parking_lot::Mutex::new(VecDeque::new()),
                 goal_classifier_in_flight: std::sync::atomic::AtomicBool::new(false),
                 storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
-                repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
-                delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
+                repeat_success_guard: std::cell::RefCell::new(
+                    lumen_discipline::RepeatSuccessGuard::new(3),
+                ),
+                delivery_state: std::cell::RefCell::new(
+                    lumen_discipline::DeliverySessionState::default(),
+                ),
                 managed_mcp_handle: Default::default(),
                 managed_mcp_expires_at: std::sync::Mutex::new(None),
                 initial_client_mcp_servers: vec![],

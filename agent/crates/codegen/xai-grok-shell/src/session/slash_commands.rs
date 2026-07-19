@@ -42,6 +42,7 @@ pub(crate) enum BuiltinGate {
     Hooks,
     Plugins,
     Goal,
+    Expert,
 }
 
 /// All built-in slash commands. Order here = display order in autocomplete.
@@ -256,7 +257,46 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             }
         },
     },
+    BuiltinCommand {
+        name: "expert",
+        description: "Run a bounded expert-assisted task",
+        argument_hint: Some(
+            "<task> | fast <task> | status | show | budget | off | exec=pro|flash|grok",
+        ),
+        aliases: &[],
+        gate: BuiltinGate::Expert,
+        resolve: resolve_expert,
+    },
 ];
+
+fn resolve_expert(args: &str) -> BuiltinAction {
+    let trimmed = args.trim();
+    match trimmed.to_ascii_lowercase().as_str() {
+        "" | "status" => BuiltinAction::ExpertStatus { verbose: false },
+        "show" => BuiltinAction::ExpertStatus { verbose: true },
+        "budget" => BuiltinAction::ExpertBudget,
+        "off" => BuiltinAction::ExpertOff,
+        "exec=pro" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::DEFAULT_EXECUTOR_MODEL.to_owned(),
+        },
+        "exec=flash" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
+        },
+        "exec=grok" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::GROK_MODEL.to_owned(),
+        },
+        "fast" | "deep" | "vision" | "dual" | "go" | "revise" => BuiltinAction::ExpertBadArgs,
+        _ if trimmed.to_ascii_lowercase().starts_with("exec=") => BuiltinAction::ExpertBadArgs,
+        _ if trimmed.to_ascii_lowercase().starts_with("fast ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Fast,
+        },
+        _ => BuiltinAction::ExpertStart {
+            task: trimmed.to_owned(),
+            mode: crate::session::expert::ExpertMode::Default,
+        },
+    }
+}
 
 /// Split a trailing `--budget <tokens>` flag off a `/goal` objective.
 ///
@@ -387,6 +427,7 @@ pub(crate) struct CommandAvailability {
     pub hooks: bool,
     pub plugins: bool,
     pub goal: bool,
+    pub expert: bool,
 }
 
 impl CommandAvailability {
@@ -401,6 +442,7 @@ impl CommandAvailability {
             BuiltinGate::Hooks => self.hooks,
             BuiltinGate::Plugins => self.plugins,
             BuiltinGate::Goal => self.goal,
+            BuiltinGate::Expert => self.expert,
         }
     }
 
@@ -416,6 +458,7 @@ impl CommandAvailability {
             hooks: true,
             plugins: true,
             goal: true,
+            expert: true,
         }
     }
 }
@@ -674,6 +717,19 @@ pub(super) enum BuiltinAction {
     GoalPause,
     GoalResume,
     GoalClear,
+    ExpertStart {
+        task: String,
+        mode: crate::session::expert::ExpertMode,
+    },
+    ExpertStatus {
+        verbose: bool,
+    },
+    ExpertBudget,
+    ExpertOff,
+    ExpertExecutor {
+        model: String,
+    },
+    ExpertBadArgs,
 }
 
 impl BuiltinAction {
@@ -706,6 +762,12 @@ impl BuiltinAction {
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => "goal",
+            BuiltinAction::ExpertStart { .. }
+            | BuiltinAction::ExpertStatus { .. }
+            | BuiltinAction::ExpertBudget
+            | BuiltinAction::ExpertOff
+            | BuiltinAction::ExpertExecutor { .. }
+            | BuiltinAction::ExpertBadArgs => "expert",
         }
     }
 
@@ -738,6 +800,12 @@ impl BuiltinAction {
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => false,
+            BuiltinAction::ExpertStart { task, .. } => !task.is_empty(),
+            BuiltinAction::ExpertStatus { .. }
+            | BuiltinAction::ExpertBudget
+            | BuiltinAction::ExpertOff
+            | BuiltinAction::ExpertBadArgs => false,
+            BuiltinAction::ExpertExecutor { .. } => true,
         }
     }
 }
@@ -2365,6 +2433,73 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].name, "commit");
         assert_eq!(refs[0].args, "fix typo");
+    }
+
+    // ── /expert E1 command resolution ───────────────────────────
+
+    fn resolve_expert_for_test(args: &str) -> BuiltinAction {
+        let blocks = vec![text_block(&format!("/expert {args}"))];
+        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+            SlashCommandOutcome::Builtin(action) => action,
+            _ => panic!("expected Builtin outcome"),
+        }
+    }
+
+    #[test]
+    fn expert_public_e1_surface_resolves() {
+        assert!(matches!(
+            resolve_expert_for_test(""),
+            BuiltinAction::ExpertStatus { verbose: false }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("show"),
+            BuiltinAction::ExpertStatus { verbose: true }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("budget"),
+            BuiltinAction::ExpertBudget
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("off"),
+            BuiltinAction::ExpertOff
+        ));
+        assert!(
+            matches!(resolve_expert_for_test("exec=pro"), BuiltinAction::ExpertExecutor { model } if model == "deepseek-v4-pro")
+        );
+        assert!(
+            matches!(resolve_expert_for_test("exec=flash"), BuiltinAction::ExpertExecutor { model } if model == "deepseek-v4-flash")
+        );
+        assert!(
+            matches!(resolve_expert_for_test("exec=grok"), BuiltinAction::ExpertExecutor { model } if model == "grok-4.5")
+        );
+        assert!(matches!(
+            resolve_expert_for_test("fast fix auth"),
+            BuiltinAction::ExpertStart {
+                mode: crate::session::expert::ExpertMode::Fast,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn expert_future_surface_is_fail_closed() {
+        for arg in ["deep", "vision", "dual", "go", "revise", "exec=other"] {
+            assert!(
+                matches!(resolve_expert_for_test(arg), BuiltinAction::ExpertBadArgs),
+                "{arg}"
+            );
+        }
+    }
+
+    #[test]
+    fn expert_is_advertised_to_acp_clients_only_when_enabled() {
+        let enabled = builtin_commands(CommandAvailability {
+            expert: true,
+            ..CommandAvailability::default()
+        });
+        assert!(enabled.iter().any(|command| command.name == "expert"));
+        let disabled = builtin_commands(CommandAvailability::default());
+        assert!(!disabled.iter().any(|command| command.name == "expert"));
     }
 
     // ── /goal command resolution ─────────────────────────────────

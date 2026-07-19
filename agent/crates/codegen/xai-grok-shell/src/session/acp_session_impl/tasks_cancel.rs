@@ -258,6 +258,17 @@ impl SessionActor {
             self.cancel_running_turn_subagents();
         }
 
+        // Aborting the prompt future drops its exact ExpertTurnGuard. Persist
+        // the invalidating generation before teardown, then reconstruct and
+        // restore the saved session model after the task has terminated.
+        // `/expert off` already entered Disabling in the run-loop and owns its
+        // Off restoration, so a normal cancel returns to IdleConfigured only.
+        let abort_expert =
+            trigger.as_deref() != Some("expert_off") && self.state.lock().await.expert.is_active();
+        if abort_expert {
+            self.request_expert_abort().await;
+        }
+
         // Don't count send-now/rewound cancels — they'd skew the cancel-rate signal.
         if !rewind_if_pristine && trigger.as_deref() != Some("send_now") {
             self.signals_handle().record_cancellation();
@@ -489,6 +500,9 @@ impl SessionActor {
 
         if let Some(running_task) = running_task {
             running_task.abort();
+        }
+        if abort_expert {
+            let _ = self.restore_disabled_expert().await;
         }
         // The aborted turn's `BlockingWaitGuard`s drop asynchronously (they
         // live in tool futures owned by the drainer task / subagent spawn

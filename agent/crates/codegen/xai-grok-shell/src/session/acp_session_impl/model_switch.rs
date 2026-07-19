@@ -2,6 +2,42 @@ use super::*;
 use crate::remote::DEFAULT_CONTEXT_WINDOW;
 use xai_chat_state::conversation_util::replace_or_insert_system_head;
 impl SessionActor {
+    /// ACP/user model changes must not steal the session-local model guard
+    /// while Expert owns it. Expert's own switch/restore calls the internal
+    /// handler below directly and remains allowed.
+    pub(super) async fn handle_external_set_session_model(
+        &self,
+        sampling_config: xai_grok_sampler::SamplerConfig,
+        use_concise: bool,
+        apply_prompt_override: bool,
+        skip_prompt_rewrite: bool,
+        auto_compact_threshold_percent: u8,
+    ) -> Result<acp::ModelId, acp::Error> {
+        // Keep the actor scheduling lock through the model mutation. This is
+        // the ownership gate shared with Expert start: an external switch
+        // that observed Idle cannot commit after Expert becomes Active.
+        let state_guard = self.state.lock().await;
+        let feature_state = state_guard.expert.feature_state;
+        if matches!(
+            feature_state,
+            crate::session::expert::ExpertFeatureState::Active
+                | crate::session::expert::ExpertFeatureState::Disabling
+        ) {
+            return Err(acp::Error::invalid_params()
+                .data("expert_active: session model is guarded until Expert restores its anchor"));
+        }
+        let result = self.handle_set_session_model(
+            sampling_config,
+            use_concise,
+            apply_prompt_override,
+            skip_prompt_rewrite,
+            auto_compact_threshold_percent,
+        )
+        .await;
+        drop(state_guard);
+        result
+    }
+
     pub(super) async fn handle_set_session_model(
         &self,
         sampling_config: xai_grok_sampler::SamplerConfig,
@@ -131,17 +167,26 @@ impl SessionActor {
         &self,
         definition: xai_grok_agent::AgentDefinition,
     ) -> Result<(), acp::Error> {
-        {
-            let state = self.state.lock().await;
-            if state.running_task.is_some() {
+        // Hold the same scheduling lock for the complete rebuild/install so
+        // Expert cannot acquire model ownership between validation and commit.
+        let state_guard = self.state.lock().await;
+        if matches!(
+                state_guard.expert.feature_state,
+                crate::session::expert::ExpertFeatureState::Active
+                    | crate::session::expert::ExpertFeatureState::Disabling
+        ) {
+            return Err(acp::Error::invalid_params().data(
+                "expert_active: agent harness is guarded until Expert restores its anchor",
+            ));
+        }
+        if state_guard.running_task.is_some() {
                 tracing::warn!(
                     session_id = % self.session_info.id.0, new_agent_type = % definition
                     .name,
                     "handle_rebuild_agent_for_definition: turn in flight, rejecting rebuild"
                 );
-                return Err(acp::Error::internal_error()
-                    .data("rebuild_agent: turn in flight, refusing to rebuild harness"));
-            }
+            return Err(acp::Error::internal_error()
+                .data("rebuild_agent: turn in flight, refusing to rebuild harness"));
         }
         let new_agent_name = definition.name.clone();
         tracing::info!(

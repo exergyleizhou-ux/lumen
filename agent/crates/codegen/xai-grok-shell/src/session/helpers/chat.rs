@@ -105,6 +105,41 @@ pub async fn text_completion(
     Ok(trimmed.to_string())
 }
 
+/// Short completion with a provider-native strict JSON Schema and normalized
+/// usage. This is the structured-output sibling of [`text_completion`]; it
+/// intentionally shares the same sampler/client path and never creates an
+/// agent or tool loop.
+pub async fn structured_text_completion(
+    sampling_client: &OaiCompatClient,
+    system: ChatRequestMessage,
+    user: ChatRequestMessage,
+    json_schema: serde_json::Value,
+    temperature: Option<f32>,
+    max_tokens: Option<u32>,
+) -> Result<(String, Option<(u64, u64)>)> {
+    let mut request = ConversationRequest::from_items(vec![
+        ConversationItem::from(system),
+        ConversationItem::from(user),
+    ]);
+    request.temperature = temperature;
+    request.max_output_tokens = max_tokens;
+    request.json_schema = Some(json_schema);
+    let response = sampling_client.conversation_collect(request).await?;
+    let usage = response
+        .usage
+        .as_ref()
+        .map(|u| (u64::from(u.prompt_tokens), u64::from(u.completion_tokens)));
+    let text = response
+        .assistant()
+        .map(|a| a.content.as_ref().to_owned())
+        .unwrap_or_default();
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("empty response");
+    }
+    Ok((trimmed.to_owned(), usage))
+}
+
 /// Build a prompt string from a template by injecting a truncated transcript and additional variables.
 /// - Replaces `{{transcript}}` with a truncated transcript derived from `conversation`
 /// - Applies each `(needle, value)` replacement from `extras` sequentially

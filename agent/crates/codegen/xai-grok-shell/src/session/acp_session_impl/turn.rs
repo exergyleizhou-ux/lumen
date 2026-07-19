@@ -290,6 +290,7 @@ impl SessionActor {
         };
         let availability = self.command_availability().await;
         let mut pending_skill_information: Option<String> = None;
+        let mut expert_turn_guard: Option<super::expert_impl::ExpertTurnGuard> = None;
         let prompt_blocks = match slash_commands::resolve(
             prompt_blocks,
             &slash_skills,
@@ -327,6 +328,23 @@ impl SessionActor {
                             }
                             GoalResumeOutcome::Message(msg) => {
                                 self.send_slash_command_output(&msg).await;
+                                return ok_end_turn(0, None);
+                            }
+                        }
+                    }
+                    BuiltinAction::ExpertStart { task, mode } => {
+                        xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        match self.begin_expert_turn(&task, mode).await {
+                            Ok((guard, envelope)) => {
+                                expert_turn_guard = Some(guard);
+                                vec![text_block(envelope), text_block(task)]
+                            }
+                            Err(code) => {
+                                self.send_slash_command_output(&format!(
+                                    "Expert could not start: {}.",
+                                    code.as_str()
+                                ))
+                                .await;
                                 return ok_end_turn(0, None);
                             }
                         }
@@ -516,6 +534,10 @@ impl SessionActor {
             Ok(v) => v,
             Err(err) => {
                 tracing::warn!("Invalid prompt: {}", err.message);
+                if let Some(guard) = expert_turn_guard.take() {
+                    self.abort_expert_turn(guard, "expert prompt was rejected before execution")
+                        .await;
+                }
                 return Err(err);
             }
         };
@@ -791,6 +813,9 @@ impl SessionActor {
                 }
             }
         };
+        if let Some(guard) = expert_turn_guard {
+            self.finish_expert_turn(guard, &result).await;
+        }
         let turn_duration_ms = turn_timer.elapsed().as_millis() as u64;
         let handle_prompt_elapsed_ms = handle_prompt_start.elapsed().as_millis() as u64;
         xai_grok_telemetry::unified_log::info(
@@ -2248,7 +2273,9 @@ impl SessionActor {
                     &mut self.delivery_state.borrow_mut(),
                     lumen_discipline::DeliveryStrictness::Soft,
                 );
-                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
+                    delivery_action
+                {
                     self.push_system_reminder(reminder);
                 }
                 let structured_output = match (
@@ -2292,7 +2319,10 @@ impl SessionActor {
                             &mut self.delivery_state.borrow_mut(),
                             lumen_discipline::DeliveryStrictness::Soft,
                         );
-                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(
+                            ref reminder,
+                        ) = delivery_action
+                        {
                             self.push_system_reminder(reminder);
                         }
                         return Ok(TurnOutcome::Completed {

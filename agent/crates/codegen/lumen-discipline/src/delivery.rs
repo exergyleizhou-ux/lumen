@@ -46,13 +46,8 @@ impl DeliverySessionState {
         self.verify_ok_this_turn = true;
     }
 
-    pub fn on_bash_test_success(&mut self, output: &str) {
-        let lower = output.to_ascii_lowercase();
-        if lower.contains("pass")
-            || lower.contains("ok")
-            || lower.contains("0 failed")
-            || lower.contains("test result: ok")
-        {
+    pub fn on_bash_verification_success(&mut self, command: &str, exit_code: i32) {
+        if exit_code == 0 && is_verification_command(command) {
             self.bash_success_with_test_hint = true;
         }
     }
@@ -65,6 +60,91 @@ impl DeliverySessionState {
     }
 }
 
+/// Classify verification from the command that the host actually executed.
+/// Output is deliberately ignored: prose such as `echo ok` is not evidence.
+pub fn is_verification_command(command: &str) -> bool {
+    // A shell comment can hide everything after `#`, including a fake
+    // verification segment (`true # && cargo test`). Conservatively reject
+    // comments instead of attempting to implement shell quoting rules here.
+    if command.contains('#') {
+        return false;
+    }
+    // `||`, sequential/background execution, and pipelines can hide a failed
+    // verification behind a later zero exit. `&&` preserves failure.
+    if command.contains('|')
+        || command.contains(';')
+        || command.contains('\n')
+        || command.replace("&&", "").contains('&')
+    {
+        return false;
+    }
+
+    command.split("&&").any(|segment| {
+        let mut words = segment.split_whitespace().peekable();
+        while words
+            .peek()
+            .is_some_and(|word| word.contains('=') && !word.starts_with('-'))
+        {
+            words.next();
+        }
+        let Some(mut program) = words.next() else {
+            return false;
+        };
+        while matches!(program, "env" | "command" | "time" | "timeout") {
+            while words.peek().is_some_and(|word| word.starts_with('-')) {
+                words.next();
+            }
+            if program == "timeout"
+                && words.peek().is_some_and(|word| {
+                    word.trim_end_matches(['s', 'm', 'h'])
+                        .parse::<u64>()
+                        .is_ok()
+                })
+            {
+                words.next();
+            }
+            let Some(next) = words.next() else {
+                return false;
+            };
+            program = next;
+        }
+        let program = program.rsplit('/').next().unwrap_or(program);
+        let args = words.collect::<Vec<_>>();
+        if args.iter().any(|arg| matches!(*arg, "--help" | "-h")) {
+            return false;
+        }
+        let arg = |idx: usize| args.get(idx).copied().unwrap_or("");
+        match program {
+            "cargo" => {
+                matches!(arg(0), "test" | "build" | "check" | "clippy")
+                    || (arg(0) == "fmt" && args.contains(&"--check"))
+                    || (arg(0) == "nextest" && matches!(arg(1), "run" | "list"))
+            }
+            "go" => matches!(arg(0), "test" | "build" | "vet"),
+            "pytest" | "py.test" | "eslint" => true,
+            "python" | "python3" => arg(0) == "-m" && arg(1) == "pytest",
+            "npm" | "pnpm" | "yarn" | "bun" => {
+                matches!(arg(0), "test" | "lint" | "check" | "build")
+                    || (arg(0) == "run" && matches!(arg(1), "test" | "lint" | "check" | "build"))
+            }
+            "make" | "just" => args.iter().any(|target| {
+                matches!(
+                    *target,
+                    "test" | "tests" | "check" | "verify" | "lint" | "build"
+                )
+            }),
+            "mvn" | "mvnw" | "gradle" | "gradlew" => args
+                .iter()
+                .any(|target| matches!(*target, "test" | "check" | "verify" | "build")),
+            "dotnet" | "swift" => matches!(arg(0), "test" | "build"),
+            "xcodebuild" => args.contains(&"test") || args.contains(&"build"),
+            "ruff" => arg(0) == "check",
+            "tsc" => args.contains(&"--noEmit") || args.contains(&"--no-emit"),
+            _ => false,
+        }
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeliveryAction {
     None,
@@ -72,7 +152,10 @@ pub enum DeliveryAction {
 }
 
 /// Turn-end delivery check.
-pub fn on_turn_end(state: &mut DeliverySessionState, strictness: DeliveryStrictness) -> DeliveryAction {
+pub fn on_turn_end(
+    state: &mut DeliverySessionState,
+    strictness: DeliveryStrictness,
+) -> DeliveryAction {
     if matches!(strictness, DeliveryStrictness::Off) {
         return DeliveryAction::None;
     }
@@ -138,9 +221,7 @@ pub fn gate_goal_complete(
                 delivery.goal_incomplete_override_armed = true;
                 GoalGate::Reject {
                     reason: "incomplete_todos",
-                    detail: format!(
-                        "{detail} (soft gate: one more completed:true may override)"
-                    ),
+                    detail: format!("{detail} (soft gate: one more completed:true may override)"),
                 }
             } else {
                 GoalGate::Allow
@@ -174,6 +255,55 @@ mod tests {
             on_turn_end(&mut s, DeliveryStrictness::Soft),
             DeliveryAction::None
         );
+    }
+
+    #[test]
+    fn bash_verification_uses_command_and_exit_status_not_output_prose() {
+        let mut state = DeliverySessionState::default();
+        state.on_writer_tool();
+        state.on_bash_verification_success("echo ok", 0);
+        assert!(matches!(
+            on_turn_end(&mut state, DeliveryStrictness::Strict),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
+
+        state.begin_turn();
+        state.on_writer_tool();
+        state.on_bash_verification_success("cargo test -p fixture", 1);
+        assert!(matches!(
+            on_turn_end(&mut state, DeliveryStrictness::Strict),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
+
+        state.begin_turn();
+        state.on_writer_tool();
+        state.on_bash_verification_success("cargo test -p fixture", 0);
+        assert_eq!(
+            on_turn_end(&mut state, DeliveryStrictness::Strict),
+            DeliveryAction::None
+        );
+    }
+
+    #[test]
+    fn verification_classifier_rejects_shell_masking_with_or_without_spaces() {
+        for command in [
+            "cargo test || true",
+            "cargo test|true",
+            "cargo test | true",
+            "cargo test; true",
+            "cargo test & wait",
+            "cargo test&wait",
+            "cargo test\ntrue",
+            "true # && cargo test -p fixture",
+            "cargo test --help",
+        ] {
+            assert!(!is_verification_command(command), "accepted {command:?}");
+        }
+        assert!(is_verification_command(
+            "cd agent && cargo check -p fixture"
+        ));
+        assert!(is_verification_command("go test ./..."));
+        assert!(is_verification_command("go build ./cmd/server"));
     }
 
     #[test]

@@ -1114,6 +1114,7 @@ pub(crate) async fn handle_subagent_request(
             None,
             None,
             None,
+            None,
             if verbatim_mirror_fork {
                 None
             } else if let Some(scope) = agent_memory_scope {

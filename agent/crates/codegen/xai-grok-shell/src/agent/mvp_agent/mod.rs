@@ -204,6 +204,7 @@ pub(crate) struct SessionSpawnOptions<'a> {
     pub persisted_signals: Option<crate::session::signals::SessionSignals>,
     pub persisted_plan_mode: Option<crate::session::plan_mode::PlanModeSnapshot>,
     pub persisted_goal_mode: Option<crate::session::goal_tracker::GoalOrchestration>,
+    pub persisted_expert_mode: Option<crate::session::expert::ExpertModeState>,
     pub persisted_announcement_state: Option<
         crate::session::announcement_state::AnnouncementState,
     >,
@@ -211,6 +212,10 @@ pub(crate) struct SessionSpawnOptions<'a> {
     pub managed_mcp_expires_at: Option<chrono::DateTime<chrono::Utc>>,
     pub model_agent_type: Option<&'a str>,
     pub session_model_id: acp::ModelId,
+    /// Persisted session-local effort. `resolve_sampling_config_for_model`
+    /// starts from catalog/global defaults, so cold resume and copied sessions
+    /// must explicitly re-apply this value to the live actor configuration.
+    pub session_reasoning_effort: Option<xai_grok_sampling_types::ReasoningEffort>,
     pub session_yolo_mode: bool,
     pub session_auto_mode: bool,
     pub prompt_display_cwd: Option<String>,
@@ -342,11 +347,13 @@ pub(crate) fn chat_session_spawn_options<'a>(
         persisted_signals: None,
         persisted_plan_mode: None,
         persisted_goal_mode: None,
+        persisted_expert_mode: None,
         persisted_announcement_state: None,
         session_meta,
         managed_mcp_expires_at: None,
         model_agent_type,
         session_model_id,
+        session_reasoning_effort: None,
         session_yolo_mode,
         session_auto_mode: false,
         prompt_display_cwd: None,

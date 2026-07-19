@@ -104,6 +104,8 @@ pub(crate) use interjection::*;
 #[path = "acp_session_impl/laziness.rs"]
 mod laziness;
 pub(crate) use laziness::*;
+#[path = "acp_session_impl/expert.rs"]
+mod expert_impl;
 #[path = "acp_session_impl/hooks_plugins.rs"]
 mod hooks_plugins;
 #[path = "acp_session_impl/mcp.rs"]
@@ -268,6 +270,10 @@ struct GoalContinuationPlan {
 /// Credentials (api_key, optional extra access key, client_version) live in
 /// the `credentials` sync mutex on `SessionActor`.
 pub(crate) struct State {
+    /// SessionActor-owned Expert policy/task state. It lives under the same
+    /// actor scheduling lock so slash transitions and turn admission are
+    /// serialized with the executor loop.
+    pub(crate) expert: crate::session::expert::ExpertModeState,
     pub(crate) running_task: Option<AgentTask>,
     pub(crate) pending_inputs: VecDeque<InputItem>,
     pub(crate) pending_notifications: Vec<PendingNotification>,
@@ -752,6 +758,8 @@ pub(crate) struct SessionActor {
     pub(crate) plan_mode: Arc<parking_lot::Mutex<crate::session::plan_mode::PlanModeTracker>>,
     /// Whether goal mode (`/goal`) is enabled for this session (feature flag).
     pub(crate) goal_enabled: bool,
+    /// Whether `/expert` is enabled by the resolved session configuration.
+    pub(crate) expert_enabled: bool,
     /// `goal_enabled` && `update_goal` in toolset; refreshed with command availability.
     goal_harness_enabled: std::sync::atomic::AtomicBool,
     /// One-shot: auto-pause persisted Active goal when harness is unavailable.
@@ -1182,6 +1190,7 @@ impl SessionActor {
             hooks: self.hook_registry.borrow().is_some(),
             plugins: self.plugin_registry.borrow().is_some(),
             goal,
+            expert: self.expert_enabled,
         }
     }
     /// Names of every tool registered with the session's tool bridge.
@@ -1544,6 +1553,9 @@ mod managed_gateway_descriptor_tests {
         assert!(!names.contains("slack__search"));
     }
 }
+#[cfg(test)]
+#[path = "acp_session_tests/expert_model_restore_tests.rs"]
+mod expert_model_restore_tests;
 /// ToolBridge must route file operations through the injected FileSystem,
 /// not direct disk I/O. When `.with_fs()` is dropped from the builder,
 /// tools fall back to LocalFs and ACP client-side enforcement stops working.

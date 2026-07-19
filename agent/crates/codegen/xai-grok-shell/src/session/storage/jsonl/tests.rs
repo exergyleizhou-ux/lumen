@@ -690,6 +690,69 @@ async fn test_copy_session_data_basic() {
     }
     assert!(loaded.plan_state.is_some());
 }
+
+#[tokio::test]
+async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
+    use crate::session::expert::{
+        DEFAULT_EXECUTOR_MODEL, ExpertFeatureState, ExpertMode, ExpertModeState, ExpertOutcome,
+        ExpertPhase,
+    };
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let source = Info {
+        id: acp::SessionId::new("expert-source"),
+        cwd: "/source/workspace".to_string(),
+    };
+    adapter.init_session(&source, default_model_id()).await.unwrap();
+    let mut state = ExpertModeState::configured();
+    state
+        .start("modify src/auth.rs", ExpertMode::Fast, DEFAULT_EXECUTOR_MODEL)
+        .unwrap();
+    state.phase = ExpertPhase::Executing;
+    state.model_before_expert = Some("session-model-before-expert".to_owned());
+    state.reasoning_effort_before_expert = Some("high".to_owned());
+    adapter.write_expert_mode_state(&source, &state).await.unwrap();
+    adapter
+        .update_current_model_and_agent(
+            &source,
+            &acp::ModelId::new(DEFAULT_EXECUTOR_MODEL),
+            None,
+            Some(Some(xai_grok_sampling_types::ReasoningEffort::Xhigh)),
+        )
+        .await
+        .unwrap();
+
+    let light = adapter.load_session_without_updates(&source).await.unwrap();
+    assert_eq!(
+        light.expert_mode_state.as_ref().map(|s| s.phase),
+        Some(ExpertPhase::Executing)
+    );
+
+    let target = Info {
+        id: acp::SessionId::new("expert-copy"),
+        cwd: "/target/workspace".to_string(),
+    };
+    let copied = adapter
+        .copy_session_data(&source, &target, CopySessionOptions::default())
+        .await
+        .unwrap();
+    assert!(copied.expert_mode_state_copied);
+    let loaded = adapter.load_session(&target).await.unwrap();
+    let copied_state = loaded.expert_mode_state.unwrap();
+    assert_eq!(copied_state.feature_state, ExpertFeatureState::IdleConfigured);
+    assert_eq!(copied_state.last_outcome, Some(ExpertOutcome::Interrupted));
+    assert_eq!(copied_state.last_error_code, None);
+    assert_eq!(copied_state.model_before_expert, None);
+    assert_eq!(copied_state.reasoning_effort_before_expert, None);
+    assert_eq!(
+        loaded.summary.current_model_id.0.as_ref(),
+        "session-model-before-expert"
+    );
+    assert_eq!(
+        loaded.summary.reasoning_effort,
+        Some(xai_grok_sampling_types::ReasoningEffort::High)
+    );
+}
 #[tokio::test]
 async fn test_copy_session_data_without_plan() {
     let temp_dir = TempDir::new().unwrap();
