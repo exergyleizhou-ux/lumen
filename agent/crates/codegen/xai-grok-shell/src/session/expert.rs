@@ -1230,16 +1230,37 @@ impl ExpertModeState {
         if self.mode == ExpertMode::Dual || self.dual_result.is_some() {
             if let Some(dual) = &self.dual_result {
                 out.push_str(&format!(
-                    "\nDual: A={} B={} degraded={} disagreements={}",
+                    "\nDual: A={} B={} degraded={} disagreements={} rollout={}",
                     dual.source_a_ok,
                     dual.source_b_ok,
                     dual.degraded,
-                    dual.disagreements.len()
+                    dual.disagreements.len(),
+                    self.dual_rollout
                 ));
             } else {
-                out.push_str("\nDual: pending");
+                out.push_str(&format!("\nDual: pending (rollout={})", self.dual_rollout));
             }
         }
+        if let Some(verdict) = &self.advisory_verdict {
+            // Never render advisory as Completed — surface as advisory only.
+            out.push_str(&format!("\nAdvisory verdict: {verdict} (untrusted)"));
+        }
+        if let Some(hv) = Some(&self.verification_summary) {
+            out.push_str(&format!(
+                "\nHostVerification: {:?} | restore_failed={}",
+                hv.outcome,
+                self.last_error_code.as_deref() == Some(ExpertErrorCode::RestoreFailed.as_str())
+            ));
+        }
+        out.push_str(&format!(
+            "\nConsultant readonly tools: {} (cap={})",
+            if self.consultant_readonly_tools {
+                "enabled-allowlist"
+            } else {
+                "off"
+            },
+            self.consultant_tool_call_cap
+        ));
         if verbose {
             out.push_str(&format!(
                 "\nTask hash: {}\nEvidence fields: {}\nTruncation: {}",
@@ -1255,6 +1276,14 @@ impl ExpertModeState {
                     self.truncation_flags.join(", ")
                 },
             ));
+            if let Some(dual) = &self.dual_result {
+                out.push_str(&format!(
+                    "\nDual A req: {} | Dual B req: {}\nDual selection: {}",
+                    dual.source_a_request_id.as_deref().unwrap_or("none"),
+                    dual.source_b_request_id.as_deref().unwrap_or("none"),
+                    dual.selection_reason
+                ));
+            }
         }
         out
     }
