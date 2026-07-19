@@ -51,6 +51,9 @@ pub enum ExpertMode {
     Fast,
     Vision,
     Deep,
+    /// Two real proposal sources (executor-model plan + consultant plan),
+    /// then a single Executor Writer. Not a dual-writer runtime.
+    Dual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -157,6 +160,44 @@ pub struct PostConsultVerdict {
     pub issues: Vec<String>,
     #[serde(default)]
     pub repair_recommendations: Vec<String>,
+}
+
+/// One dual proposal source (executor-side or consultant-side).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DualProposal {
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub steps: Vec<String>,
+    #[serde(default)]
+    pub risks: Vec<String>,
+}
+
+/// Durable dual outcome: two real sources + deterministic merge metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct DualBundle {
+    pub proposal_a: DualProposal,
+    pub proposal_b: DualProposal,
+    #[serde(default)]
+    pub merged_plan: Vec<String>,
+    #[serde(default)]
+    pub disagreements: Vec<String>,
+    #[serde(default)]
+    pub selection_reason: String,
+    #[serde(default)]
+    pub source_a_request_id: Option<String>,
+    #[serde(default)]
+    pub source_b_request_id: Option<String>,
+    #[serde(default)]
+    pub source_a_model: Option<String>,
+    #[serde(default)]
+    pub source_b_model: Option<String>,
+    #[serde(default)]
+    pub source_a_ok: bool,
+    #[serde(default)]
+    pub source_b_ok: bool,
+    #[serde(default)]
+    pub degraded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -310,6 +351,17 @@ pub struct ExpertModeState {
     /// `/goalexpert off` cannot drop Goal rolling charges for post/storm.
     #[serde(default)]
     pub goal_composed_this_task: bool,
+    /// E3 dual advisory bundle (never grants write/completion authority).
+    #[serde(default)]
+    pub dual_result: Option<DualBundle>,
+    /// E3 rollout string for dual exposure (`off`/`internal`/`opt_in`/`default_on`).
+    #[serde(default = "default_dual_rollout")]
+    pub dual_rollout: String,
+    /// When true, consultant may use the read-only tool allowlist only.
+    #[serde(default)]
+    pub consultant_readonly_tools: bool,
+    #[serde(default = "default_consultant_tool_cap")]
+    pub consultant_tool_call_cap: u32,
     pub evidence_fields: Vec<String>,
     #[serde(default)]
     pub evidence_bundle_hash: Option<String>,
@@ -381,6 +433,10 @@ impl Default for ExpertModeState {
             failure_fingerprints: Vec::new(),
             resumable_task: false,
             goal_composed_this_task: false,
+            dual_result: None,
+            dual_rollout: default_dual_rollout(),
+            consultant_readonly_tools: false,
+            consultant_tool_call_cap: default_consultant_tool_cap(),
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
             audit_events: Vec::new(),
@@ -398,6 +454,14 @@ impl Default for ExpertModeState {
             last_outcome: None,
         }
     }
+}
+
+fn default_dual_rollout() -> String {
+    "opt_in".to_owned()
+}
+
+fn default_consultant_tool_cap() -> u32 {
+    5
 }
 
 impl ExpertModeState {
@@ -420,6 +484,9 @@ impl ExpertModeState {
         state.goal_consult_cap_per_attempt = config.goal_compose.consult_cap_per_attempt;
         state.goal_consult_cap_per_goal = config.goal_compose.consult_cap_per_goal;
         state.goal_restore_model_each_attempt = config.goal_compose.restore_model_each_attempt;
+        state.dual_rollout = config.dual_rollout.clone();
+        state.consultant_readonly_tools = config.consultant_readonly_tools;
+        state.consultant_tool_call_cap = config.consultant_tool_call_cap.max(1);
         state
     }
 
@@ -523,6 +590,7 @@ impl ExpertModeState {
         self.failure_fingerprints.clear();
         self.resumable_task = false;
         self.goal_composed_this_task = false;
+        self.dual_result = None;
         self.evidence_fields.clear();
         self.evidence_bundle_hash = None;
         self.audit_events.clear();
@@ -667,6 +735,128 @@ impl ExpertModeState {
                 "consult_succeeded"
             } else {
                 "consult_failed"
+            },
+            Some(guard.request_id.clone()),
+            self.last_error_code.clone(),
+            self.evidence_bundle_hash.clone(),
+        );
+        self.request_id = None;
+        self.expected_phase = None;
+        self.phase = ExpertPhase::Ready;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    /// Dual source A (executor-model bounded plan). Leaves state ready to
+    /// reserve source B; does not hand completion or write tools.
+    pub fn finish_dual_source_a(
+        &mut self,
+        guard: &CallbackGuard,
+        usage: (u64, u64),
+        advisory: Result<DualProposal, ExpertErrorCode>,
+        resolved_model: Option<String>,
+    ) -> Result<(), ExpertErrorCode> {
+        self.accept_callback(guard)?;
+        let success = advisory.is_ok();
+        self.budget
+            .account_usage(guard.reserved_tokens, usage.0, usage.1, success);
+        let mut bundle = self.dual_result.take().unwrap_or_default();
+        bundle.source_a_request_id = Some(guard.request_id.clone());
+        bundle.source_a_model = resolved_model;
+        match advisory {
+            Ok(proposal) => {
+                bundle.proposal_a = proposal;
+                bundle.source_a_ok = true;
+                self.last_error_code = None;
+            }
+            Err(code) => {
+                bundle.source_a_ok = false;
+                bundle.degraded = true;
+                self.last_error_code = Some(code.as_str().to_owned());
+                self.notes
+                    .push(format!("dual source A unavailable: {}", code.as_str()));
+            }
+        }
+        self.dual_result = Some(bundle);
+        self.audit(
+            if success {
+                "dual_source_a_succeeded"
+            } else {
+                "dual_source_a_failed"
+            },
+            Some(guard.request_id.clone()),
+            self.last_error_code.clone(),
+            self.evidence_bundle_hash.clone(),
+        );
+        self.request_id = None;
+        self.expected_phase = None;
+        // Re-arm for source B reservation (PreparingEvidence -> ConsultingPre).
+        self.phase = ExpertPhase::PreparingEvidence;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    /// Dual source B (consultant) + deterministic merge into advisory plan.
+    pub fn finish_dual_source_b(
+        &mut self,
+        guard: &CallbackGuard,
+        usage: (u64, u64),
+        advisory: Result<DualProposal, ExpertErrorCode>,
+        resolved_model: Option<String>,
+    ) -> Result<(), ExpertErrorCode> {
+        self.accept_callback(guard)?;
+        let success = advisory.is_ok();
+        self.budget
+            .account_usage(guard.reserved_tokens, usage.0, usage.1, success);
+        let mut bundle = self.dual_result.take().unwrap_or_default();
+        bundle.source_b_request_id = Some(guard.request_id.clone());
+        bundle.source_b_model = resolved_model.clone();
+        match advisory {
+            Ok(proposal) => {
+                bundle.proposal_b = proposal;
+                bundle.source_b_ok = true;
+            }
+            Err(code) => {
+                bundle.source_b_ok = false;
+                bundle.degraded = true;
+                self.last_error_code = Some(code.as_str().to_owned());
+                self.notes
+                    .push(format!("dual source B unavailable: {}", code.as_str()));
+            }
+        }
+        let merged = merge_dual_proposals(&bundle.proposal_a, &bundle.proposal_b, bundle.source_a_ok, bundle.source_b_ok);
+        bundle.merged_plan = merged.merged_plan.clone();
+        bundle.disagreements = merged.disagreements;
+        bundle.selection_reason = merged.selection_reason;
+        bundle.degraded = bundle.degraded || merged.degraded;
+        self.plan = bundle.merged_plan.clone();
+        if bundle.source_a_ok || bundle.source_b_ok {
+            self.advisory_verdict = Some(if bundle.degraded {
+                "dual_advisory_degraded".to_owned()
+            } else {
+                "dual_advisory_received".to_owned()
+            });
+            if bundle.source_b_ok {
+                self.consultant_resolved = resolved_model;
+            }
+            if self.last_error_code.as_deref()
+                == Some(ExpertErrorCode::ConsultantUnavailable.as_str())
+                && (bundle.source_a_ok || bundle.source_b_ok)
+            {
+                // Keep degraded notes but do not block executor-only start.
+            }
+        } else {
+            self.notes
+                .push("executor-only: dual both sources unavailable".to_owned());
+        }
+        self.dual_result = Some(bundle);
+        self.audit(
+            if success {
+                "dual_source_b_succeeded"
+            } else {
+                "dual_source_b_failed"
             },
             Some(guard.request_id.clone()),
             self.last_error_code.clone(),
@@ -1037,6 +1227,19 @@ impl ExpertModeState {
                 self.storm_breakout_attempts, self.storm_breakout_cap
             ));
         }
+        if self.mode == ExpertMode::Dual || self.dual_result.is_some() {
+            if let Some(dual) = &self.dual_result {
+                out.push_str(&format!(
+                    "\nDual: A={} B={} degraded={} disagreements={}",
+                    dual.source_a_ok,
+                    dual.source_b_ok,
+                    dual.degraded,
+                    dual.disagreements.len()
+                ));
+            } else {
+                out.push_str("\nDual: pending");
+            }
+        }
         if verbose {
             out.push_str(&format!(
                 "\nTask hash: {}\nEvidence fields: {}\nTruncation: {}",
@@ -1178,6 +1381,122 @@ pub fn parse_consult_plan(raw: &str) -> Result<Vec<String>, ExpertErrorCode> {
         .into_iter()
         .map(|s| redact_and_truncate(&s, 1_000).0)
         .collect())
+}
+
+pub fn parse_dual_proposal(raw: &str) -> Result<DualProposal, ExpertErrorCode> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wire {
+        summary: String,
+        #[serde(default)]
+        steps: Vec<String>,
+        #[serde(default)]
+        risks: Vec<String>,
+    }
+    let wire: Wire = serde_json::from_str(raw.trim()).map_err(|_| ExpertErrorCode::ParseError)?;
+    if wire.summary.trim().is_empty()
+        || wire.summary.chars().count() > 1_000
+        || wire.steps.is_empty()
+        || wire.steps.len() > 8
+        || wire.risks.len() > 8
+        || wire
+            .steps
+            .iter()
+            .chain(wire.risks.iter())
+            .any(|s| s.trim().is_empty() || s.chars().count() > 1_000)
+    {
+        return Err(ExpertErrorCode::ParseError);
+    }
+    Ok(DualProposal {
+        summary: redact_and_truncate(&wire.summary, 1_000).0,
+        steps: wire
+            .steps
+            .into_iter()
+            .map(|s| redact_and_truncate(&s, 1_000).0)
+            .collect(),
+        risks: wire
+            .risks
+            .into_iter()
+            .map(|s| redact_and_truncate(&s, 1_000).0)
+            .collect(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DualMergeResult {
+    pub merged_plan: Vec<String>,
+    pub disagreements: Vec<String>,
+    pub selection_reason: String,
+    pub degraded: bool,
+}
+
+/// Deterministic, re-playable merge: A priority union of steps, max 8.
+/// Does not invent steps; never elevates advisory to completion authority.
+pub fn merge_dual_proposals(
+    a: &DualProposal,
+    b: &DualProposal,
+    a_ok: bool,
+    b_ok: bool,
+) -> DualMergeResult {
+    if !a_ok && !b_ok {
+        return DualMergeResult {
+            merged_plan: Vec::new(),
+            disagreements: Vec::new(),
+            selection_reason: "both sources unavailable; executor-only".to_owned(),
+            degraded: true,
+        };
+    }
+    if a_ok && !b_ok {
+        return DualMergeResult {
+            merged_plan: a.steps.iter().take(8).cloned().collect(),
+            disagreements: Vec::new(),
+            selection_reason: "source B unavailable; using executor-side proposal A only".to_owned(),
+            degraded: true,
+        };
+    }
+    if !a_ok && b_ok {
+        return DualMergeResult {
+            merged_plan: b.steps.iter().take(8).cloned().collect(),
+            disagreements: Vec::new(),
+            selection_reason: "source A unavailable; using consultant proposal B only".to_owned(),
+            degraded: true,
+        };
+    }
+    let mut merged = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    for step in a.steps.iter().chain(b.steps.iter()) {
+        let key = step.to_ascii_lowercase();
+        if seen.insert(key) {
+            merged.push(step.clone());
+        }
+        if merged.len() == 8 {
+            break;
+        }
+    }
+    let a_set: std::collections::BTreeSet<_> =
+        a.steps.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let b_set: std::collections::BTreeSet<_> =
+        b.steps.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let mut disagreements = Vec::new();
+    for step in &a.steps {
+        if !b_set.contains(&step.to_ascii_lowercase()) {
+            disagreements.push(format!("only_a: {step}"));
+        }
+    }
+    for step in &b.steps {
+        if !a_set.contains(&step.to_ascii_lowercase()) {
+            disagreements.push(format!("only_b: {step}"));
+        }
+    }
+    disagreements.truncate(16);
+    DualMergeResult {
+        merged_plan: merged,
+        disagreements,
+        selection_reason:
+            "deterministic A-priority union of steps; both sources retained as untrusted advisory"
+                .to_owned(),
+        degraded: false,
+    }
 }
 
 pub const MAX_VISION_IMAGE_ENCODED_BYTES: usize = 20 * 1024 * 1024;
@@ -1326,6 +1645,52 @@ pub fn prompt_envelope(task: &str, plan: &[String]) -> String {
     )
 }
 
+/// E3.1 consultant read-only tool allowlist. Anything else is invisible/denied.
+pub const CONSULTANT_READONLY_ALLOWLIST: &[&str] = &[
+    "read_file",
+    "list_directory",
+    "search_text",
+    "read_diagnostics",
+    "read_test_summary",
+    "read_diff_summary",
+];
+
+/// Write / mutation tools that must never be offered to the consultant.
+pub const CONSULTANT_FORBIDDEN_TOOLS: &[&str] = &[
+    "write_file",
+    "apply_patch",
+    "bash",
+    "shell",
+    "git_commit",
+    "git_push",
+    "delete",
+    "move",
+    "set_permission",
+    "switch_model",
+    "update_goal",
+];
+
+pub fn consultant_tool_allowed(name: &str) -> bool {
+    let n = name.trim();
+    if CONSULTANT_FORBIDDEN_TOOLS
+        .iter()
+        .any(|f| n.eq_ignore_ascii_case(f))
+    {
+        return false;
+    }
+    CONSULTANT_READONLY_ALLOWLIST
+        .iter()
+        .any(|a| n.eq_ignore_ascii_case(a))
+}
+
+/// Dual command exposure under rollout gate.
+pub fn dual_command_allowed(rollout: &str) -> bool {
+    matches!(
+        rollout.trim().to_ascii_lowercase().as_str(),
+        "internal" | "opt_in" | "default_on" | "on" | "true" | "1"
+    )
+}
+
 pub fn is_off_command(blocks: &[agent_client_protocol::ContentBlock]) -> bool {
     let text = blocks
         .iter()
@@ -1343,6 +1708,10 @@ pub fn is_off_command(blocks: &[agent_client_protocol::ContentBlock]) -> bool {
 pub fn should_consult(task: &str, mode: ExpertMode) -> bool {
     if mode == ExpertMode::Fast {
         return false;
+    }
+    // Dual always requires both proposal sources when budget allows.
+    if mode == ExpertMode::Dual || mode == ExpertMode::Vision || mode == ExpertMode::Deep {
+        return true;
     }
     let lower = task.to_ascii_lowercase();
     const RISK: &[&str] = &[
@@ -1778,6 +2147,10 @@ mod tests {
             "failure_fingerprints",
             "resumable_task",
             "goal_composed_this_task",
+            "dual_result",
+            "dual_rollout",
+            "consultant_readonly_tools",
+            "consultant_tool_call_cap",
         ] {
             object.remove(key);
         }
@@ -1802,6 +2175,54 @@ mod tests {
         assert_eq!(migrated.storm_breakout_cap, 1);
         assert!(!migrated.resumable_task);
         assert!(!migrated.goal_composed_this_task);
+        assert!(migrated.dual_result.is_none());
+        assert_eq!(migrated.dual_rollout, "opt_in");
+        assert!(!migrated.consultant_readonly_tools);
+        assert_eq!(migrated.consultant_tool_call_cap, 5);
+    }
+
+    #[test]
+    fn consultant_readonly_allowlist_rejects_writers() {
+        assert!(consultant_tool_allowed("read_file"));
+        assert!(consultant_tool_allowed("list_directory"));
+        assert!(!consultant_tool_allowed("write_file"));
+        assert!(!consultant_tool_allowed("bash"));
+        assert!(!consultant_tool_allowed("apply_patch"));
+        assert!(!consultant_tool_allowed("update_goal"));
+        assert!(!consultant_tool_allowed("unknown_tool"));
+        assert!(dual_command_allowed("opt_in"));
+        assert!(dual_command_allowed("internal"));
+        assert!(!dual_command_allowed("off"));
+    }
+
+    #[test]
+    fn dual_merge_is_deterministic_and_not_fake_single_source() {
+        let a = DualProposal {
+            summary: "from executor model".into(),
+            steps: vec!["run tests".into(), "fix auth".into()],
+            risks: vec!["auth regression".into()],
+        };
+        let b = DualProposal {
+            summary: "from consultant".into(),
+            steps: vec!["fix auth".into(), "add logs".into()],
+            risks: vec!["noise".into()],
+        };
+        let m = merge_dual_proposals(&a, &b, true, true);
+        assert!(!m.degraded);
+        assert_eq!(m.merged_plan, vec!["run tests", "fix auth", "add logs"]);
+        assert!(m.disagreements.iter().any(|d| d.starts_with("only_a:")));
+        assert!(m.disagreements.iter().any(|d| d.starts_with("only_b:")));
+        let degraded = merge_dual_proposals(&a, &DualProposal::default(), true, false);
+        assert!(degraded.degraded);
+        assert_eq!(degraded.merged_plan, a.steps);
+        let both_fail = merge_dual_proposals(&DualProposal::default(), &DualProposal::default(), false, false);
+        assert!(both_fail.degraded);
+        assert!(both_fail.merged_plan.is_empty());
+        assert!(parse_dual_proposal(
+            r#"{"summary":"s","steps":["a"],"risks":[],"extra":1}"#
+        )
+        .is_err());
+        assert!(parse_dual_proposal(r#"{"summary":"s","steps":["step one"],"risks":[]}"#).is_ok());
     }
 
     #[test]

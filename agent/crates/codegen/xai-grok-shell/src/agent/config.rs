@@ -4141,6 +4141,24 @@ pub struct ExpertConfig {
     pub consult_timeout_secs: u64,
     pub mutex_independent_goal: bool,
     pub goal_compose: ExpertGoalComposeConfig,
+    /// E3 rollout: dual command exposure (`off` | `internal` | `opt_in` | `default_on`).
+    /// Default `opt_in` — dual works when user explicitly runs `/expert dual`.
+    #[serde(default = "default_expert_dual_rollout")]
+    pub dual_rollout: String,
+    /// E3: consultant may use a read-only tool allowlist (never write tools).
+    /// Default false — fail-closed until explicitly enabled.
+    #[serde(default)]
+    pub consultant_readonly_tools: bool,
+    #[serde(default = "default_consultant_tool_call_cap")]
+    pub consultant_tool_call_cap: u32,
+}
+
+fn default_expert_dual_rollout() -> String {
+    "opt_in".to_owned()
+}
+
+fn default_consultant_tool_call_cap() -> u32 {
+    5
 }
 
 impl Default for ExpertConfig {
@@ -4161,6 +4179,9 @@ impl Default for ExpertConfig {
             consult_timeout_secs: 60,
             mutex_independent_goal: true,
             goal_compose: ExpertGoalComposeConfig::default(),
+            dual_rollout: default_expert_dual_rollout(),
+            consultant_readonly_tools: false,
+            consultant_tool_call_cap: default_consultant_tool_call_cap(),
         }
     }
 }

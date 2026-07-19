@@ -289,7 +289,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         name: "expert",
         description: "Run a bounded expert-assisted task",
         argument_hint: Some(
-            "<task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
+            "<task> | fast|vision|deep|dual <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
         ),
         aliases: &[],
         gate: BuiltinGate::Expert,
@@ -313,6 +313,7 @@ fn resolve_expert(args: &str) -> BuiltinAction {
         "exec=grok" => BuiltinAction::ExpertExecutor {
             model: crate::session::expert::GROK_MODEL.to_owned(),
         },
+        // Bare mode tokens without a task are bad_args (including dual).
         "fast" | "deep" | "vision" | "dual" => BuiltinAction::ExpertBadArgs,
         "go" => BuiltinAction::ExpertContinue { repair: false },
         "revise" => BuiltinAction::ExpertContinue { repair: true },
@@ -330,6 +331,11 @@ fn resolve_expert(args: &str) -> BuiltinAction {
         _ if trimmed.to_ascii_lowercase().starts_with("deep ") => BuiltinAction::ExpertStart {
             task: trimmed[5..].trim().to_owned(),
             mode: crate::session::expert::ExpertMode::Deep,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("dual ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Dual,
             images: Vec::new(),
         },
         _ => BuiltinAction::ExpertStart {
@@ -2574,6 +2580,13 @@ mod tests {
             resolve_expert_for_test("deep fix auth"),
             BuiltinAction::ExpertStart {
                 mode: crate::session::expert::ExpertMode::Deep,
+                ..
+            }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("dual compare approaches"),
+            BuiltinAction::ExpertStart {
+                mode: crate::session::expert::ExpertMode::Dual,
                 ..
             }
         ));
