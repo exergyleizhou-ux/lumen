@@ -248,10 +248,38 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
                 "resume" => BuiltinAction::GoalResume,
                 "clear" => BuiltinAction::GoalClear,
                 _ => {
+                    let (objective, token_budget, expert_policy) = parse_goal_args(trimmed);
+                    BuiltinAction::GoalSet {
+                        objective,
+                        token_budget,
+                        expert_policy,
+                    }
+                }
+            }
+        },
+    },
+    BuiltinCommand {
+        name: "goalexpert",
+        description: "Run or manage an autonomous goal with Expert policy",
+        argument_hint: Some(
+            "<objective> [--budget <tokens>] | status | pause | resume | clear | off",
+        ),
+        aliases: &[],
+        gate: BuiltinGate::Goal,
+        resolve: |args| {
+            let trimmed = args.trim();
+            match trimmed.to_ascii_lowercase().as_str() {
+                "" | "status" => BuiltinAction::GoalStatus,
+                "pause" => BuiltinAction::GoalPause,
+                "resume" => BuiltinAction::GoalResume,
+                "clear" => BuiltinAction::GoalClear,
+                "off" => BuiltinAction::GoalExpertOff,
+                _ => {
                     let (objective, token_budget) = parse_goal_budget(trimmed);
                     BuiltinAction::GoalSet {
                         objective,
                         token_budget,
+                        expert_policy: true,
                     }
                 }
             }
@@ -322,6 +350,27 @@ fn parse_goal_budget(trimmed: &str) -> (String, Option<i64>) {
         }
     }
     (trimmed.to_string(), None)
+}
+
+/// Parse `/goal` composition without introducing a second orchestration.
+/// `--expert` is an exact standalone flag; every other token remains part of
+/// the objective, then the existing trailing budget parser is applied.
+fn parse_goal_args(trimmed: &str) -> (String, Option<i64>, bool) {
+    let mut expert_policy = false;
+    let objective = trimmed
+        .split_whitespace()
+        .filter(|token| {
+            if *token == "--expert" {
+                expert_policy = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (objective, token_budget) = parse_goal_budget(&objective);
+    (objective, token_budget, expert_policy)
 }
 
 const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
@@ -712,11 +761,13 @@ pub(super) enum BuiltinAction {
     GoalSet {
         objective: String,
         token_budget: Option<i64>,
+        expert_policy: bool,
     },
     GoalStatus,
     GoalPause,
     GoalResume,
     GoalClear,
+    GoalExpertOff,
     ExpertStart {
         task: String,
         mode: crate::session::expert::ExpertMode,
@@ -762,6 +813,7 @@ impl BuiltinAction {
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => "goal",
+            BuiltinAction::GoalExpertOff => "goalexpert",
             BuiltinAction::ExpertStart { .. }
             | BuiltinAction::ExpertStatus { .. }
             | BuiltinAction::ExpertBudget
@@ -799,7 +851,8 @@ impl BuiltinAction {
             BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
-            | BuiltinAction::GoalClear => false,
+            | BuiltinAction::GoalClear
+            | BuiltinAction::GoalExpertOff => false,
             BuiltinAction::ExpertStart { task, .. } => !task.is_empty(),
             BuiltinAction::ExpertStatus { .. }
             | BuiltinAction::ExpertBudget
@@ -2512,6 +2565,14 @@ mod tests {
         }
     }
 
+    fn resolve_goalexpert(args: &str) -> BuiltinAction {
+        let blocks = vec![text_block(&format!("/goalexpert {args}"))];
+        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+            SlashCommandOutcome::Builtin(action) => action,
+            _ => panic!("expected Builtin outcome"),
+        }
+    }
+
     #[test]
     fn goal_empty_resolves_to_status() {
         assert!(matches!(resolve_goal(""), BuiltinAction::GoalStatus));
@@ -2540,11 +2601,83 @@ mod tests {
     }
 
     #[test]
+    fn goal_expert_flag_is_exact_and_composes_with_budget() {
+        for (args, objective, budget) in [
+            ("ship --expert", "ship", None),
+            ("ship --expert --budget 10000", "ship", Some(10_000)),
+        ] {
+            match resolve_goal(args) {
+                BuiltinAction::GoalSet {
+                    objective: actual,
+                    token_budget,
+                    expert_policy,
+                } => {
+                    assert_eq!(actual, objective);
+                    assert_eq!(token_budget, budget);
+                    assert!(expert_policy);
+                }
+                other => panic!("expected GoalSet, got {}", other.command_name()),
+            }
+        }
+
+        for args in ["ship --expertise", "explain --expert-mode", "quote--expert"] {
+            match resolve_goal(args) {
+                BuiltinAction::GoalSet {
+                    objective,
+                    expert_policy,
+                    ..
+                } => {
+                    assert_eq!(objective, args);
+                    assert!(!expert_policy);
+                }
+                other => panic!("expected GoalSet, got {}", other.command_name()),
+            }
+        }
+    }
+
+    #[test]
+    fn goalexpert_is_a_goal_alias_with_no_new_runtime_actions() {
+        match resolve_goalexpert("ship --budget 10000") {
+            BuiltinAction::GoalSet {
+                objective,
+                token_budget,
+                expert_policy,
+            } => {
+                assert_eq!(objective, "ship");
+                assert_eq!(token_budget, Some(10_000));
+                assert!(expert_policy);
+            }
+            other => panic!("expected GoalSet, got {}", other.command_name()),
+        }
+        assert!(matches!(
+            resolve_goalexpert("status"),
+            BuiltinAction::GoalStatus
+        ));
+        assert!(matches!(
+            resolve_goalexpert("pause"),
+            BuiltinAction::GoalPause
+        ));
+        assert!(matches!(
+            resolve_goalexpert("resume"),
+            BuiltinAction::GoalResume
+        ));
+        assert!(matches!(
+            resolve_goalexpert("clear"),
+            BuiltinAction::GoalClear
+        ));
+        assert!(matches!(
+            resolve_goalexpert("off"),
+            BuiltinAction::GoalExpertOff
+        ));
+    }
+
+    #[test]
     fn goal_objective_resolves_to_set() {
         match resolve_goal("implement auth module") {
             BuiltinAction::GoalSet {
                 objective,
                 token_budget,
+                ..
             } => {
                 assert_eq!(objective, "implement auth module");
                 assert_eq!(token_budget, None);
@@ -2569,6 +2702,7 @@ mod tests {
             BuiltinAction::GoalSet {
                 objective,
                 token_budget,
+                ..
             } => {
                 assert_eq!(objective, "implement X");
                 assert_eq!(token_budget, Some(500_000));
@@ -2588,6 +2722,7 @@ mod tests {
                 BuiltinAction::GoalSet {
                     objective: o,
                     token_budget,
+                    ..
                 } => {
                     assert_eq!(o, objective);
                     assert_eq!(token_budget, Some(budget), "for {text:?}");
@@ -2618,6 +2753,7 @@ mod tests {
                 BuiltinAction::GoalSet {
                     objective,
                     token_budget,
+                    ..
                 } => {
                     assert_eq!(objective, text, "objective must be preserved verbatim");
                     assert_eq!(token_budget, None, "no budget must be parsed from {text:?}");
@@ -2637,6 +2773,7 @@ mod tests {
             BuiltinAction::GoalSet {
                 objective: "x".into(),
                 token_budget: None,
+                expert_policy: false,
             }
             .command_name(),
             "goal"
@@ -2649,6 +2786,7 @@ mod tests {
             BuiltinAction::GoalSet {
                 objective: "x".into(),
                 token_budget: None,
+                expert_policy: false,
             }
             .args_provided()
         );

@@ -399,6 +399,43 @@ pub enum PersistenceMsg {
     },
 }
 
+fn combine_goal_and_expert_barrier(
+    pending_goal_error: Option<String>,
+    expert_result: io::Result<()>,
+) -> io::Result<()> {
+    match pending_goal_error {
+        Some(error) => Err(io::Error::other(format!(
+            "preceding goal mode snapshot was not durable: {error}"
+        ))),
+        None => expert_result,
+    }
+}
+
+#[cfg(test)]
+mod goal_expert_barrier_tests {
+    use super::combine_goal_and_expert_barrier;
+
+    #[test]
+    fn goal_write_failure_fails_expert_barrier_even_when_expert_write_succeeds() {
+        let result =
+            combine_goal_and_expert_barrier(Some("fixture goal write failed".to_owned()), Ok(()));
+        let error = result.expect_err("partial Goal/Expert durability must fail closed");
+        assert!(error.to_string().contains("fixture goal write failed"));
+    }
+
+    #[test]
+    fn expert_barrier_result_is_preserved_when_goal_write_was_durable() {
+        assert!(combine_goal_and_expert_barrier(None, Ok(())).is_ok());
+        assert!(
+            combine_goal_and_expert_barrier(
+                None,
+                Err(std::io::Error::other("fixture expert write failed")),
+            )
+            .is_err()
+        );
+    }
+}
+
 pub use xai_grok_shared::session::session_dir;
 
 /// Check if a session exists locally under the given cwd.
@@ -1550,6 +1587,10 @@ impl SessionPersistence {
         // re-open) stay out of gc expiry without per-message DB writes.
         // The constructors fire the t=0 touch, so this starts at now().
         let mut last_worktree_touch = std::time::Instant::now();
+        // A Goal-composed consult queues GoalModeState immediately before the
+        // Expert durability barrier. Carry any Goal snapshot write failure to
+        // that barrier so provider polling cannot proceed on a partial write.
+        let mut pending_goal_mode_error: Option<String> = None;
         while let Some(msg) = self.rx.recv().await {
             if last_worktree_touch.elapsed() >= WORKTREE_TOUCH_INTERVAL {
                 last_worktree_touch = std::time::Instant::now();
@@ -1641,8 +1682,12 @@ impl SessionPersistence {
                     }
                 }
                 PersistenceMsg::GoalModeState(state) => {
-                    if let Err(e) = self.storage.write_goal_mode_state(&self.info, &state).await {
-                        tracing::warn!(?e, "failed to write goal mode state");
+                    match self.storage.write_goal_mode_state(&self.info, &state).await {
+                        Ok(()) => pending_goal_mode_error = None,
+                        Err(e) => {
+                            tracing::warn!(?e, "failed to write goal mode state");
+                            pending_goal_mode_error = Some(e.to_string());
+                        }
                     }
                 }
                 PersistenceMsg::ExpertModeState(state) => {
@@ -1656,10 +1701,14 @@ impl SessionPersistence {
                 }
                 PersistenceMsg::ExpertModeStateAndAck { state, respond_to } => {
                     self.flush_pending().await;
-                    let result = self
+                    let expert_result = self
                         .storage
                         .write_expert_mode_state(&self.info, &state)
                         .await;
+                    let result = combine_goal_and_expert_barrier(
+                        pending_goal_mode_error.take(),
+                        expert_result,
+                    );
                     let _ = respond_to.send(result);
                 }
                 PersistenceMsg::ContentChunk(content_chunks) => {

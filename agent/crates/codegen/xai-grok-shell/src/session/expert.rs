@@ -227,6 +227,11 @@ pub struct ExpertModeState {
     pub reasoning_effort_before_expert: Option<String>,
     pub notes: Vec<String>,
     pub budget: ConsultBudgetLedger,
+    /// Original standalone Expert attempt cap while a Goal-composed round
+    /// temporarily narrows it. Old E1 snapshots safely default to `None` and
+    /// retain their persisted/custom `budget.attempt_cap`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_attempt_cap_before_task: Option<u32>,
     pub verification_summary: VerificationSummary,
     pub truncation_flags: Vec<String>,
     pub last_error_code: Option<String>,
@@ -244,6 +249,14 @@ pub struct ExpertModeState {
     pub max_consult_output_tokens: u32,
     #[serde(default = "default_true")]
     pub require_consult_on_medium: bool,
+    #[serde(default = "default_true")]
+    pub goal_compose_enabled: bool,
+    #[serde(default = "default_goal_consult_cap_per_attempt")]
+    pub goal_consult_cap_per_attempt: u32,
+    #[serde(default = "default_goal_consult_cap_per_goal")]
+    pub goal_consult_cap_per_goal: u32,
+    #[serde(default = "default_true")]
+    pub goal_restore_model_each_attempt: bool,
     /// Persisted once the user has been told that redacted task evidence may
     /// cross from the executor provider to the consultant provider.
     #[serde(default)]
@@ -277,6 +290,7 @@ impl Default for ExpertModeState {
             reasoning_effort_before_expert: None,
             notes: Vec::new(),
             budget: ConsultBudgetLedger::with_defaults(),
+            goal_attempt_cap_before_task: None,
             verification_summary: VerificationSummary::default(),
             truncation_flags: Vec::new(),
             last_error_code: None,
@@ -288,6 +302,10 @@ impl Default for ExpertModeState {
             consult_timeout_secs: 60,
             max_consult_output_tokens: 1_024,
             require_consult_on_medium: true,
+            goal_compose_enabled: true,
+            goal_consult_cap_per_attempt: 3,
+            goal_consult_cap_per_goal: 15,
+            goal_restore_model_each_attempt: true,
             cross_provider_notice_shown: false,
             updated_at: Utc::now(),
             finished_at: None,
@@ -312,6 +330,10 @@ impl ExpertModeState {
         state.consult_timeout_secs = config.consult_timeout_secs.max(1);
         state.max_consult_output_tokens = config.max_consult_output_tokens.max(1);
         state.require_consult_on_medium = config.require_consult_on_medium;
+        state.goal_compose_enabled = config.goal_compose.enabled;
+        state.goal_consult_cap_per_attempt = config.goal_compose.consult_cap_per_attempt;
+        state.goal_consult_cap_per_goal = config.goal_compose.consult_cap_per_goal;
+        state.goal_restore_model_each_attempt = config.goal_compose.restore_model_each_attempt;
         state
     }
 
@@ -352,6 +374,9 @@ impl ExpertModeState {
             self.last_error_code = Some(ExpertErrorCode::RecoveryRequired.as_str().to_owned());
             self.last_outcome = Some(ExpertOutcome::Interrupted);
             self.finished_at = Some(Utc::now());
+            if let Some(previous) = self.goal_attempt_cap_before_task.take() {
+                self.budget.attempt_cap = previous;
+            }
             self.updated_at = Utc::now();
         }
         self
@@ -388,6 +413,9 @@ impl ExpertModeState {
         self.reasoning_effort_before_expert = None;
         self.notes.clear();
         self.plan.clear();
+        if let Some(previous) = self.goal_attempt_cap_before_task.take() {
+            self.budget.attempt_cap = previous;
+        }
         self.budget.attempts = 0;
         self.budget.successes = 0;
         self.budget.input_tokens = 0;
@@ -554,6 +582,9 @@ impl ExpertModeState {
         self.expected_phase = None;
         match restore_result {
             Ok(()) => {
+                if let Some(previous) = self.goal_attempt_cap_before_task.take() {
+                    self.budget.attempt_cap = previous;
+                }
                 self.model_before_expert = None;
                 self.reasoning_effort_before_expert = None;
                 self.feature_state = if self.feature_state == ExpertFeatureState::Disabling {
@@ -660,6 +691,14 @@ fn default_consult_timeout_secs() -> u64 {
 
 fn default_consult_output_tokens() -> u32 {
     1_024
+}
+
+fn default_goal_consult_cap_per_attempt() -> u32 {
+    3
+}
+
+fn default_goal_consult_cap_per_goal() -> u32 {
+    15
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1192,6 +1231,11 @@ mod tests {
             "consult_timeout_secs",
             "max_consult_output_tokens",
             "require_consult_on_medium",
+            "goal_attempt_cap_before_task",
+            "goal_compose_enabled",
+            "goal_consult_cap_per_attempt",
+            "goal_consult_cap_per_goal",
+            "goal_restore_model_each_attempt",
             "cross_provider_notice_shown",
         ] {
             object.remove(key);
@@ -1200,8 +1244,37 @@ mod tests {
         assert!(migrated.enabled);
         assert_eq!(migrated.consult_timeout_secs, 60);
         assert_eq!(migrated.max_consult_output_tokens, 1_024);
+        assert!(migrated.goal_attempt_cap_before_task.is_none());
+        assert!(migrated.goal_compose_enabled);
+        assert_eq!(migrated.goal_consult_cap_per_attempt, 3);
+        assert_eq!(migrated.goal_consult_cap_per_goal, 15);
+        assert!(migrated.goal_restore_model_each_attempt);
         assert!(migrated.audit_events.is_empty());
         assert!(!migrated.cross_provider_notice_shown);
+    }
+
+    #[test]
+    fn goal_compose_single_remaining_consult_fits_and_temporary_cap_restores() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start(
+                "production auth",
+                ExpertMode::Default,
+                DEFAULT_EXECUTOR_MODEL,
+            )
+            .unwrap();
+        state.budget.attempt_cap = 5;
+        state.goal_attempt_cap_before_task = Some(5);
+        state.budget.attempt_cap = 1;
+        state
+            .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
+            .unwrap();
+        state.reserve_consult(64, 128).unwrap();
+        assert_eq!(state.budget.attempts, 1);
+        state.phase = ExpertPhase::Restoring;
+        state.restored(Ok(()), ExpertOutcome::Partial);
+        assert_eq!(state.budget.attempt_cap, 5);
+        assert!(state.goal_attempt_cap_before_task.is_none());
     }
 
     #[test]

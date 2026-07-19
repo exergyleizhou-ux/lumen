@@ -4,6 +4,7 @@ use crate::session::acp_session::expert_impl::ExpertTurnGuard;
 use crate::session::expert::{
     ExpertErrorCode, ExpertFeatureState, ExpertMode, ExpertModeState, ExpertOutcome, ExpertPhase,
 };
+use xai_grok_test_support::MockInferenceServer;
 
 #[derive(Clone, Copy)]
 enum TerminalCase {
@@ -12,6 +13,187 @@ enum TerminalCase {
     Cancelled,
     Off,
     Failed,
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn goal_compose_enters_executor_restores_each_round_and_preserves_global_default() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let home = tempfile::tempdir().unwrap();
+            let _home = xai_grok_test_support::EnvGuard::set("GROK_HOME", home.path());
+            let _lumen_home = xai_grok_test_support::EnvGuard::set("LUMEN_HOME", home.path());
+            let config_path = home.path().join("config.toml");
+            let config_bytes = b"[models]\ndefault = \"global-sentinel\"\n";
+            std::fs::write(&config_path, config_bytes).unwrap();
+
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.models_manager.insert_test_entry(
+                "deepseek-v4-pro",
+                crate::agent::config::ModelEntry {
+                    info: crate::agent::config::ModelInfo::fallback("deepseek-v4-pro"),
+                    api_key: Some("test-key".into()),
+                    env_key: None,
+                    api_base_url: Some("http://localhost".into()),
+                },
+            );
+            let original = actor.reconstruct_full_config().await;
+            let mut expert = ExpertModeState::configured();
+            expert.require_consult_on_medium = false;
+            actor.state.lock().await.expert = expert;
+            {
+                let mut goal = actor.goal_tracker.lock();
+                goal.create_goal(
+                    "goal-compose".into(),
+                    "ship".into(),
+                    Some(10_000),
+                    0,
+                    "2026-01-01T00:00:00Z".into(),
+                    None,
+                );
+                goal.configure_expert_policy(true, 3, 15, true);
+            }
+
+            for _round in 0..2 {
+                let (guard, envelope) = actor.begin_goal_expert_turn("ship").await.unwrap();
+                assert!(guard.goal_composed);
+                assert!(envelope.contains("<expert-mode>"));
+                assert_eq!(
+                    actor.reconstruct_full_config().await.model,
+                    "deepseek-v4-pro"
+                );
+                actor
+                    .finish_expert_turn(
+                        guard,
+                        &Ok(TurnOutcome::Cancelled {
+                            category: None,
+                            context: None,
+                        }),
+                    )
+                    .await;
+                let restored = actor.reconstruct_full_config().await;
+                assert_eq!(restored.model, original.model);
+                assert_eq!(restored.reasoning_effort, original.reasoning_effort);
+            }
+
+            let (guard, _) = actor.begin_goal_expert_turn("ship").await.unwrap();
+            actor
+                .goal_tracker
+                .lock()
+                .configure_expert_policy(false, 0, 0, false);
+            actor
+                .finish_expert_turn(
+                    guard,
+                    &Ok(TurnOutcome::Cancelled {
+                        category: None,
+                        context: None,
+                    }),
+                )
+                .await;
+            let restored_after_off = actor.reconstruct_full_config().await;
+            assert_eq!(restored_after_off.model, original.model);
+            assert_eq!(
+                restored_after_off.reasoning_effort,
+                original.reasoning_effort
+            );
+
+            assert_eq!(std::fs::read(&config_path).unwrap(), config_bytes);
+            let goal = actor.goal_tracker.lock().snapshot().cloned().unwrap();
+            assert!(!goal.expert_policy);
+            assert!(goal.expert_consult_attempts_used <= goal.expert_consult_cap_per_goal);
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[serial_test::serial]
+async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let server = MockInferenceServer::start().await.unwrap();
+            server.set_response(r#"{"plan":["inspect"]}"#);
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (observed_tx, mut observed_rx) = tokio::sync::mpsc::unbounded_channel();
+            tokio::task::spawn_local(async move {
+                while let Some(msg) = persistence_rx.recv().await {
+                    match msg {
+                        PersistenceMsg::GoalModeState(_) => {
+                            let _ = observed_tx.send("goal");
+                        }
+                        PersistenceMsg::ExpertModeStateAndAck { respond_to, .. } => {
+                            let _ = observed_tx.send("ack");
+                            let _ = respond_to.send(Ok(()));
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.models_manager.insert_test_entry(
+                "grok-4.5",
+                crate::agent::config::ModelEntry {
+                    info: crate::agent::config::ModelInfo::fallback("grok-4.5"),
+                    api_key: Some("test-key".into()),
+                    env_key: None,
+                    api_base_url: Some(server.url()),
+                },
+            );
+            actor.state.lock().await.expert = ExpertModeState::configured();
+            {
+                let mut goal = actor.goal_tracker.lock();
+                goal.create_goal(
+                    "goal-reserve".into(),
+                    "production auth migration".into(),
+                    None,
+                    0,
+                    "2026-01-01T00:00:00Z".into(),
+                    None,
+                );
+                goal.configure_expert_policy(true, 1, 1, true);
+            }
+
+            assert!(matches!(
+                actor
+                    .begin_goal_expert_turn("production auth migration")
+                    .await,
+                Err(ExpertErrorCode::ModelMissing)
+            ));
+            assert!(server.requests().is_empty());
+            assert_eq!(observed_rx.recv().await, Some("goal"));
+            assert_eq!(observed_rx.recv().await, Some("ack"));
+            assert_eq!(
+                actor
+                    .goal_tracker
+                    .lock()
+                    .snapshot()
+                    .unwrap()
+                    .expert_consult_attempts_used,
+                1
+            );
+
+            assert!(matches!(
+                actor
+                    .begin_goal_expert_turn("production auth migration")
+                    .await,
+                Err(ExpertErrorCode::ModelMissing)
+            ));
+            assert!(server.requests().is_empty());
+            let expert = actor.state.lock().await.expert.clone();
+            assert_eq!(expert.budget.attempts, 0);
+            assert!(
+                expert
+                    .notes
+                    .iter()
+                    .any(|note| note == "executor-only: budget_exhausted"),
+                "rolling cap must block a second consult reservation after pre-executor failure"
+            );
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -96,6 +278,7 @@ async fn expert_session_model_and_effort_restore_on_every_terminal_without_globa
                     original_config: original.clone(),
                     task_id,
                     generation,
+                    goal_composed: false,
                 };
                 match case {
                     TerminalCase::Completed => {
@@ -231,6 +414,7 @@ async fn successful_production_tool_result_is_required_for_expert_completed() {
                     original_config: original,
                     task_id: expert.task_id.clone().unwrap(),
                     generation: expert.task_generation,
+                    goal_composed: false,
                 };
                 actor.state.lock().await.expert = expert;
 
@@ -344,15 +528,18 @@ async fn stale_old_completion_cannot_restore_over_new_expert_task() {
             let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
             let old_original = actor.reconstruct_full_config().await;
             let mut old = ExpertModeState::configured();
-            old.start("old task", ExpertMode::Fast, "old-executor").unwrap();
+            old.start("old task", ExpertMode::Fast, "old-executor")
+                .unwrap();
             old.phase = ExpertPhase::Executing;
             let old_guard = ExpertTurnGuard {
                 original_config: old_original,
                 task_id: old.task_id.clone().unwrap(),
                 generation: old.task_generation,
+                goal_composed: false,
             };
             old.restored(Ok(()), ExpertOutcome::Aborted);
-            old.start("new task", ExpertMode::Fast, "new-executor").unwrap();
+            old.start("new task", ExpertMode::Fast, "new-executor")
+                .unwrap();
             old.phase = ExpertPhase::Executing;
             old.model_before_expert = Some("new-anchor".to_owned());
             let new_task_id = old.task_id.clone();
@@ -360,9 +547,14 @@ async fn stale_old_completion_cannot_restore_over_new_expert_task() {
             actor.state.lock().await.expert = old;
             let mut live = actor.reconstruct_full_config().await;
             live.model = "new-executor".to_owned();
-            actor.handle_set_session_model(live, false, false, true, 85).await.unwrap();
+            actor
+                .handle_set_session_model(live, false, false, true, 85)
+                .await
+                .unwrap();
 
-            actor.abort_expert_turn(old_guard, "late old completion").await;
+            actor
+                .abort_expert_turn(old_guard, "late old completion")
+                .await;
 
             let state = actor.state.lock().await.expert.clone();
             assert_eq!(state.task_id, new_task_id);

@@ -8,6 +8,7 @@ pub(super) struct ExpertTurnGuard {
     pub(super) original_config: xai_grok_sampler::SamplerConfig,
     pub(super) task_id: String,
     pub(super) generation: u64,
+    pub(super) goal_composed: bool,
 }
 
 #[derive(Debug)]
@@ -267,15 +268,53 @@ impl SessionActor {
         task: &str,
         mode: ExpertMode,
     ) -> Result<(ExpertTurnGuard, String), ExpertErrorCode> {
-        if self.goal_tracker.lock().status()
-            == Some(crate::session::goal_tracker::GoalStatus::Active)
-        {
-            return Err(ExpertErrorCode::GoalActive);
-        }
+        self.begin_expert_turn_inner(task, mode, false).await
+    }
+
+    pub(super) async fn begin_goal_expert_turn(
+        &self,
+        task: &str,
+    ) -> Result<(ExpertTurnGuard, String), ExpertErrorCode> {
+        self.begin_expert_turn_inner(task, ExpertMode::Default, true)
+            .await
+    }
+
+    async fn begin_expert_turn_inner(
+        &self,
+        task: &str,
+        mode: ExpertMode,
+        goal_composed: bool,
+    ) -> Result<(ExpertTurnGuard, String), ExpertErrorCode> {
+        let goal_attempt_cap = {
+            let tracker = self.goal_tracker.lock();
+            match tracker.snapshot() {
+                Some(goal)
+                    if goal.status == crate::session::goal_tracker::GoalStatus::Active
+                        && goal.expert_policy
+                        && goal_composed =>
+                {
+                    Some(
+                        goal.expert_consult_cap_per_attempt.min(
+                            goal.expert_consult_cap_per_goal
+                                .saturating_sub(goal.expert_consult_attempts_used),
+                        ),
+                    )
+                }
+                Some(goal) if goal.status == crate::session::goal_tracker::GoalStatus::Active => {
+                    return Err(ExpertErrorCode::GoalActive);
+                }
+                _ if goal_composed => return Err(ExpertErrorCode::GoalActive),
+                _ => None,
+            }
+        };
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
             let executor = actor.expert.executor_requested.clone();
             actor.expert.start(task, mode, &executor)?;
+            if let Some(attempt_cap) = goal_attempt_cap {
+                actor.expert.goal_attempt_cap_before_task = Some(actor.expert.budget.attempt_cap);
+                actor.expert.budget.attempt_cap = attempt_cap;
+            }
             let consultant = actor.expert.consultant_requested.clone();
             let consult = crate::session::expert::should_consult(task, mode)
                 && actor.expert.require_consult_on_medium;
@@ -340,6 +379,31 @@ impl SessionActor {
                     .transition(ExpertPhase::Triage, ExpertPhase::Ready)?;
                 self.persist_expert_snapshot(&actor.expert);
             }
+        }
+
+        // The rolling Goal ledger is charged as soon as a consultant request
+        // is reserved, before the provider future can be polled. The Expert
+        // durability barrier below shares the same FIFO persistence channel,
+        // so its acknowledgement also covers this preceding Goal snapshot.
+        if goal_composed && consult_guard.is_some() {
+            let goal_snapshot = {
+                let mut tracker = self.goal_tracker.lock();
+                tracker.record_expert_consult_attempts(1);
+                tracker.snapshot().cloned()
+            };
+            if let Some(snapshot) = goal_snapshot {
+                let _ = self
+                    .notifications
+                    .persistence_tx
+                    .send(PersistenceMsg::GoalModeState(snapshot));
+            }
+            let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
+            let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
+            self.goal_notify_sender().emit_goal_updated(
+                &mut self.goal_tracker.lock(),
+                tokens_used,
+                finished_marginal,
+            );
         }
 
         if emit_cross_provider_notice {
@@ -454,6 +518,7 @@ impl SessionActor {
                 original_config,
                 task_id,
                 generation,
+                goal_composed,
             },
             envelope,
         ))
@@ -568,6 +633,7 @@ impl SessionActor {
         };
         actor.expert.restored(restore, terminal);
         self.persist_expert_snapshot(&actor.expert);
+        drop(actor);
     }
 }
 
