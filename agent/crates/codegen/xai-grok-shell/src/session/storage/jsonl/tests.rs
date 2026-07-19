@@ -771,6 +771,81 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
         Some(xai_grok_sampling_types::ReasoningEffort::High)
     );
 }
+
+#[tokio::test]
+async fn expert_dual_metadata_survives_light_load_and_copy_does_not_replay_active() {
+    use crate::session::expert::{
+        DEFAULT_EXECUTOR_MODEL, DualBundle, DualProposal, ExpertFeatureState, ExpertMode,
+        ExpertModeState, ExpertOutcome, ExpertPhase,
+    };
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let source = Info {
+        id: acp::SessionId::new("expert-dual-source"),
+        cwd: "/source/workspace".to_string(),
+    };
+    adapter.init_session(&source, default_model_id()).await.unwrap();
+    let mut state = ExpertModeState::configured();
+    state
+        .start("dual production plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+        .unwrap();
+    state.phase = ExpertPhase::Executing;
+    state.model_before_expert = Some("session-before".to_owned());
+    state.dual_result = Some(DualBundle {
+        proposal_a: DualProposal {
+            summary: "A".into(),
+            steps: vec!["step-a".into()],
+            risks: vec![],
+        },
+        proposal_b: DualProposal {
+            summary: "B".into(),
+            steps: vec!["step-b".into()],
+            risks: vec![],
+        },
+        merged_plan: vec!["step-a".into(), "step-b".into()],
+        disagreements: vec!["only_b: step-b".into()],
+        selection_reason: "deterministic".into(),
+        source_a_request_id: Some("req-a".into()),
+        source_b_request_id: Some("req-b".into()),
+        source_a_model: Some(DEFAULT_EXECUTOR_MODEL.into()),
+        source_b_model: Some("grok-4.5".into()),
+        source_a_ok: true,
+        source_b_ok: true,
+        degraded: false,
+    });
+    state.dual_rollout = "opt_in".into();
+    adapter.write_expert_mode_state(&source, &state).await.unwrap();
+
+    let light = adapter.load_session_without_updates(&source).await.unwrap();
+    let light_expert = light.expert_mode_state.as_ref().unwrap();
+    assert_eq!(light_expert.mode, ExpertMode::Dual);
+    assert!(light_expert.dual_result.as_ref().is_some_and(|d| d.source_a_ok));
+    assert_eq!(light_expert.dual_rollout, "opt_in");
+
+    let target = Info {
+        id: acp::SessionId::new("expert-dual-copy"),
+        cwd: "/target/workspace".to_string(),
+    };
+    let copied = adapter
+        .copy_session_data(&source, &target, CopySessionOptions::default())
+        .await
+        .unwrap();
+    assert!(copied.expert_mode_state_copied);
+    let loaded = adapter.load_session(&target).await.unwrap();
+    let copied_state = loaded.expert_mode_state.unwrap();
+    // Active dual task must not replay; dual advisory metadata may remain for
+    // audit but feature is IdleConfigured Interrupted.
+    assert_eq!(copied_state.feature_state, ExpertFeatureState::IdleConfigured);
+    assert_eq!(copied_state.last_outcome, Some(ExpertOutcome::Interrupted));
+    assert_eq!(copied_state.model_before_expert, None);
+    assert!(!copied_state.resumable_task);
+    // dual_result is safe metadata (no secrets/raw); may be retained after recover.
+    if let Some(dual) = copied_state.dual_result {
+        assert!(dual.source_a_request_id.is_some());
+        assert_ne!(dual.source_a_request_id, dual.source_b_request_id);
+    }
+}
+
 #[tokio::test]
 async fn test_copy_session_data_without_plan() {
     let temp_dir = TempDir::new().unwrap();
