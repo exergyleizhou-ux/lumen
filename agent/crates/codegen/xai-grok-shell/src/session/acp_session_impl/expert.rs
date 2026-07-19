@@ -3,18 +3,14 @@ use crate::session::expert::{
     CallbackGuard, ConsultEvidenceBundle, ExpertErrorCode, ExpertMode, ExpertOutcome, ExpertPhase,
     HostVerificationOutcome, VerificationSummary,
 };
+use crate::session::expert_consultant_tools::ConsultCallFailure;
+use std::path::PathBuf;
 
 pub(super) struct ExpertTurnGuard {
     pub(super) original_config: xai_grok_sampler::SamplerConfig,
     pub(super) task_id: String,
     pub(super) generation: u64,
     pub(super) goal_composed: bool,
-}
-
-#[derive(Debug)]
-struct ConsultCallFailure {
-    code: ExpertErrorCode,
-    usage: (u64, u64),
 }
 
 /// Sequence the durability barrier and provider future. Futures are lazy: the
@@ -539,15 +535,42 @@ impl SessionActor {
             self.client_identifier.clone(),
             Some(self.max_retries),
         );
-        // E1 consultant is a short completion only. No ToolSpec is supplied and
-        // there is no agent/tool loop behind this client.
-        run_configured_consult_completion(
-            cfg,
+
+        let resolved_model = cfg.model.clone();
+        let client = xai_grok_sampler::SamplingClient::new(cfg).map_err(|_| ConsultCallFailure {
+            code: ExpertErrorCode::ConsultantUnavailable,
+            usage: (0, 0),
+        })?;
+
+        // E3: optionally enable readonly tools for the consultant.
+        // Hold cwd for the host lifetime to avoid borrow issues.
+        let cwd = PathBuf::from(&self.session_info.cwd);
+        let (readonly_tools, tool_cap) = {
+            let actor = self.state.lock().await;
+            (
+                actor.expert.consultant_readonly_tools,
+                actor.expert.consultant_tool_call_cap,
+            )
+        };
+        let host = if readonly_tools {
+            Some(crate::session::expert_consultant_tools::ReadonlyToolHost {
+                workspace_root: &cwd,
+                deny_globs: &self.deny_read_globs,
+                tool_call_cap: tool_cap.min(5).max(1),
+            })
+        } else {
+            None
+        };
+
+        let result = crate::session::expert_consultant_tools::run_consult_with_optional_tools(
+            &client,
             evidence,
             std::time::Duration::from_secs(timeout_secs),
             max_output_tokens,
+            host.as_ref(),
         )
-        .await
+        .await?;
+        Ok((result.plan, result.usage, resolved_model))
     }
 
     pub(super) async fn begin_expert_turn(

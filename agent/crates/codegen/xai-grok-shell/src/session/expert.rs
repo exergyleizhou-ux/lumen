@@ -1868,7 +1868,7 @@ fn truncate_chars(value: &str, max: usize) -> (String, bool) {
     (out, true)
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
