@@ -684,13 +684,20 @@ impl JsonlStorageAdapter {
                     serde_json::from_slice(&bytes)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
                 let was_active = state.is_active();
-                let switched_or_switching = matches!(
-                    state.phase,
-                    crate::session::expert::ExpertPhase::SwitchingExecutor
-                        | crate::session::expert::ExpertPhase::Executing
-                        | crate::session::expert::ExpertPhase::HostVerifying
-                        | crate::session::expert::ExpertPhase::Restoring
-                );
+                // Any phase after the session-local Executor switch (including
+                // E2 post/repair/storm consult-on-executor) must restore the
+                // pre-Expert model on fork/copy. Pre-switch consult phases
+                // leave model_before_expert unset and do not require restore.
+                let switched_or_switching = state.model_before_expert.is_some()
+                    || matches!(
+                        state.phase,
+                        crate::session::expert::ExpertPhase::SwitchingExecutor
+                            | crate::session::expert::ExpertPhase::Executing
+                            | crate::session::expert::ExpertPhase::HostVerifying
+                            | crate::session::expert::ExpertPhase::ConsultingPost
+                            | crate::session::expert::ExpertPhase::Repairing
+                            | crate::session::expert::ExpertPhase::Restoring
+                    );
                 let restore_model = state.model_before_expert.clone();
                 if was_active && switched_or_switching && restore_model.is_none() {
                     return Err(io::Error::new(

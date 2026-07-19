@@ -695,7 +695,7 @@ async fn test_copy_session_data_basic() {
 async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     use crate::session::expert::{
         DEFAULT_EXECUTOR_MODEL, ExpertFeatureState, ExpertMode, ExpertModeState, ExpertOutcome,
-        ExpertPhase,
+        ExpertPhase, VisualBrief,
     };
     let temp_dir = TempDir::new().unwrap();
     let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
@@ -706,9 +706,19 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     adapter.init_session(&source, default_model_id()).await.unwrap();
     let mut state = ExpertModeState::configured();
     state
-        .start("modify src/auth.rs", ExpertMode::Fast, DEFAULT_EXECUTOR_MODEL)
+        .start("modify src/auth.rs", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
         .unwrap();
-    state.phase = ExpertPhase::Executing;
+    // Mid deep post-consult (E2): executor already switched; fork must not
+    // replay Active and must restore the pre-Expert model.
+    state.phase = ExpertPhase::ConsultingPost;
+    state.post_consult_enabled = true;
+    state.post_consult_attempts = 1;
+    state.repair_attempts = 0;
+    state.goal_composed_this_task = true;
+    state.visual_brief = Some(VisualBrief {
+        observations: vec!["ui overlap".into()],
+        ..VisualBrief::default()
+    });
     state.model_before_expert = Some("session-model-before-expert".to_owned());
     state.reasoning_effort_before_expert = Some("high".to_owned());
     adapter.write_expert_mode_state(&source, &state).await.unwrap();
@@ -725,7 +735,13 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     let light = adapter.load_session_without_updates(&source).await.unwrap();
     assert_eq!(
         light.expert_mode_state.as_ref().map(|s| s.phase),
-        Some(ExpertPhase::Executing)
+        Some(ExpertPhase::ConsultingPost)
+    );
+    assert!(
+        light
+            .expert_mode_state
+            .as_ref()
+            .is_some_and(|s| s.post_consult_enabled && s.goal_composed_this_task)
     );
 
     let target = Info {
@@ -744,6 +760,8 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     assert_eq!(copied_state.last_error_code, None);
     assert_eq!(copied_state.model_before_expert, None);
     assert_eq!(copied_state.reasoning_effort_before_expert, None);
+    assert!(!copied_state.goal_composed_this_task);
+    assert!(!copied_state.resumable_task);
     assert_eq!(
         loaded.summary.current_model_id.0.as_ref(),
         "session-model-before-expert"

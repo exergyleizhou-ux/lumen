@@ -1,8 +1,8 @@
 //! Session-owned `/expert` policy state and safety boundaries.
 //!
-//! E1 deliberately keeps this module single-task and single-writer. It does
-//! not contain Goal composition, consultant tools, post-review, repair,
-//! vision, or dual execution.
+//! The state remains single-task and single-writer. E2 adds bounded vision,
+//! post-review, repair, continuation, and storm-breakout metadata; none of
+//! those advisory paths owns completion or tools.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -38,6 +38,8 @@ pub enum ExpertPhase {
     SwitchingExecutor,
     Executing,
     HostVerifying,
+    ConsultingPost,
+    Repairing,
     Restoring,
 }
 
@@ -47,6 +49,8 @@ pub enum ExpertMode {
     #[default]
     Default,
     Fast,
+    Vision,
+    Deep,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -88,6 +92,10 @@ pub enum ExpertErrorCode {
     RestoreFailed,
     RecoveryRequired,
     IncompatibleAgent,
+    InvalidAttachment,
+    AttachmentTooLarge,
+    NothingToResume,
+    RepairCapExhausted,
 }
 
 impl ExpertErrorCode {
@@ -108,8 +116,47 @@ impl ExpertErrorCode {
             Self::RestoreFailed => "restore_failed",
             Self::RecoveryRequired => "recovery_required",
             Self::IncompatibleAgent => "incompatible_agent",
+            Self::InvalidAttachment => "invalid_attachment",
+            Self::AttachmentTooLarge => "attachment_too_large",
+            Self::NothingToResume => "nothing_to_resume",
+            Self::RepairCapExhausted => "repair_cap_exhausted",
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VisualBrief {
+    #[serde(default)]
+    pub observations: Vec<String>,
+    #[serde(default)]
+    pub constraints: Vec<String>,
+    #[serde(default)]
+    pub suspected_issues: Vec<String>,
+    #[serde(default)]
+    pub recommended_actions: Vec<String>,
+    #[serde(default)]
+    pub uncertainties: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ExpertAttachmentMetadata {
+    pub ordinal: u32,
+    pub mime_type: String,
+    pub encoded_bytes: u64,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PostConsultVerdict {
+    pub verdict: String,
+    #[serde(default)]
+    pub issues: Vec<String>,
+    #[serde(default)]
+    pub repair_recommendations: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -236,6 +283,33 @@ pub struct ExpertModeState {
     pub truncation_flags: Vec<String>,
     pub last_error_code: Option<String>,
     pub advisory_verdict: Option<String>,
+    #[serde(default)]
+    pub post_consult_enabled: bool,
+    #[serde(default)]
+    pub post_consult_attempts: u32,
+    #[serde(default)]
+    pub repair_attempts: u32,
+    #[serde(default = "default_repair_cap")]
+    pub repair_cap: u32,
+    #[serde(default)]
+    pub visual_brief: Option<VisualBrief>,
+    #[serde(default)]
+    pub visual_brief_hash: Option<String>,
+    #[serde(default)]
+    pub attachment_metadata: Vec<ExpertAttachmentMetadata>,
+    #[serde(default)]
+    pub storm_breakout_attempts: u32,
+    #[serde(default = "default_storm_breakout_cap")]
+    pub storm_breakout_cap: u32,
+    #[serde(default)]
+    pub failure_fingerprints: Vec<String>,
+    #[serde(default)]
+    pub resumable_task: bool,
+    /// Whether this Active task was started under Goal×Expert compose.
+    /// Captured at task start and kept for the whole task so mid-round
+    /// `/goalexpert off` cannot drop Goal rolling charges for post/storm.
+    #[serde(default)]
+    pub goal_composed_this_task: bool,
     pub evidence_fields: Vec<String>,
     #[serde(default)]
     pub evidence_bundle_hash: Option<String>,
@@ -295,6 +369,18 @@ impl Default for ExpertModeState {
             truncation_flags: Vec::new(),
             last_error_code: None,
             advisory_verdict: None,
+            post_consult_enabled: false,
+            post_consult_attempts: 0,
+            repair_attempts: 0,
+            repair_cap: default_repair_cap(),
+            visual_brief: None,
+            visual_brief_hash: None,
+            attachment_metadata: Vec::new(),
+            storm_breakout_attempts: 0,
+            storm_breakout_cap: default_storm_breakout_cap(),
+            failure_fingerprints: Vec::new(),
+            resumable_task: false,
+            goal_composed_this_task: false,
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
             audit_events: Vec::new(),
@@ -374,6 +460,8 @@ impl ExpertModeState {
             self.last_error_code = Some(ExpertErrorCode::RecoveryRequired.as_str().to_owned());
             self.last_outcome = Some(ExpertOutcome::Interrupted);
             self.finished_at = Some(Utc::now());
+            self.goal_composed_this_task = false;
+            self.resumable_task = false;
             if let Some(previous) = self.goal_attempt_cap_before_task.take() {
                 self.budget.attempt_cap = previous;
             }
@@ -425,6 +513,16 @@ impl ExpertModeState {
         self.truncation_flags.clear();
         self.last_error_code = None;
         self.advisory_verdict = None;
+        self.post_consult_enabled = mode == ExpertMode::Deep;
+        self.post_consult_attempts = 0;
+        self.repair_attempts = 0;
+        self.visual_brief = None;
+        self.visual_brief_hash = None;
+        self.attachment_metadata.clear();
+        self.storm_breakout_attempts = 0;
+        self.failure_fingerprints.clear();
+        self.resumable_task = false;
+        self.goal_composed_this_task = false;
         self.evidence_fields.clear();
         self.evidence_bundle_hash = None;
         self.audit_events.clear();
@@ -433,6 +531,58 @@ impl ExpertModeState {
         self.updated_at = Utc::now();
         self.audit("task_started", None, None, self.task_hash.clone());
         Ok(())
+    }
+
+    /// Record whether this Active task owns Goal compose rolling charges.
+    pub fn set_goal_composed_this_task(&mut self, goal_composed: bool) {
+        self.goal_composed_this_task = goal_composed;
+        self.updated_at = Utc::now();
+    }
+
+    pub fn start_continuation(
+        &mut self,
+        repair: bool,
+        executor: &str,
+    ) -> Result<String, ExpertErrorCode> {
+        if self.is_active() || !self.resumable_task {
+            return Err(ExpertErrorCode::NothingToResume);
+        }
+        if !matches!(
+            self.last_outcome,
+            Some(ExpertOutcome::Partial | ExpertOutcome::Failed)
+        ) {
+            return Err(ExpertErrorCode::NothingToResume);
+        }
+        if !repair && self.plan.is_empty() {
+            return Err(ExpertErrorCode::NothingToResume);
+        }
+        if repair && self.repair_attempts >= self.repair_cap {
+            return Err(ExpertErrorCode::RepairCapExhausted);
+        }
+        let task = self.task_summary.clone();
+        let budget = self.budget.clone();
+        let prior_repair_attempts = self.repair_attempts;
+        let plan = self.plan.clone();
+        self.start(&task, ExpertMode::Deep, executor)?;
+        self.budget = budget;
+        self.plan = plan;
+        self.repair_attempts = prior_repair_attempts.saturating_add(u32::from(repair));
+        self.phase = ExpertPhase::Triage;
+        if repair {
+            self.notes.push("bounded repair continuation".to_owned());
+        }
+        self.resumable_task = false;
+        self.audit(
+            if repair {
+                "revision_started"
+            } else {
+                "continuation_started"
+            },
+            None,
+            None,
+            self.task_hash.clone(),
+        );
+        Ok(task)
     }
 
     pub fn transition(
@@ -530,6 +680,207 @@ impl ExpertModeState {
         Ok(())
     }
 
+    pub fn finish_vision_consult(
+        &mut self,
+        guard: &CallbackGuard,
+        usage: (u64, u64),
+        advisory: Result<VisualBrief, ExpertErrorCode>,
+        resolved_model: Option<String>,
+    ) -> Result<(), ExpertErrorCode> {
+        self.accept_callback(guard)?;
+        let success = advisory.is_ok();
+        self.budget
+            .account_usage(guard.reserved_tokens, usage.0, usage.1, success);
+        match advisory {
+            Ok(brief) => {
+                let wire = serde_json::to_vec(&brief).map_err(|_| ExpertErrorCode::ParseError)?;
+                self.visual_brief_hash = Some(sha256_hex(&wire));
+                self.plan = brief.recommended_actions.clone();
+                self.visual_brief = Some(brief);
+                self.advisory_verdict = Some("visual_advisory_received".to_owned());
+                self.consultant_resolved = resolved_model;
+                self.last_error_code = None;
+            }
+            Err(code) => {
+                self.last_error_code = Some(code.as_str().to_owned());
+                self.notes.push(format!("executor-only: {}", code.as_str()));
+            }
+        }
+        self.audit(
+            if success {
+                "vision_succeeded"
+            } else {
+                "vision_failed"
+            },
+            Some(guard.request_id.clone()),
+            self.last_error_code.clone(),
+            self.visual_brief_hash.clone(),
+        );
+        self.request_id = None;
+        self.expected_phase = None;
+        self.phase = ExpertPhase::Ready;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    pub fn reserve_post_consult(
+        &mut self,
+        estimated_input_tokens: u64,
+        max_output_tokens: u32,
+    ) -> Result<CallbackGuard, ExpertErrorCode> {
+        let reserved_tokens = estimated_input_tokens.saturating_add(u64::from(max_output_tokens));
+        self.budget.reserve(reserved_tokens)?;
+        self.transition(ExpertPhase::HostVerifying, ExpertPhase::ConsultingPost)?;
+        self.post_consult_attempts = self.post_consult_attempts.saturating_add(1);
+        let request_id = uuid::Uuid::now_v7().to_string();
+        self.request_id = Some(request_id.clone());
+        self.expected_phase = Some(ExpertPhase::ConsultingPost);
+        self.audit(
+            "post_consult_reserved",
+            Some(request_id.clone()),
+            None,
+            self.evidence_bundle_hash.clone(),
+        );
+        Ok(CallbackGuard {
+            task_id: self.task_id.clone().expect("active expert task has id"),
+            generation: self.task_generation,
+            request_id,
+            expected_phase: ExpertPhase::ConsultingPost,
+            reserved_tokens,
+        })
+    }
+
+    pub fn reserve_storm_breakout(
+        &mut self,
+        fingerprint: String,
+        repeated_signal: bool,
+        estimated_input_tokens: u64,
+        max_output_tokens: u32,
+    ) -> Result<CallbackGuard, ExpertErrorCode> {
+        if self.phase != ExpertPhase::Executing
+            || self.storm_breakout_attempts >= self.storm_breakout_cap
+        {
+            return Err(ExpertErrorCode::BudgetExhausted);
+        }
+        self.failure_fingerprints.push(fingerprint);
+        if self.failure_fingerprints.len() > 8 {
+            self.failure_fingerprints.remove(0);
+        }
+        if !repeated_signal {
+            return Err(ExpertErrorCode::NothingToResume);
+        }
+        let reserved_tokens = estimated_input_tokens.saturating_add(u64::from(max_output_tokens));
+        self.budget.reserve(reserved_tokens)?;
+        self.storm_breakout_attempts = self.storm_breakout_attempts.saturating_add(1);
+        self.phase = ExpertPhase::ConsultingPre;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        let request_id = uuid::Uuid::now_v7().to_string();
+        self.request_id = Some(request_id.clone());
+        self.expected_phase = Some(ExpertPhase::ConsultingPre);
+        self.audit(
+            "storm_breakout_reserved",
+            Some(request_id.clone()),
+            None,
+            self.task_hash.clone(),
+        );
+        Ok(CallbackGuard {
+            task_id: self.task_id.clone().expect("active expert task has id"),
+            generation: self.task_generation,
+            request_id,
+            expected_phase: ExpertPhase::ConsultingPre,
+            reserved_tokens,
+        })
+    }
+
+    pub fn finish_storm_breakout(
+        &mut self,
+        guard: &CallbackGuard,
+        usage: (u64, u64),
+        advisory: Result<Vec<String>, ExpertErrorCode>,
+        resolved_model: Option<String>,
+    ) -> Result<Vec<String>, ExpertErrorCode> {
+        self.accept_callback(guard)?;
+        let success = advisory.is_ok();
+        self.budget
+            .account_usage(guard.reserved_tokens, usage.0, usage.1, success);
+        let plan = advisory.unwrap_or_else(|code| {
+            self.last_error_code = Some(code.as_str().to_owned());
+            self.notes
+                .push(format!("storm breakout unavailable: {}", code.as_str()));
+            Vec::new()
+        });
+        if success {
+            self.consultant_resolved = resolved_model;
+            self.advisory_verdict = Some("storm_breakout_advisory".to_owned());
+        }
+        self.audit(
+            if success {
+                "storm_breakout_succeeded"
+            } else {
+                "storm_breakout_failed"
+            },
+            Some(guard.request_id.clone()),
+            self.last_error_code.clone(),
+            self.evidence_bundle_hash.clone(),
+        );
+        self.request_id = None;
+        self.expected_phase = None;
+        self.phase = ExpertPhase::Executing;
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        Ok(plan)
+    }
+
+    pub fn finish_post_consult(
+        &mut self,
+        guard: &CallbackGuard,
+        usage: (u64, u64),
+        advisory: Result<PostConsultVerdict, ExpertErrorCode>,
+        resolved_model: Option<String>,
+    ) -> Result<Option<Vec<String>>, ExpertErrorCode> {
+        self.accept_callback(guard)?;
+        let success = advisory.is_ok();
+        self.budget
+            .account_usage(guard.reserved_tokens, usage.0, usage.1, success);
+        let repair = match advisory {
+            Ok(verdict) => {
+                self.advisory_verdict = Some(format!("post_{}", verdict.verdict));
+                self.consultant_resolved = resolved_model;
+                self.last_error_code = None;
+                (verdict.verdict == "fail" && self.repair_attempts < self.repair_cap)
+                    .then_some(verdict.repair_recommendations)
+            }
+            Err(code) => {
+                self.last_error_code = Some(code.as_str().to_owned());
+                self.notes
+                    .push(format!("post advisory unavailable: {}", code.as_str()));
+                None
+            }
+        };
+        self.audit(
+            if success {
+                "post_consult_succeeded"
+            } else {
+                "post_consult_failed"
+            },
+            Some(guard.request_id.clone()),
+            self.last_error_code.clone(),
+            self.evidence_bundle_hash.clone(),
+        );
+        self.request_id = None;
+        self.expected_phase = None;
+        if repair.is_some() {
+            self.repair_attempts = self.repair_attempts.saturating_add(1);
+            self.phase = ExpertPhase::Repairing;
+            self.audit("repair_started", None, None, self.task_hash.clone());
+        } else {
+            self.phase = ExpertPhase::HostVerifying;
+        }
+        self.transition_seq = self.transition_seq.saturating_add(1);
+        self.updated_at = Utc::now();
+        Ok(repair)
+    }
+
     pub fn disable(&mut self) {
         if self.feature_state == ExpertFeatureState::Disabling {
             return;
@@ -597,6 +948,8 @@ impl ExpertModeState {
                     self.last_error_code = None;
                 }
                 self.last_outcome = Some(turn_outcome);
+                self.resumable_task =
+                    matches!(turn_outcome, ExpertOutcome::Partial | ExpertOutcome::Failed);
             }
             Err(code) => {
                 // Keep the exact restore anchors and the active/disabling
@@ -661,6 +1014,29 @@ impl ExpertModeState {
         if let Some(code) = &self.last_error_code {
             out.push_str(&format!("\nLast error: {code}"));
         }
+        if self.mode == ExpertMode::Vision || self.visual_brief.is_some() {
+            out.push_str(&format!(
+                "\nVision: {} image(s), brief={}",
+                self.attachment_metadata.len(),
+                if self.visual_brief.is_some() {
+                    "advisory"
+                } else {
+                    "none"
+                }
+            ));
+        }
+        if self.mode == ExpertMode::Deep || self.post_consult_attempts > 0 {
+            out.push_str(&format!(
+                "\nDeep: post consults={}, repairs={}/{}",
+                self.post_consult_attempts, self.repair_attempts, self.repair_cap
+            ));
+        }
+        if self.storm_breakout_attempts > 0 {
+            out.push_str(&format!(
+                "\nStorm breakouts: {}/{}",
+                self.storm_breakout_attempts, self.storm_breakout_cap
+            ));
+        }
         if verbose {
             out.push_str(&format!(
                 "\nTask hash: {}\nEvidence fields: {}\nTruncation: {}",
@@ -699,6 +1075,14 @@ fn default_goal_consult_cap_per_attempt() -> u32 {
 
 fn default_goal_consult_cap_per_goal() -> u32 {
     15
+}
+
+fn default_repair_cap() -> u32 {
+    1
+}
+
+fn default_storm_breakout_cap() -> u32 {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -794,6 +1178,143 @@ pub fn parse_consult_plan(raw: &str) -> Result<Vec<String>, ExpertErrorCode> {
         .into_iter()
         .map(|s| redact_and_truncate(&s, 1_000).0)
         .collect())
+}
+
+pub const MAX_VISION_IMAGE_ENCODED_BYTES: usize = 20 * 1024 * 1024;
+pub const MAX_VISION_IMAGES: usize = 8;
+
+pub fn validate_vision_images(
+    images: &[agent_client_protocol::ImageContent],
+) -> Result<Vec<ExpertAttachmentMetadata>, ExpertErrorCode> {
+    use base64::Engine as _;
+    if images.is_empty() || images.len() > MAX_VISION_IMAGES {
+        return Err(ExpertErrorCode::InvalidAttachment);
+    }
+    images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| {
+            if !matches!(
+                image.mime_type.as_str(),
+                "image/png" | "image/jpeg" | "image/webp" | "image/gif"
+            ) {
+                return Err(ExpertErrorCode::InvalidAttachment);
+            }
+            if image.data.is_empty() || image.data.len() > MAX_VISION_IMAGE_ENCODED_BYTES {
+                return Err(ExpertErrorCode::AttachmentTooLarge);
+            }
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&image.data)
+                .map_err(|_| ExpertErrorCode::InvalidAttachment)?;
+            let (width, height) = image::load_from_memory(&bytes)
+                .map(|decoded| (Some(decoded.width()), Some(decoded.height())))
+                .map_err(|_| ExpertErrorCode::InvalidAttachment)?;
+            Ok(ExpertAttachmentMetadata {
+                ordinal: u32::try_from(index + 1).unwrap_or(u32::MAX),
+                mime_type: image.mime_type.clone(),
+                encoded_bytes: image.data.len() as u64,
+                content_hash: sha256_hex(&bytes),
+                width,
+                height,
+            })
+        })
+        .collect()
+}
+
+pub fn parse_visual_brief(raw: &str) -> Result<VisualBrief, ExpertErrorCode> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wire {
+        #[serde(default)]
+        observations: Vec<String>,
+        #[serde(default)]
+        constraints: Vec<String>,
+        #[serde(default)]
+        suspected_issues: Vec<String>,
+        #[serde(default)]
+        recommended_actions: Vec<String>,
+        #[serde(default)]
+        uncertainties: Vec<String>,
+    }
+    let wire: Wire = serde_json::from_str(raw.trim()).map_err(|_| ExpertErrorCode::ParseError)?;
+    let bounded = |values: Vec<String>| -> Result<Vec<String>, ExpertErrorCode> {
+        if values.len() > 12
+            || values
+                .iter()
+                .any(|value| value.trim().is_empty() || value.chars().count() > 1_000)
+        {
+            return Err(ExpertErrorCode::ParseError);
+        }
+        Ok(values
+            .into_iter()
+            .map(|value| redact_and_truncate(&value, 1_000).0)
+            .collect())
+    };
+    let brief = VisualBrief {
+        observations: bounded(wire.observations)?,
+        constraints: bounded(wire.constraints)?,
+        suspected_issues: bounded(wire.suspected_issues)?,
+        recommended_actions: bounded(wire.recommended_actions)?,
+        uncertainties: bounded(wire.uncertainties)?,
+    };
+    if brief.observations.is_empty() && brief.recommended_actions.is_empty() {
+        return Err(ExpertErrorCode::ParseError);
+    }
+    Ok(brief)
+}
+
+pub fn parse_post_verdict(raw: &str) -> Result<PostConsultVerdict, ExpertErrorCode> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Issue {
+        severity: String,
+        summary: String,
+        evidence: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Wire {
+        verdict: String,
+        issues: Vec<Issue>,
+        repair_recommendations: Vec<String>,
+    }
+    let wire: Wire = serde_json::from_str(raw.trim()).map_err(|_| ExpertErrorCode::ParseError)?;
+    if !matches!(wire.verdict.as_str(), "pass" | "fail" | "uncertain")
+        || wire.issues.len() > 12
+        || wire.repair_recommendations.len() > 8
+        || wire.issues.iter().any(|issue| {
+            !matches!(issue.severity.as_str(), "critical" | "major" | "minor")
+                || issue.summary.trim().is_empty()
+                || issue.evidence.trim().is_empty()
+                || issue.summary.chars().count() > 1_000
+                || issue.evidence.chars().count() > 1_000
+        })
+        || wire
+            .repair_recommendations
+            .iter()
+            .any(|item| item.trim().is_empty() || item.chars().count() > 1_000)
+    {
+        return Err(ExpertErrorCode::ParseError);
+    }
+    Ok(PostConsultVerdict {
+        verdict: wire.verdict,
+        issues: wire
+            .issues
+            .into_iter()
+            .map(|issue| {
+                redact_and_truncate(
+                    &format!("{}: {} [{}]", issue.severity, issue.summary, issue.evidence),
+                    2_100,
+                )
+                .0
+            })
+            .collect(),
+        repair_recommendations: wire
+            .repair_recommendations
+            .into_iter()
+            .map(|item| redact_and_truncate(&item, 1_000).0)
+            .collect(),
+    })
 }
 
 pub fn prompt_envelope(task: &str, plan: &[String]) -> String {
@@ -936,6 +1457,10 @@ fn escape_envelope(value: &str) -> String {
         .replace('>', "&gt;")
 }
 
+pub(crate) fn escape_for_advisory(value: &str) -> String {
+    escape_envelope(value)
+}
+
 fn truncate_chars(value: &str, max: usize) -> (String, bool) {
     if value.chars().count() <= max {
         return (value.to_owned(), false);
@@ -947,6 +1472,10 @@ fn truncate_chars(value: &str, max: usize) -> (String, bool) {
 
 fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+pub(crate) fn hash_failure_fingerprint(value: &str) -> String {
+    sha256_hex(value.as_bytes())
 }
 
 #[cfg(test)]
@@ -1237,6 +1766,18 @@ mod tests {
             "goal_consult_cap_per_goal",
             "goal_restore_model_each_attempt",
             "cross_provider_notice_shown",
+            "post_consult_enabled",
+            "post_consult_attempts",
+            "repair_attempts",
+            "repair_cap",
+            "visual_brief",
+            "visual_brief_hash",
+            "attachment_metadata",
+            "storm_breakout_attempts",
+            "storm_breakout_cap",
+            "failure_fingerprints",
+            "resumable_task",
+            "goal_composed_this_task",
         ] {
             object.remove(key);
         }
@@ -1251,6 +1792,35 @@ mod tests {
         assert!(migrated.goal_restore_model_each_attempt);
         assert!(migrated.audit_events.is_empty());
         assert!(!migrated.cross_provider_notice_shown);
+        assert!(!migrated.post_consult_enabled);
+        assert_eq!(migrated.post_consult_attempts, 0);
+        assert_eq!(migrated.repair_attempts, 0);
+        assert_eq!(migrated.repair_cap, 1);
+        assert!(migrated.visual_brief.is_none());
+        assert!(migrated.attachment_metadata.is_empty());
+        assert_eq!(migrated.storm_breakout_attempts, 0);
+        assert_eq!(migrated.storm_breakout_cap, 1);
+        assert!(!migrated.resumable_task);
+        assert!(!migrated.goal_composed_this_task);
+    }
+
+    #[test]
+    fn goal_composed_ownership_survives_policy_off_and_clears_on_next_start() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("production auth", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state.set_goal_composed_this_task(true);
+        assert!(state.goal_composed_this_task);
+        // Simulates `/goalexpert off` mid-round: live policy may flip, but
+        // task ownership for rolling charges must remain true until restore.
+        assert!(state.goal_composed_this_task);
+        state.phase = ExpertPhase::Restoring;
+        state.restored(Ok(()), ExpertOutcome::Partial);
+        state
+            .start("next independent expert", ExpertMode::Fast, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        assert!(!state.goal_composed_this_task);
     }
 
     #[test]
@@ -1286,5 +1856,105 @@ mod tests {
         assert!(!is_off_command(&[ContentBlock::Text(TextContent::new(
             "/expert off now"
         ))]));
+    }
+
+    #[test]
+    fn vision_requires_real_image_content_and_persists_safe_metadata_only() {
+        use agent_client_protocol::ImageContent;
+        let png = ImageContent::new(
+            "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+            "image/png",
+        )
+        .uri(Some("file:///Users/private/secret.png".to_owned()));
+        let metadata = validate_vision_images(&[png]).unwrap();
+        assert_eq!(metadata.len(), 1);
+        assert_eq!(metadata[0].mime_type, "image/png");
+        assert_eq!(metadata[0].width, Some(1));
+        let wire = serde_json::to_string(&metadata).unwrap();
+        assert!(!wire.contains("Users"));
+        assert!(!wire.contains("secret.png"));
+        assert_eq!(
+            validate_vision_images(&[]),
+            Err(ExpertErrorCode::InvalidAttachment)
+        );
+        assert_eq!(
+            validate_vision_images(&[ImageContent::new("aW1hZ2U=", "text/plain")]),
+            Err(ExpertErrorCode::InvalidAttachment)
+        );
+    }
+
+    #[test]
+    fn visual_and_post_schemas_are_strict_and_bounded() {
+        let brief = parse_visual_brief(
+            r#"{"observations":["button overlaps"],"constraints":[],"suspected_issues":[],"recommended_actions":["fix layout"],"uncertainties":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(brief.recommended_actions, vec!["fix layout"]);
+        assert!(
+            parse_visual_brief(r#"{"observations":["x"],"recommended_actions":[],"extra":1}"#)
+                .is_err()
+        );
+
+        let verdict = parse_post_verdict(
+            r#"{"verdict":"fail","issues":[{"severity":"major","summary":"test failed","evidence":"exit 1"}],"repair_recommendations":["fix test"]}"#,
+        )
+        .unwrap();
+        assert_eq!(verdict.verdict, "fail");
+        assert!(
+            parse_post_verdict(
+                r#"{"verdict":"pass","issues":[],"repair_recommendations":[],"complete":true}"#
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn continuation_preserves_budget_and_is_generation_guarded() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("repair auth", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state.budget.attempts = 2;
+        state.plan = vec!["fix remaining issue".into()];
+        state.phase = ExpertPhase::Restoring;
+        state.restored(Ok(()), ExpertOutcome::Partial);
+        let generation = state.task_generation;
+        state
+            .start_continuation(true, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        assert!(state.task_generation > generation);
+        assert_eq!(state.budget.attempts, 2);
+        assert_eq!(state.repair_attempts, 1);
+        state.phase = ExpertPhase::Restoring;
+        state.restored(Ok(()), ExpertOutcome::Failed);
+        assert_eq!(
+            state.start_continuation(true, DEFAULT_EXECUTOR_MODEL),
+            Err(ExpertErrorCode::RepairCapExhausted)
+        );
+    }
+
+    #[test]
+    fn storm_breakout_requires_real_repeated_signal_and_is_capped() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("fix build", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state.phase = ExpertPhase::Executing;
+        assert_eq!(
+            state.reserve_storm_breakout("fp".into(), false, 10, 10),
+            Err(ExpertErrorCode::NothingToResume)
+        );
+        let guard = state
+            .reserve_storm_breakout("fp".into(), true, 10, 10)
+            .unwrap();
+        state
+            .finish_storm_breakout(&guard, (1, 1), Ok(vec!["change strategy".into()]), None)
+            .unwrap();
+        assert_eq!(state.storm_breakout_attempts, 1);
+        assert!(
+            state
+                .reserve_storm_breakout("fp".into(), true, 10, 10)
+                .is_err()
+        );
     }
 }

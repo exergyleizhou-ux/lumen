@@ -2314,7 +2314,8 @@ impl SessionActor {
             None => err.to_string(),
         };
         // Feed error to storm breaker
-        self.storm_breaker
+        let storm_action = self
+            .storm_breaker
             .borrow_mut()
             .on_tool_error(requested_tool_name, &err_str);
         let message = match effective_tool_name {
@@ -2340,6 +2341,13 @@ impl SessionActor {
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
         self.chat_state_handle.push_tool_result(tool_chat);
+        if storm_action.is_some()
+            && let Some(directive) = self
+                .maybe_run_expert_storm_breakout(requested_tool_name, &err_str, true)
+                .await
+        {
+            return vec![ConversationItem::user(directive)];
+        }
         vec![]
     }
     async fn send_thought_chunk(&self, text: String, chunk_index: u64) {

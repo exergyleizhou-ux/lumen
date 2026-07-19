@@ -134,15 +134,16 @@ async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution
                 }
             });
             let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
-            actor.models_manager.insert_test_entry(
-                "grok-4.5",
-                crate::agent::config::ModelEntry {
-                    info: crate::agent::config::ModelInfo::fallback("grok-4.5"),
-                    api_key: Some("test-key".into()),
-                    env_key: None,
-                    api_base_url: Some(server.url()),
-                },
-            );
+            // Deliberately leave both consultant and executor absent from the
+            // catalog. Ambient bearer env can synthesize aux configs; clear it
+            // for this serial test so resolution fails closed without HTTP.
+            let previous_xai = std::env::var("XAI_API_KEY").ok();
+            let previous_openai = std::env::var("OPENAI_API_KEY").ok();
+            // SAFETY: #[serial_test::serial]; restored before returning.
+            unsafe {
+                std::env::remove_var("XAI_API_KEY");
+                std::env::remove_var("OPENAI_API_KEY");
+            }
             actor.state.lock().await.expert = ExpertModeState::configured();
             {
                 let mut goal = actor.goal_tracker.lock();
@@ -157,13 +158,17 @@ async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution
                 goal.configure_expert_policy(true, 1, 1, true);
             }
 
-            assert!(matches!(
-                actor
-                    .begin_goal_expert_turn("production auth migration")
-                    .await,
-                Err(ExpertErrorCode::ModelMissing)
-            ));
-            assert!(server.requests().is_empty());
+            let first = actor
+                .begin_goal_expert_turn("production auth migration")
+                .await;
+            assert!(
+                matches!(first, Err(ExpertErrorCode::ModelMissing)),
+                "executor resolution must fail closed without ambient bearer"
+            );
+            assert!(
+                server.requests().is_empty(),
+                "rolling charge + reservation must not poll providers when models are missing"
+            );
             assert_eq!(observed_rx.recv().await, Some("goal"));
             assert_eq!(observed_rx.recv().await, Some("ack"));
             assert_eq!(
@@ -192,6 +197,16 @@ async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution
                     .any(|note| note == "executor-only: budget_exhausted"),
                 "rolling cap must block a second consult reservation after pre-executor failure"
             );
+            unsafe {
+                match previous_xai {
+                    Some(v) => std::env::set_var("XAI_API_KEY", v),
+                    None => std::env::remove_var("XAI_API_KEY"),
+                }
+                match previous_openai {
+                    Some(v) => std::env::set_var("OPENAI_API_KEY", v),
+                    None => std::env::remove_var("OPENAI_API_KEY"),
+                }
+            }
         })
         .await;
 }
@@ -475,6 +490,17 @@ async fn failed_off_restore_keeps_anchor_and_guard_until_retry_succeeds() {
             expert.disable();
             actor.state.lock().await.expert = expert;
 
+            // Ambient XAI_API_KEY synthesizes an aux sampler for unknown
+            // catalog IDs. Clear bearer env so missing-model restore fails
+            // closed and keeps the Disabling anchors for retry.
+            let previous_xai = std::env::var("XAI_API_KEY").ok();
+            let previous_openai = std::env::var("OPENAI_API_KEY").ok();
+            // SAFETY: single-threaded LocalSet test; restored before return.
+            unsafe {
+                std::env::remove_var("XAI_API_KEY");
+                std::env::remove_var("OPENAI_API_KEY");
+            }
+
             assert_eq!(
                 actor.restore_disabled_expert().await,
                 Err(ExpertErrorCode::RestoreFailed)
@@ -514,6 +540,16 @@ async fn failed_off_restore_keeps_anchor_and_guard_until_retry_succeeds() {
             assert_eq!(restored.model_before_expert, None);
             assert_eq!(restored.reasoning_effort_before_expert, None);
             assert_eq!(actor.reconstruct_full_config().await.model, "grok-4.5");
+            unsafe {
+                match previous_xai {
+                    Some(v) => std::env::set_var("XAI_API_KEY", v),
+                    None => std::env::remove_var("XAI_API_KEY"),
+                }
+                match previous_openai {
+                    Some(v) => std::env::set_var("OPENAI_API_KEY", v),
+                    None => std::env::remove_var("OPENAI_API_KEY"),
+                }
+            }
         })
         .await;
 }

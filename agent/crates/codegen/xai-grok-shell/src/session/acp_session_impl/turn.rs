@@ -372,16 +372,35 @@ impl SessionActor {
                             }
                         }
                     }
-                    BuiltinAction::ExpertStart { task, mode } => {
+                    BuiltinAction::ExpertStart { task, mode, images } => {
                         xai_grok_telemetry::session_ctx::log_event(slash_used);
-                        match self.begin_expert_turn(&task, mode).await {
+                        match self.begin_expert_turn(&task, mode, images.clone()).await {
                             Ok((guard, envelope)) => {
+                                expert_turn_guard = Some(guard);
+                                let mut blocks = vec![text_block(envelope), text_block(task)];
+                                blocks.extend(images.into_iter().map(acp::ContentBlock::Image));
+                                blocks
+                            }
+                            Err(code) => {
+                                self.send_slash_command_output(&format!(
+                                    "Expert could not start: {}.",
+                                    code.as_str()
+                                ))
+                                .await;
+                                return ok_end_turn(0, None);
+                            }
+                        }
+                    }
+                    BuiltinAction::ExpertContinue { repair } => {
+                        xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        match self.begin_expert_continuation(repair).await {
+                            Ok((guard, envelope, task)) => {
                                 expert_turn_guard = Some(guard);
                                 vec![text_block(envelope), text_block(task)]
                             }
                             Err(code) => {
                                 self.send_slash_command_output(&format!(
-                                    "Expert could not start: {}.",
+                                    "Expert continuation refused: {}.",
                                     code.as_str()
                                 ))
                                 .await;
@@ -864,6 +883,21 @@ impl SessionActor {
                 }
                 if matches!(round, Ok(TurnOutcome::Completed { refusal: true, .. })) {
                     break round;
+                }
+                if let Some(guard) = expert_turn_guard.as_ref()
+                    && let Some(directive) = self.review_deep_and_maybe_repair(guard, &round).await
+                {
+                    // Goal-composed rounds keep the GoalSummary continuation
+                    // tag (same FIFO history + prune). Standalone deep repair
+                    // injects a plain user message so it never impersonates
+                    // Goal orchestrator traffic or a second runtime.
+                    if guard.goal_composed {
+                        self.inject_goal_continuation_message(directive).await;
+                    } else {
+                        self.chat_state_handle
+                            .push_user_message(ConversationItem::user(directive));
+                    }
+                    continue;
                 }
                 let goal_expert_round = expert_turn_guard
                     .as_ref()

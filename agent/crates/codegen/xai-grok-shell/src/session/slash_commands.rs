@@ -289,7 +289,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         name: "expert",
         description: "Run a bounded expert-assisted task",
         argument_hint: Some(
-            "<task> | fast <task> | status | show | budget | off | exec=pro|flash|grok",
+            "<task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
         ),
         aliases: &[],
         gate: BuiltinGate::Expert,
@@ -313,15 +313,29 @@ fn resolve_expert(args: &str) -> BuiltinAction {
         "exec=grok" => BuiltinAction::ExpertExecutor {
             model: crate::session::expert::GROK_MODEL.to_owned(),
         },
-        "fast" | "deep" | "vision" | "dual" | "go" | "revise" => BuiltinAction::ExpertBadArgs,
+        "fast" | "deep" | "vision" | "dual" => BuiltinAction::ExpertBadArgs,
+        "go" => BuiltinAction::ExpertContinue { repair: false },
+        "revise" => BuiltinAction::ExpertContinue { repair: true },
         _ if trimmed.to_ascii_lowercase().starts_with("exec=") => BuiltinAction::ExpertBadArgs,
         _ if trimmed.to_ascii_lowercase().starts_with("fast ") => BuiltinAction::ExpertStart {
             task: trimmed[5..].trim().to_owned(),
             mode: crate::session::expert::ExpertMode::Fast,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("vision ") => BuiltinAction::ExpertStart {
+            task: trimmed[7..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Vision,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("deep ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Deep,
+            images: Vec::new(),
         },
         _ => BuiltinAction::ExpertStart {
             task: trimmed.to_owned(),
             mode: crate::session::expert::ExpertMode::Default,
+            images: Vec::new(),
         },
     }
 }
@@ -771,6 +785,10 @@ pub(super) enum BuiltinAction {
     ExpertStart {
         task: String,
         mode: crate::session::expert::ExpertMode,
+        images: Vec<acp::ImageContent>,
+    },
+    ExpertContinue {
+        repair: bool,
     },
     ExpertStatus {
         verbose: bool,
@@ -815,6 +833,7 @@ impl BuiltinAction {
             | BuiltinAction::GoalClear => "goal",
             BuiltinAction::GoalExpertOff => "goalexpert",
             BuiltinAction::ExpertStart { .. }
+            | BuiltinAction::ExpertContinue { .. }
             | BuiltinAction::ExpertStatus { .. }
             | BuiltinAction::ExpertBudget
             | BuiltinAction::ExpertOff
@@ -854,6 +873,7 @@ impl BuiltinAction {
             | BuiltinAction::GoalClear
             | BuiltinAction::GoalExpertOff => false,
             BuiltinAction::ExpertStart { task, .. } => !task.is_empty(),
+            BuiltinAction::ExpertContinue { .. } => false,
             BuiltinAction::ExpertStatus { .. }
             | BuiltinAction::ExpertBudget
             | BuiltinAction::ExpertOff
@@ -1152,7 +1172,16 @@ pub(super) fn resolve(
         .find(|c| matches!(c, SlashCommand::BuiltIn(b) if c.name() == command_name || b.aliases.contains(&command_name)));
 
     if let Some(SlashCommand::BuiltIn(builtin)) = builtin_match {
-        let action = (builtin.resolve)(args);
+        let mut action = (builtin.resolve)(args);
+        if let BuiltinAction::ExpertStart { images, .. } = &mut action {
+            *images = prompt_blocks
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Image(image) => Some(image.clone()),
+                    _ => None,
+                })
+                .collect();
+        }
         return Err(SlashCommandOutcome::Builtin(action));
     }
 
@@ -1660,6 +1689,8 @@ mod tests {
                 "session-info",
                 "feedback",
                 "goal",
+                "goalexpert",
+                "expert",
                 "loop",
                 "commit",
                 "deploy",
@@ -2499,7 +2530,7 @@ mod tests {
     }
 
     #[test]
-    fn expert_public_e1_surface_resolves() {
+    fn expert_public_e2_surface_resolves() {
         assert!(matches!(
             resolve_expert_for_test(""),
             BuiltinAction::ExpertStatus { verbose: false }
@@ -2532,16 +2563,61 @@ mod tests {
                 ..
             }
         ));
+        assert!(matches!(
+            resolve_expert_for_test("vision inspect screenshot"),
+            BuiltinAction::ExpertStart {
+                mode: crate::session::expert::ExpertMode::Vision,
+                ..
+            }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("deep fix auth"),
+            BuiltinAction::ExpertStart {
+                mode: crate::session::expert::ExpertMode::Deep,
+                ..
+            }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("revise"),
+            BuiltinAction::ExpertContinue { repair: true }
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("go"),
+            BuiltinAction::ExpertContinue { repair: false }
+        ));
     }
 
     #[test]
     fn expert_future_surface_is_fail_closed() {
-        for arg in ["deep", "vision", "dual", "go", "revise", "exec=other"] {
+        for arg in ["deep", "vision", "dual", "exec=other"] {
             assert!(
                 matches!(resolve_expert_for_test(arg), BuiltinAction::ExpertBadArgs),
                 "{arg}"
             );
         }
+    }
+
+    #[test]
+    fn expert_vision_preserves_only_real_image_blocks_in_order() {
+        let first = acp::ImageContent::new("AAAA", "image/png");
+        let second = acp::ImageContent::new("BBBB", "image/jpeg");
+        let blocks = vec![
+            text_block("/expert vision inspect image.png"),
+            acp::ContentBlock::Image(first),
+            acp::ContentBlock::Image(second),
+        ];
+        let action =
+            match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+                SlashCommandOutcome::Builtin(action) => action,
+                _ => panic!("expected builtin"),
+            };
+        let BuiltinAction::ExpertStart { mode, images, .. } = action else {
+            panic!("expected expert start");
+        };
+        assert_eq!(mode, crate::session::expert::ExpertMode::Vision);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].data, "AAAA");
+        assert_eq!(images[1].data, "BBBB");
     }
 
     #[test]

@@ -937,6 +937,9 @@ impl SessionActor {
             BuiltinAction::ExpertStart { .. } => {
                 unreachable!("ExpertStart is intercepted in handle_prompt")
             }
+            BuiltinAction::ExpertContinue { .. } => {
+                unreachable!("ExpertContinue is intercepted in handle_prompt")
+            }
             BuiltinAction::ExpertStatus { verbose } => {
                 let live_model = self.reconstruct_full_config().await.model;
                 let msg = format!(
@@ -1007,7 +1010,7 @@ impl SessionActor {
             }
             BuiltinAction::ExpertBadArgs => {
                 self.send_slash_command_output(
-                    "Usage: /expert <task> | fast <task> | status | show | budget | off | exec=pro|flash|grok",
+                    "Usage: /expert <task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
                 )
                 .await;
                 ok_end_turn(0, None)
