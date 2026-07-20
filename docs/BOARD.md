@@ -1,7 +1,7 @@
 # Lumen 看板（A / B / C）
 
 > **更新规则：** 只在里程碑更新。无心跳 monitor。  
-> 上次刷新：**2026-07-20T08:09Z**（UTC）— DeepSeek 执行路线图收尾中
+> 上次刷新：**2026-07-20T09:15Z**（UTC）— 路线图收尾（除 Windows）
 
 ---
 
@@ -9,60 +9,44 @@
 
 | 线 | 名称 | 完成度 | 状态 |
 |----|------|--------|------|
-| **A** | Expert prove/harden 交付 | **~95%** → 保持收口 | 主路径已完；Windows/版本后置→本轮做 |
-| **B1** | grok-build P0（已上线） | **100%** | #127 已合 + code CI 绿 |
-| **B2** | grok-build P1（cherry 调查中） | **~15%** | DeepSeek 子代理正在辩证评估 |
-| **C** | 路线图收尾（Windows + 发版 + 看板） | **~5%** | DeepSeek 先过 P1 → Windows → v0.1.222 → BOARD |
+| **A** | Expert prove/harden 交付 | **~95%** | 主路径收口；Windows 仍后置 |
+| **B** | grok-build cherry | **P0+P1 100%** | #127 + #128 已合 main |
+| **C** | 路线图收尾 | **~90%** | v0.1.222 已 bump；Windows 跳过 |
 
 ---
 
-## A — Expert 交付（保持收口）
+## A — Expert 交付
 
 | 项 | 状态 |
 |----|------|
 | Dual / tools / evidence / GitHub | ✅ main |
-| main CI @ #126 | ✅ |
 | macOS v0.1.221-macos | ✅ |
-| Windows 真 binary | 🔄 本轮做（DeepSeek） |
+| Windows 真 binary | ⏸ **本轮跳过**（用户决策） |
 
 ---
 
-## B1 — grok-build P0（已完成 ✅）
+## B — 上游 cherry
 
 | 项 | 状态 |
 |----|------|
-| dispatch_locks + cancel 持锁 | ✅ main `f29bd2e` |
-| OSC52 kill switch + LUMEN 别名 | ✅ |
-| PR #127 | ✅ MERGED |
-| main code CI | ✅ success |
+| P0 dispatch_locks + OSC52 | ✅ `f29bd2e` / #127 |
+| P1 `/summarize` alias | ✅ #128 |
+| P1 marketplace `require_sha` | ✅ #128 |
+| P1 auth recovery | SKIP（与 pin 一致） |
+| Expert / defaults 未污染 | ✅ |
 
 ---
 
-## B2 — grok-build P1（进行中 🔄）
-
-| 候选 | 评估 |
-|------|------|
-| `/summarize` slash alias | 🔍 DeepSeek 正在查 |
-| `require_sha` gate | 🔍 同上 |
-| auth recovery patch | 🔍 同上 |
-| PINNED 政策 | **铁律**：只取安全/正确性，拒 hooks/pager/Expert 面 |
-
----
-
-## C — 路线图收尾（本轮剩余 🔄）
+## C — 发版 / 运维
 
 | 项 | 状态 |
 |----|------|
-| P1 cherry 评估 + 合入 | 🔄 DeepSeek 子代理执行中（47 calls，0 错误） |
-| Windows 团队包 | 等待 P1 绿后做 |
-| v0.1.222 版本/发布 | P1 + Windows 后 |
-| 看板最终收口 | 本轮最后一步 |
-
-**子代理启动：** `2026-07-20T07:51Z` · 已运行 ~18min · 16% 上下文 · 0 错误
+| VERSION | **0.1.222** |
+| Windows 包 | ⏸ 跳过 |
+| 看板 | 本文件收口 |
 
 ---
 
 ## 一句话
 
-**A 收口 · P0 已上线 · P1/Windows/版本由 DeepSeek 按交接书推进，做完后我验收。**  
-（无 monitor 心跳；有终态或你要进度时再更新此板。）
+**P0+P1 已上 main；0.1.222 版本已推进；Windows 按用户要求后置。**

@@ -7,6 +7,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.1.222] - 2026-07-20
+
+### Fixed
+
+- Upstream P1 under PINNED policy: `/summarize` alias for `/recap` (pager).
+- Marketplace `require_sha` pin gate for remote plugin installs (`GROK_MARKETPLACE_REQUIRE_SHA` / `LUMEN_MARKETPLACE_REQUIRE_SHA`).
+- P0 (already in 0.1.221 line): cancel/prompt `dispatch_locks`; OSC 52 kill switch.
+
+### Notes
+
+- Windows package deferred (toolchain not available on this Mac).
+- Expert dual / lumen-guard / DeepSeek defaults: no intentional behavior change.
+
+
 ## [0.1.221] - 2026-07-20
 
 ### Added
