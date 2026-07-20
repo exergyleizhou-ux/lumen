@@ -699,6 +699,15 @@ fn bullet_list(items: &[String]) -> String {
         .join("\n")
 }
 
+/// The require-sha pin policy for remote plugin code. Disk-only config + env,
+/// both tighten-only: a remote campaign overlay must not be able to relax a
+/// local security policy, and an unreadable config falls back to the env knob.
+pub fn marketplace_require_sha() -> bool {
+    xai_grok_config::load_effective_config_disk_only()
+        .map(|c| xai_grok_plugin_marketplace::load_require_sha(&c))
+        .unwrap_or_else(|_| xai_grok_plugin_marketplace::env_require_sha())
+}
+
 /// Marketplace sources from config.toml + settings JSON, unfiltered.
 pub fn load_marketplace_sources() -> Vec<MarketplaceSource> {
     let config = crate::config::load_effective_config()
@@ -1059,6 +1068,7 @@ fn install_marketplace_entry(
     };
 
     let result = if let Some(remote_url) = entry.remote_url.as_deref() {
+        let require_sha = marketplace_require_sha();
         installer::install_from_remote_url(
             remote_url,
             entry.remote_ref.as_deref(),
@@ -1067,6 +1077,7 @@ fn install_marketplace_entry(
             &plugin_subdir,
             provenance,
             registry,
+            require_sha,
         )
     } else {
         installer::install_from_marketplace(marketplace_root, &plugin_subdir, provenance, registry)

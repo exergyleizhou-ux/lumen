@@ -159,6 +159,54 @@ fn repo_source_id(source: &InstallSource) -> String {
     }
 }
 
+/// A full commit sha (40-hex SHA-1 or 64-hex SHA-256) — the only thing the
+/// pin policy accepts; branches, tags, and short prefixes are mutable or forgeable.
+pub fn is_full_commit_sha(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The require-sha gate every remote plugin fetch goes through: policy on + no
+/// full-hex pin → typed refusal. Local-directory installs are exempt (the
+/// operator controls that disk; nothing is fetched).
+pub fn ensure_pinned(
+    require_sha: bool,
+    sha: Option<&str>,
+    plugin: &str,
+    url: &str,
+) -> Result<(), InstallError> {
+    if !require_sha {
+        return Ok(());
+    }
+    if sha.map(str::trim).is_some_and(is_full_commit_sha) {
+        return Ok(());
+    }
+    tracing::warn!(
+        plugin,
+        url,
+        "refusing unpinned remote plugin code (require_sha)"
+    );
+    Err(InstallError::UnpinnedRemoteRefused {
+        plugin: plugin.to_owned(),
+        url: url.to_owned(),
+    })
+}
+
+/// Prefer an explicit supplied SHA; if only `git_ref` is a full commit SHA,
+/// hoist it into the SHA slot so the verified clone path is used. Catalog pins
+/// published as `ref` still need this.
+pub fn hoist_pin_slots<'a>(
+    git_ref: Option<&'a str>,
+    git_sha: Option<&'a str>,
+) -> (Option<&'a str>, Option<&'a str>) {
+    match git_sha.map(str::trim) {
+        Some(s) => (git_ref, Some(s)),
+        None => match git_ref.map(str::trim).filter(|s| is_full_commit_sha(s)) {
+            Some(s) => (None, Some(s)),
+            None => (git_ref, None),
+        },
+    }
+}
+
 /// Install a plugin source (clone or symlink) and discover plugins.
 pub fn install_from_source(
     source: &InstallSource,
@@ -732,6 +780,37 @@ mod tests {
         assert_ne!(key_acme, key_cloud);
         assert_ne!(key_bare, key_acme);
         assert_eq!(key_bare, InstallRegistry::repo_key(path_str));
+    }
+
+    #[test]
+    fn ensure_pinned_policy() {
+        let sha1 = "a".repeat(40);
+        assert!(ensure_pinned(false, None, "p", "u").is_ok());
+        assert!(ensure_pinned(true, Some(&sha1), "p", "u").is_ok());
+        assert!(matches!(
+            ensure_pinned(true, None, "p", "u"),
+            Err(InstallError::UnpinnedRemoteRefused { .. })
+        ));
+        assert!(matches!(
+            ensure_pinned(true, Some("main"), "p", "u"),
+            Err(InstallError::UnpinnedRemoteRefused { .. })
+        ));
+        assert!(is_full_commit_sha(&sha1));
+        assert!(!is_full_commit_sha("deadbeef"));
+    }
+
+    #[test]
+    fn hoist_pin_slots_moves_full_sha_ref_into_sha_slot() {
+        let sha = "a".repeat(40);
+        assert_eq!(
+            hoist_pin_slots(Some(sha.as_str()), None),
+            (None, Some(sha.as_str()))
+        );
+        assert_eq!(
+            hoist_pin_slots(Some("main"), Some(sha.as_str())),
+            (Some("main"), Some(sha.as_str()))
+        );
+        assert_eq!(hoist_pin_slots(Some("main"), None), (Some("main"), None));
     }
 
     #[test]

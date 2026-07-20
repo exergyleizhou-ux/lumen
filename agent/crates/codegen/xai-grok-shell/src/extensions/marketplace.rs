@@ -398,6 +398,7 @@ async fn handle_install(
             plugin_subdir: plugin_relative_path.to_string(),
         };
         let mut registry = xai_grok_agent::plugins::install_registry::InstallRegistry::load();
+        let require_sha = crate::plugin::marketplace_require_sha();
         match installer::install_from_remote_url(
             &remote_url,
             remote_ref.as_deref(),
@@ -406,6 +407,7 @@ async fn handle_install(
             plugin_relative_path,
             provenance,
             &mut registry,
+            require_sha,
         ) {
             Ok(installer::MarketplaceInstallResult::Installed { repo_key }) => {
                 // Auto-enable installed plugin so it's active after reload.
