@@ -286,7 +286,13 @@ impl ReadonlyToolHost<'_> {
         cmd.args(args)
             .current_dir(self.workspace_root)
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_PAGER", "cat")
+            .env_remove("GIT_EXTERNAL_DIFF")
+            .env_remove("GIT_DIFF_OPTS")
             .env("CARGO_TERM_COLOR", "never")
+            // Avoid rustc/cargo wrappers injecting untrusted code.
+            .env_remove("RUSTC_WRAPPER")
+            .env_remove("CARGO_BUILD_RUSTC_WRAPPER")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -581,9 +587,22 @@ impl ReadonlyToolHost<'_> {
 
     fn exec_read_diff_summary(&self) -> String {
         // Safe read-only git diff stat; hard timeout; no commit/push.
+        // Hardening: disable external diff/textconv/pager (repo config may RCE).
         let raw = match self.run_cmd_timeout(
             "git",
-            &["--no-pager", "diff", "--stat"],
+            &[
+                "-c",
+                "core.pager=cat",
+                "-c",
+                "diff.external=",
+                "-c",
+                "diff.mnemonicprefix=false",
+                "--no-pager",
+                "diff",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--stat",
+            ],
             HOST_CMD_TIMEOUT,
         ) {
             Ok(out) if out.status.success() => {
@@ -602,7 +621,9 @@ impl ReadonlyToolHost<'_> {
     }
 
     fn exec_read_diagnostics(&self) -> String {
-        // Prefer agent-written snapshots, then live cargo check JSON.
+        // Pure-read path: only HostVerification / agent snapshots.
+        // Spawning cargo is *not* readonly (build scripts, rustc wrappers) —
+        // refuse exec probes so consultant cannot run workspace-controlled code.
         if let Some(hint) = self.read_workspace_hint_file(&[
             ".lumen/diagnostics.json",
             ".lumen/diagnostics.txt",
@@ -611,54 +632,15 @@ impl ReadonlyToolHost<'_> {
             let (scrubbed, _) = redact_and_truncate(&hint, DIAG_MAX);
             return scrubbed;
         }
-        // Prefer the agent workspace in the Lumen monorepo; else workspace root.
-        let agent_cargo = self.workspace_root.join("agent/Cargo.toml");
-        let root_cargo = self.workspace_root.join("Cargo.toml");
-        let check_root = if agent_cargo.is_file() {
-            self.workspace_root.join("agent")
-        } else if root_cargo.is_file() {
-            self.workspace_root.to_path_buf()
-        } else {
-            let (scrubbed, _) =
-                redact_and_truncate("[] (no Cargo.toml; diagnostics unavailable)", DIAG_MAX);
-            return scrubbed;
-        };
-        // Temporarily point host root for cargo spawn.
-        let host = ReadonlyToolHost {
-            workspace_root: &check_root,
-            deny_globs: self.deny_globs,
-            tool_call_cap: self.tool_call_cap,
-        };
-        let raw = match host.run_cmd_timeout(
-            "cargo",
-            &[
-                "check",
-                "-q",
-                "--message-format=json",
-                "-p",
-                "xai-grok-shell",
-            ],
-            HOST_CMD_TIMEOUT,
-        ) {
-            Ok(out) => {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                let parsed = host.parse_cargo_json_diagnostics(&stdout);
-                if parsed.contains("no cargo") && !out.stderr.is_empty() {
-                    format!(
-                        "{parsed}\nstderr: {}",
-                        String::from_utf8_lossy(&out.stderr).chars().take(500).collect::<String>()
-                    )
-                } else {
-                    parsed
-                }
-            }
-            Err(e) => format!("diagnostics unavailable: {e}"),
-        };
-        let (scrubbed, _) = redact_and_truncate(&raw, DIAG_MAX);
+        let (scrubbed, _) = redact_and_truncate(
+            "[] (no host snapshot at .lumen/diagnostics.*; cargo exec probes disabled for consultant safety)",
+            DIAG_MAX,
+        );
         scrubbed
     }
 
     fn exec_read_test_summary(&self) -> String {
+        // Prefer structured results already produced by Executor/HostVerification.
         if let Some(hint) = self.read_workspace_hint_file(&[
             ".lumen/test-summary.txt",
             ".lumen/test-summary.json",
@@ -668,65 +650,10 @@ impl ReadonlyToolHost<'_> {
             let (scrubbed, _) = redact_and_truncate(&hint, TEST_SUM_MAX);
             return scrubbed;
         }
-        let agent_cargo = self.workspace_root.join("agent/Cargo.toml");
-        let check_root = if agent_cargo.is_file() {
-            self.workspace_root.join("agent")
-        } else if self.workspace_root.join("Cargo.toml").is_file() {
-            self.workspace_root.to_path_buf()
-        } else {
-            let (scrubbed, _) =
-                redact_and_truncate("Test summary unavailable (no Cargo workspace).", TEST_SUM_MAX);
-            return scrubbed;
-        };
-        let host = ReadonlyToolHost {
-            workspace_root: &check_root,
-            deny_globs: self.deny_globs,
-            tool_call_cap: self.tool_call_cap,
-        };
-        // Lightweight inventory: list tests for the expert package only.
-        let raw = match host.run_cmd_timeout(
-            "cargo",
-            &[
-                "test",
-                "-p",
-                "xai-grok-shell",
-                "--lib",
-                "--",
-                "--list",
-                "--test-threads=1",
-            ],
-            HOST_CMD_TIMEOUT,
-        ) {
-            Ok(out) => {
-                let text = format!(
-                    "{}{}",
-                    String::from_utf8_lossy(&out.stdout),
-                    String::from_utf8_lossy(&out.stderr)
-                );
-                let total = text
-                    .lines()
-                    .filter(|l| l.contains(": test") || l.ends_with(": test"))
-                    .count();
-                let expert_related = text
-                    .lines()
-                    .filter(|l| {
-                        let lower = l.to_ascii_lowercase();
-                        lower.contains("expert") || lower.contains("consult") || lower.contains("dual")
-                    })
-                    .take(30)
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if total == 0 && text.trim().is_empty() {
-                    "Test summary unavailable (empty cargo test --list).".to_owned()
-                } else {
-                    format!(
-                        "cargo test --list: {total} tests visible for xai-grok-shell lib\nexpert-related (cap 30):\n{expert_related}"
-                    )
-                }
-            }
-            Err(e) => format!("Test summary unavailable: {e}"),
-        };
-        let (scrubbed, _) = redact_and_truncate(&raw, TEST_SUM_MAX);
+        let (scrubbed, _) = redact_and_truncate(
+            "Test summary unavailable: no host snapshot (.lumen/test-summary.*). Cargo test exec is disabled for consultant (not pure-read).",
+            TEST_SUM_MAX,
+        );
         scrubbed
     }
 }
@@ -1517,6 +1444,22 @@ mod tests {
         };
         let result = host.execute("read_test_summary", "{}");
         assert!(result.contains("17 passed"), "got: {result}");
+    }
+
+    #[test]
+    fn read_diagnostics_without_snapshot_does_not_exec_cargo() {
+        let dir = TempDir::new().unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("read_diagnostics", "{}");
+        assert!(
+            result.contains("disabled") || result.contains("no host snapshot"),
+            "got: {result}"
+        );
+        assert!(!result.contains("compiler-message"));
     }
 
     #[test]
