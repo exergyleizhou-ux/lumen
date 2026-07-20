@@ -822,6 +822,14 @@ impl SessionActor {
                             if let Some(ref role) = o.current_subagent_role {
                                 buf.push_str(&format!("\nActive subagent: {role}"));
                             }
+                            if o.expert_policy {
+                                buf.push_str(&format!(
+                                    "\nExpert policy: on | Consults: {}/{} (per attempt: {})",
+                                    o.expert_consult_attempts_used,
+                                    o.expert_consult_cap_per_goal,
+                                    o.expert_consult_cap_per_attempt,
+                                ));
+                            }
                             buf
                         }
                         None => "No goal is currently set. Use /goal <objective> to start one."
@@ -894,6 +902,117 @@ impl SessionActor {
                 let update = crate::session::goal_orchestrator::build_goal_cleared();
                 self.send_xai_notification(update).await;
                 self.send_slash_command_output("Goal cleared.").await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::GoalExpertOff => {
+                let (changed, goal_snapshot) = {
+                    let mut tracker = self.goal_tracker.lock();
+                    let changed = tracker.snapshot().is_some_and(|goal| goal.expert_policy);
+                    tracker.configure_expert_policy(false, 0, 0, true);
+                    (changed, tracker.snapshot().cloned())
+                };
+                let msg = if changed {
+                    "Goal Expert policy disabled. The active goal will continue solo."
+                } else {
+                    "Goal Expert policy is already off."
+                };
+                if changed {
+                    if let Some(snapshot) = goal_snapshot {
+                        let _ = self
+                            .notifications
+                            .persistence_tx
+                            .send(PersistenceMsg::GoalModeState(snapshot));
+                    }
+                    let current_tokens = self.chat_state_handle.get_total_tokens().await as i64;
+                    let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
+                    self.goal_notify_sender().emit_goal_updated(
+                        &mut self.goal_tracker.lock(),
+                        tokens_used,
+                        finished_marginal,
+                    );
+                }
+                self.send_slash_command_output(msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertStart { .. } => {
+                unreachable!("ExpertStart is intercepted in handle_prompt")
+            }
+            BuiltinAction::ExpertContinue { .. } => {
+                unreachable!("ExpertContinue is intercepted in handle_prompt")
+            }
+            BuiltinAction::ExpertStatus { verbose } => {
+                let live_model = self.reconstruct_full_config().await.model;
+                let msg = format!(
+                    "{}\nLive session model: {live_model}",
+                    self.state.lock().await.expert.status(verbose)
+                );
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertBudget => {
+                let msg = {
+                    let actor = self.state.lock().await;
+                    format!(
+                        "Expert consult budget: {}/{} attempts, {}/{} estimated tokens.",
+                        actor.expert.budget.attempts,
+                        actor.expert.budget.attempt_cap,
+                        actor
+                            .expert
+                            .budget
+                            .input_tokens
+                            .saturating_add(actor.expert.budget.output_tokens)
+                            .saturating_add(actor.expert.budget.reserved_tokens),
+                        actor.expert.budget.token_cap,
+                    )
+                };
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertOff => {
+                self.request_expert_disable().await;
+                let restore = self.restore_disabled_expert().await;
+                let live_model = self.reconstruct_full_config().await.model;
+                let msg = match restore {
+                    Ok(()) => format!(
+                        "Expert disabled for this session. Live session model: {live_model}."
+                    ),
+                    Err(code) => format!(
+                        "Expert disable is waiting for model restore: {}. Live session model: {live_model}. Run /expert off to retry.",
+                        code.as_str()
+                    ),
+                };
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertExecutor { model } => {
+                let result = {
+                    let mut actor = self.state.lock().await;
+                    if actor.expert.is_active() {
+                        Err(crate::session::expert::ExpertErrorCode::TaskInProgress)
+                    } else {
+                        actor.expert.feature_state =
+                            crate::session::expert::ExpertFeatureState::IdleConfigured;
+                        actor.expert.executor_requested = model.clone();
+                        let snapshot = actor.expert.clone();
+                        let _ = self
+                            .notifications
+                            .persistence_tx
+                            .send(PersistenceMsg::ExpertModeState(snapshot));
+                        Ok(())
+                    }
+                };
+                let msg = match result {
+                    Ok(()) => format!("Expert executor configured for this session: {model}."),
+                    Err(code) => format!("Expert executor unchanged: {}.", code.as_str()),
+                };
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertBadArgs => {
+                self.send_slash_command_output(
+                    "Usage: /expert <task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
+                )
+                .await;
                 ok_end_turn(0, None)
             }
         }

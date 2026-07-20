@@ -140,6 +140,7 @@ pub(crate) async fn spawn_session_actor(
     persisted_signals: Option<crate::session::signals::SessionSignals>,
     persisted_plan_mode: Option<crate::session::plan_mode::PlanModeSnapshot>,
     persisted_goal_mode: Option<crate::session::goal_tracker::GoalOrchestration>,
+    persisted_expert_mode: Option<crate::session::expert::ExpertModeState>,
     persisted_announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
     memory_config: Option<crate::config::MemoryConfig>,
     loc_tracking_enabled: bool,
@@ -447,7 +448,12 @@ pub(crate) async fn spawn_session_actor(
         }
     }
     chat_state_handle.update_credentials(credentials);
+    let expert_state = persisted_expert_mode
+        .unwrap_or_default()
+        .recover_after_crash();
+    let expert_enabled = expert_state.enabled;
     let state = TokioMutex::new(State {
+        expert: expert_state,
         running_task: None,
         pending_inputs: VecDeque::new(),
         pending_notifications: Vec::new(),
@@ -1228,6 +1234,7 @@ pub(crate) async fn spawn_session_actor(
         turn_prompt_mode: turn_prompt_mode.clone(),
         plan_mode: plan_mode.clone(),
         goal_enabled,
+        expert_enabled,
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker,
@@ -1716,6 +1723,7 @@ pub(crate) async fn spawn_session_on_thread(
     persisted_signals: Option<crate::session::signals::SessionSignals>,
     persisted_plan_mode: Option<crate::session::plan_mode::PlanModeSnapshot>,
     persisted_goal_mode: Option<crate::session::goal_tracker::GoalOrchestration>,
+    persisted_expert_mode: Option<crate::session::expert::ExpertModeState>,
     persisted_announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
     memory_config: Option<crate::config::MemoryConfig>,
     loc_tracking_enabled: bool,
@@ -1878,6 +1886,7 @@ pub(crate) async fn spawn_session_on_thread(
                         persisted_signals,
                         persisted_plan_mode,
                         persisted_goal_mode,
+                        persisted_expert_mode,
                         persisted_announcement_state,
                         memory_config,
                         loc_tracking_enabled,

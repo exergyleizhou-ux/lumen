@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Structural proof: DeepSeek-preferred default + legacy-complete provider catalog.
+# Structural proof: formal E0 model identities + legacy-compatible provider catalog.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -11,8 +11,8 @@ EXAMPLE="$ROOT/config/lumen.example.toml"
 DOC="$ROOT/docs/user/multi-provider.md"
 
 test -f "$MODELS" || fail "missing $MODELS"
-grep -q '"default": "deepseek-chat"' "$MODELS" || fail "default_models.json default is not deepseek-chat"
-grep -q '"model": "deepseek-chat"' "$MODELS" || fail "default_models.json missing deepseek-chat model entry"
+grep -q '"default": "deepseek-v4-pro"' "$MODELS" || fail "default_models.json default is not deepseek-v4-pro"
+grep -q '"model": "deepseek-v4-pro"' "$MODELS" || fail "default_models.json missing deepseek-v4-pro"
 # BYOK must be embedded so isolated GROK_HOME works without xAI login.
 grep -q '"base_url": "https://api.deepseek.com/v1"' "$MODELS" || fail "default_models.json missing DeepSeek base_url"
 grep -q '"env_key": "DEEPSEEK_API_KEY"' "$MODELS" || fail "default_models.json missing env_key DEEPSEEK_API_KEY"
@@ -20,10 +20,10 @@ grep -q '"byok": true' "$MODELS" || fail "default_models.json missing byok true"
 
 # Full legacy Go catalog plus MiniMax from the Science provider table.
 for id in \
-  deepseek-chat deepseek-reasoner \
+  deepseek-v4-pro deepseek-v4-flash deepseek-chat deepseek-reasoner \
   openai-gpt4o openai-gpt4o-mini openai-gpt41 openai-o3-mini openai-o4-mini \
   claude-sonnet claude-opus claude-3.5-sonnet claude-3.5-haiku \
-  xai-grok grok-3-mini kimi-k2 moonshot-v1 \
+  grok-4.5 xai-grok grok-3-mini kimi-k2 moonshot-v1 \
   qwen-max qwen-plus qwen-turbo qwen-coder \
   glm-4 glm-4-flash glm-4-plus mimo-chat minimax-m3 \
   lmstudio ollama vllm exo local-openai; do
@@ -46,20 +46,29 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as f:
     root = json.load(f)
 
-assert root["default"] == "deepseek-chat"
-assert root["web_search"] == "deepseek-chat"
+assert root["default"] == "deepseek-v4-pro"
+assert root["web_search"] == "deepseek-v4-pro"
 assert root["image_description"] == "deepseek-chat"
-assert root["session_summary"] == "deepseek-chat"
+assert root["session_summary"] == "deepseek-v4-flash"
 models = root["models"]
 assert len(models) >= 29, len(models)
 by_id = {m["id"]: m for m in models}
 assert len(by_id) == len(models), "duplicate or missing ids"
 
-deepseek = by_id["deepseek-chat"]
-assert deepseek["model"] == "deepseek-chat"
+deepseek = by_id["deepseek-v4-pro"]
+assert deepseek["model"] == "deepseek-v4-pro"
 assert deepseek["base_url"] == "https://api.deepseek.com/v1"
 assert deepseek["env_key"] == "DEEPSEEK_API_KEY"
 assert deepseek["byok"] is True
+assert [e["id"] for e in deepseek["reasoning_efforts"]] == ["high", "max"]
+assert by_id["deepseek-v4-flash"]["model"] == "deepseek-v4-flash"
+assert by_id["grok-4.5"]["model"] == "grok-4.5"
+assert not any("pricing" in model for model in models), "catalog pricing is not runtime-backed"
+for alias in ["deepseek-chat", "deepseek-reasoner"]:
+    assert by_id[alias]["hidden"] is True
+    assert "2026-07-24 15:59 UTC" in by_id[alias]["description"]
+    assert "V4 Flash" in by_id[alias]["description"]
+assert "Pro" not in by_id["deepseek-reasoner"]["name"]
 
 for model_id in [
     "claude-sonnet", "claude-opus", "claude-3.5-sonnet",
@@ -84,7 +93,7 @@ grep -q 'default-run = "lumen"' "$BIN_TOML" || fail "default-run is not lumen"
 
 test -f "$EXAMPLE" || fail "missing config/lumen.example.toml"
 grep -q 'base_url = "https://api.deepseek.com/v1"' "$EXAMPLE" || fail "example missing DeepSeek base_url"
-grep -q 'default = "deepseek-chat"' "$EXAMPLE" || fail "example missing default deepseek-chat"
+grep -q 'default = "deepseek-v4-pro"' "$EXAMPLE" || fail "example missing default deepseek-v4-pro"
 grep -q 'auto_update = false' "$EXAMPLE" || fail "example missing auto_update = false"
 for id in openai-gpt4o claude-sonnet kimi-k2 moonshot-v1 qwen-plus glm-4 mimo-chat minimax-m3 lmstudio ollama vllm exo; do
   grep -Fq "[model.$id]" "$EXAMPLE" || fail "example missing [model.$id]"
@@ -103,10 +112,11 @@ except ModuleNotFoundError:  # macOS system Python < 3.11
 
 with open(sys.argv[1], "rb") as f:
     cfg = tomllib.load(f)
-assert cfg["models"]["default"] == "deepseek-chat"
+assert cfg["models"]["default"] == "deepseek-v4-pro"
 models = cfg["model"]
 for model_id in [
-    "deepseek-chat", "openai-gpt41", "claude-3.5-sonnet", "grok-3-mini",
+    "deepseek-v4-pro", "deepseek-v4-flash", "grok-4.5", "deepseek-chat",
+    "openai-gpt41", "claude-3.5-sonnet", "grok-3-mini",
     "kimi-k2", "qwen-coder", "glm-4-flash", "mimo-chat", "minimax-m3",
     "lmstudio", "ollama", "vllm", "exo",
 ]:
@@ -131,4 +141,4 @@ grep -q 'auto_update.unwrap_or(false)' "$REG" || fail "registry auto_update must
 grep -q 'SettingKind::Bool { default: false }' "$DEFS" || fail "defs auto_update default must be false"
 grep -q 'configured.unwrap_or(false)' "$UPD" || fail "effective_auto_update must unwrap_or(false)"
 
-echo "OK: defaults structural checks pass (29-model legacy catalog + DeepSeek default)"
+echo "OK: E0 model identities and legacy-compatible catalog structural checks pass"

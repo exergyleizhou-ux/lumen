@@ -85,14 +85,14 @@ claw 场景 → 只进 **M3 parity-run**，见 `policy/CC_PARITY.md`。
 
 ```markdown
 | Model | Date | Pass | Median steps | Notes |
-| deepseek-chat | YYYY-MM-DD | k/20 | n | |
+| deepseek-v4-pro | YYYY-MM-DD | k/20 | n | |
 ```
 
 命令（目标形态）：
 
 ```bash
 # 从 monorepo 根
-./scripts/eval-coding.sh --model deepseek-chat --tasks evals/tasks
+./scripts/eval-coding.sh --model deepseek-v4-pro --tasks evals/tasks
 ```
 
 实现前期可用旧 `~/lumen` 的 `lumen eval` 指到迁出后的 tasks 目录。

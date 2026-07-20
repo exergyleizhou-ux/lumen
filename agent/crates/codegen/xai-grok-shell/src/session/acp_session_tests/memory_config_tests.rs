@@ -86,6 +86,7 @@ async fn create_test_actor_with_memory(
         .filter(|mc| mc.enabled)
         .map(|_| crate::session::memory::MemoryStorage::new(&cwd_path, None));
     let state = TokioMutex::new(State {
+        expert: crate::session::expert::ExpertModeState::default(),
         running_task: None,
         pending_inputs: VecDeque::new(),
         pending_notifications: Vec::new(),
@@ -231,6 +232,7 @@ async fn create_test_actor_with_memory(
             )),
         )),
         goal_enabled: false,
+        expert_enabled: true,
         goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
         goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
         goal_tracker: Arc::new(parking_lot::Mutex::new(

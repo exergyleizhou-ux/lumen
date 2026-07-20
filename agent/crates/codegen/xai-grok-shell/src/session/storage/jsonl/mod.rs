@@ -102,6 +102,9 @@ impl JsonlStorageAdapter {
     fn goal_mode_state_file(&self, info: &Info) -> PathBuf {
         self.session_dir(info).join("goal").join("state.json")
     }
+    fn expert_mode_state_file(&self, info: &Info) -> PathBuf {
+        self.session_dir(info).join("expert").join("state.json")
+    }
     fn rewind_points_file(&self, info: &Info) -> PathBuf {
         self.session_dir(info).join("rewind_points.jsonl")
     }
@@ -669,6 +672,65 @@ impl JsonlStorageAdapter {
         let target_dir = self.session_dir(target_info);
         std::fs::create_dir_all(&target_dir)?;
         let source_summary = self.read_summary_sync(source_info)?;
+        // Resolve Expert recovery before writing any target metadata.  A live
+        // source session may currently advertise the temporary executor in
+        // summary.json; a fork must start from the saved pre-Expert model and
+        // effort, never from that transient routing state.
+        let source_expert_path = self.expert_mode_state_file(source_info);
+        let (copied_expert_state, expert_restore_model, expert_restore_effort) =
+            if source_expert_path.exists() {
+                let bytes = std::fs::read(&source_expert_path)?;
+                let mut state: crate::session::expert::ExpertModeState =
+                    serde_json::from_slice(&bytes)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                let was_active = state.is_active();
+                // Any phase after the session-local Executor switch (including
+                // E2 post/repair/storm consult-on-executor) must restore the
+                // pre-Expert model on fork/copy. Pre-switch consult phases
+                // leave model_before_expert unset and do not require restore.
+                let switched_or_switching = state.model_before_expert.is_some()
+                    || matches!(
+                        state.phase,
+                        crate::session::expert::ExpertPhase::SwitchingExecutor
+                            | crate::session::expert::ExpertPhase::Executing
+                            | crate::session::expert::ExpertPhase::HostVerifying
+                            | crate::session::expert::ExpertPhase::ConsultingPost
+                            | crate::session::expert::ExpertPhase::Repairing
+                            | crate::session::expert::ExpertPhase::Restoring
+                    );
+                let restore_model = state.model_before_expert.clone();
+                if was_active && switched_or_switching && restore_model.is_none() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "active Expert copy is missing model_before_expert",
+                    ));
+                }
+                let restore_effort = state
+                    .reasoning_effort_before_expert
+                    .as_deref()
+                    .map(str::parse::<xai_grok_sampling_types::ReasoningEffort>)
+                    .transpose()
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "active Expert copy has invalid reasoning effort anchor",
+                        )
+                    })?;
+                state = state.recover_after_crash();
+                if was_active {
+                    state.feature_state =
+                        crate::session::expert::ExpertFeatureState::IdleConfigured;
+                    state.phase = crate::session::expert::ExpertPhase::Restoring;
+                    state.model_before_expert = None;
+                    state.reasoning_effort_before_expert = None;
+                    state.last_error_code = None;
+                    state.last_outcome = Some(crate::session::expert::ExpertOutcome::Interrupted);
+                    state.audit("copy_recovered", None, None, state.task_hash.clone());
+                }
+                (Some(state), restore_model, restore_effort)
+            } else {
+                (None, None, None)
+            };
         let chat_format_version = source_summary.chat_format_version;
         let mut chat_to_copy: Vec<ConversationItem> =
             self.read_chat_history_sync(self.chat_file(source_info), chat_format_version)?;
@@ -697,8 +759,15 @@ impl JsonlStorageAdapter {
         let num_messages = updates_to_copy.len();
         let target_model_id = options
             .new_model_id
-            .map(acp::ModelId::new)
+            .as_ref()
+            .map(|model| acp::ModelId::new(model.clone()))
+            .or_else(|| expert_restore_model.map(acp::ModelId::new))
             .unwrap_or(source_summary.current_model_id);
+        let target_reasoning_effort = if options.new_model_id.is_some() {
+            source_summary.reasoning_effort
+        } else {
+            expert_restore_effort.or(source_summary.reasoning_effort)
+        };
         let target_summary = crate::session::persistence::Summary {
             info: target_info.clone(),
             session_summary: source_summary.session_summary,
@@ -731,7 +800,7 @@ impl JsonlStorageAdapter {
             worktree_label: source_summary.worktree_label,
             agent_name: source_summary.agent_name,
             sandbox_profile: source_summary.sandbox_profile,
-            reasoning_effort: source_summary.reasoning_effort,
+            reasoning_effort: target_reasoning_effort,
         };
         let summary_bytes = serde_json::to_vec_pretty(&target_summary)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
@@ -831,6 +900,24 @@ impl JsonlStorageAdapter {
         } else {
             false
         };
+        // Expert configuration follows a fork/copy, but an active task is
+        // never replayed. Reconcile it exactly as a crash resume before write.
+        let expert_mode_state_copied = {
+            if let Some(state) = copied_expert_state {
+                let target = self.expert_mode_state_file(target_info);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::write(
+                    target,
+                    serde_json::to_vec_pretty(&state)
+                        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+                )?;
+                true
+            } else {
+                false
+            }
+        };
         let compaction_segments_copied = if options.copy_compaction_segments {
             let src_dir = self
                 .session_dir(source_info)
@@ -861,6 +948,7 @@ impl JsonlStorageAdapter {
             signals_copied,
             tool_state_copied,
             announcement_state_copied,
+            expert_mode_state_copied,
             compaction_segments_copied,
         })
     }
@@ -1071,6 +1159,21 @@ impl StorageAdapter for JsonlStorageAdapter {
         tokio::fs::write(&tmp, json).await?;
         tokio::fs::rename(&tmp, &target).await
     }
+    async fn write_expert_mode_state(
+        &self,
+        info: &Info,
+        state: &crate::session::expert::ExpertModeState,
+    ) -> io::Result<()> {
+        let json = serde_json::to_vec_pretty(state)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let target = self.expert_mode_state_file(info);
+        if let Some(parent) = target.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let tmp = target.with_extension("json.tmp");
+        tokio::fs::write(&tmp, json).await?;
+        tokio::fs::rename(&tmp, &target).await
+    }
     async fn load_session(&self, info: &Info) -> io::Result<PersistedData> {
         let summary = self.read_summary_sync(info)?;
         let chat_history =
@@ -1092,6 +1195,10 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
             )?;
+        let expert_mode_state = self
+            .read_optional_json_sync::<crate::session::expert::ExpertModeState>(
+                &self.expert_mode_state_file(info),
+            )?;
         let rewind_points = self.read_jsonl::<RewindPoint>(self.rewind_points_file(info))?;
         let result = PersistedData {
             summary,
@@ -1103,6 +1210,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             signals,
             announcement_state,
             goal_mode_state,
+            expert_mode_state,
         };
         tracing::info!(
             session_id = % info.id, num_chat_messages = result.chat_history.len(),
@@ -1140,6 +1248,10 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
             )?;
+        let expert_mode_state = self
+            .read_optional_json_sync::<crate::session::expert::ExpertModeState>(
+                &self.expert_mode_state_file(info),
+            )?;
         let result = super::PersistedDataLight {
             summary,
             chat_history,
@@ -1148,6 +1260,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             signals,
             announcement_state,
             goal_mode_state,
+            expert_mode_state,
         };
         tracing::info!(
             session_id = % info.id, num_chat_messages = result.chat_history.len(),
@@ -1245,6 +1358,7 @@ impl StorageAdapter for JsonlStorageAdapter {
                 adapter.summary_file(&info_clone),
                 adapter.plan_file(&info_clone),
                 adapter.rewind_points_file(&info_clone),
+                adapter.expert_mode_state_file(&info_clone),
             ];
             for file_path in &files_to_sync {
                 if file_path.exists()

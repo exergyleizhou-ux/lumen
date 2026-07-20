@@ -272,6 +272,93 @@ struct StreamOptions {
     include_usage: bool,
 }
 
+/// Serialize a Chat Completions payload and apply the model-specific wire
+/// contract documented for DeepSeek V4 thinking mode.
+///
+/// Lumen's cross-provider [`ReasoningEffort`] uses `xhigh`; DeepSeek V4's API
+/// accepts only `high|max`, with the legacy client values `low|medium`
+/// mapping to `high`. Thinking mode must also be enabled explicitly. Keeping
+/// this normalization at the HTTP boundary avoids changing the wire contract
+/// for OpenAI/xAI-compatible providers that legitimately accept `xhigh`.
+fn chat_completion_wire_body<T: Serialize>(
+    payload: &T,
+    model_id: &str,
+) -> Result<serde_json::Value> {
+    let mut body = serde_json::to_value(payload).map_err(SamplingError::Serialization)?;
+    if !matches!(model_id, "deepseek-v4-pro" | "deepseek-v4-flash") {
+        return Ok(body);
+    }
+
+    let effort = body
+        .get("reasoning_effort")
+        .and_then(serde_json::Value::as_str);
+    let thinking_enabled = match effort {
+        Some("low" | "medium" | "high") => {
+            body["reasoning_effort"] = serde_json::Value::String("high".to_owned());
+            true
+        }
+        Some("xhigh" | "max") => {
+            body["reasoning_effort"] = serde_json::Value::String("max".to_owned());
+            true
+        }
+        // Unknown effort values must not silently select an undocumented
+        // thinking mode. Requests without an effort are explicitly the
+        // non-thinking V4 path (used by the session-title helper).
+        Some(_) | None => false,
+    };
+    body["thinking"] = serde_json::json!({
+        "type": if thinking_enabled { "enabled" } else { "disabled" }
+    });
+
+    // DeepSeek documents these sampling controls as unsupported in thinking
+    // mode. Catalog defaults omit them; remove explicit inherited values too
+    // so a shared client config cannot emit a misleading/ignored control.
+    if thinking_enabled && let Some(obj) = body.as_object_mut() {
+        for key in [
+            "temperature",
+            "top_p",
+            "presence_penalty",
+            "frequency_penalty",
+        ] {
+            obj.remove(key);
+        }
+
+        // DeepSeek V4's thinking endpoint rejects every tool_choice variant,
+        // including auto, required, and a named function. Omitting the field
+        // preserves the model's normal automatic tool selection.
+        obj.remove("tool_choice");
+
+        // Tool-call assistant messages must replay both reasoning_content and
+        // a non-null content string. Lumen normally emits an empty string, but
+        // normalize defensively at the provider boundary for restored/foreign
+        // sessions that used null.
+        if let Some(messages) = obj.get_mut("messages").and_then(|v| v.as_array_mut()) {
+            for message in messages {
+                let Some(message) = message.as_object_mut() else {
+                    continue;
+                };
+                let is_assistant_tool_call = message.get("role").and_then(|v| v.as_str())
+                    == Some("assistant")
+                    && message
+                        .get("tool_calls")
+                        .and_then(|v| v.as_array())
+                        .is_some_and(|calls| !calls.is_empty());
+                if is_assistant_tool_call
+                    && message
+                        .get("content")
+                        .is_none_or(serde_json::Value::is_null)
+                {
+                    message.insert(
+                        "content".to_owned(),
+                        serde_json::Value::String(String::new()),
+                    );
+                }
+            }
+        }
+    }
+    Ok(body)
+}
+
 /// HTTP client for sampling. Cheap to clone; carries an `Arc`-backed
 /// `reqwest::Client` and the default headers/request-defaults computed
 /// from a [`SamplerConfig`] at construction time.
@@ -861,9 +948,10 @@ impl SamplingClient {
             deployment_id: payload.x_grok_deployment_id.as_deref(),
             user_id: payload.x_grok_user_id.as_deref(),
         };
+        let body = chat_completion_wire_body(&payload, &model_id)?;
         let http_request = grok_headers
             .apply(self.post(self.endpoint("chat/completions")))
-            .json(&payload);
+            .json(&body);
 
         let response = http_request.send().await.map_err(|e| {
             // Log at debug level; errors are surfaced to the caller.
@@ -908,6 +996,7 @@ impl SamplingClient {
                 include_usage: true,
             },
         };
+        let body = chat_completion_wire_body(&streaming_request, &model_id)?;
 
         let grok_headers = GrokRequestHeaders {
             conv_id: x_grok_conv_id,
@@ -922,7 +1011,7 @@ impl SamplingClient {
         let http_request = grok_headers
             .apply(self.post(self.endpoint("chat/completions")))
             .header(ACCEPT, HeaderValue::from_static("text/event-stream"))
-            .json(&streaming_request);
+            .json(&body);
 
         let built_request = http_request.build().map_err(|e| {
             tracing::error!("Failed to build HTTP request: {}", e);
@@ -2012,6 +2101,7 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use xai_grok_sampling_types::types::ChatRequestMessage;
+    use xai_grok_sampling_types::{ReasoningEffort, ToolChoice};
 
     fn minimal_config() -> SamplerConfig {
         SamplerConfig {
@@ -2107,6 +2197,132 @@ mod tests {
 
         assert!(obj.get("max_tokens").is_none());
         assert!(obj.get("tools").is_none());
+    }
+
+    #[test]
+    fn deepseek_v4_thinking_wire_uses_only_official_controls() {
+        for (input, expected) in [
+            (ReasoningEffort::Low, "high"),
+            (ReasoningEffort::Medium, "high"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::Xhigh, "max"),
+        ] {
+            let mut request = ChatCompletionRequest::new(
+                "deepseek-v4-pro",
+                vec![ChatRequestMessage::user("use a tool")],
+            );
+            request.reasoning_effort = Some(input);
+            request.temperature = Some(0.7);
+            request.top_p = Some(0.9);
+            request.tool_choice = Some(ToolChoice::required());
+
+            let body = chat_completion_wire_body(&request, "deepseek-v4-pro").unwrap();
+            assert_eq!(body["model"], "deepseek-v4-pro");
+            assert_eq!(body["reasoning_effort"], expected);
+            assert_eq!(body["thinking"]["type"], "enabled");
+            assert!(body.get("temperature").is_none());
+            assert!(body.get("top_p").is_none());
+            assert!(body.get("tool_choice").is_none());
+        }
+    }
+
+    #[test]
+    fn deepseek_v4_thinking_drops_every_tool_choice_variant() {
+        for choice in [
+            ToolChoice::auto(),
+            ToolChoice::required(),
+            ToolChoice::function("read_file"),
+        ] {
+            let mut request = ChatCompletionRequest::new(
+                "deepseek-v4-pro",
+                vec![ChatRequestMessage::user("use a tool")],
+            );
+            request.reasoning_effort = Some(ReasoningEffort::High);
+            request.tool_choice = Some(choice);
+            let body = chat_completion_wire_body(&request, "deepseek-v4-pro").unwrap();
+            assert!(body.get("tool_choice").is_none());
+        }
+    }
+
+    #[test]
+    fn deepseek_v4_thinking_repairs_null_assistant_tool_call_content() {
+        let payload = serde_json::json!({
+            "model": "deepseek-v4-pro",
+            "reasoning_effort": "high",
+            "messages": [{
+                "role": "assistant",
+                "content": null,
+                "reasoning_content": "must be replayed",
+                "tool_calls": [{"id": "call-1", "type": "function", "function": {
+                    "name": "read_file", "arguments": "{}"
+                }}]
+            }]
+        });
+        let body = chat_completion_wire_body(&payload, "deepseek-v4-pro").unwrap();
+        assert_eq!(body["messages"][0]["content"], "");
+        assert_eq!(body["messages"][0]["reasoning_content"], "must be replayed");
+    }
+
+    #[test]
+    fn deepseek_v4_non_thinking_and_other_providers_are_not_rewritten() {
+        let request = ChatCompletionRequest::new(
+            "deepseek-v4-flash",
+            vec![ChatRequestMessage::user("hello")],
+        )
+        .with_temperature(1.0)
+        .with_tool_choice(ToolChoice::function("session_title"));
+        let body = chat_completion_wire_body(&request, "deepseek-v4-flash").unwrap();
+        assert_eq!(body["thinking"]["type"], "disabled");
+        assert!(body.get("reasoning_effort").is_none());
+        assert_eq!(body["temperature"], 1.0);
+        assert_eq!(body["tool_choice"]["function"]["name"], "session_title");
+
+        let mut other =
+            ChatCompletionRequest::new("openai-o3-mini", vec![ChatRequestMessage::user("hello")]);
+        other.reasoning_effort = Some(ReasoningEffort::Xhigh);
+        let body = chat_completion_wire_body(&other, "openai-o3-mini").unwrap();
+        assert_eq!(body["reasoning_effort"], "xhigh");
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[tokio::test]
+    async fn deepseek_v4_http_401_is_typed_auth_failure() {
+        use axum::Router;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/v1/chat/completions",
+                    post(|| async { (StatusCode::UNAUTHORIZED, "unauthorized") }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+
+        let mut cfg = minimal_config();
+        cfg.base_url = format!("http://{addr}/v1");
+        cfg.model = "deepseek-v4-pro".to_string();
+        cfg.reasoning_effort = Some(ReasoningEffort::High);
+        let client = SamplingClient::new(cfg).unwrap();
+        let mut request = ChatCompletionRequest::new(
+            "deepseek-v4-pro",
+            vec![ChatRequestMessage::user("use a tool")],
+        );
+        request.reasoning_effort = Some(ReasoningEffort::High);
+
+        let err = match client.chat_completion_stream(request).await {
+            Ok(_) => panic!("synthetic 401 must not produce a stream"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, SamplingError::Auth(_)));
+        assert!(err.to_string().contains("401"));
+        server.abort();
     }
 
     #[test]

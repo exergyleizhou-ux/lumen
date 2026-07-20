@@ -1059,11 +1059,13 @@ impl acp::Agent for MvpAgent {
                         persisted_signals: None,
                         persisted_plan_mode: None,
                         persisted_goal_mode: None,
+                        persisted_expert_mode: None,
                         persisted_announcement_state: None,
                         session_meta: arguments.meta.as_ref(),
                         managed_mcp_expires_at,
                         model_agent_type: model_agent_type.as_deref(),
                         session_model_id,
+                        session_reasoning_effort: None,
                         session_yolo_mode,
                         session_auto_mode: session_auto_mode && !session_yolo_mode,
                         prompt_display_cwd: None,
@@ -1341,7 +1343,7 @@ impl acp::Agent for MvpAgent {
             .map_err(|e| crate::session::persistence::io_error_to_acp(&e))?;
         drop(persistence_timer);
         let crate::session::persistence::PersistedInfoLight {
-            summary,
+            mut summary,
             chat_history,
             plan_state: _,
             plan_mode_state: persisted_plan_mode,
@@ -1350,7 +1352,28 @@ impl acp::Agent for MvpAgent {
             signals: persisted_signals,
             announcement_state: persisted_announcement_state,
             goal_mode_state: _persisted_goal_mode,
+            expert_mode_state: persisted_expert_mode,
         } = persistence_info;
+        // Crash while Expert was consulting/executing: never auto-replay the
+        // write task. Restore the persisted pre-Expert session model/effort
+        // before actor spawn; the actor then reconciles the task to
+        // recovery_required. This also repairs summary.json through the normal
+        // PersistenceMsg protocol instead of a side file mutation.
+        if let Some(expert) = persisted_expert_mode.as_ref()
+            && expert.is_active()
+            && let Some(model_before) = expert.model_before_expert.as_ref()
+        {
+            summary.current_model_id = acp::ModelId::new(model_before.clone());
+            summary.reasoning_effort = expert
+                .reasoning_effort_before_expert
+                .as_deref()
+                .and_then(|value| value.parse().ok());
+            let _ = persistence.tx.send(crate::session::persistence::PersistenceMsg::CurrentModel {
+                model_id: summary.current_model_id.clone(),
+                agent_name: summary.agent_name.clone(),
+                reasoning_effort: Some(summary.reasoning_effort),
+            });
+        }
         let restored_compaction_count = persisted_signals
             .as_ref()
             .map(|s| s.compaction_count as u64)
@@ -1604,11 +1627,13 @@ impl acp::Agent for MvpAgent {
                         persisted_signals,
                         persisted_plan_mode,
                         persisted_goal_mode: _persisted_goal_mode,
+                        persisted_expert_mode,
                         persisted_announcement_state,
                         session_meta: request_meta.as_ref(),
                         managed_mcp_expires_at,
                         model_agent_type: persisted_agent_name.as_deref(),
                         session_model_id: summary.current_model_id.clone(),
+                        session_reasoning_effort: summary.reasoning_effort,
                         session_yolo_mode,
                         session_auto_mode: session_auto_mode && !session_yolo_mode,
                         prompt_display_cwd,

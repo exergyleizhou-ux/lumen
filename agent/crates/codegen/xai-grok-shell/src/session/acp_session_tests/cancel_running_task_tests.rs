@@ -113,6 +113,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 attribution_callback: None,
                 auth_manager: None,
                 state: TokioMutex::new(State {
+                    expert: crate::session::expert::ExpertModeState::default(),
                     running_task: None,
                     pending_inputs: VecDeque::new(),
                     pending_notifications: Vec::new(),
@@ -214,6 +215,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     )),
                 )),
                 goal_enabled: false,
+                expert_enabled: true,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                 goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -225,8 +227,12 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
                 goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
                 storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
-                repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
-                delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
+                repeat_success_guard: std::cell::RefCell::new(
+                    lumen_discipline::RepeatSuccessGuard::new(3),
+                ),
+                delivery_state: std::cell::RefCell::new(
+                    lumen_discipline::DeliverySessionState::default(),
+                ),
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
@@ -325,6 +331,32 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 "loaded chat history should contain the just-persisted prompt"
             );
             let _ = prompt_task.await.expect("prompt task should complete");
+
+            {
+                let mut state = actor.state.lock().await;
+                state.expert = crate::session::expert::ExpertModeState::configured();
+                state
+                    .expert
+                    .start(
+                        "cancel expert execution",
+                        crate::session::expert::ExpertMode::Fast,
+                        crate::session::expert::DEFAULT_EXECUTOR_MODEL,
+                    )
+                    .unwrap();
+                state.expert.phase = crate::session::expert::ExpertPhase::Executing;
+            }
+            actor
+                .cancel_running_task(false, false, false, Some("ctrl_c".to_owned()))
+                .await;
+            let expert = actor.state.lock().await.expert.clone();
+            assert_eq!(
+                expert.feature_state,
+                crate::session::expert::ExpertFeatureState::IdleConfigured
+            );
+            assert_eq!(
+                expert.last_outcome,
+                Some(crate::session::expert::ExpertOutcome::Aborted)
+            );
         })
         .await;
 }
@@ -569,6 +601,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 attribution_callback: None,
                 auth_manager: None,
                 state: TokioMutex::new(State {
+                    expert: crate::session::expert::ExpertModeState::default(),
                     running_task: None,
                     pending_inputs: VecDeque::new(),
                     pending_notifications: Vec::new(),
@@ -673,6 +706,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     )),
                 )),
                 goal_enabled: false,
+                expert_enabled: true,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(false),
                 goal_tracker: Arc::new(parking_lot::Mutex::new(
@@ -684,8 +718,12 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
                 goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
                 storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
-                repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
-                delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
+                repeat_success_guard: std::cell::RefCell::new(
+                    lumen_discipline::RepeatSuccessGuard::new(3),
+                ),
+                delivery_state: std::cell::RefCell::new(
+                    lumen_discipline::DeliverySessionState::default(),
+                ),
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
@@ -815,6 +853,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 hunk_tracker_handle,
             );
             let state = TokioMutex::new(State {
+                expert: crate::session::expert::ExpertModeState::default(),
                 running_task: None,
                 pending_inputs: VecDeque::new(),
                 pending_notifications: Vec::new(),
@@ -950,6 +989,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                     ),
                 ),
                 goal_enabled: false,
+                expert_enabled: true,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
                     false,
@@ -1862,6 +1902,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 hunk_tracker_handle,
             );
             let state = TokioMutex::new(State {
+                expert: crate::session::expert::ExpertModeState::default(),
                 running_task: None,
                 pending_inputs: VecDeque::new(),
                 pending_notifications: Vec::new(),
@@ -1997,6 +2038,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                     ),
                 ),
                 goal_enabled: false,
+                expert_enabled: true,
                 goal_harness_enabled: std::sync::atomic::AtomicBool::new(false),
                 goal_harness_availability_reconciled: std::sync::atomic::AtomicBool::new(
                     false,

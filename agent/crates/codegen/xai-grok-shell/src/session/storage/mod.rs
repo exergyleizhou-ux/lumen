@@ -257,6 +257,8 @@ pub struct PersistedData {
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
+    /// Persisted Expert policy/task state (None for pre-E1 sessions).
+    pub expert_mode_state: Option<crate::session::expert::ExpertModeState>,
 }
 
 /// Persisted data WITHOUT updates - for memory-efficient session loading
@@ -274,6 +276,8 @@ pub struct PersistedDataLight {
     pub announcement_state: Option<crate::session::announcement_state::AnnouncementState>,
     /// Persisted goal mode orchestration state (None for sessions without goal mode)
     pub goal_mode_state: Option<crate::session::goal_tracker::GoalOrchestration>,
+    /// Persisted Expert policy/task state (None for pre-E1 sessions).
+    pub expert_mode_state: Option<crate::session::expert::ExpertModeState>,
 }
 
 /// Result of copying session data
@@ -289,6 +293,8 @@ pub struct CopySessionResult {
     pub tool_state_copied: bool,
     /// Whether `announcement_state.json` was copied.
     pub announcement_state_copied: bool,
+    /// Whether `expert/state.json` was copied (and crash-reconciled).
+    pub expert_mode_state_copied: bool,
     /// Number of `compaction/segment_*.md` (+ `INDEX.md`) files copied from the
     /// source session's compaction archive. `0` when disabled or none exist.
     pub compaction_segments_copied: usize,
@@ -579,6 +585,13 @@ pub trait StorageAdapter: Send + Sync {
         &self,
         info: &Info,
         state: &crate::session::goal_tracker::GoalOrchestration,
+    ) -> io::Result<()>;
+
+    /// Write/update the SessionActor-owned Expert state.
+    async fn write_expert_mode_state(
+        &self,
+        info: &Info,
+        state: &crate::session::expert::ExpertModeState,
     ) -> io::Result<()>;
 
     /// Load all persisted data for a session

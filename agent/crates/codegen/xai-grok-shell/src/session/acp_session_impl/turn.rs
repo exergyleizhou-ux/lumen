@@ -290,7 +290,8 @@ impl SessionActor {
         };
         let availability = self.command_availability().await;
         let mut pending_skill_information: Option<String> = None;
-        let prompt_blocks = match slash_commands::resolve(
+        let mut expert_turn_guard: Option<super::expert_impl::ExpertTurnGuard> = None;
+        let mut prompt_blocks = match slash_commands::resolve(
             prompt_blocks,
             &slash_skills,
             availability,
@@ -313,9 +314,49 @@ impl SessionActor {
                     BuiltinAction::GoalSet {
                         objective,
                         token_budget,
+                        expert_policy,
                     } => {
                         xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        let compose = if expert_policy {
+                            let compose = self.state.lock().await.expert.clone();
+                            if !compose.enabled || !compose.goal_compose_enabled {
+                                self.send_slash_command_output(
+                                    "Goal Expert composition is disabled for this session.",
+                                )
+                                .await;
+                                return ok_end_turn(0, None);
+                            }
+                            Some(compose)
+                        } else {
+                            None
+                        };
                         let reminder = self.setup_goal(&objective, token_budget).await;
+                        if let Some(compose) = compose {
+                            let goal_snapshot = {
+                                let mut tracker = self.goal_tracker.lock();
+                                tracker.configure_expert_policy(
+                                    true,
+                                    compose.goal_consult_cap_per_attempt,
+                                    compose.goal_consult_cap_per_goal,
+                                    compose.goal_restore_model_each_attempt,
+                                );
+                                tracker.snapshot().cloned()
+                            };
+                            if let Some(snapshot) = goal_snapshot {
+                                let _ = self
+                                    .notifications
+                                    .persistence_tx
+                                    .send(PersistenceMsg::GoalModeState(snapshot));
+                            }
+                            let current_tokens =
+                                self.chat_state_handle.get_total_tokens().await as i64;
+                            let (tokens_used, finished_marginal) = self.goal_tokens(current_tokens);
+                            self.goal_notify_sender().emit_goal_updated(
+                                &mut self.goal_tracker.lock(),
+                                tokens_used,
+                                finished_marginal,
+                            );
+                        }
                         vec![text_block(reminder), text_block(objective)]
                     }
                     BuiltinAction::GoalResume => {
@@ -327,6 +368,42 @@ impl SessionActor {
                             }
                             GoalResumeOutcome::Message(msg) => {
                                 self.send_slash_command_output(&msg).await;
+                                return ok_end_turn(0, None);
+                            }
+                        }
+                    }
+                    BuiltinAction::ExpertStart { task, mode, images } => {
+                        xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        match self.begin_expert_turn(&task, mode, images.clone()).await {
+                            Ok((guard, envelope)) => {
+                                expert_turn_guard = Some(guard);
+                                let mut blocks = vec![text_block(envelope), text_block(task)];
+                                blocks.extend(images.into_iter().map(acp::ContentBlock::Image));
+                                blocks
+                            }
+                            Err(code) => {
+                                self.send_slash_command_output(&format!(
+                                    "Expert could not start: {}.",
+                                    code.as_str()
+                                ))
+                                .await;
+                                return ok_end_turn(0, None);
+                            }
+                        }
+                    }
+                    BuiltinAction::ExpertContinue { repair } => {
+                        xai_grok_telemetry::session_ctx::log_event(slash_used);
+                        match self.begin_expert_continuation(repair).await {
+                            Ok((guard, envelope, task)) => {
+                                expert_turn_guard = Some(guard);
+                                vec![text_block(envelope), text_block(task)]
+                            }
+                            Err(code) => {
+                                self.send_slash_command_output(&format!(
+                                    "Expert continuation refused: {}.",
+                                    code.as_str()
+                                ))
+                                .await;
                                 return ok_end_turn(0, None);
                             }
                         }
@@ -402,6 +479,33 @@ impl SessionActor {
                 original_blocks
             }
         };
+        if expert_turn_guard.is_none() {
+            let composed_objective = {
+                let tracker = self.goal_tracker.lock();
+                tracker.snapshot().and_then(|goal| {
+                    (goal.status == crate::session::goal_tracker::GoalStatus::Active
+                        && goal.expert_policy)
+                        .then(|| goal.objective.clone())
+                })
+            };
+            if let Some(objective) = composed_objective {
+                match self.begin_goal_expert_turn(&objective).await {
+                    Ok((guard, envelope)) => {
+                        expert_turn_guard = Some(guard);
+                        prompt_blocks
+                            .insert(0, acp::ContentBlock::Text(acp::TextContent::new(envelope)));
+                    }
+                    Err(code) => {
+                        self.send_slash_command_output(&format!(
+                            "Goal Expert attempt could not start: {}.",
+                            code.as_str()
+                        ))
+                        .await;
+                        return ok_end_turn(0, None);
+                    }
+                }
+            }
+        }
         self.events.begin_turn();
         let model_id = self.current_model_id().await;
         let turn_number = self.chat_state_handle.get_prompt_index().await as u64;
@@ -516,6 +620,10 @@ impl SessionActor {
             Ok(v) => v,
             Err(err) => {
                 tracing::warn!("Invalid prompt: {}", err.message);
+                if let Some(guard) = expert_turn_guard.take() {
+                    self.abort_expert_turn(guard, "expert prompt was rejected before execution")
+                        .await;
+                }
                 return Err(err);
             }
         };
@@ -776,6 +884,27 @@ impl SessionActor {
                 if matches!(round, Ok(TurnOutcome::Completed { refusal: true, .. })) {
                     break round;
                 }
+                if let Some(guard) = expert_turn_guard.as_ref()
+                    && let Some(directive) = self.review_deep_and_maybe_repair(guard, &round).await
+                {
+                    // Goal-composed rounds keep the GoalSummary continuation
+                    // tag (same FIFO history + prune). Standalone deep repair
+                    // injects a plain user message so it never impersonates
+                    // Goal orchestrator traffic or a second runtime.
+                    if guard.goal_composed {
+                        self.inject_goal_continuation_message(directive).await;
+                    } else {
+                        self.chat_state_handle
+                            .push_user_message(ConversationItem::user(directive));
+                    }
+                    continue;
+                }
+                let goal_expert_round = expert_turn_guard
+                    .as_ref()
+                    .is_some_and(|guard| guard.goal_composed);
+                if goal_expert_round && let Some(guard) = expert_turn_guard.take() {
+                    self.finish_expert_turn(guard, &round).await;
+                }
                 let goal_active = laziness_injection_active(
                     self.goal_harness_enabled(),
                     self.goal_tracker.lock().status(),
@@ -784,13 +913,42 @@ impl SessionActor {
                     break round;
                 }
                 match self.run_goal_round_end().await {
-                    GoalRoundDecision::Continue(directive) => {
+                    GoalRoundDecision::Continue(mut directive) => {
+                        let goal_expert_enabled =
+                            self.goal_tracker.lock().snapshot().is_some_and(|goal| {
+                                goal.status == crate::session::goal_tracker::GoalStatus::Active
+                                    && goal.expert_policy
+                            });
+                        if goal_expert_enabled {
+                            let objective = self
+                                .goal_tracker
+                                .lock()
+                                .snapshot()
+                                .map(|goal| goal.objective.clone())
+                                .unwrap_or_default();
+                            match self.begin_goal_expert_turn(&objective).await {
+                                Ok((guard, envelope)) => {
+                                    expert_turn_guard = Some(guard);
+                                    directive = format!("{envelope}\n{directive}");
+                                }
+                                Err(code) => {
+                                    tracing::warn!(
+                                        error_code = code.as_str(),
+                                        "goal expert continuation could not start"
+                                    );
+                                    break round;
+                                }
+                            }
+                        }
                         self.inject_goal_continuation_message(directive).await;
                     }
                     GoalRoundDecision::EndTurn => break round,
                 }
             }
         };
+        if let Some(guard) = expert_turn_guard {
+            self.finish_expert_turn(guard, &result).await;
+        }
         let turn_duration_ms = turn_timer.elapsed().as_millis() as u64;
         let handle_prompt_elapsed_ms = handle_prompt_start.elapsed().as_millis() as u64;
         xai_grok_telemetry::unified_log::info(
@@ -2248,7 +2406,9 @@ impl SessionActor {
                     &mut self.delivery_state.borrow_mut(),
                     lumen_discipline::DeliveryStrictness::Soft,
                 );
-                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
+                    delivery_action
+                {
                     self.push_system_reminder(reminder);
                 }
                 let structured_output = match (
@@ -2292,7 +2452,10 @@ impl SessionActor {
                             &mut self.delivery_state.borrow_mut(),
                             lumen_discipline::DeliveryStrictness::Soft,
                         );
-                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) = delivery_action {
+                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(
+                            ref reminder,
+                        ) = delivery_action
+                        {
                             self.push_system_reminder(reminder);
                         }
                         return Ok(TurnOutcome::Completed {

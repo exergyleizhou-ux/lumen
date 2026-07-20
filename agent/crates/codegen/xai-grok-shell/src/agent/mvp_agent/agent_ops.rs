@@ -533,6 +533,7 @@ impl MvpAgent {
     ) -> crate::session::slash_commands::CommandAvailability {
         crate::session::slash_commands::CommandAvailability {
             goal: self.cfg.borrow().resolve_goal().value,
+            expert: self.cfg.borrow().expert.enabled,
             ..crate::session::slash_commands::CommandAvailability::default()
         }
     }
@@ -2874,15 +2875,22 @@ impl MvpAgent {
             persisted_signals,
             persisted_plan_mode,
             persisted_goal_mode,
+            persisted_expert_mode,
             persisted_announcement_state,
             session_meta,
             managed_mcp_expires_at,
             model_agent_type,
             session_model_id,
+            session_reasoning_effort,
             session_yolo_mode,
             session_auto_mode,
             prompt_display_cwd,
         } = spec;
+        let persisted_expert_mode = persisted_expert_mode.or_else(|| {
+            Some(crate::session::expert::ExpertModeState::from_config(
+                &self.cfg.borrow().expert,
+            ))
+        });
         let _timer = crate::instrumentation_timer!("session.spawn_and_register");
         reject_direct_hub_cloud_meta(session_meta)?;
         let spawn_remote_settings = self.cfg.borrow().remote_settings.clone();
@@ -3221,13 +3229,16 @@ impl MvpAgent {
             );
             agent_definition.user_message_template = template;
         }
-        let (session_model_id, sampling_config) = self
+        let (session_model_id, mut sampling_config) = self
             .apply_agent_model_override(
                 pinned_model.as_ref(),
                 session_model_id,
                 sampling_config,
                 origin_client.clone(),
             );
+        if let Some(reasoning_effort) = session_reasoning_effort {
+            sampling_config.reasoning_effort = Some(reasoning_effort);
+        }
         let max_turns = {
             let cfg = self.cfg.borrow();
             cfg.cli_agent_overrides
@@ -3546,6 +3557,7 @@ impl MvpAgent {
                     persisted_signals,
                     persisted_plan_mode,
                     persisted_goal_mode,
+                    persisted_expert_mode,
                     persisted_announcement_state,
                     self.memory_config.clone(),
                     loc_tracking_enabled,

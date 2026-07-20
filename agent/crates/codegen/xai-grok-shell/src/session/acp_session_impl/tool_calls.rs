@@ -255,6 +255,35 @@ fn resume_action_for(outcome: PlanApprovalOutcome, feedback: Option<String>) -> 
     }
 }
 impl SessionActor {
+    /// Feed the host-owned delivery gate from the canonical successful tool
+    /// result chokepoint.  This deliberately observes the typed result after
+    /// execution; model prose and ACP status updates cannot manufacture
+    /// verification evidence.
+    pub(super) fn record_delivery_evidence_from_tool_result(
+        &self,
+        requested_tool_name: &str,
+        effective_tool_name: &str,
+        result: &ToolRunResult,
+    ) {
+        if result.output.is_error() {
+            return;
+        }
+
+        let is_verify = |name: &str| {
+            name == "verify"
+                || name
+                    .rsplit_once("__")
+                    .is_some_and(|(_, leaf)| leaf == "verify")
+        };
+        let mut delivery = self.delivery_state.borrow_mut();
+        if is_verify(requested_tool_name) || is_verify(effective_tool_name) {
+            delivery.on_verify_ok();
+        }
+        if let ToolsToolOutput::Bash(bash) = &result.output {
+            delivery.on_bash_verification_success(&bash.command, bash.exit_code);
+        }
+    }
+
     /// Merge the canonical `x.ai/tool` identity envelope into a tool-call
     /// event's `_meta`, resolving the tool from the live toolset by wire name.
     pub(super) fn stamp_tool_meta(
@@ -2037,12 +2066,23 @@ impl SessionActor {
         {
             self.signals_handle().record_bare_echo();
         }
+        self.record_delivery_evidence_from_tool_result(
+            requested_tool_name,
+            effective_tool_name,
+            &result,
+        );
         self.record_git_pr_signals(effective_tool_name, &result);
         // Storm breaker: success resets storm for this tool
-        self.storm_breaker.borrow_mut().on_tool_success(effective_tool_name);
+        self.storm_breaker
+            .borrow_mut()
+            .on_tool_success(effective_tool_name);
         // Repeat success guard: detect identical calls
         let args_str = tool_parsed_args.to_string();
-        if let Some(action) = self.repeat_success_guard.borrow_mut().on_tool_success(effective_tool_name, &args_str) {
+        if let Some(action) = self
+            .repeat_success_guard
+            .borrow_mut()
+            .on_tool_success(effective_tool_name, &args_str)
+        {
             use lumen_discipline::RepeatSuccessAction;
             let RepeatSuccessAction::Nudge(ref msg) = action;
             tracing::warn!(
@@ -2274,7 +2314,10 @@ impl SessionActor {
             None => err.to_string(),
         };
         // Feed error to storm breaker
-        self.storm_breaker.borrow_mut().on_tool_error(requested_tool_name, &err_str);
+        let storm_action = self
+            .storm_breaker
+            .borrow_mut()
+            .on_tool_error(requested_tool_name, &err_str);
         let message = match effective_tool_name {
             Some(effective) if effective != requested_tool_name => {
                 format!("Tool `{effective}` failed via `{requested_tool_name}`: {err_str}")
@@ -2298,6 +2341,13 @@ impl SessionActor {
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
         self.chat_state_handle.push_tool_result(tool_chat);
+        if storm_action.is_some()
+            && let Some(directive) = self
+                .maybe_run_expert_storm_breakout(requested_tool_name, &err_str, true)
+                .await
+        {
+            return vec![ConversationItem::user(directive)];
+        }
         vec![]
     }
     async fn send_thought_chunk(&self, text: String, chunk_index: u64) {

@@ -192,6 +192,18 @@ pub enum GoalClassifierVerdict {
 
 // History
 
+fn default_expert_consult_cap_per_attempt() -> u32 {
+    3
+}
+
+fn default_expert_consult_cap_per_goal() -> u32 {
+    15
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalEvent {
@@ -466,6 +478,18 @@ pub struct GoalOrchestration {
     #[serde(default)]
     pub last_session_tokens_seen: Option<i64>,
     pub history: Vec<GoalHistoryEntry>,
+    /// E1.5 quality policy on the existing Goal lifecycle.
+    #[serde(default)]
+    pub expert_policy: bool,
+    /// Rolling consultant usage across Goal rounds.
+    #[serde(default)]
+    pub expert_consult_attempts_used: u32,
+    #[serde(default = "default_expert_consult_cap_per_attempt")]
+    pub expert_consult_cap_per_attempt: u32,
+    #[serde(default = "default_expert_consult_cap_per_goal")]
+    pub expert_consult_cap_per_goal: u32,
+    #[serde(default = "default_true")]
+    pub expert_restore_model_each_attempt: bool,
 
     /// Human-readable explanation set when the goal transitions to a
     /// paused state with a meaningful reason. `Blocked` and `InfraPaused`
@@ -958,6 +982,11 @@ impl GoalTracker {
             parent_tokens_spent: 0,
             last_session_tokens_seen: Some(token_baseline),
             history: Vec::new(),
+            expert_policy: false,
+            expert_consult_attempts_used: 0,
+            expert_consult_cap_per_attempt: default_expert_consult_cap_per_attempt(),
+            expert_consult_cap_per_goal: default_expert_consult_cap_per_goal(),
+            expert_restore_model_each_attempt: true,
             pause_message: None,
             verifier_id,
             classifier_runs_attempted: 0,
@@ -997,6 +1026,32 @@ impl GoalTracker {
     pub fn set_phase(&mut self, phase: GoalPhase) {
         if let Some(o) = &mut self.orchestration {
             o.phase = phase;
+        }
+    }
+
+    pub fn configure_expert_policy(
+        &mut self,
+        enabled: bool,
+        consult_cap_per_attempt: u32,
+        consult_cap_per_goal: u32,
+        restore_model_each_attempt: bool,
+    ) {
+        if let Some(goal) = &mut self.orchestration {
+            goal.expert_policy = enabled;
+            if enabled {
+                goal.expert_consult_cap_per_attempt = consult_cap_per_attempt;
+                goal.expert_consult_cap_per_goal = consult_cap_per_goal;
+                goal.expert_restore_model_each_attempt = restore_model_each_attempt;
+            }
+        }
+    }
+
+    pub fn record_expert_consult_attempts(&mut self, attempts: u32) {
+        if let Some(goal) = &mut self.orchestration {
+            goal.expert_consult_attempts_used = goal
+                .expert_consult_attempts_used
+                .saturating_add(attempts)
+                .min(goal.expert_consult_cap_per_goal);
         }
     }
 
@@ -1355,6 +1410,11 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         parent_tokens_spent: 0,
         last_session_tokens_seen: Some(0),
         history: Vec::new(),
+        expert_policy: false,
+        expert_consult_attempts_used: 0,
+        expert_consult_cap_per_attempt: default_expert_consult_cap_per_attempt(),
+        expert_consult_cap_per_goal: default_expert_consult_cap_per_goal(),
+        expert_restore_model_each_attempt: true,
         pause_message: None,
         verifier_id: generate_verifier_id(),
         classifier_runs_attempted: 0,
@@ -1423,6 +1483,42 @@ mod tests {
         assert_eq!(t.objective(), Some("Build a widget"));
         assert_eq!(t.token_budget(), Some(100_000));
         assert!(t.active_since.is_some());
+    }
+
+    #[test]
+    fn goal_compose_policy_and_rolling_usage_round_trip() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        t.configure_expert_policy(true, 2, 7, true);
+        t.record_expert_consult_attempts(9);
+
+        let json = serde_json::to_string(t.snapshot().unwrap()).unwrap();
+        let restored: GoalOrchestration = serde_json::from_str(&json).unwrap();
+        assert!(restored.expert_policy);
+        assert_eq!(restored.expert_consult_attempts_used, 7);
+        assert_eq!(restored.expert_consult_cap_per_attempt, 2);
+        assert_eq!(restored.expert_consult_cap_per_goal, 7);
+        assert!(restored.expert_restore_model_each_attempt);
+    }
+
+    #[test]
+    fn goal_compose_off_and_resume_preserve_rolling_ledger() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        t.configure_expert_policy(true, 3, 15, true);
+        t.record_expert_consult_attempts(4);
+        assert!(t.pause(GoalPauseReason::User));
+        assert!(t.resume());
+        assert_eq!(t.snapshot().unwrap().expert_consult_attempts_used, 4);
+
+        t.configure_expert_policy(false, 0, 0, false);
+        let goal = t.snapshot().unwrap();
+        assert_eq!(goal.status, GoalStatus::Active);
+        assert!(!goal.expert_policy);
+        assert_eq!(goal.expert_consult_attempts_used, 4);
+        assert_eq!(goal.expert_consult_cap_per_attempt, 3);
+        assert_eq!(goal.expert_consult_cap_per_goal, 15);
+        assert!(goal.expert_restore_model_each_attempt);
     }
 
     #[test]
@@ -2897,6 +2993,11 @@ mod tests {
         // first `goal_tokens` call seeds from `token_baseline`.
         assert_eq!(legacy.parent_tokens_spent, 0);
         assert_eq!(legacy.last_session_tokens_seen, None);
+        assert!(!legacy.expert_policy);
+        assert_eq!(legacy.expert_consult_attempts_used, 0);
+        assert_eq!(legacy.expert_consult_cap_per_attempt, 3);
+        assert_eq!(legacy.expert_consult_cap_per_goal, 15);
+        assert!(legacy.expert_restore_model_each_attempt);
     }
 
     /// Legacy on-disk snapshots carry the dropped `tokens_used` and

@@ -11,9 +11,13 @@ if [[ -z "$KEY" ]]; then
   exit 2
 fi
 
+# Unconditionally ask Cargo to validate/rebuild this checkout. Finding an old
+# release executable is not evidence that L3 exercised the current source.
+(cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+  cargo build --locked -p xai-grok-pager-bin --release)
 BIN="$ROOT/agent/target/release/lumen"
-[[ -x "$BIN" ]] || (cd "$ROOT/agent" && CARGO_BUILD_JOBS=2 cargo build -p xai-grok-pager-bin --release)
 test -x "$BIN"
+BIN_SHA="$(shasum -a 256 "$BIN" | awk '{print $1}')"
 
 HOME_ISO="$(mktemp -d "${TMPDIR:-/tmp}/lumen-l3-home-XXXXXX")"
 PROOF="$ROOT/artifacts/readiness"
@@ -26,12 +30,14 @@ unset XAI_API_KEY GROK_CODE_XAI_API_KEY 2>/dev/null || true
 
 cat >"$HOME_ISO/config.toml" <<'CFG'
 [models]
-default = "deepseek-chat"
-[model.deepseek-chat]
-model = "deepseek-chat"
+default = "deepseek-v4-pro"
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
 base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
 [cli]
 auto_update = false
 CFG
@@ -43,7 +49,7 @@ After both tool results, reply with exactly: L3_STEP_A L3_STEP_B
 Do not invent tool results.'
 
 set +e
-"$BIN" -m deepseek-chat --single "$PROMPT" --output-format plain --always-approve --max-turns 12 \
+"$BIN" -m deepseek-v4-pro --single "$PROMPT" --output-format plain --always-approve --max-turns 12 \
   --debug-file "$DEBUG" >"$OUT" 2>&1
 EC=$?
 set -e
@@ -67,6 +73,8 @@ art = {
   'check_id': 'L3',
   'pass': ok,
   'exit_code': $EC,
+  'binary': r'''$BIN''',
+  'binary_sha256': '$BIN_SHA',
   'tool_request_count': n,
   'tools': tools[:30],
   'call_ids': list(dict.fromkeys(call_ids))[:30],
@@ -80,5 +88,5 @@ raise SystemExit(0 if ok else 1)
 PEC=$?
 rm -rf "$HOME_ISO"
 [[ $PEC -eq 0 ]] || { echo "FAIL: L3 multi-tool" >&2; exit 1; }
-echo "OK: L3 multi-tool signed"
+echo "OK: L3 multi-tool signed binary_sha256=$BIN_SHA"
 exit 0

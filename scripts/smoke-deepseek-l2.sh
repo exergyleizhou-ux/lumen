@@ -11,9 +11,13 @@ if [[ -z "$KEY" ]]; then
   exit 2
 fi
 
+# Unconditionally ask Cargo to validate/rebuild this checkout. Finding an old
+# release executable is not evidence that L2 exercised the current source.
+(cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
+  cargo build --locked -p xai-grok-pager-bin --release)
 BIN="$ROOT/agent/target/release/lumen"
-[[ -x "$BIN" ]] || (cd "$ROOT/agent" && CARGO_BUILD_JOBS=2 cargo build -p xai-grok-pager-bin --release)
 test -x "$BIN"
+BIN_SHA="$(shasum -a 256 "$BIN" | awk '{print $1}')"
 
 WS="$(mktemp -d "${TMPDIR:-/tmp}/lumen-l2-ws-XXXXXX")"
 HOME_ISO="$(mktemp -d "${TMPDIR:-/tmp}/lumen-l2-home-XXXXXX")"
@@ -32,12 +36,14 @@ unset XAI_API_KEY GROK_CODE_XAI_API_KEY 2>/dev/null || true
 
 cat >"$HOME_ISO/config.toml" <<'CFG'
 [models]
-default = "deepseek-chat"
-[model.deepseek-chat]
-model = "deepseek-chat"
+default = "deepseek-v4-pro"
+[model.deepseek-v4-pro]
+model = "deepseek-v4-pro"
 base_url = "https://api.deepseek.com/v1"
 api_backend = "chat_completions"
 env_key = "DEEPSEEK_API_KEY"
+supports_reasoning_effort = true
+reasoning_effort = "high"
 [cli]
 auto_update = false
 CFG
@@ -52,7 +58,7 @@ Do not skip tools."
 
 echo "L2 workspace=$WS"
 set +e
-"$BIN" -m deepseek-chat --cwd "$WS" --single "$PROMPT" \
+"$BIN" -m deepseek-v4-pro --cwd "$WS" --single "$PROMPT" \
   --output-format plain --always-approve --max-turns 12 \
   --debug-file "$DEBUG" >"$OUT" 2>&1
 EC=$?
@@ -93,6 +99,8 @@ art = {
   'check_id': 'L2',
   'pass': ok,
   'exit_code': $EC,
+  'binary': r'''$BIN''',
+  'binary_sha256': '$BIN_SHA',
   'file_answer_ok': bool($FILE_OK),
   'tool_count': len(tools),
   'tools': tools[:20],
@@ -114,5 +122,5 @@ if [[ $PEC -ne 0 ]]; then
   echo "FAIL: L2 min e2e" >&2
   exit 1
 fi
-echo "OK: L2 min e2e signed"
+echo "OK: L2 min e2e signed binary_sha256=$BIN_SHA"
 exit 0

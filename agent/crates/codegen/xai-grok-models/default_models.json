@@ -1,70 +1,116 @@
 {
-  "default": "deepseek-chat",
-  "web_search": "deepseek-chat",
+  "default": "deepseek-v4-pro",
+  "web_search": "deepseek-v4-pro",
   "image_description": "deepseek-chat",
-  "session_summary": "deepseek-chat",
+  "session_summary": "deepseek-v4-flash",
   "models": [
     {
-      "id": "deepseek-chat",
-      "model": "deepseek-chat",
-      "name": "DeepSeek V4 Flash",
-      "description": "DeepSeek V4 Flash — fast, via deepseek-chat alias, 99%+ cache hit",
+      "id": "deepseek-v4-pro",
+      "model": "deepseek-v4-pro",
+      "name": "DeepSeek V4 Pro",
+      "description": "DeepSeek V4 Pro — primary coding executor; official API model ID",
       "context_window": 1000000,
-      "max_completion_tokens": 8192,
-      "temperature": 0.0,
-      "top_p": 1.0,
+      "max_completion_tokens": 393216,
       "api_backend": "chat_completions",
       "supported_in_api": true,
+      "supports_reasoning_effort": true,
+      "reasoning_effort": "high",
+      "reasoning_efforts": [
+        {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "description": "DeepSeek V4 thinking mode",
+          "default": true
+        },
+        {
+          "id": "max",
+          "value": "xhigh",
+          "label": "Maximum Effort",
+          "description": "DeepSeek V4 maximum thinking effort",
+          "default": false
+        }
+      ],
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "byok": true,
+      "auto_compact_threshold_percent": 85,
+      "show_model_fingerprint": true
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "model": "deepseek-v4-flash",
+      "name": "DeepSeek V4 Flash",
+      "description": "DeepSeek V4 Flash — fast fallback executor; official API model ID",
+      "context_window": 1000000,
+      "max_completion_tokens": 393216,
+      "api_backend": "chat_completions",
+      "supported_in_api": true,
+      "supports_reasoning_effort": true,
+      "reasoning_effort": "high",
+      "reasoning_efforts": [
+        {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "description": "DeepSeek V4 thinking mode",
+          "default": true
+        },
+        {
+          "id": "max",
+          "value": "xhigh",
+          "label": "Maximum Effort",
+          "description": "DeepSeek V4 maximum thinking effort",
+          "default": false
+        }
+      ],
       "base_url": "https://api.deepseek.com/v1",
       "env_key": "DEEPSEEK_API_KEY",
       "byok": true,
       "auto_compact_threshold_percent": 80,
-      "compaction_at_tokens": true,
       "show_model_fingerprint": true,
-      "stream_tool_calls": true,
       "laziness_detector": {
         "enabled": true,
         "max_nudges_per_session": 3,
         "idle_threshold_ms": 8000,
         "min_confidence": 0.7
-      },
-      "pricing": {
-        "input": 0.27,
-        "cache_read": 0.014,
-        "output": 1.1,
-        "currency": "USD"
       }
+    },
+    {
+      "id": "deepseek-chat",
+      "model": "deepseek-chat",
+      "name": "DeepSeek V4 Flash (legacy non-thinking alias)",
+      "description": "Compatibility only: routes to DeepSeek V4 Flash non-thinking; retires 2026-07-24 15:59 UTC. Migrate to deepseek-v4-flash.",
+      "context_window": 1000000,
+      "max_completion_tokens": 393216,
+      "temperature": 0.0,
+      "top_p": 1.0,
+      "api_backend": "chat_completions",
+      "supported_in_api": true,
+      "hidden": true,
+      "base_url": "https://api.deepseek.com/v1",
+      "env_key": "DEEPSEEK_API_KEY",
+      "byok": true,
+      "auto_compact_threshold_percent": 80,
+      "show_model_fingerprint": true
     },
     {
       "id": "deepseek-reasoner",
       "model": "deepseek-reasoner",
-      "name": "DeepSeek V4 Pro",
-      "description": "DeepSeek V4 Pro — reasoning, via deepseek-reasoner alias",
+      "name": "DeepSeek V4 Flash (legacy thinking alias)",
+      "description": "Compatibility only: routes to DeepSeek V4 Flash thinking; not V4 Pro; retires 2026-07-24 15:59 UTC. Migrate to deepseek-v4-flash.",
       "context_window": 1000000,
-      "max_completion_tokens": 8192,
+      "max_completion_tokens": 393216,
       "api_backend": "chat_completions",
       "supported_in_api": true,
+      "hidden": true,
       "supports_reasoning_effort": true,
       "reasoning_efforts": [
-        {
-          "id": "low",
-          "value": "low",
-          "label": "Low Effort",
-          "description": "Quick reasoning",
-          "default": false
-        },
-        {
-          "id": "medium",
-          "value": "medium",
-          "label": "Medium Effort",
-          "description": "Standard depth",
-          "default": false
-        },
         {
           "id": "high",
           "value": "high",
           "label": "High Effort",
-          "description": "Deep chain-of-thought",
+          "description": "Legacy alias thinking mode",
           "default": true
         }
       ],
@@ -209,6 +255,44 @@
         "ANTHROPIC_AUTH_TOKEN"
       ],
       "byok": true
+    },
+    {
+      "id": "grok-4.5",
+      "model": "grok-4.5",
+      "name": "Grok 4.5",
+      "description": "xAI Grok 4.5 — bounded consultant and multimodal frontier model; set XAI_API_KEY, GROK_CODE_XAI_API_KEY, or GROK_API_KEY",
+      "context_window": 500000,
+      "api_backend": "responses",
+      "supported_in_api": true,
+      "supports_reasoning_effort": true,
+      "reasoning_efforts": [
+        {
+          "id": "low",
+          "value": "low",
+          "label": "Low Effort",
+          "default": false
+        },
+        {
+          "id": "medium",
+          "value": "medium",
+          "label": "Medium Effort",
+          "default": false
+        },
+        {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "default": true
+        }
+      ],
+      "base_url": "https://api.x.ai/v1",
+      "env_key": [
+        "XAI_API_KEY",
+        "GROK_CODE_XAI_API_KEY",
+        "GROK_API_KEY"
+      ],
+      "byok": true,
+      "show_model_fingerprint": true
     },
     {
       "id": "xai-grok",

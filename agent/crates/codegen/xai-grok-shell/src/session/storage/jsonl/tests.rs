@@ -130,6 +130,57 @@ async fn test_jsonl_round_trip() {
     assert_eq!(loaded.updates.len(), 1);
     assert!(loaded.plan_state.is_some());
 }
+#[tokio::test]
+async fn deepseek_v4_tool_reasoning_survives_jsonl_reload_and_next_turn_conversion() {
+    use std::sync::Arc;
+    use crate::sampling::{Role, ToolCall, conversation_to_chat_messages, rs};
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let info = create_test_info();
+    adapter.init_session(&info, acp::ModelId::new("deepseek-v4-pro")).await.unwrap();
+    let items = vec![
+        ConversationItem::user("inspect the file"),
+        ConversationItem::Reasoning(rs::ReasoningItem {
+            id: "deepseek-r1".to_string(),
+            summary: vec![rs::SummaryPart::SummaryText(rs::SummaryTextContent {
+                text: "I should read the requested file before answering.".to_string(),
+            })],
+            content: None,
+            encrypted_content: None,
+            status: None,
+        }),
+        ConversationItem::assistant_tool_calls(vec![ToolCall {
+            id: Arc::<str>::from("call-read-1"),
+            name: "read_file".to_string(),
+            arguments: Arc::<str>::from(r#"{"path":"README.md"}"#),
+        }]),
+        ConversationItem::tool_result("call-read-1", "verified file contents"),
+        ConversationItem::user("now summarize the evidence"),
+    ];
+    for item in &items {
+        adapter.append_chat_message(&info, item).await.unwrap();
+    }
+
+    let chat_path = adapter.chat_file(&info);
+    let raw_jsonl = tokio::fs::read_to_string(&chat_path).await.unwrap();
+    assert_eq!(raw_jsonl.lines().count(), items.len());
+    assert!(raw_jsonl.contains("call-read-1"));
+    assert!(raw_jsonl.contains("verified file contents"));
+
+    let restored = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf())
+        .load_session(&info).await.unwrap().chat_history;
+    let messages = conversation_to_chat_messages(restored);
+    assert_eq!(messages.len(), 4);
+    assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[1].text_content(), "");
+    assert_eq!(messages[1].reasoning_content.as_deref(), Some("I should read the requested file before answering."));
+    assert_eq!(messages[1].tool_calls.len(), 1);
+    assert_eq!(messages[1].tool_calls[0].id.as_deref(), Some("call-read-1"));
+    assert_eq!(messages[2].role, Role::Tool);
+    assert_eq!(messages[2].tool_call_id.as_deref(), Some("call-read-1"));
+    assert_eq!(messages[2].text_content(), "verified file contents");
+    assert_eq!(messages[3].role, Role::User);
+}
 /// `load_session_without_updates` always defers rewind points while the full
 /// `load_session` / `load_rewind_points` still return them.
 #[tokio::test]
@@ -639,6 +690,162 @@ async fn test_copy_session_data_basic() {
     }
     assert!(loaded.plan_state.is_some());
 }
+
+#[tokio::test]
+async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
+    use crate::session::expert::{
+        DEFAULT_EXECUTOR_MODEL, ExpertFeatureState, ExpertMode, ExpertModeState, ExpertOutcome,
+        ExpertPhase, VisualBrief,
+    };
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let source = Info {
+        id: acp::SessionId::new("expert-source"),
+        cwd: "/source/workspace".to_string(),
+    };
+    adapter.init_session(&source, default_model_id()).await.unwrap();
+    let mut state = ExpertModeState::configured();
+    state
+        .start("modify src/auth.rs", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
+        .unwrap();
+    // Mid deep post-consult (E2): executor already switched; fork must not
+    // replay Active and must restore the pre-Expert model.
+    state.phase = ExpertPhase::ConsultingPost;
+    state.post_consult_enabled = true;
+    state.post_consult_attempts = 1;
+    state.repair_attempts = 0;
+    state.goal_composed_this_task = true;
+    state.visual_brief = Some(VisualBrief {
+        observations: vec!["ui overlap".into()],
+        ..VisualBrief::default()
+    });
+    state.model_before_expert = Some("session-model-before-expert".to_owned());
+    state.reasoning_effort_before_expert = Some("high".to_owned());
+    adapter.write_expert_mode_state(&source, &state).await.unwrap();
+    adapter
+        .update_current_model_and_agent(
+            &source,
+            &acp::ModelId::new(DEFAULT_EXECUTOR_MODEL),
+            None,
+            Some(Some(xai_grok_sampling_types::ReasoningEffort::Xhigh)),
+        )
+        .await
+        .unwrap();
+
+    let light = adapter.load_session_without_updates(&source).await.unwrap();
+    assert_eq!(
+        light.expert_mode_state.as_ref().map(|s| s.phase),
+        Some(ExpertPhase::ConsultingPost)
+    );
+    assert!(
+        light
+            .expert_mode_state
+            .as_ref()
+            .is_some_and(|s| s.post_consult_enabled && s.goal_composed_this_task)
+    );
+
+    let target = Info {
+        id: acp::SessionId::new("expert-copy"),
+        cwd: "/target/workspace".to_string(),
+    };
+    let copied = adapter
+        .copy_session_data(&source, &target, CopySessionOptions::default())
+        .await
+        .unwrap();
+    assert!(copied.expert_mode_state_copied);
+    let loaded = adapter.load_session(&target).await.unwrap();
+    let copied_state = loaded.expert_mode_state.unwrap();
+    assert_eq!(copied_state.feature_state, ExpertFeatureState::IdleConfigured);
+    assert_eq!(copied_state.last_outcome, Some(ExpertOutcome::Interrupted));
+    assert_eq!(copied_state.last_error_code, None);
+    assert_eq!(copied_state.model_before_expert, None);
+    assert_eq!(copied_state.reasoning_effort_before_expert, None);
+    assert!(!copied_state.goal_composed_this_task);
+    assert!(!copied_state.resumable_task);
+    assert_eq!(
+        loaded.summary.current_model_id.0.as_ref(),
+        "session-model-before-expert"
+    );
+    assert_eq!(
+        loaded.summary.reasoning_effort,
+        Some(xai_grok_sampling_types::ReasoningEffort::High)
+    );
+}
+
+#[tokio::test]
+async fn expert_dual_metadata_survives_light_load_and_copy_does_not_replay_active() {
+    use crate::session::expert::{
+        DEFAULT_EXECUTOR_MODEL, DualBundle, DualProposal, ExpertFeatureState, ExpertMode,
+        ExpertModeState, ExpertOutcome, ExpertPhase,
+    };
+    let temp_dir = TempDir::new().unwrap();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    let source = Info {
+        id: acp::SessionId::new("expert-dual-source"),
+        cwd: "/source/workspace".to_string(),
+    };
+    adapter.init_session(&source, default_model_id()).await.unwrap();
+    let mut state = ExpertModeState::configured();
+    state
+        .start("dual production plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+        .unwrap();
+    state.phase = ExpertPhase::Executing;
+    state.model_before_expert = Some("session-before".to_owned());
+    state.dual_result = Some(DualBundle {
+        proposal_a: DualProposal {
+            summary: "A".into(),
+            steps: vec!["step-a".into()],
+            risks: vec![],
+        },
+        proposal_b: DualProposal {
+            summary: "B".into(),
+            steps: vec!["step-b".into()],
+            risks: vec![],
+        },
+        merged_plan: vec!["step-a".into(), "step-b".into()],
+        disagreements: vec!["only_b: step-b".into()],
+        selection_reason: "deterministic".into(),
+        source_a_request_id: Some("req-a".into()),
+        source_b_request_id: Some("req-b".into()),
+        source_a_model: Some(DEFAULT_EXECUTOR_MODEL.into()),
+        source_b_model: Some("grok-4.5".into()),
+        source_a_ok: true,
+        source_b_ok: true,
+        degraded: false,
+    });
+    state.dual_rollout = "opt_in".into();
+    adapter.write_expert_mode_state(&source, &state).await.unwrap();
+
+    let light = adapter.load_session_without_updates(&source).await.unwrap();
+    let light_expert = light.expert_mode_state.as_ref().unwrap();
+    assert_eq!(light_expert.mode, ExpertMode::Dual);
+    assert!(light_expert.dual_result.as_ref().is_some_and(|d| d.source_a_ok));
+    assert_eq!(light_expert.dual_rollout, "opt_in");
+
+    let target = Info {
+        id: acp::SessionId::new("expert-dual-copy"),
+        cwd: "/target/workspace".to_string(),
+    };
+    let copied = adapter
+        .copy_session_data(&source, &target, CopySessionOptions::default())
+        .await
+        .unwrap();
+    assert!(copied.expert_mode_state_copied);
+    let loaded = adapter.load_session(&target).await.unwrap();
+    let copied_state = loaded.expert_mode_state.unwrap();
+    // Active dual task must not replay; dual advisory metadata may remain for
+    // audit but feature is IdleConfigured Interrupted.
+    assert_eq!(copied_state.feature_state, ExpertFeatureState::IdleConfigured);
+    assert_eq!(copied_state.last_outcome, Some(ExpertOutcome::Interrupted));
+    assert_eq!(copied_state.model_before_expert, None);
+    assert!(!copied_state.resumable_task);
+    // dual_result is safe metadata (no secrets/raw); may be retained after recover.
+    if let Some(dual) = copied_state.dual_result {
+        assert!(dual.source_a_request_id.is_some());
+        assert_ne!(dual.source_a_request_id, dual.source_b_request_id);
+    }
+}
+
 #[tokio::test]
 async fn test_copy_session_data_without_plan() {
     let temp_dir = TempDir::new().unwrap();
