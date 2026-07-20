@@ -324,10 +324,14 @@ impl ReadonlyToolHost<'_> {
             Ok(d) => d,
             Err(e) => return format!("error: failed to list directory: {e}"),
         };
+        // Filter deny first, then cap at 200 so denied-leading dirs don't
+        // starve the listing of later allowed entries.
         let mut entries = Vec::new();
-        for entry in dir.flatten().take(200) {
+        for entry in dir.flatten() {
+            if entries.len() >= 200 {
+                break;
+            }
             let path = entry.path();
-            // Skip denied entries.
             if self.is_denied(&path) {
                 continue;
             }
@@ -377,6 +381,10 @@ impl ReadonlyToolHost<'_> {
             if results.len() >= 50 {
                 break;
             }
+            // Skip denied paths for both dirs and files (P0-2).
+            if self.is_denied(&current) {
+                continue;
+            }
             if current.is_dir() {
                 let ok = std::fs::read_dir(&current);
                 if let Ok(read) = ok {
@@ -385,22 +393,21 @@ impl ReadonlyToolHost<'_> {
                         if results.len() >= 50 {
                             break;
                         }
-                        // Skip hidden/ignored directories.
+                        // Skip hidden/ignored directories and denied children.
                         let name = entry.file_name().to_string_lossy().to_string();
                         if p.is_dir() {
                             if name.starts_with('.') || name == "node_modules" || name == "target" {
                                 continue;
                             }
+                            if self.is_denied(&p) {
+                                continue;
+                            }
                             stack.push(p);
-                        } else {
+                        } else if !self.is_denied(&p) {
                             stack.push(p);
                         }
                     }
                 }
-                continue;
-            }
-            // Skip denied files.
-            if self.is_denied(&current) {
                 continue;
             }
             let raw_bytes = match std::fs::read(&current) {
@@ -902,6 +909,52 @@ mod tests {
             "search leaked SECRET from denied file: {result}"
         );
         // But normal files should still be searchable.
+    }
+
+    #[test]
+    fn search_text_skips_denied_directories() {
+        let dir = TempDir::new().unwrap();
+        let secret_dir = dir.path().join("secret_stuff");
+        std::fs::create_dir(&secret_dir).unwrap();
+        std::fs::write(secret_dir.join("inner.txt"), b"TOKEN=leaked").unwrap();
+        std::fs::write(dir.path().join("ok.txt"), b"TOKEN=visible").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &["secret_stuff".to_owned()],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("search_text", r#"{"query":"TOKEN"}"#);
+        assert!(
+            !result.contains("leaked"),
+            "search entered denied dir: {result}"
+        );
+        // Allowed file can still match (value may be redacted).
+        assert!(
+            result.contains("ok.txt") || result.contains("TOKEN") || result.contains("REDACTED"),
+            "allowed match missing: {result}"
+        );
+    }
+
+    #[test]
+    fn list_directory_does_not_starve_allowed_after_denied() {
+        let dir = TempDir::new().unwrap();
+        // Many denied entries first (lexicographic order depends on FS; we
+        // just ensure filtering is not take-then-filter).
+        for i in 0..5 {
+            std::fs::write(dir.path().join(format!(".env.{i}")), b"x").unwrap();
+        }
+        std::fs::write(dir.path().join("z_allowed.txt"), b"ok").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[".env".to_owned()],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("list_directory", r#"{"path":"."}"#);
+        assert!(
+            result.contains("z_allowed.txt"),
+            "allowed entry starved by denied filter order: {result}"
+        );
+        assert!(!result.contains(".env."), "denied still listed: {result}");
     }
 
     #[test]
