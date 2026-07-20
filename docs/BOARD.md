@@ -1,78 +1,54 @@
 # Lumen 看板（A / B / C）
 
-> **规则：** 任何状态变化必须在 5 分钟内改本文件 + session todos。  
-> 上次刷新：**2026-07-20T06:30Z**（UTC）
+> **更新规则（修订）：**  
+> - **只在里程碑更新**（合 PR、CI 终态、用户要进度）  
+> - **禁止** 90s/3min 心跳刷屏、后台 monitor 打断会话  
+> - 上次刷新：**2026-07-20T07:07Z**（UTC）
 
 ---
 
 ## 总览
 
-| 线 | 名称 | 完成度 | 状态 | 阻塞 |
-|----|------|--------|------|------|
-| **A** | 原目标：Expert prove/harden 交付 | **~95%** | 主路径 **已收口** | Windows 真包后置 |
-| **B** | 新计划：grok-build 辩证 P0 升级 | **~98%** | **#127 已 merge** | main CI 排队中 |
-| **C** | 运维：看板 + 盯梢 + 合入 + 队列 | **进行中** | 盯 main tip CI | 无 |
+| 线 | 名称 | 完成度 | 状态 |
+|----|------|--------|------|
+| **A** | Expert prove/harden 交付 | ~95% | **主路径收口**；Windows 真包后置 |
+| **B** | grok-build P0 升级 | **100%** | **#127 已合 + code CI 绿** |
+| **C** | 运维 / 看板 | 纪律已改 | 不后台盯梢；P1 等你下令 |
 
 ---
 
-## A — 原目标（Expert 交付）
+## A — Expert 交付
 
-| 项 | 状态 | 证据 |
-|----|------|------|
-| Dual / tools / repair / evidence | ✅ | main 已合 #123–#126 |
-| CI 绿（main @ #126） | ✅ | run `29718107379` success @ `84df071` |
-| macOS 团队包 | ✅ | release `v0.1.221-macos` |
-| Windows 真 binary | ⏸ 后置 | 有脚本，本 Mac 无真包 |
-| v0.1.222 tag | ⏸ 未做 | B 合入后评估 |
+| 项 | 状态 |
+|----|------|
+| Dual / tools / evidence / GitHub | ✅ main |
+| main CI @ #126 | ✅ |
+| macOS 团队包 v0.1.221-macos | ✅ |
+| Windows 真 binary | ⏸ 后置 |
+| v0.1.222 | ⏸ 未做 |
 
 ---
 
 ## B — grok-build P0
 
-| 项 | 状态 | 细节 |
-|----|------|------|
-| 选型 / PINNED | ✅ | `agent/UPSTREAM.md` |
-| dispatch_locks + cancel 持锁 | ✅ | 已合 main |
-| OSC52 kill switch + LUMEN 别名 | ✅ | 已合 main |
-| 本地测试 | ✅ | clipboard 11；cancel 竞态；cancel local |
-| PR #127 | ✅ **MERGED** | https://github.com/exergyleizhou-ux/lumen/pull/127 |
-| PR CI | ✅ **success** | run `29720503701` |
-| merge commit | ✅ | `f29bd2e` @ 06:30Z |
-| main tip CI | 🔄 **queued** | run `29721885859` |
-| P1 cherry | ⬜ 下一批 | summarize / require_sha / auth… |
-
-**B 结论：** 升级 **已进 main**；差 tip CI 绿作最终确认。
-
----
-
-## C — 运维
-
 | 项 | 状态 |
 |----|------|
-| 持久看板 `docs/BOARD.md` | ✅ |
-| #127 CI 盯梢 → merge | ✅ 完成 |
-| main tip CI 盯梢 | 🔄 run `29721885859` queued |
-| P1 评估 | ⬜ tip 绿后 |
-
-### C 下一批
-
-1. main tip CI 绿  
-2. 本地 `git pull` 对齐 main  
-3. 可选 P1 点状 cherry  
-4. 需要时 v0.1.222  
+| dispatch_locks + cancel 持锁 | ✅ main `f29bd2e` |
+| OSC52 kill switch + LUMEN 别名 | ✅ |
+| PR #127 | ✅ MERGED |
+| main **code** CI | ✅ **success** |
+| main **docs** CI（`abcead0` 仅看板） | 可能仍在跑；**不挡 B 完成** |
 
 ---
 
-## 时间线
+## C — 下一批（等你下令）
 
-| 时间 (UTC) | 事件 |
-|------------|------|
-| ~04:59 | A: main #126 + CI success |
-| 06:01 | B: PR #127 + CI 启动 |
-| 06:30 | B CI success → **merge #127** → main `f29bd2e`；tip CI queued |
+1. 可选 P1 cherry：`/summarize`、require_sha、auth recovery…  
+2. Windows 真包  
+3. v0.1.222  
 
 ---
 
 ## 一句话
 
-**A 收口 · B 已合 main · C 盯 tip CI**
+**A 交付基本完 · B 升级已落地 · 看板不再病态刷、不打断你的任务。**
