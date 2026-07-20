@@ -528,6 +528,7 @@ pub fn classify_install_error(err: &InstallError) -> String {
         InstallError::PluginNotFound { .. } => "not_found",
         InstallError::ShaMismatch { .. } => "sha_mismatch",
         InstallError::InstallFailed { .. } => "install_failed",
+        InstallError::UnpinnedRemoteRefused { .. } => "unpinned_remote_refused",
     }
     .to_string()
 }
@@ -1443,6 +1444,13 @@ mod tests {
         assert_eq!(
             classify_install_error(&InstallError::InstallFailed { detail: "x".into() }),
             "install_failed"
+        );
+        assert_eq!(
+            classify_install_error(&InstallError::UnpinnedRemoteRefused {
+                plugin: "p".into(),
+                url: "u".into(),
+            }),
+            "unpinned_remote_refused"
         );
     }
 
