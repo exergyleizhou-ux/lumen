@@ -173,6 +173,9 @@ pub struct DualProposal {
     pub risks: Vec<String>,
 }
 
+/// Deterministic dual merge algorithm id (audit / status surface).
+pub const DUAL_MERGE_ALGORITHM: &str = "deterministic-v1";
+
 /// Durable dual outcome: two real sources + deterministic merge metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct DualBundle {
@@ -198,6 +201,20 @@ pub struct DualBundle {
     pub source_b_ok: bool,
     #[serde(default)]
     pub degraded: bool,
+    /// Always `deterministic-v1` once merge runs; empty until then.
+    #[serde(default)]
+    pub merge_algorithm: String,
+}
+
+impl DualBundle {
+    /// Product surface: complete | degraded | failed.
+    pub fn status_label(&self) -> &'static str {
+        match (self.source_a_ok, self.source_b_ok) {
+            (true, true) if !self.degraded => "complete",
+            (false, false) => "failed",
+            _ => "degraded",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -231,6 +248,11 @@ impl ConsultBudgetLedger {
                 <= self.token_cap
     }
 
+    /// Remaining consult attempt slots (not token-aware).
+    pub fn remaining_attempts(&self) -> u32 {
+        self.attempt_cap.saturating_sub(self.attempts)
+    }
+
     /// Reserve the call before any bytes leave the process.
     pub fn reserve(&mut self, tokens: u64) -> Result<(), ExpertErrorCode> {
         if !self.can_reserve(tokens) {
@@ -260,6 +282,17 @@ pub struct VerificationSummary {
     pub build_passed: bool,
     pub permission_or_sandbox_failure: bool,
     pub summary: String,
+    /// Optional fingerprint of workspace at verification time (diff/content hash).
+    #[serde(default)]
+    pub workspace_fingerprint: Option<String>,
+    /// Expert task that produced this verification pass.
+    #[serde(default)]
+    pub expert_task_id: Option<String>,
+    #[serde(default)]
+    pub generation: Option<u64>,
+    /// initial | repair — which executor pass this evidence belongs to.
+    #[serde(default)]
+    pub executor_pass: Option<String>,
 }
 
 impl VerificationSummary {
@@ -275,6 +308,27 @@ impl VerificationSummary {
         } else {
             // Unknown, including "verification not run", can never become Completed.
             ExpertOutcome::Partial
+        }
+    }
+
+    /// Repair starts a new verification pass: keep history in notes, reset current.
+    pub fn clear_for_repair_pass(&mut self) {
+        self.outcome = HostVerificationOutcome::Unknown;
+        self.tests_run = 0;
+        self.tests_passed = 0;
+        self.build_ran = false;
+        self.build_passed = false;
+        self.permission_or_sandbox_failure = false;
+        self.summary = "repair pass: host verification reset to Unknown".to_owned();
+        self.workspace_fingerprint = None;
+        self.executor_pass = Some("repair".to_owned());
+    }
+
+    /// Completed requires fingerprint match when both sides present.
+    pub fn matches_workspace(&self, current_fingerprint: &str) -> bool {
+        match &self.workspace_fingerprint {
+            Some(fp) => fp == current_fingerprint,
+            None => false,
         }
     }
 }
@@ -638,6 +692,10 @@ impl ExpertModeState {
         self.phase = ExpertPhase::Triage;
         if repair {
             self.notes.push("bounded repair continuation".to_owned());
+            // New pass must not inherit prior HostVerification success as Completed.
+            self.verification_summary.clear_for_repair_pass();
+            self.verification_summary.expert_task_id = self.task_id.clone();
+            self.verification_summary.generation = Some(self.task_generation);
         }
         self.resumable_task = false;
         self.audit(
@@ -826,13 +884,26 @@ impl ExpertModeState {
                     .push(format!("dual source B unavailable: {}", code.as_str()));
             }
         }
-        let merged = merge_dual_proposals(&bundle.proposal_a, &bundle.proposal_b, bundle.source_a_ok, bundle.source_b_ok);
+        let merged = merge_dual_proposals(
+            &bundle.proposal_a,
+            &bundle.proposal_b,
+            bundle.source_a_ok,
+            bundle.source_b_ok,
+        );
         bundle.merged_plan = merged.merged_plan.clone();
         bundle.disagreements = merged.disagreements;
         bundle.selection_reason = merged.selection_reason;
         bundle.degraded = bundle.degraded || merged.degraded;
-        self.plan = bundle.merged_plan.clone();
-        if bundle.source_a_ok || bundle.source_b_ok {
+        bundle.merge_algorithm = DUAL_MERGE_ALGORITHM.to_owned();
+        // Both sources failed: never present a plausible fake plan.
+        if !bundle.source_a_ok && !bundle.source_b_ok {
+            bundle.merged_plan.clear();
+            self.plan.clear();
+            self.advisory_verdict = Some("dual_failed".to_owned());
+            self.notes
+                .push("executor-only: dual both sources unavailable".to_owned());
+        } else {
+            self.plan = bundle.merged_plan.clone();
             self.advisory_verdict = Some(if bundle.degraded {
                 "dual_advisory_degraded".to_owned()
             } else {
@@ -841,15 +912,6 @@ impl ExpertModeState {
             if bundle.source_b_ok {
                 self.consultant_resolved = resolved_model;
             }
-            if self.last_error_code.as_deref()
-                == Some(ExpertErrorCode::ConsultantUnavailable.as_str())
-                && (bundle.source_a_ok || bundle.source_b_ok)
-            {
-                // Keep degraded notes but do not block executor-only start.
-            }
-        } else {
-            self.notes
-                .push("executor-only: dual both sources unavailable".to_owned());
         }
         self.dual_result = Some(bundle);
         self.audit(
@@ -1228,17 +1290,30 @@ impl ExpertModeState {
             ));
         }
         if self.mode == ExpertMode::Dual || self.dual_result.is_some() {
+            // Product surface: dual is opt_in by default — show rollout clearly.
             if let Some(dual) = &self.dual_result {
                 out.push_str(&format!(
-                    "\nDual: A={} B={} degraded={} disagreements={} rollout={}",
+                    "\nDual: {} | rollout={} (opt_in=explicit /expert dual only unless default_on)\nSource A: ok={} model={} req={}\nSource B: ok={} model={} req={}\nMerge: {} | disagreements={}",
+                    dual.status_label(),
+                    self.dual_rollout,
                     dual.source_a_ok,
+                    dual.source_a_model.as_deref().unwrap_or("none"),
+                    dual.source_a_request_id.as_deref().unwrap_or("none"),
                     dual.source_b_ok,
-                    dual.degraded,
+                    dual.source_b_model.as_deref().unwrap_or("none"),
+                    dual.source_b_request_id.as_deref().unwrap_or("none"),
+                    if dual.merge_algorithm.is_empty() {
+                        DUAL_MERGE_ALGORITHM
+                    } else {
+                        dual.merge_algorithm.as_str()
+                    },
                     dual.disagreements.len(),
-                    self.dual_rollout
                 ));
             } else {
-                out.push_str(&format!("\nDual: pending (rollout={})", self.dual_rollout));
+                out.push_str(&format!(
+                    "\nDual: pending | rollout={} (not active until /expert dual with task)",
+                    self.dual_rollout
+                ));
             }
         }
         if let Some(verdict) = &self.advisory_verdict {
@@ -2254,6 +2329,138 @@ mod tests {
         )
         .is_err());
         assert!(parse_dual_proposal(r#"{"summary":"s","steps":["step one"],"risks":[]}"#).is_ok());
+    }
+
+    #[test]
+    fn dual_request_ids_differ_and_status_labels_are_honest() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state
+            .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
+            .unwrap();
+        let ga = state.reserve_consult(10, 32).unwrap();
+        state
+            .finish_dual_source_a(
+                &ga,
+                (1, 1),
+                Ok(DualProposal {
+                    summary: "a".into(),
+                    steps: vec!["step a".into()],
+                    risks: vec![],
+                }),
+                Some("exec-model".into()),
+            )
+            .unwrap();
+        let gb = state.reserve_consult(10, 32).unwrap();
+        state
+            .finish_dual_source_b(
+                &gb,
+                (1, 1),
+                Ok(DualProposal {
+                    summary: "b".into(),
+                    steps: vec!["step b".into()],
+                    risks: vec![],
+                }),
+                Some("cons-model".into()),
+            )
+            .unwrap();
+        let dual = state.dual_result.as_ref().unwrap();
+        let a = dual.source_a_request_id.as_deref().unwrap();
+        let b = dual.source_b_request_id.as_deref().unwrap();
+        assert_ne!(a, b, "dual must use two independent request ids");
+        assert_eq!(dual.status_label(), "complete");
+        assert_eq!(dual.merge_algorithm, DUAL_MERGE_ALGORITHM);
+        let status = state.status(true);
+        assert!(status.contains("Source A:"));
+        assert!(status.contains("Source B:"));
+        assert!(status.contains("opt_in"));
+        assert!(status.contains(DUAL_MERGE_ALGORITHM));
+    }
+
+    #[test]
+    fn dual_both_sources_fail_clears_plan() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state
+            .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
+            .unwrap();
+        let ga = state.reserve_consult(10, 32).unwrap();
+        state
+            .finish_dual_source_a(
+                &ga,
+                (0, 0),
+                Err(ExpertErrorCode::ConsultantUnavailable),
+                None,
+            )
+            .unwrap();
+        let gb = state.reserve_consult(10, 32).unwrap();
+        state
+            .finish_dual_source_b(
+                &gb,
+                (0, 0),
+                Err(ExpertErrorCode::Timeout),
+                None,
+            )
+            .unwrap();
+        let dual = state.dual_result.as_ref().unwrap();
+        assert_eq!(dual.status_label(), "failed");
+        assert!(dual.merged_plan.is_empty());
+        assert!(state.plan.is_empty());
+        assert_eq!(state.advisory_verdict.as_deref(), Some("dual_failed"));
+    }
+
+    #[test]
+    fn budget_remaining_attempts_gates_dual_pair() {
+        let mut ledger = ConsultBudgetLedger::with_defaults();
+        ledger.attempt_cap = 1;
+        assert_eq!(ledger.remaining_attempts(), 1);
+        assert!(ledger.can_reserve(1));
+        ledger.reserve(1).unwrap();
+        assert_eq!(ledger.remaining_attempts(), 0);
+        assert!(!ledger.can_reserve(1));
+    }
+
+    #[test]
+    fn repair_resets_host_verification_pass() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start("production auth", ExpertMode::Deep, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        state.verification_summary = VerificationSummary {
+            outcome: HostVerificationOutcome::Met,
+            tests_run: 3,
+            tests_passed: 3,
+            build_ran: true,
+            build_passed: true,
+            permission_or_sandbox_failure: false,
+            summary: "green".into(),
+            workspace_fingerprint: Some("abc".into()),
+            expert_task_id: state.task_id.clone(),
+            generation: Some(state.task_generation),
+            executor_pass: Some("initial".into()),
+        };
+        state.restored(
+            Ok(()),
+            ExpertOutcome::Partial,
+        );
+        state.resumable_task = true;
+        state.last_outcome = Some(ExpertOutcome::Partial);
+        state
+            .start_continuation(true, DEFAULT_EXECUTOR_MODEL)
+            .unwrap();
+        assert_eq!(
+            state.verification_summary.outcome,
+            HostVerificationOutcome::Unknown
+        );
+        assert!(state.verification_summary.workspace_fingerprint.is_none());
+        assert_eq!(
+            state.verification_summary.executor_pass.as_deref(),
+            Some("repair")
+        );
     }
 
     #[test]

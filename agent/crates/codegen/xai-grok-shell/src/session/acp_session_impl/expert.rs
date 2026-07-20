@@ -977,6 +977,22 @@ impl SessionActor {
     ) -> Result<(), ExpertErrorCode> {
         let evidence = ConsultEvidenceBundle::build(task, &[], "", "");
         let estimated_input = evidence.estimated_input_tokens();
+        let estimated_tokens =
+            estimated_input.saturating_add(u64::from(max_output_tokens));
+
+        // Dual needs two independent reservations when budget allows both.
+        // remaining=1 ⇒ A-only degraded path (never pretend full dual).
+        let dual_legs_available = {
+            let actor = self.state.lock().await;
+            actor.expert.budget.remaining_attempts()
+        };
+        if dual_legs_available < 2 {
+            let mut actor = self.state.lock().await;
+            actor.expert.notes.push(format!(
+                "dual degraded: only {dual_legs_available} consult attempt(s) remaining (need 2 for full dual)"
+            ));
+            self.persist_expert_snapshot(&actor.expert);
+        }
 
         // Source A: executor-side model, plan-only completion.
         let leg_a = {
@@ -1060,9 +1076,40 @@ impl SessionActor {
                 self.persist_expert_snapshot(&actor.expert);
             }
 
-            // Source B: consultant model.
+            // Source B: consultant model (separate reservation — never free-ride on A).
             let leg_b = {
                 let mut actor = self.state.lock().await;
+                // Token-aware gate: if A already used the last slot, skip B explicitly.
+                if !actor.expert.budget.can_reserve(estimated_tokens)
+                    || actor.expert.budget.remaining_attempts() == 0
+                {
+                    actor.expert.last_error_code =
+                        Some(ExpertErrorCode::BudgetExhausted.as_str().to_owned());
+                    actor.expert.notes.push(
+                        "dual source B skipped: insufficient remaining budget for second independent request"
+                            .to_owned(),
+                    );
+                    let mut bundle = actor.expert.dual_result.take().unwrap_or_default();
+                    bundle.source_b_ok = false;
+                    bundle.degraded = true;
+                    let merged = crate::session::expert::merge_dual_proposals(
+                        &bundle.proposal_a,
+                        &bundle.proposal_b,
+                        bundle.source_a_ok,
+                        false,
+                    );
+                    bundle.merged_plan = merged.merged_plan.clone();
+                    bundle.disagreements = merged.disagreements;
+                    bundle.selection_reason = merged.selection_reason;
+                    bundle.merge_algorithm =
+                        crate::session::expert::DUAL_MERGE_ALGORITHM.to_owned();
+                    actor.expert.plan = bundle.merged_plan.clone();
+                    actor.expert.advisory_verdict = Some("dual_advisory_degraded".to_owned());
+                    actor.expert.dual_result = Some(bundle);
+                    actor.expert.phase = ExpertPhase::Ready;
+                    self.persist_expert_snapshot(&actor.expert);
+                    None
+                } else {
                 match actor
                     .expert
                     .reserve_consult(estimated_input, max_output_tokens)
@@ -1092,13 +1139,17 @@ impl SessionActor {
                         bundle.merged_plan = merged.merged_plan.clone();
                         bundle.disagreements = merged.disagreements;
                         bundle.selection_reason = merged.selection_reason;
+                        bundle.merge_algorithm =
+                            crate::session::expert::DUAL_MERGE_ALGORITHM.to_owned();
                         actor.expert.plan = bundle.merged_plan.clone();
+                        actor.expert.advisory_verdict = Some("dual_advisory_degraded".to_owned());
                         actor.expert.dual_result = Some(bundle);
                         actor.expert.phase = ExpertPhase::Ready;
                         self.persist_expert_snapshot(&actor.expert);
                         None
                     }
                     Err(code) => return Err(code),
+                }
                 }
             };
             if let Some((callback_b, snap_b)) = leg_b {

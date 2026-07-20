@@ -812,6 +812,7 @@ async fn expert_dual_metadata_survives_light_load_and_copy_does_not_replay_activ
         source_a_ok: true,
         source_b_ok: true,
         degraded: false,
+        merge_algorithm: String::new(),
     });
     state.dual_rollout = "opt_in".into();
     adapter.write_expert_mode_state(&source, &state).await.unwrap();
