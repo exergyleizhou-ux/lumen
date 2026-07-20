@@ -7,6 +7,26 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [0.1.221] - 2026-07-20
+
+### Added
+
+- CI gate, host cmd timeout, real evidence tools, dual-B readonly tools (`0b05bc1`)
+- complete E3 dual read-only consultation and rollout (`fd6aa2d`)
+- dual copy/light-load safety tests (`f2e6318`)
+- E3 dual two-source proposals and rollout gates (`ecd8cd7`)
+- E3 dual two-source proposals and rollout gates (`997a389`)
+- complete E2 vision and bounded review workflow (`56f5291`)
+- compose Expert policy with Goal orchestration (`64a955f`)
+- complete E1 session expert workflow (`476ae92`)
+- complete DeepSeek V4 expert E0 readiness (`d14f6dd`)
+
+### Fixed
+
+- skip denied dirs in search and filter-before-cap list (`a1f97dd`)
+- harden consultant readonly tool host sandbox, redaction, timeout, and testing (`bee4695`)
+- canonicalize workspace root in consultant path sandbox (`c9a0611`)
+
 ## [0.1.220] - 2026-07-19
 
 ### Added
