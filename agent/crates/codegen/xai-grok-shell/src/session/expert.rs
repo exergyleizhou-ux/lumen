@@ -1783,7 +1783,7 @@ pub fn should_consult(task: &str, mode: ExpertMode) -> bool {
     !(has_path && change_scope && task.chars().count() <= 240)
 }
 
-fn redact_path(path: &str) -> String {
+pub(crate) fn redact_path(path: &str) -> String {
     let p = path.replace('\\', "/");
     if is_sensitive(&p) {
         return "[REDACTED_PATH]".to_owned();
@@ -1795,7 +1795,9 @@ fn redact_path(path: &str) -> String {
     format!(".../{}", parts[parts.len() - 3..].join("/"))
 }
 
-fn redact_and_truncate(value: &str, max: usize) -> (String, bool) {
+/// Scrub secrets/assignments and cap length. Used by evidence bundles and
+/// consultant readonly tool hosts so tool results never echo raw secrets.
+pub(crate) fn redact_and_truncate(value: &str, max: usize) -> (String, bool) {
     let scrubbed = xai_grok_secrets::redact_secrets(value);
     let mut out = scrubbed
         .lines()

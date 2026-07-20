@@ -6,6 +6,17 @@
 //! execution (workspace-local, redacted, truncated, deny-glob-aware) until
 //! the model returns a plan or the budget expires.  No write tool, bash, or
 //! permission mutation is ever offered.
+//!
+//! ## Security invariants
+//! - All path input goes through `resolve_path` which rejects absolute paths,
+//!   `..` components, null bytes, and paths that canonicalize outside root.
+//! - `read_file` detects binary files (null byte in first 8 KiB) and rejects them.
+//! - `list_directory` honours `deny_globs` both for the target directory and entries.
+//! - `search_text` honours `deny_globs`, skips `.git`/`node_modules`/`target`, and
+//!   refuses binary files.
+//! - Every tool success result is passed through `redact_and_truncate` so
+//!   raw secrets (api_key, password, bearer tokens) never appear in output.
+//! - The tool loop wraps every HTTP call with the remaining deadline timeout.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -15,14 +26,60 @@ use xai_grok_sampling_types::conversation::{
 };
 
 use crate::session::expert::{
-    consultant_tool_allowed, sha256_hex, ConsultEvidenceBundle, ExpertErrorCode,
+    consultant_tool_allowed, redact_and_truncate, redact_path, sha256_hex, ConsultEvidenceBundle,
+    ExpertErrorCode,
 };
+
+// ── Size limits ───────────────────────────────────────────────────
+
+const READ_FILE_MAX: usize = 64_000;
+const LIST_MAX: usize = 8_000;
+const SEARCH_MAX: usize = 16_000;
+const DIFF_MAX: usize = 8_000;
 
 /// Result type for consult-call failures shared with the host-side impl.
 #[derive(Debug)]
 pub struct ConsultCallFailure {
     pub code: ExpertErrorCode,
     pub usage: (u64, u64),
+}
+
+// ── Shared helpers ────────────────────────────────────────────────
+
+/// Classify a transport error string into the appropriate `ExpertErrorCode`.
+fn classify_consult_transport_error(err: &str) -> ExpertErrorCode {
+    let lower = err.to_ascii_lowercase();
+    if lower.contains("401") || lower.contains("unauthorized") {
+        ExpertErrorCode::AuthFailed
+    } else if lower.contains("429") || lower.contains("rate limit") {
+        ExpertErrorCode::RateLimited
+    } else {
+        ExpertErrorCode::ConsultantUnavailable
+    }
+}
+
+/// Try to parse a plan from assistant text; if the top-level parse fails,
+/// attempt to extract the innermost `{...}` JSON object and parse that.
+fn parse_plan_from_assistant_text(text: &str) -> Result<Vec<String>, ExpertErrorCode> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Err(ExpertErrorCode::ParseError);
+    }
+    match crate::session::expert::parse_consult_plan(trimmed) {
+        Ok(plan) => Ok(plan),
+        Err(e) => {
+            // Maybe wrapped in markdown JSON block
+            if let Some(start) = trimmed.find('{') {
+                if let Some(end) = trimmed[start..].rfind('}') {
+                    let inner = &trimmed[start..start + end + 1];
+                    if let Ok(plan) = crate::session::expert::parse_consult_plan(inner) {
+                        return Ok(plan);
+                    }
+                }
+            }
+            Err(e)
+        }
+    }
 }
 
 // ── Tool specs ─────────────────────────────────────────────────────
@@ -138,17 +195,24 @@ impl ReadonlyToolHost<'_> {
         }
     }
 
+    /// Canonical workspace root, lazily computed once per serialised tool call.
+    fn canonical_root(&self) -> Option<PathBuf> {
+        std::fs::canonicalize(self.workspace_root).ok()
+    }
+
     fn resolve_path(&self, relative: &str) -> Option<PathBuf> {
         use std::path::Component;
         let rel = relative.trim();
-        if rel.is_empty() {
+        // Empty, null byte, or control chars at start.
+        if rel.is_empty() || rel.contains('\0') {
             return None;
         }
         let path = Path::new(rel);
-        // Only relative paths; reject absolute and any `..` component.
+        // Absolute path rejected.
         if path.is_absolute() {
             return None;
         }
+        // Reject any ParentDir component (e.g. `..`, `a/../../x`).
         if path
             .components()
             .any(|c| matches!(c, Component::ParentDir))
@@ -156,9 +220,10 @@ impl ReadonlyToolHost<'_> {
             return None;
         }
         // Canonicalize workspace root so macOS /var -> /private/var matches.
-        let root = std::fs::canonicalize(self.workspace_root).ok()?;
+        let root = self.canonical_root()?;
         let candidate = root.join(path);
         let canonical = std::fs::canonicalize(&candidate).ok()?;
+        // Symlink check: canonical path must start with canonical root.
         if canonical.starts_with(&root) {
             Some(canonical)
         } else {
@@ -166,6 +231,10 @@ impl ReadonlyToolHost<'_> {
         }
     }
 
+    /// Check a path (canonical absolute) against the deny globs.
+    /// Matches on the full path string as well as the file name so that
+    /// a deny glob like `".env"` catches both `/root/.env` and a file
+    /// whose full path contains `.env` somewhere.
     fn is_denied(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
         self.deny_globs.iter().any(|g| {
@@ -182,6 +251,24 @@ impl ReadonlyToolHost<'_> {
         })
     }
 
+    /// Return a display-friendly relative path for search results.
+    /// Uses canonical root so macOS /var -> /private/var doesn't strip.
+    fn display_path(&self, path: &Path) -> String {
+        if let Some(root) = self.canonical_root() {
+            if let Ok(rel) = path.strip_prefix(&root) {
+                return rel.display().to_string();
+            }
+        }
+        redact_path(&path.to_string_lossy())
+    }
+
+    /// Heuristic: treat as binary if there is a null byte within the
+    /// first `threshold` bytes.
+    fn is_binary_bytes(data: &[u8], threshold: usize) -> bool {
+        let end = threshold.min(data.len());
+        data[..end].contains(&0u8)
+    }
+
     fn exec_read_file(&self, args: &serde_json::Value) -> String {
         let path_str = match args.get("path").and_then(|v| v.as_str()) {
             Some(p) => p,
@@ -194,21 +281,28 @@ impl ReadonlyToolHost<'_> {
         if self.is_denied(&resolved) {
             return "denied: path is excluded by session deny rules".to_owned();
         }
-        match std::fs::read_to_string(&resolved) {
-            Ok(content) => {
-                let max_chars = 64_000;
-                if content.chars().count() > max_chars {
-                    let truncated: String = content.chars().take(max_chars).collect();
-                    let hash = sha256_hex(content.as_bytes());
-                    format!(
-                        "{truncated}\n--- TRUNCATED ({} chars, sha256={hash}) ---",
-                        content.chars().count()
-                    )
-                } else {
-                    content
-                }
-            }
-            Err(e) => format!("error: failed to read file: {e}"),
+        let raw_bytes = match std::fs::read(&resolved) {
+            Ok(b) => b,
+            Err(e) => return format!("error: failed to read file: {e}"),
+        };
+        // Reject binary files.
+        if Self::is_binary_bytes(&raw_bytes, 8192) {
+            return "error: binary or non-utf8 file".to_owned();
+        }
+        let content = match String::from_utf8(raw_bytes) {
+            Ok(s) => s,
+            Err(_) => return "error: binary or non-utf8 file".to_owned(),
+        };
+        // Always scrub secrets, then truncate.
+        let (scrubbed, truncated) = redact_and_truncate(&content, READ_FILE_MAX);
+        if truncated {
+            let hash = sha256_hex(content.as_bytes());
+            format!(
+                "{scrubbed}\n--- TRUNCATED ({} raw chars, sha256={hash}) ---",
+                content.chars().count()
+            )
+        } else {
+            scrubbed
         }
     }
 
@@ -222,12 +316,21 @@ impl ReadonlyToolHost<'_> {
             Some(p) => p,
             None => return "error: path is outside workspace or cannot be resolved".to_owned(),
         };
+        // Deny check on the directory itself.
+        if self.is_denied(&resolved) {
+            return "denied: path is excluded by session deny rules".to_owned();
+        }
         let dir = match std::fs::read_dir(&resolved) {
             Ok(d) => d,
             Err(e) => return format!("error: failed to list directory: {e}"),
         };
         let mut entries = Vec::new();
         for entry in dir.flatten().take(200) {
+            let path = entry.path();
+            // Skip denied entries.
+            if self.is_denied(&path) {
+                continue;
+            }
             let name = entry.file_name().to_string_lossy().to_string();
             let kind = if entry.file_type().ok().map_or(false, |t| t.is_dir()) {
                 "dir"
@@ -236,18 +339,24 @@ impl ReadonlyToolHost<'_> {
             };
             entries.push(format!("  {kind} {name}"));
         }
-        if entries.is_empty() {
+        let raw = if entries.is_empty() {
             "(empty)".to_owned()
         } else {
             format!("{}\n(200 max)", entries.join("\n"))
-        }
+        };
+        let (scrubbed, _) = redact_and_truncate(&raw, LIST_MAX);
+        scrubbed
     }
 
     fn exec_search_text(&self, args: &serde_json::Value) -> String {
         let query = match args.get("query").and_then(|v| v.as_str()) {
-            Some(q) => q,
+            Some(q) => q.trim(),
             None => return "error: missing `query` argument".to_owned(),
         };
+        // Reject empty or whitespace-only query.
+        if query.is_empty() {
+            return "error: missing or empty query".to_owned();
+        }
         let path_str = args
             .get("path")
             .and_then(|v| v.as_str())
@@ -257,75 +366,85 @@ impl ReadonlyToolHost<'_> {
             Some(p) => p,
             None => return "error: path is outside workspace or cannot be resolved".to_owned(),
         };
-        // Simple recursive grep
+        // Deny check on search root.
+        if self.is_denied(&resolved) {
+            return "denied: path is excluded by session deny rules".to_owned();
+        }
+        // Recursive grep with deny + binary skip.
         let mut results = Vec::new();
         let mut stack = vec![resolved];
-        while let Some(dir) = stack.pop() {
+        while let Some(current) = stack.pop() {
             if results.len() >= 50 {
                 break;
             }
-            if !dir.is_dir() {
-                if let Some(name) = dir.file_name() {
-                    let name_str = name.to_string_lossy();
-                    if name_str.starts_with('.')
-                        || name_str == "node_modules"
-                        || name_str == "target"
-                    {
-                        continue;
-                    }
-                }
-                match std::fs::read_to_string(&dir) {
-                    Ok(content) => {
-                        for (line_no, line) in content.lines().enumerate() {
-                            if results.len() >= 50 {
-                                break;
+            if current.is_dir() {
+                let ok = std::fs::read_dir(&current);
+                if let Ok(read) = ok {
+                    for entry in read.flatten() {
+                        let p = entry.path();
+                        if results.len() >= 50 {
+                            break;
+                        }
+                        // Skip hidden/ignored directories.
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if p.is_dir() {
+                            if name.starts_with('.') || name == "node_modules" || name == "target" {
+                                continue;
                             }
-                            if line.contains(query) {
-                                let truncated: String =
-                                    line.chars().take(200).collect();
-                                let display = dir.strip_prefix(self.workspace_root)
-                                    .unwrap_or(&dir);
-                                results.push(format!("{}:{line_no}:{truncated}", display.display()));
-                            }
+                            stack.push(p);
+                        } else {
+                            stack.push(p);
                         }
                     }
-                    Err(_) => {}
                 }
                 continue;
             }
-            let ok = std::fs::read_dir(&dir);
-            if let Ok(read) = ok {
-                for entry in read.flatten() {
-                    let p = entry.path();
-                    if results.len() >= 50 {
-                        break;
-                    }
-                    if p.is_dir() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if !name.starts_with('.') && name != "node_modules" && name != "target" {
-                            stack.push(p);
-                        }
-                    } else {
-                        stack.push(p);
-                    }
+            // Skip denied files.
+            if self.is_denied(&current) {
+                continue;
+            }
+            let raw_bytes = match std::fs::read(&current) {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            // Skip binary files.
+            if Self::is_binary_bytes(&raw_bytes, 8192) {
+                continue;
+            }
+            let content = match String::from_utf8(raw_bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let display = self.display_path(&current);
+            for (line_no, line) in content.lines().enumerate() {
+                if results.len() >= 50 {
+                    break;
+                }
+                if line.contains(query) {
+                    let truncated: String = line.chars().take(200).collect();
+                    results.push(format!("{display}:{line_no}:{truncated}"));
                 }
             }
         }
-        if results.is_empty() {
+        let raw = if results.is_empty() {
             "(no matches)".to_owned()
         } else {
             results.join("\n")
-        }
+        };
+        let (scrubbed, _) = redact_and_truncate(&raw, SEARCH_MAX);
+        scrubbed
     }
 
     fn exec_read_diff_summary(&self) -> String {
-        // Safe read-only git diff stat; no commit/push
+        // Safe read-only git diff stat; no commit/push.
+        // Prevent git from prompting for credentials on a remote.
         let output = std::process::Command::new("git")
             .arg("-C")
             .arg(self.workspace_root)
-            .args(["diff", "--stat"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .args(["--no-pager", "diff", "--stat"])
             .output();
-        match output {
+        let raw = match output {
             Ok(out) if out.status.success() => {
                 let text = String::from_utf8_lossy(&out.stdout).to_string();
                 if text.trim().is_empty() {
@@ -335,7 +454,9 @@ impl ReadonlyToolHost<'_> {
                 }
             }
             _ => "git diff --stat unavailable".to_owned(),
-        }
+        };
+        let (scrubbed, _) = redact_and_truncate(&raw, DIFF_MAX);
+        scrubbed
     }
 }
 
@@ -387,7 +508,9 @@ pub async fn run_consult_with_optional_tools(
     let mut tool_rounds: u32 = 0;
 
     loop {
-        if Instant::now() >= deadline {
+        // Check overall deadline first.
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
             return Err(ConsultCallFailure {
                 code: ExpertErrorCode::Timeout,
                 usage: (total_prompt, total_completion),
@@ -403,7 +526,6 @@ pub async fn run_consult_with_optional_tools(
                 vec![]
             },
             tool_choice: if remaining_cap == 0 {
-                // Last round: force plan output, no tools
                 Some(ConversationToolChoice::None)
             } else {
                 Some(ConversationToolChoice::Auto)
@@ -413,19 +535,18 @@ pub async fn run_consult_with_optional_tools(
         req.max_output_tokens = Some(max_output_tokens);
         req.temperature = Some(0.1);
 
-        let response = match client.conversation_collect(req).await {
-            Ok(r) => r,
-            Err(err) => {
-                let lower = err.to_string().to_ascii_lowercase();
-                let code = if lower.contains("401") || lower.contains("unauthorized") {
-                    ExpertErrorCode::AuthFailed
-                } else if lower.contains("429") || lower.contains("rate limit") {
-                    ExpertErrorCode::RateLimited
-                } else {
-                    ExpertErrorCode::ConsultantUnavailable
-                };
+        let response = match tokio::time::timeout(remaining, client.conversation_collect(req)).await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(err)) => {
                 return Err(ConsultCallFailure {
-                    code,
+                    code: classify_consult_transport_error(&err.to_string()),
+                    usage: (total_prompt, total_completion),
+                });
+            }
+            Err(_) => {
+                return Err(ConsultCallFailure {
+                    code: ExpertErrorCode::Timeout,
                     usage: (total_prompt, total_completion),
                 });
             }
@@ -439,44 +560,19 @@ pub async fn run_consult_with_optional_tools(
         if tool_calls.is_empty() {
             // Text response — parse as plan JSON
             let text = response.assistant_text();
-            if text.trim().is_empty() {
-                return Err(ConsultCallFailure {
-                    code: ExpertErrorCode::ParseError,
+            return match parse_plan_from_assistant_text(&text) {
+                Ok(plan) => Ok(ConsultantToolResult {
+                    plan,
                     usage: (total_prompt, total_completion),
-                });
-            }
-            // Try parse as plan; if it has extra formatting, try inner JSON
-            let parsed = crate::session::expert::parse_consult_plan(&text);
-            match parsed {
-                Ok(plan) => {
-                    return Ok(ConsultantToolResult {
-                        plan,
-                        usage: (total_prompt, total_completion),
-                    });
-                }
-                Err(e) => {
-                    // Maybe wrapped in markdown JSON block
-                    if let Some(start) = text.find('{') {
-                        if let Some(end) = text[start..].rfind('}') {
-                            let inner = &text[start..start + end + 1];
-                            if let Ok(plan) = crate::session::expert::parse_consult_plan(inner) {
-                                return Ok(ConsultantToolResult {
-                                    plan,
-                                    usage: (total_prompt, total_completion),
-                                });
-                            }
-                        }
-                    }
-                    return Err(ConsultCallFailure {
-                        code: e,
-                        usage: (total_prompt, total_completion),
-                    });
-                }
-            }
+                }),
+                Err(code) => Err(ConsultCallFailure {
+                    code,
+                    usage: (total_prompt, total_completion),
+                }),
+            };
         }
 
         tool_rounds += 1;
-        // Add assistant turn with tool calls
         items.push(ConversationItem::assistant_tool_calls(tool_calls.clone()));
 
         // Execute each tool call and push results
@@ -490,6 +586,13 @@ pub async fn run_consult_with_optional_tools(
 
         // Enforce cap: after max rounds, force a no-tools final completion
         if tool_rounds >= cap {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(ConsultCallFailure {
+                    code: ExpertErrorCode::Timeout,
+                    usage: (total_prompt, total_completion),
+                });
+            }
             let mut final_req = ConversationRequest {
                 items: items.clone(),
                 tools: vec![],
@@ -499,52 +602,37 @@ pub async fn run_consult_with_optional_tools(
             final_req.max_output_tokens = Some(max_output_tokens);
             final_req.temperature = Some(0.1);
 
-            let final_resp = match client.conversation_collect(final_req).await {
-                Ok(r) => r,
-                Err(err) => {
-                    let lower = err.to_string().to_ascii_lowercase();
-                    let code = if lower.contains("401") || lower.contains("unauthorized") {
-                        ExpertErrorCode::AuthFailed
-                    } else if lower.contains("429") || lower.contains("rate limit") {
-                        ExpertErrorCode::RateLimited
-                    } else {
-                        ExpertErrorCode::ConsultantUnavailable
-                    };
-                    return Err(ConsultCallFailure {
-                        code,
-                        usage: (total_prompt, total_completion),
-                    });
-                }
-            };
+            let final_resp =
+                match tokio::time::timeout(remaining, client.conversation_collect(final_req)).await
+                {
+                    Ok(Ok(r)) => r,
+                    Ok(Err(err)) => {
+                        return Err(ConsultCallFailure {
+                            code: classify_consult_transport_error(&err.to_string()),
+                            usage: (total_prompt, total_completion),
+                        });
+                    }
+                    Err(_) => {
+                        return Err(ConsultCallFailure {
+                            code: ExpertErrorCode::Timeout,
+                            usage: (total_prompt, total_completion),
+                        });
+                    }
+                };
             if let Some(u) = &final_resp.usage {
                 total_prompt = total_prompt.saturating_add(u64::from(u.prompt_tokens));
                 total_completion = total_completion.saturating_add(u64::from(u.completion_tokens));
             }
             let text = final_resp.assistant_text();
-            let parsed = crate::session::expert::parse_consult_plan(&text);
-            return match parsed {
+            return match parse_plan_from_assistant_text(&text) {
                 Ok(plan) => Ok(ConsultantToolResult {
                     plan,
                     usage: (total_prompt, total_completion),
                 }),
-                Err(e) => {
-                    // Fall back: try wrapped JSON
-                    if let Some(start) = text.find('{') {
-                        if let Some(end) = text[start..].rfind('}') {
-                            let inner = &text[start..start + end + 1];
-                            if let Ok(plan) = crate::session::expert::parse_consult_plan(inner) {
-                                return Ok(ConsultantToolResult {
-                                    plan,
-                                    usage: (total_prompt, total_completion),
-                                });
-                            }
-                        }
-                    }
-                    Err(ConsultCallFailure {
-                        code: e,
-                        usage: (total_prompt, total_completion),
-                    })
-                }
+                Err(code) => Err(ConsultCallFailure {
+                    code,
+                    usage: (total_prompt, total_completion),
+                }),
             };
         }
     }
@@ -596,14 +684,7 @@ async fn run_legacy_consult(
             });
         }
         Ok(Err(err)) => {
-            let lower = err.to_string().to_ascii_lowercase();
-            let code = if lower.contains("401") || lower.contains("unauthorized") {
-                ExpertErrorCode::AuthFailed
-            } else if lower.contains("429") || lower.contains("rate limit") {
-                ExpertErrorCode::RateLimited
-            } else {
-                ExpertErrorCode::ConsultantUnavailable
-            };
+            let code = classify_consult_transport_error(&err.to_string());
             return Err(ConsultCallFailure {
                 code,
                 usage: (0, 0),
@@ -631,7 +712,6 @@ async fn run_legacy_consult(
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use std::sync::Arc;
 
     #[test]
     fn readonly_tool_allowed_rejects_write_and_bash() {
@@ -652,16 +732,88 @@ mod tests {
             deny_globs: &[],
             tool_call_cap: 5,
         };
-        // Within workspace
         let result = host.execute("read_file", r#"{"path":"safe.txt"}"#);
         assert_eq!(result.trim(), "hello");
 
-        // Outside workspace via ../
         let result2 = host.execute("read_file", r#"{"path":"../etc/passwd"}"#);
         assert!(
             result2.contains("outside workspace") || result2.contains("denied"),
             "got: {result2}"
         );
+    }
+
+    #[test]
+    fn host_rejects_absolute_and_parent_paths() {
+        let dir = TempDir::new().unwrap();
+        let safe = dir.path().join("safe.txt");
+        std::fs::write(&safe, b"data").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        // Absolute path.
+        let r = host.execute("read_file", r#"{"path":"/etc/passwd"}"#);
+        assert!(
+            r.contains("outside") || r.contains("cannot be resolved"),
+            "got: {r}"
+        );
+        // Directory traversal with nested ParentDir.
+        let r2 = host.execute("read_file", r#"{"path":"a/../../x"}"#);
+        assert!(
+            r2.contains("outside") || r2.contains("cannot be resolved"),
+            "got: {r2}"
+        );
+        // Traversal top-level.
+        let r3 = host.execute("read_file", r#"{"path":"../outside"}"#);
+        assert!(
+            r3.contains("outside") || r3.contains("cannot be resolved"),
+            "got: {r3}"
+        );
+        // Null byte via JSON \u0000 (produces null byte in decoded string).
+        let escaped: String = "safe.txt\u{0}/etc/passwd".into();
+        let json = serde_json::to_string(&serde_json::json!({"path": escaped})).unwrap();
+        let r4 = host.execute("read_file", &json);
+        assert!(
+            r4.contains("outside") || r4.contains("cannot be resolved"),
+            "got: {r4}"
+        );
+    }
+
+    #[test]
+    fn read_file_redacts_secrets_in_output() {
+        let dir = TempDir::new().unwrap();
+        let f = dir.path().join("config.txt");
+        std::fs::write(&f, b"API_KEY=super-secret-value\nok=true").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("read_file", r#"{"path":"config.txt"}"#);
+        // Original secret must NOT appear in output.
+        assert!(!result.contains("super-secret-value"), "got: {result}");
+        // Redaction marker should be present (redact_assignments replaces value).
+        assert!(
+            result.contains("REDACTED") || result.contains("API_KEY"),
+            "got: {result}"
+        );
+    }
+
+    #[test]
+    fn read_file_rejects_binary() {
+        let dir = TempDir::new().unwrap();
+        let b = dir.path().join("binary.bin");
+        let mut data = vec![0u8; 100];
+        data[10] = 0; // null byte
+        std::fs::write(&b, &data).unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("read_file", r#"{"path":"binary.bin"}"#);
+        assert!(result.contains("binary"), "got: {result}");
     }
 
     #[test]
@@ -673,10 +825,24 @@ mod tests {
             tool_call_cap: 5,
         };
         let result = host.execute("list_directory", r#"{"path":"../"}"#);
-        assert!(
-            result.contains("outside workspace"),
-            "got: {result}"
-        );
+        assert!(result.contains("outside workspace"), "got: {result}");
+    }
+
+    #[test]
+    fn list_directory_skips_denied_entries() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join("ok.txt"), b"good").unwrap();
+        std::fs::write(dir.path().join(".env"), b"SECRET=x").unwrap();
+        std::fs::write(dir.path().join("secret.yml"), b"key: val").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[".env".to_owned(), "secret".to_owned()],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("list_directory", r#"{"path":"."}"#);
+        assert!(result.contains("ok.txt"), "must list ok.txt, got: {result}");
+        assert!(!result.contains(".env"), "must NOT list .env, got: {result}");
+        assert!(!result.contains("secret.yml"), "must NOT list secret.yml, got: {result}");
     }
 
     #[test]
@@ -694,6 +860,51 @@ mod tests {
     }
 
     #[test]
+    fn deny_globs_block_list_root() {
+        let dir = TempDir::new().unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[".".to_owned()],
+            tool_call_cap: 5,
+        };
+        let r1 = host.execute("list_directory", r#"{"path":"."}"#);
+        assert!(r1.contains("denied"), "got: {r1}");
+        let r2 = host.execute("search_text", r#"{"query":"x"}"#);
+        assert!(r2.contains("denied"), "got: {r2}");
+    }
+
+    #[test]
+    fn search_text_rejects_empty_query() {
+        let dir = TempDir::new().unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        let r = host.execute("search_text", r#"{"query":"  "}"#);
+        assert!(r.contains("empty query"), "got: {r}");
+    }
+
+    #[test]
+    fn search_text_skips_denied_files() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(".env"), b"SECRET=abc").unwrap();
+        std::fs::write(dir.path().join("code.rs"), b"fn main() {}").unwrap();
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[".env".to_owned()],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("search_text", r#"{"query":"SECRET"}"#);
+        // .env is denied so SECRET must NOT appear in search results.
+        assert!(
+            !result.contains("SECRET"),
+            "search leaked SECRET from denied file: {result}"
+        );
+        // But normal files should still be searchable.
+    }
+
+    #[test]
     fn only_allowlist_tools_are_honoured() {
         let dir = TempDir::new().unwrap();
         let host = ReadonlyToolHost {
@@ -704,6 +915,28 @@ mod tests {
         assert!(host.execute("bash", r#"{"command":"rm -rf /"}"#).contains("denied"));
         assert!(host.execute("write_file", r#"{"path":"x","content":"x"}"#).contains("denied"));
         assert!(host.execute("unknown_tool", "{}").contains("denied"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_outside_workspace_is_denied() {
+        use std::os::unix::fs::symlink;
+        let dir = TempDir::new().unwrap();
+        let outside = TempDir::new().unwrap();
+        let secret = outside.path().join("pwn.txt");
+        std::fs::write(&secret, b"stolen").unwrap();
+        let link = dir.path().join("link");
+        let _ = symlink(&secret, &link);
+        let host = ReadonlyToolHost {
+            workspace_root: dir.path(),
+            deny_globs: &[],
+            tool_call_cap: 5,
+        };
+        let result = host.execute("read_file", r#"{"path":"link"}"#);
+        assert!(
+            result.contains("outside") || result.contains("cannot be resolved"),
+            "symlink bypassed sandbox: got {result}"
+        );
     }
 
     #[tokio::test]
@@ -722,14 +955,9 @@ mod tests {
         };
         let client = xai_grok_sampler::SamplingClient::new(cfg).expect("client");
         let evidence = ConsultEvidenceBundle::build("production auth", &[], "", "");
-        let result = run_legacy_consult(
-            &client,
-            &evidence,
-            Duration::from_secs(2),
-            256,
-        )
-        .await
-        .expect("legacy consult");
+        let result = run_legacy_consult(&client, &evidence, Duration::from_secs(2), 256)
+            .await
+            .expect("legacy consult");
         assert!(!result.plan.is_empty());
         assert_eq!(server.requests().len(), 1);
         let requests = server.requests();
@@ -753,15 +981,9 @@ mod tests {
         };
         let client = xai_grok_sampler::SamplingClient::new(cfg).expect("client");
         let evidence = ConsultEvidenceBundle::build("inspect", &[], "", "");
-        let result = run_consult_with_optional_tools(
-            &client,
-            &evidence,
-            Duration::from_secs(2),
-            256,
-            None,
-        )
-        .await
-        .expect("no-tools consult");
+        let result = run_consult_with_optional_tools(&client, &evidence, Duration::from_secs(2), 256, None)
+            .await
+            .expect("no-tools consult");
         assert!(!result.plan.is_empty());
         let requests = server.requests();
         let body = requests[0].body.as_ref().unwrap();
