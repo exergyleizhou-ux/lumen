@@ -32,10 +32,10 @@ jobs:
           set -euo pipefail
           sudo apt-get update -y
           sudo apt-get install -y protobuf-compiler
+          protoc --version
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-
 
       - name: Cache cargo
         uses: actions/cache@v4
@@ -50,15 +50,10 @@ jobs:
 
       - name: cargo check xai-grok-shell
         working-directory: agent
-        env:
-          PATH: ${{ env.PATH }}:${{ github.workspace }}/agent/bin
         run: cargo check -p xai-grok-shell
 
       - name: Expert unit gate
         working-directory: agent
-        env:
-          PATH: ${{ env.PATH }}:${{ github.workspace }}/agent/bin
-          RUST_BACKTRACE: 1
         run: |
           set -euo pipefail
           cargo test -p xai-grok-shell --lib expert_consultant_tools -- --test-threads=1
