@@ -5,6 +5,7 @@ on:
     branches: [main, "codex/**"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -16,7 +17,8 @@ permissions:
 jobs:
   expert-gate:
     name: Expert v2 gate (check + focused tests)
-    runs-on: ubuntu-24.04
+    # ubuntu-latest has broader runner pool than a fixed 24.04 label.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
