@@ -9,7 +9,9 @@ on:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Do not cancel in-progress runs: rapid successive pushes/re-runs were
+  # starving the queue and never finishing when runners are scarce.
+  cancel-in-progress: false
 
 permissions:
   contents: read
