@@ -1130,14 +1130,42 @@ impl SessionActor {
                         self.client_identifier.clone(),
                         Some(self.max_retries),
                     );
-                    run_configured_dual_proposal(
-                        cfg,
-                        &evidence,
-                        "B-consultant",
-                        std::time::Duration::from_secs(timeout_secs),
-                        max_output_tokens,
-                    )
-                    .await
+                    let resolved_model = cfg.model.clone();
+                    let client = xai_grok_sampler::SamplingClient::new(cfg).map_err(|_| {
+                        ConsultCallFailure {
+                            code: ExpertErrorCode::ConsultantUnavailable,
+                            usage: (0, 0),
+                        }
+                    })?;
+                    // Dual source B may use readonly tools when enabled; never a Writer.
+                    let cwd = PathBuf::from(&self.session_info.cwd);
+                    let (readonly_tools, tool_cap) = {
+                        let actor = self.state.lock().await;
+                        (
+                            actor.expert.consultant_readonly_tools,
+                            actor.expert.consultant_tool_call_cap,
+                        )
+                    };
+                    let host = if readonly_tools {
+                        Some(crate::session::expert_consultant_tools::ReadonlyToolHost {
+                            workspace_root: &cwd,
+                            deny_globs: &self.deny_read_globs,
+                            tool_call_cap: tool_cap.min(5).max(1),
+                        })
+                    } else {
+                        None
+                    };
+                    let result =
+                        crate::session::expert_consultant_tools::run_dual_proposal_with_optional_tools(
+                            &client,
+                            &evidence,
+                            "B-consultant",
+                            std::time::Duration::from_secs(timeout_secs),
+                            max_output_tokens,
+                            host.as_ref(),
+                        )
+                        .await?;
+                    Ok((result.proposal, result.usage, resolved_model))
                 };
                 let (ready_b, result_b) =
                     persistence_gated_consult(self.persist_expert_barrier(&snap_b), provider_b)
