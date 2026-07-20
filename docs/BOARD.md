@@ -3,7 +3,7 @@
 > **更新规则（修订）：**  
 > - **只在里程碑更新**（合 PR、CI 终态、用户要进度）  
 > - **禁止** 90s/3min 心跳刷屏、后台 monitor 打断会话  
-> - 上次刷新：**2026-07-20T07:07Z**（UTC）
+> - 上次刷新：**2026-07-20T07:24Z**（UTC）— 验收后修正 docs CI 表述
 
 ---
 
@@ -36,8 +36,11 @@
 | dispatch_locks + cancel 持锁 | ✅ main `f29bd2e` |
 | OSC52 kill switch + LUMEN 别名 | ✅ |
 | PR #127 | ✅ MERGED |
-| main **code** CI | ✅ **success** |
-| main **docs** CI（`abcead0` 仅看板） | 可能仍在跑；**不挡 B 完成** |
+| main **code** CI（`f29bd2e`） | ✅ **success** |
+| main **docs** CI（`abcead0` 看板刷新） | ✅ **success** |
+| tip docs CI（`6c7a677` 看板定稿） | 可能仍在跑（仅 docs，不挡 B） |
+
+本地验收（2026-07-20）：`clipboard_route_*` 11 passed；`cancel_never_overtakes…` ok。
 
 ---
 
@@ -51,4 +54,4 @@
 
 ## 一句话
 
-**A 交付基本完 · B 升级已落地 · 看板不再病态刷、不打断你的任务。**
+**A 交付基本完 · B 升级已落地 · 看板仅里程碑更新、不打断任务。**
