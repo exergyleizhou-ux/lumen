@@ -7,11 +7,30 @@
   },
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
-    "source": "xai-org/grok-build (local Desktop pin)",
-    "policy": "PINNED; security-only cherry-picks"
+    "source": "xai-org/grok-build",
+    "policy": "PINNED; security/correctness cherry-picks only; no full merge",
+    "registered_at": "2026-07-20T09:27:17Z",
+    "lumen_version": "0.1.222",
+    "lumen_main_sha": "537191998c959b66b41f6a057dd3d3bdf16a9eb6",
+    "lumen_main_short": "5371919",
+    "upstream_remote": "https://github.com/xai-org/grok-build.git",
+    "upstream_tip_sha": "ba76b0a683fa52e4e60685017b85905451be17bc",
+    "upstream_tip_short": "ba76b0a",
+    "upstream_product_version": "0.2.106",
+    "upstream_source_rev": "ba69d70c2f7d70a130a323b2becdf137af784c7f",
+    "path_map": "upstream crates/ → lumen agent/crates/",
+    "next_diff_range": "ba76b0a..upstream/main",
+    "do_not_overwrite": [
+      "expert dual/merge/budget/consultant",
+      "lumen-guard",
+      "lumen-discipline",
+      "DeepSeek defaults and smoke",
+      "default_models.json / product default model",
+      "scripts/assert-defaults.sh semantics"
+    ]
   },
   "masterplan_authority": {
-    "desktop": "Lumen Masterplan FINAL-2.0 - \u751f\u4ea7\u7ea7\u6267\u884c\u65b9\u6848.docx",
+    "desktop": "Lumen Masterplan FINAL-2.0 - 生产级执行方案.docx",
     "baseline": "Lumen Masterplan.docx FINAL-1.1",
     "repo": "docs/masterplan/"
   },
@@ -45,9 +64,9 @@
     "scripts/verify-readiness.sh": "834983378a9f00d15a6e4418213cb828b918be1a0ec85d50409950228851fdeb",
     "scripts/probe-local.sh": "72a93b36c1c3178f23ef06f8f3f9ee59db6f5a6b3def445aa6ba79a15da3ec12",
     "scripts/doctor-verticals.sh": "8455b4f9dc5fd50a40c336009f6271f1e467a0a0873161f16080f349e2712d79",
-    "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
+    "docs/masterplan/09-FINAL-2.0-执行路径.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
-    "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
+    "docs/masterplan/00A-来源锁与运行合同.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
   },
   "aggregate_critical_sha256": "6e1fb48c9fc5448b752a101f75b35c284a2526efde899fa667dc808515d890f0"
 }
