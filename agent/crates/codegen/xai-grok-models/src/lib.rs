@@ -149,6 +149,27 @@ mod tests {
     }
 
     #[test]
+    fn kimi_k3_uses_kimi_code_api_contract() {
+        let v = embedded_catalog();
+        let models = v["models"].as_array().expect("models array");
+        let kimi = model_by_id(models, "kimi-k3");
+
+        assert_eq!(kimi["model"], "k3");
+        assert_eq!(kimi["base_url"], "https://api.kimi.com/coding/v1");
+        assert_eq!(kimi["api_backend"], "chat_completions");
+        assert_eq!(kimi["env_key"], "KIMI_CODE_API_KEY");
+        assert_eq!(kimi["byok"], true);
+        assert_eq!(kimi["supports_reasoning_effort"], true);
+        assert_eq!(kimi["reasoning_effort"], "high");
+        assert_eq!(kimi["context_window"], 262_144);
+        let efforts = kimi["reasoning_efforts"].as_array().unwrap();
+        assert_eq!(efforts.len(), 3);
+        assert_eq!(efforts[0]["id"], "low");
+        assert_eq!(efforts[1]["id"], "high");
+        assert_eq!(efforts[2]["id"], "max");
+    }
+
+    #[test]
     fn lumen_catalog_covers_legacy_go_families_and_science_minimax() {
         let v = embedded_catalog();
         let models = v["models"].as_array().expect("models array");
@@ -179,6 +200,7 @@ mod tests {
             "xai-grok",
             "grok-3-mini",
             "kimi-k2",
+            "kimi-k3",
             "moonshot-v1",
             "qwen-max",
             "qwen-plus",

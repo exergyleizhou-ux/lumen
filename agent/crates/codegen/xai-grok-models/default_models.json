@@ -344,6 +344,43 @@
       "byok": true
     },
     {
+      "id": "kimi-k3",
+      "model": "k3",
+      "name": "Kimi K3",
+      "description": "Kimi K3 via Kimi Code; Moderato supports 256K and Allegretto supports up to 1M context; set KIMI_CODE_API_KEY",
+      "context_window": 262144,
+      "api_backend": "chat_completions",
+      "supported_in_api": true,
+      "supports_reasoning_effort": true,
+      "reasoning_effort": "high",
+      "reasoning_efforts": [
+        {
+          "id": "low",
+          "value": "low",
+          "label": "Low Effort",
+          "description": "Kimi K3 low reasoning effort",
+          "default": false
+        },
+        {
+          "id": "high",
+          "value": "high",
+          "label": "High Effort",
+          "description": "Kimi K3 high reasoning effort",
+          "default": true
+        },
+        {
+          "id": "max",
+          "value": "max",
+          "label": "Maximum Effort",
+          "description": "Kimi K3 maximum reasoning effort",
+          "default": false
+        }
+      ],
+      "base_url": "https://api.kimi.com/coding/v1",
+      "env_key": "KIMI_CODE_API_KEY",
+      "byok": true
+    },
+    {
       "id": "moonshot-v1",
       "model": "moonshot-v1-8k",
       "name": "Moonshot V1 8K",
