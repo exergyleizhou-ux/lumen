@@ -114,10 +114,26 @@ impl XaiProtoBuilder {
 
         // Can only process one input file when using --dependency_out=FILE.
         for proto in protos {
+            // protoc requires dependency_out and descriptor_set_out to be file
+            // paths. Unix device paths such as /dev/stdout and /dev/null do
+            // not exist on Windows, so use an isolated temporary directory and
+            // read the dependency file after protoc exits.
+            let output_dir = tempfile::TempDir::new().context("create protoc output directory")?;
+            let dependency_path = output_dir.path().join("dependencies.d");
+            let descriptor_path = output_dir.path().join("descriptor.pb");
             let mut command = Command::new(protoc.unwrap_or(Path::new("protoc")));
-            command
-                .arg("--dependency_out=/dev/stdout")
-                .arg("--descriptor_set_out=/dev/null");
+            command.arg(format!(
+                "--dependency_out={}",
+                dependency_path
+                    .to_str()
+                    .context("temporary path not UTF-8")?
+            ));
+            command.arg(format!(
+                "--descriptor_set_out={}",
+                descriptor_path
+                    .to_str()
+                    .context("temporary path not UTF-8")?
+            ));
 
             // Add protoc's well-known types include directory first (if found).
             // This is needed for Bazel sandboxed builds where protoc and its
@@ -138,20 +154,22 @@ impl XaiProtoBuilder {
             command.stdin(Stdio::null());
             command.stderr(Stdio::inherit());
 
-            let output = command.output().context("protoc command failed")?;
-            if !output.status.success() {
+            let status = command.status().context("protoc command failed")?;
+            if !status.success() {
                 return Err(anyhow::anyhow!("protoc command failed"));
             }
 
             let output =
-                String::from_utf8(output.stdout).context("protoc command output not UTF-8")?;
+                fs::read_to_string(&dependency_path).context("read protoc dependency output")?;
 
             let mut lines = output.lines();
             let first_line = lines.next().context("protoc command output is empty")?;
-            let prefix = "/dev/null:";
-            let rem = first_line.strip_prefix(prefix).with_context(|| {
-                format!("protoc command output must start with /dev/null: {output:?}")
-            })?;
+            // The dependency file is Makefile syntax: `<descriptor>: <deps>`.
+            // Split on the delimiter including its following space so a
+            // Windows drive-letter colon is never mistaken for the separator.
+            let (_, rem) = first_line
+                .split_once(": ")
+                .with_context(|| format!("invalid protoc dependency output: {output:?}"))?;
             for line in iter::once(rem).chain(lines) {
                 let line = line.trim();
                 let line = line.strip_suffix("\\").unwrap_or(line);
