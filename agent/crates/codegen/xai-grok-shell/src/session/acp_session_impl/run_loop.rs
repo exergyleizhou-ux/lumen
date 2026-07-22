@@ -270,6 +270,13 @@ pub(super) async fn run_session(
             .feedback_manager.shutdown(session.upload_queue.get()). await; if ! session
             .startup_hints.is_subagent { session.persist_background_task_manifest().
             await; } cleanup_session_scratch(& session); return; }; match cmd {
+            SessionCommand::BeginScienceCsv(command) => { let command = *command; let result = session.prepare_science_csv(command.store, command.context,
+            command.fixture_path, command.fixture); let _ = command.respond_to.send(result); }
+            SessionCommand::FinishScienceCsv(command) => { let command = *command; let result = Box::pin(session.finish_science_csv(command.prepared, command.decision, command.reason)).await; let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceSshScpAdmission(command) => { let command = *command; let result = session.prepare_science_ssh_scp_admission(command.store, command.context, command.policy, command.request); let _ = command.respond_to.send(result); }
+            SessionCommand::FinishScienceSshScpAdmission(command) => { let command = *command; let result = session.finish_science_ssh_scp_admission(command.prepared, command.decision); let _ = command.respond_to.send(result); }
+            SessionCommand::ExecuteScienceSshScpOfflineTransport(command) => { let command = *command; let result = session.execute_science_ssh_scp_offline_transport(command.store, command.ticket, command.outcome); let _ = command.respond_to.send(result); }
+            /*
             SessionCommand::BeginScienceCsv { store, context, fixture_path, fixture,
             respond_to } => { let result = session.prepare_science_csv(store, context,
             fixture_path, fixture); let _ = respond_to.send(result); }
@@ -285,6 +292,7 @@ pub(super) async fn run_session(
             SessionCommand::ExecuteScienceSshScpOfflineTransport { store, ticket, outcome,
             respond_to } => { let result = session.execute_science_ssh_scp_offline_transport(
             store, ticket, outcome); let _ = respond_to.send(result); }
+            */
             SessionCommand::Initialize { system_prompt } => { session
             .initialize(system_prompt). await; let s = session.clone(); let handle =
             tokio::task::spawn_local(async move { s.build_prefix_background(). await });

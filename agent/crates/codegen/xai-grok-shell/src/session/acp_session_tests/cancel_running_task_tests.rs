@@ -784,9 +784,16 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 workspace_ops: xai_grok_workspace::WorkspaceOps::for_test(),
                 trace_config_template: std::cell::RefCell::new(None),
             });
-            let _ = actor
-                .process_conversation_turn_with_recovery("disabled-memory", None, None, None)
-                .await;
+            // The turn processor has a deliberately large state machine. Keep its
+            // opaque future off Tokio's default current-thread test stack while
+            // preserving the real production call and all persistence assertions.
+            let _ = Box::pin(actor.process_conversation_turn_with_recovery(
+                "disabled-memory",
+                None,
+                None,
+                None,
+            ))
+            .await;
             let (flush_tx, flush_rx) = tokio::sync::oneshot::channel();
             persistence
                 .tx

@@ -41,18 +41,20 @@ impl SessionHandle {
         };
         let (respond_to, response) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::ExecuteScienceSshScpOfflineTransport {
-                store,
-                ticket,
-                outcome,
-                respond_to,
-            })
+            .send(SessionCommand::ExecuteScienceSshScpOfflineTransport(
+                Box::new(
+                    crate::session::commands::ExecuteScienceSshScpOfflineTransport {
+                        store,
+                        ticket,
+                        outcome,
+                        respond_to,
+                    },
+                ),
+            ))
             .map_err(|_| ScienceError::Invalid("session actor unavailable".into()))?;
-        Ok(Some(
-            response
-                .await
-                .map_err(|_| ScienceError::Invalid("session actor stopped".into()))??,
-        ))
+        Ok(Some(response.await.map_err(|_| {
+            ScienceError::Invalid("session actor stopped".into())
+        })??))
     }
 
     /// Executes the P4 ordering invariant:
@@ -75,13 +77,15 @@ impl SessionHandle {
 
         let (begin_tx, begin_rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::BeginScienceSshScpAdmission {
-                store,
-                context,
-                policy,
-                request,
-                respond_to: begin_tx,
-            })
+            .send(SessionCommand::BeginScienceSshScpAdmission(Box::new(
+                crate::session::commands::BeginScienceSshScpAdmission {
+                    store,
+                    context,
+                    policy,
+                    request,
+                    respond_to: begin_tx,
+                },
+            )))
             .map_err(|_| ScienceError::Invalid("session actor unavailable".into()))?;
         let Some(prepared) = begin_rx
             .await
@@ -122,11 +126,13 @@ impl SessionHandle {
         };
         let (finish_tx, finish_rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::FinishScienceSshScpAdmission {
-                prepared,
-                decision,
-                respond_to: finish_tx,
-            })
+            .send(SessionCommand::FinishScienceSshScpAdmission(Box::new(
+                crate::session::commands::FinishScienceSshScpAdmission {
+                    prepared,
+                    decision,
+                    respond_to: finish_tx,
+                },
+            )))
             .map_err(|_| ScienceError::Invalid("session actor unavailable".into()))?;
         finish_rx
             .await

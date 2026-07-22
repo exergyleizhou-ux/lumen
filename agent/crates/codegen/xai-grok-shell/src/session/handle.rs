@@ -197,21 +197,21 @@ impl SessionHandle {
         use xai_grok_workspace::permission::{AccessKind, Decision};
         let (begin_tx, begin_rx) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::BeginScienceCsv {
-                store,
-                context,
-                fixture_path,
-                fixture,
-                respond_to: begin_tx,
-            })
+            .send(SessionCommand::BeginScienceCsv(Box::new(
+                crate::session::commands::BeginScienceCsv {
+                    store,
+                    context,
+                    fixture_path,
+                    fixture,
+                    respond_to: begin_tx,
+                },
+            )))
             .map_err(|_| {
                 xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
             })?;
-        let prepared = begin_rx
-            .await
-            .map_err(|_| {
-                xai_grok_science::ScienceError::Invalid("session actor stopped".into())
-            })??;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
         let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
             "science-csv-{}",
             prepared.ticket.run_id.0
@@ -236,7 +236,10 @@ impl SessionHandle {
         let (decision, reason) = match permission {
             Err(_) => (
                 xai_grok_science::ApprovalDecision::Timeout,
-                format!("permission request timed out after {} ms", approval_timeout.as_millis()),
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
             ),
             Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
             Ok(Decision::Ask) => (
@@ -257,12 +260,14 @@ impl SessionHandle {
         };
         let (respond_to, response) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::FinishScienceCsv {
-                prepared,
-                decision,
-                reason,
-                respond_to,
-            })
+            .send(SessionCommand::FinishScienceCsv(Box::new(
+                crate::session::commands::FinishScienceCsv {
+                    prepared,
+                    decision,
+                    reason,
+                    respond_to,
+                },
+            )))
             .map_err(|_| {
                 xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
             })?;

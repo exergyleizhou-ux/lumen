@@ -1583,7 +1583,7 @@ pub(crate) async fn spawn_session_actor(
     tokio::task::spawn_local(async move {
         xai_grok_telemetry::session_ctx::with_session_ctx(
             telemetry_ctx,
-            run_session(
+            Box::pin(run_session(
                 session,
                 cmd_rx,
                 chat_state_event_rx,
@@ -1592,7 +1592,7 @@ pub(crate) async fn spawn_session_actor(
                 codebase_indexes,
                 index_root_for_session,
                 fs_watch_caps,
-            ),
+            )),
         )
         .await;
         let _ = session_done_tx.send(());

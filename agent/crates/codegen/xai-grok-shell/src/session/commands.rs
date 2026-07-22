@@ -98,6 +98,43 @@ pub struct PreparedScienceSshScpAdmission {
     pub(crate) store: xai_grok_science::ScienceStore,
     pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
 }
+pub struct BeginScienceCsv {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) fixture_path: std::path::PathBuf,
+    pub(crate) fixture: Vec<u8>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceCsv>>,
+}
+pub struct FinishScienceCsv {
+    pub(crate) prepared: PreparedScienceCsv,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
+}
+pub struct BeginScienceSshScpAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) policy: xai_grok_science::connector::ConnectorPolicy,
+    pub(crate) request: xai_grok_science::connector::ConnectorRequest,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<Option<PreparedScienceSshScpAdmission>>>,
+}
+pub struct FinishScienceSshScpAdmission {
+    pub(crate) prepared: PreparedScienceSshScpAdmission,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>>,
+    >,
+}
+pub struct ExecuteScienceSshScpOfflineTransport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+    pub(crate) outcome: xai_grok_science::connector::OfflineTransportOutcome,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
+    >,
+}
 /// Priority levels for notification drain timing.
 ///
 /// Ordering: `Next < Later` (derived from declaration order).
@@ -125,55 +162,12 @@ impl NotificationSource {
 pub enum SessionCommand {
     /// S4 phase one: create the durable run and pending approval before the
     /// caller awaits this session's production permission manager.
-    BeginScienceCsv {
-        store: xai_grok_science::ScienceStore,
-        context: xai_grok_science::RunContext,
-        fixture_path: std::path::PathBuf,
-        fixture: Vec<u8>,
-        respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceCsv>>,
-    },
-    /// S4 phase two: finish the durable approval and, only for Allow, dispatch
-    /// the computation through `WorkspaceOps::call_tool`.
-    FinishScienceCsv {
-        prepared: PreparedScienceCsv,
-        decision: xai_grok_science::ApprovalDecision,
-        reason: String,
-        respond_to:
-            oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
-    },
-    /// P4 phase one: the actor creates a durable, redacted SSH/SCP admission
-    /// record before the handle requests any permission. `None` is a denied
-    /// admission and must never cause a permission request or transport call.
-    BeginScienceSshScpAdmission {
-        store: xai_grok_science::ScienceStore,
-        context: xai_grok_science::RunContext,
-        policy: xai_grok_science::connector::ConnectorPolicy,
-        request: xai_grok_science::connector::ConnectorRequest,
-        respond_to: oneshot::Sender<
-            xai_grok_science::Result<Option<PreparedScienceSshScpAdmission>>,
-        >,
-    },
-    /// P4 phase two: persist the terminal Lumen permission result. An Allow
-    /// returns only the opaque admission ticket; no SSH/SCP transport exists in
-    /// this command and therefore no remote action can be triggered here.
-    FinishScienceSshScpAdmission {
-        prepared: PreparedScienceSshScpAdmission,
-        decision: xai_grok_science::ApprovalDecision,
-        respond_to: oneshot::Sender<
-            xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>>,
-        >,
-    },
-    /// P4 offline-only transport model. This stays on the SessionActor so the
-    /// fake cannot become a second execution authority; it has no network or
-    /// process capability and only records deterministic terminal semantics.
-    ExecuteScienceSshScpOfflineTransport {
-        store: xai_grok_science::ScienceStore,
-        ticket: xai_grok_science::connector::AdmissionTicket,
-        outcome: xai_grok_science::connector::OfflineTransportOutcome,
-        respond_to: oneshot::Sender<
-            xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
-        >,
-    },
+    BeginScienceCsv(Box<BeginScienceCsv>),
+    /// Keep Science payloads off the main command enum stack footprint.
+    FinishScienceCsv(Box<FinishScienceCsv>),
+    BeginScienceSshScpAdmission(Box<BeginScienceSshScpAdmission>),
+    FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
+    ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
     Initialize {
         system_prompt: String,
     },
