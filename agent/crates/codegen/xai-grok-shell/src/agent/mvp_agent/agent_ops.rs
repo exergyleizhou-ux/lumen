@@ -2045,6 +2045,36 @@ impl MvpAgent {
             )
             .await
     }
+
+    /// S2 import entry: verifies the science context targets this SessionActor
+    /// and delegates to the session handle's begin/permission/finish protocol.
+    pub async fn run_science_import(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        source_path: PathBuf,
+        bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::import::ImportResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_import_with_approval_timeout(
+                store,
+                context,
+                source_path,
+                bytes,
+                approval_timeout,
+            )
+            .await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,

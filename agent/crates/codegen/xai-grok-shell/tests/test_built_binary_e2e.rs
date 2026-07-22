@@ -1017,7 +1017,9 @@ async fn test_stdio_science_csv_allow_product_path() {
             .await
             .expect("start mock server");
         let workdir = git_workdir();
-        let evidence = tempfile::tempdir().expect("create science evidence root");
+        // The product enforces store/artifact roots inside the session cwd.
+        let store_root = workdir.path().join("science-store");
+        let artifact_root = workdir.path().join("science-artifacts");
         let fixture = workdir.path().join("micro.csv");
         std::fs::copy(
             concat!(
@@ -1039,8 +1041,8 @@ async fn test_stdio_science_csv_allow_product_path() {
                     "sessionId": session_id.0.as_ref(),
                     "projectId": "science-product-allow",
                     "ownerId": "science-owner",
-                    "storeRoot": evidence.path().join("store"),
-                    "artifactRoot": evidence.path().join("artifacts"),
+                    "storeRoot": store_root,
+                    "artifactRoot": artifact_root,
                     "fixturePath": fixture,
                     "approvalTimeoutMs": 5_000,
                 }),
@@ -1062,11 +1064,8 @@ async fn test_stdio_science_csv_allow_product_path() {
                 .as_array()
                 .is_some_and(|items| items.len() == 2)
         );
-        assert!(
-            evidence.path().join("store").exists(),
-            "durable store was not created"
-        );
-        let store = xai_grok_science::ScienceStore::new(evidence.path().join("store"));
+        assert!(store_root.exists(), "durable store was not created");
+        let store = xai_grok_science::ScienceStore::new(&store_root);
         let run_id = xai_grok_science::RunId::new(
             result["run"]["context"]["run_id"]
                 .as_str()
@@ -1081,17 +1080,115 @@ async fn test_stdio_science_csv_allow_product_path() {
             events.windows(2).all(|items| items[0].seq + 1 == items[1].seq),
             "event sequence is not monotonic: {events:?}"
         );
-        let reopened = xai_grok_science::ScienceStore::new(evidence.path().join("store"));
+        let reopened = xai_grok_science::ScienceStore::new(&store_root);
         assert_eq!(
             events,
             reopened.events_after(&run_id, 0, 100).expect("replay after reopen"),
             "restart replay must preserve every event field"
         );
-    });
+    })
+    .await;
 }
 
-/// A real ACP client cancellation must durably deny the science call and must
-/// not create artifacts or a tool-start event.
+/// Science GC1 product proof: a spawned `lumen agent stdio` process imports
+/// CSV and FASTA fixtures through the SessionActor product path (begin →
+/// production permission bridge → formal execute-tool transit → kernel
+/// verification). Each run persists an artifact with a content-sniffed MIME,
+/// a structured preview record bound to the artifact hash, and evidence.
+#[tokio::test]
+#[ignore]
+async fn test_stdio_science_import_csv_fasta_product_path() {
+    with_local_set(|| async {
+        let server = MockInferenceServer::start()
+            .await
+            .expect("start mock server");
+        let workdir = git_workdir();
+        // The product enforces store/artifact roots inside the session cwd.
+        let store_root = workdir.path().join("science-store");
+        let artifact_root = workdir.path().join("science-artifacts");
+        for name in ["micro.csv", "micro.fasta"] {
+            std::fs::copy(
+                format!(
+                    "{}/../xai-grok-science/fixtures/{name}",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                workdir.path().join(name),
+            )
+            .expect("copy fixed science fixture");
+        }
+
+        let client = GrokStdioClient::spawn(&server, workdir.path()).await;
+        client.initialize_with_timeout().await;
+        let session_id = client.create_session_with_timeout(workdir.path()).await;
+
+        for (name, expected_mime) in [("micro.csv", "text/csv"), ("micro.fasta", "text/x-fasta")]
+        {
+            let response = tokio::time::timeout(
+                Duration::from_secs(30),
+                client.ext_method(
+                    "x.ai/science/import_preview",
+                    serde_json::json!({
+                        "sessionId": session_id.0.as_ref(),
+                        "projectId": "science-product-import",
+                        "ownerId": "science-owner",
+                        "storeRoot": store_root,
+                        "artifactRoot": artifact_root,
+                        "sourcePath": workdir.path().join(name),
+                        "approvalTimeoutMs": 5_000,
+                    }),
+                ),
+            )
+            .await
+            .expect("science import timed out")
+            .unwrap_or_else(|error| {
+                panic!(
+                    "science import failed: {error:?}\nstderr:\n{}",
+                    client.stderr()
+                )
+            });
+            let result: serde_json::Value =
+                serde_json::from_str(response.0.get()).expect("science import returned JSON");
+            assert_eq!(result["run"]["state"], "succeeded", "result: {result}");
+            let artifacts = result["artifacts"].as_array().expect("artifacts array");
+            assert_eq!(artifacts.len(), 1, "result: {result}");
+            assert_eq!(artifacts[0]["mime"].as_str(), Some(expected_mime));
+            let previews = result["previews"].as_array().expect("previews array");
+            assert_eq!(previews.len(), 1, "result: {result}");
+            assert_eq!(
+                previews[0]["artifact_sha256"].as_str(),
+                artifacts[0]["sha256"].as_str(),
+                "preview must bind the artifact hash"
+            );
+            let evidence_items = result["evidence"].as_array().expect("evidence array");
+            assert_eq!(evidence_items.len(), 1, "result: {result}");
+            assert_eq!(
+                evidence_items[0]["artifact_sha256"].as_str(),
+                artifacts[0]["sha256"].as_str(),
+                "evidence must cite the artifact hash"
+            );
+
+            // Durable reopen: the artifact/preview/evidence chain survives.
+            let store = xai_grok_science::ScienceStore::new(&store_root);
+            let run_id = xai_grok_science::RunId::new(
+                result["run"]["context"]["run_id"]
+                    .as_str()
+                    .expect("response must include durable run id"),
+            );
+            let run = store.load_run(&run_id).expect("reopen durable run");
+            assert_eq!(run.state, xai_grok_science::RunState::Succeeded);
+            let previews = store.previews(&run_id).expect("reopen previews");
+            assert_eq!(previews.len(), 1);
+            assert_eq!(previews[0].preview.mime, expected_mime);
+        }
+    })
+    .await;
+}
+
+/// A real ACP client cancellation of the permission prompt must durably
+/// record the terminal Cancel decision: no artifacts, no tool-start event.
+/// (The harness expresses rejection as the ACP `Cancelled` outcome, which the
+/// product maps to ApprovalDecision::Cancel; a policy-side Deny is covered by
+/// kernel unit tests.)
 #[tokio::test]
 #[ignore]
 async fn test_stdio_science_csv_deny_product_path() {
@@ -1100,7 +1197,8 @@ async fn test_stdio_science_csv_deny_product_path() {
             .await
             .expect("start mock server");
         let workdir = git_workdir();
-        let evidence = tempfile::tempdir().expect("create science evidence root");
+        // The product enforces store/artifact roots inside the session cwd.
+        let store_root = workdir.path().join("science-store");
         let fixture = workdir.path().join("micro.csv");
         std::fs::copy(
             concat!(
@@ -1118,14 +1216,13 @@ async fn test_stdio_science_csv_deny_product_path() {
         .await;
         client.initialize_with_timeout().await;
         let session_id = client.create_session_with_timeout(workdir.path()).await;
-        let store_root = evidence.path().join("store");
         let response = client
             .ext_method(
                 "x.ai/science/run_csv",
                 serde_json::json!({
                     "sessionId": session_id.0.as_ref(), "projectId": "science-product-deny",
                     "ownerId": "science-owner", "storeRoot": store_root,
-                    "artifactRoot": evidence.path().join("artifacts"), "fixturePath": fixture,
+                    "artifactRoot": workdir.path().join("science-artifacts"), "fixturePath": fixture,
                     "approvalTimeoutMs": 5_000,
                 }),
             )
@@ -1134,7 +1231,7 @@ async fn test_stdio_science_csv_deny_product_path() {
             response.is_err(),
             "deny must not report success: {response:?}"
         );
-        let run_id = std::fs::read_dir(&store_root)
+        let run_id = std::fs::read_dir(store_root.join("runs"))
             .expect("durable denied run directory")
             .next()
             .expect("one denied run")
@@ -1146,7 +1243,7 @@ async fn test_stdio_science_csv_deny_product_path() {
         let run = store
             .load_run(&xai_grok_science::RunId::new(run_id))
             .expect("load denied run");
-        assert_eq!(run.state, xai_grok_science::RunState::Denied);
+        assert_eq!(run.state, xai_grok_science::RunState::Cancelled);
         let events = store
             .events_after(&run.context.run_id, 0, 100)
             .expect("load events");
@@ -1154,9 +1251,10 @@ async fn test_stdio_science_csv_deny_product_path() {
         assert!(store.artifacts(&run.context.run_id).unwrap().is_empty());
         assert_eq!(
             store.approvals(&run.context.run_id).unwrap()[0].decision,
-            xai_grok_science::ApprovalDecision::Deny
+            xai_grok_science::ApprovalDecision::Cancel
         );
-    });
+    })
+    .await;
 }
 
 /// A client that never resolves the production permission prompt must leave a
@@ -1169,7 +1267,8 @@ async fn test_stdio_science_csv_timeout_product_path() {
             .await
             .expect("start mock server");
         let workdir = git_workdir();
-        let evidence = tempfile::tempdir().expect("create science evidence root");
+        // The product enforces store/artifact roots inside the session cwd.
+        let store_root = workdir.path().join("science-store");
         let fixture = workdir.path().join("micro.csv");
         std::fs::copy(
             concat!(
@@ -1187,14 +1286,13 @@ async fn test_stdio_science_csv_timeout_product_path() {
         .await;
         client.initialize_with_timeout().await;
         let session_id = client.create_session_with_timeout(workdir.path()).await;
-        let store_root = evidence.path().join("store");
         let response = client
             .ext_method(
                 "x.ai/science/run_csv",
                 serde_json::json!({
                     "sessionId": session_id.0.as_ref(), "projectId": "science-product-timeout",
                     "ownerId": "science-owner", "storeRoot": store_root,
-                    "artifactRoot": evidence.path().join("artifacts"), "fixturePath": fixture,
+                    "artifactRoot": workdir.path().join("science-artifacts"), "fixturePath": fixture,
                     "approvalTimeoutMs": 100,
                 }),
             )
@@ -1203,7 +1301,7 @@ async fn test_stdio_science_csv_timeout_product_path() {
             response.is_err(),
             "timeout must not report success: {response:?}"
         );
-        let run_id = std::fs::read_dir(&store_root)
+        let run_id = std::fs::read_dir(store_root.join("runs"))
             .expect("durable timed-out run directory")
             .next()
             .expect("one timed-out run")
@@ -1228,7 +1326,8 @@ async fn test_stdio_science_csv_timeout_product_path() {
             store.approvals(&run.context.run_id).unwrap()[0].decision,
             xai_grok_science::ApprovalDecision::Timeout
         );
-    });
+    })
+    .await;
 }
 
 /// Verify that x.ai/session/close frees the session.

@@ -19,6 +19,7 @@ pub mod api;
 pub mod connector;
 pub mod connectors;
 pub mod csv;
+pub mod import;
 pub mod preview;
 
 pub const SCHEMA_VERSION: u32 = 1;
@@ -212,6 +213,7 @@ impl ScienceStore {
         write_json_atomic::<Vec<Evidence>>(&dir.join("evidence.json"), &Vec::new())?;
         write_json_atomic::<Vec<Provenance>>(&dir.join("provenance.json"), &Vec::new())?;
         write_json_atomic::<Vec<Approval>>(&dir.join("approvals.json"), &Vec::new())?;
+        write_json_atomic::<Vec<preview::PreviewRecord>>(&dir.join("previews.json"), &Vec::new())?;
         Ok(record)
     }
 
@@ -387,6 +389,23 @@ impl ScienceStore {
     pub fn artifacts(&self, run_id: &RunId) -> Result<Vec<Artifact>> {
         read_json(&self.run_dir(run_id).join("artifacts.json"))
     }
+    pub fn add_preview(&self, preview: preview::PreviewRecord) -> Result<()> {
+        append_json(
+            &self.run_dir(&preview.run_id).join("previews.json"),
+            preview,
+        )
+    }
+    /// Preview records for a run. Runs created before preview support have
+    /// no `previews.json`; they read as empty rather than erroring.
+    pub fn previews(&self, run_id: &RunId) -> Result<Vec<preview::PreviewRecord>> {
+        match read_json(&self.run_dir(run_id).join("previews.json")) {
+            Ok(items) => Ok(items),
+            Err(ScienceError::Io(ref error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                Ok(Vec::new())
+            }
+            Err(error) => Err(error),
+        }
+    }
     pub fn evidence(&self, run_id: &RunId) -> Result<Vec<Evidence>> {
         read_json(&self.run_dir(run_id).join("evidence.json"))
     }
@@ -478,7 +497,7 @@ fn validate_context(context: &RunContext) -> Result<()> {
     }
     Ok(())
 }
-fn validate_relative(path: &Path) -> Result<()> {
+pub(crate) fn validate_relative(path: &Path) -> Result<()> {
     if path.is_absolute()
         || path
             .components()

@@ -1,7 +1,18 @@
 //! Lumen Science product dispatch. Seam contract: S2 and S4.
 
 use super::*;
-use crate::session::commands::{PreparedScienceCsv, PreparedScienceSshScpAdmission};
+use crate::session::commands::{
+    PreparedScienceCsv, PreparedScienceImport, PreparedScienceSshScpAdmission,
+};
+
+/// Import transit tool: copies staged input bytes to a staged output. The
+/// kernel then re-derives the preview from the output bytes, so the artifact
+/// is registered only when the formal tool path preserved the input exactly.
+const IMPORT_TOOL_SCRIPT: &str = r#"import sys
+from pathlib import Path
+source, target = map(Path, sys.argv[1:3])
+target.write_bytes(source.read_bytes())
+"#;
 
 const CSV_TOOL_SCRIPT: &str = r#"import csv, html, sys
 from collections import defaultdict
@@ -116,6 +127,153 @@ impl SessionActor {
             summary_path,
             svg_path,
         })
+    }
+
+    /// S2 phase one inside the sole session actor: begin the durable import
+    /// run and stage the bytes for the formal execute-tool transit.
+    pub(super) fn prepare_science_import(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        source_path: std::path::PathBuf,
+        bytes: Vec<u8>,
+    ) -> xai_grok_science::Result<PreparedScienceImport> {
+        let ticket = xai_grok_science::import::begin_import(&store, context.clone())?;
+        let staging = context
+            .artifact_root
+            .join(&ticket.run_id.0)
+            .join("tool-staging");
+        std::fs::create_dir_all(&staging)?;
+        let input_path = staging.join("input.bin");
+        let output_path = staging.join("output.bin");
+        std::fs::write(&input_path, &bytes)?;
+        let command = format!(
+            "python3 -c {} {} {}",
+            quote(IMPORT_TOOL_SCRIPT)?,
+            quote(&input_path.to_string_lossy())?,
+            quote(&output_path.to_string_lossy())?,
+        );
+        Ok(PreparedScienceImport {
+            store,
+            ticket,
+            source_path,
+            bytes,
+            command,
+            output_path,
+        })
+    }
+
+    pub(super) async fn finish_science_import(
+        &self,
+        prepared: PreparedScienceImport,
+        decision: xai_grok_science::ApprovalDecision,
+        reason: String,
+    ) -> xai_grok_science::Result<xai_grok_science::import::ImportResult> {
+        if decision != xai_grok_science::ApprovalDecision::Allow {
+            let terminal = xai_grok_science::csv::finish_without_execution(
+                &prepared.store,
+                &prepared.ticket,
+                decision,
+                reason,
+            )?;
+            return Err(xai_grok_science::ScienceError::Invalid(format!(
+                "science run {} finished {:?}",
+                prepared.ticket.run_id.0, terminal.state
+            )));
+        }
+
+        xai_grok_science::csv::mark_allowed(&prepared.store, &prepared.ticket)?;
+        let tool_name = self
+            .agent
+            .borrow()
+            .tool_bridge()
+            .toolset()
+            .tool_name_for_kind(xai_grok_tools::types::tool::ToolKind::Execute)
+            .ok_or_else(|| {
+                xai_grok_science::ScienceError::Invalid(
+                    "session toolset has no execute tool".into(),
+                )
+            })?;
+        prepared.store.append_event(
+            &prepared.ticket.run_id,
+            "LumenToolDispatch",
+            "tool.started",
+            serde_json::json!({
+                "tool": tool_name,
+                "call_id": prepared.ticket.call_id.0,
+                "dispatch": "WorkspaceOps::call_tool"
+            }),
+        )?;
+        let args = serde_json::to_value(BashToolInput {
+            command: prepared.command.clone(),
+            timeout: Some(30_000),
+            description: "Transit Lumen Science import bytes through the formal workspace tool"
+                .into(),
+            is_background: false,
+        })
+        .map_err(xai_grok_science::ScienceError::Serde)?;
+        let dispatched = self
+            .workspace_ops
+            .call_tool(
+                &tool_name,
+                args,
+                &prepared.ticket.call_id.0,
+                Some(&self.session_info.id.0),
+            )
+            .await;
+        let output = match dispatched {
+            Ok(output) => output,
+            Err(error) => {
+                let reason = format!("formal tool dispatch failed: {error}");
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+        };
+        match output.output {
+            ToolsToolOutput::Bash(ref bash) if bash.exit_code == 0 && !bash.timed_out => {}
+            ToolsToolOutput::Bash(ref bash) => {
+                let reason = format!(
+                    "science import transit tool failed: exit={} timed_out={}",
+                    bash.exit_code, bash.timed_out
+                );
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+            _ => {
+                let reason = "science execute tool returned a non-bash output".to_string();
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+        }
+        let transited = std::fs::read(&prepared.output_path)?;
+        if transited != prepared.bytes {
+            let reason = "formal tool bytes diverge from import input".to_string();
+            let _ = xai_grok_science::csv::fail_running(
+                &prepared.store,
+                &prepared.ticket,
+                reason.clone(),
+            );
+            return Err(xai_grok_science::ScienceError::Invalid(reason));
+        }
+        xai_grok_science::import::finish_import(
+            &prepared.store,
+            prepared.ticket,
+            &prepared.source_path,
+            &transited,
+            format!("{tool_name} via WorkspaceOps::call_tool"),
+        )
     }
 
     pub(super) async fn finish_science_csv(

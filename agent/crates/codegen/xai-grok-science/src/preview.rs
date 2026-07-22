@@ -10,7 +10,10 @@
 //! store and pass them here. Preview records carry provenance fields so the
 //! artifact/evidence chain stays complete.
 
+use crate::{CallId, RunId};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 /// Default hard cap for previewable content (50 MiB).
 pub const DEFAULT_MAX_BYTES: u64 = 50 * 1024 * 1024;
@@ -58,6 +61,50 @@ pub struct Preview {
     /// True when stats were computed on a sample rather than the full input.
     pub truncated: bool,
     pub stats: PreviewStats,
+}
+
+/// Durable preview record bound to an artifact hash. The artifact/evidence
+/// chain stays complete: every preview names its source artifact digest, the
+/// tool identity that produced it, and when it was generated.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PreviewRecord {
+    pub run_id: RunId,
+    pub call_id: CallId,
+    pub relative_path: PathBuf,
+    pub artifact_sha256: String,
+    pub preview: Preview,
+    pub generated_at: DateTime<Utc>,
+    pub tool: String,
+}
+
+/// One-line human summary stored on the artifact record's `preview` field.
+pub fn summarize(preview: &Preview) -> String {
+    let truncated = if preview.truncated { ", truncated" } else { "" };
+    match &preview.stats {
+        PreviewStats::Tabular { rows, columns, ragged } => {
+            let ragged = if *ragged { ", ragged" } else { "" };
+            format!(
+                "{}: {rows} rows x {columns} columns{ragged}{truncated}",
+                preview.mime
+            )
+        }
+        PreviewStats::Text { lines } => format!("{}: {lines} lines{truncated}", preview.mime),
+        PreviewStats::Image { width, height } => match (width, height) {
+            (Some(w), Some(h)) => format!("{}: {w}x{h}", preview.mime),
+            _ => preview.mime.clone(),
+        },
+        PreviewStats::Fasta {
+            sequences,
+            total_residues,
+            warnings,
+            ..
+        } => format!(
+            "{}: {sequences} sequences, {total_residues} residues, {} warnings{truncated}",
+            preview.mime,
+            warnings.len()
+        ),
+        PreviewStats::None => format!("{}: {} bytes", preview.mime, preview.bytes),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
