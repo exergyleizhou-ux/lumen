@@ -196,6 +196,52 @@ pub fn start_ssh_scp_admission(
     }
 }
 
+/// Records the existing Lumen permission manager's terminal decision. An
+/// `Allow` returns the admission ticket to the caller but deliberately does
+/// not start a transport: only the future, separately reviewed SSH/SCP tool
+/// may consume that ticket. All other decisions terminally close the run.
+pub fn finish_ssh_scp_admission(
+    store: &ScienceStore,
+    ticket: AdmissionTicket,
+    decision: ApprovalDecision,
+) -> Result<Option<AdmissionTicket>> {
+    if !decision.terminal() {
+        return Err(ScienceError::Invalid(
+            "connector permission decision must be terminal".into(),
+        ));
+    }
+    store.decide_approval(
+        &ticket.context.project_id,
+        &ticket.context.run_id,
+        &ticket.context.owner_id,
+        &ticket.call_id,
+        decision.clone(),
+    )?;
+    store.append_event(
+        &ticket.context.run_id,
+        "LumenPermissionManager",
+        "connector.permission",
+        serde_json::json!({
+            "connector": "ssh-scp-v1",
+            "decision": decision,
+        }),
+    )?;
+    let terminal = match decision {
+        ApprovalDecision::Allow => return Ok(Some(ticket)),
+        ApprovalDecision::Deny => RunState::Denied,
+        ApprovalDecision::Timeout => RunState::TimedOut,
+        ApprovalDecision::Cancel => RunState::Cancelled,
+        ApprovalDecision::Interrupted => RunState::Interrupted,
+        ApprovalDecision::Pending => unreachable!("checked above"),
+    };
+    store.transition(
+        &ticket.context.run_id,
+        terminal,
+        Some("connector permission was not granted".into()),
+    )?;
+    Ok(None)
+}
+
 fn validate_request(request: &ConnectorRequest) -> Result<()> {
     if request.host.is_empty()
         || !request.host.is_ascii()
@@ -364,5 +410,46 @@ mod tests {
         let event = store.events_after(&run_id, 0, 10).unwrap().pop().unwrap();
         assert_eq!(event.payload["outcome"], "denied");
         assert!(!serde_json::to_string(&event).unwrap().contains("localhost"));
+    }
+
+    #[test]
+    fn permission_decision_is_replayable_and_allow_starts_no_transport() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let context = context("p", "alice");
+        let run_id = context.run_id.clone();
+        let AdmissionStart::Ready(ticket) =
+            start_ssh_scp_admission(&store, context, &policy(), &request()).unwrap()
+        else {
+            panic!("allowlisted target must await Lumen approval");
+        };
+        let ticket = *ticket;
+        let returned = finish_ssh_scp_admission(&store, ticket, ApprovalDecision::Allow)
+            .unwrap()
+            .expect("allow returns an opaque ticket, not a transport result");
+        assert_eq!(returned.target.host, "hpc.example.test");
+        assert_eq!(store.load_run(&run_id).unwrap().state, RunState::AwaitingApproval);
+        assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Allow);
+        let events = store.events_after(&run_id, 0, 10).unwrap();
+        assert_eq!(events.last().unwrap().kind, "connector.permission");
+        assert!(!serde_json::to_string(&events).unwrap().contains(FINGERPRINT));
+    }
+
+    #[test]
+    fn denied_permission_closes_run_without_transport_ticket() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let context = context("p", "alice");
+        let run_id = context.run_id.clone();
+        let AdmissionStart::Ready(ticket) =
+            start_ssh_scp_admission(&store, context, &policy(), &request()).unwrap()
+        else {
+            panic!("allowlisted target must await Lumen approval");
+        };
+        assert!(finish_ssh_scp_admission(&store, *ticket, ApprovalDecision::Deny)
+            .unwrap()
+            .is_none());
+        assert_eq!(store.load_run(&run_id).unwrap().state, RunState::Denied);
+        assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Deny);
     }
 }

@@ -89,6 +89,15 @@ pub struct PreparedScienceCsv {
     pub(crate) summary_path: std::path::PathBuf,
     pub(crate) svg_path: std::path::PathBuf,
 }
+
+/// A project-owned SSH/SCP target that has passed offline Science admission.
+/// It has no socket, process, credential, or transport handle. The caller must
+/// still obtain the existing session permission decision before it can receive
+/// the opaque ticket for a future transport implementation.
+pub struct PreparedScienceSshScpAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+}
 /// Priority levels for notification drain timing.
 ///
 /// Ordering: `Next < Later` (derived from declaration order).
@@ -131,6 +140,28 @@ pub enum SessionCommand {
         reason: String,
         respond_to:
             oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
+    },
+    /// P4 phase one: the actor creates a durable, redacted SSH/SCP admission
+    /// record before the handle requests any permission. `None` is a denied
+    /// admission and must never cause a permission request or transport call.
+    BeginScienceSshScpAdmission {
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        policy: xai_grok_science::connector::ConnectorPolicy,
+        request: xai_grok_science::connector::ConnectorRequest,
+        respond_to: oneshot::Sender<
+            xai_grok_science::Result<Option<PreparedScienceSshScpAdmission>>,
+        >,
+    },
+    /// P4 phase two: persist the terminal Lumen permission result. An Allow
+    /// returns only the opaque admission ticket; no SSH/SCP transport exists in
+    /// this command and therefore no remote action can be triggered here.
+    FinishScienceSshScpAdmission {
+        prepared: PreparedScienceSshScpAdmission,
+        decision: xai_grok_science::ApprovalDecision,
+        respond_to: oneshot::Sender<
+            xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>>,
+        >,
     },
     Initialize {
         system_prompt: String,

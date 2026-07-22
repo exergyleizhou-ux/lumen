@@ -275,6 +275,12 @@ pub(super) async fn run_session(
             fixture_path, fixture); let _ = respond_to.send(result); }
             SessionCommand::FinishScienceCsv { prepared, decision, reason, respond_to } => {
             let result = session.finish_science_csv(prepared, decision, reason). await; let _ =
+            respond_to.send(result); }
+            SessionCommand::BeginScienceSshScpAdmission { store, context, policy, request,
+            respond_to } => { let result = session.prepare_science_ssh_scp_admission(store,
+            context, policy, request); let _ = respond_to.send(result); }
+            SessionCommand::FinishScienceSshScpAdmission { prepared, decision, respond_to } => {
+            let result = session.finish_science_ssh_scp_admission(prepared, decision); let _ =
             respond_to.send(result); } SessionCommand::Initialize { system_prompt } => { session
             .initialize(system_prompt). await; let s = session.clone(); let handle =
             tokio::task::spawn_local(async move { s.build_prefix_background(). await });

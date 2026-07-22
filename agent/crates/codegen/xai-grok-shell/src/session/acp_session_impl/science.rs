@@ -1,7 +1,7 @@
 //! Lumen Science product dispatch. Seam contract: S2 and S4.
 
 use super::*;
-use crate::session::commands::PreparedScienceCsv;
+use crate::session::commands::{PreparedScienceCsv, PreparedScienceSshScpAdmission};
 
 const CSV_TOOL_SCRIPT: &str = r#"import csv, html, sys
 from collections import defaultdict
@@ -39,6 +39,41 @@ fn quote(value: &str) -> xai_grok_science::Result<String> {
 }
 
 impl SessionActor {
+    /// P4 admission runs inside the sole Lumen session actor. It is called
+    /// before the handle asks the existing permission manager, and the Science
+    /// crate itself performs no I/O outside its durable local store.
+    pub(super) fn prepare_science_ssh_scp_admission(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        policy: xai_grok_science::connector::ConnectorPolicy,
+        request: xai_grok_science::connector::ConnectorRequest,
+    ) -> xai_grok_science::Result<Option<PreparedScienceSshScpAdmission>> {
+        match xai_grok_science::connector::start_ssh_scp_admission(
+            &store, context, &policy, &request,
+        )? {
+            xai_grok_science::connector::AdmissionStart::Ready(ticket) => {
+                Ok(Some(PreparedScienceSshScpAdmission {
+                    store,
+                    ticket: *ticket,
+                }))
+            }
+            xai_grok_science::connector::AdmissionStart::Denied => Ok(None),
+        }
+    }
+
+    pub(super) fn finish_science_ssh_scp_admission(
+        &self,
+        prepared: PreparedScienceSshScpAdmission,
+        decision: xai_grok_science::ApprovalDecision,
+    ) -> xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>> {
+        xai_grok_science::connector::finish_ssh_scp_admission(
+            &prepared.store,
+            prepared.ticket,
+            decision,
+        )
+    }
+
     pub(super) fn prepare_science_csv(
         &self,
         store: xai_grok_science::ScienceStore,

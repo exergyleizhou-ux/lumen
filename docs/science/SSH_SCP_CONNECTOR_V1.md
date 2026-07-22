@@ -28,14 +28,16 @@ and create no retryable background job.
 
 ## Dispatch order and audit
 
-`SessionHandle` must call `connector::authorize` **before** it requests the
-existing Lumen permission manager. Rejection must therefore produce no socket,
-DNS query, subprocess, credential lookup, or `WorkspaceOps::call_tool` call.
-After a Science run exists, both branches append a `connector.admission` event
-using `AdmissionAudit`; it stores an irreversible target correlation hash, not
-the hostname, host-key fingerprint, password, token, private key, command, or
-transport handle. Allow still needs the existing session permission decision
-before any future transport dispatch.
+`SessionHandle::admit_science_ssh_scp_with_approval_timeout` calls
+`SessionActor` admission **before** it requests the existing Lumen permission
+manager. Rejection therefore produces no socket, DNS query, subprocess,
+credential lookup, or `WorkspaceOps::call_tool` call. After a Science run
+exists, both branches append a `connector.admission` event using
+`AdmissionAudit`; it stores an irreversible target correlation hash, not the
+hostname, host-key fingerprint, password, token, private key, command, or
+transport handle. The terminal permission result is sent back through
+`SessionActor` and appended as `connector.permission`. Allow returns only an
+opaque admission ticket; it cannot dispatch a transport yet.
 
 Cancellation, timeout, and restart policy are inherited from the existing
 Science approval contract: no pending remote job is recovered or automatically
