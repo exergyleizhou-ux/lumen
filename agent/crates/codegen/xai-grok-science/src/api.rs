@@ -12,9 +12,11 @@ use axum::{
 use serde::Deserialize;
 use std::{
     fs,
+    future::Future,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -28,6 +30,14 @@ impl TokenFile {
         let path = path.into();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+        }
+        if let Ok(metadata) = fs::symlink_metadata(&path) {
+            if metadata.file_type().is_symlink() || !metadata.is_file() {
+                return Err(ScienceError::Invalid(
+                    "stale token path must be a regular file".into(),
+                ));
+            }
+            fs::remove_file(&path)?;
         }
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         #[cfg(unix)]
@@ -77,6 +87,32 @@ pub fn router(state: ApiState) -> Router {
         .with_state(Arc::new(state))
 }
 
+/// Serve the authenticated API on a caller-owned loopback listener. Holding
+/// `token_file` for the entire future makes normal shutdown remove the token;
+/// the next startup removes a stale regular token left by an unclean exit.
+pub async fn serve_loopback(
+    listener: TcpListener,
+    state: ApiState,
+    token_file: TokenFile,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> crate::Result<()> {
+    if !listener.local_addr()?.ip().is_loopback() {
+        return Err(ScienceError::Invalid(
+            "science API listener must be loopback".into(),
+        ));
+    }
+    if state.token != token_file.token() {
+        return Err(ScienceError::Invalid(
+            "API state token does not match token guard".into(),
+        ));
+    }
+    let _token_lifetime = token_file;
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(shutdown)
+        .await?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct Replay {
     after: Option<u64>,
@@ -101,12 +137,21 @@ fn authorize(
         .get("host")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("");
-    let host_name = host.split(':').next().unwrap_or("");
-    if !matches!(host_name, "127.0.0.1" | "localhost" | "[::1]") {
+    let host_name = host
+        .parse::<http::uri::Authority>()
+        .ok()
+        .map(|authority| authority.host().to_owned())
+        .unwrap_or_default();
+    if !matches!(host_name.as_str(), "127.0.0.1" | "localhost" | "[::1]") {
         return Err((StatusCode::FORBIDDEN, "host forbidden").into_response());
     }
     if let Some(origin) = headers.get("origin").and_then(|value| value.to_str().ok())
-        && !(origin.starts_with("http://127.0.0.1:") || origin.starts_with("http://localhost:"))
+        && !origin.parse::<Uri>().ok().is_some_and(|uri| {
+            uri.scheme_str() == Some("http")
+                && uri.authority().is_some_and(|authority| {
+                    matches!(authority.host(), "127.0.0.1" | "localhost" | "[::1]")
+                })
+        })
     {
         return Err((StatusCode::FORBIDDEN, "origin forbidden").into_response());
     }
@@ -364,7 +409,29 @@ mod tests {
         );
         let traversal = format!("{base}/artifacts/%2e%2e%2fsummary.csv");
         assert_ne!(
-            app.oneshot(request(&traversal, Some("secret"), "127.0.0.1:1", None))
+            app.clone()
+                .oneshot(request(&traversal, Some("secret"), "127.0.0.1:1", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        let double_encoded = format!("{base}/artifacts/%252e%252e%252fsummary.csv");
+        assert_ne!(
+            app.clone()
+                .oneshot(request(
+                    &double_encoded,
+                    Some("secret"),
+                    "127.0.0.1:1",
+                    None
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            app.oneshot(request(&base, Some("secret"), "[::1]:8080", None))
                 .await
                 .unwrap()
                 .status(),
@@ -389,5 +456,65 @@ mod tests {
         }
         drop(token);
         assert!(!path.exists());
+
+        fs::write(&path, "stale-token").unwrap();
+        let replacement = TokenFile::create(&path).unwrap();
+        assert_ne!(fs::read_to_string(&path).unwrap(), "stale-token");
+        drop(replacement);
+        assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn real_loopback_listener_holds_and_cleans_token() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path().join("store"));
+        let result = csv::execute_approved_fixture(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            Path::new("fixture.csv"),
+            CSV,
+        )
+        .unwrap();
+        let token_path = temp.path().join("api.token");
+        let token_file = TokenFile::create(&token_path).unwrap();
+        let token = token_file.token().to_owned();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(serve_loopback(
+            listener,
+            ApiState {
+                store,
+                token: token.clone(),
+                owner_id: "alice".into(),
+            },
+            token_file,
+            async move {
+                let _ = shutdown_rx.await;
+            },
+        ));
+        let url = format!(
+            "http://{address}/projects/p/runs/{}",
+            result.run.context.run_id.0
+        );
+        let client = reqwest::Client::new();
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .get(&url)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert!(token_path.exists());
+        let _ = shutdown_tx.send(());
+        server.await.unwrap().unwrap();
+        assert!(!token_path.exists());
     }
 }

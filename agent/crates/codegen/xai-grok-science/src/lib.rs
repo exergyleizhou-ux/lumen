@@ -62,6 +62,7 @@ impl RunId {
 pub struct RunContext {
     pub run_id: RunId,
     pub project_id: ProjectId,
+    pub session_id: String,
     pub owner_id: String,
     pub workspace_root: PathBuf,
     pub provider: String,
@@ -159,6 +160,7 @@ pub enum ApprovalDecision {
     Deny,
     Timeout,
     Cancel,
+    Interrupted,
 }
 
 impl ApprovalDecision {
@@ -406,15 +408,41 @@ impl ScienceStore {
                 "artifact is not registered to run".into(),
             ));
         }
-        Ok(fs::read(
-            self.run_dir(run_id).join("artifacts").join(relative),
-        )?)
+        let artifact_root = self.run_dir(run_id).join("artifacts");
+        let target = artifact_root.join(relative);
+        let metadata = fs::symlink_metadata(&target)?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(ScienceError::Invalid(
+                "artifact must be a regular file, not a symlink".into(),
+            ));
+        }
+        let canonical_root = dunce::canonicalize(&artifact_root)?;
+        let canonical_target = dunce::canonicalize(&target)?;
+        if !canonical_target.starts_with(&canonical_root) {
+            return Err(ScienceError::Invalid(
+                "artifact resolved outside its run root".into(),
+            ));
+        }
+        Ok(fs::read(canonical_target)?)
     }
 
     pub fn recover_interrupted(&self, run_id: &RunId) -> Result<RunRecord> {
         let run = self.load_run(run_id)?;
         if run.state.terminal() {
             return Ok(run);
+        }
+        let approvals_path = self.run_dir(run_id).join("approvals.json");
+        let mut approvals: Vec<Approval> = read_json(&approvals_path)?;
+        let mut approvals_changed = false;
+        for approval in &mut approvals {
+            if approval.decision == ApprovalDecision::Pending {
+                approval.decision = ApprovalDecision::Interrupted;
+                approval.decided_at = Some(Utc::now());
+                approvals_changed = true;
+            }
+        }
+        if approvals_changed {
+            write_json_atomic(&approvals_path, &approvals)?;
         }
         self.transition(
             run_id,
@@ -436,7 +464,10 @@ impl ScienceStore {
 }
 
 fn validate_context(context: &RunContext) -> Result<()> {
-    if context.run_id.0.is_empty() || context.project_id.0.is_empty() || context.owner_id.is_empty()
+    if context.run_id.0.is_empty()
+        || context.project_id.0.is_empty()
+        || context.session_id.is_empty()
+        || context.owner_id.is_empty()
     {
         return Err(ScienceError::Invalid(
             "ids and owner must be non-empty".into(),
@@ -494,6 +525,7 @@ mod tests {
         RunContext {
             run_id: RunId::new_v7(),
             project_id: ProjectId::new(project),
+            session_id: format!("session-{project}"),
             owner_id: owner.into(),
             workspace_root: root.join(project),
             provider: "offline".into(),
@@ -624,6 +656,17 @@ mod tests {
                 serde_json::json!({}),
             )
             .unwrap();
+        let call = CallId::new("pending-call");
+        store
+            .request_approval(Approval {
+                project_id: run.context.project_id.clone(),
+                run_id: run.context.run_id.clone(),
+                call_id: call.clone(),
+                owner_id: run.context.owner_id.clone(),
+                decision: ApprovalDecision::Pending,
+                decided_at: None,
+            })
+            .unwrap();
         drop(store);
         let reopened = ScienceStore::new(temp.path());
         assert_eq!(
@@ -637,6 +680,85 @@ mod tests {
                 .state,
             RunState::Interrupted
         );
+        let approval = reopened.approvals(&run.context.run_id).unwrap().remove(0);
+        assert_eq!(approval.call_id, call);
+        assert_eq!(approval.decision, ApprovalDecision::Interrupted);
+        assert!(approval.decided_at.is_some());
+    }
+
+    #[test]
+    fn concurrent_appends_to_one_run_have_unique_monotonic_sequences() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let run = store
+            .create_run(context(temp.path(), "one", "alice"))
+            .unwrap();
+        std::thread::scope(|scope| {
+            for worker in 0..8 {
+                let store = store.clone();
+                let run_id = run.context.run_id.clone();
+                scope.spawn(move || {
+                    for item in 0..50 {
+                        store
+                            .append_event(
+                                &run_id,
+                                format!("worker-{worker}"),
+                                "tick",
+                                serde_json::json!({"item": item}),
+                            )
+                            .unwrap();
+                    }
+                });
+            }
+        });
+        let events = store.events_after(&run.context.run_id, 0, 1_000).unwrap();
+        assert_eq!(events.len(), 400);
+        assert!(
+            events
+                .iter()
+                .enumerate()
+                .all(|(index, event)| event.seq == index as u64 + 1)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn registered_symlink_artifact_is_rejected_on_read() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let run = store
+            .create_run(context(temp.path(), "a", "alice"))
+            .unwrap();
+        store
+            .put_artifact(
+                &run.context.project_id,
+                &run.context.run_id,
+                "alice",
+                CallId::new("c"),
+                Path::new("artifact.txt"),
+                b"safe",
+                "text/plain",
+                "text",
+            )
+            .unwrap();
+        let outside = temp.path().join("outside-secret");
+        fs::write(&outside, b"secret").unwrap();
+        let target = store
+            .run_dir(&run.context.run_id)
+            .join("artifacts/artifact.txt");
+        fs::remove_file(&target).unwrap();
+        symlink(&outside, &target).unwrap();
+        assert!(matches!(
+            store.artifact_bytes(
+                &run.context.project_id,
+                &run.context.run_id,
+                "alice",
+                Path::new("artifact.txt")
+            ),
+            Err(ScienceError::Invalid(_))
+        ));
     }
 
     #[test]

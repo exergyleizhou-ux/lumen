@@ -176,10 +176,45 @@ impl SessionHandle {
         fixture_path: std::path::PathBuf,
         fixture: Vec<u8>,
     ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
+        self.run_science_csv_with_approval_timeout(
+            store,
+            context,
+            fixture_path,
+            fixture,
+            std::time::Duration::from_secs(120),
+        )
+        .await
+    }
+
+    pub async fn run_science_csv_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: std::path::PathBuf,
+        fixture: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
         use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceCsv {
+                store,
+                context,
+                fixture_path,
+                fixture,
+                respond_to: begin_tx,
+            })
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx
+            .await
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+            })??;
         let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
             "science-csv-{}",
-            context.run_id.0
+            prepared.ticket.run_id.0
         )));
         let update = acp::ToolCallUpdate::new(
             call_id,
@@ -187,41 +222,45 @@ impl SessionHandle {
                 .kind(Some(acp::ToolKind::Other))
                 .title(Some("Lumen Science CSV analysis".into())),
         );
-        let decision = self
-            .permission_handle
-            .request(
-                AccessKind::Edit(context.artifact_root.display().to_string()),
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Bash(prepared.command.clone()),
                 update,
                 Some(self.info.id.0.to_string()),
                 None,
                 None,
-            )
-            .await;
-        match decision {
-            Decision::Allow | Decision::Ask => {}
-            Decision::Reject(reason) | Decision::PolicyDeny(reason) => {
-                return Err(xai_grok_science::ScienceError::Invalid(format!(
-                    "science run denied: {reason}"
-                )));
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!("permission request timed out after {} ms", approval_timeout.as_millis()),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
             }
-            Decision::Cancelled => {
-                return Err(xai_grok_science::ScienceError::Invalid(
-                    "science run cancelled".into(),
-                ));
-            }
-            Decision::FollowupMessage(message) => {
-                return Err(xai_grok_science::ScienceError::Invalid(format!(
-                    "science run requires follow-up: {message}"
-                )));
-            }
-        }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
         let (respond_to, response) = oneshot::channel();
         self.cmd_tx
-            .send(SessionCommand::RunScienceCsv {
-                store,
-                context,
-                fixture_path,
-                fixture,
+            .send(SessionCommand::FinishScienceCsv {
+                prepared,
+                decision,
+                reason,
                 respond_to,
             })
             .map_err(|_| {

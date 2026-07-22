@@ -79,6 +79,16 @@ pub struct ParsedPromptInfo {
     /// Local disk path embedded in truncated message, only `Some` when truncated.
     pub local_path: Option<std::path::PathBuf>,
 }
+
+pub struct PreparedScienceCsv {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) fixture_path: std::path::PathBuf,
+    pub(crate) fixture: Vec<u8>,
+    pub(crate) command: String,
+    pub(crate) summary_path: std::path::PathBuf,
+    pub(crate) svg_path: std::path::PathBuf,
+}
 /// Priority levels for notification drain timing.
 ///
 /// Ordering: `Next < Later` (derived from declaration order).
@@ -104,13 +114,21 @@ impl NotificationSource {
     }
 }
 pub enum SessionCommand {
-    /// S4: execute the deterministic Science CSV tool only after the caller
-    /// has passed this session's production permission manager.
-    RunScienceCsv {
+    /// S4 phase one: create the durable run and pending approval before the
+    /// caller awaits this session's production permission manager.
+    BeginScienceCsv {
         store: xai_grok_science::ScienceStore,
         context: xai_grok_science::RunContext,
         fixture_path: std::path::PathBuf,
         fixture: Vec<u8>,
+        respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceCsv>>,
+    },
+    /// S4 phase two: finish the durable approval and, only for Allow, dispatch
+    /// the computation through `WorkspaceOps::call_tool`.
+    FinishScienceCsv {
+        prepared: PreparedScienceCsv,
+        decision: xai_grok_science::ApprovalDecision,
+        reason: String,
         respond_to:
             oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
     },

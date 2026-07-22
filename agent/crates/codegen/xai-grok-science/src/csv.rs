@@ -21,78 +21,175 @@ pub struct ResearchResult {
     pub replay_after: u64,
 }
 
-pub fn execute_approved_fixture(
-    store: &ScienceStore,
-    context: RunContext,
-    fixture_path: &Path,
-    fixture: &[u8],
-) -> Result<ResearchResult> {
-    let project = context.project_id.clone();
-    let owner = context.owner_id.clone();
-    let run_id = context.run_id.clone();
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScienceRunTicket {
+    pub project_id: ProjectId,
+    pub run_id: RunId,
+    pub owner_id: String,
+    pub call_id: CallId,
+}
+
+/// Phase one of the product protocol. `SessionActor` calls this before the
+/// production permission manager is awaited, so every allow/deny/timeout/cancel
+/// has a durable pending record to finish.
+pub fn begin_fixture(store: &ScienceStore, context: RunContext) -> Result<ScienceRunTicket> {
+    let ticket = ScienceRunTicket {
+        project_id: context.project_id.clone(),
+        run_id: context.run_id.clone(),
+        owner_id: context.owner_id.clone(),
+        call_id: CallId::new("science_csv_analyze"),
+    };
     store.create_run(context)?;
     store.append_event(
-        &run_id,
+        &ticket.run_id,
         "SessionActor",
         "run.created",
         serde_json::json!({}),
     )?;
-    let call = CallId::new("science_csv_analyze");
     store.request_approval(Approval {
-        project_id: project.clone(),
-        run_id: run_id.clone(),
-        call_id: call.clone(),
-        owner_id: owner.clone(),
+        project_id: ticket.project_id.clone(),
+        run_id: ticket.run_id.clone(),
+        call_id: ticket.call_id.clone(),
+        owner_id: ticket.owner_id.clone(),
         decision: ApprovalDecision::Pending,
         decided_at: None,
     })?;
-    store.transition(&run_id, RunState::AwaitingApproval, None)?;
-    store.decide_approval(&project, &run_id, &owner, &call, ApprovalDecision::Allow)?;
+    store.transition(&ticket.run_id, RunState::AwaitingApproval, None)?;
+    Ok(ticket)
+}
+
+pub fn finish_without_execution(
+    store: &ScienceStore,
+    ticket: &ScienceRunTicket,
+    decision: ApprovalDecision,
+    reason: impl Into<String>,
+) -> Result<RunRecord> {
+    let (state, event_kind) = match decision {
+        ApprovalDecision::Deny => (RunState::Denied, "approval.denied"),
+        ApprovalDecision::Timeout => (RunState::TimedOut, "approval.timed_out"),
+        ApprovalDecision::Cancel => (RunState::Cancelled, "approval.cancelled"),
+        _ => {
+            return Err(ScienceError::Invalid(
+                "non-execution finish requires deny, timeout, or cancel".into(),
+            ));
+        }
+    };
+    let reason = reason.into();
+    store.decide_approval(
+        &ticket.project_id,
+        &ticket.run_id,
+        &ticket.owner_id,
+        &ticket.call_id,
+        decision,
+    )?;
     store.append_event(
-        &run_id,
+        &ticket.run_id,
+        "LumenApproval",
+        event_kind,
+        serde_json::json!({"call_id": ticket.call_id.0, "reason": reason}),
+    )?;
+    store.transition(&ticket.run_id, state, Some(reason))
+}
+
+pub fn mark_allowed(store: &ScienceStore, ticket: &ScienceRunTicket) -> Result<RunRecord> {
+    store.decide_approval(
+        &ticket.project_id,
+        &ticket.run_id,
+        &ticket.owner_id,
+        &ticket.call_id,
+        ApprovalDecision::Allow,
+    )?;
+    store.append_event(
+        &ticket.run_id,
         "LumenApproval",
         "approval.allowed",
-        serde_json::json!({"call_id": call.0}),
+        serde_json::json!({"call_id": ticket.call_id.0}),
     )?;
-    store.transition(&run_id, RunState::Running, None)?;
+    store.transition(&ticket.run_id, RunState::Running, None)
+}
+
+pub fn fail_running(
+    store: &ScienceStore,
+    ticket: &ScienceRunTicket,
+    reason: impl Into<String>,
+) -> Result<RunRecord> {
+    store.transition(&ticket.run_id, RunState::Failed, Some(reason.into()))
+}
+
+/// Complete an allowed run from bytes produced by Lumen's formal workspace
+/// tool dispatch. The deterministic kernel independently verifies those bytes
+/// before registering them as authoritative artifacts.
+pub fn finish_from_tool_output(
+    store: &ScienceStore,
+    ticket: ScienceRunTicket,
+    fixture_path: &Path,
+    fixture: &[u8],
+    summary: &[u8],
+    svg: &[u8],
+    tool_identity: impl Into<String>,
+) -> Result<ResearchResult> {
+    let run = store.load_run(&ticket.run_id)?;
+    if run.state != RunState::Running
+        || store
+            .approvals(&ticket.run_id)?
+            .iter()
+            .find(|approval| approval.call_id == ticket.call_id)
+            .is_none_or(|approval| approval.decision != ApprovalDecision::Allow)
+    {
+        return Err(ScienceError::Invalid(
+            "formal tool output requires an allowed running run".into(),
+        ));
+    }
     let input = std::str::from_utf8(fixture)
         .map_err(|_| ScienceError::Invalid("fixture must be UTF-8".into()))?;
     let groups = summarize(input)?;
-    let summary = render_summary(&groups);
-    let svg = render_svg(&groups);
+    let expected_summary = render_summary(&groups);
+    let expected_svg = render_svg(&groups);
+    if summary != expected_summary.as_bytes() || svg != expected_svg.as_bytes() {
+        let _ = store.transition(
+            &ticket.run_id,
+            RunState::Failed,
+            Some("formal tool output failed deterministic verification".into()),
+        );
+        return Err(ScienceError::Invalid(
+            "formal tool output failed deterministic verification".into(),
+        ));
+    }
+    let tool_identity = tool_identity.into();
     let csv_artifact = store.put_artifact(
-        &project,
-        &run_id,
-        &owner,
-        call.clone(),
+        &ticket.project_id,
+        &ticket.run_id,
+        &ticket.owner_id,
+        ticket.call_id.clone(),
         Path::new("summary.csv"),
-        summary.as_bytes(),
+        summary,
         "text/csv",
         "table",
     )?;
     let svg_artifact = store.put_artifact(
-        &project,
-        &run_id,
-        &owner,
-        call,
+        &ticket.project_id,
+        &ticket.run_id,
+        &ticket.owner_id,
+        ticket.call_id,
         Path::new("means.svg"),
-        svg.as_bytes(),
+        svg,
         "image/svg+xml",
         "image",
     )?;
     let input_hash = format!("{:x}", Sha256::digest(fixture));
     store.add_provenance(Provenance {
-        run_id: run_id.clone(),
+        run_id: ticket.run_id.clone(),
         source_uri: format!("file://{}", fixture_path.display()),
         source_commit: None,
         source_path: Some(fixture_path.display().to_string()),
         license: "CC0-1.0 fixture".into(),
         retrieved_at: Utc::now(),
         input_sha256: input_hash,
-        tool: "Lumen SessionActor/science_csv_analyze@1".into(),
+        tool: tool_identity.clone(),
         environment: BTreeMap::from([
             ("algorithm".into(), "group-count-mean-v1".into()),
             ("locale".into(), "C".into()),
+            ("dispatch".into(), "WorkspaceOps::call_tool".into()),
         ]),
     })?;
     let conclusion = groups
@@ -101,26 +198,53 @@ pub fn execute_approved_fixture(
         .collect::<Vec<_>>()
         .join("; ");
     store.add_evidence(Evidence {
-        run_id: run_id.clone(),
+        run_id: ticket.run_id.clone(),
         claim: conclusion.clone(),
         source: fixture_path.display().to_string(),
         artifact_sha256: Some(csv_artifact.sha256.clone()),
         verified_at: Utc::now(),
     })?;
     store.append_event(
-        &run_id,
+        &ticket.run_id,
         "LumenToolDispatch",
         "tool.completed",
-        serde_json::json!({"artifacts": [csv_artifact.sha256, svg_artifact.sha256]}),
+        serde_json::json!({
+            "tool": tool_identity,
+            "artifacts": [csv_artifact.sha256, svg_artifact.sha256]
+        }),
     )?;
-    let run = store.transition(&run_id, RunState::Succeeded, None)?;
+    let run = store.transition(&ticket.run_id, RunState::Succeeded, None)?;
     store.append_event(
-        &run_id,
+        &ticket.run_id,
         "HostVerification",
         "run.succeeded",
         serde_json::json!({}),
     )?;
     aggregate(store, run, conclusion)
+}
+
+pub fn execute_approved_fixture(
+    store: &ScienceStore,
+    context: RunContext,
+    fixture_path: &Path,
+    fixture: &[u8],
+) -> Result<ResearchResult> {
+    let ticket = begin_fixture(store, context)?;
+    mark_allowed(store, &ticket)?;
+    let input = std::str::from_utf8(fixture)
+        .map_err(|_| ScienceError::Invalid("fixture must be UTF-8".into()))?;
+    let groups = summarize(input)?;
+    let summary = render_summary(&groups);
+    let svg = render_svg(&groups);
+    finish_from_tool_output(
+        store,
+        ticket,
+        fixture_path,
+        fixture,
+        summary.as_bytes(),
+        svg.as_bytes(),
+        "kernel-test-only/direct-executor",
+    )
 }
 
 pub fn aggregate(
@@ -204,6 +328,7 @@ pub fn fixture_context(root: &Path, project: ProjectId, owner: impl Into<String>
     RunContext {
         run_id: RunId::new_v7(),
         project_id: project,
+        session_id: "kernel-test-session".into(),
         owner_id: owner.into(),
         workspace_root: root.join("workspace"),
         provider: "offline-deterministic".into(),

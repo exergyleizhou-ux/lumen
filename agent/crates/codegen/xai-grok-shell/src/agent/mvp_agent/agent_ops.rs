@@ -2015,6 +2015,36 @@ impl MvpAgent {
         let sessions = self.sessions.borrow();
         sessions.get(session_id).cloned()
     }
+
+    /// S4 product entry: route an approved deterministic Science run through
+    /// the already-registered `SessionActor`; never spawns a second executor.
+    pub async fn run_science_csv(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: PathBuf,
+        fixture: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_csv_with_approval_timeout(
+                store,
+                context,
+                fixture_path,
+                fixture,
+                approval_timeout,
+            )
+            .await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,
