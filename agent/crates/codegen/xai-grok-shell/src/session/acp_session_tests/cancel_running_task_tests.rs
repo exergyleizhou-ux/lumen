@@ -1429,24 +1429,22 @@ async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
                 .to_string()))
             ];
             let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-            let actor_for_prompt = actor.clone();
-            let prompt_task = tokio::task::spawn_local(async move {
-                actor_for_prompt
-                    .handle_prompt(
-                        "interrupt-wiring-test",
-                        prompt_blocks,
-                        PromptMode::Agent,
-                        None,
-                        None,
-                        None,
-                        None,
-                        true,
-                        None,
-                        Some(ack_tx),
-                        None,
-                    )
-                    .await
-            });
+            let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
+            let prompt_task = AgentTask::new_prompt(
+                actor.clone(),
+                "interrupt-wiring-test".to_owned(),
+                prompt_blocks,
+                PromptMode::Agent,
+                None,
+                None,
+                None,
+                None,
+                true,
+                None,
+                completion_tx,
+                Some(ack_tx),
+                None,
+            );
             assert!(ack_rx. await .is_ok(), "persist ack should resolve");
             let conv = actor.chat_state_handle.get_conversation().await;
             let user_idx = conv
@@ -1473,7 +1471,7 @@ async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
                 "the preceding system-reminder must carry the interrupt notice"
             );
             assert!(! actor.events.take_pending_interrupt_reminder());
-            prompt_task.abort();
+            prompt_task.handle.abort();
         })
         .await;
 }

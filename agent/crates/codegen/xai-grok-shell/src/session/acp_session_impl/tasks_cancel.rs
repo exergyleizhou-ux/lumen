@@ -59,7 +59,7 @@ pub(crate) struct AgentTask {
 }
 
 impl AgentTask {
-    pub(super) fn new_prompt(
+    pub(crate) fn new_prompt(
         session: Arc<SessionActor>,
         prompt_id: String,
         input: Vec<ContentBlock>,
