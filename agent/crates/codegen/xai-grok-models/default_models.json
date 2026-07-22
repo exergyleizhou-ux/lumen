@@ -370,7 +370,7 @@
         },
         {
           "id": "max",
-          "value": "max",
+          "value": "xhigh",
           "label": "Maximum Effort",
           "description": "Kimi K3 maximum reasoning effort",
           "default": false
