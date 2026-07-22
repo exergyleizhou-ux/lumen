@@ -74,6 +74,15 @@ impl SessionActor {
         )
     }
 
+    pub(super) fn execute_science_ssh_scp_offline_transport(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        ticket: xai_grok_science::connector::AdmissionTicket,
+        outcome: xai_grok_science::connector::OfflineTransportOutcome,
+    ) -> xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt> {
+        xai_grok_science::connector::execute_offline_transport(&store, ticket, outcome)
+    }
+
     pub(super) fn prepare_science_csv(
         &self,
         store: xai_grok_science::ScienceStore,

@@ -163,6 +163,17 @@ pub enum SessionCommand {
             xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>>,
         >,
     },
+    /// P4 offline-only transport model. This stays on the SessionActor so the
+    /// fake cannot become a second execution authority; it has no network or
+    /// process capability and only records deterministic terminal semantics.
+    ExecuteScienceSshScpOfflineTransport {
+        store: xai_grok_science::ScienceStore,
+        ticket: xai_grok_science::connector::AdmissionTicket,
+        outcome: xai_grok_science::connector::OfflineTransportOutcome,
+        respond_to: oneshot::Sender<
+            xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
+        >,
+    },
     Initialize {
         system_prompt: String,
     },

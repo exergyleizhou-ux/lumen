@@ -48,6 +48,8 @@ existing Lumen `Allow` decision. It is deterministic and has three outcomes:
 `complete`, `timeout`, and `cancel`. Each emits redacted
 `connector.transport.*` events and ends in `Succeeded`, `TimedOut`, or
 `Cancelled`. It creates no artifact, socket, subprocess, or background job.
+`SessionHandle::run_science_ssh_scp_offline_transport` dispatches this model
+through `SessionActor`; it is not callable as a second executor.
 
 On store reopen, `recover_interrupted` turns any non-terminal run—including an
 allowed but unstarted ticket—into `Interrupted`; the stale ticket can no longer

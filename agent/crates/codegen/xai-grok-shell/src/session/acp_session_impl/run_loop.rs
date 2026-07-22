@@ -281,7 +281,11 @@ pub(super) async fn run_session(
             context, policy, request); let _ = respond_to.send(result); }
             SessionCommand::FinishScienceSshScpAdmission { prepared, decision, respond_to } => {
             let result = session.finish_science_ssh_scp_admission(prepared, decision); let _ =
-            respond_to.send(result); } SessionCommand::Initialize { system_prompt } => { session
+            respond_to.send(result); }
+            SessionCommand::ExecuteScienceSshScpOfflineTransport { store, ticket, outcome,
+            respond_to } => { let result = session.execute_science_ssh_scp_offline_transport(
+            store, ticket, outcome); let _ = respond_to.send(result); }
+            SessionCommand::Initialize { system_prompt } => { session
             .initialize(system_prompt). await; let s = session.clone(); let handle =
             tokio::task::spawn_local(async move { s.build_prefix_background(). await });
             session.deferred_prefix.arm(handle); } SessionCommand::ReplaceSystemPrompt {

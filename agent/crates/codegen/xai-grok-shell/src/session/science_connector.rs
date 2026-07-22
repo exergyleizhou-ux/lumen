@@ -8,10 +8,53 @@ use agent_client_protocol as acp;
 use tokio::sync::oneshot;
 use xai_grok_science::{
     ApprovalDecision, RunContext, ScienceError, ScienceStore,
-    connector::{AdmissionTicket, ConnectorPolicy, ConnectorRequest},
+    connector::{
+        AdmissionTicket, ConnectorPolicy, ConnectorRequest, OfflineTransportOutcome,
+        OfflineTransportReceipt,
+    },
 };
 
 impl SessionHandle {
+    /// Full P4 offline product path. Admission and the deterministic transport
+    /// both execute through SessionActor; only the pre-existing Lumen
+    /// permission manager can supply the Allow that permits the model run.
+    pub async fn run_science_ssh_scp_offline_transport(
+        &self,
+        store: ScienceStore,
+        context: RunContext,
+        policy: ConnectorPolicy,
+        request: ConnectorRequest,
+        approval_timeout: std::time::Duration,
+        outcome: OfflineTransportOutcome,
+    ) -> xai_grok_science::Result<Option<OfflineTransportReceipt>> {
+        let Some(ticket) = self
+            .admit_science_ssh_scp_with_approval_timeout(
+                store.clone(),
+                context,
+                policy,
+                request,
+                approval_timeout,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ExecuteScienceSshScpOfflineTransport {
+                store,
+                ticket,
+                outcome,
+                respond_to,
+            })
+            .map_err(|_| ScienceError::Invalid("session actor unavailable".into()))?;
+        Ok(Some(
+            response
+                .await
+                .map_err(|_| ScienceError::Invalid("session actor stopped".into()))??,
+        ))
+    }
+
     /// Executes the P4 ordering invariant:
     ///
     /// `SessionActor durable admission -> Lumen permission manager ->
