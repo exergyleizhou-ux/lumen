@@ -57,6 +57,12 @@ jobs:
         shell: pwsh
         env:
           CARGO_BUILD_JOBS: "4"
+          # MSVC creates a PDB for debug information.  The monolithic CLI
+          # exceeds the PDB public-symbol limit, while this distributable does
+          # not ship a matching symbol bundle.  Force a symbol-free release
+          # specifically for the Windows team package.
+          CARGO_PROFILE_RELEASE_DEBUG: "0"
+          CARGO_PROFILE_RELEASE_STRIP: "symbols"
         run: |
           cargo build --locked --release `
             --package xai-grok-pager-bin `
