@@ -74,6 +74,13 @@ rustflags = ["-C", "force-unwind-tables=yes", "-C", "target-feature=+crt-static"
 # env vars below for those platforms.
 # See: https://github.com/tikv/jemallocator/issues/122
 [env]
+# Test threads run very large SessionActor fixtures on a single poll stack.
+# The actor prompt/turn state machines are boxed on the heap (see
+# acp_session_impl/turn.rs), but debug builds still need more than the
+# default 2 MiB test-thread stack. 16 MiB matches what the suite was
+# measured against; an explicitly exported RUST_MIN_STACK still wins
+# (cargo [env] does not override variables already set).
+RUST_MIN_STACK = "16777216"
 SYSTEM_DEPS_DAV1D_BUILD_INTERNAL = "auto"
 AARCH64_APPLE_DARWIN_JEMALLOC_SYS_WITH_LG_PAGE = "14"
 AARCH64_UNKNOWN_LINUX_GNU_JEMALLOC_SYS_WITH_LG_PAGE = "16"

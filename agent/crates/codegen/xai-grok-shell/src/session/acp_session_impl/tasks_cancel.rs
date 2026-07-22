@@ -157,6 +157,9 @@ async fn run_task(
     persist_ack: Option<oneshot::Sender<()>>,
     parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
 ) {
+    // Detach the heavy prompt state machine from the command/notification
+    // dispatcher poll before constructing and polling it on the actor.
+    tokio::task::yield_now().await;
     let result = Box::pin(session
         .handle_prompt(
             &prompt_id,

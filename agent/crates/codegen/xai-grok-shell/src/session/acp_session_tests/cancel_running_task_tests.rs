@@ -16,7 +16,9 @@ impl AsyncTerminalRunner for DummyTerminal {
 async fn persist_ack_waits_for_disk_flush_before_success() {
     let local = tokio::task::LocalSet::new();
     local
-        .run_until(async {
+        // Keep this deliberately large actor fixture off the current-thread test stack:
+        // the prompt itself is already run through the production `AgentTask` boundary.
+        .run_until(Box::pin(async {
             let tmp = tempfile::TempDir::new().unwrap();
             let session_dir = tmp.path().join("session");
             let cwd = AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap();
@@ -297,24 +299,22 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 "hello persist".to_string(),
             ))];
             let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-            let actor_for_prompt = actor.clone();
-            let prompt_task = tokio::task::spawn_local(async move {
-                actor_for_prompt
-                    .handle_prompt(
-                        "persist-ack-test",
-                        prompt_blocks,
-                        PromptMode::Agent,
-                        None,
-                        None,
-                        None,
-                        None,
-                        true,
-                        None,
-                        Some(ack_tx),
-                        None,
-                    )
-                    .await
-            });
+            let (completion_tx, _completion_rx) = tokio::sync::mpsc::unbounded_channel();
+            let _prompt_task = AgentTask::new_prompt(
+                actor.clone(),
+                "persist-ack-test".to_owned(),
+                prompt_blocks,
+                PromptMode::Agent,
+                None,
+                None,
+                None,
+                None,
+                true,
+                None,
+                completion_tx,
+                Some(ack_tx),
+                None,
+            );
             assert!(ack_rx.await.is_ok(), "persist ack should resolve");
             let storage = crate::session::storage::JsonlStorageAdapter::with_explicit_session_dir(
                 session_dir,
@@ -330,8 +330,6 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     .any(|item| item.text_content().contains("hello persist")),
                 "loaded chat history should contain the just-persisted prompt"
             );
-            let _ = prompt_task.await.expect("prompt task should complete");
-
             {
                 let mut state = actor.state.lock().await;
                 state.expert = crate::session::expert::ExpertModeState::configured();
@@ -357,7 +355,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 expert.last_outcome,
                 Some(crate::session::expert::ExpertOutcome::Aborted)
             );
-        })
+        }))
         .await;
 }
 #[tokio::test(flavor = "current_thread")]

@@ -848,6 +848,11 @@ impl SessionActor {
                 self.chat_state_handle.push_user_message(user_chat);
             }
         }
+        // Persistence is the last part of prompt setup that must remain on
+        // the dispatcher path.  Resume the full turn state machine on a
+        // fresh actor poll so this large continuation cannot inherit that
+        // call stack.
+        tokio::task::yield_now().await;
         self.dispatch_hook(
             xai_grok_hooks::event::HookEventName::UserPromptSubmit,
             xai_grok_hooks::event::HookPayload::UserPromptSubmit {
@@ -1502,13 +1507,14 @@ impl SessionActor {
         err,
         fields(req_id = %req_id, session_id = %self.session_info.id.0)
     )]
-    pub(super) async fn process_conversation_turn_with_recovery(
-        self: &Arc<Self>,
-        req_id: &str,
+    pub(super) fn process_conversation_turn_with_recovery<'a>(
+        self: &'a Arc<Self>,
+        req_id: &'a str,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
         artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
-    ) -> Result<TurnOutcome, acp::Error> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TurnOutcome, acp::Error>> + 'a>> {
+        Box::pin(async move {
         let _ = self.compaction.auto_compact_suppressed.compare_exchange(
             crate::session::compaction_config::SUPPRESS_TURN,
             crate::session::compaction_config::SUPPRESS_NONE,
@@ -1630,6 +1636,7 @@ impl SessionActor {
                 return result;
             }
         }
+        })
     }
     /// Compute the first-turn memory reminder, if one should be injected.
     ///
@@ -1845,13 +1852,14 @@ impl SessionActor {
             parent_agent_id = tracing::field::Empty,
         )
     )]
-    async fn process_conversation_turn(
-        self: &Arc<Self>,
-        req_id: &str,
+    fn process_conversation_turn<'a>(
+        self: &'a Arc<Self>,
+        req_id: &'a str,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
-        artifact_tracker: Option<&crate::upload::manifest::ArtifactTracker>,
+        artifact_tracker: Option<&'a crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
-    ) -> Result<TurnOutcome, acp::Error> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TurnOutcome, acp::Error>> + 'a>> {
+        Box::pin(async move {
         let conv_turn_start = std::time::Instant::now();
         // Begin new turn for delivery tracking
         self.delivery_state.borrow_mut().begin_turn();
@@ -2543,6 +2551,7 @@ impl SessionActor {
                 continue;
             }
         }
+        })
     }
 }
 /// Backoff schedule for resubmits after a *successful* 401 auth recovery
