@@ -77,8 +77,8 @@ impl AgentTask {
         let pid = prompt_id.clone();
         Self {
             prompt_id,
-            handle: tokio::task::spawn_local(async move {
-                run_task(
+            handle: tokio::task::spawn_local(Box::pin(async move {
+                Box::pin(run_task(
                     session.clone(),
                     input,
                     prompt_mode,
@@ -92,9 +92,9 @@ impl AgentTask {
                     completion_tx,
                     persist_ack,
                     parsed_prompt_tx,
-                )
+                ))
                 .await
-            })
+            }))
             .abort_handle(),
         }
     }
@@ -157,7 +157,7 @@ async fn run_task(
     persist_ack: Option<oneshot::Sender<()>>,
     parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
 ) {
-    let result = session
+    let result = Box::pin(session
         .handle_prompt(
             &prompt_id,
             input,
@@ -170,7 +170,7 @@ async fn run_task(
             json_schema,
             persist_ack,
             parsed_prompt_tx,
-        )
+        ))
         .await;
     let _ = completion_tx.send((prompt_id, result));
 }
