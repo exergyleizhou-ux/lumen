@@ -19,6 +19,7 @@ pub mod api;
 pub mod connector;
 pub mod connectors;
 pub mod csv;
+pub mod preview;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
