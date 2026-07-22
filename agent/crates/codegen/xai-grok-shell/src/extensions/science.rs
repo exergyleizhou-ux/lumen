@@ -50,12 +50,144 @@ struct ImportPreviewParams {
     approval_timeout_ms: u64,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ConnectorFetchParams {
+    session_id: String,
+    project_id: String,
+    owner_id: String,
+    store_root: PathBuf,
+    artifact_root: PathBuf,
+    connector_id: String,
+    query: String,
+    #[serde(default = "default_max_results")]
+    max_results: u32,
+    /// Offline mock transport: one local fixture file per protocol exchange,
+    /// standing in for the HTTP responses. Live transport is not wired here;
+    /// the audited live probe lives in the science crate's ignored tests.
+    fixture_paths: Vec<PathBuf>,
+    #[serde(default = "default_approval_timeout_ms")]
+    approval_timeout_ms: u64,
+}
+
+fn default_max_results() -> u32 {
+    5
+}
+
 pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     match args.method.as_ref() {
         "x.ai/science/run_csv" => handle_run_csv(agent, args).await,
         "x.ai/science/import_preview" => handle_import_preview(agent, args).await,
+        "x.ai/science/connector_fetch" => handle_connector_fetch(agent, args).await,
         _ => Err(acp::Error::method_not_found()),
     }
+}
+
+/// S3 connector fetch entry: validates the connector, builds the protocol's
+/// policy-gated request sequence, pairs each request with its offline
+/// fixture, then drives the SessionActor begin/permission/finish protocol.
+async fn handle_connector_fetch(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    let params: ConnectorFetchParams = parse_params(args)?;
+    if params.project_id.is_empty() || params.owner_id.is_empty() {
+        return Err(acp::Error::invalid_params().data("projectId and ownerId are required"));
+    }
+    if !(1..=300_000).contains(&params.approval_timeout_ms) {
+        return Err(acp::Error::invalid_params().data("approvalTimeoutMs must be in 1..=300000"));
+    }
+    if params.query.is_empty() || !(1..=50).contains(&params.max_results) {
+        return Err(acp::Error::invalid_params().data("query required; maxResults must be in 1..=50"));
+    }
+    let descriptor = xai_grok_science::connectors::descriptor(&params.connector_id)
+        .ok_or_else(|| acp::Error::invalid_params().data("unknown connectorId"))?;
+    let expected = xai_grok_science::connectors::fetch::expected_exchanges(descriptor.id)
+        .ok_or_else(|| acp::Error::invalid_params().data("connector has no v1 operation"))?;
+    if params.fixture_paths.len() != expected {
+        return Err(acp::Error::invalid_params().data(format!(
+            "connector {} requires exactly {expected} fixture exchange(s)",
+            descriptor.id
+        )));
+    }
+    let session_id = acp::SessionId::new(params.session_id);
+    let handle = agent
+        .get_session_handle(&session_id)
+        .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
+    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let store_root = canonical_dir_within(params.store_root, &workspace)?;
+    let artifact_root = canonical_dir_within(params.artifact_root, &workspace)?;
+    let mut fixture_bytes = Vec::with_capacity(expected);
+    for path in &params.fixture_paths {
+        let path = std::fs::canonicalize(path).map_err(internal)?;
+        if !path.starts_with(&workspace) || !path.is_file() {
+            return Err(acp::Error::invalid_params()
+                .data("fixturePaths must be files inside session cwd"));
+        }
+        let bytes = std::fs::read(&path).map_err(internal)?;
+        if bytes.len() as u64 > xai_grok_science::preview::DEFAULT_MAX_BYTES {
+            return Err(acp::Error::invalid_params().data("fixture exceeds the size cap"));
+        }
+        fixture_bytes.push(bytes);
+    }
+    // Build the policy-gated request sequence. The pubmed esummary path
+    // depends on the ids of the esearch exchange, parsed from the staged
+    // fixture (the kernel re-parses everything at finish).
+    let validate = |path: &str| {
+        xai_grok_science::connectors::validate_request(descriptor.id, path, false, 10_000)
+            .map_err(|error| acp::Error::invalid_params().data(error.to_string()))
+    };
+    let requests = match descriptor.id {
+        "pubmed" => {
+            let search = validate(&xai_grok_science::connectors::pubmed::esearch_path(
+                &params.query,
+                params.max_results,
+                0,
+            ))?;
+            let (_total, ids) =
+                xai_grok_science::connectors::pubmed::parse_esearch(&fixture_bytes[0])
+                    .map_err(|error| acp::Error::invalid_params().data(error.to_string()))?;
+            let summary =
+                validate(&xai_grok_science::connectors::pubmed::esummary_path(&ids))?;
+            vec![search, summary]
+        }
+        "chembl" => {
+            vec![validate(&xai_grok_science::connectors::chembl::search_path(
+                &params.query,
+                params.max_results,
+                0,
+            ))?]
+        }
+        other => {
+            return Err(acp::Error::invalid_params().data(format!("no v1 operation for {other}")))
+        }
+    };
+    let context = RunContext {
+        run_id: RunId::new_v7(),
+        project_id: ProjectId::new(params.project_id),
+        session_id: session_id.0.to_string(),
+        owner_id: params.owner_id,
+        workspace_root: workspace,
+        provider: "offline-deterministic".into(),
+        approval_policy: "production-session-permission".into(),
+        tool_profile: "science-connector-v1".into(),
+        artifact_root,
+        environment: BTreeMap::from([
+            ("network".into(), "disabled".into()),
+            ("locale".into(), "C".into()),
+        ]),
+    };
+    let result = agent
+        .run_science_fetch(
+            &session_id,
+            ScienceStore::new(store_root),
+            context,
+            descriptor.id.to_owned(),
+            params.query,
+            requests,
+            fixture_bytes,
+            Duration::from_millis(params.approval_timeout_ms),
+        )
+        .await
+        .map_err(internal)?;
+    to_raw_response(&result)
 }
 
 /// S2 import entry: validates the source file inside the session workspace,

@@ -11,6 +11,26 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod chembl;
+pub mod fetch;
+pub mod pubmed;
+
+/// Minimal percent-encoding for query terms (unreserved characters pass
+/// through; everything else is %XX). Keeps the crate free of a URL crate
+/// dependency for two fixed endpoints.
+pub(crate) fn url_encode(term: &str) -> String {
+    let mut out = String::with_capacity(term.len());
+    for byte in term.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 /// Credential requirement of a data service.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

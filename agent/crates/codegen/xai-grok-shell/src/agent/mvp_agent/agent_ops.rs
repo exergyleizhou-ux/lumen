@@ -2075,6 +2075,41 @@ impl MvpAgent {
             )
             .await
     }
+
+    /// S3 connector fetch entry: verifies the science context targets this
+    /// SessionActor and delegates to the session handle's
+    /// begin/permission/finish protocol.
+    pub async fn run_science_fetch(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        connector_id: String,
+        query: String,
+        requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+        fixture_bytes: Vec<Vec<u8>>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_fetch_with_approval_timeout(
+                store,
+                context,
+                connector_id,
+                query,
+                requests,
+                fixture_bytes,
+                approval_timeout,
+            )
+            .await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,

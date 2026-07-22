@@ -2,8 +2,19 @@
 
 use super::*;
 use crate::session::commands::{
-    PreparedScienceCsv, PreparedScienceImport, PreparedScienceSshScpAdmission,
+    PreparedScienceCsv, PreparedScienceFetch, PreparedScienceImport,
+    PreparedScienceSshScpAdmission,
 };
+
+/// Fetch transit tool: copies each staged input to its staged output. The
+/// kernel re-parses the output bytes as connector responses, so a fetch is
+/// recorded only when the formal tool path preserved every exchange.
+const FETCH_TOOL_SCRIPT: &str = r#"import sys
+from pathlib import Path
+args = sys.argv[1:]
+for index in range(0, len(args), 2):
+    Path(args[index + 1]).write_bytes(Path(args[index]).read_bytes())
+"#;
 
 /// Import transit tool: copies staged input bytes to a staged output. The
 /// kernel then re-derives the preview from the output bytes, so the artifact
@@ -272,6 +283,173 @@ impl SessionActor {
             prepared.ticket,
             &prepared.source_path,
             &transited,
+            format!("{tool_name} via WorkspaceOps::call_tool"),
+        )
+    }
+
+    /// S3 phase one inside the sole session actor: begin the durable fetch
+    /// run and stage the offline response bytes for formal tool transit.
+    pub(super) fn prepare_science_fetch(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        connector_id: String,
+        query: String,
+        requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+        fixture_bytes: Vec<Vec<u8>>,
+    ) -> xai_grok_science::Result<PreparedScienceFetch> {
+        if requests.len() != fixture_bytes.len() || requests.is_empty() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "fetch requires one staged response per request".into(),
+            ));
+        }
+        let ticket = xai_grok_science::connectors::fetch::begin_fetch(&store, context.clone())?;
+        let staging = context
+            .artifact_root
+            .join(&ticket.run_id.0)
+            .join("tool-staging");
+        std::fs::create_dir_all(&staging)?;
+        let mut command = format!("python3 -c {}", quote(FETCH_TOOL_SCRIPT)?);
+        let mut output_paths = Vec::with_capacity(fixture_bytes.len());
+        for (index, bytes) in fixture_bytes.iter().enumerate() {
+            let input_path = staging.join(format!("input_{index}.bin"));
+            let output_path = staging.join(format!("output_{index}.bin"));
+            std::fs::write(&input_path, bytes)?;
+            command.push_str(&format!(
+                " {} {}",
+                quote(&input_path.to_string_lossy())?,
+                quote(&output_path.to_string_lossy())?,
+            ));
+            output_paths.push(output_path);
+        }
+        Ok(PreparedScienceFetch {
+            store,
+            ticket,
+            connector_id,
+            query,
+            requests,
+            fixture_bytes,
+            command,
+            output_paths,
+        })
+    }
+
+    pub(super) async fn finish_science_fetch(
+        &self,
+        prepared: PreparedScienceFetch,
+        decision: xai_grok_science::ApprovalDecision,
+        reason: String,
+    ) -> xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult> {
+        if decision != xai_grok_science::ApprovalDecision::Allow {
+            let terminal = xai_grok_science::csv::finish_without_execution(
+                &prepared.store,
+                &prepared.ticket,
+                decision,
+                reason,
+            )?;
+            return Err(xai_grok_science::ScienceError::Invalid(format!(
+                "science run {} finished {:?}",
+                prepared.ticket.run_id.0, terminal.state
+            )));
+        }
+
+        xai_grok_science::csv::mark_allowed(&prepared.store, &prepared.ticket)?;
+        let tool_name = self
+            .agent
+            .borrow()
+            .tool_bridge()
+            .toolset()
+            .tool_name_for_kind(xai_grok_tools::types::tool::ToolKind::Execute)
+            .ok_or_else(|| {
+                xai_grok_science::ScienceError::Invalid(
+                    "session toolset has no execute tool".into(),
+                )
+            })?;
+        prepared.store.append_event(
+            &prepared.ticket.run_id,
+            "LumenToolDispatch",
+            "tool.started",
+            serde_json::json!({
+                "tool": tool_name,
+                "call_id": prepared.ticket.call_id.0,
+                "dispatch": "WorkspaceOps::call_tool"
+            }),
+        )?;
+        let args = serde_json::to_value(BashToolInput {
+            command: prepared.command.clone(),
+            timeout: Some(30_000),
+            description: "Transit Lumen Science connector bytes through the formal workspace tool"
+                .into(),
+            is_background: false,
+        })
+        .map_err(xai_grok_science::ScienceError::Serde)?;
+        let dispatched = self
+            .workspace_ops
+            .call_tool(
+                &tool_name,
+                args,
+                &prepared.ticket.call_id.0,
+                Some(&self.session_info.id.0),
+            )
+            .await;
+        let output = match dispatched {
+            Ok(output) => output,
+            Err(error) => {
+                let reason = format!("formal tool dispatch failed: {error}");
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+        };
+        match output.output {
+            ToolsToolOutput::Bash(ref bash) if bash.exit_code == 0 && !bash.timed_out => {}
+            ToolsToolOutput::Bash(ref bash) => {
+                let reason = format!(
+                    "science fetch transit tool failed: exit={} timed_out={}",
+                    bash.exit_code, bash.timed_out
+                );
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+            _ => {
+                let reason = "science execute tool returned a non-bash output".to_string();
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+        }
+        let mut exchanges = Vec::with_capacity(prepared.requests.len());
+        for (index, request) in prepared.requests.into_iter().enumerate() {
+            let transited = std::fs::read(&prepared.output_paths[index])?;
+            if transited != prepared.fixture_bytes[index] {
+                let reason = format!("formal tool bytes diverge on fetch exchange {index}");
+                let _ = xai_grok_science::csv::fail_running(
+                    &prepared.store,
+                    &prepared.ticket,
+                    reason.clone(),
+                );
+                return Err(xai_grok_science::ScienceError::Invalid(reason));
+            }
+            exchanges.push(
+                xai_grok_science::connectors::fetch::FetchExchange { request, response: transited },
+            );
+        }
+        xai_grok_science::connectors::fetch::finish_fetch(
+            &prepared.store,
+            prepared.ticket,
+            &prepared.connector_id,
+            &prepared.query,
+            exchanges,
             format!("{tool_name} via WorkspaceOps::call_tool"),
         )
     }

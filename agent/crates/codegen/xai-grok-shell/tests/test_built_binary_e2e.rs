@@ -1184,6 +1184,130 @@ async fn test_stdio_science_import_csv_fasta_product_path() {
     .await;
 }
 
+/// Science GC2 product proof: pubmed (two-exchange protocol) and chembl
+/// (single-exchange) fetches run through the SessionActor product path with
+/// offline fixtures as mock transport. Each run persists raw response
+/// artifacts, a redacted per-exchange audit, citation-bearing evidence, and
+/// provenance naming the connector TOS.
+#[tokio::test]
+#[ignore]
+async fn test_stdio_science_connector_fetch_product_path() {
+    with_local_set(|| async {
+        let server = MockInferenceServer::start()
+            .await
+            .expect("start mock server");
+        let workdir = git_workdir();
+        let store_root = workdir.path().join("science-store");
+        let artifact_root = workdir.path().join("science-artifacts");
+        for name in [
+            "connector_pubmed_esearch.json",
+            "connector_pubmed_esummary.json",
+            "connector_chembl_search.json",
+        ] {
+            std::fs::copy(
+                format!(
+                    "{}/../xai-grok-science/fixtures/{name}",
+                    env!("CARGO_MANIFEST_DIR")
+                ),
+                workdir.path().join(name),
+            )
+            .expect("copy connector fixture");
+        }
+
+        let client = GrokStdioClient::spawn(&server, workdir.path()).await;
+        client.initialize_with_timeout().await;
+        let session_id = client.create_session_with_timeout(workdir.path()).await;
+
+        let cases: [( &str, &str, Vec<&str>, usize, &str ); 2] = [
+            (
+                "pubmed",
+                "crispr",
+                vec!["connector_pubmed_esearch.json", "connector_pubmed_esummary.json"],
+                2,
+                "Base editing advances",
+            ),
+            ("chembl", "aspirin", vec!["connector_chembl_search.json"], 1, "ASPIRIN"),
+        ];
+        for (connector, query, fixtures, exchange_count, first_title) in cases {
+            let fixture_paths: Vec<_> = fixtures
+                .iter()
+                .map(|name| workdir.path().join(name))
+                .collect();
+            let response = tokio::time::timeout(
+                Duration::from_secs(30),
+                client.ext_method(
+                    "x.ai/science/connector_fetch",
+                    serde_json::json!({
+                        "sessionId": session_id.0.as_ref(),
+                        "projectId": "science-product-connector",
+                        "ownerId": "science-owner",
+                        "storeRoot": store_root,
+                        "artifactRoot": artifact_root,
+                        "connectorId": connector,
+                        "query": query,
+                        "maxResults": 5,
+                        "fixturePaths": fixture_paths,
+                        "approvalTimeoutMs": 5_000,
+                    }),
+                ),
+            )
+            .await
+            .expect("connector fetch timed out")
+            .unwrap_or_else(|error| {
+                panic!(
+                    "connector fetch failed: {error:?}\nstderr:\n{}",
+                    client.stderr()
+                )
+            });
+            let result: serde_json::Value =
+                serde_json::from_str(response.0.get()).expect("connector fetch returned JSON");
+            assert_eq!(result["run"]["state"], "succeeded", "result: {result}");
+            assert_eq!(
+                result["artifacts"].as_array().map(Vec::len),
+                Some(exchange_count),
+                "result: {result}"
+            );
+            assert_eq!(
+                result["parsed"]["records"][0]["title"].as_str(),
+                Some(first_title),
+                "result: {result}"
+            );
+            // Evidence carries the scientific citation; the audit is redacted.
+            let claim = result["evidence"][0]["claim"].as_str().unwrap_or_default();
+            assert!(claim.contains(query), "claim: {claim}");
+            assert!(claim.contains(first_title), "claim: {claim}");
+            let audits = result["audits"].as_array().expect("audits array");
+            assert_eq!(audits.len(), exchange_count);
+            for audit in audits {
+                let hash = audit["request_sha256"].as_str().unwrap_or_default();
+                assert_eq!(hash.len(), 64, "audit: {audit}");
+                assert!(!hash.contains(query), "audit must not leak query terms");
+            }
+            assert!(
+                result["provenance"][0]["license"]
+                    .as_str()
+                    .is_some_and(|tos| tos.starts_with("https://")),
+                "result: {result}"
+            );
+
+            // Durable reopen: records survive a store restart.
+            let store = xai_grok_science::ScienceStore::new(&store_root);
+            let run_id = xai_grok_science::RunId::new(
+                result["run"]["context"]["run_id"]
+                    .as_str()
+                    .expect("response must include durable run id"),
+            );
+            let run = store.load_run(&run_id).expect("reopen durable run");
+            assert_eq!(run.state, xai_grok_science::RunState::Succeeded);
+            assert_eq!(
+                store.artifacts(&run_id).expect("reopen artifacts").len(),
+                exchange_count
+            );
+        }
+    })
+    .await;
+}
+
 /// A real ACP client cancellation of the permission prompt must durably
 /// record the terminal Cancel decision: no artifacts, no tool-start event.
 /// (The harness expresses rejection as the ACP `Cancelled` outcome, which the

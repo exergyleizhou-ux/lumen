@@ -139,6 +139,39 @@ pub struct FinishScienceImport {
     pub(crate) respond_to:
         oneshot::Sender<xai_grok_science::Result<xai_grok_science::import::ImportResult>>,
 }
+
+/// A connector fetch that has begun a durable run inside the session actor
+/// and awaits the production permission decision. `requests` are the
+/// policy-validated connector exchanges; `fixture_bytes` stand in for the
+/// HTTP responses (offline mock transport) and are transited through the
+/// formal workspace execute tool before the kernel re-parses them.
+pub struct PreparedScienceFetch {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) connector_id: String,
+    pub(crate) query: String,
+    pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+    pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) command: String,
+    pub(crate) output_paths: Vec<std::path::PathBuf>,
+}
+pub struct BeginScienceFetch {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) connector_id: String,
+    pub(crate) query: String,
+    pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+    pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceFetch>>,
+}
+pub struct FinishScienceFetch {
+    pub(crate) prepared: PreparedScienceFetch,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult>,
+    >,
+}
 pub struct BeginScienceSshScpAdmission {
     pub(crate) store: xai_grok_science::ScienceStore,
     pub(crate) context: xai_grok_science::RunContext,
@@ -196,6 +229,10 @@ pub enum SessionCommand {
     /// session's production permission manager.
     BeginScienceImport(Box<BeginScienceImport>),
     FinishScienceImport(Box<FinishScienceImport>),
+    /// S3 phase one: begin a durable connector fetch run before the caller
+    /// awaits this session's production permission manager.
+    BeginScienceFetch(Box<BeginScienceFetch>),
+    FinishScienceFetch(Box<FinishScienceFetch>),
     BeginScienceSshScpAdmission(Box<BeginScienceSshScpAdmission>),
     FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
     ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
