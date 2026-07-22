@@ -169,6 +169,8 @@ mod recap;
 mod rewind;
 #[path = "acp_session_impl/run_loop.rs"]
 mod run_loop;
+#[path = "acp_session_impl/science.rs"]
+mod science;
 #[path = "acp_session_impl/session_setup.rs"]
 mod session_setup;
 #[path = "acp_session_impl/turn_end.rs"]

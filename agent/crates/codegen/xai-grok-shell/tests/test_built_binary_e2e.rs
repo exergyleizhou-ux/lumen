@@ -27,6 +27,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use serde_json::Value;
+use xai_grok_test_support::acp_client::PermissionResponse;
 use xai_grok_test_support::env::test_env_cmd_tokio;
 use xai_grok_test_support::*;
 
@@ -999,6 +1000,235 @@ async fn test_stdio_full_session_lifecycle() {
         );
     })
     .await;
+}
+
+/// Science GB3 product proof: a separately spawned `lumen agent stdio`
+/// process accepts the ACP extension, routes through its existing SessionActor
+/// and production permission bridge, then persists a successful CSV result.
+///
+/// This remains ignored because it requires a pre-built composition-root
+/// binary. It deliberately uses the shared typed ACP harness rather than a
+/// kernel helper so it cannot bypass the product protocol.
+#[tokio::test]
+#[ignore]
+async fn test_stdio_science_csv_allow_product_path() {
+    with_local_set(|| async {
+        let server = MockInferenceServer::start()
+            .await
+            .expect("start mock server");
+        let workdir = git_workdir();
+        let evidence = tempfile::tempdir().expect("create science evidence root");
+        let fixture = workdir.path().join("micro.csv");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../xai-grok-science/fixtures/micro.csv"
+            ),
+            &fixture,
+        )
+        .expect("copy fixed science fixture");
+
+        let client = GrokStdioClient::spawn(&server, workdir.path()).await;
+        client.initialize_with_timeout().await;
+        let session_id = client.create_session_with_timeout(workdir.path()).await;
+        let response = tokio::time::timeout(
+            Duration::from_secs(30),
+            client.ext_method(
+                "x.ai/science/run_csv",
+                serde_json::json!({
+                    "sessionId": session_id.0.as_ref(),
+                    "projectId": "science-product-allow",
+                    "ownerId": "science-owner",
+                    "storeRoot": evidence.path().join("store"),
+                    "artifactRoot": evidence.path().join("artifacts"),
+                    "fixturePath": fixture,
+                    "approvalTimeoutMs": 5_000,
+                }),
+            ),
+        )
+        .await
+        .expect("science extension timed out")
+        .unwrap_or_else(|error| {
+            panic!(
+                "science extension failed: {error:?}\nstderr:\n{}",
+                client.stderr()
+            )
+        });
+        let result: serde_json::Value =
+            serde_json::from_str(response.0.get()).expect("science extension returned JSON");
+        assert_eq!(result["run"]["state"], "succeeded", "result: {result}");
+        assert!(
+            result["artifacts"]
+                .as_array()
+                .is_some_and(|items| items.len() == 2)
+        );
+        assert!(
+            evidence.path().join("store").exists(),
+            "durable store was not created"
+        );
+        let store = xai_grok_science::ScienceStore::new(evidence.path().join("store"));
+        let run_id = xai_grok_science::RunId::new(
+            result["run"]["context"]["run_id"]
+                .as_str()
+                .expect("response must include durable run id"),
+        );
+        let run = store.load_run(&run_id).expect("reopen durable run");
+        assert_eq!(run.state, xai_grok_science::RunState::Succeeded);
+        let events = store.events_after(&run_id, 0, 100).expect("replay events");
+        assert!(events.len() >= 4, "events: {events:?}");
+        assert_eq!(events[0].seq, 1);
+        assert!(
+            events.windows(2).all(|items| items[0].seq + 1 == items[1].seq),
+            "event sequence is not monotonic: {events:?}"
+        );
+        let reopened = xai_grok_science::ScienceStore::new(evidence.path().join("store"));
+        assert_eq!(
+            events,
+            reopened.events_after(&run_id, 0, 100).expect("replay after reopen"),
+            "restart replay must preserve every event field"
+        );
+    });
+}
+
+/// A real ACP client cancellation must durably deny the science call and must
+/// not create artifacts or a tool-start event.
+#[tokio::test]
+#[ignore]
+async fn test_stdio_science_csv_deny_product_path() {
+    with_local_set(|| async {
+        let server = MockInferenceServer::start()
+            .await
+            .expect("start mock server");
+        let workdir = git_workdir();
+        let evidence = tempfile::tempdir().expect("create science evidence root");
+        let fixture = workdir.path().join("micro.csv");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../xai-grok-science/fixtures/micro.csv"
+            ),
+            &fixture,
+        )
+        .expect("copy fixed science fixture");
+        let client = GrokStdioClient::spawn_with_permission_response(
+            &server,
+            workdir.path(),
+            PermissionResponse::Reject,
+        )
+        .await;
+        client.initialize_with_timeout().await;
+        let session_id = client.create_session_with_timeout(workdir.path()).await;
+        let store_root = evidence.path().join("store");
+        let response = client
+            .ext_method(
+                "x.ai/science/run_csv",
+                serde_json::json!({
+                    "sessionId": session_id.0.as_ref(), "projectId": "science-product-deny",
+                    "ownerId": "science-owner", "storeRoot": store_root,
+                    "artifactRoot": evidence.path().join("artifacts"), "fixturePath": fixture,
+                    "approvalTimeoutMs": 5_000,
+                }),
+            )
+            .await;
+        assert!(
+            response.is_err(),
+            "deny must not report success: {response:?}"
+        );
+        let run_id = std::fs::read_dir(&store_root)
+            .expect("durable denied run directory")
+            .next()
+            .expect("one denied run")
+            .expect("run directory entry")
+            .file_name()
+            .to_string_lossy()
+            .to_string();
+        let store = xai_grok_science::ScienceStore::new(&store_root);
+        let run = store
+            .load_run(&xai_grok_science::RunId::new(run_id))
+            .expect("load denied run");
+        assert_eq!(run.state, xai_grok_science::RunState::Denied);
+        let events = store
+            .events_after(&run.context.run_id, 0, 100)
+            .expect("load events");
+        assert!(!events.iter().any(|event| event.kind == "tool.started"));
+        assert!(store.artifacts(&run.context.run_id).unwrap().is_empty());
+        assert_eq!(
+            store.approvals(&run.context.run_id).unwrap()[0].decision,
+            xai_grok_science::ApprovalDecision::Deny
+        );
+    });
+}
+
+/// A client that never resolves the production permission prompt must leave a
+/// durable timeout record, not execute after the request has expired.
+#[tokio::test]
+#[ignore]
+async fn test_stdio_science_csv_timeout_product_path() {
+    with_local_set(|| async {
+        let server = MockInferenceServer::start()
+            .await
+            .expect("start mock server");
+        let workdir = git_workdir();
+        let evidence = tempfile::tempdir().expect("create science evidence root");
+        let fixture = workdir.path().join("micro.csv");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../xai-grok-science/fixtures/micro.csv"
+            ),
+            &fixture,
+        )
+        .expect("copy fixed science fixture");
+        let client = GrokStdioClient::spawn_with_permission_response(
+            &server,
+            workdir.path(),
+            PermissionResponse::NeverRespond,
+        )
+        .await;
+        client.initialize_with_timeout().await;
+        let session_id = client.create_session_with_timeout(workdir.path()).await;
+        let store_root = evidence.path().join("store");
+        let response = client
+            .ext_method(
+                "x.ai/science/run_csv",
+                serde_json::json!({
+                    "sessionId": session_id.0.as_ref(), "projectId": "science-product-timeout",
+                    "ownerId": "science-owner", "storeRoot": store_root,
+                    "artifactRoot": evidence.path().join("artifacts"), "fixturePath": fixture,
+                    "approvalTimeoutMs": 100,
+                }),
+            )
+            .await;
+        assert!(
+            response.is_err(),
+            "timeout must not report success: {response:?}"
+        );
+        let run_id = std::fs::read_dir(&store_root)
+            .expect("durable timed-out run directory")
+            .next()
+            .expect("one timed-out run")
+            .expect("run directory entry")
+            .file_name()
+            .to_string_lossy()
+            .to_string();
+        let store = xai_grok_science::ScienceStore::new(&store_root);
+        let run = store
+            .load_run(&xai_grok_science::RunId::new(run_id))
+            .expect("load timed-out run");
+        assert_eq!(run.state, xai_grok_science::RunState::TimedOut);
+        assert!(
+            !store
+                .events_after(&run.context.run_id, 0, 100)
+                .unwrap()
+                .iter()
+                .any(|event| event.kind == "tool.started")
+        );
+        assert!(store.artifacts(&run.context.run_id).unwrap().is_empty());
+        assert_eq!(
+            store.approvals(&run.context.run_id).unwrap()[0].decision,
+            xai_grok_science::ApprovalDecision::Timeout
+        );
+    });
 }
 
 /// Verify that x.ai/session/close frees the session.

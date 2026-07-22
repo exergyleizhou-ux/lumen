@@ -79,6 +79,62 @@ pub struct ParsedPromptInfo {
     /// Local disk path embedded in truncated message, only `Some` when truncated.
     pub local_path: Option<std::path::PathBuf>,
 }
+
+pub struct PreparedScienceCsv {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) fixture_path: std::path::PathBuf,
+    pub(crate) fixture: Vec<u8>,
+    pub(crate) command: String,
+    pub(crate) summary_path: std::path::PathBuf,
+    pub(crate) svg_path: std::path::PathBuf,
+}
+
+/// A project-owned SSH/SCP target that has passed offline Science admission.
+/// It has no socket, process, credential, or transport handle. The caller must
+/// still obtain the existing session permission decision before it can receive
+/// the opaque ticket for a future transport implementation.
+pub struct PreparedScienceSshScpAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+}
+pub struct BeginScienceCsv {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) fixture_path: std::path::PathBuf,
+    pub(crate) fixture: Vec<u8>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceCsv>>,
+}
+pub struct FinishScienceCsv {
+    pub(crate) prepared: PreparedScienceCsv,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
+}
+pub struct BeginScienceSshScpAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) policy: xai_grok_science::connector::ConnectorPolicy,
+    pub(crate) request: xai_grok_science::connector::ConnectorRequest,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<Option<PreparedScienceSshScpAdmission>>>,
+}
+pub struct FinishScienceSshScpAdmission {
+    pub(crate) prepared: PreparedScienceSshScpAdmission,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<Option<xai_grok_science::connector::AdmissionTicket>>,
+    >,
+}
+pub struct ExecuteScienceSshScpOfflineTransport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+    pub(crate) outcome: xai_grok_science::connector::OfflineTransportOutcome,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
+    >,
+}
 /// Priority levels for notification drain timing.
 ///
 /// Ordering: `Next < Later` (derived from declaration order).
@@ -104,6 +160,14 @@ impl NotificationSource {
     }
 }
 pub enum SessionCommand {
+    /// S4 phase one: create the durable run and pending approval before the
+    /// caller awaits this session's production permission manager.
+    BeginScienceCsv(Box<BeginScienceCsv>),
+    /// Keep Science payloads off the main command enum stack footprint.
+    FinishScienceCsv(Box<FinishScienceCsv>),
+    BeginScienceSshScpAdmission(Box<BeginScienceSshScpAdmission>),
+    FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
+    ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
     Initialize {
         system_prompt: String,
     },

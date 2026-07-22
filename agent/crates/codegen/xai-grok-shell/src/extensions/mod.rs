@@ -27,6 +27,7 @@ pub mod rewind;
 pub mod rollout;
 pub mod routing;
 pub mod search;
+pub mod science;
 pub mod session_admin;
 pub mod session_search;
 pub mod session_updates;

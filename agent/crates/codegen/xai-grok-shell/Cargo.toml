@@ -122,6 +122,7 @@ xai-grok-shell-base = { workspace = true }
 xai-grok-shell-session-support = { workspace = true }
 xai-grok-shared = { workspace = true }
 xai-grok-secrets = { workspace = true }
+xai-grok-science = { path = "../xai-grok-science" }
 xai-tracing-macros = { path = "../xai-tracing-macros" }
 xai-fsnotify = { path = "../xai-fsnotify" }
 xai-codebase-graph = { path = "../xai-codebase-graph" }

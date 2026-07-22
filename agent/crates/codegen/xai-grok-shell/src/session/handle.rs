@@ -165,6 +165,117 @@ pub struct SessionHandle {
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
 }
 impl SessionHandle {
+    /// S4 product path for the deterministic offline Science micro-loop.
+    /// Approval is requested from the existing session-scoped Lumen permission
+    /// manager before the command can reach `SessionActor`; a rejection never
+    /// invokes the Science executor.
+    pub async fn run_science_csv(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: std::path::PathBuf,
+        fixture: Vec<u8>,
+    ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
+        self.run_science_csv_with_approval_timeout(
+            store,
+            context,
+            fixture_path,
+            fixture,
+            std::time::Duration::from_secs(120),
+        )
+        .await
+    }
+
+    pub async fn run_science_csv_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: std::path::PathBuf,
+        fixture: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceCsv(Box::new(
+                crate::session::commands::BeginScienceCsv {
+                    store,
+                    context,
+                    fixture_path,
+                    fixture,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-csv-{}",
+            prepared.ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some("Lumen Science CSV analysis".into())),
+        );
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Bash(prepared.command.clone()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceCsv(Box::new(
+                crate::session::commands::FinishScienceCsv {
+                    prepared,
+                    decision,
+                    reason,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
     /// Last assistant `model_id` / `model_fingerprint` in conversation (global, not turn-scoped).
     pub(crate) async fn get_model_metadata(&self) -> xai_chat_state::ModelMetadata {
         let (tx, rx) = oneshot::channel();

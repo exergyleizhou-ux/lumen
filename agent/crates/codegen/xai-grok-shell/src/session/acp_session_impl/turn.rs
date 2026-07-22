@@ -207,9 +207,9 @@ impl SessionActor {
             command_source = tracing::field::Empty,
         )
     )]
-    pub(super) async fn handle_prompt(
-        self: &Arc<Self>,
-        prompt_id: &str,
+    pub(super) fn handle_prompt<'a>(
+        self: &'a Arc<Self>,
+        prompt_id: &'a str,
         prompt_blocks: Vec<acp::ContentBlock>,
         prompt_mode: PromptMode,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
@@ -220,7 +220,8 @@ impl SessionActor {
         json_schema: Option<serde_json::Value>,
         persist_ack: Option<oneshot::Sender<()>>,
         parsed_prompt_tx: Option<oneshot::Sender<ParsedPromptInfo>>,
-    ) -> PromptTurnResult {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = PromptTurnResult> + 'a>> {
+        Box::pin(async move {
         let handle_prompt_start = std::time::Instant::now();
         let prompt_length: usize = prompt_blocks
             .iter()
@@ -847,6 +848,11 @@ impl SessionActor {
                 self.chat_state_handle.push_user_message(user_chat);
             }
         }
+        // Persistence is the last part of prompt setup that must remain on
+        // the dispatcher path.  Resume the full turn state machine on a
+        // fresh actor poll so this large continuation cannot inherit that
+        // call stack.
+        tokio::task::yield_now().await;
         self.dispatch_hook(
             xai_grok_hooks::event::HookEventName::UserPromptSubmit,
             xai_grok_hooks::event::HookPayload::UserPromptSubmit {
@@ -870,14 +876,13 @@ impl SessionActor {
                         == Some(crate::session::goal_tracker::GoalStatus::Active);
                     self.set_goal_loop_active_resource(goal_loop_active).await;
                 }
-                let round = self
-                    .process_conversation_turn_with_recovery(
+                let round = Box::pin(self.process_conversation_turn_with_recovery(
                         prompt_id,
                         round_trace.take(),
                         round_artifact.take(),
                         json_schema.clone(),
-                    )
-                    .await;
+                    ))
+                .await;
                 if !matches!(round, Ok(TurnOutcome::Completed { .. })) {
                     break round;
                 }
@@ -1248,6 +1253,7 @@ impl SessionActor {
                 Err(crate::sampling::error::attach_prompt_usage(e, usage))
             }
         }
+        })
     }
     /// Wait for turn-blocking subagents (up to 120s on the turn task),
     /// snapshot, clear sticky. Background children never gate the drain: the
@@ -1501,13 +1507,14 @@ impl SessionActor {
         err,
         fields(req_id = %req_id, session_id = %self.session_info.id.0)
     )]
-    pub(super) async fn process_conversation_turn_with_recovery(
-        self: &Arc<Self>,
-        req_id: &str,
+    pub(super) fn process_conversation_turn_with_recovery<'a>(
+        self: &'a Arc<Self>,
+        req_id: &'a str,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
         artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
-    ) -> Result<TurnOutcome, acp::Error> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TurnOutcome, acp::Error>> + 'a>> {
+        Box::pin(async move {
         let _ = self.compaction.auto_compact_suppressed.compare_exchange(
             crate::session::compaction_config::SUPPRESS_TURN,
             crate::session::compaction_config::SUPPRESS_NONE,
@@ -1518,39 +1525,36 @@ impl SessionActor {
         let completion_req = match agent_ref.completion_requirement() {
             Some(req) => req,
             None => {
-                return self
-                    .process_conversation_turn(
+                return Box::pin(self.process_conversation_turn(
                         req_id,
                         trace_gcs_config,
                         artifact_tracker.as_ref(),
                         json_schema,
-                    )
-                    .await;
+                    ))
+                .await;
             }
         };
         let recovery = match &completion_req.recovery {
             Some(r) => r.clone(),
             None => {
-                return self
-                    .process_conversation_turn(
+                return Box::pin(self.process_conversation_turn(
                         req_id,
                         trace_gcs_config,
                         artifact_tracker.as_ref(),
                         json_schema,
-                    )
-                    .await;
+                    ))
+                .await;
             }
         };
         let required_tool = completion_req.tool.clone();
         let recovery_prompt = completion_req.reminder.clone();
-        let mut result = self
-            .process_conversation_turn(
+        let mut result = Box::pin(self.process_conversation_turn(
                 req_id,
                 trace_gcs_config.clone(),
                 artifact_tracker.as_ref(),
                 json_schema.clone(),
-            )
-            .await;
+            ))
+        .await;
         if matches!(result, Ok(TurnOutcome::MaxTurnsReached { .. })) {
             return result;
         }
@@ -1607,14 +1611,13 @@ impl SessionActor {
             sleep(delay).await;
             let recovery_message = ConversationItem::auto_recovery(recovery_prompt.clone());
             self.chat_state_handle.push_user_message(recovery_message);
-            result = self
-                .process_conversation_turn(
+            result = Box::pin(self.process_conversation_turn(
                     req_id,
                     trace_gcs_config.clone(),
                     artifact_tracker.as_ref(),
                     None,
-                )
-                .await;
+                ))
+            .await;
             if matches!(result, Ok(TurnOutcome::MaxTurnsReached { .. })) {
                 return result;
             }
@@ -1633,6 +1636,7 @@ impl SessionActor {
                 return result;
             }
         }
+        })
     }
     /// Compute the first-turn memory reminder, if one should be injected.
     ///
@@ -1848,13 +1852,14 @@ impl SessionActor {
             parent_agent_id = tracing::field::Empty,
         )
     )]
-    async fn process_conversation_turn(
-        self: &Arc<Self>,
-        req_id: &str,
+    fn process_conversation_turn<'a>(
+        self: &'a Arc<Self>,
+        req_id: &'a str,
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
-        artifact_tracker: Option<&crate::upload::manifest::ArtifactTracker>,
+        artifact_tracker: Option<&'a crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
-    ) -> Result<TurnOutcome, acp::Error> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<TurnOutcome, acp::Error>> + 'a>> {
+        Box::pin(async move {
         let conv_turn_start = std::time::Instant::now();
         // Begin new turn for delivery tracking
         self.delivery_state.borrow_mut().begin_turn();
@@ -2546,6 +2551,7 @@ impl SessionActor {
                 continue;
             }
         }
+        })
     }
 }
 /// Backoff schedule for resubmits after a *successful* 401 auth recovery

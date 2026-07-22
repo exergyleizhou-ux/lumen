@@ -13611,6 +13611,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "xai-grok-science"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "dunce",
+ "http 1.4.0",
+ "reqwest 0.12.24",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "uuid",
+]
+
+[[package]]
 name = "xai-grok-secrets"
 version = "0.1.0"
 dependencies = [
@@ -13766,6 +13785,7 @@ dependencies = [
  "xai-grok-sampler",
  "xai-grok-sampling-types",
  "xai-grok-sandbox",
+ "xai-grok-science",
  "xai-grok-secrets",
  "xai-grok-shared",
  "xai-grok-shell-base",

@@ -10,6 +10,7 @@ pub mod merge;
 pub mod notifications;
 pub mod pending_interaction;
 pub mod prompt_queue;
+pub mod science_connector;
 pub mod two_pass;
 pub use self::acp_session::*;
 pub use self::acp_types::*;

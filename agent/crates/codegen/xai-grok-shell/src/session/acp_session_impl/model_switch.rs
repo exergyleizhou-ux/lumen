@@ -222,6 +222,15 @@ impl SessionActor {
             self.is_cursor_harness(),
             std::sync::atomic::Ordering::Relaxed,
         );
+        // Validation → commit is complete: the new harness was installed
+        // under the scheduling lock, so Expert could not interleave and take
+        // model ownership mid-rebuild. The guard MUST be released before the
+        // notification tail below: `send_available_commands_update` reaches
+        // `send_update_full` → `close_rewind_window`, which re-locks
+        // `self.state`. tokio's Mutex is not reentrant, so holding the guard
+        // across that call self-deadlocks the session (observed: rebuild
+        // hung indefinitely after commit).
+        drop(state_guard);
         if let Err(e) = self.workspace_ops.bind_local_session(
             &self.session_id_string(),
             self.tool_context.cwd.as_path().to_path_buf(),

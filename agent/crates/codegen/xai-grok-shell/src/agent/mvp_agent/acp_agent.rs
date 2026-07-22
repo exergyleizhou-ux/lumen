@@ -3508,6 +3508,9 @@ impl acp::Agent for MvpAgent {
             s if s.starts_with("x.ai/search/") => {
                 crate::extensions::search::handle(self, &args).await
             }
+            s if s.starts_with("x.ai/science/") => {
+                crate::extensions::science::handle(self, &args).await
+            }
             s if s.starts_with("x.ai/bundle/") => {
                 crate::extensions::bundle::handle(self, &args).await
             }

@@ -64,9 +64,20 @@ struct TextCapture {
     notification_count: AtomicU32,
 }
 
+/// How the typed ACP harness answers a production permission request.
+/// Product Science tests use this to prove allow, deny, and no-response paths
+/// without replacing Lumen's permission manager or SessionActor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PermissionResponse {
+    AllowOnce,
+    Reject,
+    NeverRespond,
+}
+
 /// ACP client impl: auto-approves permissions, captures text chunks.
 struct TestAcpClient {
     capture: Arc<TextCapture>,
+    permission_response: PermissionResponse,
 }
 
 #[async_trait::async_trait(?Send)]
@@ -75,6 +86,14 @@ impl acp::Client for TestAcpClient {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
+        if self.permission_response == PermissionResponse::NeverRespond {
+            std::future::pending::<()>().await;
+        }
+        if self.permission_response == PermissionResponse::Reject {
+            return Ok(acp::RequestPermissionResponse::new(
+                acp::RequestPermissionOutcome::Cancelled,
+            ));
+        }
         // Auto-approve: pick AllowOnce if available, otherwise first option.
         let outcome = args
             .options
@@ -151,6 +170,44 @@ impl GrokStdioClient {
         extra_env: &[(&str, &str)],
         leading_args: &[&str],
     ) -> Self {
+        Self::spawn_with_home_env_args_and_permission(
+            server,
+            cwd,
+            home,
+            extra_env,
+            leading_args,
+            PermissionResponse::AllowOnce,
+        )
+        .await
+    }
+
+    /// Spawn an ACP product process with an explicit client-side permission
+    /// behavior. The agent still owns permission policy and terminal state.
+    pub async fn spawn_with_permission_response(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        permission_response: PermissionResponse,
+    ) -> Self {
+        let home = TempDir::new().expect("create temp home");
+        Self::spawn_with_home_env_args_and_permission(
+            server,
+            cwd,
+            home,
+            &[],
+            &[],
+            permission_response,
+        )
+        .await
+    }
+
+    async fn spawn_with_home_env_args_and_permission(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        home: TempDir,
+        extra_env: &[(&str, &str)],
+        leading_args: &[&str],
+        permission_response: PermissionResponse,
+    ) -> Self {
         let (mut child, stderr) =
             spawn_agent_process(server, cwd, home.path(), extra_env, leading_args);
 
@@ -160,6 +217,7 @@ impl GrokStdioClient {
         let capture = Arc::new(TextCapture::default());
         let client = TestAcpClient {
             capture: capture.clone(),
+            permission_response,
         };
 
         let incoming = LineBufferedRead::spawn_local(incoming);
