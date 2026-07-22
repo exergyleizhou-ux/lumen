@@ -1,7 +1,8 @@
 # Lumen Science SSH/SCP connector capability v1
 
-Seam contracts: **S3, S4**. Status: P4 offline admission contract; no socket,
-DNS lookup, credential lookup, subprocess, or remote-job recovery exists yet.
+Seam contracts: **S3, S4**. Status: P4 has an offline admission and transport
+model; no socket, DNS lookup, credential lookup, subprocess, or remote-job
+recovery exists yet.
 
 ## Exact capability
 
@@ -39,7 +40,22 @@ transport handle. The terminal permission result is sent back through
 `SessionActor` and appended as `connector.permission`. Allow returns only an
 opaque admission ticket; it cannot dispatch a transport yet.
 
+## Offline transport model
+
+`connector::execute_offline_transport` consumes only an admission ticket whose
+project/owner/run exactly match a durable `AwaitingApproval` run with an
+existing Lumen `Allow` decision. It is deterministic and has three outcomes:
+`complete`, `timeout`, and `cancel`. Each emits redacted
+`connector.transport.*` events and ends in `Succeeded`, `TimedOut`, or
+`Cancelled`. It creates no artifact, socket, subprocess, or background job.
+
+On store reopen, `recover_interrupted` turns any non-terminal run—including an
+allowed but unstarted ticket—into `Interrupted`; the stale ticket can no longer
+enter the offline transport. This is the required no-auto-resume behavior for
+the future real transport too.
+
 Cancellation, timeout, and restart policy are inherited from the existing
 Science approval contract: no pending remote job is recovered or automatically
-retried. A real transport must prove process/socket cleanup for both timeout
-and cancellation before it can be considered P4 complete.
+retried. The offline model proves the state-machine invariant, but a real
+transport must additionally prove process/socket cleanup for both timeout and
+cancellation before P4 can be considered complete.

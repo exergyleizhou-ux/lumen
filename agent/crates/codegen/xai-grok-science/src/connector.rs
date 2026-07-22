@@ -85,6 +85,25 @@ pub struct AdmissionTicket {
     pub target: AuthorizedTarget,
 }
 
+/// Deterministic outcome for the P4 offline SSH/SCP transport harness. This
+/// is a transport model, not an SSH client: it has no host resolver, socket,
+/// process, credential lookup, or retry queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OfflineTransportOutcome {
+    Complete,
+    Timeout,
+    Cancel,
+}
+
+/// Redacted result returned by the offline transport harness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfflineTransportReceipt {
+    pub run_id: crate::RunId,
+    pub outcome: OfflineTransportOutcome,
+    pub target_sha256: String,
+}
+
 pub fn authorize(
     policy: &ConnectorPolicy,
     context: &RunContext,
@@ -127,18 +146,22 @@ pub fn authorize(
 /// raw request or a formatted error, which could leak a host key or future
 /// credential-bearing request fields.
 pub fn admission_audit(request: &ConnectorRequest, outcome: AdmissionOutcome) -> AdmissionAudit {
-    let mut hasher = Sha256::new();
-    hasher.update(b"lumen-science-ssh-scp-target-v1\0");
-    hasher.update(request.host.as_bytes());
-    hasher.update(b":");
-    hasher.update(request.port.to_be_bytes());
     AdmissionAudit {
         connector: "ssh-scp-v1".into(),
         outcome,
-        target_sha256: format!("{:x}", hasher.finalize()),
+        target_sha256: target_sha256(&request.host, request.port),
         timeout_ms: request.timeout_ms,
         data_egress: request.data_egress,
     }
+}
+
+fn target_sha256(host: &str, port: u16) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"lumen-science-ssh-scp-target-v1\0");
+    hasher.update(host.as_bytes());
+    hasher.update(b":");
+    hasher.update(port.to_be_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 /// Creates the durable, project-owned admission record before a caller reaches
@@ -240,6 +263,72 @@ pub fn finish_ssh_scp_admission(
         Some("connector permission was not granted".into()),
     )?;
     Ok(None)
+}
+
+/// Executes an entirely offline, deterministic model of the SSH/SCP transport
+/// lifecycle. It is intentionally the only transport available at P4 today:
+/// an allowed ticket can prove audit, timeout, cancellation, and recovery
+/// semantics without performing an external side effect.
+pub fn execute_offline_transport(
+    store: &ScienceStore,
+    ticket: AdmissionTicket,
+    outcome: OfflineTransportOutcome,
+) -> Result<OfflineTransportReceipt> {
+    let run = store.load_run(&ticket.context.run_id)?;
+    let approval_allowed = store
+        .approvals(&ticket.context.run_id)?
+        .iter()
+        .any(|approval| {
+            approval.project_id == ticket.context.project_id
+                && approval.owner_id == ticket.context.owner_id
+                && approval.call_id == ticket.call_id
+                && approval.decision == ApprovalDecision::Allow
+        });
+    if run.context != ticket.context
+        || run.state != RunState::AwaitingApproval
+        || !approval_allowed
+    {
+        return Err(ScienceError::Invalid(
+            "offline connector transport requires an allowed awaiting run".into(),
+        ));
+    }
+    let target_sha256 = target_sha256(&ticket.target.host, ticket.target.port);
+    store.transition(&ticket.context.run_id, RunState::Running, None)?;
+    store.append_event(
+        &ticket.context.run_id,
+        "LumenOfflineConnectorTransport",
+        "connector.transport.started",
+        serde_json::json!({
+            "connector": "ssh-scp-v1",
+            "mode": "offline_fake",
+            "target_sha256": target_sha256,
+        }),
+    )?;
+    let (state, kind) = match outcome {
+        OfflineTransportOutcome::Complete => (RunState::Succeeded, "connector.transport.completed"),
+        OfflineTransportOutcome::Timeout => (RunState::TimedOut, "connector.transport.timed_out"),
+        OfflineTransportOutcome::Cancel => (RunState::Cancelled, "connector.transport.cancelled"),
+    };
+    store.transition(
+        &ticket.context.run_id,
+        state,
+        Some("offline connector transport terminal".into()),
+    )?;
+    store.append_event(
+        &ticket.context.run_id,
+        "LumenOfflineConnectorTransport",
+        kind,
+        serde_json::json!({
+            "connector": "ssh-scp-v1",
+            "mode": "offline_fake",
+            "target_sha256": target_sha256,
+        }),
+    )?;
+    Ok(OfflineTransportReceipt {
+        run_id: ticket.context.run_id,
+        outcome,
+        target_sha256,
+    })
 }
 
 fn validate_request(request: &ConnectorRequest) -> Result<()> {
@@ -451,5 +540,67 @@ mod tests {
             .is_none());
         assert_eq!(store.load_run(&run_id).unwrap().state, RunState::Denied);
         assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Deny);
+    }
+
+    fn approved_ticket(store: &ScienceStore) -> AdmissionTicket {
+        let AdmissionStart::Ready(ticket) =
+            start_ssh_scp_admission(store, context("p", "alice"), &policy(), &request()).unwrap()
+        else {
+            panic!("allowlisted target must await Lumen approval");
+        };
+        finish_ssh_scp_admission(store, *ticket, ApprovalDecision::Allow)
+            .unwrap()
+            .expect("allowed ticket")
+    }
+
+    #[test]
+    fn offline_transport_is_redacted_and_has_explicit_terminal_outcomes() {
+        for (outcome, state, terminal_kind) in [
+            (
+                OfflineTransportOutcome::Complete,
+                RunState::Succeeded,
+                "connector.transport.completed",
+            ),
+            (
+                OfflineTransportOutcome::Timeout,
+                RunState::TimedOut,
+                "connector.transport.timed_out",
+            ),
+            (
+                OfflineTransportOutcome::Cancel,
+                RunState::Cancelled,
+                "connector.transport.cancelled",
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = ScienceStore::new(temp.path());
+            let ticket = approved_ticket(&store);
+            let run_id = ticket.context.run_id.clone();
+            let receipt = execute_offline_transport(&store, ticket, outcome).unwrap();
+            assert_eq!(receipt.run_id, run_id);
+            assert_eq!(receipt.outcome, outcome);
+            assert_eq!(store.load_run(&run_id).unwrap().state, state);
+            assert!(store.artifacts(&run_id).unwrap().is_empty());
+            let events = store.events_after(&run_id, 0, 20).unwrap();
+            assert_eq!(events.last().unwrap().kind, terminal_kind);
+            let serialized = serde_json::to_string(&events).unwrap();
+            assert!(!serialized.contains("hpc.example.test"));
+            assert!(!serialized.contains(FINGERPRINT));
+            assert!(serialized.contains("offline_fake"));
+        }
+    }
+
+    #[test]
+    fn restart_interrupts_approved_ticket_and_prevents_transport_resume() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let ticket = approved_ticket(&store);
+        let run_id = ticket.context.run_id.clone();
+        let reopened = ScienceStore::new(temp.path());
+        reopened.recover_interrupted(&run_id).unwrap();
+        assert_eq!(reopened.load_run(&run_id).unwrap().state, RunState::Interrupted);
+        assert!(execute_offline_transport(&reopened, ticket, OfflineTransportOutcome::Complete)
+            .is_err());
+        assert!(reopened.artifacts(&run_id).unwrap().is_empty());
     }
 }
