@@ -11,6 +11,7 @@ use std::{
     fs,
     io::Write,
     path::{Component, Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use uuid::Uuid;
 
@@ -179,11 +180,15 @@ pub struct Approval {
 #[derive(Debug, Clone)]
 pub struct ScienceStore {
     root: PathBuf,
+    writes: Arc<Mutex<()>>,
 }
 
 impl ScienceStore {
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            writes: Arc::new(Mutex::new(())),
+        }
     }
 
     pub fn create_run(&self, context: RunContext) -> Result<RunRecord> {
@@ -234,8 +239,22 @@ impl ScienceStore {
         kind: impl Into<String>,
         payload: serde_json::Value,
     ) -> Result<Event> {
+        let _guard = self
+            .writes
+            .lock()
+            .map_err(|_| ScienceError::Invalid("science store write lock poisoned".into()))?;
         let path = self.run_dir(run_id).join("events.json");
-        let mut events: Vec<Event> = read_json(&path)?;
+        let mut events: Vec<Event> = match read_json(&path) {
+            Ok(events) => events,
+            Err(error) => {
+                let _ = self.transition(
+                    run_id,
+                    RunState::Failed,
+                    Some(format!("event persistence failed: {error}")),
+                );
+                return Err(error);
+            }
+        };
         let event = Event {
             schema_version: SCHEMA_VERSION,
             run_id: run_id.clone(),
@@ -246,7 +265,14 @@ impl ScienceStore {
             payload,
         };
         events.push(event.clone());
-        write_json_atomic(&path, &events)?;
+        if let Err(error) = write_json_atomic(&path, &events) {
+            let _ = self.transition(
+                run_id,
+                RunState::Failed,
+                Some(format!("event persistence failed: {error}")),
+            );
+            return Err(error);
+        }
         Ok(event)
     }
 
@@ -665,5 +691,34 @@ mod tests {
             store.events_after(&run.context.run_id, 0, 100),
             Err(ScienceError::Serde(_))
         ));
+        assert!(
+            store
+                .append_event(&run.context.run_id, "actor", "event", serde_json::json!({}))
+                .is_err()
+        );
+        assert_eq!(
+            store.load_run(&run.context.run_id).unwrap().state,
+            RunState::Failed
+        );
+    }
+
+    #[test]
+    fn explicit_denied_timeout_and_cancel_terminal_states() {
+        for state in [RunState::Denied, RunState::TimedOut, RunState::Cancelled] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = ScienceStore::new(temp.path());
+            let run = store
+                .create_run(context(temp.path(), "a", "alice"))
+                .unwrap();
+            let terminal = store
+                .transition(&run.context.run_id, state, Some(format!("{state:?}")))
+                .unwrap();
+            assert!(terminal.state.terminal());
+            assert!(
+                store
+                    .transition(&run.context.run_id, RunState::Running, None)
+                    .is_err()
+            );
+        }
     }
 }
