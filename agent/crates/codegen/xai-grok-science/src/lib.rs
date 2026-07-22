@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 pub mod api;
 pub mod connector;
+pub mod connectors;
 pub mod csv;
 
 pub const SCHEMA_VERSION: u32 = 1;
