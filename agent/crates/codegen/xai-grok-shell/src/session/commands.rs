@@ -168,9 +168,8 @@ pub struct FinishScienceFetch {
     pub(crate) prepared: PreparedScienceFetch,
     pub(crate) decision: xai_grok_science::ApprovalDecision,
     pub(crate) reason: String,
-    pub(crate) respond_to: oneshot::Sender<
-        xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult>,
-    >,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult>>,
 }
 pub struct BeginScienceSshScpAdmission {
     pub(crate) store: xai_grok_science::ScienceStore,
@@ -194,6 +193,14 @@ pub struct ExecuteScienceSshScpOfflineTransport {
     pub(crate) respond_to: oneshot::Sender<
         xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
     >,
+}
+pub struct ExecuteScienceSshScpTransport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+    pub(crate) operation: xai_grok_science::transport::ScpOperation,
+    pub(crate) config: xai_grok_science::transport::ScpExecutionConfig,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::transport::TransportReceipt>>,
 }
 /// Priority levels for notification drain timing.
 ///
@@ -236,6 +243,7 @@ pub enum SessionCommand {
     BeginScienceSshScpAdmission(Box<BeginScienceSshScpAdmission>),
     FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
     ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
+    ExecuteScienceSshScpTransport(Box<ExecuteScienceSshScpTransport>),
     Initialize {
         system_prompt: String,
     },

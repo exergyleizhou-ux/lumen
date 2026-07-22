@@ -2110,6 +2110,34 @@ impl MvpAgent {
             )
             .await
     }
+
+    /// S3 real SSH/SCP entry. The sole SessionActor owns admission, approval
+    /// completion, and the process launch; this facade adds no executor.
+    pub async fn run_science_ssh_scp_transport(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        policy: xai_grok_science::connector::ConnectorPolicy,
+        request: xai_grok_science::connector::ConnectorRequest,
+        operation: xai_grok_science::transport::ScpOperation,
+        config: xai_grok_science::transport::ScpExecutionConfig,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<Option<xai_grok_science::transport::TransportReceipt>> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_ssh_scp_transport(
+                store, context, policy, request, operation, config, approval_timeout,
+            )
+            .await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,

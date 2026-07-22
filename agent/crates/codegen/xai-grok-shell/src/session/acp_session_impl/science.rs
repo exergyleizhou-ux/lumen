@@ -2,8 +2,7 @@
 
 use super::*;
 use crate::session::commands::{
-    PreparedScienceCsv, PreparedScienceFetch, PreparedScienceImport,
-    PreparedScienceSshScpAdmission,
+    PreparedScienceCsv, PreparedScienceFetch, PreparedScienceImport, PreparedScienceSshScpAdmission,
 };
 
 /// Fetch transit tool: copies each staged input to its staged output. The
@@ -103,6 +102,16 @@ impl SessionActor {
         outcome: xai_grok_science::connector::OfflineTransportOutcome,
     ) -> xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt> {
         xai_grok_science::connector::execute_offline_transport(&store, ticket, outcome)
+    }
+
+    pub(super) fn execute_science_ssh_scp_transport(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        ticket: xai_grok_science::connector::AdmissionTicket,
+        operation: xai_grok_science::transport::ScpOperation,
+        config: xai_grok_science::transport::ScpExecutionConfig,
+    ) -> xai_grok_science::Result<xai_grok_science::transport::TransportReceipt> {
+        xai_grok_science::transport::execute_scp(&store, ticket, operation, &config)
     }
 
     pub(super) fn prepare_science_csv(
@@ -440,9 +449,10 @@ impl SessionActor {
                 );
                 return Err(xai_grok_science::ScienceError::Invalid(reason));
             }
-            exchanges.push(
-                xai_grok_science::connectors::fetch::FetchExchange { request, response: transited },
-            );
+            exchanges.push(xai_grok_science::connectors::fetch::FetchExchange {
+                request,
+                response: transited,
+            });
         }
         xai_grok_science::connectors::fetch::finish_fetch(
             &prepared.store,

@@ -15,6 +15,47 @@ use xai_grok_science::{
 };
 
 impl SessionHandle {
+    /// S3 real SCP product path. Admission and process execution both cross
+    /// the sole SessionActor; the operation digest is bound before permission.
+    pub async fn run_science_ssh_scp_transport(
+        &self,
+        store: ScienceStore,
+        context: RunContext,
+        policy: ConnectorPolicy,
+        request: ConnectorRequest,
+        operation: xai_grok_science::transport::ScpOperation,
+        config: xai_grok_science::transport::ScpExecutionConfig,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<Option<xai_grok_science::transport::TransportReceipt>> {
+        let Some(ticket) = self
+            .admit_science_ssh_scp_with_approval_timeout(
+                store.clone(),
+                context,
+                policy,
+                request,
+                approval_timeout,
+            )
+            .await?
+        else {
+            return Ok(None);
+        };
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::ExecuteScienceSshScpTransport(Box::new(
+                crate::session::commands::ExecuteScienceSshScpTransport {
+                    store,
+                    ticket,
+                    operation,
+                    config,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| ScienceError::Invalid("session actor unavailable".into()))?;
+        Ok(Some(response.await.map_err(|_| {
+            ScienceError::Invalid("session actor stopped".into())
+        })??))
+    }
+
     /// Full P4 offline product path. Admission and the deterministic transport
     /// both execute through SessionActor; only the pre-existing Lumen
     /// permission manager can supply the Allow that permits the model run.
@@ -107,7 +148,10 @@ impl SessionHandle {
         let permission = tokio::time::timeout(
             approval_timeout,
             self.permission_handle.request(
-                AccessKind::Bash("Lumen Science SSH/SCP connector transport admission".into()),
+                // Keep the ACP permission subject an actual tool identity so
+                // the production bridge can present an Allow option, while
+                // leaving host, path, and credential material out of it.
+                AccessKind::Bash("scp".into()),
                 update,
                 Some(self.info.id.0.to_string()),
                 None,

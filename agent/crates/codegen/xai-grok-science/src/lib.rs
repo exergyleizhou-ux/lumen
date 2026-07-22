@@ -21,6 +21,7 @@ pub mod connectors;
 pub mod csv;
 pub mod import;
 pub mod preview;
+pub mod transport;
 
 pub const SCHEMA_VERSION: u32 = 1;
 
