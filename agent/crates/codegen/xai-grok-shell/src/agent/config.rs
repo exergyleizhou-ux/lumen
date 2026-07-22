@@ -7648,7 +7648,10 @@ reasoning_effort = "low"
         assert_eq!(model.info.base_url, "https://inference.example.com/v1");
     }
     #[test]
+    #[serial]
     fn e2e_default_byok_model_does_not_forward_session_token() {
+        let _xai_key = EnvGuard::unset("XAI_API_KEY");
+        let _deepseek_key = EnvGuard::unset("DEEPSEEK_API_KEY");
         let (_, models) = resolve_models_from_toml("", None);
         let model = models
             .get(crate::models::default_model())
@@ -7765,7 +7768,10 @@ reasoning_effort = "low"
         );
     }
     #[test]
+    #[serial]
     fn e2e_duplicate_model_field_both_entries_survive() {
+        let _xai_key = EnvGuard::unset("XAI_API_KEY");
+        let _deepseek_key = EnvGuard::unset("DEEPSEEK_API_KEY");
         let dm = crate::models::default_model();
         let (_, models) = resolve_models_from_toml(
             &format!(
