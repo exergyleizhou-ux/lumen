@@ -270,7 +270,10 @@ pub(super) async fn run_session(
             .feedback_manager.shutdown(session.upload_queue.get()). await; if ! session
             .startup_hints.is_subagent { session.persist_background_task_manifest().
             await; } cleanup_session_scratch(& session); return; }; match cmd {
-            SessionCommand::Initialize { system_prompt } => { session
+            SessionCommand::RunScienceCsv { store, context, fixture_path, fixture,
+            respond_to } => { let result = xai_grok_science::csv::execute_approved_fixture(
+            & store, context, & fixture_path, & fixture); let _ = respond_to.send(result);
+            } SessionCommand::Initialize { system_prompt } => { session
             .initialize(system_prompt). await; let s = session.clone(); let handle =
             tokio::task::spawn_local(async move { s.build_prefix_background(). await });
             session.deferred_prefix.arm(handle); } SessionCommand::ReplaceSystemPrompt {

@@ -165,6 +165,73 @@ pub struct SessionHandle {
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
 }
 impl SessionHandle {
+    /// S4 product path for the deterministic offline Science micro-loop.
+    /// Approval is requested from the existing session-scoped Lumen permission
+    /// manager before the command can reach `SessionActor`; a rejection never
+    /// invokes the Science executor.
+    pub async fn run_science_csv(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: std::path::PathBuf,
+        fixture: Vec<u8>,
+    ) -> xai_grok_science::Result<xai_grok_science::csv::ResearchResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-csv-{}",
+            context.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some("Lumen Science CSV analysis".into())),
+        );
+        let decision = self
+            .permission_handle
+            .request(
+                AccessKind::Edit(context.artifact_root.display().to_string()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            )
+            .await;
+        match decision {
+            Decision::Allow | Decision::Ask => {}
+            Decision::Reject(reason) | Decision::PolicyDeny(reason) => {
+                return Err(xai_grok_science::ScienceError::Invalid(format!(
+                    "science run denied: {reason}"
+                )));
+            }
+            Decision::Cancelled => {
+                return Err(xai_grok_science::ScienceError::Invalid(
+                    "science run cancelled".into(),
+                ));
+            }
+            Decision::FollowupMessage(message) => {
+                return Err(xai_grok_science::ScienceError::Invalid(format!(
+                    "science run requires follow-up: {message}"
+                )));
+            }
+        }
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::RunScienceCsv {
+                store,
+                context,
+                fixture_path,
+                fixture,
+                respond_to,
+            })
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
     /// Last assistant `model_id` / `model_fingerprint` in conversation (global, not turn-scoped).
     pub(crate) async fn get_model_metadata(&self) -> xai_chat_state::ModelMetadata {
         let (tx, rx) = oneshot::channel();

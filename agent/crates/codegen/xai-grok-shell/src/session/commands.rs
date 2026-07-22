@@ -104,6 +104,16 @@ impl NotificationSource {
     }
 }
 pub enum SessionCommand {
+    /// S4: execute the deterministic Science CSV tool only after the caller
+    /// has passed this session's production permission manager.
+    RunScienceCsv {
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        fixture_path: std::path::PathBuf,
+        fixture: Vec<u8>,
+        respond_to:
+            oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
+    },
     Initialize {
         system_prompt: String,
     },

@@ -13614,12 +13614,16 @@ dependencies = [
 name = "xai-grok-science"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "chrono",
+ "http 1.4.0",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
+ "tower",
  "uuid",
 ]
 
@@ -13779,6 +13783,7 @@ dependencies = [
  "xai-grok-sampler",
  "xai-grok-sampling-types",
  "xai-grok-sandbox",
+ "xai-grok-science",
  "xai-grok-secrets",
  "xai-grok-shared",
  "xai-grok-shell-base",

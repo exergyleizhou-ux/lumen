@@ -14,6 +14,9 @@ use std::{
 };
 use uuid::Uuid;
 
+pub mod api;
+pub mod csv;
+
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, thiserror::Error)]
@@ -358,6 +361,28 @@ impl ScienceStore {
     }
     pub fn provenance(&self, run_id: &RunId) -> Result<Vec<Provenance>> {
         read_json(&self.run_dir(run_id).join("provenance.json"))
+    }
+    pub fn approvals(&self, run_id: &RunId) -> Result<Vec<Approval>> {
+        read_json(&self.run_dir(run_id).join("approvals.json"))
+    }
+    pub fn artifact_bytes(
+        &self,
+        project: &ProjectId,
+        run_id: &RunId,
+        owner: &str,
+        relative: &Path,
+    ) -> Result<Vec<u8>> {
+        self.assert_owner(project, run_id, owner)?;
+        validate_relative(relative)?;
+        let artifacts = self.artifacts(run_id)?;
+        if !artifacts.iter().any(|item| item.relative_path == relative) {
+            return Err(ScienceError::Invalid(
+                "artifact is not registered to run".into(),
+            ));
+        }
+        Ok(fs::read(
+            self.run_dir(run_id).join("artifacts").join(relative),
+        )?)
     }
 
     pub fn recover_interrupted(&self, run_id: &RunId) -> Result<RunRecord> {
