@@ -96,7 +96,8 @@ impl TurnSpanTotals {
         if let Some(u) = response.usage.as_ref() {
             self.input_tokens += i64::from(u.prompt_tokens);
             self.output_tokens += i64::from(u.completion_tokens);
-            self.cache_read_tokens += i64::from(u.cached_prompt_tokens);
+            self.cache_read_tokens +=
+                i64::from(u.definitive_provider_cache_hit_tokens().unwrap_or(0));
             span.record("input_tokens", self.input_tokens);
             span.record("output_tokens", self.output_tokens);
             span.record("cache_read_tokens", self.cache_read_tokens);

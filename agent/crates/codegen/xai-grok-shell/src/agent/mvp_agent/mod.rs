@@ -476,7 +476,10 @@ pub(crate) fn build_prompt_response_meta(
         model_id: model_id.to_string(),
         input_tokens: last_turn_usage.map(|u| u.prompt_tokens),
         output_tokens: last_turn_usage.map(|u| u.completion_tokens),
-        cached_read_tokens: last_turn_usage.map(|u| u.cached_prompt_tokens),
+        // ACP prompt metadata is user-visible. Only provider-reported,
+        // internally consistent nonzero cache truth may be shown as a hit.
+        cached_read_tokens: last_turn_usage
+            .and_then(|u| u.definitive_provider_cache_hit_tokens()),
         reasoning_tokens: last_turn_usage.map(|u| u.reasoning_tokens),
         usage: prompt_usage,
         cancellation_category,

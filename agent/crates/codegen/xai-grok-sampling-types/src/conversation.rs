@@ -646,11 +646,13 @@ pub struct TokenUsage {
     pub completion_tokens: u32,
     pub total_tokens: u32,
     pub reasoning_tokens: u32,
-    /// Prompt tokens served from cache.
+    /// Compatibility cache-read token field normalized from provider shapes.
     /// - OpenAI: `prompt_tokens_details.cached_tokens` / `input_tokens_details.cached_tokens`.
     /// - Anthropic Messages: `usage.cache_read_input_tokens`. Cache writes
     ///   (`cache_creation_input_tokens`, billed at ~1.25x) are NOT counted here; they are folded
-    ///   into `prompt_tokens` instead.
+    ///   into `prompt_tokens` instead. This is useful diagnostic data, but
+    ///   must not by itself be shown as a definitive cache hit; use
+    ///   [`Self::definitive_provider_cache_hit_tokens`] for that projection.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     /// Exact provider-reported cache hits.  Unlike the compatibility field
