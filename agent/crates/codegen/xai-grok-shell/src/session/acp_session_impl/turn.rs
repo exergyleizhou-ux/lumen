@@ -2153,11 +2153,14 @@ impl SessionActor {
                 let cached_prompt_tokens = usage.map(|u| u.cached_prompt_tokens);
                 let provider_cache_hit_tokens = usage.and_then(|u| u.provider_cache_hit_tokens);
                 let provider_cache_miss_tokens = usage.and_then(|u| u.cache_miss_prompt_tokens);
-                let provider_cache_accounting = usage.map(|u| match u.provider_cache_usage_truth() {
-                    xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported",
-                    xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => "contradictory",
-                    xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable",
-                });
+                let provider_cache_accounting =
+                    usage.map(|u| match u.provider_cache_usage_truth() {
+                        xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported",
+                        xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => {
+                            "contradictory"
+                        }
+                        xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable",
+                    });
                 let completion_tokens = usage.map(|u| u.completion_tokens);
                 let reasoning_tokens = usage.map(|u| u.reasoning_tokens);
                 let ttft_ms = latency.time_to_first_token_ms;
@@ -2221,13 +2224,27 @@ impl SessionActor {
                                 .usage
                                 .as_ref()
                                 .map(|u| u.cached_prompt_tokens),
-                            provider_cache_accounting: response.usage.as_ref().map(|u| match u.provider_cache_usage_truth() {
-                                xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported".to_string(),
-                                xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => "contradictory".to_string(),
-                                xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable".to_string(),
+                            provider_cache_accounting: response.usage.as_ref().map(|u| {
+                                match u.provider_cache_usage_truth() {
+                                    xai_grok_sampling_types::CacheUsageTruth::Reported {
+                                        ..
+                                    } => "reported".to_string(),
+                                    xai_grok_sampling_types::CacheUsageTruth::Contradictory {
+                                        ..
+                                    } => "contradictory".to_string(),
+                                    xai_grok_sampling_types::CacheUsageTruth::Unavailable => {
+                                        "unavailable".to_string()
+                                    }
+                                }
                             }),
-                            provider_cache_hit_tokens: response.usage.as_ref().and_then(|u| u.provider_cache_hit_tokens),
-                            provider_cache_miss_tokens: response.usage.as_ref().and_then(|u| u.cache_miss_prompt_tokens),
+                            provider_cache_hit_tokens: response
+                                .usage
+                                .as_ref()
+                                .and_then(|u| u.provider_cache_hit_tokens),
+                            provider_cache_miss_tokens: response
+                                .usage
+                                .as_ref()
+                                .and_then(|u| u.cache_miss_prompt_tokens),
                         },
                     );
                 }
