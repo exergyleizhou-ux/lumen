@@ -2749,6 +2749,137 @@ mod tests {
         server.abort();
     }
 
+    #[tokio::test]
+    async fn observer_precedes_delivery_for_all_six_final_wire_paths() {
+        use axum::Router;
+        use axum::body::Bytes;
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use xai_grok_sampling_types::ConversationItem;
+
+        #[derive(Clone)]
+        struct ServerState {
+            observed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+            bodies: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+        }
+
+        async fn reject_after_observation(
+            State(state): State<ServerState>,
+            uri: axum::http::Uri,
+            body: Bytes,
+        ) -> (StatusCode, &'static str) {
+            assert!(
+                state.observed.load(std::sync::atomic::Ordering::SeqCst),
+                "observer must run before the final wire request is delivered"
+            );
+            state.bodies.lock().unwrap().push((
+                uri.path().to_owned(),
+                serde_json::from_slice(&body).expect("test request is JSON"),
+            ));
+            (StatusCode::INTERNAL_SERVER_ERROR, "synthetic failure")
+        }
+
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = ServerState {
+            observed: observed.clone(),
+            bodies: bodies.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(reject_after_observation))
+                    .route("/v1/responses", post(reject_after_observation))
+                    .route("/v1/messages", post(reject_after_observation))
+                    .with_state(state),
+            )
+            .await
+            .unwrap();
+        });
+
+        let observer = std::sync::Arc::new(RecordingObserver {
+            snapshots: std::sync::Mutex::new(Vec::new()),
+            observed: Some(observed),
+        });
+        let mut config = minimal_config();
+        config.base_url = format!("http://{addr}/v1");
+        config.request_observer = Some(observer.clone());
+        let mut client = SamplingClient::new(config).expect("build client");
+        client.set_wire_observation_context(Some((
+            lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            },
+            0,
+        )));
+        let request = ConversationRequest::from_items(vec![ConversationItem::user("hello")]);
+
+        assert!(client.conversation(request.clone()).await.is_err());
+        assert!(client.conversation_stream(request.clone()).await.is_err());
+        assert!(
+            client
+                .conversation_responses(request.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .conversation_stream_responses(request.clone())
+                .await
+                .is_err()
+        );
+        assert!(client.conversation_messages(request.clone()).await.is_err());
+        assert!(client.conversation_stream_messages(request).await.is_err());
+
+        let snapshots = observer.snapshots.lock().unwrap();
+        assert_eq!(snapshots.len(), 6);
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| &snapshot.serialization_kind)
+                .collect::<Vec<_>>(),
+            vec![
+                &lumen_discipline::WireSerializationKind::ChatCompletions,
+                &lumen_discipline::WireSerializationKind::ChatCompletions,
+                &lumen_discipline::WireSerializationKind::Responses,
+                &lumen_discipline::WireSerializationKind::Responses,
+                &lumen_discipline::WireSerializationKind::Messages,
+                &lumen_discipline::WireSerializationKind::Messages,
+            ]
+        );
+        drop(snapshots);
+
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 6);
+        assert_eq!(bodies[0].0, "/v1/chat/completions");
+        assert_ne!(
+            bodies[0].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[1].0, "/v1/chat/completions");
+        assert_eq!(bodies[1].1["stream"], true);
+        assert_eq!(bodies[2].0, "/v1/responses");
+        assert_ne!(
+            bodies[2].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[3].0, "/v1/responses");
+        assert_eq!(bodies[3].1["stream"], true);
+        assert_eq!(bodies[4].0, "/v1/messages");
+        assert_ne!(
+            bodies[4].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[5].0, "/v1/messages");
+        assert_eq!(bodies[5].1["stream"], true);
+        server.abort();
+    }
+
     #[test]
     fn user_agent_includes_origin_and_agent_product() {
         let origin = OriginClientInfo {
