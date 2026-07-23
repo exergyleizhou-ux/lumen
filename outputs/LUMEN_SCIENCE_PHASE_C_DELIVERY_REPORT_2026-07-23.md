@@ -136,6 +136,10 @@ does not invalidate the local real-OpenSSH fixture proof above.
   verdict is advisory only, while durable run/approval/artifact/evidence/
   provenance verification is required for Goal completion.
 - **Implemented and live-verified:** explicit ChEMBL L5 probe above.
+- **Audited but not admitted:** PDF/DOCX/XLSX/PPTX converters and Notebook
+  execution. `docs/science/FORMAT_CONVERTER_SUPPLY_CHAIN_AUDIT.md` records the
+  missing reproducibility, dependency-license, and runtime-isolation evidence;
+  no unpinned system tool or Python converter has been added.
 
 1. Keep Rust Lumen and `SessionActor` as the only execution and permission
    authority; do not introduce an Open Science Agent/ACP runtime.
