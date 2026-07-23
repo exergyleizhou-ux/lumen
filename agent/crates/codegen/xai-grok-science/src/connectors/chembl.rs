@@ -100,4 +100,50 @@ mod tests {
             .is_err()
         );
     }
+
+    /// L5 live probe: real public ChEMBL retrieval. Explicitly ignored; run
+    /// with `cargo test -p xai-grok-science live_probe_chembl -- --ignored
+    /// --nocapture` and archive the printed evidence line.
+    #[tokio::test]
+    #[ignore = "live network probe against ChEMBL; run explicitly"]
+    async fn live_probe_chembl_real_search() {
+        let query = "aspirin";
+        let request = super::super::validate_request(
+            "chembl",
+            &search_path(query, 3, 0),
+            false,
+            10_000,
+        )
+        .expect("validated ChEMBL request");
+        let body = reqwest::Client::new()
+            .get(&request.url)
+            .send()
+            .await
+            .expect("ChEMBL send")
+            .error_for_status()
+            .expect("ChEMBL status")
+            .bytes()
+            .await
+            .expect("ChEMBL body");
+        let parsed = parse_search(&body).expect("parse live ChEMBL search");
+        assert!(parsed.total_hits > 0, "live ChEMBL returned no hits");
+        let first = parsed.records.first().expect("live ChEMBL returned no records");
+        let evidence = serde_json::json!({
+            "connector": "chembl",
+            "query": query,
+            "total_hits": parsed.total_hits,
+            "first_record": {
+                "chembl_id": first.id,
+                "name": first.title,
+                "url": first.url,
+            },
+            "retrieved_at": chrono::Utc::now().to_rfc3339(),
+            "request_url": request.url,
+            "tos_url": super::super::descriptor("chembl").unwrap().tos_url,
+        });
+        println!(
+            "CHEMBL_LIVE_EVIDENCE={}",
+            serde_json::to_string_pretty(&evidence).unwrap()
+        );
+    }
 }

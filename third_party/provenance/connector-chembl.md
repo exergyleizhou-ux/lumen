@@ -12,7 +12,7 @@ key_dependencies_and_licenses: none (no vendored code)
 reuse_mode: protocol/workflow adaptation
 lumen_target_path: agent/crates/codegen/xai-grok-science/src/connectors.rs (descriptor), src/connectors/chembl.rs (adapter), src/connectors/fetch.rs (run protocol)
 modifications_made: n/a
-verification_evidence: descriptor + adapter + fetch unit tests (connectors::tests); product-path e2e test_stdio_science_connector_fetch_product_path (L4); live probe not run in Phase C (pubmed is the designated L5 connector; chembl live probe deferred to P5)
+verification_evidence: descriptor + adapter + fetch unit tests (connectors::tests); product-path e2e test_stdio_science_connector_fetch_product_path (L4); explicit ignored live_probe_chembl_real_search produces CHEMBL_LIVE_EVIDENCE from the public API (L5)
 owner: lumen-science
 tos_url: https://www.ebi.ac.uk/about/terms-of-use
 rate_policy: conservative 5 requests/second (descriptor-enforced)

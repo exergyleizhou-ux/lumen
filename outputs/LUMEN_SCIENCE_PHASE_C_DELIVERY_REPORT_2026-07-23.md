@@ -9,7 +9,8 @@ durable-state authority.
 ## Verdict
 
 Phase C local implementation and fixture-backed product verification are
-complete through C3. The real-host SSH proof is **Blocked**, not failed or
+complete through C3. The public ChEMBL connector now also has an explicit L5
+probe. The real-host SSH proof is **Blocked**, not failed or
 silently waived: it requires a user-provided, explicitly authorized host,
 account, host-key fingerprint, and disposable transfer data. Nothing was
 deployed, merged, pushed, rebased, or tagged.
@@ -29,6 +30,14 @@ deployed, merged, pushed, rebased, or tagged.
   CSV/FASTA import, and PubMed/ChEMBL fixture-backed fetch pipelines with
   evidence, citations, and replayable artifacts. The current complete L4 gate
   re-proves import and connector fetch.
+
+### Public connector L5 evidence
+
+The explicit ignored `live_probe_chembl_real_search` probe passed on
+2026-07-23: public `aspirin` retrieval returned 52 hits and CHEMBL25/ASPIRIN
+as the first record. The complete redaction-safe evidence is
+`outputs/evidence/gp5_chembl_live_probe.log`. This is a read-only public API
+probe; ordinary test runs remain zero-network.
 
 ### B3 async correction
 
@@ -74,6 +83,16 @@ Science storage. Timeout and cancellation kill and reap the child.
 | Pager build | passed | `outputs/evidence/gc3_pager_build_final.log` |
 | Complete Science L4 e2e | 7 passed, 0 failed; 9.07s | `outputs/evidence/gc3_science_e2e.log` |
 
+After the C3 report, the Phase-C extension added the explicit ChEMBL L5
+probe and S5 completion fencing. Its default science gate is **59 passed, 0
+failed, 2 ignored** (`outputs/evidence/gp5_science.log`); the two ignored
+tests are the only network probes. Strict science clippy also passed again.
+The full Shell-library and pager-binary reruns were attempted after this
+extension but the macOS toolchain exited while compiling/linking the very large
+Shell binary without producing a refreshed executable or final test summary.
+The C3 Shell/e2e evidence remains valid for C3, but is deliberately not
+represented as a post-P5 full regression pass.
+
 The shell-lib investigation found that test-only `MvpAgent` constructors with
 `remote_settings=None` entered the production remote-prefetch fallback and
 waited on network I/O. Test fixtures now supply an explicit empty remote
@@ -106,7 +125,13 @@ requires the user to name an authorized non-loopback target and approve the
 exact put/get test scope. This blocked item limits external-host evidence; it
 does not invalidate the local real-OpenSSH fixture proof above.
 
-## P5 decision list
+## Post-C extensions and remaining decision list
+
+- **Implemented locally:** `7d877055` wires S5 Goal × Expert ×
+  HostVerification fencing into the sole Rust `SessionActor`; a consultant
+  verdict is advisory only, while durable run/approval/artifact/evidence/
+  provenance verification is required for Goal completion.
+- **Implemented and live-verified:** explicit ChEMBL L5 probe above.
 
 1. Keep Rust Lumen and `SessionActor` as the only execution and permission
    authority; do not introduce an Open Science Agent/ACP runtime.
@@ -133,4 +158,5 @@ ca76a6e7e24c4e73a893d51ad1d0441bb9e338dd95d6ffde271810cf0e86564e  gc3_clippy_rer
 627bd3cf969152d16796ce3dc80d170d930e0d6c00d7e67b3283d294b3f9f385  gc3_pager_build_final.log
 a076f80b6eac0f1f22ade1ed312ebd5f3e9438ac818d95d5b1aeb5cb3e7c8b98  gc3_science_e2e.log
 670d685228e58de0eb50ad1f136a65852b3077251640b189e29974159525a79e  transport-openssh.md
+7d5b9714e99d7ec909e5c4fc53480b37b4e979c9222a22dda00b2a518153d725  gp5_chembl_live_probe.log
 ```
