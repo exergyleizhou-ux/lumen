@@ -254,9 +254,11 @@ Authorized by the user ("授权你 全权交给你", 2026-07-23).
   timing-sensitive tests (30 s internal deadline) exposed by concurrent
   build load (G4 23-minute full rebuild ran alongside G2). Not a merge
   regression. No test timeouts were changed without user sign-off.
-- **Push:** PENDING — `git push origin main` (local `main` was 34 commits
-  ahead of `origin/main`) executes once the gate is green; the pushed range
-  is recorded here after execution. Nothing was rebased or tagged.
+- **Push:** executed 2026-07-23. `git push origin main` pushed range
+  `f7caa832..50217ca0` (35 commits, including the D-3 commit) to
+  `https://github.com/exergyleizhou-ux/lumen.git`. No force push, no tags.
+  Confirmed: local HEAD = remote HEAD = `50217ca0`. Nothing was rebased or
+  tagged.
 - Decision item 10's "merging `science/kernel` into `main`" and "remote
   push" entries are resolved by this addendum; all other P5 items remain
   open and unstarted.
