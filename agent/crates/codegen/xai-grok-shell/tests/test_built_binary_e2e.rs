@@ -1299,9 +1299,9 @@ async fn test_stdio_science_import_csv_fasta_product_path() {
     .await;
 }
 
-/// Science GC2 product proof: pubmed (two-exchange protocol), chembl, and
-/// Crossref (single-exchange) fetches run through the SessionActor product path with
-/// offline fixtures as mock transport. Each run persists raw response
+/// Science GC2 product proof: PubMed (two-exchange protocol), ChEMBL,
+/// Crossref, and UniProt (single-exchange) fetches run through the SessionActor
+/// product path with offline fixtures as mock transport. Each run persists raw response
 /// artifacts, a redacted per-exchange audit, citation-bearing evidence, and
 /// provenance naming the connector TOS.
 #[tokio::test]
@@ -1319,6 +1319,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
             "connector_pubmed_esummary.json",
             "connector_chembl_search.json",
             "connector_crossref_works.json",
+            "connector_uniprot_search.json",
         ] {
             std::fs::copy(
                 format!(
@@ -1334,7 +1335,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
         client.initialize_with_timeout().await;
         let session_id = client.create_session_with_timeout(workdir.path()).await;
 
-        let cases: [(&str, &str, Vec<&str>, usize, &str); 3] = [
+        let cases: [(&str, &str, Vec<&str>, usize, &str); 4] = [
             (
                 "pubmed",
                 "crispr",
@@ -1358,6 +1359,13 @@ async fn test_stdio_science_connector_fetch_product_path() {
                 vec!["connector_crossref_works.json"],
                 1,
                 "Reproducible science workflows",
+            ),
+            (
+                "uniprot",
+                "human insulin",
+                vec!["connector_uniprot_search.json"],
+                1,
+                "Insulin",
             ),
         ];
         for (connector, query, fixtures, exchange_count, first_title) in cases {
@@ -1411,6 +1419,9 @@ async fn test_stdio_science_connector_fetch_product_path() {
             );
             if connector == "pubmed" {
                 assert!(notice.contains("NCBI disclaimer"), "notice: {notice}");
+            }
+            if connector == "uniprot" {
+                assert!(notice.contains("CC BY 4.0"), "notice: {notice}");
             }
             // Evidence carries the scientific citation; the audit is redacted.
             let claim = result["evidence"][0]["claim"].as_str().unwrap_or_default();

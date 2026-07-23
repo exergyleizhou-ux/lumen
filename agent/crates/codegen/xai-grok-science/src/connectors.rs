@@ -15,6 +15,7 @@ pub mod chembl;
 pub mod crossref;
 pub mod fetch;
 pub mod pubmed;
+pub mod uniprot;
 
 /// Minimal percent-encoding for query terms (unreserved characters pass
 /// through; everything else is %XX). Keeps the crate free of a URL crate
@@ -175,9 +176,32 @@ const CROSSREF: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/works?query.bibliographic=crispr&rows=1&select=DOI,title,container-title",
 };
 
+/// UniProtKB website REST API. The v1 operation retrieves a bounded subset of
+/// identity and annotation summary fields, never sequence or citation text.
+const UNIPROT: ConnectorDescriptor = ConnectorDescriptor {
+    id: "uniprot",
+    display_name: "UniProtKB",
+    auth_class: AuthClass::None,
+    base_url: "https://rest.uniprot.org/uniprotkb",
+    egress_hosts: &["rest.uniprot.org"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 1_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://www.uniprot.org/help/license",
+    user_notice: "UniProt copyrightable database content is licensed CC BY 4.0 and must be attributed; UniProt provides no correctness warranty, and some data may be covered by patents or other rights.",
+    data_class: DataClass::PublicData,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/search?query=insulin&format=json&size=1&fields=accession,id,protein_name,gene_names,organism_name",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT]
 }
 
 /// Look up a connector by id.
@@ -383,10 +407,11 @@ mod tests {
     #[test]
     fn registry_contains_first_batch_in_stable_order() {
         let ids: Vec<_> = registry().iter().map(|d| d.id).collect();
-        assert_eq!(ids, vec!["pubmed", "chembl", "crossref"]);
+        assert_eq!(ids, vec!["pubmed", "chembl", "crossref", "uniprot"]);
         assert!(descriptor("pubmed").is_some());
         assert!(descriptor("chembl").is_some());
         assert!(descriptor("crossref").is_some());
+        assert!(descriptor("uniprot").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
@@ -430,6 +455,14 @@ mod tests {
         .expect("public Crossref request");
         assert_eq!(crossref.rate_limit.max_requests, 1);
         assert_eq!(crossref.rate_limit.per_ms, 1_000);
+        let uniprot = validate_request(
+            "uniprot",
+            "/search?query=insulin&format=json&size=5&fields=accession,id,protein_name,gene_names,organism_name",
+            false,
+            5_000,
+        )
+        .expect("public UniProt request");
+        assert_eq!(uniprot.rate_limit.max_requests, 1);
     }
 
     #[test]

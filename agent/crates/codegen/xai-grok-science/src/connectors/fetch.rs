@@ -2,8 +2,8 @@
 //!
 //! One fetch run models one complete connector operation as a sequence of
 //! request/response exchanges (two for pubmed esearch+esummary, one for a
-//! ChEMBL or Crossref search). The responses reach this module as bytes that transited
-//! Lumen's formal workspace tool dispatch; the kernel re-parses every
+//! ChEMBL, Crossref, or UniProt search). The responses reach this module as
+//! bytes that transited Lumen's formal workspace tool dispatch; the kernel re-parses every
 //! exchange and fails the run closed before registering any artifact when a
 //! response is malformed. Credentials never appear here: the request URLs
 //! contain only public query terms, the redacted audit hashes each URL, and
@@ -95,6 +95,14 @@ pub fn parse_responses(connector_id: &str, exchanges: &[FetchExchange]) -> Resul
             }
             super::crossref::parse_works(&exchanges[0].response)
         }
+        "uniprot" => {
+            if exchanges.len() != 1 {
+                return Err(ScienceError::Invalid(
+                    "uniprot fetch requires exactly one search exchange".into(),
+                ));
+            }
+            super::uniprot::parse_search(&exchanges[0].response)
+        }
         other => Err(ScienceError::Invalid(format!(
             "no protocol adapter for connector: {other}"
         ))),
@@ -108,6 +116,7 @@ pub fn expected_exchanges(connector_id: &str) -> Option<usize> {
         "pubmed" => Some(2),
         "chembl" => Some(1),
         "crossref" => Some(1),
+        "uniprot" => Some(1),
         _ => None,
     }
 }
@@ -312,6 +321,9 @@ mod tests {
     const CROSSREF: &[u8] = br#"{"status":"ok","message":{"total-results":1,"items":[{
         "DOI":"10.5555/example.1","title":["Reproducible science workflows"],
         "container-title":["Journal of Durable Research"]}]}}"#;
+    const UNIPROT: &[u8] = br#"{"results":[{"primaryAccession":"P01308",
+        "uniProtkbId":"INS_HUMAN","proteinDescription":{"recommendedName":{"fullName":{"value":"Insulin"}}},
+        "organism":{"scientificName":"Homo sapiens"}}],"totalResults":1}"#;
 
     fn exchange(connector: &str, path: &str, response: &[u8]) -> FetchExchange {
         FetchExchange {
@@ -480,6 +492,54 @@ mod tests {
     }
 
     #[test]
+    fn uniprot_fetch_records_notice_citation_and_replays() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let result = execute_approved_fetch(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            "uniprot",
+            "human insulin",
+            vec![exchange(
+                "uniprot",
+                &super::super::uniprot::search_path("human insulin", 5),
+                UNIPROT,
+            )],
+        )
+        .unwrap();
+        assert_eq!(result.parsed.total_hits, 1);
+        assert_eq!(result.parsed.records[0].id, "P01308");
+        assert_eq!(result.parsed.records[0].title, "Insulin");
+        assert!(result.user_notice.contains("CC BY 4.0"));
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.audits.len(), 1);
+        assert!(result.evidence[0].source.contains("rest.uniprot.org"));
+        let before = serde_json::to_value(&result).unwrap();
+        drop(store);
+        let reopened = ScienceStore::new(temp.path());
+        let replay = FetchResult {
+            run: reopened.load_run(&result.run.context.run_id).unwrap(),
+            artifacts: reopened.artifacts(&result.run.context.run_id).unwrap(),
+            evidence: reopened.evidence(&result.run.context.run_id).unwrap(),
+            provenance: reopened.provenance(&result.run.context.run_id).unwrap(),
+            approvals: reopened.approvals(&result.run.context.run_id).unwrap(),
+            audits: result.audits.clone(),
+            user_notice: result.user_notice.clone(),
+            parsed: parse_responses(
+                "uniprot",
+                &[exchange(
+                    "uniprot",
+                    &super::super::uniprot::search_path("human insulin", 5),
+                    UNIPROT,
+                )],
+            )
+            .unwrap(),
+            replay_after: result.replay_after,
+        };
+        assert_eq!(before, serde_json::to_value(replay).unwrap());
+    }
+
+    #[test]
     fn malformed_response_fails_run_closed() {
         let temp = tempfile::tempdir().unwrap();
         let store = ScienceStore::new(temp.path());
@@ -509,6 +569,7 @@ mod tests {
         assert_eq!(expected_exchanges("pubmed"), Some(2));
         assert_eq!(expected_exchanges("chembl"), Some(1));
         assert_eq!(expected_exchanges("crossref"), Some(1));
+        assert_eq!(expected_exchanges("uniprot"), Some(1));
         assert_eq!(expected_exchanges("unknown"), None);
         assert!(
             parse_responses("pubmed", &pubmed_exchanges()[..1]).is_err(),
@@ -516,5 +577,6 @@ mod tests {
         );
         assert!(parse_responses("chembl", &[]).is_err());
         assert!(parse_responses("crossref", &[]).is_err());
+        assert!(parse_responses("uniprot", &[]).is_err());
     }
 }

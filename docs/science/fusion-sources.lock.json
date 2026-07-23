@@ -122,6 +122,54 @@
       ],
       "admission": "pending-deny-live; offline-fixture-only",
       "live_probe": "ignored; not-run"
+    },
+    {
+      "id": "uniprotkb-rest",
+      "service_owner": "UniProt Consortium",
+      "service_url": "https://rest.uniprot.org/uniprotkb/",
+      "local_implementation": [
+        "agent/crates/codegen/xai-grok-science/src/connectors/uniprot.rs",
+        "agent/crates/codegen/xai-grok-science/src/connectors/fetch.rs",
+        "agent/crates/codegen/xai-grok-shell/src/extensions/science.rs"
+      ],
+      "source_code_imported": false,
+      "runtime_authority": "rust-lumen-tui-only",
+      "data_class": "public_data",
+      "credential_class": "none",
+      "terms_reviewed_at": "2026-07-24",
+      "terms_urls": [
+        "https://www.uniprot.org/help/api",
+        "https://www.uniprot.org/help/api_queries",
+        "https://www.uniprot.org/help/license"
+      ],
+      "license": "CC-BY-4.0 for copyrightable database content",
+      "implemented_controls": {
+        "exact_https_host_allowlist": true,
+        "local_rate_limit": "1 request per 1000ms",
+        "exchange_count": 1,
+        "max_results": 50,
+        "selected_fields": [
+          "accession",
+          "id",
+          "protein_name",
+          "gene_names",
+          "organism_name"
+        ],
+        "excluded_fields": [
+          "sequence",
+          "features",
+          "references",
+          "citation_text"
+        ],
+        "offline_fixture_product_proof": "1 passed, 0 failed"
+      },
+      "unmet_live_admission_conditions": [
+        "explicit live-network authorization",
+        "retained redacted status and response evidence",
+        "visible presentation-point notice test"
+      ],
+      "admission": "pending-deny-live; offline-fixture-only",
+      "live_probe": "ignored; not-run"
     }
   ]
 }
