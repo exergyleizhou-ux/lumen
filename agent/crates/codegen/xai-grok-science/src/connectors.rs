@@ -12,6 +12,7 @@
 use serde::{Deserialize, Serialize};
 
 pub mod chembl;
+pub mod crossref;
 pub mod fetch;
 pub mod pubmed;
 
@@ -95,6 +96,9 @@ pub struct ConnectorDescriptor {
     pub retry: RetryPolicy,
     /// Terms-of-service URL recorded into provenance and live evidence.
     pub tos_url: &'static str,
+    /// Text a TUI/ACP caller must present with retrieved data. This keeps
+    /// service-specific copyright and usage notices out of model prose.
+    pub user_notice: &'static str,
     pub data_class: DataClass,
     pub cache_policy: CachePolicy,
     /// Relative path used by the explicit `#[ignore]`d live probe.
@@ -118,6 +122,7 @@ const PUBMED: ConnectorDescriptor = ConnectorDescriptor {
         base_delay_ms: 500,
     },
     tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "NCBI disclaimer and copyright notice: PubMed abstracts may be protected by copyright; review NCBI policies before reproducing or redistributing retrieved content.",
     data_class: DataClass::PublicReference,
     cache_policy: CachePolicy::TtlSeconds(86_400),
     live_probe_path: "/esearch.fcgi?db=pubmed&term=crispr&retmax=1&retmode=json",
@@ -140,14 +145,39 @@ const CHEMBL: ConnectorDescriptor = ConnectorDescriptor {
         base_delay_ms: 500,
     },
     tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "ChEMBL data is subject to the EBI terms of use.",
     data_class: DataClass::PublicData,
     cache_policy: CachePolicy::TtlSeconds(86_400),
     live_probe_path: "/molecule.json?limit=1",
 };
 
+/// Crossref public REST API. The v1 operation is a bounded bibliographic
+/// works search that deliberately selects no abstract or full-text fields.
+/// Metadata terms: <https://www.crossref.org/documentation/retrieve-metadata/>
+const CROSSREF: ConnectorDescriptor = ConnectorDescriptor {
+    id: "crossref",
+    display_name: "Crossref Works",
+    auth_class: AuthClass::None,
+    base_url: "https://api.crossref.org",
+    egress_hosts: &["api.crossref.org"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 1_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://www.crossref.org/documentation/retrieve-metadata/",
+    user_notice: "Crossref bibliographic metadata is generally factual/public-domain data, but abstracts may retain publisher or author copyright; this connector intentionally retrieves no abstracts or full text.",
+    data_class: DataClass::PublicReference,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/works?query.bibliographic=crispr&rows=1&select=DOI,title,container-title",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL]
+    &[PUBMED, CHEMBL, CROSSREF]
 }
 
 /// Look up a connector by id.
@@ -160,14 +190,25 @@ pub fn descriptor(id: &str) -> Option<&'static ConnectorDescriptor> {
 pub enum PolicyError {
     UnknownConnector(String),
     /// Target host is not on the descriptor's exact allowlist.
-    EgressHostNotAllowed { connector: String, host: String },
+    EgressHostNotAllowed {
+        connector: String,
+        host: String,
+    },
     /// Descriptor requires a credential class the request did not satisfy.
-    CredentialRequired { connector: String },
+    CredentialRequired {
+        connector: String,
+    },
     /// Requested timeout exceeds the descriptor budget ceiling.
-    TimeoutExceeds { connector: String, max_ms: u64 },
+    TimeoutExceeds {
+        connector: String,
+        max_ms: u64,
+    },
     /// Base URL or probe path failed validation (non-HTTPS, absolute path,
     /// or path escaping the descriptor base).
-    InvalidEndpoint { connector: String, detail: String },
+    InvalidEndpoint {
+        connector: String,
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for PolicyError {
@@ -181,7 +222,10 @@ impl std::fmt::Display for PolicyError {
                 write!(f, "connector {connector}: credential required")
             }
             PolicyError::TimeoutExceeds { connector, max_ms } => {
-                write!(f, "connector {connector}: timeout exceeds {max_ms}ms budget")
+                write!(
+                    f,
+                    "connector {connector}: timeout exceeds {max_ms}ms budget"
+                )
             }
             PolicyError::InvalidEndpoint { connector, detail } => {
                 write!(f, "connector {connector}: invalid endpoint: {detail}")
@@ -218,13 +262,18 @@ pub fn validate_descriptor(d: &ConnectorDescriptor) -> std::result::Result<(), P
         detail: detail.to_owned(),
     };
     if d.id.is_empty() || !d.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
-        return Err(invalid("id must be non-empty ascii alphanumeric/underscore"));
+        return Err(invalid(
+            "id must be non-empty ascii alphanumeric/underscore",
+        ));
     }
     if !d.base_url.starts_with("https://") {
         return Err(invalid("base_url must be https"));
     }
     if !d.tos_url.starts_with("https://") {
         return Err(invalid("tos_url must be https"));
+    }
+    if d.user_notice.trim().is_empty() {
+        return Err(invalid("user_notice must be non-empty"));
     }
     let host = d
         .base_url
@@ -236,7 +285,9 @@ pub fn validate_descriptor(d: &ConnectorDescriptor) -> std::result::Result<(), P
         return Err(invalid("base_url host must be on egress_hosts"));
     }
     if !d.live_probe_path.starts_with('/') || d.live_probe_path.contains("..") {
-        return Err(invalid("live_probe_path must be absolute and contain no .."));
+        return Err(invalid(
+            "live_probe_path must be absolute and contain no ..",
+        ));
     }
     if d.rate_limit.max_requests == 0 || d.retry.max_attempts == 0 {
         return Err(invalid("rate limit and retry must be positive"));
@@ -332,9 +383,10 @@ mod tests {
     #[test]
     fn registry_contains_first_batch_in_stable_order() {
         let ids: Vec<_> = registry().iter().map(|d| d.id).collect();
-        assert_eq!(ids, vec!["pubmed", "chembl"]);
+        assert_eq!(ids, vec!["pubmed", "chembl", "crossref"]);
         assert!(descriptor("pubmed").is_some());
         assert!(descriptor("chembl").is_some());
+        assert!(descriptor("crossref").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
@@ -363,6 +415,21 @@ mod tests {
         assert_eq!(req.timeout_ms, 5_000);
         assert_eq!(req.rate_limit.max_requests, 3);
         assert!(req.tos_url.starts_with("https://"));
+        assert!(
+            descriptor("pubmed")
+                .unwrap()
+                .user_notice
+                .contains("NCBI disclaimer")
+        );
+        let crossref = validate_request(
+            "crossref",
+            "/works?query.bibliographic=cell&rows=5&select=DOI,title,container-title",
+            false,
+            5_000,
+        )
+        .expect("public Crossref request");
+        assert_eq!(crossref.rate_limit.max_requests, 1);
+        assert_eq!(crossref.rate_limit.per_ms, 1_000);
     }
 
     #[test]
@@ -387,13 +454,23 @@ mod tests {
 
     #[test]
     fn audit_record_is_redacted_and_stable() {
-        let req = validate_request("pubmed", "/esearch.fcgi?db=pubmed&term=x", false, 5_000)
-            .unwrap();
-        let audit = connector_audit(&req, Some("abc".into()), 1_700_000_000_000, ConnectorOutcome::Retrieved);
+        let req =
+            validate_request("pubmed", "/esearch.fcgi?db=pubmed&term=x", false, 5_000).unwrap();
+        let audit = connector_audit(
+            &req,
+            Some("abc".into()),
+            1_700_000_000_000,
+            ConnectorOutcome::Retrieved,
+        );
         assert_eq!(audit.connector_id, "pubmed");
         assert_eq!(audit.request_sha256.len(), 64);
         assert!(!audit.request_sha256.contains("crispr"));
-        let again = connector_audit(&req, Some("abc".into()), 1_700_000_000_000, ConnectorOutcome::Retrieved);
+        let again = connector_audit(
+            &req,
+            Some("abc".into()),
+            1_700_000_000_000,
+            ConnectorOutcome::Retrieved,
+        );
         assert_eq!(audit, again, "audit must be deterministic for replay");
     }
 }

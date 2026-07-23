@@ -2,16 +2,14 @@
 //!
 //! One fetch run models one complete connector operation as a sequence of
 //! request/response exchanges (two for pubmed esearch+esummary, one for a
-//! ChEMBL search). The responses reach this module as bytes that transited
+//! ChEMBL or Crossref search). The responses reach this module as bytes that transited
 //! Lumen's formal workspace tool dispatch; the kernel re-parses every
 //! exchange and fails the run closed before registering any artifact when a
 //! response is malformed. Credentials never appear here: the request URLs
 //! contain only public query terms, the redacted audit hashes each URL, and
 //! the scientific evidence cites the public source URL as its citation.
 
-use super::{
-    ConnectorAudit, ConnectorOutcome, ValidatedRequest, connector_audit, descriptor,
-};
+use super::{ConnectorAudit, ConnectorOutcome, ValidatedRequest, connector_audit, descriptor};
 use crate::{
     Approval, ApprovalDecision, Artifact, CallId, Evidence, Provenance, Result, RunContext,
     RunRecord, RunState, ScienceError, ScienceStore,
@@ -58,6 +56,8 @@ pub struct FetchResult {
     pub approvals: Vec<Approval>,
     /// Redacted per-exchange audit records (URL and response by hash only).
     pub audits: Vec<ConnectorAudit>,
+    /// Mandatory service notice for the caller to display alongside results.
+    pub user_notice: String,
     pub parsed: ParsedResponse,
     pub replay_after: u64,
 }
@@ -74,7 +74,10 @@ pub fn parse_responses(connector_id: &str, exchanges: &[FetchExchange]) -> Resul
             }
             let (total_hits, _ids) = super::pubmed::parse_esearch(&exchanges[0].response)?;
             let records = super::pubmed::parse_esummary(&exchanges[1].response)?;
-            Ok(ParsedResponse { total_hits, records })
+            Ok(ParsedResponse {
+                total_hits,
+                records,
+            })
         }
         "chembl" => {
             if exchanges.len() != 1 {
@@ -83,6 +86,14 @@ pub fn parse_responses(connector_id: &str, exchanges: &[FetchExchange]) -> Resul
                 ));
             }
             super::chembl::parse_search(&exchanges[0].response)
+        }
+        "crossref" => {
+            if exchanges.len() != 1 {
+                return Err(ScienceError::Invalid(
+                    "crossref fetch requires exactly one works exchange".into(),
+                ));
+            }
+            super::crossref::parse_works(&exchanges[0].response)
         }
         other => Err(ScienceError::Invalid(format!(
             "no protocol adapter for connector: {other}"
@@ -96,6 +107,7 @@ pub fn expected_exchanges(connector_id: &str) -> Option<usize> {
     match connector_id {
         "pubmed" => Some(2),
         "chembl" => Some(1),
+        "crossref" => Some(1),
         _ => None,
     }
 }
@@ -109,7 +121,12 @@ pub fn begin_fetch(store: &ScienceStore, context: RunContext) -> Result<ScienceR
         call_id: CallId::new("science_connector_fetch"),
     };
     store.create_run(context)?;
-    store.append_event(&ticket.run_id, "SessionActor", "run.created", serde_json::json!({}))?;
+    store.append_event(
+        &ticket.run_id,
+        "SessionActor",
+        "run.created",
+        serde_json::json!({}),
+    )?;
     store.request_approval(Approval {
         project_id: ticket.project_id.clone(),
         run_id: ticket.run_id.clone(),
@@ -144,9 +161,8 @@ pub fn finish_fetch(
             "connector fetch requires an allowed running run".into(),
         ));
     }
-    let descriptor = descriptor(connector_id).ok_or_else(|| {
-        ScienceError::Invalid(format!("unknown connector: {connector_id}"))
-    })?;
+    let descriptor = descriptor(connector_id)
+        .ok_or_else(|| ScienceError::Invalid(format!("unknown connector: {connector_id}")))?;
     if exchanges.is_empty() {
         return Err(ScienceError::Invalid(
             "connector fetch requires at least one exchange".into(),
@@ -200,7 +216,10 @@ pub fn finish_fetch(
             "{} search {query:?}: {} hits; first: {} ({}), {}",
             connector_id, parsed.total_hits, record.title, record.id, record.container
         ),
-        None => format!("{} search {query:?}: {} hits; no records", connector_id, parsed.total_hits),
+        None => format!(
+            "{} search {query:?}: {} hits; no records",
+            connector_id, parsed.total_hits
+        ),
     };
     store.add_provenance(Provenance {
         run_id: ticket.run_id.clone(),
@@ -242,6 +261,7 @@ pub fn finish_fetch(
     )?;
     Ok(FetchResult {
         audits,
+        user_notice: descriptor.user_notice.to_owned(),
         parsed,
         replay_after: store
             .events_after(&run.context.run_id, 0, 1_000)?
@@ -266,7 +286,14 @@ pub fn execute_approved_fetch(
 ) -> Result<FetchResult> {
     let ticket = begin_fetch(store, context)?;
     csv::mark_allowed(store, &ticket)?;
-    finish_fetch(store, ticket, connector_id, query, exchanges, "kernel-test-only/direct-executor")
+    finish_fetch(
+        store,
+        ticket,
+        connector_id,
+        query,
+        exchanges,
+        "kernel-test-only/direct-executor",
+    )
 }
 
 #[cfg(test)]
@@ -274,12 +301,17 @@ mod tests {
     use super::*;
     use crate::ProjectId;
 
-    const ESEARCH: &[u8] = br#"{"esearchresult": {"count": "2", "idlist": ["41234567", "41234568"]}}"#;
+    const ESEARCH: &[u8] =
+        br#"{"esearchresult": {"count": "2", "idlist": ["41234567", "41234568"]}}"#;
     const ESUMMARY: &[u8] = br#"{"result": {"uids": ["41234567", "41234568"],
         "41234567": {"uid": "41234567", "title": "Base editing advances", "fulljournalname": "Nature"},
         "41234568": {"uid": "41234568", "title": "Prime editing review", "fulljournalname": "Cell"}}}"#;
-    const CHEMBL: &[u8] = br#"{"molecules": [{"molecule_chembl_id": "CHEMBL25", "pref_name": "ASPIRIN"}],
+    const CHEMBL: &[u8] =
+        br#"{"molecules": [{"molecule_chembl_id": "CHEMBL25", "pref_name": "ASPIRIN"}],
         "page_meta": {"total_count": 1}}"#;
+    const CROSSREF: &[u8] = br#"{"status":"ok","message":{"total-results":1,"items":[{
+        "DOI":"10.5555/example.1","title":["Reproducible science workflows"],
+        "container-title":["Journal of Durable Research"]}]}}"#;
 
     fn exchange(connector: &str, path: &str, response: &[u8]) -> FetchExchange {
         FetchExchange {
@@ -290,8 +322,16 @@ mod tests {
 
     fn pubmed_exchanges() -> Vec<FetchExchange> {
         vec![
-            exchange("pubmed", "/esearch.fcgi?db=pubmed&retmode=json&term=crispr", ESEARCH),
-            exchange("pubmed", "/esummary.fcgi?db=pubmed&retmode=json&id=41234567,41234568", ESUMMARY),
+            exchange(
+                "pubmed",
+                "/esearch.fcgi?db=pubmed&retmode=json&term=crispr",
+                ESEARCH,
+            ),
+            exchange(
+                "pubmed",
+                "/esummary.fcgi?db=pubmed&retmode=json&id=41234567,41234568",
+                ESUMMARY,
+            ),
         ]
     }
 
@@ -311,27 +351,44 @@ mod tests {
         assert_eq!(result.parsed.records[0].id, "41234567");
         assert_eq!(result.artifacts.len(), 2);
         assert_eq!(result.audits.len(), 2);
+        assert!(result.user_notice.contains("NCBI disclaimer"));
         // Audit is redacted; evidence carries the scientific citation.
         assert!(!result.audits[0].request_sha256.contains("crispr"));
         assert!(result.evidence[0].claim.contains("crispr"));
         assert!(result.evidence[0].claim.contains("Base editing advances"));
-        assert!(result.evidence[0].source.contains("eutils.ncbi.nlm.nih.gov"));
+        assert!(
+            result.evidence[0]
+                .source
+                .contains("eutils.ncbi.nlm.nih.gov")
+        );
         assert_eq!(
             result.evidence[0].artifact_sha256.as_deref(),
             Some(result.artifacts[0].sha256.as_str())
         );
-        assert_eq!(result.provenance[0].license, descriptor("pubmed").unwrap().tos_url);
+        assert_eq!(
+            result.provenance[0].license,
+            descriptor("pubmed").unwrap().tos_url
+        );
         let before = serde_json::to_value(&result).unwrap();
         drop(store);
         let reopened = ScienceStore::new(temp.path());
         let run = reopened.load_run(&result.run.context.run_id).unwrap();
         let replay = FetchResult {
             audits: result.audits.clone(),
+            user_notice: result.user_notice.clone(),
             parsed: parse_responses(
                 "pubmed",
                 &[
-                    exchange("pubmed", "/esearch.fcgi?db=pubmed&retmode=json&term=crispr", ESEARCH),
-                    exchange("pubmed", "/esummary.fcgi?db=pubmed&retmode=json&id=41234567,41234568", ESUMMARY),
+                    exchange(
+                        "pubmed",
+                        "/esearch.fcgi?db=pubmed&retmode=json&term=crispr",
+                        ESEARCH,
+                    ),
+                    exchange(
+                        "pubmed",
+                        "/esummary.fcgi?db=pubmed&retmode=json&id=41234567,41234568",
+                        ESUMMARY,
+                    ),
                 ],
             )
             .unwrap(),
@@ -358,12 +415,68 @@ mod tests {
             csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
             "chembl",
             "aspirin",
-            vec![exchange("chembl", "/molecule/search.json?q=aspirin&limit=5&offset=0", CHEMBL)],
+            vec![exchange(
+                "chembl",
+                "/molecule/search.json?q=aspirin&limit=5&offset=0",
+                CHEMBL,
+            )],
         )
         .unwrap();
         assert_eq!(result.parsed.total_hits, 1);
         assert_eq!(result.parsed.records[0].id, "CHEMBL25");
         assert_eq!(result.artifacts.len(), 1);
+    }
+
+    #[test]
+    fn crossref_fetch_records_notice_citation_and_replays() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let result = execute_approved_fetch(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            "crossref",
+            "reproducible science",
+            vec![exchange(
+                "crossref",
+                &super::super::crossref::works_path("reproducible science", 5),
+                CROSSREF,
+            )],
+        )
+        .unwrap();
+        assert_eq!(result.parsed.total_hits, 1);
+        assert_eq!(result.parsed.records[0].id, "10.5555/example.1");
+        assert_eq!(
+            result.parsed.records[0].title,
+            "Reproducible science workflows"
+        );
+        assert!(result.user_notice.contains("no abstracts"));
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.audits.len(), 1);
+        assert!(result.evidence[0].source.contains("api.crossref.org"));
+        let before = serde_json::to_value(&result).unwrap();
+        drop(store);
+        let reopened = ScienceStore::new(temp.path());
+        let run = reopened.load_run(&result.run.context.run_id).unwrap();
+        let replay = FetchResult {
+            run,
+            artifacts: reopened.artifacts(&result.run.context.run_id).unwrap(),
+            evidence: reopened.evidence(&result.run.context.run_id).unwrap(),
+            provenance: reopened.provenance(&result.run.context.run_id).unwrap(),
+            approvals: reopened.approvals(&result.run.context.run_id).unwrap(),
+            audits: result.audits.clone(),
+            user_notice: result.user_notice.clone(),
+            parsed: parse_responses(
+                "crossref",
+                &[exchange(
+                    "crossref",
+                    &super::super::crossref::works_path("reproducible science", 5),
+                    CROSSREF,
+                )],
+            )
+            .unwrap(),
+            replay_after: result.replay_after,
+        };
+        assert_eq!(before, serde_json::to_value(replay).unwrap());
     }
 
     #[test]
@@ -377,7 +490,11 @@ mod tests {
             context,
             "chembl",
             "aspirin",
-            vec![exchange("chembl", "/molecule/search.json?q=aspirin&limit=5&offset=0", b"garbage")],
+            vec![exchange(
+                "chembl",
+                "/molecule/search.json?q=aspirin&limit=5&offset=0",
+                b"garbage",
+            )],
         )
         .unwrap_err();
         assert!(error.to_string().contains("failed closed"));
@@ -391,11 +508,13 @@ mod tests {
     fn exchange_count_is_enforced_per_protocol() {
         assert_eq!(expected_exchanges("pubmed"), Some(2));
         assert_eq!(expected_exchanges("chembl"), Some(1));
+        assert_eq!(expected_exchanges("crossref"), Some(1));
         assert_eq!(expected_exchanges("unknown"), None);
         assert!(
             parse_responses("pubmed", &pubmed_exchanges()[..1]).is_err(),
             "pubmed without esummary must fail"
         );
         assert!(parse_responses("chembl", &[]).is_err());
+        assert!(parse_responses("crossref", &[]).is_err());
     }
 }

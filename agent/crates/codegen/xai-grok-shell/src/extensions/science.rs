@@ -353,6 +353,14 @@ async fn handle_connector_fetch(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
                 ),
             )?]
         }
+        "crossref" => {
+            vec![validate(
+                &xai_grok_science::connectors::crossref::works_path(
+                    &params.query,
+                    params.max_results,
+                ),
+            )?]
+        }
         other => {
             return Err(acp::Error::invalid_params().data(format!("no v1 operation for {other}")));
         }

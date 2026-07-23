@@ -1299,8 +1299,8 @@ async fn test_stdio_science_import_csv_fasta_product_path() {
     .await;
 }
 
-/// Science GC2 product proof: pubmed (two-exchange protocol) and chembl
-/// (single-exchange) fetches run through the SessionActor product path with
+/// Science GC2 product proof: pubmed (two-exchange protocol), chembl, and
+/// Crossref (single-exchange) fetches run through the SessionActor product path with
 /// offline fixtures as mock transport. Each run persists raw response
 /// artifacts, a redacted per-exchange audit, citation-bearing evidence, and
 /// provenance naming the connector TOS.
@@ -1318,6 +1318,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
             "connector_pubmed_esearch.json",
             "connector_pubmed_esummary.json",
             "connector_chembl_search.json",
+            "connector_crossref_works.json",
         ] {
             std::fs::copy(
                 format!(
@@ -1333,7 +1334,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
         client.initialize_with_timeout().await;
         let session_id = client.create_session_with_timeout(workdir.path()).await;
 
-        let cases: [(&str, &str, Vec<&str>, usize, &str); 2] = [
+        let cases: [(&str, &str, Vec<&str>, usize, &str); 3] = [
             (
                 "pubmed",
                 "crispr",
@@ -1350,6 +1351,13 @@ async fn test_stdio_science_connector_fetch_product_path() {
                 vec!["connector_chembl_search.json"],
                 1,
                 "ASPIRIN",
+            ),
+            (
+                "crossref",
+                "reproducible science",
+                vec!["connector_crossref_works.json"],
+                1,
+                "Reproducible science workflows",
             ),
         ];
         for (connector, query, fixtures, exchange_count, first_title) in cases {
@@ -1396,6 +1404,14 @@ async fn test_stdio_science_connector_fetch_product_path() {
                 Some(first_title),
                 "result: {result}"
             );
+            let notice = result["user_notice"].as_str().unwrap_or_default();
+            assert!(
+                !notice.is_empty(),
+                "connector notice must reach the product response"
+            );
+            if connector == "pubmed" {
+                assert!(notice.contains("NCBI disclaimer"), "notice: {notice}");
+            }
             // Evidence carries the scientific citation; the audit is redacted.
             let claim = result["evidence"][0]["claim"].as_str().unwrap_or_default();
             assert!(claim.contains(query), "claim: {claim}");
