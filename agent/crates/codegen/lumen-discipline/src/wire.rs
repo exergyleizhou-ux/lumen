@@ -3,16 +3,19 @@
 //! This module intentionally contains no HTTP client or prompt bytes. The
 //! sampler owns request building and supplies only sanitized, one-way evidence.
 
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WireSerializationKind {
     ChatCompletions,
     Responses,
     Messages,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum WireMutationReason {
     RetryImageStrip,
     ImageEvicted,
@@ -24,7 +27,7 @@ pub enum WireMutationReason {
     PermissionProfileChanged,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WireRequestSnapshot {
     pub cache_domain_hash: String,
     pub cache_epoch_id: String,

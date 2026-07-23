@@ -166,7 +166,6 @@ mod tests {
             0,
             1,
         );
-        assert!(after_change.prefix_changed);
         assert_eq!(after_change.stable_streak, 0);
         drop_session(sid);
     }

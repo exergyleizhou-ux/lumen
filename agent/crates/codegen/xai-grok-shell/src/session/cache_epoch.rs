@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 pub const CACHE_EPOCH_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EPOCH_FILE_NAME: &str = "cache_epoch.json";
+pub const CACHE_EVIDENCE_FILE_NAME: &str = "cache_request_evidence.jsonl";
 
 /// Inputs that can alter provider-side cache identity. All fields are already
 /// non-secret identities; callers must pass a credential slot/account ID, not
@@ -173,6 +174,27 @@ fn write_next(
     Ok((record, disposition))
 }
 
+/// Append sanitized evidence for an outbound provider request. The sampler
+/// supplies only one-way hashes and request shape metadata, never prompt
+/// bytes, credentials, request IDs, or headers. Failure is deliberately
+/// returned to the caller so the observer can remain fail-open.
+pub fn append_request_evidence(
+    session_dir: &Path,
+    snapshot: &lumen_discipline::WireRequestSnapshot,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(session_dir)?;
+    let path = session_dir.join(CACHE_EVIDENCE_FILE_NAME);
+    let mut line = serde_json::to_vec(snapshot).expect("wire snapshot is serializable");
+    line.push(b'\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    use std::io::Write;
+    file.write_all(&line)?;
+    file.sync_data()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -281,5 +303,27 @@ mod tests {
             ordered_manifest_fingerprint(&vec!["one", "two"]),
             ordered_manifest_fingerprint(&vec!["two", "one"])
         );
+    }
+
+    #[test]
+    fn request_evidence_is_durable_jsonl_without_request_material() {
+        let dir = tempfile::tempdir().unwrap();
+        let snapshot = lumen_discipline::WireRequestSnapshot {
+            cache_domain_hash: "domain-hash".into(),
+            cache_epoch_id: "epoch-id".into(),
+            transport_hash: "transport-hash".into(),
+            provider_cache_material_hash: "material-hash".into(),
+            body_bytes: 42,
+            wire_common_prefix_bytes: None,
+            serialization_kind: lumen_discipline::WireSerializationKind::Responses,
+            mutation_reasons: vec![],
+            attempt_index: 0,
+        };
+        append_request_evidence(dir.path(), &snapshot).unwrap();
+        let evidence = std::fs::read_to_string(dir.path().join(CACHE_EVIDENCE_FILE_NAME)).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+        assert_eq!(value["cache_epoch_id"], "epoch-id");
+        assert_eq!(value["serialization_kind"], "responses");
+        assert!(!evidence.contains("private prompt"));
     }
 }
