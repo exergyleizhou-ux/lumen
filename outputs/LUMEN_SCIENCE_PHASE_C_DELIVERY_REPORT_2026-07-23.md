@@ -221,6 +221,10 @@ a076f80b6eac0f1f22ade1ed312ebd5f3e9438ac818d95d5b1aeb5cb3e7c8b98  gc3_science_e2
 dea27ada1a7760f5b296ecd0ef82decc17c13382930dd169125f8bd56f55b539  gp5_pager_build_final.log
 61aee28e64f522773e75bc629f41ad38a195a1b29e0a438bc63166545887bd9a  gp5_science_e2e_final.log
 45f75b19e5718ce74d75d27dc949e2b0cc21908a1e53dca4d31c24e03ebe8e09  gp5_science_clippy_final.log
+54b88763e5a1924964b0cc93d21715f28d3ece737e3e378bea93565190a33b34  postmerge_g2_quiet_full.log
+a58c0e8f125a1576e04bbfd1c28ddfa2154b5b6cf1c67bd032e10c81c42174c4  postmerge_g2_rerun.log
+0f0de5e2f04f6014f039904edefbea6fde6233642bc6422a2d5d84eb646574d8  postmerge_gate_battery.log
+62f86230b9672777c564f1ca1c1eda6a1631b3af2863791087330bf6eb06847b  postmerge_worktree_pool_quiet_probe.log
 ```
 
 ## Post-delivery addendum: merge into main and remote push (2026-07-23)
@@ -252,7 +256,9 @@ Authorized by the user ("授权你 全权交给你", 2026-07-23).
   merge introduced zero code delta in xai-grok-shell (byte-identical to the
   `science/kernel` tree that passed 5674/0). These are pre-existing
   timing-sensitive tests (30 s internal deadline) exposed by concurrent
-  build load (G4 23-minute full rebuild ran alongside G2). Not a merge
+  build load (the direct-binary re-run of the G2 suite ran alongside the G4
+23-minute full rebuild; the battery's own G2 phase ran on an already
+load-warm machine). Not a merge
   regression. No test timeouts were changed without user sign-off.
 - **Push:** executed 2026-07-23. `git push origin main` pushed range
   `f7caa832..50217ca0` (35 commits, including the D-3 commit) to
@@ -262,3 +268,22 @@ Authorized by the user ("授权你 全权交给你", 2026-07-23).
 - Decision item 10's "merging `science/kernel` into `main`" and "remote
   push" entries are resolved by this addendum; all other P5 items remain
   open and unstarted.
+
+### Vacuous-e2e re-audit (2026-07-23)
+
+Re-audit of the Phase B vacuous-async-e2e erratum (missing `.await`,
+0.00s false passes). Every `with_local_set` pattern in the test directory
+was checked:
+
+- `grep -rn "with_local_set" crates/codegen/xai-grok-shell/tests/` → 48
+  occurrences total (includes `async fn with_local_set` helper definitions
+  and `use super::...with_local_set` imports).
+- `grep -rn -A2 "with_local_set" crates/codegen/xai-grok-shell/tests/ |
+  grep -c "\.await"` → 35. The 13-line gap is entirely from function
+  definitions and use imports — neither are test callsites.
+- Manual verification: all 35 actual `with_local_set(|| async {` test
+  callsites (across 8 test files) have a matching `.await`. **Zero
+  vacuous async tests.**
+
+G5 science e2e confirms real duration: 7/7 passed in `finished in 8.52s`
+(battery log: `outputs/evidence/postmerge_gate_battery.log`), not 0.00s.
