@@ -101,6 +101,7 @@ impl SamplerActor {
                 request_id,
                 request,
                 config,
+                wire_context,
                 completion_tx,
             } => {
                 let cancel_token = CancellationToken::new();
@@ -122,6 +123,7 @@ impl SamplerActor {
                     request_id,
                     request_inner,
                     effective_config,
+                    wire_context,
                     retry_policy,
                     event_tx,
                     cancel_token,

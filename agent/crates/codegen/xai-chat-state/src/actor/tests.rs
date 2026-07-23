@@ -210,6 +210,7 @@ async fn record_last_turn_usage_round_trip() {
         total_tokens: 1290,
         reasoning_tokens: 0,
         cached_prompt_tokens: 800,
+        cache_miss_prompt_tokens: None,
     };
     h.handle.record_last_turn_usage(usage.clone());
 
@@ -225,6 +226,7 @@ async fn record_last_turn_usage_round_trip() {
         total_tokens: 10000,
         reasoning_tokens: 0,
         cached_prompt_tokens: 0,
+        cache_miss_prompt_tokens: None,
     };
     h.handle.record_last_turn_usage(next);
     let got2 = h
@@ -246,6 +248,7 @@ async fn prompt_usage_ledger_via_handle_resets_and_clears() {
         total_tokens: 12,
         reasoning_tokens: 0,
         cached_prompt_tokens: 0,
+        cache_miss_prompt_tokens: None,
     };
 
     let h = TestHarness::new();
@@ -1214,6 +1217,37 @@ async fn build_request_injects_memory_reminder() {
     } else {
         panic!("expected System item");
     }
+}
+
+#[tokio::test]
+async fn persisted_memory_reminder_emits_committed_mutation() {
+    let mut h = TestHarness::with_conversation(vec![ConversationItem::system("You are helpful.")]);
+    let _ = h
+        .handle
+        .build_request(
+            vec![],
+            Some("Remember: durable preference".to_string()),
+            true,
+            None,
+            "c".into(),
+            "r".into(),
+        )
+        .await
+        .expect("actor available");
+
+    assert!(
+        h.drain_persistence()
+            .iter()
+            .any(|record| matches!(record, PersistenceRecord::ReplaceHistory(_)))
+    );
+    assert!(matches!(
+        h.next_event().await,
+        ChatStateEvent::HistoryMutationCommitted {
+            revision: 1,
+            mutation: crate::CommittedHistoryMutation::MemoryReminderPersisted,
+            new_len: 1,
+        }
+    ));
 }
 
 #[tokio::test]
@@ -2392,6 +2426,43 @@ async fn turn_capture_survives_compaction_and_flags_it() {
     ));
     assert!(matches!(&capture.messages[2], ConversationItem::User(_)));
     assert!(capture.compaction_occurred);
+}
+
+#[tokio::test]
+async fn compaction_ack_follows_persistence_and_matches_committed_event() {
+    let mut h = TestHarness::new();
+    let ack = h
+        .handle
+        .replace_conversation_for_compaction_and_ack(vec![ConversationItem::system("summary")])
+        .await
+        .expect("actor must acknowledge committed replacement");
+
+    assert_eq!(ack.revision, 1);
+    assert_eq!(
+        ack.mutation,
+        crate::CommittedHistoryMutation::CompactionReplace
+    );
+    assert_eq!(ack.new_len, 1);
+    assert!(h.drain_persistence().iter().any(|record| matches!(
+        record,
+        crate::PersistenceRecord::ReplaceHistory(items) if items.len() == ack.new_len
+    )));
+    assert!(matches!(
+        h.next_event().await,
+        crate::ChatStateEvent::ConversationReset { new_len: 1 }
+    ));
+    assert!(matches!(
+        h.next_event().await,
+        crate::ChatStateEvent::TokensUpdated { .. }
+    ));
+    assert!(matches!(
+        h.next_event().await,
+        crate::ChatStateEvent::HistoryMutationCommitted {
+            revision: 1,
+            mutation: crate::CommittedHistoryMutation::CompactionReplace,
+            new_len: 1,
+        }
+    ));
 }
 
 #[tokio::test]

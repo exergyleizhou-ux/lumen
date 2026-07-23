@@ -193,7 +193,14 @@ pub(super) async fn run_session(
             trigger_bytes, "reclaim_target_bytes" : reclaim_target_bytes, "inline_images"
             : inline_images, "images_remaining" : inline_images.saturating_sub(evicted),
             "needs_image_compaction" : needs_image_compaction, "evicted" : evicted,
-            })),); } Some(xai_chat_state::ChatStateEvent::PromptIndexChanged { .. }) |
+            })),); } Some(xai_chat_state::ChatStateEvent::HistoryMutationCommitted { revision, mutation, new_len }) => {
+            match session.rotate_cache_epoch_after_history_mutation().await {
+            Ok(record) => tracing::debug!(revision, ?mutation, new_len, epoch = %record.epoch_id,
+            generation = record.generation, "chat history mutation committed and cache epoch rotated"),
+            Err(error) => tracing::warn!(revision, ?mutation, new_len, %error,
+            "chat history mutation committed but cache epoch rotation failed"),
+            }
+            } Some(xai_chat_state::ChatStateEvent::PromptIndexChanged { .. }) |
             Some(xai_chat_state::ChatStateEvent::TokensUpdated { .. }) => {} None => {} }
             } maybe_event = event_rx.recv() => { if let Some(event) = maybe_event { match
             event { SessionEvent::Notification(notification) => { let out = replay_buffer

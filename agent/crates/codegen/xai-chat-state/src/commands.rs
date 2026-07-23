@@ -12,6 +12,7 @@ use crate::types::{
     AutoCompactTrigger, ChatStateSnapshot, ConversationCounts, Credentials, NotificationMeta,
     TurnCapture,
 };
+use crate::events::HistoryMutationAck;
 
 #[derive(Debug, Clone, Default)]
 pub struct ModelMetadata {
@@ -109,6 +110,14 @@ pub enum ChatStateCommand {
     ReplaceConversation {
         items: Vec<ConversationItem>,
         is_compaction: bool,
+    },
+
+    /// Replace history and reply after the actor queues persistence and emits
+    /// its committed mutation event.
+    ReplaceConversationAndAck {
+        items: Vec<ConversationItem>,
+        is_compaction: bool,
+        reply: oneshot::Sender<HistoryMutationAck>,
     },
 
     /// Out-of-band history repair (`x.ai/session/repair`): run

@@ -44,10 +44,10 @@ impl ChatStateActor {
     ///
     /// Truncating to `target_prompt_index = 1` keeps only items up to (but not
     /// including) the 2nd `User` message.
-    pub(super) fn truncate_to_prompt_index(&mut self, target_prompt_index: usize) {
+    pub(super) fn truncate_to_prompt_index(&mut self, target_prompt_index: usize) -> bool {
         if target_prompt_index >= self.state.prompt_index {
             // Nothing to truncate — already at or before the target.
-            return;
+            return false;
         }
 
         // Find the conversation position of the Nth User item.
@@ -78,6 +78,7 @@ impl ChatStateActor {
         self.send_event(ChatStateEvent::ConversationReset {
             new_len: self.state.conversation.len(),
         });
+        true
     }
 
     /// Check if auto-compact is needed based on token utilization.

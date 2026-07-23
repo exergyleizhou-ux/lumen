@@ -25,6 +25,7 @@ pub(crate) enum SamplerCommand {
         request_id: RequestId,
         request: Box<ConversationRequest>,
         config: Option<Box<SamplerConfig>>,
+        wire_context: Option<lumen_discipline::WireObservationContext>,
         completion_tx: Option<
             oneshot::Sender<Result<(ConversationResponse, InferenceLatencyStats), SamplingError>>,
         >,

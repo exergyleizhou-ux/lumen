@@ -14,6 +14,9 @@ static REGISTRY: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
 
 struct Entry {
     model_id: String,
+    /// Endpoint is part of the cache/security domain. The same model routed
+    /// to another endpoint must never inherit a prefix tracker.
+    base_url: Option<String>,
     tracker: SessionCacheTracker,
     log_rewrite_version: u64,
     last_snap: Option<SessionCacheSnapshot>,
@@ -32,14 +35,17 @@ fn entry_mut<'a>(
     guard
         .entry(session_id.to_string())
         .and_modify(|e| {
-            if e.model_id != model_id {
+            let next_base_url = base_url.map(str::to_string);
+            if e.model_id != model_id || e.base_url != next_base_url {
                 e.model_id = model_id.to_string();
+                e.base_url = next_base_url.clone();
                 e.tracker
-                    .set_model(model_id.to_string(), base_url.map(str::to_string));
+                    .set_model(model_id.to_string(), next_base_url);
             }
         })
         .or_insert_with(|| Entry {
             model_id: model_id.to_string(),
+            base_url: base_url.map(str::to_string),
             tracker: SessionCacheTracker::new(model_id.to_string(), base_url.map(str::to_string)),
             log_rewrite_version: 0,
             last_snap: None,
@@ -59,6 +65,7 @@ pub fn bump_log_rewrite(session_id: &str) {
             session_id.to_string(),
             Entry {
                 model_id: "unknown".into(),
+                base_url: None,
                 tracker: SessionCacheTracker::new("unknown", None),
                 log_rewrite_version: 1,
                 last_snap: None,
@@ -140,6 +147,27 @@ mod tests {
         observe_call(sid, "deepseek-chat", None, "sys", &tools, 1000, 0, 10);
         let s2 = observe_call(sid, "deepseek-chat", None, "sys", &tools, 2000, 1500, 10);
         assert!(s2.stable_streak >= 1);
+        drop_session(sid);
+    }
+
+    #[test]
+    fn base_url_change_resets_tracker_even_when_model_is_stable() {
+        let sid = "test-cache-session-endpoint-domain";
+        drop_session(sid);
+        let tools = vec![("read".into(), "{}".into())];
+        observe_call(sid, "deepseek-v4-pro", Some("https://a.example"), "sys", &tools, 10, 0, 1);
+        let after_change = observe_call(
+            sid,
+            "deepseek-v4-pro",
+            Some("https://b.example"),
+            "sys",
+            &tools,
+            10,
+            0,
+            1,
+        );
+        assert!(after_change.prefix_changed);
+        assert_eq!(after_change.stable_streak, 0);
         drop_session(sid);
     }
 }

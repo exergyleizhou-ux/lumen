@@ -817,8 +817,6 @@ impl SessionActor {
         let tokens_before = self.chat_state_handle.get_total_tokens().await;
         tracing::Span::current().record("compaction_tokens_before", tokens_before as i64);
         self.signals_handle().record_compaction(tokens_before);
-        // Compaction rewrites history prefix → bust automatic prompt cache.
-        crate::session::prompt_cache_registry::bump_log_rewrite(self.session_info.id.0.as_ref());
         let trigger_str = match trigger {
             xai_grok_telemetry::events::CompactionTrigger::Manual => "manual",
             xai_grok_telemetry::events::CompactionTrigger::Auto => "auto",
@@ -1593,8 +1591,18 @@ impl SessionActor {
             .await
         };
         let new_len = compacted_history.len();
-        self.chat_state_handle
-            .replace_conversation_for_compaction(compacted_history);
+        let committed = self
+            .chat_state_handle
+            .replace_conversation_for_compaction_and_ack(compacted_history)
+            .await;
+        // Do not mark a cache rewrite at compaction-attempt start: failed/no-op
+        // compaction must preserve the existing prefix diagnostics. The ack is
+        // emitted only after actor persistence and the in-memory replacement.
+        let Some(_committed) = committed else {
+            tracing::warn!("compaction replacement was not acknowledged by ChatState");
+            return Ok(());
+        };
+        crate::session::prompt_cache_registry::bump_log_rewrite(self.session_info.id.0.as_ref());
         if self.startup_hints.inherited_prefix_len.is_some() {
             let post_replace_tokens = self.chat_state_handle.get_total_tokens().await;
             if xai_token_estimation::exceeds_threshold(

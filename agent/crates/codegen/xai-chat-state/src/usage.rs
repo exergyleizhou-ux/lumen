@@ -157,6 +157,7 @@ mod tests {
             total_tokens: 999_999,
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
+            cache_miss_prompt_tokens: None,
         }
     }
 

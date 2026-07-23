@@ -1323,6 +1323,16 @@ pub(crate) async fn spawn_session_actor(
         workspace_ops: workspace_ops.clone(),
         trace_config_template: std::cell::RefCell::new(None),
     });
+    match session.load_cache_epoch().await {
+        Ok(record) => tracing::debug!(
+            epoch = %record.epoch_id,
+            generation = record.generation,
+            "initialized cache epoch"
+        ),
+        Err(error) => {
+            tracing::warn!(%error, "cache epoch metadata unavailable; observation remains fail-open")
+        }
+    }
     {
         let drainer_session = session.clone();
         let mut sampler_event_rx = sampler_event_rx;

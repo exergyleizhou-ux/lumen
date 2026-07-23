@@ -541,6 +541,15 @@ pub struct Usage {
     pub prompt_tokens_details: Option<PromptTokensDetails>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion_tokens_details: Option<CompletionTokensDetails>,
+    /// DeepSeek cache reads. Kept optional so an omitted field remains
+    /// distinguishable from a provider-reported zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_hit_tokens: Option<u32>,
+    /// DeepSeek prompt tokens which were not served from cache. This is not
+    /// derivable from every compatible provider response, so absence is
+    /// meaningful and must be preserved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_cache_miss_tokens: Option<u32>,
     /// xAI extension: request price in USD ticks (1 USD = 1e10 ticks).
     /// The REST mapper backfills `0` for unbilled requests; capture sites
     /// normalize `0` to "unreported" (see `stream/chat_completions.rs`).

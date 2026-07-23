@@ -653,6 +653,70 @@ pub struct TokenUsage {
     ///   into `prompt_tokens` instead.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
+    /// Provider-reported cache misses, when the wire format supplies them.
+    /// `None` is deliberately different from zero.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_miss_prompt_tokens: Option<u32>,
+}
+
+/// Provider-reported prompt-cache accounting, kept separate from Lumen's
+/// request-shape diagnostics.  In particular, a stable request body never
+/// implies a cache hit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CacheUsageTruth {
+    /// The provider supplied accounting which is internally consistent.  A
+    /// missing side remains missing; it is never synthesized by subtraction.
+    Reported {
+        hit_tokens: Option<u32>,
+        miss_tokens: Option<u32>,
+    },
+    /// The provider supplied cache accounting, but it conflicts with the
+    /// reported prompt total. Preserve the original values for audit rather
+    /// than silently repairing them.
+    Contradictory {
+        reported_hit_tokens: Option<u32>,
+        reported_miss_tokens: Option<u32>,
+        prompt_tokens: u32,
+    },
+    /// This response contains no cache-accounting fields.
+    Unavailable,
+}
+
+impl Usage {
+    /// Decode DeepSeek-compatible cache usage without conflating omitted
+    /// fields with provider-reported zero. `prompt_tokens_details` remains a
+    /// compatible hit source when DeepSeek's dedicated hit field is absent.
+    ///
+    /// A contradiction is reported only when both cache buckets are present:
+    /// it is then possible to check DeepSeek's `prompt = hit + miss`
+    /// contract. A sole miss bucket deliberately leaves hit unknown.
+    pub fn cache_usage_truth(&self) -> CacheUsageTruth {
+        let hit_tokens = self.prompt_cache_hit_tokens.or_else(|| {
+            self.prompt_tokens_details
+                .as_ref()
+                .map(|details| details.cached_tokens)
+        });
+        let miss_tokens = self.prompt_cache_miss_tokens;
+
+        if hit_tokens.is_none() && miss_tokens.is_none() {
+            return CacheUsageTruth::Unavailable;
+        }
+
+        if let (Some(hit), Some(miss)) = (hit_tokens, miss_tokens)
+            && hit.checked_add(miss) != Some(self.prompt_tokens)
+        {
+            return CacheUsageTruth::Contradictory {
+                reported_hit_tokens: hit_tokens,
+                reported_miss_tokens: miss_tokens,
+                prompt_tokens: self.prompt_tokens,
+            };
+        }
+
+        CacheUsageTruth::Reported {
+            hit_tokens,
+            miss_tokens,
+        }
+    }
 }
 
 impl TokenUsage {
@@ -666,10 +730,13 @@ impl TokenUsage {
 
 impl From<Usage> for TokenUsage {
     fn from(u: Usage) -> Self {
-        let cached_prompt_tokens = u
-            .prompt_tokens_details
-            .as_ref()
-            .map_or(0, |d| d.cached_tokens);
+        // DeepSeek's explicit fields are authoritative when present; do not
+        // silently turn a reported zero into an OpenAI-compatible estimate.
+        let cached_prompt_tokens = u.prompt_cache_hit_tokens.unwrap_or_else(|| {
+            u.prompt_tokens_details
+                .as_ref()
+                .map_or(0, |d| d.cached_tokens)
+        });
         Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
@@ -679,6 +746,7 @@ impl From<Usage> for TokenUsage {
                 .as_ref()
                 .map_or(0, |d| d.reasoning_tokens),
             cached_prompt_tokens,
+            cache_miss_prompt_tokens: u.prompt_cache_miss_tokens,
         }
     }
 }
@@ -9528,5 +9596,104 @@ mod tests {
             2,
             "both reasoning siblings must be present"
         );
+    }
+
+    #[test]
+    fn deepseek_cache_usage_preserves_reported_zero_and_miss() {
+        let wire = r#"{
+          "prompt_tokens": 100,
+          "completion_tokens": 4,
+          "total_tokens": 104,
+          "prompt_tokens_details": { "cached_tokens": 99 },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 100
+        }"#;
+        let usage: Usage = serde_json::from_str(wire).expect("valid DeepSeek usage");
+        let normalized = TokenUsage::from(usage);
+        assert_eq!(normalized.cached_prompt_tokens, 0);
+        assert_eq!(normalized.cache_miss_prompt_tokens, Some(100));
+    }
+
+    #[test]
+    fn absent_deepseek_cache_usage_keeps_compatible_fallback() {
+        let wire = r#"{
+          "prompt_tokens": 100,
+          "completion_tokens": 4,
+          "total_tokens": 104,
+          "prompt_tokens_details": { "cached_tokens": 70 }
+        }"#;
+        let usage: Usage = serde_json::from_str(wire).expect("valid compatible usage");
+        let normalized = TokenUsage::from(usage);
+        assert_eq!(normalized.cached_prompt_tokens, 70);
+        assert_eq!(normalized.cache_miss_prompt_tokens, None);
+    }
+
+    #[test]
+    fn deepseek_cache_usage_truth_matrix_preserves_absence_zero_and_contradictions() {
+        struct Case {
+            wire: &'static str,
+            expected: CacheUsageTruth,
+        }
+
+        let cases = [
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_tokens_details":{"cached_tokens":70}}"#,
+                expected: CacheUsageTruth::Reported {
+                    hit_tokens: Some(70),
+                    miss_tokens: None,
+                },
+            },
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_tokens_details":{"cached_tokens":99},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":100}"#,
+                expected: CacheUsageTruth::Reported {
+                    hit_tokens: Some(0),
+                    miss_tokens: Some(100),
+                },
+            },
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":30}"#,
+                expected: CacheUsageTruth::Reported {
+                    hit_tokens: Some(70),
+                    miss_tokens: Some(30),
+                },
+            },
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":40}"#,
+                expected: CacheUsageTruth::Contradictory {
+                    reported_hit_tokens: Some(70),
+                    reported_miss_tokens: Some(40),
+                    prompt_tokens: 100,
+                },
+            },
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_miss_tokens":100}"#,
+                expected: CacheUsageTruth::Reported {
+                    hit_tokens: None,
+                    miss_tokens: Some(100),
+                },
+            },
+            Case {
+                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":101,"prompt_cache_miss_tokens":0}"#,
+                expected: CacheUsageTruth::Contradictory {
+                    reported_hit_tokens: Some(101),
+                    reported_miss_tokens: Some(0),
+                    prompt_tokens: 100,
+                },
+            },
+        ];
+
+        for case in cases {
+            let usage: Usage = serde_json::from_str(case.wire).expect("valid usage fixture");
+            assert_eq!(usage.cache_usage_truth(), case.expected);
+        }
+    }
+
+    #[test]
+    fn absent_cache_usage_is_unavailable_not_a_zero_hit() {
+        let usage: Usage = serde_json::from_str(
+            r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100}"#,
+        )
+        .expect("valid usage fixture");
+        assert_eq!(usage.cache_usage_truth(), CacheUsageTruth::Unavailable);
     }
 }

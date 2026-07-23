@@ -14,6 +14,9 @@ pub enum CacheMechanism {
     ExplicitBreakpoints,
     /// Provider claims cache but client must not assert definitive hit without report.
     ReportedOnly,
+    /// The provider's cache accounting has not been documented and verified for
+    /// this integration. Keep wire observations, but surface no cache truth.
+    ObservedOnly,
     /// No cloud prompt cache (local Ollama / LM Studio / many small hosts).
     None,
 }
@@ -103,15 +106,24 @@ pub fn profile_for_model(model_id: &str, base_url: Option<&str>) -> CacheProfile
         };
     }
 
-    // Moonshot / Qwen / GLM / generic OpenAI-compatible BYOK
-    if id.contains("kimi")
-        || id.contains("moonshot")
-        || id.contains("qwen")
+    // Kimi's stable wire shape is useful operational evidence, but it is not
+    // cache-hit evidence. Do not promote this until an official usage field
+    // and an authorized provider proof establish the contract.
+    if id.contains("kimi") || id.contains("moonshot") || url.contains("moonshot") {
+        return CacheProfile {
+            mechanism: CacheMechanism::ObservedOnly,
+            value: CacheValue::Low,
+            label: "Kimi observed-only",
+            adaptation: "Record final-wire stability only. Cache-hit, miss-token, and cost-saving claims are unavailable pending documented provider usage fields and authorized validation.",
+        };
+    }
+
+    // Qwen / GLM / generic OpenAI-compatible BYOK
+    if id.contains("qwen")
         || id.contains("glm")
         || id.contains("mimo")
         || url.contains("dashscope")
         || url.contains("bigmodel")
-        || url.contains("moonshot")
     {
         return CacheProfile {
             mechanism: CacheMechanism::ReportedOnly,
@@ -135,7 +147,10 @@ pub fn allows_definitive_display(profile: &CacheProfile, has_provider_tokens: bo
     if !has_provider_tokens {
         return false;
     }
-    !matches!(profile.mechanism, CacheMechanism::None)
+    !matches!(
+        profile.mechanism,
+        CacheMechanism::None | CacheMechanism::ObservedOnly
+    )
 }
 
 #[cfg(test)]
@@ -167,5 +182,12 @@ mod tests {
         let p = profile_for_model("gpt-4o", Some("https://api.openai.com/v1"));
         assert_eq!(p.mechanism, CacheMechanism::AutomaticPrefix);
         assert_eq!(p.value, CacheValue::Medium);
+    }
+
+    #[test]
+    fn kimi_is_observed_only_and_cannot_claim_a_hit() {
+        let p = profile_for_model("kimi-k3", Some("https://api.kimi.com/coding/v1"));
+        assert_eq!(p.mechanism, CacheMechanism::ObservedOnly);
+        assert!(!allows_definitive_display(&p, true));
     }
 }

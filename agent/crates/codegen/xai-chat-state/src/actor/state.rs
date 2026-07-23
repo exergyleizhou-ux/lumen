@@ -173,6 +173,9 @@ pub(crate) struct ChatState {
     /// discover harness subagents via their `<subagent_result>` footer.
     /// Drained by `TakeHarnessTraceTurns` at the end of the user-facing turn.
     pub(super) harness_trace_turns: Vec<Vec<ConversationItem>>,
+    /// Monotonic actor-local boundary for durable conversation mutations.
+    /// Durable cache epoch records belong to the shell, not ChatState.
+    pub committed_history_revision: u64,
 }
 
 /// Tracks which conversation items belong to the current turn without
@@ -245,6 +248,7 @@ impl ChatState {
             turn_capture: None,
             harness_trace_buffer: Vec::new(),
             harness_trace_turns: Vec::new(),
+            committed_history_revision: 0,
         }
     }
 

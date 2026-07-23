@@ -15,6 +15,15 @@ use xai_grok_sampling_types::{
 use crate::attribution::SharedAttributionCallback;
 use crate::retry::{DEFAULT_MAX_RETRIES, RATE_LIMIT_RETRY_THRESHOLD};
 
+/// Best-effort sink for privacy-preserving evidence from an already-built
+/// outbound request. Implementations must never make model delivery depend on
+/// telemetry: sampler call sites deliberately ignore failures/panics here.
+pub trait RequestObserver: Send + Sync + std::fmt::Debug {
+    fn observe(&self, snapshot: &lumen_discipline::WireRequestSnapshot);
+}
+
+pub type SharedRequestObserver = std::sync::Arc<dyn RequestObserver>;
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthScheme {
@@ -124,6 +133,10 @@ pub struct SamplerConfig {
     /// Per-request header injector (e.g. OTel traceparent). Called in `post()`.
     #[serde(skip)]
     pub header_injector: Option<SharedHeaderInjector>,
+
+    /// Optional fail-open observer invoked immediately before HTTP execute.
+    #[serde(skip)]
+    pub request_observer: Option<SharedRequestObserver>,
 }
 
 impl Default for SamplerConfig {
@@ -158,6 +171,7 @@ impl Default for SamplerConfig {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            request_observer: None,
         }
     }
 }

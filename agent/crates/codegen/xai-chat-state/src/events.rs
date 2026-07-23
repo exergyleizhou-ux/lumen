@@ -1,5 +1,27 @@
 //! Events emitted by the ChatStateActor.
 
+/// Durable conversation changes committed by the single-writer ChatState actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommittedHistoryMutation {
+    ConversationReplace,
+    CompactionReplace,
+    HistoryRepair,
+    SystemHeadReplace,
+    SnapshotRestore,
+    Rewind,
+    IntegrityRepair,
+    RetainedToolPrune,
+    MemoryReminderPersisted,
+}
+
+/// Reply returned when a caller must wait for a committed history boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistoryMutationAck {
+    pub revision: u64,
+    pub mutation: CommittedHistoryMutation,
+    pub new_len: usize,
+}
+
 /// Events emitted by the ChatStateActor to the session main loop.
 ///
 /// Persistence is handled internally by the actor — these events are for
@@ -16,6 +38,15 @@ pub enum ChatStateEvent {
     /// Conversation was replaced (compaction/rewind) — session may need to
     /// reset idle-flush counters, memory injection flags, etc.
     ConversationReset { new_len: usize },
+
+    /// A history replacement has been accepted by the actor and its
+    /// persistence operation has been queued. The revision is monotonic for
+    /// this actor and is the only valid shell-side cache-epoch boundary.
+    HistoryMutationCommitted {
+        revision: u64,
+        mutation: CommittedHistoryMutation,
+        new_len: usize,
+    },
 
     /// Image byte-budget record for a built request (observability only,
     /// emitted on image-bearing turns). The session consumer writes this to
@@ -48,5 +79,10 @@ mod tests {
         let _ = ChatStateEvent::PromptIndexChanged { new_index: 1 };
         let _ = ChatStateEvent::TokensUpdated { total_tokens: 500 };
         let _ = ChatStateEvent::ConversationReset { new_len: 3 };
+        let _ = ChatStateEvent::HistoryMutationCommitted {
+            revision: 1,
+            mutation: CommittedHistoryMutation::CompactionReplace,
+            new_len: 3,
+        };
     }
 }

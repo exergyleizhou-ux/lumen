@@ -447,6 +447,7 @@ pub fn stream_responses<'a>(
             total_tokens: u.total_tokens,
             reasoning_tokens: u.output_tokens_details.reasoning_tokens,
             cached_prompt_tokens: u.input_tokens_details.cached_tokens,
+            cache_miss_prompt_tokens: None,
         });
 
         let cost_usd_ticks = response
