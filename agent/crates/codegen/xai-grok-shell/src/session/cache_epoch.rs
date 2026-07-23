@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 pub const CACHE_EPOCH_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EPOCH_FILE_NAME: &str = "cache_epoch.json";
+pub const CACHE_REQUEST_EVIDENCE_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EVIDENCE_FILE_NAME: &str = "cache_request_evidence.jsonl";
 
 /// Inputs that can alter provider-side cache identity. All fields are already
@@ -182,9 +183,20 @@ pub fn append_request_evidence(
     session_dir: &Path,
     snapshot: &lumen_discipline::WireRequestSnapshot,
 ) -> std::io::Result<()> {
+    #[derive(Serialize)]
+    struct Record<'a> {
+        schema_version: u32,
+        #[serde(flatten)]
+        snapshot: &'a lumen_discipline::WireRequestSnapshot,
+    }
+
     std::fs::create_dir_all(session_dir)?;
     let path = session_dir.join(CACHE_EVIDENCE_FILE_NAME);
-    let mut line = serde_json::to_vec(snapshot).expect("wire snapshot is serializable");
+    let mut line = serde_json::to_vec(&Record {
+        schema_version: CACHE_REQUEST_EVIDENCE_SCHEMA_VERSION,
+        snapshot,
+    })
+    .expect("wire snapshot is serializable");
     line.push(b'\n');
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -322,6 +334,7 @@ mod tests {
         append_request_evidence(dir.path(), &snapshot).unwrap();
         let evidence = std::fs::read_to_string(dir.path().join(CACHE_EVIDENCE_FILE_NAME)).unwrap();
         let value: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+        assert_eq!(value["schema_version"], 1);
         assert_eq!(value["cache_epoch_id"], "epoch-id");
         assert_eq!(value["serialization_kind"], "responses");
         assert!(!evidence.contains("private prompt"));
