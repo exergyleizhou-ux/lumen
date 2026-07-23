@@ -86,12 +86,16 @@ Science storage. Timeout and cancellation kill and reap the child.
 After the C3 report, the Phase-C extension added the explicit ChEMBL L5
 probe and S5 completion fencing. Its default science gate is **59 passed, 0
 failed, 2 ignored** (`outputs/evidence/gp5_science.log`); the two ignored
-tests are the only network probes. Strict science clippy also passed again.
-The full Shell-library and pager-binary reruns were attempted after this
-extension but the macOS toolchain exited while compiling/linking the very large
-Shell binary without producing a refreshed executable or final test summary.
-The C3 Shell/e2e evidence remains valid for C3, but is deliberately not
-represented as a post-P5 full regression pass.
+tests are the only network probes. The post-P5 rebuild initially exposed and
+then corrected a persistence-barrier type error in `verify_science_goal`.
+The complete post-fix gates are:
+
+| Gate | Result | Evidence |
+|---|---|---|
+| Shell library | 5674 passed, 0 failed, 13 ignored; 56.35s | `outputs/evidence/gp5_shell_lib_final.log` |
+| Science strict clippy | passed with `-D warnings` | `outputs/evidence/gp5_science_clippy_final.log` |
+| Pager build | passed; 2m02s | `outputs/evidence/gp5_pager_build_final.log` |
+| Complete Science L4 e2e | 7 passed, 0 failed; 8.89s | `outputs/evidence/gp5_science_e2e_final.log` |
 
 The shell-lib investigation found that test-only `MvpAgent` constructors with
 `remote_settings=None` entered the production remote-prefetch fallback and
@@ -159,4 +163,8 @@ ca76a6e7e24c4e73a893d51ad1d0441bb9e338dd95d6ffde271810cf0e86564e  gc3_clippy_rer
 a076f80b6eac0f1f22ade1ed312ebd5f3e9438ac818d95d5b1aeb5cb3e7c8b98  gc3_science_e2e.log
 670d685228e58de0eb50ad1f136a65852b3077251640b189e29974159525a79e  transport-openssh.md
 7d5b9714e99d7ec909e5c4fc53480b37b4e979c9222a22dda00b2a518153d725  gp5_chembl_live_probe.log
+8617246d92227261f56a8623936122e99cdfde645555f49672a4226a0d1f42d4  gp5_shell_lib_final.log
+dea27ada1a7760f5b296ecd0ef82decc17c13382930dd169125f8bd56f55b539  gp5_pager_build_final.log
+61aee28e64f522773e75bc629f41ad38a195a1b29e0a438bc63166545887bd9a  gp5_science_e2e_final.log
+45f75b19e5718ce74d75d27dc949e2b0cc21908a1e53dca4d31c24e03ebe8e09  gp5_science_clippy_final.log
 ```
