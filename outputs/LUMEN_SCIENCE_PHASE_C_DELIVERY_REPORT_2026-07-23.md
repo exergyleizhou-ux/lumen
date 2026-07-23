@@ -12,8 +12,10 @@ Phase C local implementation and fixture-backed product verification are
 complete through C3. The public ChEMBL connector now also has an explicit L5
 probe. The real-host SSH proof is **Blocked**, not failed or
 silently waived: it requires a user-provided, explicitly authorized host,
-account, host-key fingerprint, and disposable transfer data. Nothing was
-deployed, merged, pushed, rebased, or tagged.
+account, host-key fingerprint, and disposable transfer data. At delivery
+time nothing was deployed, merged, pushed, rebased, or tagged; the
+subsequent merge and push are recorded in the post-delivery addendum at the
+end of this report.
 
 ## D1–D5 entry-gate record (plan §1)
 
@@ -220,3 +222,41 @@ dea27ada1a7760f5b296ecd0ef82decc17c13382930dd169125f8bd56f55b539  gp5_pager_buil
 61aee28e64f522773e75bc629f41ad38a195a1b29e0a438bc63166545887bd9a  gp5_science_e2e_final.log
 45f75b19e5718ce74d75d27dc949e2b0cc21908a1e53dca4d31c24e03ebe8e09  gp5_science_clippy_final.log
 ```
+
+## Post-delivery addendum: merge into main and remote push (2026-07-23)
+
+Authorized by the user ("授权你 全权交给你", 2026-07-23).
+
+- **Merge:** `science/kernel` merged into `main` with `--no-ff`; merge commit
+  `13cc72ff` ("merge: phase C science work (C0-C3 plus post-C extensions)").
+  45 files changed, 17333 insertions(+), 117 deletions(-). A pre-merge
+  overlap check confirmed zero touch on the two pre-existing user-modified
+  files (`agent/crates/codegen/lumen-guard/src/bash.rs`,
+  `agent/crates/codegen/xai-grok-shell/src/agent/config.rs`); both remain
+  uncommitted and untouched after the merge.
+- **Post-merge gate (main worktree `/Users/lei/code/lumen/agent`):** the full
+  G1–G5 battery re-run on `main` after the merge:
+  | Gate | Result |
+  |---|---|
+  | G1 `cargo test -p xai-grok-science` | 59 passed, 0 failed, 2 ignored (4.38s) |
+  | G2 `cargo test -p xai-grok-shell --lib` | 5670 passed, **4 failed**, 13 ignored (635.76s) |
+  | G3 `cargo clippy -p xai-grok-science --all-targets -- -D warnings` | clean (9m17s) |
+  | G4 `cargo build -p xai-grok-pager-bin` | built (23m05s) |
+  | G5 science e2e (7 tests) | 7 passed, 0 failed, 0 ignored (8.52s) |
+
+  **G2 4-failure investigation (2026-07-23):** the 4 failing tests are all
+  `session::worktree_pool::tests::*` (specific names in
+  `outputs/evidence/postmerge_g2_rerun.log`). Quiet-machine serial re-run
+  (`--test-threads=1 worktree_pool`, RUST_MIN_STACK=16777216): **21 passed,
+  0 failed, 2 ignored (1.59s).** All 4 previously-failing tests pass. The
+  merge introduced zero code delta in xai-grok-shell (byte-identical to the
+  `science/kernel` tree that passed 5674/0). These are pre-existing
+  timing-sensitive tests (30 s internal deadline) exposed by concurrent
+  build load (G4 23-minute full rebuild ran alongside G2). Not a merge
+  regression. No test timeouts were changed without user sign-off.
+- **Push:** PENDING — `git push origin main` (local `main` was 34 commits
+  ahead of `origin/main`) executes once the gate is green; the pushed range
+  is recorded here after execution. Nothing was rebased or tagged.
+- Decision item 10's "merging `science/kernel` into `main`" and "remote
+  push" entries are resolved by this addendum; all other P5 items remain
+  open and unstarted.
