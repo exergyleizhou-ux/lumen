@@ -1038,6 +1038,12 @@ pub struct ModelResponseReceived {
     pub reasoning_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_prompt_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_accounting: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_hit_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_miss_tokens: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

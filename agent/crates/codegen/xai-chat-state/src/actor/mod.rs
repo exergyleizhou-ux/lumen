@@ -241,6 +241,9 @@ impl ChatStateActor {
             ChatStateCommand::RestoreSnapshot(snapshot) => {
                 self.restore_snapshot(*snapshot);
             }
+            ChatStateCommand::RestoreMetadataWithoutHistory(snapshot) => {
+                self.restore_metadata_without_history(*snapshot);
+            }
             ChatStateCommand::BeginTurnCapture => {
                 self.state.turn_capture = Some(state::TurnCaptureState {
                     turn_start_offset: self.state.conversation.len(),

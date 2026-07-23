@@ -3,10 +3,10 @@
 //! This module intentionally contains no HTTP client or prompt bytes. The
 //! sampler owns request building and supplies only sanitized, one-way evidence.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireSerializationKind {
     ChatCompletions,
@@ -14,7 +14,7 @@ pub enum WireSerializationKind {
     Messages,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WireMutationReason {
     RetryImageStrip,

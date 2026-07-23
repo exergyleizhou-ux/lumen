@@ -263,6 +263,15 @@ impl ChatStateHandle {
             .send(ChatStateCommand::RestoreSnapshot(Box::new(snapshot)));
     }
 
+    /// Restore persisted accounting metadata after the actor was created from
+    /// the same durable conversation.  Unlike [`Self::restore_snapshot`], this
+    /// deliberately does not persist or emit a history mutation.
+    pub fn restore_metadata_without_history(&self, snapshot: ChatStateSnapshot) {
+        let _ = self.cmd_tx.send(ChatStateCommand::RestoreMetadataWithoutHistory(
+            Box::new(snapshot),
+        ));
+    }
+
     /// Begin capturing turn messages. Call at the start of a real user turn
     /// (in `handle_prompt`), before `push_user_message`.
     pub fn begin_turn_capture(&self) {

@@ -653,6 +653,10 @@ pub struct TokenUsage {
     ///   into `prompt_tokens` instead.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
+    /// Exact provider-reported cache hits.  Unlike the compatibility field
+    /// above, `None` means the provider did not report a hit bucket.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_cache_hit_tokens: Option<u32>,
     /// Provider-reported cache misses, when the wire format supplies them.
     /// `None` is deliberately different from zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -720,6 +724,30 @@ impl Usage {
 }
 
 impl TokenUsage {
+    /// Provider cache accounting without the compatibility normalization of
+    /// `cached_prompt_tokens`. A nonzero `Reported` hit is the only state
+    /// that may be promoted to a definitive cache hit.
+    pub fn provider_cache_usage_truth(&self) -> CacheUsageTruth {
+        let hit_tokens = self.provider_cache_hit_tokens;
+        let miss_tokens = self.cache_miss_prompt_tokens;
+        if hit_tokens.is_none() && miss_tokens.is_none() {
+            return CacheUsageTruth::Unavailable;
+        }
+        if let (Some(hit), Some(miss)) = (hit_tokens, miss_tokens)
+            && hit.checked_add(miss) != Some(self.prompt_tokens)
+        {
+            return CacheUsageTruth::Contradictory {
+                reported_hit_tokens: hit_tokens,
+                reported_miss_tokens: miss_tokens,
+                prompt_tokens: self.prompt_tokens,
+            };
+        }
+        CacheUsageTruth::Reported {
+            hit_tokens,
+            miss_tokens,
+        }
+    }
+
     pub fn record_on_span(&self, span: &tracing::Span) {
         span.record("prompt_tokens", self.prompt_tokens);
         span.record("completion_tokens", self.completion_tokens);
@@ -737,6 +765,11 @@ impl From<Usage> for TokenUsage {
                 .as_ref()
                 .map_or(0, |d| d.cached_tokens)
         });
+        let provider_cache_hit_tokens = u.prompt_cache_hit_tokens.or_else(|| {
+            u.prompt_tokens_details
+                .as_ref()
+                .map(|details| details.cached_tokens)
+        });
         Self {
             prompt_tokens: u.prompt_tokens,
             completion_tokens: u.completion_tokens,
@@ -746,6 +779,7 @@ impl From<Usage> for TokenUsage {
                 .as_ref()
                 .map_or(0, |d| d.reasoning_tokens),
             cached_prompt_tokens,
+            provider_cache_hit_tokens,
             cache_miss_prompt_tokens: u.prompt_cache_miss_tokens,
         }
     }
@@ -9611,7 +9645,15 @@ mod tests {
         let usage: Usage = serde_json::from_str(wire).expect("valid DeepSeek usage");
         let normalized = TokenUsage::from(usage);
         assert_eq!(normalized.cached_prompt_tokens, 0);
+        assert_eq!(normalized.provider_cache_hit_tokens, Some(0));
         assert_eq!(normalized.cache_miss_prompt_tokens, Some(100));
+        assert_eq!(
+            normalized.provider_cache_usage_truth(),
+            CacheUsageTruth::Reported {
+                hit_tokens: Some(0),
+                miss_tokens: Some(100),
+            }
+        );
     }
 
     #[test]
@@ -9625,6 +9667,7 @@ mod tests {
         let usage: Usage = serde_json::from_str(wire).expect("valid compatible usage");
         let normalized = TokenUsage::from(usage);
         assert_eq!(normalized.cached_prompt_tokens, 70);
+        assert_eq!(normalized.provider_cache_hit_tokens, Some(70));
         assert_eq!(normalized.cache_miss_prompt_tokens, None);
     }
 

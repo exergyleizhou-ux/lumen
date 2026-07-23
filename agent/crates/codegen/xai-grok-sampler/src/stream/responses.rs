@@ -447,6 +447,10 @@ pub fn stream_responses<'a>(
             total_tokens: u.total_tokens,
             reasoning_tokens: u.output_tokens_details.reasoning_tokens,
             cached_prompt_tokens: u.input_tokens_details.cached_tokens,
+            // The Responses decoder exposes a normalized scalar here, so a
+            // zero cannot prove the provider emitted a cache bucket.
+            provider_cache_hit_tokens: (u.input_tokens_details.cached_tokens > 0)
+                .then_some(u.input_tokens_details.cached_tokens),
             cache_miss_prompt_tokens: None,
         });
 

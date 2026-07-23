@@ -3,6 +3,28 @@
 //! recovery, and per-response usage recording.
 use super::*;
 
+/// Map only mutations whose cache effect is represented faithfully by the
+/// provider-neutral evidence vocabulary. Other durable rewrites still rotate
+/// the epoch, but are not mislabeled as a compaction or memory change.
+fn wire_mutation_reasons(
+    mutation: xai_chat_state::CommittedHistoryMutation,
+) -> Vec<lumen_discipline::WireMutationReason> {
+    use lumen_discipline::WireMutationReason;
+    use xai_chat_state::CommittedHistoryMutation;
+
+    match mutation {
+        CommittedHistoryMutation::CompactionReplace => vec![WireMutationReason::FullCompaction],
+        CommittedHistoryMutation::RetainedToolPrune => vec![WireMutationReason::ToolResultPruned],
+        CommittedHistoryMutation::MemoryReminderPersisted => vec![WireMutationReason::MemoryChanged],
+        CommittedHistoryMutation::ConversationReplace
+        | CommittedHistoryMutation::HistoryRepair
+        | CommittedHistoryMutation::SystemHeadReplace
+        | CommittedHistoryMutation::SnapshotRestore
+        | CommittedHistoryMutation::Rewind
+        | CommittedHistoryMutation::IntegrityRepair => Vec::new(),
+    }
+}
+
 /// Fail-open bridge from the sampler's exact-wire hook to the session-owned
 /// durable evidence ledger. The ledger contains hashes and request shape only.
 #[derive(Debug)]
@@ -173,11 +195,13 @@ impl SessionActor {
     /// Rotate only after ChatState has committed a durable history rewrite.
     pub(super) async fn rotate_cache_epoch_after_history_mutation(
         &self,
+        mutation: xai_chat_state::CommittedHistoryMutation,
     ) -> std::io::Result<crate::session::cache_epoch::CacheEpochRecord> {
         let domain = self.cache_domain().await;
         crate::session::cache_epoch::rotate_after_history_mutation(
             &crate::session::persistence::session_dir(&self.session_info),
             &domain,
+            wire_mutation_reasons(mutation),
         )
     }
 
@@ -955,7 +979,14 @@ impl SessionActor {
                 Ok((epoch, _)) => Some(lumen_discipline::WireObservationContext {
                     cache_domain_hash: domain.fingerprint(),
                     cache_epoch_id: epoch.epoch_id.to_string(),
-                    mutation_reasons: Vec::new(),
+                    mutation_reasons: crate::session::cache_epoch::take_pending_mutation_reasons(
+                        &crate::session::persistence::session_dir(&self.session_info),
+                        epoch.epoch_id,
+                    )
+                    .unwrap_or_else(|error| {
+                        tracing::warn!(%error, "cache mutation attribution unavailable for wire observation");
+                        Vec::new()
+                    }),
                 }),
                 Err(error) => {
                     tracing::warn!(%error, "cache epoch unavailable for wire observation");

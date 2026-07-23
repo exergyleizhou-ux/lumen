@@ -194,7 +194,7 @@ pub(super) async fn run_session(
             : inline_images, "images_remaining" : inline_images.saturating_sub(evicted),
             "needs_image_compaction" : needs_image_compaction, "evicted" : evicted,
             })),); } Some(xai_chat_state::ChatStateEvent::HistoryMutationCommitted { revision, mutation, new_len }) => {
-            match session.rotate_cache_epoch_after_history_mutation().await {
+            match session.rotate_cache_epoch_after_history_mutation(mutation).await {
             Ok(record) => tracing::debug!(revision, ?mutation, new_len, epoch = %record.epoch_id,
             generation = record.generation, "chat history mutation committed and cache epoch rotated"),
             Err(error) => tracing::warn!(revision, ?mutation, new_len, %error,

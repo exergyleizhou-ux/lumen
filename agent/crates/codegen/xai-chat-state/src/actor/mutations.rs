@@ -497,6 +497,33 @@ impl ChatStateActor {
         self.emit_committed_history_mutation(CommittedHistoryMutation::SnapshotRestore);
     }
 
+    /// Apply startup metadata to an actor which was already constructed from
+    /// `snap.conversation`.  Persisting that same history creates a false
+    /// durable-mutation boundary on every resume, which in turn invalidates a
+    /// provider cache epoch despite no transcript change.
+    pub(super) fn restore_metadata_without_history(&mut self, snap: ChatStateSnapshot) {
+        // The shell constructs this actor from `snap.conversation` before
+        // issuing this command.  Do not compare `ConversationItem`s here:
+        // their type intentionally has no structural `PartialEq` because some
+        // variants contain opaque provider material.
+        self.state.sampling_config = snap.sampling_config;
+        self.state.prompt_index = snap.prompt_index;
+        self.state.total_tokens = snap.total_tokens;
+        self.state.estimated_tokens_since_model = 0;
+        self.state.estimate_at_last_response = if snap.estimate_at_last_response > 0 {
+            snap.estimate_at_last_response
+        } else {
+            super::state::estimate_conversation_tokens(&self.state.conversation)
+        };
+        self.state.agent_edited_paths = snap.agent_edited_paths;
+        self.state.prompt_texts = snap.prompt_texts;
+        self.state.stream_start_ms = snap.stream_start_ms;
+        self.state.turn_start_ms = snap.turn_start_ms;
+        self.state.last_compaction_prompt_index = snap.last_compaction_prompt_index;
+        self.state.credentials = snap.credentials;
+        self.state.prompt_usage = None;
+    }
+
     pub(super) fn emit_committed_history_mutation(
         &mut self,
         mutation: CommittedHistoryMutation,

@@ -167,6 +167,12 @@ pub enum ChatStateCommand {
     /// Restore from a snapshot.
     RestoreSnapshot(Box<ChatStateSnapshot>),
 
+    /// Restore persisted accounting metadata while retaining the actor's
+    /// already-loaded conversation.  Startup uses this after constructing the
+    /// actor from the durable history; it must not rewrite that history or
+    /// advertise a history-mutation boundary.
+    RestoreMetadataWithoutHistory(Box<ChatStateSnapshot>),
+
     /// Start capturing turn messages. Clears any previous buffer.
     BeginTurnCapture,
 

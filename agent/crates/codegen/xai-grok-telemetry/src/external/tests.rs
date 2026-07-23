@@ -383,6 +383,9 @@ fn api_request_snapshot_and_token_usage() {
             completion_tokens: Some(50),
             reasoning_tokens: Some(25),
             cached_prompt_tokens: None,
+            provider_cache_accounting: None,
+            provider_cache_hit_tokens: None,
+            provider_cache_miss_tokens: None,
         },
     );
     let events = exported_events(&stream);

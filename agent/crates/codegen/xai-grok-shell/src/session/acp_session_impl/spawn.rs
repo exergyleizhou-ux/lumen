@@ -444,7 +444,7 @@ pub(crate) async fn spawn_session_actor(
                 snap.total_tokens = initial_total_tokens;
             }
             snap.last_compaction_prompt_index = initial_last_compaction;
-            chat_state_handle.restore_snapshot(snap);
+            chat_state_handle.restore_metadata_without_history(snap);
         }
     }
     chat_state_handle.update_credentials(credentials);
@@ -946,8 +946,26 @@ pub(crate) async fn spawn_session_actor(
     } else {
         save_system_prompt(&session_info, &system_prompt);
     }
-    persist_chat_history_jsonl_sync(&session_info, &conversation);
-    chat_state_handle.replace_conversation(conversation);
+    // The actor was constructed from this durable history.  On an ordinary
+    // resume the startup normalization above is a no-op, so do not rewrite the
+    // transcript or emit a false history-mutation event (and rotate its cache
+    // epoch).  A real setup change still follows the normal committed path.
+    let actor_history = chat_state_handle.get_conversation().await;
+    // ConversationItem deliberately has no PartialEq (some variants carry
+    // opaque provider data), while its durable JSON representation is exactly
+    // what the persistence layer stores.  Serialization failure is treated as
+    // changed so it cannot suppress a real rewrite.
+    let history_changed = match (
+        serde_json::to_vec(&actor_history),
+        serde_json::to_vec(&conversation),
+    ) {
+        (Ok(before), Ok(after)) => before != after,
+        _ => true,
+    };
+    if history_changed {
+        persist_chat_history_jsonl_sync(&session_info, &conversation);
+        chat_state_handle.replace_conversation(conversation);
+    }
     let feedback_client = feedback_proxy_url.map(|base_url| {
         let mut client =
             crate::agent::feedback_client::FeedbackClient::new(base_url, feedback_user_token)

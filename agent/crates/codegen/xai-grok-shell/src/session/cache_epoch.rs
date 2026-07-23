@@ -55,6 +55,10 @@ pub struct CacheEpochRecord {
     pub epoch_id: Uuid,
     pub generation: u64,
     pub domain_fingerprint: String,
+    /// Reasons for the first outbound request in this epoch. This is bounded,
+    /// enum-only metadata; it never carries rewritten history or request text.
+    #[serde(default)]
+    pub pending_mutation_reasons: Vec<lumen_discipline::WireMutationReason>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +139,7 @@ pub fn load_or_rotate(
 pub fn rotate_after_history_mutation(
     session_dir: &Path,
     domain: &CacheDomain,
+    mutation_reasons: Vec<lumen_discipline::WireMutationReason>,
 ) -> std::io::Result<CacheEpochRecord> {
     std::fs::create_dir_all(session_dir)?;
     let path = session_dir.join(CACHE_EPOCH_FILE_NAME);
@@ -143,11 +148,12 @@ pub fn rotate_after_history_mutation(
         .and_then(|bytes| serde_json::from_slice::<CacheEpochRecord>(&bytes).ok())
         .map(|record| record.generation)
         .unwrap_or(0);
-    write_next(
+    write_next_with_mutation_reasons(
         &path,
         generation,
         domain.fingerprint(),
         CacheEpochDisposition::RotatedDomainChanged,
+        mutation_reasons,
     )
     .map(|(record, _)| record)
 }
@@ -158,13 +164,29 @@ fn write_next(
     domain_fingerprint: String,
     disposition: CacheEpochDisposition,
 ) -> std::io::Result<(CacheEpochRecord, CacheEpochDisposition)> {
+    write_next_with_mutation_reasons(path, previous_generation, domain_fingerprint, disposition, Vec::new())
+}
+
+fn write_next_with_mutation_reasons(
+    path: &Path,
+    previous_generation: u64,
+    domain_fingerprint: String,
+    disposition: CacheEpochDisposition,
+    pending_mutation_reasons: Vec<lumen_discipline::WireMutationReason>,
+) -> std::io::Result<(CacheEpochRecord, CacheEpochDisposition)> {
     let record = CacheEpochRecord {
         schema_version: CACHE_EPOCH_SCHEMA_VERSION,
         epoch_id: Uuid::new_v4(),
         generation: previous_generation.saturating_add(1),
         domain_fingerprint,
+        pending_mutation_reasons,
     };
-    let bytes = serde_json::to_vec_pretty(&record).expect("CacheEpochRecord is serializable");
+    write_record(path, &record)?;
+    Ok((record, disposition))
+}
+
+fn write_record(path: &Path, record: &CacheEpochRecord) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(record).expect("CacheEpochRecord is serializable");
     let temp = path.with_extension("json.tmp");
     let mut file = std::fs::File::create(&temp)?;
     use std::io::Write;
@@ -172,7 +194,28 @@ fn write_next(
     file.sync_all()?;
     drop(file);
     std::fs::rename(temp, path)?;
-    Ok((record, disposition))
+    Ok(())
+}
+
+/// Consume the bounded mutation attribution after it has been attached to an
+/// outbound request. Keeping it in the durable epoch record bridges the
+/// actor event loop and the next sampler submission without retaining history
+/// content or adding per-actor mutable state.
+pub fn take_pending_mutation_reasons(
+    session_dir: &Path,
+    epoch_id: Uuid,
+) -> std::io::Result<Vec<lumen_discipline::WireMutationReason>> {
+    let path = session_dir.join(CACHE_EPOCH_FILE_NAME);
+    let mut record: CacheEpochRecord = serde_json::from_slice(&std::fs::read(&path)?)
+        .map_err(std::io::Error::other)?;
+    if record.epoch_id != epoch_id {
+        return Ok(Vec::new());
+    }
+    let reasons = std::mem::take(&mut record.pending_mutation_reasons);
+    if !reasons.is_empty() {
+        write_record(&path, &record)?;
+    }
+    Ok(reasons)
 }
 
 /// Append sanitized evidence for an outbound provider request. The sampler
@@ -304,9 +347,32 @@ mod tests {
     fn committed_history_mutation_rotates_even_in_same_domain() {
         let dir = tempfile::tempdir().unwrap();
         let (first, _) = load_or_rotate(dir.path(), &domain(), false).unwrap();
-        let second = rotate_after_history_mutation(dir.path(), &domain()).unwrap();
+        let second = rotate_after_history_mutation(dir.path(), &domain(), vec![]).unwrap();
         assert_ne!(first.epoch_id, second.epoch_id);
         assert_eq!(second.generation, first.generation + 1);
+    }
+
+    #[test]
+    fn mutation_attribution_is_attached_once_to_the_rotated_epoch() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, _) = load_or_rotate(dir.path(), &domain(), false).unwrap();
+        let rotated = rotate_after_history_mutation(
+            dir.path(),
+            &domain(),
+            vec![lumen_discipline::WireMutationReason::FullCompaction],
+        )
+        .unwrap();
+
+        assert_ne!(first.epoch_id, rotated.epoch_id);
+        assert_eq!(
+            take_pending_mutation_reasons(dir.path(), rotated.epoch_id).unwrap(),
+            vec![lumen_discipline::WireMutationReason::FullCompaction]
+        );
+        assert!(take_pending_mutation_reasons(dir.path(), rotated.epoch_id)
+            .unwrap()
+            .is_empty());
+        let retained = load_or_rotate(dir.path(), &domain(), false).unwrap().0;
+        assert_eq!(retained.epoch_id, rotated.epoch_id);
     }
 
     #[test]
@@ -348,7 +414,7 @@ mod tests {
         assert_eq!(disposition, CacheEpochDisposition::Retained);
         assert_eq!(after_restart, initial);
 
-        let after_mutation = rotate_after_history_mutation(dir.path(), &domain()).unwrap();
+        let after_mutation = rotate_after_history_mutation(dir.path(), &domain(), vec![]).unwrap();
         assert_ne!(after_mutation.epoch_id, initial.epoch_id);
         for attempt_index in 0..=1 {
             append_request_evidence(

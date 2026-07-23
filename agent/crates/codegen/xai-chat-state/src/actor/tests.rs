@@ -1120,6 +1120,28 @@ async fn snapshot_restore_preserves_all_fields() {
 }
 
 #[tokio::test]
+async fn metadata_restore_does_not_rewrite_or_emit_history_mutation() {
+    let mut h = TestHarness::with_conversation(vec![
+        ConversationItem::system("durable system"),
+        ConversationItem::user("durable user"),
+    ]);
+    let mut snapshot = h.handle.snapshot().await.expect("actor alive");
+    snapshot.prompt_index = 7;
+    snapshot.total_tokens = 42;
+
+    h.handle.restore_metadata_without_history(snapshot);
+    tokio::task::yield_now().await;
+
+    assert!(h.drain_events().is_empty(), "metadata hydration is not a history mutation");
+    assert!(
+        h.drain_persistence().is_empty(),
+        "metadata hydration must not rewrite durable history"
+    );
+    assert_eq!(h.handle.get_prompt_index().await, 7);
+    assert_eq!(h.handle.get_total_tokens().await, 42);
+}
+
+#[tokio::test]
 async fn auto_compact_does_not_trigger_below_threshold() {
     let h = TestHarness::with_context_window(10000);
     h.handle.record_token_usage(8400);
