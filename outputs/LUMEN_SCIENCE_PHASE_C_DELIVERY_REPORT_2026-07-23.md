@@ -248,18 +248,29 @@ Authorized by the user ("授权你 全权交给你", 2026-07-23).
   | G4 `cargo build -p xai-grok-pager-bin` | built (23m05s) |
   | G5 science e2e (7 tests) | 7 passed, 0 failed, 0 ignored (8.52s) |
 
-  **G2 4-failure investigation (2026-07-23):** the 4 failing tests are all
-  `session::worktree_pool::tests::*` (specific names in
-  `outputs/evidence/postmerge_g2_rerun.log`). Quiet-machine serial re-run
-  (`--test-threads=1 worktree_pool`, RUST_MIN_STACK=16777216): **21 passed,
-  0 failed, 2 ignored (1.59s).** All 4 previously-failing tests pass. The
-  merge introduced zero code delta in xai-grok-shell (byte-identical to the
-  `science/kernel` tree that passed 5674/0). These are pre-existing
-  timing-sensitive tests (30 s internal deadline) exposed by concurrent
-  build load (the direct-binary re-run of the G2 suite ran alongside the G4
-23-minute full rebuild; the battery's own G2 phase ran on an already
-load-warm machine). Not a merge
-  regression. No test timeouts were changed without user sign-off.
+  **G2 4-failure investigation (2026-07-23):** the 4 failing tests
+  (`session::worktree_pool::tests::test_pool_fill_creates_worktrees`,
+  `test_adopt_in_fill_loop_creates_deficit`, `test_pool_release_and_reacquire`,
+  `test_pool_fill_replenishes_after_acquire`) were consistently reproduced
+  across **four** post-merge full-suite attempts: the battery G2 (5670/4,
+  635.76s), a direct-binary re-run under concurrent G4 build load (same
+  4, load-killed mid-run), and a quiet-machine `cargo test` re-run (5668/4,
+  104.95s; log: `outputs/evidence/postmerge_g2_quiet_full.log`).  One
+  past run—the `science/kernel` worktree gate—passed (5674/0).  Against
+  this, an isolated **serial** re-run of only the pool tests passed
+  consistently (`--test-threads=1 worktree_pool`, 21/21 in 1.55s plus an
+  independent replication at 1.59s; log:
+  `outputs/evidence/postmerge_worktree_pool_quiet_probe.log`).
+
+  The pattern—pass serial, reproducibly fail under full-suite parallelism—
+  points to **intra-suite parallel contention**, not external system load.
+  These tests use a 30 s internal deadline for a background `git worktree
+  add` task; when ~5687 tests run across 10+ threads, the fill task can
+  starve past the deadline. Serial execution gives it ample CPU budget.
+  The merge introduced zero code delta in xai-grok-shell (byte-identical to
+  the `science/kernel` tree), and no timeouts or deadline constants were
+  modified. **Not a merge regression.** No test parameters were changed
+  without user sign-off.
 - **Push:** executed 2026-07-23. `git push origin main` pushed range
   `f7caa832..50217ca0` (35 commits, including the D-3 commit) to
   `https://github.com/exergyleizhou-ux/lumen.git`. No force push, no tags.
