@@ -15,6 +15,37 @@ silently waived: it requires a user-provided, explicitly authorized host,
 account, host-key fingerprint, and disposable transfer data. Nothing was
 deployed, merged, pushed, rebased, or tagged.
 
+## D1–D5 entry-gate record (plan §1)
+
+Verified before C0 started; re-confirmed at delivery:
+
+- **D1 — sole base:** all work targets the Rust Lumen base only; the earlier
+  Go-base attempt is abandoned and untouched.
+- **D2 — isolation:** every Phase C change lives in the
+  `.worktrees/science-kernel` worktree on branch `science/kernel`; the main
+  worktree diff contains only the two pre-existing user files.
+- **D3 — no upstream runtime:** no Open Science Agent/ACP runtime was
+  imported; Rust Lumen is the only execution/approval/verification authority.
+- **D4 — zero-network default:** default test suites make no network calls;
+  the only networked tests are the two explicitly `#[ignore]`d live probes.
+- **D5 — first connector batch approved:** pubmed + chembl approved by the
+  user on 2026-07-23 ("批准 我全权给你").
+
+## Per-item status classification (eight-level evidence ladder)
+
+| Item | Status | Level |
+|---|---|---|
+| C0 connector descriptor core | Completed and verified | L4 (unit + policy fail-closed tests) |
+| C1 preview module | Completed and verified | L4 (unit + API guard tests) |
+| C1 import product path (CSV+FASTA) | Completed and verified | L4 (actor + permission bridge + durable reopen e2e) |
+| C2 pubmed/chembl fixture fetch product path | Completed and verified | L4 (e2e 5/5 incl. connector fetch) |
+| C2 pubmed live retrieval | Completed and verified | **L5** (real NCBI response archived) |
+| C2 chembl live retrieval | Completed and verified | **L5** (real ChEMBL response archived) |
+| C3 SSH transport, four paths via local sshd | Completed and verified | L4 (real OpenSSH fixture e2e) |
+| C3 SSH transport, real non-loopback host | **Blocked** (needs user-authorized host) | — |
+| Post-C S5 goal/review fencing (`7d877055`, `8453adfb`) | Implemented locally, unit-verified | L3 (no product-path e2e yet — P5 item) |
+| Post-C format converter supply chain | Audited, **not admitted** | audit doc only |
+
 ## C0, C1, and C2 evidence
 
 - **C0 — durable Rust kernel and authenticated reads:** `14e1da9e`,
@@ -102,6 +133,16 @@ The shell-lib investigation found that test-only `MvpAgent` constructors with
 waited on network I/O. Test fixtures now supply an explicit empty remote
 settings snapshot, making the gate deterministic and offline.
 
+### Independent re-verification (second party, 2026-07-23)
+
+The full battery was re-run from scratch by the reviewing agent at final HEAD
+`73d46a41`, not copied from the logs above: science **59 passed / 0 failed /
+2 ignored**, clippy `-D warnings` clean, shell library **5674 passed /
+0 failed**, complete science e2e **7 passed / 0 failed in 8.34s** (real
+execution, no 0.00s passes). All eleven evidence-file SHA-256 hashes listed
+below were recomputed and match. The two pre-existing user-modified files in
+the main worktree are untouched.
+
 ## Dependency and provenance audit
 
 - C3 changes no `Cargo.toml` or `Cargo.lock`; added crate dependencies: **0**.
@@ -156,6 +197,13 @@ does not invalidate the local real-OpenSSH fixture proof above.
    `Interrupted` and never retries a stale ticket.
 8. Treat this report as local build/test evidence, not deployment or release
    evidence.
+9. Bring the post-C S5 goal/review fencing to L4 with a product-path e2e
+   before treating it as accepted; it ships today at L3 (unit-verified only).
+10. P5立项 candidates (user decides): PDF/DOCX/XLSX/PPTX/Notebook format
+    batch (blocked on converter supply-chain audit); Open Science UI/workflow
+    transplant (S1 upper half); Notebook compute (S4 upper half); real-host
+    SSH with user-authorized target; 1573 upstream skill files license review;
+    merging `science/kernel` into `main`; remote push (not authorized).
 
 ## Evidence hashes
 
