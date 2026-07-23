@@ -2138,6 +2138,34 @@ impl MvpAgent {
             )
             .await
     }
+
+    /// P5 host-owned completion facade. It validates that the durable run is
+    /// owned by the selected SessionActor before the actor binds its current
+    /// Goal/Expert generations and performs HostVerification.
+    pub async fn verify_science_goal(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        run_id: xai_grok_science::RunId,
+    ) -> Result<
+        xai_grok_science::review::HostVerificationReport,
+        crate::session::science_goal::ScienceGoalReviewError,
+    > {
+        let run = store
+            .load_run(&run_id)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        let handle = self
+            .get_session_handle(session_id)
+            .ok_or(crate::session::science_goal::ScienceGoalReviewError::NoActiveGoal)?;
+        let actor_workspace = std::fs::canonicalize(&handle.info.cwd)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        let run_workspace = std::fs::canonicalize(&run.context.workspace_root)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        if run.context.session_id != session_id.0.as_ref() || run_workspace != actor_workspace {
+            return Err(crate::session::science_goal::ScienceGoalReviewError::StaleBinding);
+        }
+        handle.verify_science_goal(store, run_id).await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,

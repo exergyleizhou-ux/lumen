@@ -94,6 +94,14 @@ struct SshScpFixtureParams {
     cancel_after_ms: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct GoalHostVerifyParams {
+    session_id: String,
+    store_root: PathBuf,
+    run_id: String,
+}
+
 fn default_max_results() -> u32 {
     5
 }
@@ -104,8 +112,37 @@ pub async fn handle(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
         "x.ai/science/import_preview" => handle_import_preview(agent, args).await,
         "x.ai/science/connector_fetch" => handle_connector_fetch(agent, args).await,
         "x.ai/science/ssh_scp_fixture" => handle_ssh_scp_fixture(agent, args).await,
+        "x.ai/science/goal_host_verify" => handle_goal_host_verify(agent, args).await,
         _ => Err(acp::Error::method_not_found()),
     }
+}
+
+/// P5 product completion entry. This endpoint cannot supply a consultant
+/// verdict, approval, or verification summary; it only asks the owning actor
+/// to derive those facts from its current Goal/Expert state and durable store.
+async fn handle_goal_host_verify(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
+    let params: GoalHostVerifyParams = parse_params(args)?;
+    if params.session_id.is_empty() || params.run_id.is_empty() {
+        return Err(acp::Error::invalid_params().data("sessionId and runId are required"));
+    }
+    let session_id = acp::SessionId::new(params.session_id);
+    let handle = agent
+        .get_session_handle(&session_id)
+        .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
+    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let store_root = canonical_dir_within(params.store_root, &workspace)?;
+    let result = agent
+        .verify_science_goal(
+            &session_id,
+            ScienceStore::new(store_root),
+            RunId::new(params.run_id),
+        )
+        .await
+        .map_err(|error| {
+            acp::Error::invalid_params()
+                .data(format!("science host verification rejected: {error:?}"))
+        })?;
+    to_raw_response(&result)
 }
 
 /// Debug-only fixture connector. The public S3 policy continues to reject

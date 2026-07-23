@@ -1188,6 +1188,20 @@ async fn test_stdio_science_csv_allow_product_path() {
                 .expect("replay after reopen"),
             "restart replay must preserve every event field"
         );
+        let premature = client
+            .ext_method(
+                "x.ai/science/goal_host_verify",
+                serde_json::json!({
+                    "sessionId": session_id.0.as_ref(),
+                    "storeRoot": store_root,
+                    "runId": run_id.0,
+                }),
+            )
+            .await;
+        assert!(
+            premature.is_err(),
+            "durable Science success without an active bound Goal/Expert must not complete"
+        );
     })
     .await;
 }

@@ -15,6 +15,32 @@ use xai_grok_science::{
 };
 
 impl SessionHandle {
+    /// P5 host-verification entry. The handle carries no Goal/Expert mutation
+    /// authority; it can only ask the owning SessionActor to run the bound,
+    /// durable completion gate.
+    pub async fn verify_science_goal(
+        &self,
+        store: ScienceStore,
+        run_id: xai_grok_science::RunId,
+    ) -> Result<
+        xai_grok_science::review::HostVerificationReport,
+        crate::session::science_goal::ScienceGoalReviewError,
+    > {
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::VerifyScienceGoal(Box::new(
+                crate::session::commands::VerifyScienceGoal {
+                    store,
+                    run_id,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::NoActiveGoal)?;
+        response
+            .await
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::NoActiveGoal)?
+    }
+
     /// S3 real SCP product path. Admission and process execution both cross
     /// the sole SessionActor; the operation digest is bound before permission.
     pub async fn run_science_ssh_scp_transport(

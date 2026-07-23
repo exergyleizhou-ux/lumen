@@ -60,6 +60,70 @@ fn quote(value: &str) -> xai_grok_science::Result<String> {
 }
 
 impl SessionActor {
+    /// P5 completion remains inside the sole actor. A successful response is
+    /// not returned until Goal and Expert snapshots have crossed the
+    /// persistence queue's durability barrier.
+    pub(super) async fn verify_science_goal(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        run_id: xai_grok_science::RunId,
+    ) -> Result<
+        xai_grok_science::review::HostVerificationReport,
+        crate::session::science_goal::ScienceGoalReviewError,
+    > {
+        let current_session_tokens = self.chat_state_handle.get_total_tokens().await as i64;
+        let (report, expert_snapshot) = {
+            let mut state = self.state.lock().await;
+            let mut goal = self.goal_tracker.lock();
+            let review = crate::session::science_goal::ScienceGoalReview::bind(
+                &goal,
+                &state.expert,
+                run_id,
+            )?;
+            let report = review.host_verify_and_complete(&mut goal, &mut state.expert, &store)?;
+            (report, state.expert.clone())
+        };
+
+        let (tokens_used, finished_marginal) = self.goal_tokens(current_session_tokens);
+        self.goal_notify_sender().emit_goal_updated(
+            &mut self.goal_tracker.lock(),
+            tokens_used,
+            finished_marginal,
+        );
+        let goal_snapshot =
+            self.goal_tracker.lock().snapshot().cloned().ok_or(
+                crate::session::science_goal::ScienceGoalReviewError::GoalCompletionRejected,
+            )?;
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::GoalModeState(goal_snapshot))
+            .map_err(|_| {
+                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+            })?;
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::ExpertModeState(expert_snapshot))
+            .map_err(|_| {
+                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+            })?;
+        let (respond_to, response) = tokio::sync::oneshot::channel();
+        self.notifications
+            .persistence_tx
+            .send(PersistenceMsg::FlushAndAck { respond_to })
+            .map_err(|_| {
+                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+            })?;
+        response
+            .await
+            .map_err(|_| {
+                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+            })?
+            .map_err(|_| {
+                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+            })?;
+        Ok(report)
+    }
+
     /// P4 admission runs inside the sole Lumen session actor. It is called
     /// before the handle asks the existing permission manager, and the Science
     /// crate itself performs no I/O outside its durable local store.

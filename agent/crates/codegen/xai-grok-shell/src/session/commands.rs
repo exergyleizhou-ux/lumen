@@ -202,6 +202,20 @@ pub struct ExecuteScienceSshScpTransport {
     pub(crate) respond_to:
         oneshot::Sender<xai_grok_science::Result<xai_grok_science::transport::TransportReceipt>>,
 }
+
+/// Host-owned P5 completion gate. The actor binds its current Goal and Expert
+/// generations, verifies the durable Science run, persists both snapshots,
+/// and only then returns success.
+pub struct VerifyScienceGoal {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) run_id: xai_grok_science::RunId,
+    pub(crate) respond_to: oneshot::Sender<
+        Result<
+            xai_grok_science::review::HostVerificationReport,
+            crate::session::science_goal::ScienceGoalReviewError,
+        >,
+    >,
+}
 /// Priority levels for notification drain timing.
 ///
 /// Ordering: `Next < Later` (derived from declaration order).
@@ -244,6 +258,7 @@ pub enum SessionCommand {
     FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
     ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
     ExecuteScienceSshScpTransport(Box<ExecuteScienceSshScpTransport>),
+    VerifyScienceGoal(Box<VerifyScienceGoal>),
     Initialize {
         system_prompt: String,
     },
