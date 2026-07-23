@@ -401,6 +401,78 @@ fn api_request_snapshot_and_token_usage() {
     );
 }
 
+#[test]
+fn api_request_rejects_non_definitive_cache_tokens() {
+    let cases = [
+        ("unavailable", None, None),
+        ("reported", Some(0), Some(100)),
+        ("reported", Some(90), Some(20)),
+    ];
+
+    for (accounting, hit_tokens, miss_tokens) in cases {
+        let record = schema::map_api_request(&events::ModelResponseReceived {
+            model_id: "grok-4".into(),
+            duration_ms: 1200,
+            stop_reason: Some("stop".into()),
+            prompt_tokens: Some(100),
+            completion_tokens: Some(50),
+            reasoning_tokens: Some(25),
+            cached_prompt_tokens: Some(90),
+            provider_cache_accounting: Some(accounting.into()),
+            provider_cache_hit_tokens: hit_tokens,
+            provider_cache_miss_tokens: miss_tokens,
+        })
+        .expect("api request record");
+
+        assert!(
+            !record
+                .attrs
+                .iter()
+                .any(|(key, _)| *key == ExternalKey::CacheReadTokens)
+        );
+        assert!(!record.metrics.iter().any(|metric| {
+            matches!(
+                metric,
+                MetricIncrement::TokenUsage {
+                    token_type: "cache_read",
+                    ..
+                }
+            )
+        }));
+    }
+}
+
+#[test]
+fn api_request_exports_only_consistent_nonzero_provider_cache_truth() {
+    let record = schema::map_api_request(&events::ModelResponseReceived {
+        model_id: "deepseek-v4".into(),
+        duration_ms: 1200,
+        stop_reason: Some("stop".into()),
+        prompt_tokens: Some(100),
+        completion_tokens: Some(50),
+        reasoning_tokens: Some(25),
+        cached_prompt_tokens: Some(90),
+        provider_cache_accounting: Some("reported".into()),
+        provider_cache_hit_tokens: Some(90),
+        provider_cache_miss_tokens: Some(10),
+    })
+    .expect("api request record");
+
+    assert!(record.attrs.iter().any(|(key, value)| {
+        *key == ExternalKey::CacheReadTokens && *value == AttrValue::I64(90)
+    }));
+    assert!(record.metrics.iter().any(|metric| {
+        matches!(
+            metric,
+            MetricIncrement::TokenUsage {
+                token_type: "cache_read",
+                count: 90,
+                ..
+            }
+        )
+    }));
+}
+
 /// One failed turn ⇒ exactly one `error.count` increment, even though the
 /// failure emits `ApiError` (and possibly `RateLimitHit`) *alongside*
 /// `TurnCompleted{Error}`. `TurnCompleted{Error}` is the single increment

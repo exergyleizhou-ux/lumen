@@ -2224,7 +2224,7 @@ impl SessionActor {
                             cached_prompt_tokens: response
                                 .usage
                                 .as_ref()
-                                .map(|u| u.cached_prompt_tokens),
+                                .and_then(|u| u.definitive_provider_cache_hit_tokens()),
                             provider_cache_accounting: response.usage.as_ref().map(|u| {
                                 match u.provider_cache_usage_truth() {
                                     xai_grok_sampling_types::CacheUsageTruth::Reported {
