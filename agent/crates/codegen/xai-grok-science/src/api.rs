@@ -244,9 +244,15 @@ async fn result(
     }
 }
 
+#[derive(Deserialize)]
+struct ArtifactQuery {
+    preview: Option<bool>,
+}
+
 async fn artifact(
     State(state): State<Arc<ApiState>>,
     AxumPath((project, run_id, artifact)): AxumPath<(String, String, String)>,
+    Query(query): Query<ArtifactQuery>,
     headers: HeaderMap,
     uri: Uri,
 ) -> Response {
@@ -257,6 +263,22 @@ async fn artifact(
         return response;
     }
     let path = Path::new(&artifact);
+    if query.preview == Some(true) {
+        // Same traversal guard as raw artifact reads; the preview record is
+        // only served when it is registered to this run and path.
+        if let Err(error) = crate::validate_relative(path) {
+            return map_error(error);
+        }
+        let previews = match state.store.previews(&RunId::new(run_id)) {
+            Ok(previews) => previews,
+            Err(error) => return map_error(error),
+        };
+        return match previews.into_iter().find(|record| record.relative_path == path) {
+            Some(record) => axum::Json(record).into_response(),
+            None => (StatusCode::NOT_FOUND, "no preview registered for artifact")
+                .into_response(),
+        };
+    }
     match state.store.artifact_bytes(
         &ProjectId::new(project),
         &RunId::new(run_id),
@@ -432,6 +454,107 @@ mod tests {
         );
         assert_eq!(
             app.oneshot(request(&base, Some("secret"), "[::1]:8080", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+    }
+
+    #[tokio::test]
+    async fn artifact_preview_requires_auth_owner_and_registered_record() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let imported = crate::import::execute_approved_import(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            Path::new("fixture.csv"),
+            CSV,
+        )
+        .unwrap();
+        let analyzed = csv::execute_approved_fixture(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            Path::new("fixture.csv"),
+            CSV,
+        )
+        .unwrap();
+        let app = router(ApiState {
+            store,
+            token: "secret".into(),
+            owner_id: "alice".into(),
+        });
+        let import_run = &imported.run.context.run_id.0;
+        let preview_uri = format!("/projects/p/runs/{import_run}/artifacts/fixture.csv?preview=true");
+        assert_eq!(
+            app.clone()
+                .oneshot(request(&preview_uri, None, "127.0.0.1:8000", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let response = app
+            .clone()
+            .oneshot(request(&preview_uri, Some("secret"), "127.0.0.1:8000", None))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        let record: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            record["artifact_sha256"].as_str(),
+            Some(imported.artifacts[0].sha256.as_str())
+        );
+        // A raw read of the same artifact still returns bytes, not JSON.
+        let raw = app
+            .clone()
+            .oneshot(request(
+                &format!("/projects/p/runs/{import_run}/artifacts/fixture.csv"),
+                Some("secret"),
+                "127.0.0.1:8000",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(raw.status(), StatusCode::OK);
+        let raw_body = axum::body::to_bytes(raw.into_body(), 1_000_000)
+            .await
+            .unwrap();
+        assert_eq!(raw_body.as_ref(), CSV);
+        // An artifact without a registered preview record is a 404.
+        let no_preview = format!(
+            "/projects/p/runs/{}/artifacts/summary.csv?preview=true",
+            analyzed.run.context.run_id.0
+        );
+        assert_eq!(
+            app.clone()
+                .oneshot(request(&no_preview, Some("secret"), "127.0.0.1:8000", None))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        // Another owner's run is forbidden even when the run id is known.
+        assert_eq!(
+            app.clone()
+                .oneshot(request(
+                    &format!("/projects/q/runs/{import_run}/artifacts/fixture.csv?preview=true"),
+                    Some("secret"),
+                    "127.0.0.1:8000",
+                    None,
+                ))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        // Traversal is rejected before any record lookup.
+        let traversal = format!("/projects/p/runs/{import_run}/artifacts/%2e%2e%2ffixture.csv?preview=true");
+        assert_ne!(
+            app.oneshot(request(&traversal, Some("secret"), "127.0.0.1:8000", None))
                 .await
                 .unwrap()
                 .status(),

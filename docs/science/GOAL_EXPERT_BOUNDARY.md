@@ -1,8 +1,9 @@
 # Lumen Science Goal and Expert boundary
 
-Seam contract: **S5**. Status: integration contract only. Existing Goal/Expert
-implementation files are owned by concurrent work and are intentionally not
-modified by the Science workstream.
+Seam contract: **S5**. Status: implemented in the Rust `SessionActor` on
+`science/kernel`. The completion entry is
+`x.ai/science/goal_host_verify`; it is routed through `MvpAgent` and the
+owning actor, never through a consultant callback or a second runtime.
 
 ## Authority and completion
 
@@ -30,9 +31,11 @@ new Goal generation, and no stale `PASS` can satisfy HostVerification after a
 restart. Goal state and Expert state may be persisted for recovery, but recovery
 must require a fresh host-side verification before any completion claim.
 
-## Required future tests
+## Required proof
 
-Before P5 can be called complete, prove at least:
+The following proof obligations are covered by the focused Rust tests in
+`xai-grok-shell::session::science_goal` and
+`xai-grok-science::review`:
 
 1. consultant `PASS` without HostVerification does not transition a Science
    run to complete;

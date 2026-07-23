@@ -1762,7 +1762,12 @@ fn build_minimal_agent_for_tests() -> MvpAgent {
         std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let cfg = AgentConfig::default();
+    let cfg = AgentConfig {
+        // Keep unit construction offline instead of triggering the shell's
+        // remote-settings startup fallback.
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config")
 }
 /// Build a minimal MvpAgent with pre-loaded auth for gate tests.
@@ -1775,7 +1780,10 @@ fn build_agent_with_auth(auth: crate::auth::GrokAuth) -> MvpAgent {
     auth_manager.hot_swap(auth);
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let cfg = AgentConfig::default();
+    let cfg = AgentConfig {
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config")
 }
 /// Regression: boot-time plugin discovery is deferred past ACP
@@ -1808,7 +1816,10 @@ async fn ensure_plugin_registry_lazily_populates_snapshot() {
         std::sync::Arc::new(AuthManager::new(auth_home.path(), GrokComConfig::default()));
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let mut cfg = AgentConfig::default();
+    let mut cfg = AgentConfig {
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     cfg.plugins.cli_plugin_dirs = vec![plugin_dir.path().to_path_buf()];
     let agent = MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config");
     assert!(
@@ -1998,7 +2009,10 @@ async fn push_roster_activity_delta_broadcasts_overridden_activity() {
         std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let cfg = AgentConfig::default();
+    let cfg = AgentConfig {
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     let agent = MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config");
     let sid = acp::SessionId::new("sess-activity");
     agent
@@ -2522,7 +2536,10 @@ fn build_agent_with_api_key_auth_disabled() -> MvpAgent {
         std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
     let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let mut cfg = AgentConfig::default();
+    let mut cfg = AgentConfig {
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     cfg.grok_com_config.disable_api_key_auth = Some(true);
     MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config")
 }
@@ -3697,7 +3714,10 @@ fn build_agent_with_gateway_rx() -> (
         std::sync::Arc::new(AuthManager::new(temp_dir.path(), GrokComConfig::default()));
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let gateway = GatewaySender::new(tx);
-    let cfg = AgentConfig::default();
+    let cfg = AgentConfig {
+        remote_settings: Some(crate::util::config::RemoteSettings::default()),
+        ..AgentConfig::default()
+    };
     let agent = MvpAgent::new(gateway, &cfg, auth_manager, None).expect("valid test config");
     (agent, rx)
 }

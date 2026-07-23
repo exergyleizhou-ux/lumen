@@ -36,6 +36,9 @@ pub struct ConnectorRequest {
     pub host_key_sha256: String,
     pub timeout_ms: u64,
     pub data_egress: bool,
+    /// One-way binding for a future process-local SCP operation.  Paths and
+    /// credentials are not serializable and never enter durable audit data.
+    pub operation_sha256: Option<String>,
 }
 
 /// A request accepted by a project-scoped policy. This deliberately excludes
@@ -83,6 +86,7 @@ pub struct AdmissionTicket {
     pub context: RunContext,
     pub call_id: CallId,
     pub target: AuthorizedTarget,
+    pub operation_sha256: Option<String>,
 }
 
 /// Deterministic outcome for the P4 offline SSH/SCP transport harness. This
@@ -199,6 +203,7 @@ pub fn start_ssh_scp_admission(
                 context,
                 call_id,
                 target,
+                operation_sha256: request.operation_sha256.clone(),
             })))
         }
         Err(error) => {
@@ -284,9 +289,7 @@ pub fn execute_offline_transport(
                 && approval.call_id == ticket.call_id
                 && approval.decision == ApprovalDecision::Allow
         });
-    if run.context != ticket.context
-        || run.state != RunState::AwaitingApproval
-        || !approval_allowed
+    if run.context != ticket.context || run.state != RunState::AwaitingApproval || !approval_allowed
     {
         return Err(ScienceError::Invalid(
             "offline connector transport requires an allowed awaiting run".into(),
@@ -345,6 +348,9 @@ fn validate_request(request: &ConnectorRequest) -> Result<()> {
             .host_key_sha256
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit())
+        || request.operation_sha256.as_ref().is_some_and(|hash| {
+            hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
     {
         return Err(ScienceError::Invalid(
             "invalid remote connector request".into(),
@@ -411,6 +417,7 @@ mod tests {
             host_key_sha256: FINGERPRINT.into(),
             timeout_ms: 10_000,
             data_egress: false,
+            operation_sha256: None,
         }
     }
 
@@ -441,7 +448,14 @@ mod tests {
         let mut malformed = request();
         malformed.host = "user@hpc.example.test".into();
         assert!(authorize(&policy(), &context("p", "alice"), &malformed).is_err());
-        for host in ["localhost", "worker.localhost", "cluster.local", "127.0.0.1", "10.0.0.7", "::1"] {
+        for host in [
+            "localhost",
+            "worker.localhost",
+            "cluster.local",
+            "127.0.0.1",
+            "10.0.0.7",
+            "::1",
+        ] {
             malformed.host = host.into();
             assert!(authorize(&policy(), &context("p", "alice"), &malformed).is_err());
         }
@@ -471,8 +485,14 @@ mod tests {
             panic!("allowlisted target must await Lumen approval");
         };
         assert_eq!(ticket.target.host, "hpc.example.test");
-        assert_eq!(store.load_run(&run_id).unwrap().state, RunState::AwaitingApproval);
-        assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Pending);
+        assert_eq!(
+            store.load_run(&run_id).unwrap().state,
+            RunState::AwaitingApproval
+        );
+        assert_eq!(
+            store.approvals(&run_id).unwrap()[0].decision,
+            ApprovalDecision::Pending
+        );
         let events = store.events_after(&run_id, 0, 10).unwrap();
         assert_eq!(events.len(), 1);
         let event = &events[0];
@@ -517,11 +537,21 @@ mod tests {
             .unwrap()
             .expect("allow returns an opaque ticket, not a transport result");
         assert_eq!(returned.target.host, "hpc.example.test");
-        assert_eq!(store.load_run(&run_id).unwrap().state, RunState::AwaitingApproval);
-        assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Allow);
+        assert_eq!(
+            store.load_run(&run_id).unwrap().state,
+            RunState::AwaitingApproval
+        );
+        assert_eq!(
+            store.approvals(&run_id).unwrap()[0].decision,
+            ApprovalDecision::Allow
+        );
         let events = store.events_after(&run_id, 0, 10).unwrap();
         assert_eq!(events.last().unwrap().kind, "connector.permission");
-        assert!(!serde_json::to_string(&events).unwrap().contains(FINGERPRINT));
+        assert!(
+            !serde_json::to_string(&events)
+                .unwrap()
+                .contains(FINGERPRINT)
+        );
     }
 
     #[test]
@@ -535,11 +565,16 @@ mod tests {
         else {
             panic!("allowlisted target must await Lumen approval");
         };
-        assert!(finish_ssh_scp_admission(&store, *ticket, ApprovalDecision::Deny)
-            .unwrap()
-            .is_none());
+        assert!(
+            finish_ssh_scp_admission(&store, *ticket, ApprovalDecision::Deny)
+                .unwrap()
+                .is_none()
+        );
         assert_eq!(store.load_run(&run_id).unwrap().state, RunState::Denied);
-        assert_eq!(store.approvals(&run_id).unwrap()[0].decision, ApprovalDecision::Deny);
+        assert_eq!(
+            store.approvals(&run_id).unwrap()[0].decision,
+            ApprovalDecision::Deny
+        );
     }
 
     fn approved_ticket(store: &ScienceStore) -> AdmissionTicket {
@@ -598,9 +633,14 @@ mod tests {
         let run_id = ticket.context.run_id.clone();
         let reopened = ScienceStore::new(temp.path());
         reopened.recover_interrupted(&run_id).unwrap();
-        assert_eq!(reopened.load_run(&run_id).unwrap().state, RunState::Interrupted);
-        assert!(execute_offline_transport(&reopened, ticket, OfflineTransportOutcome::Complete)
-            .is_err());
+        assert_eq!(
+            reopened.load_run(&run_id).unwrap().state,
+            RunState::Interrupted
+        );
+        assert!(
+            execute_offline_transport(&reopened, ticket, OfflineTransportOutcome::Complete)
+                .is_err()
+        );
         assert!(reopened.artifacts(&run_id).unwrap().is_empty());
     }
 }

@@ -2045,6 +2045,127 @@ impl MvpAgent {
             )
             .await
     }
+
+    /// S2 import entry: verifies the science context targets this SessionActor
+    /// and delegates to the session handle's begin/permission/finish protocol.
+    pub async fn run_science_import(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        source_path: PathBuf,
+        bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::import::ImportResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_import_with_approval_timeout(
+                store,
+                context,
+                source_path,
+                bytes,
+                approval_timeout,
+            )
+            .await
+    }
+
+    /// S3 connector fetch entry: verifies the science context targets this
+    /// SessionActor and delegates to the session handle's
+    /// begin/permission/finish protocol.
+    pub async fn run_science_fetch(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        connector_id: String,
+        query: String,
+        requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+        fixture_bytes: Vec<Vec<u8>>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_fetch_with_approval_timeout(
+                store,
+                context,
+                connector_id,
+                query,
+                requests,
+                fixture_bytes,
+                approval_timeout,
+            )
+            .await
+    }
+
+    /// S3 real SSH/SCP entry. The sole SessionActor owns admission, approval
+    /// completion, and the process launch; this facade adds no executor.
+    pub async fn run_science_ssh_scp_transport(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        policy: xai_grok_science::connector::ConnectorPolicy,
+        request: xai_grok_science::connector::ConnectorRequest,
+        operation: xai_grok_science::transport::ScpOperation,
+        config: xai_grok_science::transport::ScpExecutionConfig,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<Option<xai_grok_science::transport::TransportReceipt>> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_ssh_scp_transport(
+                store, context, policy, request, operation, config, approval_timeout,
+            )
+            .await
+    }
+
+    /// P5 host-owned completion facade. It validates that the durable run is
+    /// owned by the selected SessionActor before the actor binds its current
+    /// Goal/Expert generations and performs HostVerification.
+    pub async fn verify_science_goal(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        run_id: xai_grok_science::RunId,
+    ) -> Result<
+        xai_grok_science::review::HostVerificationReport,
+        crate::session::science_goal::ScienceGoalReviewError,
+    > {
+        let run = store
+            .load_run(&run_id)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        let handle = self
+            .get_session_handle(session_id)
+            .ok_or(crate::session::science_goal::ScienceGoalReviewError::NoActiveGoal)?;
+        let actor_workspace = std::fs::canonicalize(&handle.info.cwd)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        let run_workspace = std::fs::canonicalize(&run.context.workspace_root)
+            .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
+        if run.context.session_id != session_id.0.as_ref() || run_workspace != actor_workspace {
+            return Err(crate::session::science_goal::ScienceGoalReviewError::StaleBinding);
+        }
+        handle.verify_science_goal(store, run_id).await
+    }
     /// Get hooks list for a session (for `x.ai/hooks/list` extension).
     pub async fn list_hooks(
         &self,

@@ -112,6 +112,65 @@ pub struct FinishScienceCsv {
     pub(crate) respond_to:
         oneshot::Sender<xai_grok_science::Result<xai_grok_science::csv::ResearchResult>>,
 }
+
+/// A file import that has begun a durable run inside the session actor and is
+/// waiting on the production permission decision. `command` copies the staged
+/// input through the formal workspace execute tool so import bytes transit
+/// the same dispatch path as every other product tool call.
+pub struct PreparedScienceImport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) source_path: std::path::PathBuf,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) command: String,
+    pub(crate) output_path: std::path::PathBuf,
+}
+pub struct BeginScienceImport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) source_path: std::path::PathBuf,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceImport>>,
+}
+pub struct FinishScienceImport {
+    pub(crate) prepared: PreparedScienceImport,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::import::ImportResult>>,
+}
+
+/// A connector fetch that has begun a durable run inside the session actor
+/// and awaits the production permission decision. `requests` are the
+/// policy-validated connector exchanges; `fixture_bytes` stand in for the
+/// HTTP responses (offline mock transport) and are transited through the
+/// formal workspace execute tool before the kernel re-parses them.
+pub struct PreparedScienceFetch {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) connector_id: String,
+    pub(crate) query: String,
+    pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+    pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) command: String,
+    pub(crate) output_paths: Vec<std::path::PathBuf>,
+}
+pub struct BeginScienceFetch {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) connector_id: String,
+    pub(crate) query: String,
+    pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
+    pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceFetch>>,
+}
+pub struct FinishScienceFetch {
+    pub(crate) prepared: PreparedScienceFetch,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult>>,
+}
 pub struct BeginScienceSshScpAdmission {
     pub(crate) store: xai_grok_science::ScienceStore,
     pub(crate) context: xai_grok_science::RunContext,
@@ -133,6 +192,28 @@ pub struct ExecuteScienceSshScpOfflineTransport {
     pub(crate) outcome: xai_grok_science::connector::OfflineTransportOutcome,
     pub(crate) respond_to: oneshot::Sender<
         xai_grok_science::Result<xai_grok_science::connector::OfflineTransportReceipt>,
+    >,
+}
+pub struct ExecuteScienceSshScpTransport {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::connector::AdmissionTicket,
+    pub(crate) operation: xai_grok_science::transport::ScpOperation,
+    pub(crate) config: xai_grok_science::transport::ScpExecutionConfig,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::transport::TransportReceipt>>,
+}
+
+/// Host-owned P5 completion gate. The actor binds its current Goal and Expert
+/// generations, verifies the durable Science run, persists both snapshots,
+/// and only then returns success.
+pub struct VerifyScienceGoal {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) run_id: xai_grok_science::RunId,
+    pub(crate) respond_to: oneshot::Sender<
+        Result<
+            xai_grok_science::review::HostVerificationReport,
+            crate::session::science_goal::ScienceGoalReviewError,
+        >,
     >,
 }
 /// Priority levels for notification drain timing.
@@ -165,9 +246,19 @@ pub enum SessionCommand {
     BeginScienceCsv(Box<BeginScienceCsv>),
     /// Keep Science payloads off the main command enum stack footprint.
     FinishScienceCsv(Box<FinishScienceCsv>),
+    /// S2 phase one: begin a durable import run before the caller awaits this
+    /// session's production permission manager.
+    BeginScienceImport(Box<BeginScienceImport>),
+    FinishScienceImport(Box<FinishScienceImport>),
+    /// S3 phase one: begin a durable connector fetch run before the caller
+    /// awaits this session's production permission manager.
+    BeginScienceFetch(Box<BeginScienceFetch>),
+    FinishScienceFetch(Box<FinishScienceFetch>),
     BeginScienceSshScpAdmission(Box<BeginScienceSshScpAdmission>),
     FinishScienceSshScpAdmission(Box<FinishScienceSshScpAdmission>),
     ExecuteScienceSshScpOfflineTransport(Box<ExecuteScienceSshScpOfflineTransport>),
+    ExecuteScienceSshScpTransport(Box<ExecuteScienceSshScpTransport>),
+    VerifyScienceGoal(Box<VerifyScienceGoal>),
     Initialize {
         system_prompt: String,
     },
