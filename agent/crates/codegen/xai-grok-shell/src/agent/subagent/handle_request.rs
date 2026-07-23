@@ -503,6 +503,12 @@ pub(crate) async fn handle_subagent_request(
         cwd: effective_cwd,
     };
     let child_session_dir = session::persistence::session_dir(&child_session_info);
+    // A child owns a distinct session directory and therefore a distinct
+    // cache-evidence writer. Never inherit the parent's observer: that would
+    // mix child history/routing identity into the parent's durable ledger.
+    effective_sampling_config.request_observer = Some(
+        crate::session::cache_epoch::durable_request_observer(child_session_dir.clone()),
+    );
     let parent_session_dir = session::persistence::session_dir(
         &SessionInfo {
             id: acp::SessionId::new(ctx.parent_session_id.clone()),

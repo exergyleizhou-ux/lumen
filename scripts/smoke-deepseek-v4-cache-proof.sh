@@ -1,10 +1,30 @@
 #!/usr/bin/env bash
-# Live, product-path cache evidence probe for DeepSeek V4.
+# DeepSeek V4 cache evidence probe with an explicit, billable proof mode.
 #
 # It deliberately prints only provider usage counters and sanitized durable
 # request evidence summaries.  It never prints prompts, provider bodies,
 # headers, request IDs, credentials, or the isolated session directory.
 set -euo pipefail
+
+MODE="${1:---probe}"
+case "$MODE" in
+  --probe)
+    # The default is intentionally offline: this tells an operator exactly
+    # which command would make provider calls without building or sending one.
+    echo "PROBE: no provider request made. Use --proof with LUMEN_ALLOW_BILLABLE_CACHE_PROOF=1 for a strict live proof."
+    exit 0
+    ;;
+  --proof) ;;
+  *)
+    echo "usage: $0 [--probe|--proof]" >&2
+    exit 64
+    ;;
+esac
+
+if [[ "${LUMEN_ALLOW_BILLABLE_CACHE_PROOF:-0}" != "1" ]]; then
+  echo "BLOCKED: --proof is billable; set LUMEN_ALLOW_BILLABLE_CACHE_PROOF=1 to authorize provider requests" >&2
+  exit 2
+fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
@@ -87,7 +107,9 @@ for row in rows:
         raise SystemExit("FAIL: request evidence has an unknown cache epoch")
 
 # Read only Lumen's structured, sanitized telemetry context; never inspect a
-# debug stream or a provider response body.  `unavailable` must remain so.
+# debug stream or a provider response body. Strict proof accepts only a
+# validated provider report from the second call, never request success,
+# transport hashes, or local prefix similarity.
 usage = []
 if unified_path.exists():
     for line in unified_path.read_text(errors="replace").splitlines():
@@ -95,19 +117,27 @@ if unified_path.exists():
         if entry.get("msg") != "shell.turn.inference_done":
             continue
         ctx = entry.get("ctx") or {}
-        usage.append((ctx.get("provider_cache_accounting"),
+        usage.append((ctx.get("prompt_tokens"),
+                      ctx.get("provider_cache_accounting"),
                       ctx.get("provider_cache_hit_tokens"),
                       ctx.get("provider_cache_miss_tokens")))
 if len(usage) < 2:
     raise SystemExit("FAIL: two sanitized provider usage telemetry records were not persisted")
-accounting, hit, miss = usage[-1]
+prompt, accounting, hit, miss = usage[-1]
 if accounting not in {"reported", "unavailable", "contradictory"}:
     raise SystemExit("FAIL: provider cache accounting telemetry is invalid")
-cache_hit = accounting == "reported" and isinstance(hit, int) and hit > 0
+if accounting != "reported":
+    raise SystemExit(f"FAIL: strict proof requires internally consistent provider accounting, got {accounting}")
+if not isinstance(prompt, int) or prompt <= 0:
+    raise SystemExit("FAIL: strict proof requires provider-reported positive prompt tokens on the second request")
+if not isinstance(hit, int) or hit <= 0 or hit > prompt:
+    raise SystemExit("FAIL: strict proof requires a nonzero provider-reported cache hit on the second request")
+if miss is not None and (not isinstance(miss, int) or miss < 0 or hit + miss != prompt):
+    raise SystemExit("FAIL: strict proof rejected inconsistent provider cache hit/miss accounting")
 attempts = sorted({row["attempt_index"] for row in rows})
 backends = sorted({row["serialization_kind"] for row in rows})
-print("OK: DeepSeek V4 cache live proof "
-      f"provider_cache_accounting={accounting} provider_cache_hit={str(cache_hit).lower()} "
+print("PASS: DeepSeek V4 strict cache live proof "
+      f"provider_cache_accounting={accounting} provider_cache_hit=true "
       f"provider_cache_hit_tokens={hit if hit is not None else 'unavailable'} "
       f"provider_cache_miss_tokens={miss if miss is not None else 'unavailable'} "
       f"durable_epoch_generation_before={before['generation']} after={after['generation']} evidence_records={len(rows)} "

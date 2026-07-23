@@ -15,30 +15,15 @@ fn wire_mutation_reasons(
     match mutation {
         CommittedHistoryMutation::CompactionReplace => vec![WireMutationReason::FullCompaction],
         CommittedHistoryMutation::RetainedToolPrune => vec![WireMutationReason::ToolResultPruned],
-        CommittedHistoryMutation::MemoryReminderPersisted => vec![WireMutationReason::MemoryChanged],
+        CommittedHistoryMutation::MemoryReminderPersisted => {
+            vec![WireMutationReason::MemoryChanged]
+        }
         CommittedHistoryMutation::ConversationReplace
         | CommittedHistoryMutation::HistoryRepair
         | CommittedHistoryMutation::SystemHeadReplace
         | CommittedHistoryMutation::SnapshotRestore
         | CommittedHistoryMutation::Rewind
         | CommittedHistoryMutation::IntegrityRepair => Vec::new(),
-    }
-}
-
-/// Fail-open bridge from the sampler's exact-wire hook to the session-owned
-/// durable evidence ledger. The ledger contains hashes and request shape only.
-#[derive(Debug)]
-struct DurableCacheEvidenceObserver {
-    session_dir: std::path::PathBuf,
-}
-
-impl xai_grok_sampler::RequestObserver for DurableCacheEvidenceObserver {
-    fn observe(&self, snapshot: &lumen_discipline::WireRequestSnapshot) {
-        if let Err(error) =
-            crate::session::cache_epoch::append_request_evidence(&self.session_dir, snapshot)
-        {
-            tracing::warn!(%error, "cache request evidence write failed; continuing provider call");
-        }
     }
 }
 
@@ -447,9 +432,9 @@ impl SessionActor {
             compaction_at_tokens: self.compaction_at_tokens.get(),
             doom_loop_recovery: self.doom_loop_recovery,
             header_injector: Some(std::sync::Arc::new(TraceContextInjector)),
-            request_observer: Some(std::sync::Arc::new(DurableCacheEvidenceObserver {
-                session_dir: crate::session::persistence::session_dir(&self.session_info),
-            })),
+            request_observer: Some(crate::session::cache_epoch::durable_request_observer(
+                crate::session::persistence::session_dir(&self.session_info),
+            )),
         }
     }
     /// Install auto-mode permission classifier with a live LLM side-query

@@ -4,7 +4,14 @@
 //! The record contains neither prompt material nor credentials: only an epoch
 //! UUID and a digest of the effective cache domain.
 
-use std::path::Path;
+use std::{
+    path::{Path, PathBuf},
+    sync::{
+        Arc,
+        atomic::{AtomicU8, Ordering},
+        mpsc::{self, SyncSender, TrySendError},
+    },
+};
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -14,6 +21,128 @@ pub const CACHE_EPOCH_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EPOCH_FILE_NAME: &str = "cache_epoch.json";
 pub const CACHE_REQUEST_EVIDENCE_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EVIDENCE_FILE_NAME: &str = "cache_request_evidence.jsonl";
+
+/// This is deliberately small: evidence must never accumulate unboundedly or
+/// become a source of request latency. A full queue makes the attempt's
+/// evidence unavailable; it is never represented as a successful write.
+const EVIDENCE_QUEUE_CAPACITY: usize = 64;
+
+const EVIDENCE_AVAILABLE: u8 = 0;
+const EVIDENCE_UNAVAILABLE_QUEUE_FULL: u8 = 1;
+const EVIDENCE_UNAVAILABLE_WRITE_FAILED: u8 = 2;
+const EVIDENCE_UNAVAILABLE_WRITER_CLOSED: u8 = 3;
+
+/// Best-effort status of the per-session evidence sink. This is deliberately
+/// not cache truth: an unavailable sink can never be used to infer a cache hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvidenceAvailability {
+    Available,
+    UnavailableQueueFull,
+    UnavailableWriteFailed,
+    UnavailableWriterClosed,
+}
+
+impl EvidenceAvailability {
+    fn from_raw(value: u8) -> Self {
+        match value {
+            EVIDENCE_UNAVAILABLE_QUEUE_FULL => Self::UnavailableQueueFull,
+            EVIDENCE_UNAVAILABLE_WRITE_FAILED => Self::UnavailableWriteFailed,
+            EVIDENCE_UNAVAILABLE_WRITER_CLOSED => Self::UnavailableWriterClosed,
+            _ => Self::Available,
+        }
+    }
+}
+
+/// Non-blocking bridge from the exact-wire hook to one sequential background
+/// writer. The request thread only uses `try_send`; `sync_data` remains in the
+/// worker so a slow filesystem cannot delay TTFT or cancellation.
+#[derive(Debug)]
+pub(crate) struct DurableCacheEvidenceObserver {
+    sender: SyncSender<lumen_discipline::WireRequestSnapshot>,
+    availability: Arc<AtomicU8>,
+}
+
+impl DurableCacheEvidenceObserver {
+    pub(crate) fn new(session_dir: PathBuf) -> Self {
+        let (sender, receiver) = mpsc::sync_channel(EVIDENCE_QUEUE_CAPACITY);
+        let availability = Arc::new(AtomicU8::new(EVIDENCE_AVAILABLE));
+        let worker_availability = availability.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("lumen-cache-evidence".into())
+            .spawn(move || {
+                while let Ok(snapshot) = receiver.recv() {
+                    if let Err(error) = append_request_evidence(&session_dir, &snapshot) {
+                        worker_availability
+                            .store(EVIDENCE_UNAVAILABLE_WRITE_FAILED, Ordering::Release);
+                        tracing::warn!(
+                            %error,
+                            cache_evidence = "unavailable",
+                            "cache request evidence write failed; later evidence is unavailable"
+                        );
+                        break;
+                    }
+                }
+            })
+        {
+            availability.store(EVIDENCE_UNAVAILABLE_WRITER_CLOSED, Ordering::Release);
+            tracing::warn!(
+                %error,
+                cache_evidence = "unavailable",
+                "cache request evidence worker could not start; continuing provider call"
+            );
+        }
+        Self {
+            sender,
+            availability,
+        }
+    }
+
+    pub(crate) fn availability(&self) -> EvidenceAvailability {
+        EvidenceAvailability::from_raw(self.availability.load(Ordering::Acquire))
+    }
+
+    fn enqueue(&self, snapshot: &lumen_discipline::WireRequestSnapshot) {
+        if self.availability() != EvidenceAvailability::Available {
+            tracing::warn!(
+                cache_evidence = "unavailable",
+                availability = ?self.availability(),
+                "cache request evidence unavailable; continuing provider call"
+            );
+            return;
+        }
+        match self.sender.try_send(snapshot.clone()) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.availability
+                    .store(EVIDENCE_UNAVAILABLE_QUEUE_FULL, Ordering::Release);
+                tracing::warn!(
+                    cache_evidence = "unavailable",
+                    "cache request evidence queue is full; continuing provider call"
+                );
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                self.availability
+                    .store(EVIDENCE_UNAVAILABLE_WRITER_CLOSED, Ordering::Release);
+                tracing::warn!(
+                    cache_evidence = "unavailable",
+                    "cache request evidence writer stopped; continuing provider call"
+                );
+            }
+        }
+    }
+}
+
+impl xai_grok_sampler::RequestObserver for DurableCacheEvidenceObserver {
+    fn observe(&self, snapshot: &lumen_discipline::WireRequestSnapshot) {
+        self.enqueue(snapshot);
+    }
+}
+
+pub(crate) fn durable_request_observer(
+    session_dir: PathBuf,
+) -> xai_grok_sampler::SharedRequestObserver {
+    Arc::new(DurableCacheEvidenceObserver::new(session_dir))
+}
 
 /// Inputs that can alter provider-side cache identity. All fields are already
 /// non-secret identities; callers must pass a credential slot/account ID, not
@@ -164,7 +293,13 @@ fn write_next(
     domain_fingerprint: String,
     disposition: CacheEpochDisposition,
 ) -> std::io::Result<(CacheEpochRecord, CacheEpochDisposition)> {
-    write_next_with_mutation_reasons(path, previous_generation, domain_fingerprint, disposition, Vec::new())
+    write_next_with_mutation_reasons(
+        path,
+        previous_generation,
+        domain_fingerprint,
+        disposition,
+        Vec::new(),
+    )
 }
 
 fn write_next_with_mutation_reasons(
@@ -206,8 +341,8 @@ pub fn take_pending_mutation_reasons(
     epoch_id: Uuid,
 ) -> std::io::Result<Vec<lumen_discipline::WireMutationReason>> {
     let path = session_dir.join(CACHE_EPOCH_FILE_NAME);
-    let mut record: CacheEpochRecord = serde_json::from_slice(&std::fs::read(&path)?)
-        .map_err(std::io::Error::other)?;
+    let mut record: CacheEpochRecord =
+        serde_json::from_slice(&std::fs::read(&path)?).map_err(std::io::Error::other)?;
     if record.epoch_id != epoch_id {
         return Ok(Vec::new());
     }
@@ -253,6 +388,33 @@ pub fn append_request_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn snapshot(attempt_index: u32) -> lumen_discipline::WireRequestSnapshot {
+        lumen_discipline::WireRequestSnapshot {
+            cache_domain_hash: "domain-hash".into(),
+            cache_epoch_id: "epoch-id".into(),
+            transport_hash: format!("transport-{attempt_index}"),
+            provider_cache_material_hash: format!("material-{attempt_index}"),
+            body_bytes: 42,
+            wire_common_prefix_bytes: None,
+            serialization_kind: lumen_discipline::WireSerializationKind::Responses,
+            mutation_reasons: vec![],
+            attempt_index,
+        }
+    }
+
+    fn wait_for_availability(
+        observer: &DurableCacheEvidenceObserver,
+        expected: EvidenceAvailability,
+    ) {
+        for _ in 0..50 {
+            if observer.availability() == expected {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(observer.availability(), expected);
+    }
 
     fn domain() -> CacheDomain {
         CacheDomain {
@@ -368,9 +530,11 @@ mod tests {
             take_pending_mutation_reasons(dir.path(), rotated.epoch_id).unwrap(),
             vec![lumen_discipline::WireMutationReason::FullCompaction]
         );
-        assert!(take_pending_mutation_reasons(dir.path(), rotated.epoch_id)
-            .unwrap()
-            .is_empty());
+        assert!(
+            take_pending_mutation_reasons(dir.path(), rotated.epoch_id)
+                .unwrap()
+                .is_empty()
+        );
         let retained = load_or_rotate(dir.path(), &domain(), false).unwrap().0;
         assert_eq!(retained.epoch_id, rotated.epoch_id);
     }
@@ -404,6 +568,118 @@ mod tests {
         assert_eq!(value["cache_epoch_id"], "epoch-id");
         assert_eq!(value["serialization_kind"], "responses");
         assert!(!evidence.contains("private prompt"));
+    }
+
+    #[test]
+    fn background_writer_preserves_order_without_blocking_the_observer() {
+        let dir = tempfile::tempdir().unwrap();
+        let observer = DurableCacheEvidenceObserver::new(dir.path().to_path_buf());
+        observer.enqueue(&snapshot(0));
+        observer.enqueue(&snapshot(1));
+
+        let evidence_path = dir.path().join(CACHE_EVIDENCE_FILE_NAME);
+        let mut rows = Vec::new();
+        for _ in 0..50 {
+            rows = std::fs::read_to_string(&evidence_path)
+                .ok()
+                .map(|contents| {
+                    contents
+                        .lines()
+                        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if rows.len() == 2 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(observer.availability(), EvidenceAvailability::Available);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["attempt_index"], 0);
+        assert_eq!(rows[1]["attempt_index"], 1);
+    }
+
+    #[test]
+    fn full_queue_marks_evidence_unavailable_without_waiting_for_io() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let observer = DurableCacheEvidenceObserver {
+            sender,
+            availability: Arc::new(AtomicU8::new(EVIDENCE_AVAILABLE)),
+        };
+        observer.enqueue(&snapshot(0));
+        let before = std::time::Instant::now();
+        observer.enqueue(&snapshot(1));
+        assert!(before.elapsed() < std::time::Duration::from_millis(50));
+        assert_eq!(
+            observer.availability(),
+            EvidenceAvailability::UnavailableQueueFull
+        );
+    }
+
+    #[test]
+    fn writer_failure_is_explicitly_unavailable_not_a_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let not_a_directory = dir.path().join("not-a-directory");
+        std::fs::write(&not_a_directory, b"file").unwrap();
+        let observer = DurableCacheEvidenceObserver::new(not_a_directory);
+        observer.enqueue(&snapshot(0));
+        wait_for_availability(&observer, EvidenceAvailability::UnavailableWriteFailed);
+    }
+
+    #[test]
+    fn cancellation_drop_does_not_block_or_discard_already_queued_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let evidence_path = dir.path().join(CACHE_EVIDENCE_FILE_NAME);
+        {
+            let observer = DurableCacheEvidenceObserver::new(dir.path().to_path_buf());
+            observer.enqueue(&snapshot(0));
+        }
+        for _ in 0..50 {
+            if std::fs::read_to_string(&evidence_path)
+                .ok()
+                .is_some_and(|contents| !contents.is_empty())
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("queued evidence was not flushed after observer drop");
+    }
+
+    #[test]
+    fn parent_and_child_observers_keep_independent_evidence_scopes() {
+        let root = tempfile::tempdir().unwrap();
+        let parent_dir = root.path().join("parent-session");
+        let child_dir = root.path().join("child-session");
+        let parent = DurableCacheEvidenceObserver::new(parent_dir.clone());
+        let child = DurableCacheEvidenceObserver::new(child_dir.clone());
+        parent.enqueue(&snapshot(0));
+        child.enqueue(&snapshot(1));
+
+        for _ in 0..50 {
+            let parent_ready = std::fs::read_to_string(parent_dir.join(CACHE_EVIDENCE_FILE_NAME))
+                .ok()
+                .is_some_and(|contents| contents.contains("transport-0"));
+            let child_ready = std::fs::read_to_string(child_dir.join(CACHE_EVIDENCE_FILE_NAME))
+                .ok()
+                .is_some_and(|contents| contents.contains("transport-1"));
+            if parent_ready && child_ready {
+                assert!(
+                    !std::fs::read_to_string(parent_dir.join(CACHE_EVIDENCE_FILE_NAME))
+                        .unwrap()
+                        .contains("transport-1")
+                );
+                assert!(
+                    !std::fs::read_to_string(child_dir.join(CACHE_EVIDENCE_FILE_NAME))
+                        .unwrap()
+                        .contains("transport-0")
+                );
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("parent and child evidence ledgers were not independently written");
     }
 
     #[test]

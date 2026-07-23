@@ -748,6 +748,22 @@ impl TokenUsage {
         }
     }
 
+    /// The only token count that may be surfaced as a definitive cache hit.
+    /// Compatibility `cached_prompt_tokens` must not affect this decision:
+    /// it can be populated by a generic provider shape even when cache
+    /// accounting is unavailable, contradictory, or explicitly zero.
+    pub fn definitive_provider_cache_hit_tokens(&self) -> Option<u32> {
+        match self.provider_cache_usage_truth() {
+            CacheUsageTruth::Reported {
+                hit_tokens: Some(hit_tokens),
+                ..
+            } if hit_tokens > 0 => Some(hit_tokens),
+            CacheUsageTruth::Reported { .. }
+            | CacheUsageTruth::Contradictory { .. }
+            | CacheUsageTruth::Unavailable => None,
+        }
+    }
+
     pub fn record_on_span(&self, span: &tracing::Span) {
         span.record("prompt_tokens", self.prompt_tokens);
         span.record("completion_tokens", self.completion_tokens);
@@ -9738,5 +9754,64 @@ mod tests {
         )
         .expect("valid usage fixture");
         assert_eq!(usage.cache_usage_truth(), CacheUsageTruth::Unavailable);
+    }
+
+    #[test]
+    fn definitive_cache_hit_requires_consistent_nonzero_provider_truth() {
+        let cases = [
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    // Generic compatibility data must not be promoted.
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: None,
+                    cache_miss_prompt_tokens: None,
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(90),
+                    cache_miss_prompt_tokens: Some(20),
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(0),
+                    cache_miss_prompt_tokens: Some(100),
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(90),
+                    cache_miss_prompt_tokens: Some(10),
+                },
+                Some(90),
+            ),
+        ];
+
+        for (usage, expected) in cases {
+            assert_eq!(usage.definitive_provider_cache_hit_tokens(), expected);
+        }
     }
 }

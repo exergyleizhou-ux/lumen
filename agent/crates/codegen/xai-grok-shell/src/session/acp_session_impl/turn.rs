@@ -2282,34 +2282,27 @@ impl SessionActor {
                         .await
                         .map(|c| c.base_url);
                     let (prompt_tok, hit_tok, out_tok) = response
-                    .usage
-                    .as_ref()
-                    .map(|u| {
-                        let explicit_deepseek_contradiction = model_id
-                            .to_ascii_lowercase()
-                            .contains("deepseek")
-                            && u.cache_miss_prompt_tokens.is_some_and(|miss| {
-                                u.cached_prompt_tokens.checked_add(miss) != Some(u.prompt_tokens)
-                            });
-                        if explicit_deepseek_contradiction {
-                            tracing::warn!(
-                                prompt_tokens = u.prompt_tokens,
-                                reported_hit_tokens = u.cached_prompt_tokens,
-                                reported_miss_tokens = ?u.cache_miss_prompt_tokens,
-                                "DeepSeek cache usage is contradictory; suppressing cache-hit display"
-                            );
-                        }
-                        (
-                            u64::from(u.prompt_tokens),
-                            if explicit_deepseek_contradiction {
-                                0
-                            } else {
-                                u64::from(u.cached_prompt_tokens)
-                            },
-                            u64::from(u.completion_tokens),
-                        )
-                    })
-                    .unwrap_or((0, 0, 0));
+                        .usage
+                        .as_ref()
+                        .map(|u| {
+                            let definitive_hit = u.definitive_provider_cache_hit_tokens();
+                            if definitive_hit.is_none()
+                                && u.cached_prompt_tokens > 0
+                            {
+                                tracing::debug!(
+                                    prompt_tokens = u.prompt_tokens,
+                                    cached_prompt_tokens = u.cached_prompt_tokens,
+                                    truth = ?u.provider_cache_usage_truth(),
+                                    "cache compatibility tokens are not definitive provider cache truth"
+                                );
+                            }
+                            (
+                                u64::from(u.prompt_tokens),
+                                u64::from(definitive_hit.unwrap_or(0)),
+                                u64::from(u.completion_tokens),
+                            )
+                        })
+                        .unwrap_or((0, 0, 0));
                     let snap = crate::session::prompt_cache_registry::observe_call(
                         self.session_info.id.0.as_ref(),
                         &model_id,
