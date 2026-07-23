@@ -339,4 +339,52 @@ mod tests {
         assert_eq!(value["serialization_kind"], "responses");
         assert!(!evidence.contains("private prompt"));
     }
+
+    #[test]
+    fn restart_mutation_and_retry_evidence_form_a_replayable_offline_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let (initial, _) = load_or_rotate(dir.path(), &domain(), false).unwrap();
+        let (after_restart, disposition) = load_or_rotate(dir.path(), &domain(), false).unwrap();
+        assert_eq!(disposition, CacheEpochDisposition::Retained);
+        assert_eq!(after_restart, initial);
+
+        let after_mutation = rotate_after_history_mutation(dir.path(), &domain()).unwrap();
+        assert_ne!(after_mutation.epoch_id, initial.epoch_id);
+        for attempt_index in 0..=1 {
+            append_request_evidence(
+                dir.path(),
+                &lumen_discipline::WireRequestSnapshot {
+                    cache_domain_hash: domain().fingerprint(),
+                    cache_epoch_id: after_mutation.epoch_id.to_string(),
+                    transport_hash: format!("transport-{attempt_index}"),
+                    provider_cache_material_hash: format!("material-{attempt_index}"),
+                    body_bytes: 42,
+                    wire_common_prefix_bytes: None,
+                    serialization_kind: lumen_discipline::WireSerializationKind::Responses,
+                    mutation_reasons: if attempt_index == 0 {
+                        vec![]
+                    } else {
+                        vec![lumen_discipline::WireMutationReason::RetryImageStrip]
+                    },
+                    attempt_index,
+                },
+            )
+            .unwrap();
+        }
+
+        let rows: Vec<serde_json::Value> =
+            std::fs::read_to_string(dir.path().join(CACHE_EVIDENCE_FILE_NAME))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(rows.len(), 2);
+        assert!(
+            rows.iter()
+                .all(|row| row["cache_epoch_id"] == after_mutation.epoch_id.to_string())
+        );
+        assert_eq!(rows[0]["attempt_index"], 0);
+        assert_eq!(rows[1]["attempt_index"], 1);
+        assert_eq!(rows[1]["mutation_reasons"][0], "retry_image_strip");
+    }
 }
