@@ -607,7 +607,9 @@ impl SessionActor {
                 auto_compact_threshold_percent: self.compaction.threshold_percent.get(),
                 usage_categories,
             },
-            cache_hit_ratio: cache_snap.as_ref().and_then(|s| s.last_hit_ratio),
+            cache_hit_ratio: cache_snap
+                .as_ref()
+                .and_then(|s| s.provider_reported_last_hit_ratio),
             cache_session_hit_ratio: cache_snap.as_ref().and_then(|s| s.session_hit_ratio),
             cache_stability_score: cache_snap.as_ref().map(|s| s.stability_score),
             cache_profile: cache_snap.as_ref().map(|s| s.profile_label.to_string()),
