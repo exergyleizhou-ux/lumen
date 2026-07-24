@@ -93,7 +93,6 @@ if [[ -z "${body// }" ]]; then
 fi
 
 # Reject placeholders (Reasonix-style)
-reject_re='(?i)Cache-impact:\s*(n/a|none|todo|tbd)\s*$|Cache-guard:\s*(n/a|none|todo|tbd)\s*$'
 if echo "$body" | grep -Eiq 'Cache-impact:\s*(n/a|todo|tbd)\b'; then
   echo "FAIL: Cache-impact must be descriptive (not n/a/todo/tbd). Use 'none — reason' if truly none." >&2
   exit 1

@@ -88,7 +88,7 @@ cp "$BIN_SRC" "$OUT_DIR/lumen.exe"
 SHA=$(shasum -a 256 "$OUT_DIR/lumen.exe" | awk '{print $1}')
 echo "$SHA  lumen.exe" > "$OUT_DIR/SHA256SUMS.txt"
 
-cat > "$OUT_DIR/INSTALL.txt" << INSTALL_EOF
+cat > "$OUT_DIR/INSTALL.txt" << EOF
 Lumen for Windows
 =================
 Version: commit $SOURCE_COMMIT
