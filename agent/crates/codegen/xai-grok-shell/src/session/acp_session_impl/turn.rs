@@ -96,7 +96,8 @@ impl TurnSpanTotals {
         if let Some(u) = response.usage.as_ref() {
             self.input_tokens += i64::from(u.prompt_tokens);
             self.output_tokens += i64::from(u.completion_tokens);
-            self.cache_read_tokens += i64::from(u.cached_prompt_tokens);
+            self.cache_read_tokens +=
+                i64::from(u.definitive_provider_cache_hit_tokens().unwrap_or(0));
             span.record("input_tokens", self.input_tokens);
             span.record("output_tokens", self.output_tokens);
             span.record("cache_read_tokens", self.cache_read_tokens);
@@ -2153,11 +2154,14 @@ impl SessionActor {
                 let cached_prompt_tokens = usage.map(|u| u.cached_prompt_tokens);
                 let provider_cache_hit_tokens = usage.and_then(|u| u.provider_cache_hit_tokens);
                 let provider_cache_miss_tokens = usage.and_then(|u| u.cache_miss_prompt_tokens);
-                let provider_cache_accounting = usage.map(|u| match u.provider_cache_usage_truth() {
-                    xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported",
-                    xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => "contradictory",
-                    xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable",
-                });
+                let provider_cache_accounting =
+                    usage.map(|u| match u.provider_cache_usage_truth() {
+                        xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported",
+                        xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => {
+                            "contradictory"
+                        }
+                        xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable",
+                    });
                 let completion_tokens = usage.map(|u| u.completion_tokens);
                 let reasoning_tokens = usage.map(|u| u.reasoning_tokens);
                 let ttft_ms = latency.time_to_first_token_ms;
@@ -2220,14 +2224,28 @@ impl SessionActor {
                             cached_prompt_tokens: response
                                 .usage
                                 .as_ref()
-                                .map(|u| u.cached_prompt_tokens),
-                            provider_cache_accounting: response.usage.as_ref().map(|u| match u.provider_cache_usage_truth() {
-                                xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => "reported".to_string(),
-                                xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. } => "contradictory".to_string(),
-                                xai_grok_sampling_types::CacheUsageTruth::Unavailable => "unavailable".to_string(),
+                                .and_then(|u| u.definitive_provider_cache_hit_tokens()),
+                            provider_cache_accounting: response.usage.as_ref().map(|u| {
+                                match u.provider_cache_usage_truth() {
+                                    xai_grok_sampling_types::CacheUsageTruth::Reported {
+                                        ..
+                                    } => "reported".to_string(),
+                                    xai_grok_sampling_types::CacheUsageTruth::Contradictory {
+                                        ..
+                                    } => "contradictory".to_string(),
+                                    xai_grok_sampling_types::CacheUsageTruth::Unavailable => {
+                                        "unavailable".to_string()
+                                    }
+                                }
                             }),
-                            provider_cache_hit_tokens: response.usage.as_ref().and_then(|u| u.provider_cache_hit_tokens),
-                            provider_cache_miss_tokens: response.usage.as_ref().and_then(|u| u.cache_miss_prompt_tokens),
+                            provider_cache_hit_tokens: response
+                                .usage
+                                .as_ref()
+                                .and_then(|u| u.provider_cache_hit_tokens),
+                            provider_cache_miss_tokens: response
+                                .usage
+                                .as_ref()
+                                .and_then(|u| u.cache_miss_prompt_tokens),
                         },
                     );
                 }
@@ -2265,34 +2283,27 @@ impl SessionActor {
                         .await
                         .map(|c| c.base_url);
                     let (prompt_tok, hit_tok, out_tok) = response
-                    .usage
-                    .as_ref()
-                    .map(|u| {
-                        let explicit_deepseek_contradiction = model_id
-                            .to_ascii_lowercase()
-                            .contains("deepseek")
-                            && u.cache_miss_prompt_tokens.is_some_and(|miss| {
-                                u.cached_prompt_tokens.checked_add(miss) != Some(u.prompt_tokens)
-                            });
-                        if explicit_deepseek_contradiction {
-                            tracing::warn!(
-                                prompt_tokens = u.prompt_tokens,
-                                reported_hit_tokens = u.cached_prompt_tokens,
-                                reported_miss_tokens = ?u.cache_miss_prompt_tokens,
-                                "DeepSeek cache usage is contradictory; suppressing cache-hit display"
-                            );
-                        }
-                        (
-                            u64::from(u.prompt_tokens),
-                            if explicit_deepseek_contradiction {
-                                0
-                            } else {
-                                u64::from(u.cached_prompt_tokens)
-                            },
-                            u64::from(u.completion_tokens),
-                        )
-                    })
-                    .unwrap_or((0, 0, 0));
+                        .usage
+                        .as_ref()
+                        .map(|u| {
+                            let definitive_hit = u.definitive_provider_cache_hit_tokens();
+                            if definitive_hit.is_none()
+                                && u.cached_prompt_tokens > 0
+                            {
+                                tracing::debug!(
+                                    prompt_tokens = u.prompt_tokens,
+                                    cached_prompt_tokens = u.cached_prompt_tokens,
+                                    truth = ?u.provider_cache_usage_truth(),
+                                    "cache compatibility tokens are not definitive provider cache truth"
+                                );
+                            }
+                            (
+                                u64::from(u.prompt_tokens),
+                                u64::from(definitive_hit.unwrap_or(0)),
+                                u64::from(u.completion_tokens),
+                            )
+                        })
+                        .unwrap_or((0, 0, 0));
                     let snap = crate::session::prompt_cache_registry::observe_call(
                         self.session_info.id.0.as_ref(),
                         &model_id,

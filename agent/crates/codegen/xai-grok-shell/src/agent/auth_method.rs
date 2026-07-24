@@ -770,6 +770,10 @@ mod tests {
         // Make sure no global key is masking the per-model path we're trying
         // to exercise. Held until end-of-scope so we restore on panic too.
         let _global = EnvGuard::unset(XAI_API_KEY_ENV_VAR);
+        let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
+        let _openai = EnvGuard::unset("OPENAI_API_KEY");
+        let _kimi = EnvGuard::unset("KIMI_API_KEY");
+        let _kimi_code = EnvGuard::unset("KIMI_CODE_API_KEY");
 
         let dm = crate::models::default_model();
         let toml: toml::Value = toml::from_str(&format!(

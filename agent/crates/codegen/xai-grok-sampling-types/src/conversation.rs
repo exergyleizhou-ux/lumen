@@ -646,11 +646,13 @@ pub struct TokenUsage {
     pub completion_tokens: u32,
     pub total_tokens: u32,
     pub reasoning_tokens: u32,
-    /// Prompt tokens served from cache.
+    /// Compatibility cache-read token field normalized from provider shapes.
     /// - OpenAI: `prompt_tokens_details.cached_tokens` / `input_tokens_details.cached_tokens`.
     /// - Anthropic Messages: `usage.cache_read_input_tokens`. Cache writes
     ///   (`cache_creation_input_tokens`, billed at ~1.25x) are NOT counted here; they are folded
-    ///   into `prompt_tokens` instead.
+    ///   into `prompt_tokens` instead. This is useful diagnostic data, but
+    ///   must not by itself be shown as a definitive cache hit; use
+    ///   [`Self::definitive_provider_cache_hit_tokens`] for that projection.
     #[serde(default)]
     pub cached_prompt_tokens: u32,
     /// Exact provider-reported cache hits.  Unlike the compatibility field
@@ -745,6 +747,22 @@ impl TokenUsage {
         CacheUsageTruth::Reported {
             hit_tokens,
             miss_tokens,
+        }
+    }
+
+    /// The only token count that may be surfaced as a definitive cache hit.
+    /// Compatibility `cached_prompt_tokens` must not affect this decision:
+    /// it can be populated by a generic provider shape even when cache
+    /// accounting is unavailable, contradictory, or explicitly zero.
+    pub fn definitive_provider_cache_hit_tokens(&self) -> Option<u32> {
+        match self.provider_cache_usage_truth() {
+            CacheUsageTruth::Reported {
+                hit_tokens: Some(hit_tokens),
+                ..
+            } if hit_tokens > 0 => Some(hit_tokens),
+            CacheUsageTruth::Reported { .. }
+            | CacheUsageTruth::Contradictory { .. }
+            | CacheUsageTruth::Unavailable => None,
         }
     }
 
@@ -9738,5 +9756,64 @@ mod tests {
         )
         .expect("valid usage fixture");
         assert_eq!(usage.cache_usage_truth(), CacheUsageTruth::Unavailable);
+    }
+
+    #[test]
+    fn definitive_cache_hit_requires_consistent_nonzero_provider_truth() {
+        let cases = [
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    // Generic compatibility data must not be promoted.
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: None,
+                    cache_miss_prompt_tokens: None,
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(90),
+                    cache_miss_prompt_tokens: Some(20),
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(0),
+                    cache_miss_prompt_tokens: Some(100),
+                },
+                None,
+            ),
+            (
+                TokenUsage {
+                    prompt_tokens: 100,
+                    completion_tokens: 0,
+                    total_tokens: 100,
+                    reasoning_tokens: 0,
+                    cached_prompt_tokens: 90,
+                    provider_cache_hit_tokens: Some(90),
+                    cache_miss_prompt_tokens: Some(10),
+                },
+                Some(90),
+            ),
+        ];
+
+        for (usage, expected) in cases {
+            assert_eq!(usage.definitive_provider_cache_hit_tokens(), expected);
+        }
     }
 }

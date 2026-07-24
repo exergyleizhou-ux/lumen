@@ -59,11 +59,9 @@ fn enriches_meta_with_camelcase_token_keys() {
 }
 
 #[test]
-fn preserves_zero_token_values() {
-    // Responses API hits with no cache return cached_prompt_tokens=0.
-    // The key is still emitted as 0 so the bot can distinguish "no cache
-    // hit" from "no usage data". (The bot's _merge_meta_usage requires
-    // the key to be present and integer-typed.)
+fn suppresses_zero_cache_truth_from_hit_metadata() {
+    // A reported zero is not a cache hit.  Do not expose compatibility
+    // telemetry as a definitive cache-read result.
     let usage = TokenUsage {
         prompt_tokens: 100,
         completion_tokens: 10,
@@ -77,8 +75,26 @@ fn preserves_zero_token_values() {
         last_turn_usage: Some(&usage),
         ..args("s", "p", 110, "m")
     });
-    assert_eq!(meta["cachedReadTokens"], 0);
+    assert!(meta.get("cachedReadTokens").is_none());
     assert_eq!(meta["reasoningTokens"], 0);
+}
+
+#[test]
+fn does_not_promote_compatibility_tokens_to_cache_read_metadata() {
+    let usage = TokenUsage {
+        prompt_tokens: 100,
+        completion_tokens: 10,
+        total_tokens: 110,
+        reasoning_tokens: 0,
+        cached_prompt_tokens: 90,
+        provider_cache_hit_tokens: None,
+        cache_miss_prompt_tokens: None,
+    };
+    let meta = build_prompt_response_meta(PromptResponseMetaArgs {
+        last_turn_usage: Some(&usage),
+        ..args("s", "p", 110, "m")
+    });
+    assert!(meta.get("cachedReadTokens").is_none());
 }
 
 #[test]
