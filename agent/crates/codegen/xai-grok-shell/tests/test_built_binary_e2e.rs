@@ -1323,6 +1323,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
             "connector_europepmc_search.json",
             "connector_openalex_search.json",
             "connector_semantic_scholar_search.json",
+            "connector_arxiv_search.xml",
         ] {
             std::fs::copy(
                 format!(
@@ -1338,7 +1339,7 @@ async fn test_stdio_science_connector_fetch_product_path() {
         client.initialize_with_timeout().await;
         let session_id = client.create_session_with_timeout(workdir.path()).await;
 
-        let cases: [(&str, &str, Vec<&str>, usize, &str); 7] = [
+        let cases: [(&str, &str, Vec<&str>, usize, &str); 8] = [
             (
                 "pubmed",
                 "crispr",
@@ -1388,6 +1389,13 @@ async fn test_stdio_science_connector_fetch_product_path() {
                 "semantic-scholar",
                 "machine learning",
                 vec!["connector_semantic_scholar_search.json"],
+                1,
+                "Attention Is All You Need",
+            ),
+            (
+                "arxiv",
+                "transformer",
+                vec!["connector_arxiv_search.xml"],
                 1,
                 "Attention Is All You Need",
             ),

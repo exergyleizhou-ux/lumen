@@ -170,6 +170,7 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::europepmc::EuropepmcAdapter)).expect("europepmc adapter");
     registry.register(Box::new(super::openalex::OpenalexAdapter)).expect("openalex adapter");
     registry.register(Box::new(super::semantic_scholar::SemanticScholarAdapter)).expect("semantic-scholar adapter");
+    registry.register(Box::new(super::arxiv::ArxivAdapter)).expect("arxiv adapter");
 
     validate_global_coverage();
 
@@ -261,6 +262,7 @@ mod tests {
         registry.register(Box::new(super::super::europepmc::EuropepmcAdapter)).unwrap();
         registry.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
         registry.register(Box::new(super::super::semantic_scholar::SemanticScholarAdapter)).unwrap();
+        registry.register(Box::new(super::super::arxiv::ArxivAdapter)).unwrap();
         // ... plus one orphan whose descriptor is NOT in connectors::registry().
         registry.register(Box::new(OrphanAdapter)).unwrap();
 
@@ -295,5 +297,6 @@ mod tests {
         assert_eq!(REGISTRY.expected_exchanges("europepmc"), Some(1));
         assert_eq!(REGISTRY.expected_exchanges("openalex"), Some(1));
         assert_eq!(REGISTRY.expected_exchanges("semantic-scholar"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("arxiv"), Some(1));
     }
 }

@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod arxiv;
 pub mod chembl;
 pub mod crossref;
 pub mod europepmc;
@@ -276,9 +277,31 @@ const SEMANTIC_SCHOLAR: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/graph/v1/paper/search?query=machine%20learning&limit=1&fields=paperId,title,url,year,venue,externalIds",
 };
 
+/// arXiv Atom query API. Public, no key required. Requires ≤1 req/3s.
+const ARXIV: ConnectorDescriptor = ConnectorDescriptor {
+    id: "arxiv",
+    display_name: "arXiv",
+    auth_class: AuthClass::None,
+    base_url: "https://export.arxiv.org/api",
+    egress_hosts: &["export.arxiv.org"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 3_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://info.arxiv.org/help/api/index.html",
+    user_notice: "arXiv metadata freely accessible; individual articles may be subject to copyright by their authors. This connector intentionally retrieves no abstracts or full-text content.",
+    data_class: DataClass::PublicReference,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/query?search_query=all%3Amachine+learning&start=0&max_results=1&sortBy=relevance",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV]
 }
 
 /// Look up a connector by id.
@@ -530,6 +553,7 @@ mod tests {
                 "europepmc",
                 "openalex",
                 "semantic-scholar",
+                "arxiv",
             ]
         );
         assert!(descriptor("pubmed").is_some());
@@ -539,6 +563,7 @@ mod tests {
         assert!(descriptor("europepmc").is_some());
         assert!(descriptor("openalex").is_some());
         assert!(descriptor("semantic-scholar").is_some());
+        assert!(descriptor("arxiv").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
