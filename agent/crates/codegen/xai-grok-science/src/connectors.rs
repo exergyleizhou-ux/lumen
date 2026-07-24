@@ -41,6 +41,10 @@ pub mod ucsc;
 pub mod uniprot;
 pub mod adapter;
 
+/// Static empty Vec used by connectors that need a borrowed empty slice for
+/// `Option::unwrap_or` in places where a temporary `&vec![]` would be dropped.
+pub(crate) static EMPTY_JSON_ARRAY: Vec<serde_json::Value> = Vec::new();
+
 /// Minimal percent-encoding for query terms (unreserved characters pass
 /// through; everything else is %XX). Keeps the crate free of a URL crate
 /// dependency for two fixed endpoints.
@@ -520,9 +524,109 @@ const MYVARIANT: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/v1/query?q=rs334&size=1",
 };
 
+
+const REACTOME: ConnectorDescriptor = ConnectorDescriptor {
+    id: "reactome", display_name: "Reactome", auth_class: AuthClass::None,
+    base_url: "https://reactome.org", egress_hosts: &["reactome.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://reactome.org/documentation/data-license-agreement",
+    user_notice: "Reactome data CC0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/ContentService/search/query?query=DNA+repair&cluster=true&species=Homo+sapiens",
+};
+const STRING_DB: ConnectorDescriptor = ConnectorDescriptor {
+    id: "string-db", display_name: "STRING", auth_class: AuthClass::None,
+    base_url: "https://string-db.org/api", egress_hosts: &["string-db.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://string-db.org/cgi/access", user_notice: "STRING data CC BY 4.0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/json/get_string_ids?identifiers=BRCA2&species=9606&limit=1&echo_query=1",
+};
+const INTACT: ConnectorDescriptor = ConnectorDescriptor {
+    id: "intact", display_name: "IntAct", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/intact/ws", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use", user_notice: "IntAct data freely available. EMBL-EBI terms apply.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/intact/ws/interaction/findInteractions/BRCA2?page=0&pageSize=1",
+};
+const WIKIPATHWAYS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "wikipathways", display_name: "WikiPathways", auth_class: AuthClass::None,
+    base_url: "https://www.wikipathways.org", egress_hosts: &["www.wikipathways.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 5_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.wikipathways.org/index.php/WikiPathways:License", user_notice: "WikiPathways data CC0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/json/findPathwaysByText.json",
+};
+const OPENTARGETS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "opentargets", display_name: "Open Targets", auth_class: AuthClass::None,
+    base_url: "https://api.platform.opentargets.org/api/v4/graphql", egress_hosts: &["api.platform.opentargets.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://platform.opentargets.org/documentation", user_notice: "Open Targets data CC BY 4.0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/v4/graphql?query=%7Bsearch(queryString%3A%22BRCA2%22%2Cpage%3A%7Bindex%3A0%2Csize%3A1%7D)%7Bhits%7Bid%7D%7D%7D",
+};
+
+const GEO: ConnectorDescriptor = ConnectorDescriptor {
+    id: "geo", display_name: "NCBI GEO", auth_class: AuthClass::None,
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/", user_notice: "GEO data freely available. NCBI policies apply.", data_class: DataClass::PublicReference, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/esearch.fcgi?db=gds&retmode=json&retmax=1&term=cancer",
+};
+const ARRAYEXPRESS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "arrayexpress", display_name: "ArrayExpress", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/biostudies/api/v1", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use", user_notice: "ArrayExpress data freely available. EMBL-EBI terms apply.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/biostudies/api/v1/arrayexpress/search?query=cancer&pageSize=1",
+};
+const GTEX: ConnectorDescriptor = ConnectorDescriptor {
+    id: "gtex", display_name: "GTEx", auth_class: AuthClass::None,
+    base_url: "https://gtexportal.org/api/v2", egress_hosts: &["gtexportal.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://gtexportal.org/home/documentationPage", user_notice: "GTEx data freely available. NIH dbGaP terms for controlled-access subsets.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/v2/reference/gene?geneId=BRCA2&itemsPerPage=1",
+};
+const HPA: ConnectorDescriptor = ConnectorDescriptor {
+    id: "hpa", display_name: "Human Protein Atlas", auth_class: AuthClass::None,
+    base_url: "https://www.proteinatlas.org", egress_hosts: &["www.proteinatlas.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.proteinatlas.org/about/licence", user_notice: "HPA data CC BY-SA 3.0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/search_download.php?search=BRCA2&format=json&columns=g,gs,eg,up,gd,chr&compress=no",
+};
+const EXPRESSION_ATLAS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "expression-atlas", display_name: "Expression Atlas", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/gxa", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use", user_notice: "Expression Atlas data freely available. EMBL-EBI terms apply.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/gxa/json/experiments",
+};
+const SINGLE_CELL_ATLAS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "single-cell-atlas", display_name: "Single Cell Expression Atlas", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/gxa/sc", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use", user_notice: "SCEA data freely available. EMBL-EBI terms apply.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/gxa/sc/json/experiments",
+};
+const DEPMAP: ConnectorDescriptor = ConnectorDescriptor {
+    id: "depmap", display_name: "DepMap", auth_class: AuthClass::None,
+    base_url: "https://depmap.org/portal", egress_hosts: &["depmap.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 2_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://depmap.org/portal/download/all/", user_notice: "DepMap data CC BY 4.0.", data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/portal/api/download/files",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI, ENSEMBL, NCBI_GENE, DBSNP, CLINVAR, GNOMAD, UCSC, MYGENE, MYVARIANT]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI, ENSEMBL, NCBI_GENE, DBSNP, CLINVAR, GNOMAD, UCSC, MYGENE, MYVARIANT, REACTOME, STRING_DB, INTACT, WIKIPATHWAYS, OPENTARGETS, GEO, ARRAYEXPRESS, GTEX, HPA, EXPRESSION_ATLAS, SINGLE_CELL_ATLAS, DEPMAP]
 }
 
 /// Look up a connector by id.
@@ -926,3 +1030,16 @@ mod tests {
         assert_eq!(audit, again, "audit must be deterministic for replay");
     }
 }
+
+pub mod arrayexpress;
+pub mod depmap;
+pub mod expression_atlas;
+pub mod geo;
+pub mod gtex;
+pub mod hpa;
+pub mod intact;
+pub mod opentargets;
+pub mod reactome;
+pub mod single_cell_atlas;
+pub mod string_db;
+pub mod wikipathways;

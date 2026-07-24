@@ -190,6 +190,18 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::ucsc::UcscAdapter)).expect("ucsc adapter");
     registry.register(Box::new(super::mygene::MygeneAdapter)).expect("mygene adapter");
     registry.register(Box::new(super::myvariant::MyvariantAdapter)).expect("myvariant adapter");
+    registry.register(Box::new(super::reactome::ReactomeAdapter)).expect("reactome adapter");
+    registry.register(Box::new(super::string_db::StringDbAdapter)).expect("string-db adapter");
+    registry.register(Box::new(super::intact::IntactAdapter)).expect("intact adapter");
+    registry.register(Box::new(super::wikipathways::WikpathwaysAdapter)).expect("wikipathways adapter");
+    registry.register(Box::new(super::opentargets::OpentargetsAdapter)).expect("opentargets adapter");
+    registry.register(Box::new(super::geo::GeoAdapter)).expect("geo adapter");
+    registry.register(Box::new(super::arrayexpress::ArrayexpressAdapter)).expect("arrayexpress adapter");
+    registry.register(Box::new(super::gtex::GtexAdapter)).expect("gtex adapter");
+    registry.register(Box::new(super::hpa::HpaAdapter)).expect("hpa adapter");
+    registry.register(Box::new(super::expression_atlas::ExpressionAtlasAdapter)).expect("expression-atlas adapter");
+    registry.register(Box::new(super::single_cell_atlas::SingleCellAtlasAdapter)).expect("single-cell-atlas adapter");
+    registry.register(Box::new(super::depmap::DepmapAdapter)).expect("depmap adapter");
 
     validate_global_coverage();
 
