@@ -48,11 +48,13 @@ mod expert_shipped {
     use crate::session::expert::consultant_tool_allowed;
 
     #[test]
-    fn expert_default_is_off_with_zero_cap() {
+    fn expert_default_state_matches_shipped_defaults() {
         let state = ExpertModeState::default();
+        // Shipped defaults: DEFAULT_CONSULT_CAP = 3, enabled = true
+        assert_eq!(state.budget.attempt_cap, 3);
+        assert!(state.enabled);
+        // Default state is Off (not actively consulting)
         assert_eq!(state.feature_state, ExpertFeatureState::Off);
-        assert_eq!(state.budget.attempt_cap, 0);
-        assert!(!state.enabled);
     }
 
     #[test]
