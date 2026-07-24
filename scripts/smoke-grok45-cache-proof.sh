@@ -36,20 +36,61 @@ if [[ ! -f "$ACCOUNT_AUTH_FILE" ]]; then
 fi
 if ! python3 - "$ACCOUNT_AUTH_FILE" <<'PY'
 import json
+import base64
 import pathlib
 import sys
 
 store = json.loads(pathlib.Path(sys.argv[1]).read_text())
-if not any(
+issuer = "https://auth.x.ai"
+client_id = "b1a00492-073a-47ea-816f-4c329264a828"
+entry = store.get(f"{issuer}::{client_id}") if isinstance(store, dict) else None
+if not (
     isinstance(entry, dict)
-    and entry.get("auth_mode") in {"oidc", "web_login", "grok"}
-    and entry.get("oidc_issuer") == "https://auth.x.ai"
-    for entry in store.values()
+    and entry.get("auth_mode") == "oidc"
+    and entry.get("oidc_issuer") == issuer
+    and entry.get("oidc_client_id") == client_id
 ):
+    raise SystemExit(1)
+token = entry.get("key")
+parts = token.split(".") if isinstance(token, str) else []
+if len(parts) != 3:
+    raise SystemExit(1)
+try:
+    payload = parts[1] + "=" * ((4 - len(parts[1]) % 4) % 4)
+    claims = json.loads(base64.urlsafe_b64decode(payload))
+except Exception:
+    raise SystemExit(1)
+scope = claims.get("scope", claims.get("scp", []))
+if isinstance(scope, str):
+    scope = set(scope.split())
+elif isinstance(scope, list):
+    scope = set(scope)
+else:
+    scope = set()
+required = {
+    "openid",
+    "profile",
+    "email",
+    "offline_access",
+    "grok-cli:access",
+    "api:access",
+    "conversations:read",
+    "conversations:write",
+    "workspaces:read",
+    "workspaces:write",
+}
+audience = claims.get("aud")
+if isinstance(audience, str):
+    audiences = {audience}
+elif isinstance(audience, list):
+    audiences = set(audience)
+else:
+    audiences = set()
+if not required <= scope or client_id not in audiences:
     raise SystemExit(1)
 PY
 then
-  echo "BLOCKED: xAI account OAuth credential is unavailable; no provider request was made" >&2
+  echo "BLOCKED: xAI account OAuth credential does not satisfy the current CLI scope contract; no provider request was made" >&2
   exit 2
 fi
 
@@ -72,7 +113,11 @@ export GROK_DISABLE_API_KEY_AUTH=1
 mkdir -p "$LUMEN_HOME"
 unset XAI_API_KEY DEEPSEEK_API_KEY KIMI_CODE_API_KEY OPENAI_API_KEY \
   OPENAI_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN GROK_API_KEY \
-  GROK_CODE_XAI_API_KEY 2>/dev/null || true
+  GROK_CODE_XAI_API_KEY GROK_OIDC_ISSUER GROK_OIDC_CLIENT_ID \
+  GROK_OIDC_SCOPES GROK_OIDC_AUDIENCE GROK_OAUTH2_ISSUER \
+  GROK_OAUTH2_CLIENT_ID GROK_OAUTH2_SCOPES GROK_OAUTH2_PRINCIPAL_TYPE \
+  GROK_OAUTH2_PRINCIPAL_ID GROK_AUTH_PROVIDER_COMMAND GROK_LOCAL_AUTH \
+  2>/dev/null || true
 cat >"$LUMEN_HOME/config.toml" <<'CFG'
 [models]
 default = "grok-4.5"
@@ -82,9 +127,68 @@ auto_update = false
 preferred_method = "oidc"
 CFG
 
+classify_first_failure() {
+  local failure_class="provider_or_transport"
+  local refresh_class="no_failure_marker"
+  local files=("$PROOF_ROOT/first.out" "$PROOF_ROOT/first.debug")
+  local http_status="unavailable"
+  local durable_request_evidence="false"
+  if grep -Eiq '(^|[^0-9])402([^0-9]|$)|payment required|free.?usage.?exhausted|buy.?credits|upgrade.*plan' "${files[@]}" 2>/dev/null; then
+    failure_class="billing_or_plan_entitlement"
+  elif grep -Eiq '(^|[^0-9])401([^0-9]|$)|unauthorized|credentials|auth context|authentication|bearer token' "${files[@]}" 2>/dev/null; then
+    failure_class="authentication"
+  elif grep -Eiq '(^|[^0-9])403([^0-9]|$)|forbidden|entitlement|permission denied' "${files[@]}" 2>/dev/null; then
+    failure_class="entitlement_or_policy"
+  elif grep -Eiq '(^|[^0-9])429([^0-9]|$)|rate.?limit|quota|usage.?exhausted' "${files[@]}" 2>/dev/null; then
+    failure_class="rate_limit_or_quota"
+  elif grep -Eiq '(^|[^0-9])404([^0-9]|$)|model[^[:alnum:]]+(not found|unavailable|unsupported)' "${files[@]}" 2>/dev/null; then
+    failure_class="model_unavailable"
+  elif grep -Eiq 'timeout|timed out|connection|connect error|dns|tls|error sending request|transport' "${files[@]}" 2>/dev/null; then
+    failure_class="transport"
+  fi
+  for status in 400 401 402 403 404 408 409 422 429 500 502 503 504; do
+    if grep -Eiq "(^|[^0-9])${status}([^0-9]|$)" "${files[@]}" 2>/dev/null; then
+      http_status="$status"
+      break
+    fi
+  done
+  if find "$PROOF_ROOT" -type f -name cache_request_evidence.jsonl -size +0c -print -quit |
+    grep -q .
+  then
+    durable_request_evidence="true"
+  fi
+  if grep -Eiq 'auth\\.refresh\\.success|auth recovery:.*recovered' "${files[@]}" 2>/dev/null; then
+    refresh_class="succeeded"
+  elif grep -Eiq 'auth\\.refresh\\.(permanent_failure|transient_failure)|auth recovery:.*(failed|giving up)' "${files[@]}" 2>/dev/null; then
+    refresh_class="failed"
+  elif grep -Eiq 'auth_retry_backoff|attempting refresh|unauthorized_recovery' "${files[@]}" 2>/dev/null; then
+    refresh_class="attempted"
+  fi
+  printf 'endpoint_class=cli_chat_proxy failure_class=%s http_status=%s refresh_class=%s durable_request_evidence=%s\n' \
+    "$failure_class" "$http_status" "$refresh_class" "$durable_request_evidence" >&2
+  python3 - "$ACCOUNT_AUTH_FILE" <<'PY' >&2
+import json
+import pathlib
+import sys
+
+try:
+    store = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    entry = store.get(
+        "https://auth.x.ai::b1a00492-073a-47ea-816f-4c329264a828", {}
+    )
+    blocked = bool(entry.get("user_blocked_reason")) or bool(
+        entry.get("team_blocked_reasons")
+    )
+    print(f"auth_metadata_blocked={str(blocked).lower()}")
+except Exception:
+    print("auth_metadata_blocked=unavailable")
+PY
+}
+
 COMMON=(-m grok-4.5 --reasoning-effort low --output-format plain --always-approve --max-turns 2)
 if ! "$BIN" "${COMMON[@]}" --single "Reply with exactly: cache-proof-one." \
   --debug-file "$PROOF_ROOT/first.debug" >"$PROOF_ROOT/first.out" 2>&1; then
+  classify_first_failure
   echo "FAIL: first Grok 4.5 provider request failed" >&2
   exit 1
 fi
