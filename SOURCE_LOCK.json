@@ -2,8 +2,8 @@
   "schema_version": 1,
   "generated_at": "2026-07-24T20:00:30Z",
   "monorepo": {
-    "git_head": "dbc778750d99371f1d6b2577cf4f7a6ce270e9f1",
-    "git_short": "dbc77875"
+    "git_head": "c4f71da32e5163711880d5be0b6609c6bc361747",
+    "git_short": "c4f71da3"
   },
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
@@ -18,7 +18,7 @@
     "upstream_tip_short": "ba76b0a",
     "upstream_product_version": "0.2.106",
     "upstream_source_rev": "ba69d70c2f7d70a130a323b2becdf137af784c7f",
-    "path_map": "upstream crates/ → lumen agent/crates/",
+    "path_map": "upstream crates/ \u2192 lumen agent/crates/",
     "next_diff_range": "ba76b0a..upstream/main",
     "do_not_overwrite": [
       "expert dual/merge/budget/consultant",
@@ -30,7 +30,7 @@
     ]
   },
   "masterplan_authority": {
-    "desktop": "Lumen Masterplan FINAL-2.0 - 生产级执行方案.docx",
+    "desktop": "Lumen Masterplan FINAL-2.0 - \u751f\u4ea7\u7ea7\u6267\u884c\u65b9\u6848.docx",
     "baseline": "Lumen Masterplan.docx FINAL-1.1",
     "repo": "docs/masterplan/"
   },
@@ -64,9 +64,9 @@
     "scripts/verify-readiness.sh": "834983378a9f00d15a6e4418213cb828b918be1a0ec85d50409950228851fdeb",
     "scripts/probe-local.sh": "72a93b36c1c3178f23ef06f8f3f9ee59db6f5a6b3def445aa6ba79a15da3ec12",
     "scripts/doctor-verticals.sh": "8455b4f9dc5fd50a40c336009f6271f1e467a0a0873161f16080f349e2712d79",
-    "docs/masterplan/09-FINAL-2.0-执行路径.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
+    "docs/masterplan/09-FINAL-2.0-\u6267\u884c\u8def\u5f84.md": "e8606cce21aaa43de7b4faf42cf22733c94c953919f52b14e8630d825c115785",
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
-    "docs/masterplan/00A-来源锁与运行合同.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
+    "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
   },
   "aggregate_critical_sha256": "6e1fb48c9fc5448b752a101f75b35c284a2526efde899fa667dc808515d890f0"
 }
