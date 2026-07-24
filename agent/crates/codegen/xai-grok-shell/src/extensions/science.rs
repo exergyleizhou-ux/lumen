@@ -328,7 +328,7 @@ async fn handle_connector_fetch(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
     // depends on the ids of the esearch exchange, parsed from the staged
     // fixture (the kernel re-parses everything at finish).
     let validate = |path: &str| {
-        xai_grok_science::connectors::validate_request(descriptor.id, path, false, 10_000)
+        xai_grok_science::connectors::validate_fixture_request(descriptor.id, path, 10_000)
             .map_err(|error| acp::Error::invalid_params().data(error.to_string()))
     };
     let requests = match descriptor.id {
@@ -372,6 +372,14 @@ async fn handle_connector_fetch(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
         "europepmc" => {
             vec![validate(
                 &xai_grok_science::connectors::europepmc::search_path(
+                    &params.query,
+                    params.max_results,
+                ),
+            )?]
+        }
+        "openalex" => {
+            vec![validate(
+                &xai_grok_science::connectors::openalex::search_path(
                     &params.query,
                     params.max_results,
                 ),

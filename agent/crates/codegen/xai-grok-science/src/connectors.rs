@@ -15,6 +15,7 @@ pub mod chembl;
 pub mod crossref;
 pub mod europepmc;
 pub mod fetch;
+pub mod openalex;
 pub mod pubmed;
 pub mod uniprot;
 
@@ -224,9 +225,33 @@ const EUROPEPMC: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/search?query=single%20cell%20RNA&format=json&resultType=lite&pageSize=1&synonym=false",
 };
 
+/// OpenAlex Works REST API. Live access requires a runtime-only API key and
+/// is metered. The v1 operation returns only selected CC0 bibliographic
+/// metadata and intentionally excludes abstracts, full text, and content URLs.
+const OPENALEX: ConnectorDescriptor = ConnectorDescriptor {
+    id: "openalex",
+    display_name: "OpenAlex Works",
+    auth_class: AuthClass::ApiKey,
+    base_url: "https://api.openalex.org",
+    egress_hosts: &["api.openalex.org"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 1_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://openalex.org/OpenAlex_termsofservice.pdf",
+    user_notice: "Selected OpenAlex metadata is provided under CC0, but the metered API service requires a runtime key and is subject to OpenAlex terms. This connector returns no abstracts or full text; verify article-level rights before reusing underlying content.",
+    data_class: DataClass::PublicReference,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/works?search=single%20cell%20RNA&per_page=1&select=id,doi,display_name,publication_year",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX]
 }
 
 /// Look up a connector by id.
@@ -385,6 +410,42 @@ pub fn validate_request(
     })
 }
 
+/// Validate a request that will be paired with an offline fixture and never
+/// dispatched to the network. Credential presence is intentionally not
+/// asserted because no credential is needed or permitted in fixture paths;
+/// every other descriptor and endpoint policy remains enforced.
+pub fn validate_fixture_request(
+    connector_id: &str,
+    path: &str,
+    timeout_ms: u64,
+) -> std::result::Result<ValidatedRequest, PolicyError> {
+    let d = descriptor(connector_id)
+        .ok_or_else(|| PolicyError::UnknownConnector(connector_id.to_owned()))?;
+    validate_descriptor(d)?;
+    if timeout_ms == 0 || timeout_ms > MAX_TIMEOUT_MS {
+        return Err(PolicyError::TimeoutExceeds {
+            connector: d.id.to_owned(),
+            max_ms: MAX_TIMEOUT_MS,
+        });
+    }
+    if !path.starts_with('/') || path.contains("..") {
+        return Err(PolicyError::InvalidEndpoint {
+            connector: d.id.to_owned(),
+            detail: "path must be absolute and contain no ..".to_owned(),
+        });
+    }
+    Ok(ValidatedRequest {
+        connector_id: d.id,
+        url: format!("{}{}", d.base_url, path),
+        timeout_ms,
+        rate_limit: d.rate_limit,
+        retry: d.retry,
+        tos_url: d.tos_url,
+        data_class: d.data_class,
+        cache_policy: d.cache_policy,
+    })
+}
+
 /// Redacted audit record for one connector retrieval. Request and response
 /// are identified by hash only; URLs may contain query terms that are part of
 /// the scientific record, so they are hashed, not copied.
@@ -434,13 +495,21 @@ mod tests {
         let ids: Vec<_> = registry().iter().map(|d| d.id).collect();
         assert_eq!(
             ids,
-            vec!["pubmed", "chembl", "crossref", "uniprot", "europepmc"]
+            vec![
+                "pubmed",
+                "chembl",
+                "crossref",
+                "uniprot",
+                "europepmc",
+                "openalex",
+            ]
         );
         assert!(descriptor("pubmed").is_some());
         assert!(descriptor("chembl").is_some());
         assert!(descriptor("crossref").is_some());
         assert!(descriptor("uniprot").is_some());
         assert!(descriptor("europepmc").is_some());
+        assert!(descriptor("openalex").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
@@ -500,6 +569,32 @@ mod tests {
         )
         .expect("public Europe PMC request");
         assert_eq!(europepmc.rate_limit.max_requests, 1);
+        assert!(matches!(
+            validate_request(
+                "openalex",
+                &openalex::search_path("single cell RNA", 5),
+                false,
+                10_000
+            ),
+            Err(PolicyError::CredentialRequired { .. })
+        ));
+        let openalex = validate_request(
+            "openalex",
+            &openalex::search_path("single cell RNA", 5),
+            true,
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(openalex.rate_limit.max_requests, 1);
+        assert_eq!(openalex.rate_limit.per_ms, 1_000);
+        let fixture = validate_fixture_request(
+            "openalex",
+            &openalex::search_path("single cell RNA", 5),
+            10_000,
+        )
+        .unwrap();
+        assert_eq!(fixture.url, openalex.url);
+        assert!(!fixture.url.contains("api_key"));
     }
 
     #[test]
