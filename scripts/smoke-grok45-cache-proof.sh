@@ -28,8 +28,28 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$PATH"
 export PROTOC="${PROTOC:-/opt/homebrew/bin/protoc}"
 
-if [[ -z "${XAI_API_KEY:-}" ]]; then
-  echo "BLOCKED: XAI_API_KEY is absent; no provider request was made" >&2
+ACCOUNT_GROK_HOME="${GROK_HOME:-$HOME/.grok}"
+ACCOUNT_AUTH_FILE="$ACCOUNT_GROK_HOME/auth.json"
+if [[ ! -f "$ACCOUNT_AUTH_FILE" ]]; then
+  echo "BLOCKED: xAI account auth is absent; no provider request was made" >&2
+  exit 2
+fi
+if ! python3 - "$ACCOUNT_AUTH_FILE" <<'PY'
+import json
+import pathlib
+import sys
+
+store = json.loads(pathlib.Path(sys.argv[1]).read_text())
+if not any(
+    isinstance(entry, dict)
+    and entry.get("auth_mode") in {"oidc", "web_login", "grok"}
+    and entry.get("oidc_issuer") == "https://auth.x.ai"
+    for entry in store.values()
+):
+    raise SystemExit(1)
+PY
+then
+  echo "BLOCKED: xAI account OAuth credential is unavailable; no provider request was made" >&2
   exit 2
 fi
 
@@ -47,16 +67,19 @@ cleanup() {
 }
 trap cleanup EXIT
 export LUMEN_HOME="$PROOF_ROOT/lumen-home"
-export GROK_HOME="$PROOF_ROOT/grok-home"
-mkdir -p "$LUMEN_HOME" "$GROK_HOME"
-unset DEEPSEEK_API_KEY KIMI_CODE_API_KEY OPENAI_API_KEY OPENAI_BASE_URL \
-  ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN GROK_API_KEY GROK_CODE_XAI_API_KEY \
-  2>/dev/null || true
+export GROK_HOME="$ACCOUNT_GROK_HOME"
+export GROK_DISABLE_API_KEY_AUTH=1
+mkdir -p "$LUMEN_HOME"
+unset XAI_API_KEY DEEPSEEK_API_KEY KIMI_CODE_API_KEY OPENAI_API_KEY \
+  OPENAI_BASE_URL ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN GROK_API_KEY \
+  GROK_CODE_XAI_API_KEY 2>/dev/null || true
 cat >"$LUMEN_HOME/config.toml" <<'CFG'
 [models]
 default = "grok-4.5"
 [cli]
 auto_update = false
+[auth]
+preferred_method = "oidc"
 CFG
 
 COMMON=(-m grok-4.5 --reasoning-effort low --output-format plain --always-approve --max-turns 2)
@@ -82,12 +105,14 @@ if ! "$BIN" "${COMMON[@]}" --resume "$SESSION_ID" --single "Reply with exactly: 
 fi
 
 python3 - "$EPOCH_BEFORE" "$SESSION_DIR/cache_epoch.json" \
-  "$SESSION_DIR/cache_request_evidence.jsonl" "$GROK_HOME/logs/unified.jsonl" <<'PY'
+  "$SESSION_DIR/cache_request_evidence.jsonl" "$GROK_HOME/logs/unified.jsonl" \
+  "$SESSION_ID" <<'PY'
 import json
 import pathlib
 import sys
 
-before_path, after_path, ledger_path, unified_path = map(pathlib.Path, sys.argv[1:])
+before_path, after_path, ledger_path, unified_path = map(pathlib.Path, sys.argv[1:5])
+session_id = sys.argv[5]
 before = json.loads(before_path.read_text())
 after = json.loads(after_path.read_text())
 if before["domain_fingerprint"] != after["domain_fingerprint"]:
@@ -122,7 +147,10 @@ usage = []
 if unified_path.exists():
     for line in unified_path.read_text(errors="replace").splitlines():
         entry = json.loads(line)
-        if entry.get("msg") != "shell.turn.inference_done":
+        if (
+            entry.get("sid") != session_id
+            or entry.get("msg") != "shell.turn.inference_done"
+        ):
             continue
         ctx = entry.get("ctx") or {}
         usage.append(
