@@ -75,12 +75,12 @@ pub fn parse_search(bytes: &[u8]) -> crate::Result<ParsedResponse> {
 
     for entry in &entries {
         // arXiv error entries point at .../api/errors
-        if let Some(id) = text_between(entry, "id") {
-            if id.contains("arxiv.org/api/errors") {
-                return Err(ScienceError::Invalid(format!(
-                    "arxiv: server rejected query: {id}"
-                )));
-            }
+        if let Some(id) = text_between(entry, "id")
+            && id.contains("arxiv.org/api/errors")
+        {
+            return Err(ScienceError::Invalid(format!(
+                "arxiv: server rejected query: {id}"
+            )));
         }
 
         let arxiv_id = text_between(entry, "id")

@@ -1480,6 +1480,7 @@ mod tests {
         }
     }
     #[tokio::test]
+    #[ignore = "requires network connectivity and CryptoProvider"]
     async fn open_socket_allows_wss_to_remote_host() {
         let url = Url::parse("wss://hub.example.com/").expect("valid url");
         let credential = bearer_credential();
@@ -1490,6 +1491,7 @@ mod tests {
         }
     }
     #[tokio::test]
+    #[ignore = "requires network connectivity"]
     async fn open_socket_allows_plaintext_ws_when_insecure_opt_in() {
         let url = Url::parse("ws://hub.example.com:1/").expect("valid url");
         let credential = bearer_credential();
