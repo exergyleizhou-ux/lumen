@@ -193,7 +193,7 @@ if ! "$BIN" "${COMMON[@]}" --single "Reply with exactly: cache-proof-one." \
   exit 1
 fi
 
-SESSION_DIR="$(find "$PROOF_ROOT" -type f -name chat_history.jsonl -print -quit | xargs -n1 dirname)"
+SESSION_DIR="$(find "$PROOF_ROOT" -type f -name chat_history.jsonl -exec dirname {} \; -quit)"
 if [[ -z "$SESSION_DIR" ]] || [[ ! -f "$SESSION_DIR/cache_epoch.json" ]]; then
   echo "FAIL: product request did not persist a session cache epoch" >&2
   exit 1

@@ -67,7 +67,7 @@ COMMON=(-m deepseek-v4-pro --output-format plain --always-approve --max-turns 2)
 "$BIN" "${COMMON[@]}" --single "Reply with exactly: cache-proof-one." \
   --debug-file "$PROOF_ROOT/first.debug" >"$PROOF_ROOT/first.out" 2>&1
 
-SESSION_DIR="$(find "$PROOF_ROOT" -type f -name chat_history.jsonl -print -quit | xargs -n1 dirname)"
+SESSION_DIR="$(find "$PROOF_ROOT" -type f -name chat_history.jsonl -exec dirname {} \; -quit)"
 if [[ -z "$SESSION_DIR" ]] || [[ ! -f "$SESSION_DIR/cache_epoch.json" ]]; then
   echo "FAIL: product request did not persist a session cache epoch" >&2
   exit 1
