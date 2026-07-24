@@ -1458,16 +1458,6 @@ mod tests {
     fn bearer_credential() -> AuthCredential {
         AuthCredential::bearer("test-token")
     }
-    /// Install static CryptoProvider once for tests that need TLS.
-    fn ensure_crypto_provider() {
-        use std::sync::OnceLock;
-        static INIT: OnceLock<()> = OnceLock::new();
-        INIT.get_or_init(|| {
-            rustls::crypto::ring::default_provider()
-                .install_default()
-                .expect("install default CryptoProvider");
-        });
-    }
     #[tokio::test]
     async fn open_socket_refuses_plaintext_ws_to_remote_host() {
         let url = Url::parse("ws://hub.example.com:8080/v1/tools").expect("valid url");
@@ -1492,7 +1482,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "requires network connectivity"]
     async fn open_socket_allows_wss_to_remote_host() {
-        let _ = ensure_crypto_provider();
         let url = Url::parse("wss://hub.example.com/").expect("valid url");
         let credential = bearer_credential();
         if let Err(ClientError::InsecureScheme { .. }) =
