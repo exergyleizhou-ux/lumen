@@ -5,8 +5,43 @@
 //! intentionally neither selected nor consumed because their rights differ
 //! from Crossref's factual metadata.
 
+use super::adapter::ProtocolAdapter;
 use super::fetch::{ParsedResponse, RetrievedRecord};
 use crate::ScienceError;
+
+/// DS-1 protocol adapter. Registered in the global [`super::adapter::REGISTRY`].
+pub struct CrossrefAdapter;
+
+impl ProtocolAdapter for CrossrefAdapter {
+    fn descriptor(&self) -> &'static super::ConnectorDescriptor {
+        &super::CROSSREF
+    }
+
+    fn expected_exchanges(&self) -> usize {
+        1
+    }
+
+    fn build_fixture_paths(
+        &self,
+        query: &str,
+        max_results: u32,
+        _fixtures: &[Vec<u8>],
+    ) -> crate::Result<Vec<String>> {
+        Ok(vec![works_path(query, max_results)])
+    }
+
+    fn parse_responses(
+        &self,
+        exchanges: &[super::fetch::FetchExchange],
+    ) -> crate::Result<ParsedResponse> {
+        if exchanges.len() != 1 {
+            return Err(ScienceError::Invalid(
+                "crossref fetch requires exactly one works exchange".into(),
+            ));
+        }
+        parse_works(&exchanges[0].response)
+    }
+}
 
 const SELECTED_FIELDS: &str = "DOI,title,container-title";
 

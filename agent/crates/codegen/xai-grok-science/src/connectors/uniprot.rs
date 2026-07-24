@@ -4,8 +4,43 @@
 //! protein-name, gene-name, and organism summary fields. Protein sequences,
 //! features, references, and citation text are neither requested nor parsed.
 
+use super::adapter::ProtocolAdapter;
 use super::fetch::{ParsedResponse, RetrievedRecord};
 use crate::ScienceError;
+
+/// DS-1 protocol adapter. Registered in the global [`super::adapter::REGISTRY`].
+pub struct UniprotAdapter;
+
+impl ProtocolAdapter for UniprotAdapter {
+    fn descriptor(&self) -> &'static super::ConnectorDescriptor {
+        &super::UNIPROT
+    }
+
+    fn expected_exchanges(&self) -> usize {
+        1
+    }
+
+    fn build_fixture_paths(
+        &self,
+        query: &str,
+        max_results: u32,
+        _fixtures: &[Vec<u8>],
+    ) -> crate::Result<Vec<String>> {
+        Ok(vec![search_path(query, max_results)])
+    }
+
+    fn parse_responses(
+        &self,
+        exchanges: &[super::fetch::FetchExchange],
+    ) -> crate::Result<ParsedResponse> {
+        if exchanges.len() != 1 {
+            return Err(ScienceError::Invalid(
+                "uniprot fetch requires exactly one search exchange".into(),
+            ));
+        }
+        parse_search(&exchanges[0].response)
+    }
+}
 
 const FIELDS: &str = "accession,id,protein_name,gene_names,organism_name";
 

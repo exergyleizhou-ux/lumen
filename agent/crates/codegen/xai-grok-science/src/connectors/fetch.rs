@@ -63,78 +63,19 @@ pub struct FetchResult {
 }
 
 /// Parse the exchanges of a completed fetch for `connector_id`. Exchange
-/// count and order are fixed per connector protocol.
+/// count and order are fixed per connector protocol. Routes through the
+/// global [`super::adapter::REGISTRY`]; unknown IDs fail closed.
 pub fn parse_responses(connector_id: &str, exchanges: &[FetchExchange]) -> Result<ParsedResponse> {
-    match connector_id {
-        "pubmed" => {
-            if exchanges.len() != 2 {
-                return Err(ScienceError::Invalid(
-                    "pubmed fetch requires esearch and esummary exchanges".into(),
-                ));
-            }
-            let (total_hits, _ids) = super::pubmed::parse_esearch(&exchanges[0].response)?;
-            let records = super::pubmed::parse_esummary(&exchanges[1].response)?;
-            Ok(ParsedResponse {
-                total_hits,
-                records,
-            })
-        }
-        "chembl" => {
-            if exchanges.len() != 1 {
-                return Err(ScienceError::Invalid(
-                    "chembl fetch requires exactly one search exchange".into(),
-                ));
-            }
-            super::chembl::parse_search(&exchanges[0].response)
-        }
-        "crossref" => {
-            if exchanges.len() != 1 {
-                return Err(ScienceError::Invalid(
-                    "crossref fetch requires exactly one works exchange".into(),
-                ));
-            }
-            super::crossref::parse_works(&exchanges[0].response)
-        }
-        "uniprot" => {
-            if exchanges.len() != 1 {
-                return Err(ScienceError::Invalid(
-                    "uniprot fetch requires exactly one search exchange".into(),
-                ));
-            }
-            super::uniprot::parse_search(&exchanges[0].response)
-        }
-        "europepmc" => {
-            if exchanges.len() != 1 {
-                return Err(ScienceError::Invalid(
-                    "europepmc fetch requires exactly one search exchange".into(),
-                ));
-            }
-            super::europepmc::parse_search(&exchanges[0].response)
-        }
-        "openalex" => {
-            if exchanges.len() != 1 {
-                return Err(ScienceError::Invalid(
-                    "openalex fetch requires exactly one works exchange".into(),
-                ));
-            }
-            super::openalex::parse_search(&exchanges[0].response)
-        }
-        other => Err(ScienceError::Invalid(format!(
-            "no protocol adapter for connector: {other}"
-        ))),
-    }
+    let adapter = super::adapter::REGISTRY
+        .get(connector_id)
+        .ok_or_else(|| ScienceError::Invalid(format!("no protocol adapter for connector: {connector_id}")))?;
+    adapter.parse_responses(exchanges)
 }
 
 /// Expected exchange count for a connector's v1 operation, used by the
 /// product path to validate fixture sets before beginning a run.
 pub fn expected_exchanges(connector_id: &str) -> Option<usize> {
-    match connector_id {
-        "pubmed" => Some(2),
-        "chembl" => Some(1),
-        "crossref" => Some(1),
-        "uniprot" | "europepmc" | "openalex" => Some(1),
-        _ => None,
-    }
+    super::adapter::REGISTRY.expected_exchanges(connector_id)
 }
 
 /// Phase one of the fetch protocol, mirroring the CSV/import loops.

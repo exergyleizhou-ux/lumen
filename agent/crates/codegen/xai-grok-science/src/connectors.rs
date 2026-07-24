@@ -18,6 +18,7 @@ pub mod fetch;
 pub mod openalex;
 pub mod pubmed;
 pub mod uniprot;
+pub mod adapter;
 
 /// Minimal percent-encoding for query terms (unreserved characters pass
 /// through; everything else is %XX). Keeps the crate free of a URL crate

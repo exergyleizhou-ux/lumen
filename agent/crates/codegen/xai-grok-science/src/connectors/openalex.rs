@@ -5,8 +5,43 @@
 //! authorships, locations, references, topics, and content URLs are neither
 //! returned nor parsed.
 
+use super::adapter::ProtocolAdapter;
 use super::fetch::{ParsedResponse, RetrievedRecord};
 use crate::ScienceError;
+
+/// DS-1 protocol adapter. Registered in the global [`super::adapter::REGISTRY`].
+pub struct OpenalexAdapter;
+
+impl ProtocolAdapter for OpenalexAdapter {
+    fn descriptor(&self) -> &'static super::ConnectorDescriptor {
+        &super::OPENALEX
+    }
+
+    fn expected_exchanges(&self) -> usize {
+        1
+    }
+
+    fn build_fixture_paths(
+        &self,
+        query: &str,
+        max_results: u32,
+        _fixtures: &[Vec<u8>],
+    ) -> crate::Result<Vec<String>> {
+        Ok(vec![search_path(query, max_results)])
+    }
+
+    fn parse_responses(
+        &self,
+        exchanges: &[super::fetch::FetchExchange],
+    ) -> crate::Result<ParsedResponse> {
+        if exchanges.len() != 1 {
+            return Err(ScienceError::Invalid(
+                "openalex fetch requires exactly one works exchange".into(),
+            ));
+        }
+        parse_search(&exchanges[0].response)
+    }
+}
 
 const SELECTED_FIELDS: &str = "id,doi,display_name,publication_year";
 

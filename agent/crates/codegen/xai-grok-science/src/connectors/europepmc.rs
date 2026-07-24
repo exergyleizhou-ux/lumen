@@ -4,8 +4,43 @@
 //! expansion disabled for deterministic query semantics. Abstracts, full text,
 //! reference lists, annotations, and links are neither requested nor parsed.
 
+use super::adapter::ProtocolAdapter;
 use super::fetch::{ParsedResponse, RetrievedRecord};
 use crate::ScienceError;
+
+/// DS-1 protocol adapter. Registered in the global [`super::adapter::REGISTRY`].
+pub struct EuropepmcAdapter;
+
+impl ProtocolAdapter for EuropepmcAdapter {
+    fn descriptor(&self) -> &'static super::ConnectorDescriptor {
+        &super::EUROPEPMC
+    }
+
+    fn expected_exchanges(&self) -> usize {
+        1
+    }
+
+    fn build_fixture_paths(
+        &self,
+        query: &str,
+        max_results: u32,
+        _fixtures: &[Vec<u8>],
+    ) -> crate::Result<Vec<String>> {
+        Ok(vec![search_path(query, max_results)])
+    }
+
+    fn parse_responses(
+        &self,
+        exchanges: &[super::fetch::FetchExchange],
+    ) -> crate::Result<ParsedResponse> {
+        if exchanges.len() != 1 {
+            return Err(ScienceError::Invalid(
+                "europepmc fetch requires exactly one search exchange".into(),
+            ));
+        }
+        parse_search(&exchanges[0].response)
+    }
+}
 
 /// Build one bounded Europe PMC metadata search. The product boundary enforces
 /// `1..=50`; clamping here keeps direct callers bounded too.
