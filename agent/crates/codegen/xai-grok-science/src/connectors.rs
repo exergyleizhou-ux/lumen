@@ -17,6 +17,7 @@ pub mod europepmc;
 pub mod fetch;
 pub mod openalex;
 pub mod pubmed;
+pub mod semantic_scholar;
 pub mod uniprot;
 pub mod adapter;
 
@@ -250,9 +251,34 @@ const OPENALEX: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/works?search=single%20cell%20RNA&per_page=1&select=id,doi,display_name,publication_year",
 };
 
+/// Semantic Scholar Academic Graph API. Public, keyless tier available with
+/// shared 1000 req/s pool; introductory API key provides dedicated 1 req/s.
+/// Selected fields exclude abstracts, citation counts, and authors per
+/// DS-0 admission policy.
+const SEMANTIC_SCHOLAR: ConnectorDescriptor = ConnectorDescriptor {
+    id: "semantic-scholar",
+    display_name: "Semantic Scholar",
+    auth_class: AuthClass::None,
+    base_url: "https://api.semanticscholar.org",
+    egress_hosts: &["api.semanticscholar.org"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 3_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://api.semanticscholar.org/api-docs/",
+    user_notice: "Semantic Scholar metadata retrieved under fair use; S2 data available under ODC-BY. This connector intentionally retrieves no abstracts or full text. Verify article-level rights before reusing underlying content.",
+    data_class: DataClass::PublicReference,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/graph/v1/paper/search?query=machine%20learning&limit=1&fields=paperId,title,url,year,venue,externalIds",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR]
 }
 
 /// Look up a connector by id.
@@ -503,6 +529,7 @@ mod tests {
                 "uniprot",
                 "europepmc",
                 "openalex",
+                "semantic-scholar",
             ]
         );
         assert!(descriptor("pubmed").is_some());
@@ -511,6 +538,7 @@ mod tests {
         assert!(descriptor("uniprot").is_some());
         assert!(descriptor("europepmc").is_some());
         assert!(descriptor("openalex").is_some());
+        assert!(descriptor("semantic-scholar").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
