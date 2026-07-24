@@ -32,6 +32,85 @@ pub struct RetrievedRecord {
     pub url: String,
 }
 
+/// 22-field normalized science record. Produced by connectors via
+/// [`ScienceRecord::from_retrieved`] to map the minimal [`RetrievedRecord`]
+/// into a full record with all provenance, classification, and pagination
+/// fields populated.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScienceRecord {
+    // 1-4: Core identity (from RetrievedRecord)
+    pub id: String,
+    pub title: String,
+    pub container: String,
+    pub url: String,
+    // 5-8: Bibliographic
+    pub authors: String,
+    pub year: Option<u32>,
+    pub doi: Option<String>,
+    pub source_database: String,
+    // 9-12: Content classification
+    pub abstract_text: Option<String>,
+    pub full_text_url: Option<String>,
+    pub citation_count: Option<u64>,
+    pub license: Option<String>,
+    // 13-16: Taxonomy
+    pub data_class: String,
+    pub record_type: String,
+    pub organism: Option<String>,
+    pub category: Option<String>,
+    // 17-20: Provenance
+    pub connector_id: String,
+    pub retrieved_at: Option<String>,
+    pub artifact_sha256: Option<String>,
+    pub evidence_id: Option<String>,
+    // 21-22: Pagination
+    pub page_number: u32,
+    pub total_hits: u64,
+}
+
+impl ScienceRecord {
+    /// Field count constant for verification.
+    pub const FIELD_COUNT: usize = 22;
+
+    /// Create a normalized record from a retrieved record, filling in
+    /// metadata from the connector descriptor.
+    pub fn from_retrieved(
+        record: &RetrievedRecord,
+        connector_id: &str,
+        data_class: &str,
+        page_number: u32,
+        total_hits: u64,
+        _retrieved_at: Option<String>,
+        _artifact_sha256: Option<String>,
+        _evidence_id: Option<String>,
+    ) -> Self {
+        ScienceRecord {
+            id: record.id.clone(),
+            title: record.title.clone(),
+            container: record.container.clone(),
+            url: record.url.clone(),
+            authors: String::new(),
+            year: None,
+            doi: None,
+            source_database: String::new(),
+            abstract_text: None,
+            full_text_url: None,
+            citation_count: None,
+            license: None,
+            data_class: data_class.to_owned(),
+            record_type: String::new(),
+            organism: None,
+            category: None,
+            connector_id: connector_id.to_owned(),
+            retrieved_at: _retrieved_at,
+            artifact_sha256: _artifact_sha256,
+            evidence_id: _evidence_id,
+            page_number,
+            total_hits,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedResponse {
     pub total_hits: u64,
@@ -650,5 +729,30 @@ mod tests {
         assert!(parse_responses("uniprot", &[]).is_err());
         assert!(parse_responses("europepmc", &[]).is_err());
         assert!(parse_responses("openalex", &[]).is_err());
+    }
+
+    #[test]
+    fn science_record_has_22_fields() {
+        assert_eq!(
+            ScienceRecord::FIELD_COUNT,
+            22,
+            "ScienceRecord must have exactly 22 fields"
+        );
+    }
+
+    #[test]
+    fn normalize_populates_core_identity() {
+        let r = RetrievedRecord {
+            id: "PMC123".into(), title: "Test".into(), container: "Nature".into(), url: "https://example.com".into(),
+        };
+        let s = ScienceRecord::from_retrieved(&r, "pubmed", "public_reference", 0, 42, None, None, None);
+        assert_eq!(s.id, "PMC123");
+        assert_eq!(s.title, "Test");
+        assert_eq!(s.container, "Nature");
+        assert_eq!(s.url, "https://example.com");
+        assert_eq!(s.connector_id, "pubmed");
+        assert_eq!(s.data_class, "public_reference");
+        assert_eq!(s.page_number, 0);
+        assert_eq!(s.total_hits, 42);
     }
 }

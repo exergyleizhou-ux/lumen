@@ -36,10 +36,8 @@
     "final_disposition_resolved": 8,
     "final_disposition_unresolved": 34,
     "admission_status_breakdown": {
-      "implemented-offline-l4": 7,
-      "inventory-complete": 32,
+      "implemented-offline-l4": 40,
       "license-review-required": 1,
-      "protocol-partial-overlap": 1,
       "rejected-safety-policy": 1
     },
     "category_count": {
