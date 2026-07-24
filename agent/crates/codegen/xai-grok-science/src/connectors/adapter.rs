@@ -171,6 +171,12 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::openalex::OpenalexAdapter)).expect("openalex adapter");
     registry.register(Box::new(super::semantic_scholar::SemanticScholarAdapter)).expect("semantic-scholar adapter");
     registry.register(Box::new(super::arxiv::ArxivAdapter)).expect("arxiv adapter");
+    registry.register(Box::new(super::biorxiv::BiorxivAdapter)).expect("biorxiv adapter");
+    registry.register(Box::new(super::rcsb_pdb::RcsbPdbAdapter)).expect("rcsb-pdb adapter");
+    registry.register(Box::new(super::pdbe::PdbeAdapter)).expect("pdbe adapter");
+    registry.register(Box::new(super::alphafold::AlphafoldAdapter)).expect("alphafold adapter");
+    registry.register(Box::new(super::interpro::InterproAdapter)).expect("interpro adapter");
+    registry.register(Box::new(super::sifts::SiftsAdapter)).expect("sifts adapter");
 
     validate_global_coverage();
 
@@ -263,6 +269,12 @@ mod tests {
         registry.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
         registry.register(Box::new(super::super::semantic_scholar::SemanticScholarAdapter)).unwrap();
         registry.register(Box::new(super::super::arxiv::ArxivAdapter)).unwrap();
+        registry.register(Box::new(super::super::biorxiv::BiorxivAdapter)).unwrap();
+        registry.register(Box::new(super::super::rcsb_pdb::RcsbPdbAdapter)).unwrap();
+        registry.register(Box::new(super::super::pdbe::PdbeAdapter)).unwrap();
+        registry.register(Box::new(super::super::alphafold::AlphafoldAdapter)).unwrap();
+        registry.register(Box::new(super::super::interpro::InterproAdapter)).unwrap();
+        registry.register(Box::new(super::super::sifts::SiftsAdapter)).unwrap();
         // ... plus one orphan whose descriptor is NOT in connectors::registry().
         registry.register(Box::new(OrphanAdapter)).unwrap();
 
@@ -298,5 +310,11 @@ mod tests {
         assert_eq!(REGISTRY.expected_exchanges("openalex"), Some(1));
         assert_eq!(REGISTRY.expected_exchanges("semantic-scholar"), Some(1));
         assert_eq!(REGISTRY.expected_exchanges("arxiv"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("biorxiv"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("rcsb-pdb"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("pdbe"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("alphafold"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("interpro"), Some(1));
+        assert_eq!(REGISTRY.expected_exchanges("sifts"), Some(1));
     }
 }

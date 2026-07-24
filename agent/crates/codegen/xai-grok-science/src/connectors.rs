@@ -11,14 +11,20 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod alphafold;
 pub mod arxiv;
+pub mod biorxiv;
 pub mod chembl;
 pub mod crossref;
 pub mod europepmc;
 pub mod fetch;
+pub mod interpro;
 pub mod openalex;
+pub mod pdbe;
 pub mod pubmed;
+pub mod rcsb_pdb;
 pub mod semantic_scholar;
+pub mod sifts;
 pub mod uniprot;
 pub mod adapter;
 
@@ -299,9 +305,75 @@ const ARXIV: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/api/query?search_query=all%3Amachine+learning&start=0&max_results=1&sortBy=relevance",
 };
 
+const BIORXIV: ConnectorDescriptor = ConnectorDescriptor {
+    id: "biorxiv", display_name: "bioRxiv / medRxiv", auth_class: AuthClass::None,
+    base_url: "https://api.biorxiv.org", egress_hosts: &["api.biorxiv.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 2_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.biorxiv.org/about/terms",
+    user_notice: "Preprint metadata retrieved from bioRxiv/medRxiv. Content rights vary by author; abstracts intentionally excluded.",
+    data_class: DataClass::PublicReference, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/details/biorxiv/10.1101/2024.01.01.123456",
+};
+
+const RCSB_PDB: ConnectorDescriptor = ConnectorDescriptor {
+    id: "rcsb-pdb", display_name: "RCSB PDB", auth_class: AuthClass::None,
+    base_url: "https://search.rcsb.org", egress_hosts: &["search.rcsb.org", "data.rcsb.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.rcsb.org/pages/policies",
+    user_notice: "PDB data is CC0. Structural metadata only; full coordinate data available via separate download.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/rcsbsearch/v2/query?json=%7B%22query%22%3A%7B%22type%22%3A%22terminal%22%2C%22service%22%3A%22full_text%22%2C%22parameters%22%3A%7B%22value%22%3A%22hemoglobin%22%7D%7D%2C%22return_type%22%3A%22entry%22%2C%22request_options%22%3A%7B%22paginate%22%3A%7B%22start%22%3A0%2C%22rows%22%3A1%7D%7D%7D",
+};
+
+const PDBE: ConnectorDescriptor = ConnectorDescriptor {
+    id: "pdbe", display_name: "PDBe", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/pdbe", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "PDB data is CC0. EMBL-EBI terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/pdbe/search/pdb/select?q=hemoglobin&wt=json&rows=1&fl=pdb_id,title,experimental_method,resolution,organism_scientific_name",
+};
+
+const ALPHAFOLD: ConnectorDescriptor = ConnectorDescriptor {
+    id: "alphafold", display_name: "AlphaFold DB", auth_class: AuthClass::None,
+    base_url: "https://alphafold.ebi.ac.uk", egress_hosts: &["alphafold.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 500 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "AlphaFold DB data is CC-BY-4.0. EMBL-EBI terms apply. Predicted structures only; experimental validation not implied.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/prediction/P01308",
+};
+
+const INTERPRO: ConnectorDescriptor = ConnectorDescriptor {
+    id: "interpro", display_name: "InterPro", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/interpro", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "InterPro data is CC0. EMBL-EBI terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/interpro/api/entry/interpro/?search=kringle&page_size=1",
+};
+
+const SIFTS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "sifts", display_name: "SIFTS", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/pdbe/api/mappings", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 500 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "SIFTS data freely available. EMBL-EBI terms apply. Residue-level mappings summarized only.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/best_structures/P01308",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS]
 }
 
 /// Look up a connector by id.
@@ -554,6 +626,12 @@ mod tests {
                 "openalex",
                 "semantic-scholar",
                 "arxiv",
+                "biorxiv",
+                "rcsb-pdb",
+                "pdbe",
+                "alphafold",
+                "interpro",
+                "sifts",
             ]
         );
         assert!(descriptor("pubmed").is_some());
@@ -564,6 +642,12 @@ mod tests {
         assert!(descriptor("openalex").is_some());
         assert!(descriptor("semantic-scholar").is_some());
         assert!(descriptor("arxiv").is_some());
+        assert!(descriptor("biorxiv").is_some());
+        assert!(descriptor("rcsb-pdb").is_some());
+        assert!(descriptor("pdbe").is_some());
+        assert!(descriptor("alphafold").is_some());
+        assert!(descriptor("interpro").is_some());
+        assert!(descriptor("sifts").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
