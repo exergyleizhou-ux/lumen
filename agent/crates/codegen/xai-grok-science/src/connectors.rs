@@ -13,18 +13,23 @@ use serde::{Deserialize, Serialize};
 
 pub mod alphafold;
 pub mod arxiv;
+pub mod bindingdb;
 pub mod biorxiv;
+pub mod chebi;
 pub mod chembl;
 pub mod crossref;
 pub mod europepmc;
 pub mod fetch;
+pub mod gtopdb;
 pub mod interpro;
 pub mod openalex;
 pub mod pdbe;
+pub mod pubchem;
 pub mod pubmed;
 pub mod rcsb_pdb;
 pub mod semantic_scholar;
 pub mod sifts;
+pub mod surechembl;
 pub mod uniprot;
 pub mod adapter;
 
@@ -371,9 +376,64 @@ const SIFTS: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/best_structures/P01308",
 };
 
+const PUBCHEM: ConnectorDescriptor = ConnectorDescriptor {
+    id: "pubchem", display_name: "PubChem", auth_class: AuthClass::None,
+    base_url: "https://pubchem.ncbi.nlm.nih.gov/rest/pug", egress_hosts: &["pubchem.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 2, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "PubChem data freely available. NCBI policies apply. Structure data (SMILES, InChI) excluded.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/rest/pug/compound/name/aspirin/cids/JSON?name_type=word",
+};
+
+const BINDINGDB: ConnectorDescriptor = ConnectorDescriptor {
+    id: "bindingdb", display_name: "BindingDB", auth_class: AuthClass::None,
+    base_url: "https://bindingdb.org/rest", egress_hosts: &["bindingdb.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 2_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.bindingdb.org/rwd/bind/termsofuse.jsp",
+    user_notice: "BindingDB data CC BY 4.0. SMILES structure data excluded.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/rest/getLigandsByUniprots?uniprot=P01308&cutoff=10000&code=0&response=application/json",
+};
+
+const GTOPDB: ConnectorDescriptor = ConnectorDescriptor {
+    id: "gtopdb", display_name: "GtoPdb", auth_class: AuthClass::None,
+    base_url: "https://www.guidetopharmacology.org/services", egress_hosts: &["www.guidetopharmacology.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.guidetopharmacology.org/about.jsp",
+    user_notice: "GtoPdb data CC BY-SA 4.0.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/services/ligands?name=aspirin",
+};
+
+const SURECHEMBL: ConnectorDescriptor = ConnectorDescriptor {
+    id: "surechembl", display_name: "SureChEMBL", auth_class: AuthClass::None,
+    base_url: "https://www.surechembl.org/api", egress_hosts: &["www.surechembl.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "SureChEMBL data freely available. EMBL-EBI terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/api/search/content?query=aspirin&page=1&itemsPerPage=1",
+};
+
+const CHEBI: ConnectorDescriptor = ConnectorDescriptor {
+    id: "chebi", display_name: "ChEBI", auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/ols4/api", egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "ChEBI data CC BY 4.0. EMBL-EBI terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/ols4/api/search?q=aspirin&ontology=chebi&rows=1",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI]
 }
 
 /// Look up a connector by id.

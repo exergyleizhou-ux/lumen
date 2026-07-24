@@ -177,6 +177,11 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::alphafold::AlphafoldAdapter)).expect("alphafold adapter");
     registry.register(Box::new(super::interpro::InterproAdapter)).expect("interpro adapter");
     registry.register(Box::new(super::sifts::SiftsAdapter)).expect("sifts adapter");
+    registry.register(Box::new(super::pubchem::PubchemAdapter)).expect("pubchem adapter");
+    registry.register(Box::new(super::bindingdb::BindingdbAdapter)).expect("bindingdb adapter");
+    registry.register(Box::new(super::gtopdb::GtopdbAdapter)).expect("gtopdb adapter");
+    registry.register(Box::new(super::surechembl::SurechemblAdapter)).expect("surechembl adapter");
+    registry.register(Box::new(super::chebi::ChebiAdapter)).expect("chebi adapter");
 
     validate_global_coverage();
 
