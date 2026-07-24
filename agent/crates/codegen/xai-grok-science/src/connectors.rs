@@ -905,6 +905,15 @@ mod tests {
     }
 
     #[test]
+    fn register_count_is_42() {
+        assert_eq!(
+            registry().len(),
+            42,
+            "registry must contain exactly 42 connectors"
+        );
+    }
+
+    #[test]
     fn every_registered_descriptor_passes_validation() {
         for d in registry() {
             validate_descriptor(d).unwrap_or_else(|e| panic!("{} invalid: {e}", d.id));
