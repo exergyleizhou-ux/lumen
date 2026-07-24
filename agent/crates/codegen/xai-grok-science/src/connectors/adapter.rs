@@ -148,10 +148,11 @@ pub fn validate_adapter_descriptor_coverage(
     Ok(())
 }
 
-/// Validate the global adapter registry against the global descriptor
-/// registry. Called at startup; fails closed on mismatch.
-fn validate_global_coverage() {
-    validate_adapter_descriptor_coverage(&REGISTRY, super::registry())
+/// Validate the adapter registry against the descriptor registry.
+/// Takes a reference to the local registry (NOT &REGISTRY) to avoid
+/// recursive LazyLock deref deadlock during initialization.
+fn validate_local_coverage(adapter_registry: &AdapterRegistry) {
+    validate_adapter_descriptor_coverage(adapter_registry, super::registry())
         .expect("adapter/descriptor coverage validation failed at init");
 }
 
@@ -206,7 +207,7 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::biogrid::BiogridAdapter)).expect("biogrid adapter");
     registry.register(Box::new(super::kegg::KeggAdapter)).expect("kegg adapter");
 
-    validate_global_coverage();
+    validate_local_coverage(&registry);
 
     registry
 });

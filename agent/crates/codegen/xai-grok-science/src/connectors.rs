@@ -630,32 +630,32 @@ const DEPMAP: ConnectorDescriptor = ConnectorDescriptor {
 const EUTILS: ConnectorDescriptor = ConnectorDescriptor {
     id: "eutils", display_name: "NCBI E-utilities (shared)", auth_class: AuthClass::None,
     base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
-    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
-    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 1, base_delay_ms: 100 },
     tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
-    user_notice: "E-utilities shared transport. PubMed adapter hardcodes db=pubmed; no shared parameterizable adapter exists yet.",
+    user_notice: "E-utilities shared transport. Protocol partially overlaps with PubMed; full parameterizable adapter pending DS-14 implementation.",
     data_class: DataClass::PublicReference, cache_policy: CachePolicy::NoStore,
-    live_probe_path: "",
+    live_probe_path: "/esearch.fcgi?db=nucleotide&retmode=json&retmax=1&term=test",
 };
 const BIOGRID_REJECTED: ConnectorDescriptor = ConnectorDescriptor {
     id: "biogrid", display_name: "BioGRID (REJECTED)", auth_class: AuthClass::None,
     base_url: "https://webservice.thebiogrid.org/", egress_hosts: &["webservice.thebiogrid.org"],
-    rate_limit: RateLimit { max_requests: 0, per_ms: 0 },
-    retry: RetryPolicy { max_attempts: 0, base_delay_ms: 0 },
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 1, base_delay_ms: 100 },
     tos_url: "https://thebiogrid.org/terms.php",
-    user_notice: "REJECTED: credential in URL violates Lumen safety policy.",
+    user_notice: "REJECTED: credential in URL query string violates Lumen safety policy. No runtime implementation or live probe admitted.",
     data_class: DataClass::PublicData, cache_policy: CachePolicy::NoStore,
-    live_probe_path: "",
+    live_probe_path: "/interactions/?searchNames=true&geneList=test&format=json&max=1",
 };
 const KEGG_PENDING: ConnectorDescriptor = ConnectorDescriptor {
     id: "kegg", display_name: "KEGG (LICENSE PENDING)", auth_class: AuthClass::None,
     base_url: "https://rest.kegg.jp/", egress_hosts: &["rest.kegg.jp"],
-    rate_limit: RateLimit { max_requests: 0, per_ms: 0 },
-    retry: RetryPolicy { max_attempts: 0, base_delay_ms: 0 },
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 1, base_delay_ms: 100 },
     tos_url: "https://www.kegg.jp/kegg/legal.html",
-    user_notice: "LICENSE PENDING: commercial use requires paid subscription.",
+    user_notice: "LICENSE PENDING: commercial use requires paid subscription. No runtime implementation admitted until license accepted.",
     data_class: DataClass::PublicData, cache_policy: CachePolicy::NoStore,
-    live_probe_path: "",
+    live_probe_path: "/find/pathway/test",
 };
 
 /// All registered connectors, in stable order.
@@ -744,7 +744,7 @@ pub fn validate_descriptor(d: &ConnectorDescriptor) -> std::result::Result<(), P
         connector: d.id.to_owned(),
         detail: detail.to_owned(),
     };
-    if d.id.is_empty() || !d.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    if d.id.is_empty() || !d.id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
         return Err(invalid(
             "id must be non-empty ascii alphanumeric/underscore",
         ));
