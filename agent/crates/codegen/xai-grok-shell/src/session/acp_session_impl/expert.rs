@@ -505,9 +505,7 @@ impl SessionActor {
         };
         let snapshot = {
             let mut actor = self.state.lock().await;
-            actor
-                .expert
-                .restored(restore.clone(), ExpertOutcome::Aborted);
+            actor.expert.restored(restore, ExpertOutcome::Aborted);
             actor.expert.clone()
         };
         self.persist_expert_snapshot(&snapshot);
@@ -537,10 +535,11 @@ impl SessionActor {
         );
 
         let resolved_model = cfg.model.clone();
-        let client = xai_grok_sampler::SamplingClient::new(cfg).map_err(|_| ConsultCallFailure {
-            code: ExpertErrorCode::ConsultantUnavailable,
-            usage: (0, 0),
-        })?;
+        let client =
+            xai_grok_sampler::SamplingClient::new(cfg).map_err(|_| ConsultCallFailure {
+                code: ExpertErrorCode::ConsultantUnavailable,
+                usage: (0, 0),
+            })?;
 
         // E3: optionally enable readonly tools for the consultant.
         // Hold cwd for the host lifetime to avoid borrow issues.
@@ -556,7 +555,7 @@ impl SessionActor {
             Some(crate::session::expert_consultant_tools::ReadonlyToolHost {
                 workspace_root: &cwd,
                 deny_globs: &self.deny_read_globs,
-                tool_call_cap: tool_cap.min(5).max(1),
+                tool_call_cap: tool_cap.clamp(1, 5),
             })
         } else {
             None
@@ -977,8 +976,7 @@ impl SessionActor {
     ) -> Result<(), ExpertErrorCode> {
         let evidence = ConsultEvidenceBundle::build(task, &[], "", "");
         let estimated_input = evidence.estimated_input_tokens();
-        let estimated_tokens =
-            estimated_input.saturating_add(u64::from(max_output_tokens));
+        let estimated_tokens = estimated_input.saturating_add(u64::from(max_output_tokens));
 
         // Dual needs two independent reservations when budget allows both.
         // remaining=1 ⇒ A-only degraded path (never pretend full dual).
@@ -1110,46 +1108,47 @@ impl SessionActor {
                     self.persist_expert_snapshot(&actor.expert);
                     None
                 } else {
-                match actor
-                    .expert
-                    .reserve_consult(estimated_input, max_output_tokens)
-                {
-                    Ok(guard) => {
-                        let snap = actor.expert.clone();
-                        self.persist_expert_snapshot(&snap);
-                        Some((guard, snap))
-                    }
-                    Err(ExpertErrorCode::BudgetExhausted) => {
-                        actor.expert.last_error_code =
-                            Some(ExpertErrorCode::BudgetExhausted.as_str().to_owned());
-                        actor.expert.notes.push(
+                    match actor
+                        .expert
+                        .reserve_consult(estimated_input, max_output_tokens)
+                    {
+                        Ok(guard) => {
+                            let snap = actor.expert.clone();
+                            self.persist_expert_snapshot(&snap);
+                            Some((guard, snap))
+                        }
+                        Err(ExpertErrorCode::BudgetExhausted) => {
+                            actor.expert.last_error_code =
+                                Some(ExpertErrorCode::BudgetExhausted.as_str().to_owned());
+                            actor.expert.notes.push(
                             "dual source B skipped: budget_exhausted; degraded to A-only or executor-only"
                                 .to_owned(),
                         );
-                        // Finalize merge with B missing.
-                        let mut bundle = actor.expert.dual_result.take().unwrap_or_default();
-                        bundle.source_b_ok = false;
-                        bundle.degraded = true;
-                        let merged = crate::session::expert::merge_dual_proposals(
-                            &bundle.proposal_a,
-                            &bundle.proposal_b,
-                            bundle.source_a_ok,
-                            false,
-                        );
-                        bundle.merged_plan = merged.merged_plan.clone();
-                        bundle.disagreements = merged.disagreements;
-                        bundle.selection_reason = merged.selection_reason;
-                        bundle.merge_algorithm =
-                            crate::session::expert::DUAL_MERGE_ALGORITHM.to_owned();
-                        actor.expert.plan = bundle.merged_plan.clone();
-                        actor.expert.advisory_verdict = Some("dual_advisory_degraded".to_owned());
-                        actor.expert.dual_result = Some(bundle);
-                        actor.expert.phase = ExpertPhase::Ready;
-                        self.persist_expert_snapshot(&actor.expert);
-                        None
+                            // Finalize merge with B missing.
+                            let mut bundle = actor.expert.dual_result.take().unwrap_or_default();
+                            bundle.source_b_ok = false;
+                            bundle.degraded = true;
+                            let merged = crate::session::expert::merge_dual_proposals(
+                                &bundle.proposal_a,
+                                &bundle.proposal_b,
+                                bundle.source_a_ok,
+                                false,
+                            );
+                            bundle.merged_plan = merged.merged_plan.clone();
+                            bundle.disagreements = merged.disagreements;
+                            bundle.selection_reason = merged.selection_reason;
+                            bundle.merge_algorithm =
+                                crate::session::expert::DUAL_MERGE_ALGORITHM.to_owned();
+                            actor.expert.plan = bundle.merged_plan.clone();
+                            actor.expert.advisory_verdict =
+                                Some("dual_advisory_degraded".to_owned());
+                            actor.expert.dual_result = Some(bundle);
+                            actor.expert.phase = ExpertPhase::Ready;
+                            self.persist_expert_snapshot(&actor.expert);
+                            None
+                        }
+                        Err(code) => return Err(code),
                     }
-                    Err(code) => return Err(code),
-                }
                 }
             };
             if let Some((callback_b, snap_b)) = leg_b {
@@ -1201,7 +1200,7 @@ impl SessionActor {
                         Some(crate::session::expert_consultant_tools::ReadonlyToolHost {
                             workspace_root: &cwd,
                             deny_globs: &self.deny_read_globs,
-                            tool_call_cap: tool_cap.min(5).max(1),
+                            tool_call_cap: tool_cap.clamp(1, 5),
                         })
                     } else {
                         None
@@ -2061,7 +2060,11 @@ mod consult_http_tests {
         assert_ne!(pa.summary, pb.summary);
         let mut state = crate::session::expert::ExpertModeState::configured();
         state
-            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "production dual plan",
+                ExpertMode::Dual,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         state.budget.token_cap = 50_000;
         state

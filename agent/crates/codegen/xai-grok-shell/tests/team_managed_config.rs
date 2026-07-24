@@ -3,7 +3,7 @@
 //! the cli-chat-proxy deployment-config route.
 //!
 //! Every test here MUST be `#[serial]`: they share one process-global
-//! `GROK_HOME` (the `grok_home` `OnceLock` allows a single value per process)
+//! `GROK_HOME` / `LUMEN_HOME` (both home resolvers cache one value per process)
 //! and mutate that directory + process env, so concurrent tests would race.
 
 use std::io::{BufRead, BufReader, Write};
@@ -20,9 +20,9 @@ fn team_identity(id: &str) -> ServingIdentity {
     ServingIdentity::Team(id.to_owned())
 }
 
-/// Shared temp dir used as GROK_HOME for the whole test binary (the grok_home
-/// `OnceLock` only allows one value per process). Also scrubs/installs the env
-/// this suite depends on, before any test thread reads it.
+/// Shared temp dir used as both legacy GROK_HOME and primary LUMEN_HOME for the
+/// whole test binary (the home resolvers allow one value per process). Also
+/// scrubs/installs the env this suite depends on before any test thread reads it.
 fn test_home() -> &'static PathBuf {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
@@ -30,6 +30,7 @@ fn test_home() -> &'static PathBuf {
         // SAFETY: set once at init before other threads read the vars.
         unsafe {
             std::env::set_var("GROK_HOME", &path);
+            std::env::set_var("LUMEN_HOME", &path);
             // Ambient env must not shadow the scenarios under test: a real
             // deployment key, a managed-config opt-out, or a proxy that would
             // intercept the 127.0.0.1 mocks.

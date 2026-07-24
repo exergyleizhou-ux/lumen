@@ -377,6 +377,8 @@ pub struct SamplingClient {
     bearer_resolver: Option<crate::config::SharedBearerResolver>,
     /// Per-request header injection (OTel traceparent).
     header_injector: Option<crate::config::SharedHeaderInjector>,
+    request_observer: Option<crate::config::SharedRequestObserver>,
+    wire_observation_context: Option<(lumen_discipline::WireObservationContext, u32)>,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -625,12 +627,24 @@ impl SamplingClient {
             attribution_callback: config.attribution_callback,
             bearer_resolver: config.bearer_resolver,
             header_injector: config.header_injector,
+            request_observer: config.request_observer,
+            wire_observation_context: None,
         })
     }
 
     /// The configured API backend for this client.
     pub fn api_backend(&self) -> ApiBackend {
         self.defaults.api_backend.clone()
+    }
+
+    /// Sets dynamic, submission-scoped observation data for the next attempt.
+    /// This is intentionally separate from `SamplerConfig`: retry count and
+    /// cache epoch are facts of one actor task, not client construction.
+    pub fn set_wire_observation_context(
+        &mut self,
+        context: Option<(lumen_discipline::WireObservationContext, u32)>,
+    ) {
+        self.wire_observation_context = context;
     }
 
     /// POST with default headers. Overrides auth from resolver if wired.
@@ -681,6 +695,54 @@ impl SamplingClient {
             injector.inject(&mut headers);
         }
         self.http.post(url).headers(headers)
+    }
+
+    /// Emit only one-way, sanitized evidence for the exact request about to be
+    /// executed. Telemetry is deliberately fail-open: a bad observer must not
+    /// prevent a model request from reaching the provider.
+    fn observe_built_request(
+        &self,
+        request: &reqwest::Request,
+        kind: lumen_discipline::WireSerializationKind,
+        _session_id: &str,
+    ) {
+        let (Some(observer), Some((context, attempt_index))) =
+            (&self.request_observer, &self.wire_observation_context)
+        else {
+            return;
+        };
+        let body = request
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .unwrap_or_default();
+        let mut transport = format!("{} {}\n", request.method(), request.url());
+        // Explicit allowlist: never hash credentials, request IDs, traces, or
+        // arbitrary injected headers into persisted diagnostics.
+        for header in [CONTENT_TYPE, ACCEPT, USER_AGENT] {
+            if let Some(value) = request.headers().get(&header)
+                && let Ok(value) = value.to_str()
+            {
+                transport.push_str(header.as_str());
+                transport.push(':');
+                transport.push_str(value);
+                transport.push('\n');
+            }
+        }
+        transport.push_str(&String::from_utf8_lossy(body));
+        let snapshot = lumen_discipline::WireRequestSnapshot {
+            cache_domain_hash: context.cache_domain_hash.clone(),
+            cache_epoch_id: context.cache_epoch_id.clone(),
+            transport_hash: lumen_discipline::digest_hex(transport.as_bytes()),
+            provider_cache_material_hash: lumen_discipline::digest_hex(body),
+            body_bytes: body.len() as u64,
+            wire_common_prefix_bytes: None,
+            serialization_kind: kind,
+            mutation_reasons: context.mutation_reasons.clone(),
+            attempt_index: *attempt_index,
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            observer.observe(&snapshot);
+        }));
     }
 
     /// Bearer prefix for 401 attribution. Prefers live resolver, falls back to default_headers.
@@ -927,6 +989,7 @@ impl SamplingClient {
         &self,
         request: ChatCompletionRequest,
     ) -> Result<ChatCompletionResponse> {
+        let cache_session_id = request.x_grok_session_id.clone();
         let payload = self.apply_defaults(request)?;
         let x_grok_conv_id = &payload.x_grok_conv_id.clone().unwrap_or_default();
         let x_grok_req_id = &payload.x_grok_req_id.clone().unwrap_or_default();
@@ -953,7 +1016,13 @@ impl SamplingClient {
             .apply(self.post(self.endpoint("chat/completions")))
             .json(&body);
 
-        let response = http_request.send().await.map_err(|e| {
+        let built_request = http_request.build().map_err(SamplingError::Http)?;
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::ChatCompletions,
+            cache_session_id.as_deref().unwrap_or_default(),
+        );
+        let response = self.http.execute(built_request).await.map_err(|e| {
             // Log at debug level; errors are surfaced to the caller.
             tracing::debug!("HTTP request failed: {}", e);
             e
@@ -1024,6 +1093,11 @@ impl SamplingClient {
             "Sending chat/completions request"
         );
         Self::log_request_headers(&built_request, "chat/completions");
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::ChatCompletions,
+            payload.x_grok_session_id.as_deref().unwrap_or_default(),
+        );
 
         let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1222,10 +1296,20 @@ impl SamplingClient {
             deployment_id: request.x_grok_deployment_id.as_deref(),
             user_id: request.x_grok_user_id.as_deref(),
         };
+        let extra_raw_tools = std::mem::take(&mut request.extra_raw_tools);
         let mut request_body = serde_json::to_value(&request.inner).map_err(|e| {
             tracing::error!("Failed to serialize responses request: {}", e);
             SamplingError::Serialization(e)
         })?;
+        // Match the streaming Responses path: typed async-openai tools do not
+        // cover xAI-specific hosted tools such as x_search.
+        if !extra_raw_tools.is_empty() {
+            if let Some(tools) = request_body.get_mut("tools").and_then(|v| v.as_array_mut()) {
+                tools.extend(extra_raw_tools);
+            } else {
+                request_body["tools"] = serde_json::Value::Array(extra_raw_tools);
+            }
+        }
         // async-openai's ReasoningTextContent struct omits the `type`
         // discriminator that the Responses API requires on input. Patch
         // it in post-serialize. This is the last surviving piece of the
@@ -1235,7 +1319,13 @@ impl SamplingClient {
             .apply(self.post(self.endpoint("responses")))
             .json(&request_body);
 
-        let response = http_request.send().await.map_err(|e| {
+        let built_request = http_request.build().map_err(SamplingError::Http)?;
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::Responses,
+            request.x_grok_session_id.as_deref().unwrap_or_default(),
+        );
+        let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
             e
         })?;
@@ -1402,6 +1492,11 @@ impl SamplingClient {
             "Sending responses API stream request"
         );
         Self::log_request_headers(&built_request, "responses");
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::Responses,
+            request.x_grok_session_id.as_deref().unwrap_or_default(),
+        );
 
         let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1593,7 +1688,13 @@ impl SamplingClient {
             .apply(self.post(self.endpoint("messages")))
             .json(&request.inner);
 
-        let response = http_request.send().await.map_err(|e| {
+        let built_request = http_request.build().map_err(SamplingError::Http)?;
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::Messages,
+            request.x_grok_session_id.as_deref().unwrap_or_default(),
+        );
+        let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
             e
         })?;
@@ -1721,6 +1822,11 @@ impl SamplingClient {
             "Sending messages API stream request"
         );
         Self::log_request_headers(&built_request, "messages");
+        self.observe_built_request(
+            &built_request,
+            lumen_discipline::WireSerializationKind::Messages,
+            request.x_grok_session_id.as_deref().unwrap_or_default(),
+        );
 
         let response = self.http.execute(built_request).await.map_err(|e| {
             tracing::debug!("HTTP request failed: {}", e);
@@ -1972,6 +2078,12 @@ impl SamplingClient {
         let x_grok_turn_idx = request.x_grok_turn_idx.clone();
         let x_grok_agent_id = request.x_grok_agent_id.clone();
 
+        // Keep the non-streaming Responses wire identical to the streaming
+        // path. xAI-specific hosted tools cannot be represented by
+        // async-openai's typed `rs::Tool` and must be injected after
+        // serialization by `create_response`.
+        let extra_tools = xai_grok_sampling_types::extra_raw_tools(&request.hosted_tools);
+
         let responses_request: rs::CreateResponse = (&request).into();
 
         let mut wrapper = CreateResponseWrapper::new(responses_request);
@@ -1980,6 +2092,7 @@ impl SamplingClient {
         wrapper.x_grok_session_id = x_grok_session_id;
         wrapper.x_grok_turn_idx = x_grok_turn_idx;
         wrapper.x_grok_agent_id = x_grok_agent_id;
+        wrapper.extra_raw_tools = extra_tools;
 
         if let Some(trace) = trace {
             wrapper.trace = Some(trace);
@@ -2132,6 +2245,7 @@ mod tests {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            request_observer: None,
         }
     }
 
@@ -2480,6 +2594,290 @@ mod tests {
             req.headers().contains_key("traceparent"),
             "HeaderInjector should inject traceparent into post() requests"
         );
+    }
+
+    #[derive(Default, Debug)]
+    struct RecordingObserver {
+        snapshots: std::sync::Mutex<Vec<lumen_discipline::WireRequestSnapshot>>,
+        observed: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    }
+
+    impl crate::config::RequestObserver for RecordingObserver {
+        fn observe(&self, snapshot: &lumen_discipline::WireRequestSnapshot) {
+            if let Some(observed) = &self.observed {
+                observed.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            self.snapshots.lock().unwrap().push(snapshot.clone());
+        }
+    }
+
+    #[derive(Debug)]
+    struct PanickingObserver;
+
+    impl crate::config::RequestObserver for PanickingObserver {
+        fn observe(&self, _: &lumen_discipline::WireRequestSnapshot) {
+            panic!("observer failure must be fail-open");
+        }
+    }
+
+    #[test]
+    fn request_observer_snapshot_excludes_credentials_and_request_ids() {
+        let observer = std::sync::Arc::new(RecordingObserver::default());
+        let mut config = minimal_config();
+        config.request_observer = Some(observer.clone());
+        let mut client = SamplingClient::new(config).expect("build");
+        client.set_wire_observation_context(Some((
+            lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            },
+            0,
+        )));
+        let request = client
+            .post("https://example.test/v1/chat/completions")
+            .header("x-grok-req-id", "request-id-must-not-escape")
+            .json(&serde_json::json!({"prompt": "private prompt bytes"}))
+            .build()
+            .expect("build request");
+        let expected_body_bytes = request
+            .body()
+            .and_then(reqwest::Body::as_bytes)
+            .expect("JSON body is byte-backed")
+            .len() as u64;
+
+        client.observe_built_request(
+            &request,
+            lumen_discipline::WireSerializationKind::ChatCompletions,
+            "session-opaque-id",
+        );
+
+        let snapshots = observer.snapshots.lock().unwrap();
+        assert_eq!(snapshots.len(), 1);
+        let snapshot = &snapshots[0];
+        assert_eq!(
+            snapshot.serialization_kind,
+            lumen_discipline::WireSerializationKind::ChatCompletions
+        );
+        assert_eq!(snapshot.body_bytes, expected_body_bytes);
+        assert_eq!(snapshot.cache_domain_hash, "domain");
+        assert_eq!(snapshot.cache_epoch_id, "epoch");
+        assert_eq!(snapshot.attempt_index, 0);
+        let rendered = format!("{snapshot:?}");
+        assert!(!rendered.contains("test-key"));
+        assert!(!rendered.contains("request-id-must-not-escape"));
+        assert!(!rendered.contains("private prompt bytes"));
+    }
+
+    #[test]
+    fn panicking_request_observer_is_fail_open() {
+        let mut config = minimal_config();
+        config.request_observer = Some(std::sync::Arc::new(PanickingObserver));
+        let mut client = SamplingClient::new(config).expect("build");
+        client.set_wire_observation_context(Some((
+            lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            },
+            0,
+        )));
+        let request = client
+            .post("https://example.test/v1/chat/completions")
+            .build()
+            .unwrap();
+        client.observe_built_request(
+            &request,
+            lumen_discipline::WireSerializationKind::ChatCompletions,
+            "session",
+        );
+    }
+
+    #[tokio::test]
+    async fn request_observer_runs_before_chat_delivery() {
+        use axum::Router;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed_by_server = observed.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new().route(
+                    "/v1/chat/completions",
+                    post(move || {
+                        let observed_by_server = observed_by_server.clone();
+                        async move {
+                            assert!(observed_by_server.load(std::sync::atomic::Ordering::SeqCst));
+                            (StatusCode::INTERNAL_SERVER_ERROR, "synthetic failure")
+                        }
+                    }),
+                ),
+            )
+            .await
+            .unwrap();
+        });
+
+        let observer = std::sync::Arc::new(RecordingObserver {
+            snapshots: std::sync::Mutex::new(Vec::new()),
+            observed: Some(observed),
+        });
+        let mut config = minimal_config();
+        config.base_url = format!("http://{addr}/v1");
+        config.request_observer = Some(observer.clone());
+        let mut client = SamplingClient::new(config).expect("build");
+        client.set_wire_observation_context(Some((
+            lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            },
+            0,
+        )));
+        let error = client
+            .chat_completion(ChatCompletionRequest::new(
+                "test-model",
+                vec![ChatRequestMessage::user("hello")],
+            ))
+            .await
+            .expect_err("synthetic server failure");
+        assert!(matches!(error, SamplingError::Api { .. }));
+        assert_eq!(observer.snapshots.lock().unwrap().len(), 1);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn observer_precedes_delivery_for_all_six_final_wire_paths() {
+        use axum::Router;
+        use axum::body::Bytes;
+        use axum::extract::State;
+        use axum::http::StatusCode;
+        use axum::routing::post;
+        use xai_grok_sampling_types::ConversationItem;
+
+        #[derive(Clone)]
+        struct ServerState {
+            observed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+            bodies: std::sync::Arc<std::sync::Mutex<Vec<(String, serde_json::Value)>>>,
+        }
+
+        async fn reject_after_observation(
+            State(state): State<ServerState>,
+            uri: axum::http::Uri,
+            body: Bytes,
+        ) -> (StatusCode, &'static str) {
+            assert!(
+                state.observed.load(std::sync::atomic::Ordering::SeqCst),
+                "observer must run before the final wire request is delivered"
+            );
+            state.bodies.lock().unwrap().push((
+                uri.path().to_owned(),
+                serde_json::from_slice(&body).expect("test request is JSON"),
+            ));
+            (StatusCode::INTERNAL_SERVER_ERROR, "synthetic failure")
+        }
+
+        let observed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bodies = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let state = ServerState {
+            observed: observed.clone(),
+            bodies: bodies.clone(),
+        };
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(
+                listener,
+                Router::new()
+                    .route("/v1/chat/completions", post(reject_after_observation))
+                    .route("/v1/responses", post(reject_after_observation))
+                    .route("/v1/messages", post(reject_after_observation))
+                    .with_state(state),
+            )
+            .await
+            .unwrap();
+        });
+
+        let observer = std::sync::Arc::new(RecordingObserver {
+            snapshots: std::sync::Mutex::new(Vec::new()),
+            observed: Some(observed),
+        });
+        let mut config = minimal_config();
+        config.base_url = format!("http://{addr}/v1");
+        config.request_observer = Some(observer.clone());
+        let mut client = SamplingClient::new(config).expect("build client");
+        client.set_wire_observation_context(Some((
+            lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            },
+            0,
+        )));
+        let request = ConversationRequest::from_items(vec![ConversationItem::user("hello")]);
+
+        assert!(client.conversation(request.clone()).await.is_err());
+        assert!(client.conversation_stream(request.clone()).await.is_err());
+        assert!(
+            client
+                .conversation_responses(request.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .conversation_stream_responses(request.clone())
+                .await
+                .is_err()
+        );
+        assert!(client.conversation_messages(request.clone()).await.is_err());
+        assert!(client.conversation_stream_messages(request).await.is_err());
+
+        let snapshots = observer.snapshots.lock().unwrap();
+        assert_eq!(snapshots.len(), 6);
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| &snapshot.serialization_kind)
+                .collect::<Vec<_>>(),
+            vec![
+                &lumen_discipline::WireSerializationKind::ChatCompletions,
+                &lumen_discipline::WireSerializationKind::ChatCompletions,
+                &lumen_discipline::WireSerializationKind::Responses,
+                &lumen_discipline::WireSerializationKind::Responses,
+                &lumen_discipline::WireSerializationKind::Messages,
+                &lumen_discipline::WireSerializationKind::Messages,
+            ]
+        );
+        drop(snapshots);
+
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 6);
+        assert_eq!(bodies[0].0, "/v1/chat/completions");
+        assert_ne!(
+            bodies[0].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[1].0, "/v1/chat/completions");
+        assert_eq!(bodies[1].1["stream"], true);
+        assert_eq!(bodies[2].0, "/v1/responses");
+        assert_ne!(
+            bodies[2].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[3].0, "/v1/responses");
+        assert_eq!(bodies[3].1["stream"], true);
+        assert_eq!(bodies[4].0, "/v1/messages");
+        assert_ne!(
+            bodies[4].1.get("stream"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert_eq!(bodies[5].0, "/v1/messages");
+        assert_eq!(bodies[5].1["stream"], true);
+        server.abort();
     }
 
     #[test]

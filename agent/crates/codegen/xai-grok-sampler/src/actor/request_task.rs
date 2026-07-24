@@ -78,6 +78,7 @@ pub(crate) async fn run_request_task(
     request_id: RequestId,
     request: ConversationRequest,
     config: SamplerConfig,
+    wire_context: Option<lumen_discipline::WireObservationContext>,
     retry_policy: RetryPolicy,
     event_tx: mpsc::UnboundedSender<SamplingEvent>,
     cancel_token: CancellationToken,
@@ -120,8 +121,19 @@ pub(crate) async fn run_request_task(
     let doom_policy = config.doom_loop_recovery;
     let doom_max_retries = doom_policy.map_or(0, |p| p.max_retries);
     let mut doom_retry_count: u32 = 0;
+    let mut retry_image_strip_pending = false;
 
     loop {
+        client.set_wire_observation_context(wire_context.as_ref().map(|context| {
+            let mut context = context.clone();
+            if retry_image_strip_pending {
+                context
+                    .mutation_reasons
+                    .push(lumen_discipline::WireMutationReason::RetryImageStrip);
+                retry_image_strip_pending = false;
+            }
+            (context, retry_count)
+        }));
         if cancel_token.is_cancelled() {
             handle_cancellation(&event_tx, &request_id, &mut completion_tx);
             return request_id;
@@ -203,6 +215,7 @@ pub(crate) async fn run_request_task(
                     &mut request,
                     &mut client,
                     &config,
+                    &mut retry_image_strip_pending,
                     &mut completion_tx,
                 )
                 .await
@@ -245,6 +258,7 @@ pub(crate) async fn run_request_task(
                     &mut request,
                     &mut client,
                     &config,
+                    &mut retry_image_strip_pending,
                     &mut completion_tx,
                 )
                 .await
@@ -267,6 +281,7 @@ pub(crate) async fn run_request_task(
                     &mut request,
                     &mut client,
                     &config,
+                    &mut retry_image_strip_pending,
                     &mut completion_tx,
                 )
                 .await
@@ -294,6 +309,7 @@ async fn apply_retry_decision(
     request: &mut ConversationRequest,
     client: &mut SamplingClient,
     config: &SamplerConfig,
+    retry_image_strip_pending: &mut bool,
     completion_tx: &mut Option<oneshot::Sender<CompletionResult>>,
 ) -> bool {
     let rate_limit_threshold = if retry_policy.rate_limit_retry_threshold == 0 {
@@ -310,6 +326,7 @@ async fn apply_retry_decision(
     if err.is_likely_body_rejected() {
         let stripped = request.strip_images();
         if stripped > 0 {
+            *retry_image_strip_pending = true;
             tracing::warn!(
                 stripped,
                 "stripped {stripped} image(s) before retry (likely nginx 413 via connection reset)"
@@ -338,6 +355,7 @@ async fn apply_retry_decision(
                 send_completion(completion_tx, Err(clone_error(err)));
                 return false;
             }
+            *retry_image_strip_pending = true;
             *retry_count += 1;
             emit_retrying(event_tx, request_id, *retry_count, max_retries, err);
             true

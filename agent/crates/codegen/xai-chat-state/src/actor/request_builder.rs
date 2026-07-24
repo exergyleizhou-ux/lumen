@@ -57,6 +57,9 @@ impl ChatStateActor {
             let injected = inject_memory_reminder(&mut self.state.conversation, reminder);
             if injected {
                 self.persistence.replace_history(&self.state.conversation);
+                self.emit_committed_history_mutation(
+                    crate::events::CommittedHistoryMutation::MemoryReminderPersisted,
+                );
                 memory_reminder = None;
             }
             self.rebase_turn_capture_offset();

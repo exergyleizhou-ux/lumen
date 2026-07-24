@@ -45,7 +45,7 @@ pub use actor::state::{
 pub use commands::ModelMetadata;
 pub use compaction_mode::CompactionMode;
 pub use compaction_transcript::CompactionDetail;
-pub use events::ChatStateEvent;
+pub use events::{ChatStateEvent, CommittedHistoryMutation, HistoryMutationAck};
 pub use handle::ChatStateHandle;
 pub use persistence::{
     ChatPersistence, MockChatPersistence, MockPersistenceReceiver, NullChatPersistence,

@@ -27,8 +27,8 @@ use xai_grok_sampling_types::conversation::{
 };
 
 use crate::session::expert::{
-    consultant_tool_allowed, parse_dual_proposal, redact_and_truncate, redact_path, sha256_hex,
-    ConsultEvidenceBundle, DualProposal, ExpertErrorCode,
+    ConsultEvidenceBundle, DualProposal, ExpertErrorCode, consultant_tool_allowed,
+    parse_dual_proposal, redact_and_truncate, redact_path, sha256_hex,
 };
 
 // ── Size limits ───────────────────────────────────────────────────
@@ -74,12 +74,12 @@ fn parse_plan_from_assistant_text(text: &str) -> Result<Vec<String>, ExpertError
         Ok(plan) => Ok(plan),
         Err(e) => {
             // Maybe wrapped in markdown JSON block
-            if let Some(start) = trimmed.find('{') {
-                if let Some(end) = trimmed[start..].rfind('}') {
-                    let inner = &trimmed[start..start + end + 1];
-                    if let Ok(plan) = crate::session::expert::parse_consult_plan(inner) {
-                        return Ok(plan);
-                    }
+            if let Some(start) = trimmed.find('{')
+                && let Some(end) = trimmed[start..].rfind('}')
+            {
+                let inner = &trimmed[start..start + end + 1];
+                if let Ok(plan) = crate::session::expert::parse_consult_plan(inner) {
+                    return Ok(plan);
                 }
             }
             Err(e)
@@ -141,7 +141,10 @@ pub fn consultant_readonly_tool_specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "read_diagnostics".into(),
-            description: Some("Read workspace diagnostics (limited availability; returns [] when unavailable)".into()),
+            description: Some(
+                "Read workspace diagnostics (limited availability; returns [] when unavailable)"
+                    .into(),
+            ),
             parameters: serde_json::json!({
                 "type": "object",
                 "properties": {},
@@ -202,7 +205,7 @@ impl ReadonlyToolHost<'_> {
 
     /// Canonical workspace root, lazily computed once per serialised tool call.
     fn canonical_root(&self) -> Option<PathBuf> {
-        std::fs::canonicalize(self.workspace_root).ok()
+        dunce::canonicalize(self.workspace_root).ok()
     }
 
     fn resolve_path(&self, relative: &str) -> Option<PathBuf> {
@@ -218,16 +221,13 @@ impl ReadonlyToolHost<'_> {
             return None;
         }
         // Reject any ParentDir component (e.g. `..`, `a/../../x`).
-        if path
-            .components()
-            .any(|c| matches!(c, Component::ParentDir))
-        {
+        if path.components().any(|c| matches!(c, Component::ParentDir)) {
             return None;
         }
         // Canonicalize workspace root so macOS /var -> /private/var matches.
         let root = self.canonical_root()?;
         let candidate = root.join(path);
-        let canonical = std::fs::canonicalize(&candidate).ok()?;
+        let canonical = dunce::canonicalize(&candidate).ok()?;
         // Symlink check: canonical path must start with canonical root.
         if canonical.starts_with(&root) {
             Some(canonical)
@@ -246,8 +246,8 @@ impl ReadonlyToolHost<'_> {
             if g.starts_with('*') && g.ends_with('*') && g.len() > 2 {
                 let mid = &g[1..g.len() - 1];
                 path_str.contains(mid)
-            } else if g.starts_with('*') {
-                path_str.ends_with(&g[1..])
+            } else if let Some(stripped) = g.strip_prefix('*') {
+                path_str.ends_with(stripped)
             } else if g.ends_with('*') {
                 path_str.starts_with(&g[..g.len() - 1])
             } else {
@@ -259,10 +259,10 @@ impl ReadonlyToolHost<'_> {
     /// Return a display-friendly relative path for search results.
     /// Uses canonical root so macOS /var -> /private/var doesn't strip.
     fn display_path(&self, path: &Path) -> String {
-        if let Some(root) = self.canonical_root() {
-            if let Ok(rel) = path.strip_prefix(&root) {
-                return rel.display().to_string();
-            }
+        if let Some(root) = self.canonical_root()
+            && let Ok(rel) = path.strip_prefix(&root)
+        {
+            return rel.display().to_string();
         }
         redact_path(&path.to_string_lossy())
     }
@@ -363,10 +363,10 @@ impl ReadonlyToolHost<'_> {
                     if Self::is_binary_bytes(&bytes, 8192) {
                         continue;
                     }
-                    if let Ok(text) = String::from_utf8(bytes) {
-                        if !text.trim().is_empty() {
-                            return Some(text);
-                        }
+                    if let Ok(text) = String::from_utf8(bytes)
+                        && !text.trim().is_empty()
+                    {
+                        return Some(text);
                     }
                 }
             }
@@ -479,7 +479,7 @@ impl ReadonlyToolHost<'_> {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            let kind = if entry.file_type().ok().map_or(false, |t| t.is_dir()) {
+            let kind = if entry.file_type().ok().is_some_and(|t| t.is_dir()) {
                 "dir"
             } else {
                 "file"
@@ -680,12 +680,12 @@ fn parse_dual_from_assistant_text(text: &str) -> Result<DualProposal, ExpertErro
     match parse_dual_proposal(trimmed) {
         Ok(p) => Ok(p),
         Err(e) => {
-            if let Some(start) = trimmed.find('{') {
-                if let Some(end) = trimmed[start..].rfind('}') {
-                    let inner = &trimmed[start..start + end + 1];
-                    if let Ok(p) = parse_dual_proposal(inner) {
-                        return Ok(p);
-                    }
+            if let Some(start) = trimmed.find('{')
+                && let Some(end) = trimmed[start..].rfind('}')
+            {
+                let inner = &trimmed[start..start + end + 1];
+                if let Ok(p) = parse_dual_proposal(inner) {
+                    return Ok(p);
                 }
             }
             Err(e)
@@ -763,12 +763,12 @@ pub async fn run_dual_proposal_with_optional_tools(
                 (raw.chars().count() as u64).div_ceil(4),
             )
         });
-        let proposal =
-            parse_dual_from_assistant_text(&raw).map_err(|code| ConsultCallFailure { code, usage })?;
+        let proposal = parse_dual_from_assistant_text(&raw)
+            .map_err(|code| ConsultCallFailure { code, usage })?;
         return Ok(DualProposalToolResult { proposal, usage });
     };
 
-    let cap = host.tool_call_cap.min(5).max(1);
+    let cap = host.tool_call_cap.clamp(1, 5);
     let deadline = Instant::now() + timeout;
     let system_text = format!(
         "You are dual proposal source {source_label} with optional readonly tools.\n\
@@ -929,7 +929,7 @@ pub async fn run_consult_with_optional_tools(
         return run_legacy_consult(client, evidence, timeout, max_output_tokens).await;
     };
 
-    let cap = host.tool_call_cap.min(5).max(1);
+    let cap = host.tool_call_cap.clamp(1, 5);
     let deadline = Instant::now() + timeout;
     let system_text = format!(
         "You are a bounded read-only engineering consultant.\n\
@@ -1146,10 +1146,7 @@ async fn run_legacy_consult(
     });
     let plan = crate::session::expert::parse_consult_plan(&raw)
         .map_err(|code| ConsultCallFailure { code, usage })?;
-    Ok(ConsultantToolResult {
-        plan,
-        usage,
-    })
+    Ok(ConsultantToolResult { plan, usage })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────
@@ -1287,8 +1284,14 @@ mod tests {
         };
         let result = host.execute("list_directory", r#"{"path":"."}"#);
         assert!(result.contains("ok.txt"), "must list ok.txt, got: {result}");
-        assert!(!result.contains(".env"), "must NOT list .env, got: {result}");
-        assert!(!result.contains("secret.yml"), "must NOT list secret.yml, got: {result}");
+        assert!(
+            !result.contains(".env"),
+            "must NOT list .env, got: {result}"
+        );
+        assert!(
+            !result.contains("secret.yml"),
+            "must NOT list secret.yml, got: {result}"
+        );
     }
 
     #[test]
@@ -1404,8 +1407,14 @@ mod tests {
             deny_globs: &[],
             tool_call_cap: 5,
         };
-        assert!(host.execute("bash", r#"{"command":"rm -rf /"}"#).contains("denied"));
-        assert!(host.execute("write_file", r#"{"path":"x","content":"x"}"#).contains("denied"));
+        assert!(
+            host.execute("bash", r#"{"command":"rm -rf /"}"#)
+                .contains("denied")
+        );
+        assert!(
+            host.execute("write_file", r#"{"path":"x","content":"x"}"#)
+                .contains("denied")
+        );
         assert!(host.execute("unknown_tool", "{}").contains("denied"));
     }
 
@@ -1546,9 +1555,10 @@ mod tests {
         };
         let client = xai_grok_sampler::SamplingClient::new(cfg).expect("client");
         let evidence = ConsultEvidenceBundle::build("inspect", &[], "", "");
-        let result = run_consult_with_optional_tools(&client, &evidence, Duration::from_secs(2), 256, None)
-            .await
-            .expect("no-tools consult");
+        let result =
+            run_consult_with_optional_tools(&client, &evidence, Duration::from_secs(2), 256, None)
+                .await
+                .expect("no-tools consult");
         assert!(!result.plan.is_empty());
         let requests = server.requests();
         let body = requests[0].body.as_ref().unwrap();

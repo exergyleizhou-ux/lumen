@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 use tracing::debug;
 
 use crate::commands::ChatStateCommand;
-use crate::events::ChatStateEvent;
+use crate::events::{ChatStateEvent, CommittedHistoryMutation};
 use crate::handle::ChatStateHandle;
 use crate::persistence::ChatPersistence;
 use crate::types::{PruningConfig, TurnCapture};
@@ -183,7 +183,25 @@ impl ChatStateActor {
                 items,
                 is_compaction,
             } => {
-                self.replace_conversation(items, is_compaction);
+                let mutation = if is_compaction {
+                    CommittedHistoryMutation::CompactionReplace
+                } else {
+                    CommittedHistoryMutation::ConversationReplace
+                };
+                self.replace_conversation(items, is_compaction, mutation);
+            }
+            ChatStateCommand::ReplaceConversationAndAck {
+                items,
+                is_compaction,
+                reply,
+            } => {
+                let mutation = if is_compaction {
+                    CommittedHistoryMutation::CompactionReplace
+                } else {
+                    CommittedHistoryMutation::ConversationReplace
+                };
+                let ack = self.replace_conversation(items, is_compaction, mutation);
+                let _ = reply.send(ack);
             }
             ChatStateCommand::RepairHistory {
                 dry_run,
@@ -222,6 +240,9 @@ impl ChatStateActor {
             }
             ChatStateCommand::RestoreSnapshot(snapshot) => {
                 self.restore_snapshot(*snapshot);
+            }
+            ChatStateCommand::RestoreMetadataWithoutHistory(snapshot) => {
+                self.restore_metadata_without_history(*snapshot);
             }
             ChatStateCommand::BeginTurnCapture => {
                 self.state.turn_capture = Some(state::TurnCaptureState {
@@ -315,13 +336,22 @@ impl ChatStateActor {
                 target_prompt_index,
                 reply,
             } => {
-                self.truncate_to_prompt_index(target_prompt_index);
+                let changed = self.truncate_to_prompt_index(target_prompt_index);
                 self.state.turn_capture = None;
                 self.state.prompt_usage = None;
                 // `harness_trace_buffer` / `harness_trace_turns` intentionally
                 // survive a rewind: the goal planner / verifier subagents
                 // genuinely ran, so their sealed trace turns stay uploadable as
                 // siblings even when the live turn that triggered them is undone.
+                if changed {
+                    self.state.committed_history_revision =
+                        self.state.committed_history_revision.saturating_add(1);
+                    self.send_event(ChatStateEvent::HistoryMutationCommitted {
+                        revision: self.state.committed_history_revision,
+                        mutation: CommittedHistoryMutation::Rewind,
+                        new_len: self.state.conversation.len(),
+                    });
+                }
                 let _ = reply.send(());
             }
             ChatStateCommand::CheckAutoCompactNeeded {

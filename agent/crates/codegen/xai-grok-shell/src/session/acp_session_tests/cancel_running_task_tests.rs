@@ -68,6 +68,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                request_observer: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -396,6 +397,7 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                request_observer: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -530,6 +532,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                request_observer: None,
             })
             .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -1868,6 +1871,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                request_observer: None,
             };
             let (sampler_event_tx, _sampler_event_rx) = tokio::sync::mpsc::unbounded_channel::<
                 xai_grok_sampler::SamplingEvent,

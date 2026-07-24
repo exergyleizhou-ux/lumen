@@ -47,6 +47,7 @@ impl SamplerHandle {
             request_id,
             request: Box::new(request),
             config: None,
+            wire_context: None,
             completion_tx: None,
         });
     }
@@ -63,6 +64,7 @@ impl SamplerHandle {
             request_id,
             request: Box::new(request),
             config: Some(Box::new(config)),
+            wire_context: None,
             completion_tx: None,
         });
     }
@@ -115,6 +117,18 @@ impl SamplerHandle {
         request_id: RequestId,
         request: ConversationRequest,
     ) -> Result<(ConversationResponse, InferenceLatencyStats), SamplingError> {
+        self.submit_and_collect_with_wire_context(request_id, request, None)
+            .await
+    }
+
+    /// Like [`Self::submit_and_collect`], but supplies dynamic session evidence
+    /// to every retry attempt without mutating the actor's default config.
+    pub async fn submit_and_collect_with_wire_context(
+        &self,
+        request_id: RequestId,
+        request: ConversationRequest,
+        wire_context: Option<lumen_discipline::WireObservationContext>,
+    ) -> Result<(ConversationResponse, InferenceLatencyStats), SamplingError> {
         // RAII guard: when this future is dropped (cancel, panic, or normal return),
         // tell the sampler actor to cancel the in-flight request_id. No-op if the
         // actor already finished and removed it from its active set.
@@ -141,6 +155,7 @@ impl SamplerHandle {
                 request_id,
                 request: Box::new(request),
                 config: None,
+                wire_context,
                 completion_tx: Some(completion_tx),
             })
             .ok()

@@ -21,17 +21,20 @@ use xai_grok_workspace::permission::{
     spawn_permission_manager, spawn_permission_manager_with_hub,
 };
 
-/// Shared `GROK_HOME` for the entire test binary. The `OnceLock` in
-/// `xai-grok-config` only allows one value per process, so all tests share
-/// this temp directory and `#[serial]` keeps them from clobbering each
-/// other's state files.
+/// Shared legacy `GROK_HOME` and primary `LUMEN_HOME` for the entire test
+/// binary. The home resolvers allow one value per process, so all tests share
+/// this temp directory and `#[serial]` keeps them from clobbering each other's
+/// state files.
 fn test_home() -> &'static PathBuf {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(|| {
         let dir = tempfile::TempDir::new().unwrap();
         let path = dir.keep();
-        // SAFETY: called once at init before other threads touch this var.
-        unsafe { std::env::set_var("GROK_HOME", &path) };
+        // SAFETY: called once at init before other threads touch these vars.
+        unsafe {
+            std::env::set_var("GROK_HOME", &path);
+            std::env::set_var("LUMEN_HOME", &path);
+        }
         path
     })
 }
@@ -846,24 +849,31 @@ async fn deny_rule_enforced_in_yolo_mode_web_fetch() {
 
 #[tokio::test]
 #[serial]
-async fn yolo_mode_without_deny_rules_approves_everything() {
+async fn yolo_mode_without_deny_rules_approves_non_guarded_requests() {
     run_actor_test_full(
         ClientType::GrokPager,
         None,
         true,
         |handle, _gw, _cwd| async move {
-            let d = request(&handle, AccessKind::Bash("rm -rf /".to_string()), "1").await;
+            // Lumen Guard hard-denies remain binding before YOLO. Exercise
+            // non-guarded requests here so this test isolates YOLO behavior.
+            let d = request(
+                &handle,
+                AccessKind::Bash("my-custom-build --release".to_string()),
+                "1",
+            )
+            .await;
             assert!(matches!(d, Decision::Allow));
 
             let d = request(&handle, mcp("linear__list"), "2").await;
             assert!(matches!(d, Decision::Allow));
 
-            let d = request(&handle, AccessKind::Edit("/etc/passwd".to_string()), "3").await;
+            let d = request(&handle, AccessKind::Edit("src/main.rs".to_string()), "3").await;
             assert!(matches!(d, Decision::Allow));
 
             let d = request(
                 &handle,
-                AccessKind::WebFetch("https://evil.com".to_string()),
+                AccessKind::WebFetch("https://example.com".to_string()),
                 "4",
             )
             .await;

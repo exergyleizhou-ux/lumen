@@ -7,7 +7,9 @@ use crate::cache::{CacheUsage, format_cache_line, hit_ratio};
 use crate::cache_shape::{
     CacheDiagnostics, PrefixChangeReason, PrefixShape, compare_shape, format_change_reasons,
 };
-use crate::provider_strategy::{CacheProfile, profile_for_model};
+use crate::provider_strategy::{
+    CacheMechanism, CacheProfile, allows_definitive_display, profile_for_model,
+};
 
 /// Rolling session cache state (host-owned; never inject into system prefix).
 #[derive(Debug, Clone, Default)]
@@ -27,6 +29,11 @@ pub struct SessionCacheTracker {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SessionCacheSnapshot {
     pub last_hit_ratio: Option<f64>,
+    /// Only populated when a provider-reported, non-zero cache-read count can
+    /// be displayed as cache truth for this provider policy. A zero cache-read
+    /// count is deliberately not promoted: older compatible payloads omit the
+    /// field and normalize to zero.
+    pub provider_reported_last_hit_ratio: Option<f64>,
     pub session_hit_ratio: Option<f64>,
     pub stable_streak: u64,
     pub last_change_reasons: String,
@@ -81,36 +88,51 @@ impl SessionCacheTracker {
             self.stable_streak = self.stable_streak.saturating_add(1);
         }
         self.cum_hit = self.cum_hit.saturating_add(cache_hit_tokens);
-        self.cum_input = self.cum_input.saturating_add(prompt_tokens.max(cache_hit_tokens));
+        self.cum_input = self
+            .cum_input
+            .saturating_add(prompt_tokens.max(cache_hit_tokens));
         self.last_shape = Some(shape);
         self.last_diag = Some(diag.clone());
         diag
     }
 
-    pub fn snapshot(&self, last_prompt: u64, last_hit: u64, last_output: u64) -> SessionCacheSnapshot {
+    pub fn snapshot(
+        &self,
+        last_prompt: u64,
+        last_hit: u64,
+        last_output: u64,
+    ) -> SessionCacheSnapshot {
         let profile = self.profile();
         let last_ratio = hit_ratio(last_prompt, last_hit);
+        let provider_reported_last_hit_ratio =
+            if last_hit > 0 && allows_definitive_display(&profile, true) {
+                last_ratio
+            } else {
+                None
+            };
         let session_ratio = hit_ratio(self.cum_input, self.cum_hit);
         let reasons = self
             .last_diag
             .as_ref()
             .map(|d| format_change_reasons(&d.change_reasons))
             .unwrap_or_else(|| "n/a".into());
-        let prefix_stable = self
-            .last_diag
-            .as_ref()
-            .is_some_and(|d| !d.prefix_changed);
+        let prefix_stable = self.last_diag.as_ref().is_some_and(|d| !d.prefix_changed);
         SessionCacheSnapshot {
             last_hit_ratio: last_ratio,
+            provider_reported_last_hit_ratio,
             session_hit_ratio: session_ratio,
             stable_streak: self.stable_streak,
             last_change_reasons: reasons,
             prefix_stable,
-            cache_line: format_cache_line(CacheUsage {
-                input_tokens: last_prompt,
-                cache_read_tokens: last_hit,
-                output_tokens: last_output,
-            }),
+            cache_line: if matches!(profile.mechanism, CacheMechanism::ObservedOnly) {
+                "provider cache usage unavailable · wire observation only".to_owned()
+            } else {
+                format_cache_line(CacheUsage {
+                    input_tokens: last_prompt,
+                    cache_read_tokens: last_hit,
+                    output_tokens: last_output,
+                })
+            },
             profile_label: profile.label,
             adaptation: profile.adaptation,
             stability_score: stability_score(self.stable_streak, self.cum_input, self.cum_hit),
@@ -151,5 +173,37 @@ mod tests {
         t.observe(a, 1000, 800);
         t.observe(b, 1000, 0);
         assert_eq!(t.stable_streak, 0);
+    }
+
+    #[test]
+    fn kimi_snapshot_never_formats_a_cache_hit_line() {
+        let mut t =
+            SessionCacheTracker::new("kimi-k3", Some("https://api.kimi.com/coding/v1".into()));
+        t.observe(capture_shape("sys", "[]", 0), 1000, 900);
+        let snap = t.snapshot(1000, 900, 10);
+        assert_eq!(snap.profile_label, "Kimi observed-only");
+        assert_eq!(
+            snap.cache_line,
+            "provider cache usage unavailable · wire observation only"
+        );
+    }
+
+    #[test]
+    fn only_nonzero_provider_cache_reads_are_promoted_to_truth() {
+        let mut deepseek = SessionCacheTracker::new("deepseek-v4-pro", None);
+        deepseek.observe(capture_shape("sys", "[]", 0), 1000, 700);
+        assert_eq!(
+            deepseek
+                .snapshot(1000, 700, 1)
+                .provider_reported_last_hit_ratio,
+            Some(0.7)
+        );
+
+        let mut zero = SessionCacheTracker::new("deepseek-v4-pro", None);
+        zero.observe(capture_shape("sys", "[]", 0), 1000, 0);
+        assert_eq!(
+            zero.snapshot(1000, 0, 1).provider_reported_last_hit_ratio,
+            None
+        );
     }
 }

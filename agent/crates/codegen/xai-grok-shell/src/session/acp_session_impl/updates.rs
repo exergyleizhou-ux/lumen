@@ -149,7 +149,7 @@ impl SessionActor {
         if let Some(snap) =
             crate::session::prompt_cache_registry::last_snapshot(self.session_info.id.0.as_ref())
         {
-            if let Some(r) = snap.last_hit_ratio {
+            if let Some(r) = snap.provider_reported_last_hit_ratio {
                 obj.insert("cacheHitRatio".to_string(), serde_json::json!(r));
             }
             if let Some(r) = snap.session_hit_ratio {

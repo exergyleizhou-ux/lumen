@@ -503,6 +503,12 @@ pub(crate) async fn handle_subagent_request(
         cwd: effective_cwd,
     };
     let child_session_dir = session::persistence::session_dir(&child_session_info);
+    // A child owns a distinct session directory and therefore a distinct
+    // cache-evidence writer. Never inherit the parent's observer: that would
+    // mix child history/routing identity into the parent's durable ledger.
+    effective_sampling_config.request_observer = Some(
+        crate::session::cache_epoch::durable_request_observer(child_session_dir.clone()),
+    );
     let parent_session_dir = session::persistence::session_dir(
         &SessionInfo {
             id: acp::SessionId::new(ctx.parent_session_id.clone()),
@@ -546,15 +552,15 @@ pub(crate) async fn handle_subagent_request(
     );
     if crate::session::is_cursor_user_template(&definition.user_message_template)
         && context_source != InitialContextSource::Resumed && !verbatim_mirror_fork
-    {} else if context_source != InitialContextSource::Resumed && !verbatim_mirror_fork {
-        if let Some(ref pi) = effective_runtime.persona_instructions {
-            let reminder = xai_grok_sampling_types::conversation::ConversationItem::system_reminder(
-                format!("<system-reminder>\n{pi}\n</system-reminder>"),
-            );
-            let insert_at = inherited_prefix_len.min(forked_conversation.len());
-            forked_conversation.insert(insert_at, reminder);
-            inherited_prefix_len += 1;
-        }
+    {} else if context_source != InitialContextSource::Resumed && !verbatim_mirror_fork
+        && let Some(ref pi) = effective_runtime.persona_instructions
+    {
+        let reminder = xai_grok_sampling_types::conversation::ConversationItem::system_reminder(
+            format!("<system-reminder>\n{pi}\n</system-reminder>"),
+        );
+        let insert_at = inherited_prefix_len.min(forked_conversation.len());
+        forked_conversation.insert(insert_at, reminder);
+        inherited_prefix_len += 1;
     }
     let effective_source_str = match &context_source {
         InitialContextSource::New => "new",

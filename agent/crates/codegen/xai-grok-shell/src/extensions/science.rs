@@ -30,7 +30,7 @@ fn internal(error: impl std::fmt::Display) -> acp::Error {
 
 fn canonical_dir_within(path: PathBuf, workspace: &std::path::Path) -> Result<PathBuf, acp::Error> {
     std::fs::create_dir_all(&path).map_err(internal)?;
-    let canonical = std::fs::canonicalize(path).map_err(internal)?;
+    let canonical = dunce::canonicalize(path).map_err(internal)?;
     if !canonical.starts_with(workspace) {
         return Err(acp::Error::invalid_params().data("science path must be inside session cwd"));
     }
@@ -457,8 +457,8 @@ async fn handle_run_csv(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
     let handle = agent
         .get_session_handle(&session_id)
         .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
-    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
-    let fixture_path = std::fs::canonicalize(params.fixture_path).map_err(internal)?;
+    let workspace = dunce::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let fixture_path = dunce::canonicalize(params.fixture_path).map_err(internal)?;
     if !fixture_path.starts_with(&workspace) || !fixture_path.is_file() {
         return Err(
             acp::Error::invalid_params().data("fixturePath must be a file inside session cwd")

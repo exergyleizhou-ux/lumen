@@ -115,10 +115,10 @@ impl EnvKeys {
         mut getenv: impl FnMut(&str) -> Option<String>,
     ) -> Option<String> {
         for name in self.names() {
-            if let Some(value) = getenv(name) {
-                if !value.trim().is_empty() {
-                    return Some(value);
-                }
+            if let Some(value) = getenv(name)
+                && !value.trim().is_empty()
+            {
+                return Some(value);
             }
         }
         None
@@ -4792,6 +4792,7 @@ pub fn sampling_config_for_model(
         compaction_at_tokens: info.compaction_at_tokens,
         doom_loop_recovery: None,
         header_injector: None,
+        request_observer: None,
     }
 }
 /// Fold URL-derived headers into `extra_headers`.

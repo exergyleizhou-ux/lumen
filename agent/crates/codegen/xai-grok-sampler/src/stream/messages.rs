@@ -474,6 +474,9 @@ pub fn stream_messages<'a>(
                 total_tokens: total_prompt_tokens.saturating_add(final_output_tokens),
                 reasoning_tokens: 0,
                 cached_prompt_tokens: final_cache_read_input_tokens,
+                provider_cache_hit_tokens: (final_cache_read_input_tokens > 0)
+                    .then_some(final_cache_read_input_tokens),
+                cache_miss_prompt_tokens: None,
             })
         } else {
             None

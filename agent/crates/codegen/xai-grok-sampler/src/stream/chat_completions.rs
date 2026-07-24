@@ -308,8 +308,8 @@ mod tests {
     use futures_util::stream;
     use std::pin::pin;
     use xai_grok_sampling_types::{
-        ChatChunkChoice, ChatChunkDelta, FinishReason, Role, ToolCallDelta as ChunkToolCallDelta,
-        ToolCallFunctionDelta, Usage, rs,
+        ChatChunkChoice, ChatChunkDelta, FinishReason, PromptTokensDetails, Role,
+        ToolCallDelta as ChunkToolCallDelta, ToolCallFunctionDelta, Usage, rs,
     };
 
     fn rid() -> RequestId {
@@ -666,6 +666,8 @@ mod tests {
             total_tokens: 150,
             prompt_tokens_details: None,
             completion_tokens_details: None,
+            prompt_cache_hit_tokens: Some(70),
+            prompt_cache_miss_tokens: Some(30),
             cost_in_usd_ticks: None,
         });
 
@@ -689,6 +691,51 @@ mod tests {
                 assert_eq!(u.prompt_tokens, 100);
                 assert_eq!(u.completion_tokens, 50);
                 assert_eq!(u.total_tokens, 150);
+                assert_eq!(u.provider_cache_hit_tokens, Some(70));
+                assert_eq!(u.cache_miss_prompt_tokens, Some(30));
+                assert_eq!(u.definitive_provider_cache_hit_tokens(), Some(70));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn usage_preserves_provider_reported_zero_cache_hit() {
+        let mut chunk_with_usage = make_chunk(vec![ChatChunkDelta::default()]);
+        chunk_with_usage.usage = Some(Usage {
+            prompt_tokens: 100,
+            completion_tokens: 0,
+            total_tokens: 100,
+            prompt_tokens_details: Some(PromptTokensDetails {
+                cached_tokens: 99,
+                ..Default::default()
+            }),
+            completion_tokens_details: None,
+            prompt_cache_hit_tokens: Some(0),
+            prompt_cache_miss_tokens: Some(100),
+            cost_in_usd_ticks: None,
+        });
+
+        let raw = stream::iter(vec![
+            Ok(chunk_with_usage),
+            Ok(final_chunk(FinishReason::Stop)),
+        ])
+        .boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                let usage = response.usage.as_ref().expect("usage extracted");
+                assert_eq!(usage.cached_prompt_tokens, 0);
+                assert_eq!(usage.provider_cache_hit_tokens, Some(0));
+                assert_eq!(usage.cache_miss_prompt_tokens, Some(100));
+                assert_eq!(usage.definitive_provider_cache_hit_tokens(), None);
             }
             other => panic!("expected Completed, got {other:?}"),
         }
@@ -706,6 +753,8 @@ mod tests {
                 total_tokens: 15,
                 prompt_tokens_details: None,
                 completion_tokens_details: None,
+                prompt_cache_hit_tokens: None,
+                prompt_cache_miss_tokens: None,
                 cost_in_usd_ticks: wire,
             });
             let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
@@ -739,6 +788,8 @@ mod tests {
             total_tokens: 15,
             prompt_tokens_details: None,
             completion_tokens_details: None,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
             cost_in_usd_ticks: Some(99),
         });
         let mut second = make_chunk(vec![ChatChunkDelta::default()]);
@@ -748,6 +799,8 @@ mod tests {
             total_tokens: 18,
             prompt_tokens_details: None,
             completion_tokens_details: None,
+            prompt_cache_hit_tokens: None,
+            prompt_cache_miss_tokens: None,
             cost_in_usd_ticks: Some(0),
         });
         let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![

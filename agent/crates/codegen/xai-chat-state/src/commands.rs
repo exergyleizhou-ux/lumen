@@ -12,6 +12,7 @@ use crate::types::{
     AutoCompactTrigger, ChatStateSnapshot, ConversationCounts, Credentials, NotificationMeta,
     TurnCapture,
 };
+use crate::events::HistoryMutationAck;
 
 #[derive(Debug, Clone, Default)]
 pub struct ModelMetadata {
@@ -111,6 +112,14 @@ pub enum ChatStateCommand {
         is_compaction: bool,
     },
 
+    /// Replace history and reply after the actor queues persistence and emits
+    /// its committed mutation event.
+    ReplaceConversationAndAck {
+        items: Vec<ConversationItem>,
+        is_compaction: bool,
+        reply: oneshot::Sender<HistoryMutationAck>,
+    },
+
     /// Out-of-band history repair (`x.ai/session/repair`): run
     /// [`crate::compaction_utils::repair_history`] and persist when changed;
     /// `dry_run` only reports.
@@ -157,6 +166,12 @@ pub enum ChatStateCommand {
 
     /// Restore from a snapshot.
     RestoreSnapshot(Box<ChatStateSnapshot>),
+
+    /// Restore persisted accounting metadata while retaining the actor's
+    /// already-loaded conversation.  Startup uses this after constructing the
+    /// actor from the durable history; it must not rewrite that history or
+    /// advertise a history-mutation boundary.
+    RestoreMetadataWithoutHistory(Box<ChatStateSnapshot>),
 
     /// Start capturing turn messages. Clears any previous buffer.
     BeginTurnCapture,

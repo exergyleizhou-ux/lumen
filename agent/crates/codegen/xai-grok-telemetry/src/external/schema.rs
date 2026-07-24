@@ -820,6 +820,7 @@ pub fn map_turn_completed(ev: &events::TurnCompleted) -> Option<ExternalRecord> 
 
 /// `ModelResponseReceived` → `grok_code.api_request` + `token.usage`.
 pub fn map_api_request(ev: &events::ModelResponseReceived) -> Option<ExternalRecord> {
+    let definitive_cache_read_tokens = ev.definitive_provider_cache_hit_tokens();
     let mut rec = ExternalRecord::event(ExternalEventName::ApiRequest)
         .attr(ExternalKey::Model, ev.model_id.as_str())
         .attr(ExternalKey::DurationMs, ev.duration_ms)
@@ -827,12 +828,12 @@ pub fn map_api_request(ev: &events::ModelResponseReceived) -> Option<ExternalRec
         .attr_opt(ExternalKey::InputTokens, ev.prompt_tokens)
         .attr_opt(ExternalKey::OutputTokens, ev.completion_tokens)
         .attr_opt(ExternalKey::ReasoningTokens, ev.reasoning_tokens)
-        .attr_opt(ExternalKey::CacheReadTokens, ev.cached_prompt_tokens);
+        .attr_opt(ExternalKey::CacheReadTokens, definitive_cache_read_tokens);
     for (token_type, count) in [
         ("input", ev.prompt_tokens),
         ("output", ev.completion_tokens),
         ("reasoning", ev.reasoning_tokens),
-        ("cache_read", ev.cached_prompt_tokens),
+        ("cache_read", definitive_cache_read_tokens),
     ] {
         if let Some(count) = count.filter(|c| *c > 0) {
             rec = rec.metric(MetricIncrement::TokenUsage {

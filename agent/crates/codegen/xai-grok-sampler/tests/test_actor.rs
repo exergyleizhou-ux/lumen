@@ -21,8 +21,8 @@ use tokio::net::TcpListener;
 use tokio::sync::{mpsc, oneshot};
 
 use xai_grok_sampler::{
-    ApiBackend, RequestId, RetryPolicy, SamplerActor, SamplerConfig, SamplingChannel,
-    SamplingErrorKind, SamplingEvent,
+    ApiBackend, RequestId, RequestObserver, RetryPolicy, SamplerActor, SamplerConfig,
+    SamplingChannel, SamplingErrorKind, SamplingEvent,
 };
 use xai_grok_sampling_types::{
     ConversationItem, ConversationRequest, DoomLoopRecoveryPolicy, UserItem,
@@ -98,6 +98,7 @@ fn test_config(base_url: String, model: &str) -> SamplerConfig {
         compaction_at_tokens: None,
         doom_loop_recovery: None,
         header_injector: None,
+        request_observer: None,
     }
 }
 
@@ -111,6 +112,33 @@ fn user_request(text: &str) -> ConversationRequest {
             ..Default::default()
         })],
         ..Default::default()
+    }
+}
+
+fn image_request() -> ConversationRequest {
+    ConversationRequest {
+        items: vec![ConversationItem::User(UserItem {
+            content: vec![
+                xai_grok_sampling_types::ContentPart::Text {
+                    text: std::sync::Arc::<str>::from("describe image"),
+                },
+                xai_grok_sampling_types::ContentPart::Image {
+                    url: std::sync::Arc::<str>::from("data:image/png;base64,AAAA"),
+                },
+            ],
+            synthetic_reason: None,
+            ..Default::default()
+        })],
+        ..Default::default()
+    }
+}
+
+#[derive(Debug, Default)]
+struct RetryRecordingObserver(std::sync::Mutex<Vec<lumen_discipline::WireRequestSnapshot>>);
+
+impl RequestObserver for RetryRecordingObserver {
+    fn observe(&self, snapshot: &lumen_discipline::WireRequestSnapshot) {
+        self.0.lock().unwrap().push(snapshot.clone());
     }
 }
 
@@ -431,6 +459,142 @@ async fn retries_on_500_then_succeeds() {
     assert!(
         counter.load(Ordering::SeqCst) >= 2,
         "server hit at least twice"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn wire_observation_tracks_every_normal_retry_attempt() {
+    let counter = Arc::new(AtomicU32::new(0));
+    let counter_handler = Arc::clone(&counter);
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move || {
+            let counter = Arc::clone(&counter_handler);
+            async move {
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err::<Sse<_>, (StatusCode, String)>((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        json!({ "error": { "message": "transient" } }).to_string(),
+                    ))
+                } else {
+                    let events = sse::chat_completion_events("ok", "test-model");
+                    Ok(Sse::new(stream::iter(
+                        events.into_iter().map(Ok::<_, std::convert::Infallible>),
+                    )))
+                }
+            }
+        }),
+    );
+    let server = MockServer::spawn(app).await;
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let observer = Arc::new(RetryRecordingObserver::default());
+    let mut config = test_config(server.base_url(), "test-model");
+    config.max_retries = Some(3);
+    config.request_observer = Some(observer.clone());
+    let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
+
+    let response = handle
+        .submit_and_collect_with_wire_context(
+            RequestId::from("req-wire-retry"),
+            user_request("hi"),
+            Some(lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            }),
+        )
+        .await
+        .expect("third attempt succeeds");
+    assert!(response.0.assistant().is_some());
+    server.shutdown();
+
+    let snapshots = observer.0.lock().unwrap();
+    assert_eq!(snapshots.len(), 3);
+    assert_eq!(
+        snapshots
+            .iter()
+            .map(|snapshot| snapshot.attempt_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert!(
+        snapshots
+            .iter()
+            .all(|snapshot| snapshot.cache_epoch_id == "epoch")
+    );
+    assert!(
+        snapshots.windows(2).all(
+            |pair| pair[0].provider_cache_material_hash == pair[1].provider_cache_material_hash
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn image_strip_retry_changes_material_once_without_rotating_epoch() {
+    let counter = Arc::new(AtomicU32::new(0));
+    let counter_handler = Arc::clone(&counter);
+    let app = Router::new().route(
+        "/v1/chat/completions",
+        post(move || {
+            let counter = Arc::clone(&counter_handler);
+            async move {
+                if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                    Err::<Sse<_>, (StatusCode, String)>((
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        json!({ "error": { "message": "payload too large" } }).to_string(),
+                    ))
+                } else {
+                    let events = sse::chat_completion_events("ok", "test-model");
+                    Ok(Sse::new(stream::iter(
+                        events.into_iter().map(Ok::<_, std::convert::Infallible>),
+                    )))
+                }
+            }
+        }),
+    );
+    let server = MockServer::spawn(app).await;
+    let (event_tx, _event_rx) = mpsc::unbounded_channel();
+    let observer = Arc::new(RetryRecordingObserver::default());
+    let mut config = test_config(server.base_url(), "test-model");
+    config.request_observer = Some(observer.clone());
+    let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
+
+    handle
+        .submit_and_collect_with_wire_context(
+            RequestId::from("req-wire-image-strip"),
+            image_request(),
+            Some(lumen_discipline::WireObservationContext {
+                cache_domain_hash: "domain".into(),
+                cache_epoch_id: "epoch".into(),
+                mutation_reasons: Vec::new(),
+            }),
+        )
+        .await
+        .expect("image-stripped retry succeeds");
+    server.shutdown();
+
+    let snapshots = observer.0.lock().unwrap();
+    assert_eq!(snapshots.len(), 2);
+    assert_eq!(snapshots[0].attempt_index, 0);
+    assert_eq!(snapshots[1].attempt_index, 1);
+    assert_eq!(snapshots[0].cache_epoch_id, snapshots[1].cache_epoch_id);
+    assert_ne!(
+        snapshots[0].provider_cache_material_hash,
+        snapshots[1].provider_cache_material_hash
+    );
+    assert!(
+        !snapshots[0]
+            .mutation_reasons
+            .contains(&lumen_discipline::WireMutationReason::RetryImageStrip)
+    );
+    assert_eq!(
+        snapshots[1]
+            .mutation_reasons
+            .iter()
+            .filter(|reason| **reason == lumen_discipline::WireMutationReason::RetryImageStrip)
+            .count(),
+        1
     );
 }
 

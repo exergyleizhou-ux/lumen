@@ -260,6 +260,8 @@ mod tests {
                 total_tokens: 4,
                 reasoning_tokens: 0,
                 cached_prompt_tokens: 0,
+                provider_cache_hit_tokens: None,
+                cache_miss_prompt_tokens: None,
             },
             None,
             Some(10),

@@ -433,19 +433,18 @@ pub(crate) async fn spawn_session_actor(
         chat_state_event_tx,
         tokio_util::sync::CancellationToken::new(),
     );
-    if !initial_prompt_texts.is_empty()
+    if (!initial_prompt_texts.is_empty()
         || initial_total_tokens > 0
-        || initial_last_compaction.is_some()
+        || initial_last_compaction.is_some())
+        && let Some(mut snap) = chat_state_handle.snapshot().await
     {
-        if let Some(mut snap) = chat_state_handle.snapshot().await {
-            snap.prompt_index = initial_prompt_texts.len();
-            snap.prompt_texts = initial_prompt_texts;
-            if initial_total_tokens > 0 {
-                snap.total_tokens = initial_total_tokens;
-            }
-            snap.last_compaction_prompt_index = initial_last_compaction;
-            chat_state_handle.restore_snapshot(snap);
+        snap.prompt_index = initial_prompt_texts.len();
+        snap.prompt_texts = initial_prompt_texts;
+        if initial_total_tokens > 0 {
+            snap.total_tokens = initial_total_tokens;
         }
+        snap.last_compaction_prompt_index = initial_last_compaction;
+        chat_state_handle.restore_metadata_without_history(snap);
     }
     chat_state_handle.update_credentials(credentials);
     let expert_state = persisted_expert_mode
@@ -946,8 +945,26 @@ pub(crate) async fn spawn_session_actor(
     } else {
         save_system_prompt(&session_info, &system_prompt);
     }
-    persist_chat_history_jsonl_sync(&session_info, &conversation);
-    chat_state_handle.replace_conversation(conversation);
+    // The actor was constructed from this durable history.  On an ordinary
+    // resume the startup normalization above is a no-op, so do not rewrite the
+    // transcript or emit a false history-mutation event (and rotate its cache
+    // epoch).  A real setup change still follows the normal committed path.
+    let actor_history = chat_state_handle.get_conversation().await;
+    // ConversationItem deliberately has no PartialEq (some variants carry
+    // opaque provider data), while its durable JSON representation is exactly
+    // what the persistence layer stores.  Serialization failure is treated as
+    // changed so it cannot suppress a real rewrite.
+    let history_changed = match (
+        serde_json::to_vec(&actor_history),
+        serde_json::to_vec(&conversation),
+    ) {
+        (Ok(before), Ok(after)) => before != after,
+        _ => true,
+    };
+    if history_changed {
+        persist_chat_history_jsonl_sync(&session_info, &conversation);
+        chat_state_handle.replace_conversation(conversation);
+    }
     let feedback_client = feedback_proxy_url.map(|base_url| {
         let mut client =
             crate::agent::feedback_client::FeedbackClient::new(base_url, feedback_user_token)
@@ -1323,6 +1340,16 @@ pub(crate) async fn spawn_session_actor(
         workspace_ops: workspace_ops.clone(),
         trace_config_template: std::cell::RefCell::new(None),
     });
+    match session.load_cache_epoch().await {
+        Ok(record) => tracing::debug!(
+            epoch = %record.epoch_id,
+            generation = record.generation,
+            "initialized cache epoch"
+        ),
+        Err(error) => {
+            tracing::warn!(%error, "cache epoch metadata unavailable; observation remains fail-open")
+        }
+    }
     {
         let drainer_session = session.clone();
         let mut sampler_event_rx = sampler_event_rx;

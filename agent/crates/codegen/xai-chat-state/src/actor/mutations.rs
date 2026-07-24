@@ -7,7 +7,7 @@ use xai_grok_sampling_types::{
 
 use super::ChatStateActor;
 use super::request_builder::HARD_CLEAR_PLACEHOLDER;
-use crate::events::ChatStateEvent;
+use crate::events::{ChatStateEvent, CommittedHistoryMutation};
 use crate::types::ChatStateSnapshot;
 
 /// Static string label for tracing on `ConversationItem` (avoids pulling
@@ -66,6 +66,7 @@ impl ChatStateActor {
                 "Repaired dangling tool calls in conversation"
             );
             self.persistence.replace_history(&self.state.conversation);
+            self.emit_committed_history_mutation(CommittedHistoryMutation::IntegrityRepair);
         }
         self.rebase_turn_capture_offset();
     }
@@ -101,7 +102,7 @@ impl ChatStateActor {
                 "History repair modified the conversation"
             );
             // Full replace: persists atomically and re-bases token estimates.
-            self.replace_conversation(items, false);
+            self.replace_conversation(items, false, CommittedHistoryMutation::HistoryRepair);
         } else {
             // Nothing changed — put the conversation back untouched.
             self.state.conversation = items;
@@ -272,6 +273,7 @@ impl ChatStateActor {
                 "ChatState: in-memory tool-result prune"
             );
             self.persistence.replace_history(&self.state.conversation);
+            self.emit_committed_history_mutation(CommittedHistoryMutation::RetainedToolPrune);
         }
 
         cleared
@@ -402,7 +404,8 @@ impl ChatStateActor {
         &mut self,
         items: Vec<ConversationItem>,
         is_compaction: bool,
-    ) {
+        mutation: CommittedHistoryMutation,
+    ) -> crate::events::HistoryMutationAck {
         self.snapshot_turn_slice();
         if is_compaction && let Some(cap) = &mut self.state.turn_capture {
             cap.compaction_occurred = true;
@@ -436,6 +439,7 @@ impl ChatStateActor {
         self.send_event(ChatStateEvent::TokensUpdated {
             total_tokens: estimated_tokens,
         });
+        self.emit_committed_history_mutation(mutation)
     }
 
     /// Atomically swap the leading `System` message with `prompt` (or insert one
@@ -457,7 +461,11 @@ impl ChatStateActor {
         let changed =
             crate::conversation_util::replace_or_insert_system_head(&mut conversation, prompt);
         debug_assert!(changed, "head mismatch must produce a change");
-        self.replace_conversation(conversation, false);
+        self.replace_conversation(
+            conversation,
+            false,
+            CommittedHistoryMutation::SystemHeadReplace,
+        );
         changed
     }
 
@@ -485,6 +493,54 @@ impl ChatStateActor {
         self.state.credentials = snap.credentials;
         // Drop abandoned prompt billing; session ledger is lifetime.
         self.state.prompt_usage = None;
+        self.persistence.replace_history(&self.state.conversation);
+        self.emit_committed_history_mutation(CommittedHistoryMutation::SnapshotRestore);
+    }
+
+    /// Apply startup metadata to an actor which was already constructed from
+    /// `snap.conversation`.  Persisting that same history creates a false
+    /// durable-mutation boundary on every resume, which in turn invalidates a
+    /// provider cache epoch despite no transcript change.
+    pub(super) fn restore_metadata_without_history(&mut self, snap: ChatStateSnapshot) {
+        // The shell constructs this actor from `snap.conversation` before
+        // issuing this command.  Do not compare `ConversationItem`s here:
+        // their type intentionally has no structural `PartialEq` because some
+        // variants contain opaque provider material.
+        self.state.sampling_config = snap.sampling_config;
+        self.state.prompt_index = snap.prompt_index;
+        self.state.total_tokens = snap.total_tokens;
+        self.state.estimated_tokens_since_model = 0;
+        self.state.estimate_at_last_response = if snap.estimate_at_last_response > 0 {
+            snap.estimate_at_last_response
+        } else {
+            super::state::estimate_conversation_tokens(&self.state.conversation)
+        };
+        self.state.agent_edited_paths = snap.agent_edited_paths;
+        self.state.prompt_texts = snap.prompt_texts;
+        self.state.stream_start_ms = snap.stream_start_ms;
+        self.state.turn_start_ms = snap.turn_start_ms;
+        self.state.last_compaction_prompt_index = snap.last_compaction_prompt_index;
+        self.state.credentials = snap.credentials;
+        self.state.prompt_usage = None;
+    }
+
+    pub(super) fn emit_committed_history_mutation(
+        &mut self,
+        mutation: CommittedHistoryMutation,
+    ) -> crate::events::HistoryMutationAck {
+        self.state.committed_history_revision =
+            self.state.committed_history_revision.saturating_add(1);
+        let ack = crate::events::HistoryMutationAck {
+            revision: self.state.committed_history_revision,
+            mutation,
+            new_len: self.state.conversation.len(),
+        };
+        self.send_event(ChatStateEvent::HistoryMutationCommitted {
+            revision: ack.revision,
+            mutation: ack.mutation,
+            new_len: ack.new_len,
+        });
+        ack
     }
 
     /// If turn capture is active, append the current turn's tail items into

@@ -20,6 +20,7 @@ mod provider_strategy;
 mod request_prefix;
 mod session_cache;
 mod storm;
+mod wire;
 
 pub use cache::{CacheUsage, format_cache_line, format_cache_line_rich, hit_ratio};
 pub use cache_shape::{
@@ -38,4 +39,8 @@ pub use session_cache::{SessionCacheSnapshot, SessionCacheTracker};
 pub use storm::{
     RepeatSuccessAction, RepeatSuccessGuard, StormAction, StormBreaker, error_signature,
     hash_tool_args,
+};
+pub use wire::{
+    WireMutationReason, WireObservationContext, WireRequestSnapshot, WireSerializationKind,
+    common_prefix_bytes, digest_hex,
 };

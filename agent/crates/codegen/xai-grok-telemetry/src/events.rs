@@ -1036,8 +1036,42 @@ pub struct ModelResponseReceived {
     pub completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u32>,
+    /// Definitive provider-reported cache reads only. Compatibility cache
+    /// fields must be filtered before constructing this telemetry event.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cached_prompt_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_accounting: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_hit_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider_cache_miss_tokens: Option<u32>,
+}
+
+impl ModelResponseReceived {
+    /// Revalidate cache truth at the external-telemetry boundary.
+    ///
+    /// This is intentionally independent of `cached_prompt_tokens`, so an
+    /// incorrectly constructed event cannot promote compatibility data to a
+    /// `cache_read` metric.
+    pub(crate) fn definitive_provider_cache_hit_tokens(&self) -> Option<u32> {
+        if self.provider_cache_accounting.as_deref() != Some("reported") {
+            return None;
+        }
+
+        let prompt_tokens = self.prompt_tokens?;
+        let hit_tokens = self.provider_cache_hit_tokens.filter(|hit| *hit > 0)?;
+        if hit_tokens > prompt_tokens {
+            return None;
+        }
+        if let Some(miss_tokens) = self.provider_cache_miss_tokens
+            && hit_tokens.checked_add(miss_tokens) != Some(prompt_tokens)
+        {
+            return None;
+        }
+
+        Some(hit_tokens)
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -179,6 +179,24 @@ impl ChatStateHandle {
         self.send_replace(items, true);
     }
 
+    /// Replace history for compaction and wait until the single-writer actor
+    /// has persisted the replacement, updated memory, and emitted its committed
+    /// mutation event. `None` means the actor was unavailable; callers must not
+    /// infer a committed cache boundary in that case.
+    pub async fn replace_conversation_for_compaction_and_ack(
+        &self,
+        items: Vec<ConversationItem>,
+    ) -> Option<crate::events::HistoryMutationAck> {
+        self.query("ReplaceConversationAndAck", |reply| {
+            ChatStateCommand::ReplaceConversationAndAck {
+                items,
+                is_compaction: true,
+                reply,
+            }
+        })
+        .await
+    }
+
     fn send_replace(&self, items: Vec<ConversationItem>, is_compaction: bool) {
         let _ = self.cmd_tx.send(ChatStateCommand::ReplaceConversation {
             items,
@@ -243,6 +261,15 @@ impl ChatStateHandle {
         let _ = self
             .cmd_tx
             .send(ChatStateCommand::RestoreSnapshot(Box::new(snapshot)));
+    }
+
+    /// Restore persisted accounting metadata after the actor was created from
+    /// the same durable conversation.  Unlike [`Self::restore_snapshot`], this
+    /// deliberately does not persist or emit a history mutation.
+    pub fn restore_metadata_without_history(&self, snapshot: ChatStateSnapshot) {
+        let _ = self.cmd_tx.send(ChatStateCommand::RestoreMetadataWithoutHistory(
+            Box::new(snapshot),
+        ));
     }
 
     /// Begin capturing turn messages. Call at the start of a real user turn

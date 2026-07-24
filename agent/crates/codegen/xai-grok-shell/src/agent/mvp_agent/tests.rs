@@ -2597,6 +2597,8 @@ async fn cached_token_fallthrough_falls_to_grok_com_without_credentials() {
     let _lockdown = EnvGuard::unset("GROK_DISABLE_API_KEY_AUTH");
     let _new = EnvGuard::unset(XAI_API_KEY_ENV_VAR);
     let _legacy = EnvGuard::unset(LEGACY_XAI_API_KEY_ENV_VAR);
+    let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
+    let _openai = EnvGuard::unset("OPENAI_API_KEY");
     let agent = build_minimal_agent_for_tests();
     assert_eq!(
         agent

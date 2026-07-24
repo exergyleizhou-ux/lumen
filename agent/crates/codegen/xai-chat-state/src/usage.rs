@@ -51,7 +51,11 @@ impl UsageTotals {
         Self {
             input_tokens: u64::from(usage.prompt_tokens),
             output_tokens: u64::from(usage.completion_tokens),
-            cached_read_tokens: u64::from(usage.cached_prompt_tokens),
+            // This ledger backs user-visible cache-read metrics.  Generic
+            // compatibility tokens are not proof of a provider cache hit.
+            cached_read_tokens: u64::from(
+                usage.definitive_provider_cache_hit_tokens().unwrap_or(0),
+            ),
             reasoning_tokens: u64::from(usage.reasoning_tokens),
             model_calls: 1,
             api_duration_ms: api_duration_ms.unwrap_or(0),
@@ -157,6 +161,8 @@ mod tests {
             total_tokens: 999_999,
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
         }
     }
 
@@ -191,5 +197,21 @@ mod tests {
 
         ledger.record_subagent(&[], true);
         assert!(ledger.incomplete);
+    }
+
+    #[test]
+    fn ledger_does_not_promote_compatibility_cache_tokens_to_a_hit() {
+        let usage = TokenUsage {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            total_tokens: 110,
+            reasoning_tokens: 0,
+            cached_prompt_tokens: 90,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
+        };
+        let mut ledger = UsageLedger::default();
+        ledger.record_main_loop_call("m", &usage, None, None);
+        assert_eq!(ledger.totals.cached_read_tokens, 0);
     }
 }

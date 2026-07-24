@@ -13,6 +13,8 @@ fn response_with_usage(total_tokens: u32) -> ConversationResponse {
 
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
         }),
         cost_usd_ticks: None,
         message_chunks_emitted: 1,

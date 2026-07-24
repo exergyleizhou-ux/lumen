@@ -1,4 +1,5 @@
 pub mod acp_types;
+pub mod cache_epoch;
 pub mod announcement_state;
 pub mod commands;
 pub mod compaction_config;

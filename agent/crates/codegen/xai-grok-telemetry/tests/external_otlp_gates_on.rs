@@ -103,6 +103,9 @@ fn external_stream_gates_on_end_to_end() {
         completion_tokens: Some(7),
         reasoning_tokens: Some(3),
         cached_prompt_tokens: Some(9),
+        provider_cache_accounting: None,
+        provider_cache_hit_tokens: None,
+        provider_cache_miss_tokens: None,
     });
     xai_grok_telemetry::log_event(xai_grok_telemetry::events::ToolCallCompleted {
         tool_name: "github__create_issue".into(),
