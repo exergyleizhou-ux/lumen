@@ -5,8 +5,8 @@
 **Branch:** `codex/science-fusion-full`, based on
 `main@8bd51b51ff874ecf035f52398898c2fbd40e9390`
 
-**Decision:** implementation is under offline fixture validation; live OpenAlex
-remains **pending-deny**.
+**Decision:** offline fixture product path accepted; live OpenAlex remains
+**pending-deny**.
 
 ## Native Rust product slice
 
@@ -62,10 +62,26 @@ underlying article content retains article-level rights.
 
 No OpenAlex, provider, or other live endpoint was called.
 
-Evidence will be recorded after targeted unit tests, strict Science clippy, an
-exact-product-source `lumen` build, and the rebuilt-binary ACP connector test
-complete. Until then this document is an admission design and source review,
-not accepted product proof.
+- Science: 82 tests discovered; 76 passed, 0 failed, 6 live probes ignored.
+- OpenAlex adapter, fixture, credential boundary, fail-closed, notice,
+  artifact/evidence/provenance, redacted audit, and reopen replay tests passed.
+- Strict Science clippy passed with `-D warnings`.
+- The shell built-binary test target compiled successfully before the product
+  source commit.
+- Product source commit:
+  `791413c28338458472eb98502628f1307eaa58aa`.
+- Fresh exact-product-source `xai-grok-pager-bin --bin lumen` build passed in
+  8m16s with Cargo offline and `CARGO_INCREMENTAL=0`.
+- Rebuilt-binary ACP connector test: 1 passed, 0 failed. It executed PubMed,
+  ChEMBL, Crossref, UniProt, Europe PMC, and OpenAlex fixture cases and checked
+  artifacts, notices, redacted audits, citation evidence, provenance, and
+  same-store reopen.
+- Built binary SHA-256:
+  `7986919860879b7c4f63aa990fe237f7b34b48e1fac7dd978361d75114fda209`.
+
+Evidence is in `agent/work/openalex-p1-evidence/`. The three `.summary` files
+are explicitly concise summaries of the current tool output, not complete raw
+compiler logs. The built-binary test log retains the exact test result.
 
 ## Live admission remains closed
 
@@ -73,4 +89,5 @@ Live proof requires explicit billable-network authorization, an
 operator-approved runtime-only API key, retained redacted rate-limit/cost/status
 and response evidence, and an actual presentation-point test for the mandatory
 notice. Any article-content reuse also requires checking the article-level
-license. Until then, this is deterministic offline work only, not live L5.
+license. Until then, this is accepted deterministic offline L4 evidence, not
+live L5.

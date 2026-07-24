@@ -1,0 +1,11 @@
+product_source_commit: 791413c28338458472eb98502628f1307eaa58aa
+binary_sha256: 7986919860879b7c4f63aa990fe237f7b34b48e1fac7dd978361d75114fda209
+command: GROK_BINARY=/Users/lei/Documents/Codex/2026-07-24/ji-3/work/target-science-fusion/debug/lumen CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/Users/lei/Documents/Codex/2026-07-24/ji-3/work/target-science-fusion cargo test -p xai-grok-shell --test test_built_binary_e2e test_stdio_science_connector_fetch_product_path --offline -- --ignored --nocapture
+
+running 1 test
+test test_stdio_science_connector_fetch_product_path ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out; finished in 7.47s
+
+fixture_cases: pubmed, chembl, crossref, uniprot, europepmc, openalex
+network: offline fixture transport only; no live connector or provider call

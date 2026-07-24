@@ -268,7 +268,7 @@
           "topics",
           "content_url"
         ],
-        "offline_fixture_product_proof": "pending test execution"
+        "offline_fixture_product_proof": "built-binary ACP: 1 passed, 0 failed; exact product commit 791413c28338458472eb98502628f1307eaa58aa; binary sha256 7986919860879b7c4f63aa990fe237f7b34b48e1fac7dd978361d75114fda209"
       },
       "unmet_live_admission_conditions": [
         "explicit billable live-network authorization",
@@ -277,7 +277,7 @@
         "visible presentation-point notice test",
         "article-level license verification before content reuse"
       ],
-      "admission": "pending-deny-live; offline-fixture implementation under test",
+      "admission": "pending-deny-live; offline-fixture product path accepted",
       "live_probe": "ignored; not-run"
     }
   ]
