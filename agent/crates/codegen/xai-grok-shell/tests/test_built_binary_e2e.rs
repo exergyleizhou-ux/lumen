@@ -1396,6 +1396,14 @@ async fn test_stdio_science_connector_fetch_product_path() {
                 Some(first_title),
                 "result: {result}"
             );
+            let notice = result["user_notice"].as_str().unwrap_or_default();
+            assert!(
+                !notice.is_empty(),
+                "connector notice must reach the product response"
+            );
+            if connector == "pubmed" {
+                assert!(notice.contains("NCBI disclaimer"), "notice: {notice}");
+            }
             // Evidence carries the scientific citation; the audit is redacted.
             let claim = result["evidence"][0]["claim"].as_str().unwrap_or_default();
             assert!(claim.contains(query), "claim: {claim}");

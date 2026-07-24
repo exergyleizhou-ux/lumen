@@ -1612,6 +1612,11 @@ mod record_response_token_usage_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/replay_buffer_send_update_tests.rs"]
 mod replay_buffer_send_update_tests;
+/// SessionActor invariant tests: single-writer, durable-before-side-effect,
+/// terminal exactly-once, plan-mode dual-writer safety, Expert sandbox.
+#[cfg(test)]
+#[path = "acp_session_impl/session_actor_invariants.rs"]
+mod session_actor_invariants;
 #[cfg(test)]
 #[path = "acp_session_tests/reverse_request_session_id_tests.rs"]
 mod reverse_request_session_id_tests;
