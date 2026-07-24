@@ -2157,9 +2157,9 @@ impl MvpAgent {
         let handle = self
             .get_session_handle(session_id)
             .ok_or(crate::session::science_goal::ScienceGoalReviewError::NoActiveGoal)?;
-        let actor_workspace = std::fs::canonicalize(&handle.info.cwd)
+        let actor_workspace = dunce::canonicalize(&handle.info.cwd)
             .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
-        let run_workspace = std::fs::canonicalize(&run.context.workspace_root)
+        let run_workspace = dunce::canonicalize(&run.context.workspace_root)
             .map_err(|_| crate::session::science_goal::ScienceGoalReviewError::HostVerificationFailed)?;
         if run.context.session_id != session_id.0.as_ref() || run_workspace != actor_workspace {
             return Err(crate::session::science_goal::ScienceGoalReviewError::StaleBinding);

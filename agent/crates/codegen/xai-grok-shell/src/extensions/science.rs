@@ -129,7 +129,7 @@ async fn handle_goal_host_verify(agent: &MvpAgent, args: &acp::ExtRequest) -> Ex
     let handle = agent
         .get_session_handle(&session_id)
         .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
-    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let workspace = dunce::canonicalize(&handle.info.cwd).map_err(internal)?;
     let store_root = canonical_dir_within(params.store_root, &workspace)?;
     let result = agent
         .verify_science_goal(
@@ -165,11 +165,11 @@ async fn handle_ssh_scp_fixture(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
     let handle = agent
         .get_session_handle(&session_id)
         .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
-    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let workspace = dunce::canonicalize(&handle.info.cwd).map_err(internal)?;
     let store_root = canonical_dir_within(params.store_root, &workspace)?;
     let artifact_root = canonical_dir_within(params.artifact_root, &workspace)?;
     let canonical_file = |path: PathBuf, label: &str| -> Result<PathBuf, acp::Error> {
-        let path = std::fs::canonicalize(path).map_err(internal)?;
+        let path = dunce::canonicalize(path).map_err(internal)?;
         if !path.starts_with(&workspace) || !path.is_file() {
             return Err(acp::Error::invalid_params()
                 .data(format!("{label} must be a file inside session cwd")));
@@ -186,7 +186,7 @@ async fn handle_ssh_scp_fixture(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
                 .local_path
                 .parent()
                 .ok_or_else(|| acp::Error::invalid_params().data("localPath has no parent"))?;
-            let parent = std::fs::canonicalize(parent).map_err(internal)?;
+            let parent = dunce::canonicalize(parent).map_err(internal)?;
             if !parent.starts_with(&workspace) {
                 return Err(
                     acp::Error::invalid_params().data("localPath must be inside session cwd")
@@ -309,12 +309,12 @@ async fn handle_connector_fetch(agent: &MvpAgent, args: &acp::ExtRequest) -> Ext
     let handle = agent
         .get_session_handle(&session_id)
         .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
-    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let workspace = dunce::canonicalize(&handle.info.cwd).map_err(internal)?;
     let store_root = canonical_dir_within(params.store_root, &workspace)?;
     let artifact_root = canonical_dir_within(params.artifact_root, &workspace)?;
     let mut fixture_bytes = Vec::with_capacity(expected);
     for path in &params.fixture_paths {
-        let path = std::fs::canonicalize(path).map_err(internal)?;
+        let path = dunce::canonicalize(path).map_err(internal)?;
         if !path.starts_with(&workspace) || !path.is_file() {
             return Err(
                 acp::Error::invalid_params().data("fixturePaths must be files inside session cwd")
@@ -384,8 +384,8 @@ async fn handle_import_preview(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtR
     let handle = agent
         .get_session_handle(&session_id)
         .ok_or_else(|| acp::Error::invalid_params().data("session not found"))?;
-    let workspace = std::fs::canonicalize(&handle.info.cwd).map_err(internal)?;
-    let source_path = std::fs::canonicalize(&params.source_path).map_err(internal)?;
+    let workspace = dunce::canonicalize(&handle.info.cwd).map_err(internal)?;
+    let source_path = dunce::canonicalize(&params.source_path).map_err(internal)?;
     if !source_path.starts_with(&workspace) || !source_path.is_file() {
         return Err(
             acp::Error::invalid_params().data("sourcePath must be a file inside session cwd")
