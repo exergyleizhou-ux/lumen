@@ -17,11 +17,18 @@ pub mod bindingdb;
 pub mod biorxiv;
 pub mod chebi;
 pub mod chembl;
+pub mod clinvar;
 pub mod crossref;
+pub mod dbsnp;
+pub mod ensembl;
 pub mod europepmc;
 pub mod fetch;
+pub mod gnomad;
 pub mod gtopdb;
 pub mod interpro;
+pub mod mygene;
+pub mod myvariant;
+pub mod ncbi_gene;
 pub mod openalex;
 pub mod pdbe;
 pub mod pubchem;
@@ -30,6 +37,7 @@ pub mod rcsb_pdb;
 pub mod semantic_scholar;
 pub mod sifts;
 pub mod surechembl;
+pub mod ucsc;
 pub mod uniprot;
 pub mod adapter;
 
@@ -431,9 +439,90 @@ const CHEBI: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/ols4/api/search?q=aspirin&ontology=chebi&rows=1",
 };
 
+const ENSEMBL: ConnectorDescriptor = ConnectorDescriptor {
+    id: "ensembl", display_name: "Ensembl", auth_class: AuthClass::None,
+    base_url: "https://rest.ensembl.org", egress_hosts: &["rest.ensembl.org"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ebi.ac.uk/about/terms-of-use",
+    user_notice: "Ensembl data freely available. EMBL-EBI terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/lookup/symbol/human/BRCA2?content-type=application/json",
+};
+const NCBI_GENE: ConnectorDescriptor = ConnectorDescriptor {
+    id: "ncbi-gene", display_name: "NCBI Gene", auth_class: AuthClass::None,
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "NCBI Gene data freely available. NCBI policies apply.",
+    data_class: DataClass::PublicReference, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/esearch.fcgi?db=gene&retmode=json&retmax=1&term=BRCA2",
+};
+const DBSNP: ConnectorDescriptor = ConnectorDescriptor {
+    id: "dbsnp", display_name: "dbSNP", auth_class: AuthClass::None,
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "dbSNP data freely available. NCBI policies apply.",
+    data_class: DataClass::PublicReference, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/esearch.fcgi?db=snp&retmode=json&retmax=1&term=rs334",
+};
+const CLINVAR: ConnectorDescriptor = ConnectorDescriptor {
+    id: "clinvar", display_name: "ClinVar", auth_class: AuthClass::None,
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "ClinVar data freely available. NCBI policies apply.",
+    data_class: DataClass::PublicReference, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/esearch.fcgi?db=clinvar&retmode=json&retmax=1&term=BRCA1",
+};
+const GNOMAD: ConnectorDescriptor = ConnectorDescriptor {
+    id: "gnomad", display_name: "gnomAD", auth_class: AuthClass::None,
+    base_url: "https://gnomad.broadinstitute.org/api", egress_hosts: &["gnomad.broadinstitute.org"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://gnomad.broadinstitute.org/terms",
+    user_notice: "gnomAD data ODC Public Domain Dedication. Broad Institute terms apply.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/?query={%20gene(gene_id:%20\"ENSG00000139618\")%20{%20gene_id,symbol%20}%20}",
+};
+const UCSC: ConnectorDescriptor = ConnectorDescriptor {
+    id: "ucsc", display_name: "UCSC Genome Browser", auth_class: AuthClass::None,
+    base_url: "https://api.genome.ucsc.edu", egress_hosts: &["api.genome.ucsc.edu"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://genome.ucsc.edu/license/",
+    user_notice: "UCSC Genome Browser data freely available for academic use.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/search?search=BRCA2&genome=hg38",
+};
+const MYGENE: ConnectorDescriptor = ConnectorDescriptor {
+    id: "mygene", display_name: "MyGene.info", auth_class: AuthClass::None,
+    base_url: "https://mygene.info/v3", egress_hosts: &["mygene.info"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://mygene.info/",
+    user_notice: "MyGene.info data from multiple sources. Service free.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/v3/query?q=BRCA2&size=1&species=human",
+};
+const MYVARIANT: ConnectorDescriptor = ConnectorDescriptor {
+    id: "myvariant", display_name: "MyVariant.info", auth_class: AuthClass::None,
+    base_url: "https://myvariant.info/v1", egress_hosts: &["myvariant.info"],
+    rate_limit: RateLimit { max_requests: 1, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://myvariant.info/",
+    user_notice: "MyVariant.info data from multiple sources. Service free.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/v1/query?q=rs334&size=1",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI, ENSEMBL, NCBI_GENE, DBSNP, CLINVAR, GNOMAD, UCSC, MYGENE, MYVARIANT]
 }
 
 /// Look up a connector by id.

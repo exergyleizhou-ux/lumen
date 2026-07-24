@@ -182,6 +182,14 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::gtopdb::GtopdbAdapter)).expect("gtopdb adapter");
     registry.register(Box::new(super::surechembl::SurechemblAdapter)).expect("surechembl adapter");
     registry.register(Box::new(super::chebi::ChebiAdapter)).expect("chebi adapter");
+    registry.register(Box::new(super::ensembl::EnsemblAdapter)).expect("ensembl adapter");
+    registry.register(Box::new(super::ncbi_gene::NcbiGeneAdapter)).expect("ncbi-gene adapter");
+    registry.register(Box::new(super::dbsnp::DbsnpAdapter)).expect("dbsnp adapter");
+    registry.register(Box::new(super::clinvar::ClinvarAdapter)).expect("clinvar adapter");
+    registry.register(Box::new(super::gnomad::GnomadAdapter)).expect("gnomad adapter");
+    registry.register(Box::new(super::ucsc::UcscAdapter)).expect("ucsc adapter");
+    registry.register(Box::new(super::mygene::MygeneAdapter)).expect("mygene adapter");
+    registry.register(Box::new(super::myvariant::MyvariantAdapter)).expect("myvariant adapter");
 
     validate_global_coverage();
 
