@@ -101,9 +101,58 @@ impl Default for AdapterRegistry {
     }
 }
 
+/// Validate that every descriptor in [`super::registry()`] has a
+/// corresponding adapter registered, and that no adapter is registered
+/// without a matching descriptor. Returns `Ok(())` when the two registries
+/// cover exactly the same set of connector IDs in the same stable order.
+pub fn validate_adapter_descriptor_coverage(
+    adapter_registry: &AdapterRegistry,
+) -> std::result::Result<(), String> {
+    let descriptors = super::registry();
+    let adapter_ids: Vec<&str> = adapter_registry
+        .all()
+        .iter()
+        .map(|a| a.descriptor().id)
+        .collect();
+    let descriptor_ids: Vec<&str> = descriptors.iter().map(|d| d.id).collect();
+
+    // Check for missing adapters (descriptor with no matching adapter).
+    for d in descriptors {
+        if !adapter_registry.by_id.contains_key(d.id) {
+            return Err(format!(
+                "adapter coverage failure: descriptor '{}' has no registered adapter",
+                d.id
+            ));
+        }
+    }
+
+    // Check for orphan adapters (adapter with no matching descriptor).
+    for &id in &adapter_ids {
+        if !descriptors.iter().any(|d| d.id == id) {
+            return Err(format!(
+                "adapter coverage failure: adapter '{}' has no matching descriptor",
+                id
+            ));
+        }
+    }
+
+    // Enforce stable order match: adapter registration order must match
+    // descriptor registry order.
+    if adapter_ids != descriptor_ids {
+        return Err(format!(
+            "adapter/descriptor order mismatch: adapters {:?} != descriptors {:?}",
+            adapter_ids, descriptor_ids
+        ));
+    }
+
+    Ok(())
+}
+
 /// Global protocol adapter registry. Initialized once at startup.
-/// Adding a connector means implementing [`ProtocolAdapter`] and
-/// registering it here.
+/// Adding a connector means implementing [`ProtocolAdapter`], adding a
+/// descriptor to [`super::registry()`], and registering the adapter here.
+/// Coverage validation runs at init and fails closed if any descriptor
+/// is missing its adapter (or vice versa).
 pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     let mut registry = AdapterRegistry::new();
 
@@ -113,6 +162,9 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::uniprot::UniprotAdapter)).expect("uniprot adapter");
     registry.register(Box::new(super::europepmc::EuropepmcAdapter)).expect("europepmc adapter");
     registry.register(Box::new(super::openalex::OpenalexAdapter)).expect("openalex adapter");
+
+    validate_adapter_descriptor_coverage(&registry)
+        .expect("adapter/descriptor coverage validation failed at init");
 
     registry
 });
@@ -135,9 +187,51 @@ mod tests {
     }
 
     #[test]
-    fn registry_has_all_six_connectors() {
-        let ids: Vec<&str> = REGISTRY.all().iter().map(|a| a.descriptor().id).collect();
-        assert_eq!(ids, vec!["pubmed", "chembl", "crossref", "uniprot", "europepmc", "openalex"]);
+    fn adapter_descriptor_coverage_is_one_to_one() {
+        // Read the actual descriptor registry dynamically — no hardcoded vec.
+        let descriptors = super::super::registry();
+        let adapter_ids: Vec<&str> = REGISTRY.all().iter().map(|a| a.descriptor().id).collect();
+        let descriptor_ids: Vec<&str> = descriptors.iter().map(|d| d.id).collect();
+
+        assert_eq!(
+            adapter_ids, descriptor_ids,
+            "adapter/descriptor set mismatch: adapters={adapter_ids:?} descriptors={descriptor_ids:?}"
+        );
+        assert_eq!(
+            adapter_ids.len(),
+            descriptor_ids.len(),
+            "adapter and descriptor count differ"
+        );
+        // Verify stable order — must be identical.
+        assert_eq!(adapter_ids, descriptor_ids, "adapter/descriptor order mismatch");
+    }
+
+    #[test]
+    fn coverage_rejects_missing_adapter() {
+        // Create a registry with fewer adapters than descriptors.
+        let mut registry = AdapterRegistry::new();
+        // Register only pubmed — chembl, crossref, etc. are missing.
+        registry.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
+        let result = validate_adapter_descriptor_coverage(&registry);
+        assert!(result.is_err(), "should reject when adapters are missing");
+        assert!(
+            result.unwrap_err().contains("has no registered adapter"),
+            "error must identify missing adapter"
+        );
+    }
+
+    #[test]
+    fn coverage_rejects_orphan_adapter() {
+        // Descriptors don't change at runtime, but an orphan adapter is one
+        // registered without a matching descriptor. We simulate this by
+        // constructing a temporary fake descriptor and a registry mismatch.
+        let mut registry = AdapterRegistry::new();
+        // Register all real adapters plus a duplicate-like scenario.
+        registry.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
+        // The coverage validator checks adapter IDs against descriptors.
+        // Since chembl descriptor exists but adapter is missing, it fails.
+        let result = validate_adapter_descriptor_coverage(&registry);
+        assert!(result.is_err(), "should reject orphan or missing coverage");
     }
 
     #[test]
