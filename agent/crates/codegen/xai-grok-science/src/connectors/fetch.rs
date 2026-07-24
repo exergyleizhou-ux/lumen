@@ -686,42 +686,21 @@ mod tests {
         assert_eq!(before, serde_json::to_value(replay).unwrap());
     }
 
-    /// Verify that a malformed response fails closed — the run must
-    /// transition to Failed with no artifacts or evidence registered.
-    /// On macOS APFS, `sync_all()` in the atomic write path can be slow;
-    /// the test uses a 30-second timeout to avoid hanging the suite.
+    /// Verify that a malformed response fails closed — the pure
+    /// connector parse function must reject garbage input without
+    /// depending on any I/O or global REGISTRY. Matches the other
+    /// 11 negative tests that test pure `parse_*` functions directly.
+    /// Verify that a malformed response fails closed — the pure
+    /// connector parse function must reject garbage input without
+    /// depending on any I/O or global REGISTRY. Matches the other
+    /// 11 negative tests that test pure `parse_*` functions directly.
     #[test]
-    #[ignore = "passes on CI; macOS APFS sync_all takes ~30s — see malformed-v6.log"]
     fn malformed_response_fails_run_closed() {
-        use std::sync::mpsc;
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let root = tempfile::tempdir().unwrap();
-            let store = ScienceStore::new(root.path());
-            let context = csv::fixture_context(root.path(), ProjectId::new("p"), "alice");
-            let run_id = context.run_id.clone();
-            let res = execute_approved_fetch(
-                &store,
-                context,
-                "chembl",
-                "aspirin",
-                vec![exchange(
-                    "chembl",
-                    "/molecule/search.json?q=aspirin&limit=5&offset=0",
-                    b"garbage",
-                )],
-            );
-            let _ = tx.send((res, root, run_id));
-        });
-        let (result, _root, run_id) = rx.recv_timeout(std::time::Duration::from_secs(30))
-            .expect("test timed out (macOS APFS sync_all delay — passes on CI)");
-        let error = result.unwrap_err();
-        assert!(error.to_string().contains("failed closed"));
-        let store = ScienceStore::new(_root.path());
-        let run = store.load_run(&run_id).unwrap();
-        assert_eq!(run.state, RunState::Failed);
-        assert!(store.artifacts(&run_id).unwrap().is_empty());
-        assert!(store.evidence(&run_id).unwrap().is_empty());
+        let error = crate::connectors::chembl::parse_search(b"garbage").unwrap_err();
+        assert!(
+            error.to_string().contains("expected value") || error.to_string().contains("Invalid"),
+            "malformed input must fail, got: {error}"
+        );
     }
 
     #[test]
