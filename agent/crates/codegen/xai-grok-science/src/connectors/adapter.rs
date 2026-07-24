@@ -218,21 +218,62 @@ mod tests {
             "error must name a specific missing descriptor");
     }
 
+    /// A test-only descriptor whose ID deliberately does NOT exist in
+    /// `connectors::registry()`. Used to verify that the coverage validator
+    /// catches an adapter registered without a matching descriptor.
+    static ORPHAN_DESCRIPTOR: ConnectorDescriptor = ConnectorDescriptor {
+        id: "orphan-test-only",
+        display_name: "Orphan (test-only)",
+        auth_class: super::super::AuthClass::None,
+        base_url: "https://example.invalid/",
+        egress_hosts: &["example.invalid"],
+        rate_limit: super::super::RateLimit { max_requests: 1, per_ms: 1000 },
+        retry: super::super::RetryPolicy { max_attempts: 1, base_delay_ms: 100 },
+        tos_url: "https://example.invalid/tos",
+        user_notice: "orphan test only",
+        data_class: super::super::DataClass::PublicReference,
+        cache_policy: super::super::CachePolicy::NoStore,
+        live_probe_path: "/test",
+    };
+
+    struct OrphanAdapter;
+
+    impl ProtocolAdapter for OrphanAdapter {
+        fn descriptor(&self) -> &'static ConnectorDescriptor { &ORPHAN_DESCRIPTOR }
+        fn expected_exchanges(&self) -> usize { 1 }
+        fn build_fixture_paths(&self, _query: &str, _max: u32, _fixtures: &[Vec<u8>]) -> crate::Result<Vec<String>> {
+            Ok(vec!["/test".into()])
+        }
+        fn parse_responses(&self, _exchanges: &[crate::connectors::fetch::FetchExchange]) -> crate::Result<crate::connectors::fetch::ParsedResponse> {
+            Ok(crate::connectors::fetch::ParsedResponse { total_hits: 0, records: vec![] })
+        }
+    }
+
     #[test]
     fn coverage_rejects_orphan_adapter() {
-        // Orphan: an adapter registered without a matching descriptor.
-        // We simulate this by passing a descriptor list that deliberately
-        // excludes an adapter that was registered.
         let mut registry = AdapterRegistry::new();
+        // Register all real adapters ...
         registry.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
         registry.register(Box::new(super::super::chembl::ChemblAdapter)).unwrap();
-        // Descriptors list omits chembl — chembl adapter is now orphan.
-        let descriptors = &[super::super::PUBMED];
+        registry.register(Box::new(super::super::crossref::CrossrefAdapter)).unwrap();
+        registry.register(Box::new(super::super::uniprot::UniprotAdapter)).unwrap();
+        registry.register(Box::new(super::super::europepmc::EuropepmcAdapter)).unwrap();
+        registry.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
+        // ... plus one orphan whose descriptor is NOT in connectors::registry().
+        registry.register(Box::new(OrphanAdapter)).unwrap();
+
+        let descriptors = super::super::registry();
         let result = validate_adapter_descriptor_coverage(&registry, descriptors);
         assert!(result.is_err(), "should reject orphan adapters");
         let err = result.unwrap_err();
-        assert!(err.contains("has no matching descriptor"),
-            "error must identify orphan adapter, got: {err}");
+        assert!(
+            err.contains("orphan-test-only"),
+            "error must contain orphan adapter ID, got: {err}"
+        );
+        assert!(
+            err.contains("has no matching descriptor"),
+            "error must state 'no matching descriptor', got: {err}"
+        );
     }
 
     #[test]
