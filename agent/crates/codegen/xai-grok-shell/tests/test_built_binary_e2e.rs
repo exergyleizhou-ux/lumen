@@ -2393,3 +2393,44 @@ async fn test_headless_waits_for_short_background_task_and_exits_clean() {
         stderr_tail(&result.stderr, 2000)
     );
 }
+
+/// DS-38: structural proof that the science connector registry contains
+/// exactly 42 entries and that every expected connector ID is present.
+/// This test does NOT require a running binary — it reads the compiled-in
+/// descriptor registry directly from the xai-grok-science crate.
+#[test]
+fn test_connector_registry_has_all_42_ids() {
+    let registry = xai_grok_science::connectors::registry();
+    assert_eq!(
+        registry.len(),
+        42,
+        "descriptor registry must contain exactly 42 connectors"
+    );
+
+    let expected: std::collections::BTreeSet<&str> = [
+        "pubmed", "chembl", "crossref", "uniprot", "europepmc", "openalex",
+        "semantic-scholar", "arxiv", "biorxiv",
+        "rcsb-pdb", "pdbe", "alphafold", "interpro", "sifts",
+        "pubchem", "bindingdb", "gtopdb", "surechembl", "chebi",
+        "ensembl", "ncbi-gene", "dbsnp", "clinvar", "gnomad", "ucsc", "mygene", "myvariant",
+        "reactome", "string-db", "intact", "wikipathways", "opentargets",
+        "geo", "arrayexpress", "gtex", "hpa", "expression-atlas", "single-cell-atlas", "depmap",
+        "eutils", "biogrid", "kegg",
+    ]
+    .into_iter()
+    .collect();
+
+    let actual: std::collections::BTreeSet<&str> =
+        registry.iter().map(|d| d.id).collect();
+
+    assert_eq!(
+        expected, actual,
+        "connector registry must contain exactly these 42 IDs"
+    );
+
+    // Prove no duplicates
+    let mut ids: Vec<&str> = registry.iter().map(|d| d.id).collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 42, "connector registry contains duplicate IDs");
+}
