@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub mod alphafold;
 pub mod arxiv;
 pub mod bindingdb;
+pub mod biogrid;
 pub mod biorxiv;
 pub mod chebi;
 pub mod chembl;
@@ -22,10 +23,12 @@ pub mod crossref;
 pub mod dbsnp;
 pub mod ensembl;
 pub mod europepmc;
+pub mod eutils;
 pub mod fetch;
 pub mod gnomad;
 pub mod gtopdb;
 pub mod interpro;
+pub mod kegg;
 pub mod mygene;
 pub mod myvariant;
 pub mod ncbi_gene;
@@ -624,9 +627,40 @@ const DEPMAP: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/portal/api/download/files",
 };
 
+const EUTILS: ConnectorDescriptor = ConnectorDescriptor {
+    id: "eutils", display_name: "NCBI E-utilities (shared)", auth_class: AuthClass::None,
+    base_url: "https://eutils.ncbi.nlm.nih.gov/entrez/eutils", egress_hosts: &["eutils.ncbi.nlm.nih.gov"],
+    rate_limit: RateLimit { max_requests: 3, per_ms: 1_000 },
+    retry: RetryPolicy { max_attempts: 3, base_delay_ms: 1_000 },
+    tos_url: "https://www.ncbi.nlm.nih.gov/home/about/policies/",
+    user_notice: "E-utilities shared transport. PubMed adapter hardcodes db=pubmed; no shared parameterizable adapter exists yet.",
+    data_class: DataClass::PublicReference, cache_policy: CachePolicy::NoStore,
+    live_probe_path: "",
+};
+const BIOGRID_REJECTED: ConnectorDescriptor = ConnectorDescriptor {
+    id: "biogrid", display_name: "BioGRID (REJECTED)", auth_class: AuthClass::None,
+    base_url: "https://webservice.thebiogrid.org/", egress_hosts: &["webservice.thebiogrid.org"],
+    rate_limit: RateLimit { max_requests: 0, per_ms: 0 },
+    retry: RetryPolicy { max_attempts: 0, base_delay_ms: 0 },
+    tos_url: "https://thebiogrid.org/terms.php",
+    user_notice: "REJECTED: credential in URL violates Lumen safety policy.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::NoStore,
+    live_probe_path: "",
+};
+const KEGG_PENDING: ConnectorDescriptor = ConnectorDescriptor {
+    id: "kegg", display_name: "KEGG (LICENSE PENDING)", auth_class: AuthClass::None,
+    base_url: "https://rest.kegg.jp/", egress_hosts: &["rest.kegg.jp"],
+    rate_limit: RateLimit { max_requests: 0, per_ms: 0 },
+    retry: RetryPolicy { max_attempts: 0, base_delay_ms: 0 },
+    tos_url: "https://www.kegg.jp/kegg/legal.html",
+    user_notice: "LICENSE PENDING: commercial use requires paid subscription.",
+    data_class: DataClass::PublicData, cache_policy: CachePolicy::NoStore,
+    live_probe_path: "",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI, ENSEMBL, NCBI_GENE, DBSNP, CLINVAR, GNOMAD, UCSC, MYGENE, MYVARIANT, REACTOME, STRING_DB, INTACT, WIKIPATHWAYS, OPENTARGETS, GEO, ARRAYEXPRESS, GTEX, HPA, EXPRESSION_ATLAS, SINGLE_CELL_ATLAS, DEPMAP]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC, OPENALEX, SEMANTIC_SCHOLAR, ARXIV, BIORXIV, RCSB_PDB, PDBE, ALPHAFOLD, INTERPRO, SIFTS, PUBCHEM, BINDINGDB, GTOPDB, SURECHEMBL, CHEBI, ENSEMBL, NCBI_GENE, DBSNP, CLINVAR, GNOMAD, UCSC, MYGENE, MYVARIANT, REACTOME, STRING_DB, INTACT, WIKIPATHWAYS, OPENTARGETS, GEO, ARRAYEXPRESS, GTEX, HPA, EXPRESSION_ATLAS, SINGLE_CELL_ATLAS, DEPMAP, EUTILS, BIOGRID_REJECTED, KEGG_PENDING]
 }
 
 /// Look up a connector by id.

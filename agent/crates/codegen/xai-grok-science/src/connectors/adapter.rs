@@ -202,6 +202,9 @@ pub static REGISTRY: LazyLock<AdapterRegistry> = LazyLock::new(|| {
     registry.register(Box::new(super::expression_atlas::ExpressionAtlasAdapter)).expect("expression-atlas adapter");
     registry.register(Box::new(super::single_cell_atlas::SingleCellAtlasAdapter)).expect("single-cell-atlas adapter");
     registry.register(Box::new(super::depmap::DepmapAdapter)).expect("depmap adapter");
+    registry.register(Box::new(super::eutils::EutilsAdapter)).expect("eutils adapter");
+    registry.register(Box::new(super::biogrid::BiogridAdapter)).expect("biogrid adapter");
+    registry.register(Box::new(super::kegg::KeggAdapter)).expect("kegg adapter");
 
     validate_global_coverage();
 
