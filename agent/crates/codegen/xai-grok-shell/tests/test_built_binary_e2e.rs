@@ -1078,16 +1078,21 @@ async fn test_stdio_science_csv_allow_product_path() {
         assert!(events.len() >= 4, "events: {events:?}");
         assert_eq!(events[0].seq, 1);
         assert!(
-            events.windows(2).all(|items| items[0].seq + 1 == items[1].seq),
+            events
+                .windows(2)
+                .all(|items| items[0].seq + 1 == items[1].seq),
             "event sequence is not monotonic: {events:?}"
         );
         let reopened = xai_grok_science::ScienceStore::new(evidence.path().join("store"));
         assert_eq!(
             events,
-            reopened.events_after(&run_id, 0, 100).expect("replay after reopen"),
+            reopened
+                .events_after(&run_id, 0, 100)
+                .expect("replay after reopen"),
             "restart replay must preserve every event field"
         );
-    });
+    })
+    .await;
 }
 
 /// A real ACP client cancellation must durably deny the science call and must
@@ -1156,7 +1161,8 @@ async fn test_stdio_science_csv_deny_product_path() {
             store.approvals(&run.context.run_id).unwrap()[0].decision,
             xai_grok_science::ApprovalDecision::Deny
         );
-    });
+    })
+    .await;
 }
 
 /// A client that never resolves the production permission prompt must leave a
@@ -1228,7 +1234,8 @@ async fn test_stdio_science_csv_timeout_product_path() {
             store.approvals(&run.context.run_id).unwrap()[0].decision,
             xai_grok_science::ApprovalDecision::Timeout
         );
-    });
+    })
+    .await;
 }
 
 /// Verify that x.ai/session/close frees the session.
