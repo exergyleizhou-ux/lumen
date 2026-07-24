@@ -33,11 +33,11 @@
   "summary": {
     "total_inventory": 42,
     "ds0_inventory_coverage": 42,
-    "final_disposition_resolved": 7,
-    "final_disposition_unresolved": 35,
+    "final_disposition_resolved": 8,
+    "final_disposition_unresolved": 34,
     "admission_status_breakdown": {
-      "implemented-offline-l4": 6,
-      "inventory-complete": 33,
+      "implemented-offline-l4": 7,
+      "inventory-complete": 32,
       "license-review-required": 1,
       "protocol-partial-overlap": 1,
       "rejected-safety-policy": 1
@@ -300,7 +300,7 @@
       "stable_id": "semantic-scholar",
       "source_file": "backend/cli/src/science/connectors/literature/semantic-scholar.ts",
       "source_sha256": "6cecd632a4a400bce418f7a73f9d8f0172202b37b48b2f603759b292fc95a56d",
-      "rust_module": "connectors/semantic_scholar.rs (planned)",
+      "rust_module": "connectors/semantic_scholar.rs",
       "service_owner": "Allen Institute for AI (AI2)",
       "official_base_url": "https://api.semanticscholar.org/graph/v1/",
       "egress_hosts": [
@@ -337,8 +337,8 @@
       ],
       "fixture_feasibility": true,
       "live_probe_condition": "requires explicit live-network authorization; optional API key provides an identified dedicated introductory quota of 1 req/s and supportability; it does not imply throughput above the unauthenticated shared-pool ceiling of 1000 req/s",
-      "admission_status": "inventory-complete",
-      "final_disposition": null,
+      "admission_status": "implemented-offline-l4",
+      "final_disposition": "implemented-offline-l4",
       "reason": "DS-0 inventory complete; awaits DS-2 implementation",
       "codex_acceptance": "pending",
       "official_docs_urls": {
