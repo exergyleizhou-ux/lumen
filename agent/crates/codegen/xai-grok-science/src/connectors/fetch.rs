@@ -2,7 +2,7 @@
 //!
 //! One fetch run models one complete connector operation as a sequence of
 //! request/response exchanges (two for pubmed esearch+esummary, one for a
-//! ChEMBL, Crossref, or UniProt search). The responses reach this module as
+//! ChEMBL, Crossref, UniProt, or Europe PMC search). The responses reach this module as
 //! bytes that transited Lumen's formal workspace tool dispatch; the kernel re-parses every
 //! exchange and fails the run closed before registering any artifact when a
 //! response is malformed. Credentials never appear here: the request URLs
@@ -103,6 +103,14 @@ pub fn parse_responses(connector_id: &str, exchanges: &[FetchExchange]) -> Resul
             }
             super::uniprot::parse_search(&exchanges[0].response)
         }
+        "europepmc" => {
+            if exchanges.len() != 1 {
+                return Err(ScienceError::Invalid(
+                    "europepmc fetch requires exactly one search exchange".into(),
+                ));
+            }
+            super::europepmc::parse_search(&exchanges[0].response)
+        }
         other => Err(ScienceError::Invalid(format!(
             "no protocol adapter for connector: {other}"
         ))),
@@ -116,7 +124,7 @@ pub fn expected_exchanges(connector_id: &str) -> Option<usize> {
         "pubmed" => Some(2),
         "chembl" => Some(1),
         "crossref" => Some(1),
-        "uniprot" => Some(1),
+        "uniprot" | "europepmc" => Some(1),
         _ => None,
     }
 }
@@ -324,6 +332,9 @@ mod tests {
     const UNIPROT: &[u8] = br#"{"results":[{"primaryAccession":"P01308",
         "uniProtkbId":"INS_HUMAN","proteinDescription":{"recommendedName":{"fullName":{"value":"Insulin"}}},
         "organism":{"scientificName":"Homo sapiens"}}],"totalResults":1}"#;
+    const EUROPEPMC: &[u8] = br#"{"hitCount":1,"resultList":{"result":[{
+        "id":"41234567","source":"MED","title":"Reproducible single-cell analysis",
+        "journalTitle":"Genome Methods","pubYear":"2026"}]}}"#;
 
     fn exchange(connector: &str, path: &str, response: &[u8]) -> FetchExchange {
         FetchExchange {
@@ -531,6 +542,57 @@ mod tests {
                     "uniprot",
                     &super::super::uniprot::search_path("human insulin", 5),
                     UNIPROT,
+                )],
+            )
+            .unwrap(),
+            replay_after: result.replay_after,
+        };
+        assert_eq!(before, serde_json::to_value(replay).unwrap());
+    }
+
+    #[test]
+    fn europepmc_fetch_records_notice_citation_and_replays() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ScienceStore::new(temp.path());
+        let result = execute_approved_fetch(
+            &store,
+            csv::fixture_context(temp.path(), ProjectId::new("p"), "alice"),
+            "europepmc",
+            "single cell RNA",
+            vec![exchange(
+                "europepmc",
+                &super::super::europepmc::search_path("single cell RNA", 5),
+                EUROPEPMC,
+            )],
+        )
+        .unwrap();
+        assert_eq!(result.parsed.total_hits, 1);
+        assert_eq!(result.parsed.records[0].id, "MED:41234567");
+        assert_eq!(
+            result.parsed.records[0].title,
+            "Reproducible single-cell analysis"
+        );
+        assert!(result.user_notice.contains("article-level license"));
+        assert_eq!(result.artifacts.len(), 1);
+        assert_eq!(result.audits.len(), 1);
+        assert!(result.evidence[0].source.contains("www.ebi.ac.uk"));
+        let before = serde_json::to_value(&result).unwrap();
+        drop(store);
+        let reopened = ScienceStore::new(temp.path());
+        let replay = FetchResult {
+            run: reopened.load_run(&result.run.context.run_id).unwrap(),
+            artifacts: reopened.artifacts(&result.run.context.run_id).unwrap(),
+            evidence: reopened.evidence(&result.run.context.run_id).unwrap(),
+            provenance: reopened.provenance(&result.run.context.run_id).unwrap(),
+            approvals: reopened.approvals(&result.run.context.run_id).unwrap(),
+            audits: result.audits.clone(),
+            user_notice: result.user_notice.clone(),
+            parsed: parse_responses(
+                "europepmc",
+                &[exchange(
+                    "europepmc",
+                    &super::super::europepmc::search_path("single cell RNA", 5),
+                    EUROPEPMC,
                 )],
             )
             .unwrap(),

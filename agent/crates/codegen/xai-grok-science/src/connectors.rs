@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod chembl;
 pub mod crossref;
+pub mod europepmc;
 pub mod fetch;
 pub mod pubmed;
 pub mod uniprot;
@@ -199,9 +200,33 @@ const UNIPROT: ConnectorDescriptor = ConnectorDescriptor {
     live_probe_path: "/search?query=insulin&format=json&size=1&fields=accession,id,protein_name,gene_names,organism_name",
 };
 
+/// Europe PMC Articles REST API. The v1 operation retrieves one bounded
+/// `lite` bibliographic metadata page and intentionally excludes abstracts,
+/// full text, references, annotations, and external links.
+const EUROPEPMC: ConnectorDescriptor = ConnectorDescriptor {
+    id: "europepmc",
+    display_name: "Europe PMC Articles",
+    auth_class: AuthClass::None,
+    base_url: "https://www.ebi.ac.uk/europepmc/webservices/rest",
+    egress_hosts: &["www.ebi.ac.uk"],
+    rate_limit: RateLimit {
+        max_requests: 1,
+        per_ms: 1_000,
+    },
+    retry: RetryPolicy {
+        max_attempts: 3,
+        base_delay_ms: 1_000,
+    },
+    tos_url: "https://europepmc.org/Copyright",
+    user_notice: "Europe PMC lite bibliographic metadata is returned without abstracts or full text. Article content remains subject to each work's copyright and license; verify the article-level license before reuse or redistribution.",
+    data_class: DataClass::PublicReference,
+    cache_policy: CachePolicy::TtlSeconds(86_400),
+    live_probe_path: "/search?query=single%20cell%20RNA&format=json&resultType=lite&pageSize=1&synonym=false",
+};
+
 /// All registered connectors, in stable order.
 pub fn registry() -> &'static [ConnectorDescriptor] {
-    &[PUBMED, CHEMBL, CROSSREF, UNIPROT]
+    &[PUBMED, CHEMBL, CROSSREF, UNIPROT, EUROPEPMC]
 }
 
 /// Look up a connector by id.
@@ -407,11 +432,15 @@ mod tests {
     #[test]
     fn registry_contains_first_batch_in_stable_order() {
         let ids: Vec<_> = registry().iter().map(|d| d.id).collect();
-        assert_eq!(ids, vec!["pubmed", "chembl", "crossref", "uniprot"]);
+        assert_eq!(
+            ids,
+            vec!["pubmed", "chembl", "crossref", "uniprot", "europepmc"]
+        );
         assert!(descriptor("pubmed").is_some());
         assert!(descriptor("chembl").is_some());
         assert!(descriptor("crossref").is_some());
         assert!(descriptor("uniprot").is_some());
+        assert!(descriptor("europepmc").is_some());
         assert!(descriptor("unknown").is_none());
     }
 
@@ -463,6 +492,14 @@ mod tests {
         )
         .expect("public UniProt request");
         assert_eq!(uniprot.rate_limit.max_requests, 1);
+        let europepmc = validate_request(
+            "europepmc",
+            "/search?query=cell&format=json&resultType=lite&pageSize=5&synonym=false",
+            false,
+            5_000,
+        )
+        .expect("public Europe PMC request");
+        assert_eq!(europepmc.rate_limit.max_requests, 1);
     }
 
     #[test]

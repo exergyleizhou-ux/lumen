@@ -170,6 +170,57 @@
       ],
       "admission": "pending-deny-live; offline-fixture-only",
       "live_probe": "ignored; not-run"
+    },
+    {
+      "id": "europepmc-articles-rest",
+      "service_owner": "Europe PMC / EMBL-EBI",
+      "service_url": "https://www.ebi.ac.uk/europepmc/webservices/rest/",
+      "local_implementation": [
+        "agent/crates/codegen/xai-grok-science/src/connectors/europepmc.rs",
+        "agent/crates/codegen/xai-grok-science/src/connectors/fetch.rs",
+        "agent/crates/codegen/xai-grok-shell/src/extensions/science.rs"
+      ],
+      "source_code_imported": false,
+      "runtime_authority": "rust-lumen-tui-only",
+      "data_class": "public_reference",
+      "credential_class": "none",
+      "terms_reviewed_at": "2026-07-24",
+      "terms_urls": [
+        "https://europepmc.org/RestfulWebService",
+        "https://europepmc.org/developers",
+        "https://europepmc.org/Copyright"
+      ],
+      "implemented_controls": {
+        "exact_https_host_allowlist": true,
+        "local_rate_limit": "1 request per 1000ms; conservative local cap, not an official service quota",
+        "exchange_count": 1,
+        "max_results": 50,
+        "result_type": "lite",
+        "synonym_expansion": false,
+        "selected_fields": [
+          "source",
+          "id",
+          "title",
+          "journalTitle",
+          "pubYear"
+        ],
+        "excluded_fields": [
+          "abstractText",
+          "full text",
+          "references",
+          "annotations",
+          "external links"
+        ],
+        "offline_fixture_product_proof": "1 passed, 0 failed"
+      },
+      "unmet_live_admission_conditions": [
+        "explicit live-network authorization",
+        "retained redacted status and response evidence",
+        "visible presentation-point notice test",
+        "article-level license verification before content reuse"
+      ],
+      "admission": "pending-deny-live; offline-fixture-only",
+      "live_probe": "ignored; not-run"
     }
   ]
 }
