@@ -53,16 +53,21 @@ No Europe PMC, provider, or other live endpoint was called.
 - Europe PMC adapter, fixture, fail-closed, notice, artifact/evidence/
   provenance, audit, and reopen replay tests passed.
 - Strict Science clippy: passed with `-D warnings`.
-- Fresh `xai-grok-pager-bin --bin lumen` build: passed in 13m06s with
-  `CARGO_INCREMENTAL=0`.
+- Fresh exact-HEAD `xai-grok-pager-bin --bin lumen` build: passed in 12m35s
+  with `CARGO_INCREMENTAL=0`, after commit `f390ca91`.
 - Rebuilt-binary ACP connector test: `running 1 test`; 1 passed, 0 failed. It
   executed PubMed, ChEMBL, Crossref, UniProt, and Europe PMC fixture cases and
   checked artifacts, notices, redacted audits, citation evidence, provenance,
   and same-store reopen.
 - Built binary SHA-256:
-  `21b7f5f16546ca67e6137b7c084eb68d1628cf49025460bba0ba5e57ae8e9e32`.
+  `8171b076017c77246b8378a444e7fd4ac76a1a708ea6a067529e7feb4363b5d7`.
 
 Evidence logs and hashes are in `agent/work/europepmc-p1-evidence/`.
+`exact-head-lumen-build.log` and
+`exact-head-built-binary-connector-e2e.log` are the authoritative committed
+source-state evidence. The earlier unprefixed build and ACP logs are retained
+as preliminary evidence and are superseded because they preceded removal of
+two unrelated rustfmt-only working-tree diffs.
 
 ## Live admission remains closed
 
