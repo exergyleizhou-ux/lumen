@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn malformed_response_fails_run_closed() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = tempfile::Builder::new().prefix("fetch_malformed_").tempdir().unwrap();
         let store = ScienceStore::new(temp.path());
         let context = csv::fixture_context(temp.path(), ProjectId::new("p"), "alice");
         let run_id = context.run_id.clone();
@@ -705,10 +705,14 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("failed closed"));
+        drop(store);
+        let store = ScienceStore::new(temp.path());
         let run = store.load_run(&run_id).unwrap();
         assert_eq!(run.state, RunState::Failed);
         assert!(store.artifacts(&run_id).unwrap().is_empty());
         assert!(store.evidence(&run_id).unwrap().is_empty());
+        drop(store);
+        drop(temp);
     }
 
     #[test]
