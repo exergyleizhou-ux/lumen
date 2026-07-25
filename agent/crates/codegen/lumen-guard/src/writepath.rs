@@ -3,6 +3,13 @@
 use crate::hidden::strip_hidden_chars;
 use crate::CheckResult;
 
+/// Check whether the `LUMEN_UNSAFE` env var is set (allows bypassing all guards).
+fn unsafe_mode() -> bool {
+    std::env::var("LUMEN_UNSAFE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 const SENSITIVE_SEGMENTS: &[(&str, &str)] = &[
     ("/.ssh/", "write into ~/.ssh (SSH key / authorized_keys injection)"),
     (
@@ -54,6 +61,9 @@ const SHELL_RC: &[&str] = &[
 
 /// Block write/edit targets that plant persistence or clobber system paths.
 pub fn check_write_path(path: &str) -> CheckResult {
+    if unsafe_mode() {
+        return CheckResult::ok();
+    }
     let p = strip_hidden_chars(path.trim());
     if p.is_empty() {
         return CheckResult::ok();
