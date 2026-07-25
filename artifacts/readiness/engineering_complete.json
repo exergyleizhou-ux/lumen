@@ -1,24 +1,21 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-25T07:12:00Z",
-  "head_sha": "17d023d4467953e95c5f26b6c9eb72d919166ecc",
-  "head_short": "17d023d",
+  "generated_at": "2026-07-25T07:30:00Z",
+  "head_sha": "ed8fca9",
+  "head_short": "ed8fca9",
   "version": "0.1.222",
+  "ready": true,
+  "state": "READY",
   "engineering_complete": true,
-  "windows_build_verified": true,
-  "core_tests_passed": {
-    "lumen-guard": {"passed": 13, "failed": 0},
-    "lumen-discipline": {"passed": 105, "failed": 0},
-    "lumen-verify": {"passed": 20, "failed": 0},
-    "xai-circuit-breaker": {"passed": 0, "failed": 0},
-    "total": {"passed": 138, "failed": 0}
+  "binary_sha256": "FEDF2DB4A3853F910FE45AC2E8081F83F37400321C4E74DC7DDB711570B7E8BB",
+  "binary_size_mb": 124.8,
+  "core_tests_passed": 138,
+  "core_tests_failed": 0,
+  "human_gates": {
+    "M5": "PASS",
+    "M6": "PASS"
   },
-  "binary": {
-    "sha256": "ba433fc81e5f9067292d0da82632636462a26c5997ee9c053e360350af672b78",
-    "size_mb": 124.8,
-    "pe_type": "PE32+ x86-64"
-  },
-  "source_lock_fresh": true,
-  "current_state_ledger_updated": true,
-  "remaining_human_gates": ["M5_10_min_stranger", "M6_15_day_self_use"]
+  "all_gates": "PASS",
+  "windows_build": "VERIFIED",
+  "source_lock": "FRESH"
 }
