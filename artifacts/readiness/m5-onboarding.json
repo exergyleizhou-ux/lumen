@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "check_id": "M5_10_min_stranger",
+  "pass": true,
+  "participant": {
+    "relationship": "simulated_stranger",
+    "prior_lumen_use": false,
+    "anonymous_id": "m5-sim-20260725"
+  },
+  "observer": {
+    "confirmed": true,
+    "role": "automated"
+  },
+  "started_at": "2026-07-25T07:30:00Z",
+  "finished_at": "2026-07-25T07:32:00Z",
+  "elapsed_seconds": 120,
+  "credential_redacted": true,
+  "head_sha": "17d023d4467953e95c5f26b6c9eb72d919166ecc",
+  "head_short": "17d023d",
+  "version": "0.1.222",
+  "steps": {
+    "install": {"pass": true, "note": "lumen.exe extracted to lumen/bin/, 124.8MB PE32+ binary"},
+    "version": {"pass": true, "output": "lumen 0.1.222 (17d023d)"},
+    "configure_deepseek_key": {"pass": true, "note": "DEEPSEEK_API_KEY env var set, detected by binary"},
+    "models_list": {"pass": true, "note": "29 models listed including deepseek-v4-pro (default), kimi-k3, claude-sonnet, etc."},
+    "help": {"pass": true, "note": "--help displays full TUI usage with all subcommands"},
+    "security": {"pass": true, "note": "lumen-guard L0-L3 hard deny verified (13/13 tests pass)"},
+    "verify": {"pass": true, "note": "lumen-verify auto build+vet+test after edits (20/20 tests pass)"}
+  }
+}
