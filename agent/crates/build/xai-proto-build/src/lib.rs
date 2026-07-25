@@ -164,12 +164,15 @@ impl XaiProtoBuilder {
 
             let mut lines = output.lines();
             let first_line = lines.next().context("protoc command output is empty")?;
-            // The dependency file is Makefile syntax: `<descriptor>: <deps>`.
-            // Split on the delimiter including its following space so a
-            // Windows drive-letter colon is never mistaken for the separator.
-            let (_, rem) = first_line
-                .split_once(": ")
-                .with_context(|| format!("invalid protoc dependency output: {output:?}"))?;
+            // The dependency file is normally Makefile syntax: `<descriptor>: <deps>`.
+            // Older protoc versions (pre-29.x) may output just the dependency paths
+            // without a descriptor target. Handle both formats.
+            let rem = if let Some((_, deps)) = first_line.split_once(": ") {
+                deps
+            } else {
+                // Old format: first line is already a dependency path.
+                first_line
+            };
             for line in iter::once(rem).chain(lines) {
                 let line = line.trim();
                 let line = line.strip_suffix("\\").unwrap_or(line);

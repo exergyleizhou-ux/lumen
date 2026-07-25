@@ -1,4 +1,6 @@
 **/target/
+/bin/
+nul
 **/.DS_Store
 *.log
 journal/artifacts/
