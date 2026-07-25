@@ -1,7 +1,7 @@
 # Lumen Current State Ledger — Phase 0
 
-**Generated**: 2026-07-25 14:20 UTC
-**HEAD**: 6738868
+**Generated**: 2026-07-25 15:07 UTC
+**HEAD**: 5c7e1d4
 **Auto-generated**: by CI `regenerate-ledger.sh` on push to main
 
 ---
@@ -14,7 +14,7 @@
 | Local branches | **1** |
 | Branches fully in main | **1 of 1** |
 | Branches NOT in main | **0 of 1** |
-| Current HEAD | 6738868 |
+| Current HEAD | 5c7e1d4 |
 
 ---
 
@@ -36,4 +36,4 @@
 
 ---
 
-*This file is auto-generated. Do not edit manually. Last update: 2026-07-25 14:20 UTC*
+*This file is auto-generated. Do not edit manually. Last update: 2026-07-25 15:07 UTC*
