@@ -92,7 +92,7 @@ echo "$SHA  lumen.exe" > "$OUT_DIR/SHA256SUMS.txt"
 SCRIPTS_SRC="$ROOT/scripts"
 SCRIPTS_DST="$OUT_DIR/scripts"
 mkdir -p "$SCRIPTS_DST"
-for ps1 in lumen-config-check.ps1 lumen-e2e.ps1 lumen-model-fallback.ps1 check-vacuous-e2e.ps1; do
+for ps1 in lumen-config-check.ps1 lumen-e2e.ps1 lumen-model-fallback.ps1 check-vacuous-e2e.ps1 lumen-install.ps1 lumen-doctor.ps1 lumen-service.ps1 lumen-update.ps1 lumen-credential.ps1 lumen-bench.ps1; do
   if [ -f "$SCRIPTS_SRC/$ps1" ]; then
     cp "$SCRIPTS_SRC/$ps1" "$SCRIPTS_DST/"
     echo "  bundled: scripts/$ps1"
@@ -148,6 +148,12 @@ Install:
 
 Bundled PowerShell scripts (in scripts/):
   - lumen-env.ps1          Setup Lumen environment (PATH + API key)
+  - lumen-install.ps1      One-click full installation wizard
+  - lumen-doctor.ps1       Comprehensive system diagnostic
+  - lumen-service.ps1      Install Lumen as a Windows Service
+  - lumen-update.ps1       Self-update to latest GitHub release
+  - lumen-credential.ps1   Manage API keys in Windows Credential Manager
+  - lumen-bench.ps1        Performance benchmark (CPU/memory/disk/network)
   - lumen-config-check.ps1 Validate Lumen vs Grok config consistency
   - lumen-e2e.ps1          Run end-to-end tests with fresh binary
   - lumen-model-fallback.ps1 Monitor API health + suggest model switch
