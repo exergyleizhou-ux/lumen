@@ -240,7 +240,7 @@ async fn create_test_actor(
     }
 }
 /// Test that should_auto_compact returns correct trigger info.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_should_auto_compact_triggers_at_threshold() {
     let local = tokio::task::LocalSet::new();
     local
@@ -260,7 +260,7 @@ async fn test_should_auto_compact_triggers_at_threshold() {
         .await;
 }
 /// Test that should_auto_compact does NOT trigger below threshold.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_should_auto_compact_below_threshold() {
     let local = tokio::task::LocalSet::new();
     local
@@ -276,7 +276,7 @@ async fn test_should_auto_compact_below_threshold() {
         .await;
 }
 /// Test check_auto_compact_needed uses state values.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_check_auto_compact_needed_uses_state() {
     let local = tokio::task::LocalSet::new();
     local
@@ -296,7 +296,7 @@ async fn test_check_auto_compact_needed_uses_state() {
 /// auto-compact behavior. This validates the A/B fork fix: forked sessions
 /// must use the new model's context window, not the source session's.
 /// Without this, auto-compact fires at the wrong threshold.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_context_window_override_affects_auto_compact() {
     let local = tokio::task::LocalSet::new();
     local
@@ -322,7 +322,7 @@ async fn test_context_window_override_affects_auto_compact() {
 }
 /// Test the reverse direction: overriding to a smaller context window
 /// should make auto-compact trigger sooner.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_context_window_override_to_smaller_triggers_compact() {
     let local = tokio::task::LocalSet::new();
     local
@@ -349,7 +349,7 @@ async fn test_context_window_override_to_smaller_triggers_compact() {
 /// Response-header downgrade guard: `handle_model_metadata_update`
 /// must reject a smaller context_window from response headers but
 /// accept a larger one.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_response_header_context_window_downgrade_rejected() {
     let local = tokio::task::LocalSet::new();
     local
@@ -689,7 +689,7 @@ async fn create_test_actor_with_memory(
         trace_config_template: std::cell::RefCell::new(None),
     }
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_is_flushing_suppresses_auto_compact() {
     let local = tokio::task::LocalSet::new();
     local
@@ -719,7 +719,7 @@ async fn test_is_flushing_suppresses_auto_compact() {
 }
 /// Test that `force_compact` triggers auto-compact even below threshold,
 /// and is consumed (reset to false) after a single use.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_force_compact_triggers_below_threshold() {
     let local = tokio::task::LocalSet::new();
     local
@@ -795,7 +795,7 @@ fn test_is_flushing_compare_exchange_prevents_double_entry() {
         "should succeed after release"
     );
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_flush_config_from_memory_config() {
     let local = tokio::task::LocalSet::new();
@@ -821,7 +821,7 @@ async fn test_flush_config_from_memory_config() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_memory_flush_enabled_from_config() {
     let local = tokio::task::LocalSet::new();
@@ -865,7 +865,7 @@ async fn test_memory_flush_enabled_from_config() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_memory_storage_created_when_enabled() {
     let local = tokio::task::LocalSet::new();
@@ -905,7 +905,7 @@ async fn test_memory_storage_created_when_enabled() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_idle_flush_timeout_from_config() {
     let local = tokio::task::LocalSet::new();
@@ -946,7 +946,7 @@ async fn test_idle_flush_timeout_from_config() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_dream_check_timeout_from_config() {
     let local = tokio::task::LocalSet::new();
@@ -1024,7 +1024,7 @@ async fn test_dream_check_timeout_from_config() {
 /// The `maybe_refresh_model_metadata_on_resume` method checks this timestamp
 /// to decide whether to proactively refresh model metadata from cli-chat-proxy.
 /// This test verifies the timestamp recording and idle detection logic.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_last_api_request_at_idle_detection() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1063,7 +1063,7 @@ async fn test_last_api_request_at_idle_detection() {
 /// interval flush guard (`current_len > last_len`) stays false
 /// because the compacted conversation is shorter than the stored
 /// pre-compaction length.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_idle_flush_conversation_len_reset_after_compaction() {
     let local = tokio::task::LocalSet::new();
@@ -1153,7 +1153,7 @@ fn api_error_with_context_window(context_window: u64) -> xai_grok_sampler::Sampl
 /// Primary scenario: remote settings shrinks the context window mid-session.
 /// The shell's last-known token count (214K) exceeds the new limit (200K) —
 /// should_compact_on_error must return true so the session can recover.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1168,7 +1168,7 @@ async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
 }
 /// When tracked tokens are within the new limit, the error was not a context
 /// overflow — do not compact.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1186,7 +1186,7 @@ async fn test_compact_on_error_no_trigger_when_tokens_within_new_window() {
 /// Simulates a session idle for >10 minutes, then verifies the function
 /// fetches `/models-v2`, parses the response, and updates `context_window`
 /// and `max_completion_tokens` in the sampling config.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_e2e_idle_resume_refreshes_model_metadata() {
     use axum::routing::get;
     let local = tokio::task::LocalSet::new();
@@ -1487,7 +1487,7 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
         .await;
 }
 /// Verify `maybe_refresh_model_metadata_on_resume` is a no-op when idle < 10 min.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_idle_resume_noop_when_not_idle_enough() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1511,7 +1511,7 @@ async fn test_idle_resume_noop_when_not_idle_enough() {
 }
 /// If the proxy hasn't been updated yet, model_metadata is None — must be
 /// a no-op for backwards compatibility.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_compact_on_error_noop_without_model_metadata() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1536,7 +1536,7 @@ async fn test_compact_on_error_noop_without_model_metadata() {
 }
 /// A fresh session emits `x-compactions-remaining: 1`; once the chat-state
 /// reflects a compaction, the next reconstructed config emits `0`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn compactions_remaining_header_flips_after_compaction() {
     use xai_grok_sampling_types::CompactionsRemaining;
     let local = tokio::task::LocalSet::new();
@@ -1576,7 +1576,7 @@ async fn compactions_remaining_header_flips_after_compaction() {
 }
 /// `Fixed(n)` sends the constant `n` and never flips: the header stays put
 /// across a compaction, unlike the dynamic 1->0 variant.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn compactions_remaining_fixed_does_not_flip_after_compaction() {
     use xai_grok_sampling_types::CompactionsRemaining;
     let local = tokio::task::LocalSet::new();
@@ -1617,7 +1617,7 @@ async fn compactions_remaining_fixed_does_not_flip_after_compaction() {
 /// With the calculated form enabled, a fresh session emits
 /// `x-compaction-at = context_window * threshold_percent / 100`; once the
 /// chat-state reflects a compaction, the next reconstructed config drops it.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn compaction_at_tokens_header_flips_after_compaction() {
     use xai_grok_sampling_types::CompactionAtTokens;
     let local = tokio::task::LocalSet::new();
@@ -1654,7 +1654,7 @@ async fn compaction_at_tokens_header_flips_after_compaction() {
         .await;
 }
 /// `Fixed(n)` sends the exact constant; the default (`None`) never emits the header.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn compaction_at_tokens_fixed_and_disabled() {
     use xai_grok_sampling_types::CompactionAtTokens;
     let local = tokio::task::LocalSet::new();

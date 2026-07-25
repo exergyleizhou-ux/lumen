@@ -513,7 +513,7 @@ fn build_offload_notice_reports_bytes_marker_and_path() {
 // covered via the injected-writer seam.
 
 /// Threshold gate: a prompt exactly at `LARGE_PROMPT_THRESHOLD` is returned unchanged, no file.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn maybe_truncate_at_threshold_returns_unchanged_no_file() {
     let local = tokio::task::LocalSet::new();
     local

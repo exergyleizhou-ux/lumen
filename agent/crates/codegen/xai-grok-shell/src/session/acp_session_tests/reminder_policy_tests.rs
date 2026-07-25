@@ -288,7 +288,7 @@ fn date_rollover_reminder_silent_when_clock_moves_backward() {
     let today = ymd(2026, 4, 24);
     assert!(date_rollover_reminder(today, last).is_none());
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn same_session_rolls_over_once_when_local_date_advances() {
     let local = tokio::task::LocalSet::new();
     local

@@ -254,7 +254,7 @@ pub(super) async fn make_replay_send_update_fixture() -> ReplaySendUpdateFixture
         persistence_rx,
     }
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn send_update_buffers_streaming_chunks_and_flush_sends_merged_notification() {
     let local = tokio::task::LocalSet::new();
     local
@@ -313,7 +313,7 @@ async fn send_update_buffers_streaming_chunks_and_flush_sends_merged_notificatio
 /// buffer when the user hits Ctrl+C never reaches disk before
 /// `copy_session_dir_to_memory` reads `updates.jsonl`. This test
 /// exercises the exact code added to both match arms.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_and_copyfile_handlers_flush_buffered_chunks_to_persistence() {
     let local = tokio::task::LocalSet::new();
     local
@@ -370,7 +370,7 @@ async fn cancel_and_copyfile_handlers_flush_buffered_chunks_to_persistence() {
 /// Negative control for `cancel_and_copyfile_handlers_flush_buffered_chunks_to_persistence`:
 /// without the flush, a buffered chunk does NOT reach persistence on its
 /// own — proving the flush call is load-bearing in the cancel path.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn buffered_chunk_does_not_reach_persistence_without_explicit_flush() {
     let local = tokio::task::LocalSet::new();
     local
@@ -408,7 +408,7 @@ async fn buffered_chunk_does_not_reach_persistence_without_explicit_flush() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn available_commands_update_is_forwarded_but_not_persisted() {
     let local = tokio::task::LocalSet::new();
     local
@@ -469,7 +469,7 @@ async fn available_commands_update_is_forwarded_but_not_persisted() {
 /// channels must accumulate into the session's streaming capture so
 /// the trace upload can serialize it even when the canonical
 /// `record_assistant_response` path is skipped (cancel / max tokens).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn channel_tokens_accumulate_into_streaming_capture() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
     let local = tokio::task::LocalSet::new();
@@ -543,7 +543,7 @@ async fn channel_tokens_accumulate_into_streaming_capture() {
 /// second generation through the real `handle_sampling_event` path rather than
 /// wipe the first — guards the `if cap.prompt_id != prompt_id` branch in the
 /// `StreamStarted` arm that the pure-struct tests bypass.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn same_prompt_restart_accumulates_segments_via_handler() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
     let local = tokio::task::LocalSet::new();
@@ -606,7 +606,7 @@ async fn same_prompt_restart_accumulates_segments_via_handler() {
 /// uncommitted same-turn generations (e.g. a doomloop retry that preceded the
 /// commit) are left intact, so a completed turn neither re-uploads its own
 /// reasoning nor erases earlier uncommitted partials.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn completed_event_clears_slot_keeps_prior_uncommitted_segments() {
     use xai_grok_sampler::{InferenceLatencyStats, RequestId, SamplingChannel, SamplingEvent};
     use xai_grok_sampling_types::{ConversationItem, ConversationResponse};
@@ -689,7 +689,7 @@ async fn completed_event_clears_slot_keeps_prior_uncommitted_segments() {
 /// interleave between two still-draining text chunks (run on the drainer task)
 /// and split the assistant message around the tool call on every attached
 /// client — the multi-pane "out of order" bug.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn completed_event_releases_stream_drain_barrier() {
     use xai_grok_sampler::{InferenceLatencyStats, RequestId, SamplingChannel, SamplingEvent};
     use xai_grok_sampling_types::{ConversationItem, ConversationResponse};
@@ -754,7 +754,7 @@ async fn completed_event_releases_stream_drain_barrier() {
 /// `MaxTokensTruncation`, etc.) must NOT clear the accumulator —
 /// the consumer needs to take it via `TakeStreamingCapture` and
 /// upload as `streaming_partial.json`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn failed_event_preserves_streaming_capture_for_takeout() {
     use xai_grok_sampler::{
         RequestId, SamplingChannel, SamplingErrorInfo, SamplingErrorKind, SamplingEvent,
@@ -822,7 +822,7 @@ async fn failed_event_preserves_streaming_capture_for_takeout() {
 /// signals had NOTHING discarded, so it must not be classified as a
 /// budget-spent accept — no tally, no counters, no capture stamp; the
 /// signals stay warn-only on the accepted response.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn observe_only_confident_completion_stays_warn_only() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
     let local = tokio::task::LocalSet::new();
@@ -900,7 +900,7 @@ async fn observe_only_confident_completion_stays_warn_only() {
 /// stamps the in-progress slot, the resample's `StreamStarted` folds it into
 /// `segments`, and a budget-spent accept folds a text-free stamped segment
 /// on `Completed`. Session counters and the per-turn tally track along.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingErrorKind, SamplingEvent};
     let local = tokio::task::LocalSet::new();
@@ -1019,7 +1019,7 @@ async fn doom_loop_recovery_stamps_capture_segments_and_counters() {
 /// must re-label the live capture as tied to the tool-call phase while
 /// preserving the reasoning text already accumulated — so a partial
 /// taken at that point shows the model was cut off mid tool-call.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn tool_call_delta_marks_streaming_capture_phase() {
     use xai_grok_sampler::{RequestId, SamplingChannel, SamplingEvent};
     let local = tokio::task::LocalSet::new();
@@ -1072,7 +1072,7 @@ async fn tool_call_delta_marks_streaming_capture_phase() {
 }
 /// `ToolCallDelta` on an idle (empty, never-begun) slot must not
 /// fabricate a phase — there is no partial to attribute it to.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn tool_call_delta_on_idle_slot_leaves_phase_pending() {
     use xai_grok_sampler::{RequestId, SamplingEvent};
     let local = tokio::task::LocalSet::new();

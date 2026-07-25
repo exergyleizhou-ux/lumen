@@ -85,7 +85,7 @@ fn agent_msg_update(text: &str) -> acp::SessionUpdate {
     )))
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn normal_completion_persists_turn_completed_after_buffered_delta_flush() {
     let local = tokio::task::LocalSet::new();
     local
@@ -192,7 +192,7 @@ async fn normal_completion_persists_turn_completed_after_buffered_delta_flush() 
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn error_completion_persists_turn_completed_with_error_detail() {
     let local = tokio::task::LocalSet::new();
     local
@@ -229,7 +229,7 @@ async fn error_completion_persists_turn_completed_with_error_detail() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancellation_persists_turn_completed_cancelled() {
     let local = tokio::task::LocalSet::new();
     local
@@ -298,7 +298,7 @@ fn turn_completed_meta(msgs: &[PersistenceMsg]) -> Option<serde_json::Value> {
 /// `running_task.prompt_id`, so the durable `TurnCompleted` (with
 /// `cancelTrigger=send_now`) is still persisted — otherwise viewers strand on
 /// "Waiting…" with no terminal at all.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn send_now_cancel_in_completion_race_window_still_persists_turn_completed() {
     let local = tokio::task::LocalSet::new();
     local
@@ -345,7 +345,7 @@ async fn send_now_cancel_in_completion_race_window_still_persists_turn_completed
 
 /// A send-now cancel stamps `_meta.cancelTrigger == "send_now"` on both the
 /// durable `TurnCompleted` terminal and the cancelled turn's resolved RPC.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn send_now_cancel_stamps_cancel_trigger_on_turn_end() {
     let local = tokio::task::LocalSet::new();
     local
@@ -424,7 +424,7 @@ async fn send_now_cancel_stamps_cancel_trigger_on_turn_end() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pristine_rewind_cancel_emits_no_turn_completed() {
     let local = tokio::task::LocalSet::new();
     local
@@ -468,7 +468,7 @@ async fn pristine_rewind_cancel_emits_no_turn_completed() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn removed_from_queue_completion_emits_no_turn_completed() {
     let local = tokio::task::LocalSet::new();
     local
@@ -513,7 +513,7 @@ async fn removed_from_queue_completion_emits_no_turn_completed() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn unknown_prompt_completion_emits_no_turn_completed() {
     let local = tokio::task::LocalSet::new();
     local

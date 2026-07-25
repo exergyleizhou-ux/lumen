@@ -40,7 +40,7 @@ async fn seed_skills(actor: &SessionActor, names: &[&str]) {
         .seed_skill_discovery(None, None, skills, None, None, None, Default::default())
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn usage_categories_include_skills_and_mcp_with_counts() {
     let local = tokio::task::LocalSet::new();
     local
@@ -70,7 +70,7 @@ async fn usage_categories_include_skills_and_mcp_with_counts() {
 /// `maybe_inject_mcp_reminder` injects in `Full` mode, minus the
 /// `<system-reminder>` wrapper. Composing the two texts differently (for
 /// example, dropping the tool usage hint from one side) fails this test.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn mcp_snapshot_matches_full_mode_injected_reminder() {
     let local = tokio::task::LocalSet::new();
     local

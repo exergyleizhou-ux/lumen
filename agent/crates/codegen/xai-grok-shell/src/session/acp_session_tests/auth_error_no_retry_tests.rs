@@ -133,7 +133,7 @@ fn auth_manager_with_valid_token(key: &str) -> (tempfile::TempDir, Arc<AuthManag
 }
 
 /// Sub-case 1: no auth_manager -> falls through, no emit.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn no_emit_when_auth_manager_is_none() {
     let local = tokio::task::LocalSet::new();
@@ -154,7 +154,7 @@ async fn no_emit_when_auth_manager_is_none() {
 /// Sub-case 2: no AuthManager → auth recovery is skipped entirely,
 /// falls through to terminal error. Covers BYOK / API-key users
 /// where no OIDC refresh is possible.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn no_recovery_without_auth_manager() {
     let local = tokio::task::LocalSet::new();
@@ -182,7 +182,7 @@ async fn no_recovery_without_auth_manager() {
 }
 
 /// Session-based auth + working refresher → RefreshAuthAndResubmit.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_recovery_returns_refresh_and_retry() {
     let local = tokio::task::LocalSet::new();
     local
@@ -210,7 +210,7 @@ async fn sampler_401_recovery_returns_refresh_and_retry() {
 /// token reports success but the retry re-sends the same rejected key —
 /// an invisible 401 loop that hangs the turn. Recovery is skipped and
 /// the 401 surfaces as a terminal error.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn sampler_401_with_api_key_auth_skips_refresh_and_surfaces_error() {
     let local = tokio::task::LocalSet::new();
@@ -248,7 +248,7 @@ async fn sampler_401_with_api_key_auth_skips_refresh_and_surfaces_error() {
 /// When `creds.auth_type` is `ApiKey` (BYOK model), the pre-flight
 /// refresh must NOT fire — the model's own API key must not be
 /// overwritten by the session JWT.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_refresh_skips_api_key_auth_type() {
     let local = tokio::task::LocalSet::new();
@@ -289,7 +289,7 @@ async fn pre_flight_refresh_skips_api_key_auth_type() {
 /// (per-turn pre-flight) is a cache hit — the refresher fires once
 /// (proactive), then the per-turn call sees the fresh token without
 /// hitting the IdP again.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn proactive_refresh_makes_per_turn_refresh_a_cache_hit() {
     let local = tokio::task::LocalSet::new();
@@ -372,7 +372,7 @@ fn model_not_found_error() -> xai_grok_sampler::SamplingErrorInfo {
 
 /// 404 model-not-found with a legacy WebLogin token appends a
 /// "Legacy auth detected" hint to the error message.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn legacy_auth_hint_on_404_model_not_found() {
     let local = tokio::task::LocalSet::new();
     local
@@ -439,7 +439,7 @@ fn unauthorized_401_error() -> xai_grok_sampler::SamplingErrorInfo {
 
 /// 401 Unauthorized with a legacy WebLogin token appends a
 /// "Legacy auth detected" hint to the error message.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn legacy_auth_hint_on_401_unauthorized() {
     let local = tokio::task::LocalSet::new();
     local
@@ -479,7 +479,7 @@ async fn legacy_auth_hint_on_401_unauthorized() {
 }
 
 /// 401 with OIDC auth must NOT append the legacy hint.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn no_legacy_hint_on_401_for_oidc_auth() {
     let local = tokio::task::LocalSet::new();
     local
@@ -521,7 +521,7 @@ async fn no_legacy_hint_on_401_for_oidc_auth() {
 }
 
 /// 404 model-not-found with OIDC auth must NOT append the legacy hint.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn no_legacy_hint_for_oidc_auth() {
     let local = tokio::task::LocalSet::new();
     local
@@ -594,7 +594,7 @@ fn session_token_auth_gate_truth_table() {
 
 /// Pre-fix, the gate read `auth_type` and skipped recovery here, 401'ing every
 /// turn until restart.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_session_method_with_stale_api_key_auth_type_still_recovers() {
     let local = tokio::task::LocalSet::new();
     local
@@ -628,7 +628,7 @@ async fn sampler_401_session_method_with_stale_api_key_auth_type_still_recovers(
 }
 
 /// Same regression via the `oidc` method id (the other session-based variant).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_oidc_method_with_stale_api_key_auth_type_still_recovers() {
     let local = tokio::task::LocalSet::new();
     local
@@ -663,7 +663,7 @@ async fn sampler_401_oidc_method_with_stale_api_key_auth_type_still_recovers() {
 
 /// Without the live bearer resolver here the sampler would sign requests with
 /// the stale buffered token.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reconstruct_full_config_wires_bearer_resolver_for_session_method_despite_api_key_auth_type()
  {
     let local = tokio::task::LocalSet::new();
@@ -690,7 +690,7 @@ async fn reconstruct_full_config_wires_bearer_resolver_for_session_method_despit
 
 /// Negative: a genuine `xai.api_key` method keeps its configured key on the
 /// wire (no live resolver).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reconstruct_full_config_no_bearer_resolver_for_api_key_method() {
     let local = tokio::task::LocalSet::new();
     local
@@ -716,7 +716,7 @@ async fn reconstruct_full_config_no_bearer_resolver_for_api_key_method() {
 
 /// The pre-flight refresh heals a transiently-`ApiKey` session by writing the
 /// fresh session token back into `creds.api_key`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_refresh_heals_session_method_with_stale_api_key_auth_type() {
     let local = tokio::task::LocalSet::new();
@@ -751,7 +751,7 @@ async fn pre_flight_refresh_heals_session_method_with_stale_api_key_auth_type() 
 /// inactive) must adopt a later OIDC `/login` on the SAME actor -- the shared
 /// `auth_method_id` handle is flipped in place (no re-spawn), so the next turn
 /// wires the live bearer resolver and heals the stale key.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn session_born_on_api_key_recovers_after_oidc_login_without_restart() {
     let local = tokio::task::LocalSet::new();
     local
@@ -814,7 +814,7 @@ async fn session_born_on_api_key_recovers_after_oidc_login_without_restart() {
 
 /// The cache-hit branch is what lets a later config parse failure (`Unknown`)
 /// fall back to the last-known-good status.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn model_auth_facts_memo_serves_cached_status_and_keys_on_model() {
     use crate::agent::auth_method::ModelByok;
     use crate::agent::config::ModelAuthFacts;
@@ -848,7 +848,7 @@ async fn model_auth_facts_memo_serves_cached_status_and_keys_on_model() {
 
 /// A session method whose active model is a genuine per-model BYOK model keeps
 /// the model's own key on the wire (no live resolver).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reconstruct_full_config_no_bearer_resolver_for_byok_model_on_session_method() {
     use crate::agent::auth_method::ModelByok;
     use crate::agent::config::ModelAuthFacts;
@@ -893,7 +893,7 @@ async fn reconstruct_full_config_no_bearer_resolver_for_byok_model_on_session_me
 /// turns the current model into a per-model BYOK model on a third-party
 /// `base_url` keeps serving the stale `NotByok`, leaving the gate active and
 /// leaking the OIDC token cross-host.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn set_session_model_invalidates_byok_memo_for_same_model_id() {
     use crate::agent::auth_method::ModelByok;
     use crate::agent::config::ModelAuthFacts;

@@ -9,7 +9,7 @@ use super::support::*;
 use super::*;
 use xai_grok_sampling_types::ConversationItem;
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn new_prompt_cancels_in_flight_recap_epoch() {
     let local = tokio::task::LocalSet::new();
     local
@@ -39,7 +39,7 @@ async fn new_prompt_cancels_in_flight_recap_epoch() {
 
 /// `queue_input` for a real user prompt bumps epoch before any await so a
 /// LocalSet recap cannot commit after Prompt accept but before handle_prompt.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn queue_input_user_prompt_bumps_recap_epoch() {
     let local = tokio::task::LocalSet::new();
     local
@@ -77,7 +77,7 @@ async fn queue_input_user_prompt_bumps_recap_epoch() {
 }
 
 /// Synthetic auto-wake must not cancel an in-flight recap.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn queue_input_synthetic_does_not_bump_recap_epoch() {
     let local = tokio::task::LocalSet::new();
     local
@@ -117,7 +117,7 @@ async fn queue_input_synthetic_does_not_bump_recap_epoch() {
 }
 
 /// Production commit branch: epoch bump mid-flight → no watermark, in-flight cleared.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn try_commit_recap_cancelled_clears_in_flight_without_watermark() {
     let local = tokio::task::LocalSet::new();
     local
@@ -150,7 +150,7 @@ async fn try_commit_recap_cancelled_clears_in_flight_without_watermark() {
 }
 
 /// Live epoch commits watermark and clears in-flight (emit path may proceed).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn try_commit_recap_live_advances_watermark() {
     let local = tokio::task::LocalSet::new();
     local
@@ -172,7 +172,7 @@ async fn try_commit_recap_live_advances_watermark() {
 }
 
 /// Auto cancel is silent; manual cancel emits SessionRecapUnavailable.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn drop_recap_after_cancel_auto_silent_manual_unavailable() {
     let local = tokio::task::LocalSet::new();
     local
@@ -227,7 +227,7 @@ fn drained_session_recap(rx: &mut tokio::sync::mpsc::UnboundedReceiver<Persisten
 }
 
 /// Auto recap below `MIN_TURNS_FOR_AUTO_RECAP` is a no-op and display-only.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn auto_recap_below_min_turns_is_noop_and_display_only() {
     let local = tokio::task::LocalSet::new();
     local
@@ -268,7 +268,7 @@ async fn auto_recap_below_min_turns_is_noop_and_display_only() {
 /// A manual `/recap` passes the gate (when a new main turn exists) and attempts
 /// generation; the test's base_url is unreachable so the model call fails.
 /// Either way the conversation must be byte-identical afterwards — display-only.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn manual_recap_never_mutates_conversation() {
     let local = tokio::task::LocalSet::new();
     local
@@ -326,7 +326,7 @@ fn drained_recap_unavailable(
 /// instead of silently dropping, the shell emits `SessionRecapUnavailable` so
 /// the client can clear it. Deterministic (no-network) repro of the
 /// forever-spinner bug.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn manual_recap_with_no_turns_emits_unavailable() {
     let local = tokio::task::LocalSet::new();
     local
@@ -353,7 +353,7 @@ async fn manual_recap_with_no_turns_emits_unavailable() {
 /// A manual `/recap` whose generation fails (the test's base_url is
 /// unreachable, so the prepare/model call errors) must also emit
 /// `SessionRecapUnavailable` rather than leaving the spinner running.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn manual_recap_generation_failure_emits_unavailable() {
     let local = tokio::task::LocalSet::new();
     local
@@ -385,7 +385,7 @@ async fn manual_recap_generation_failure_emits_unavailable() {
 /// When the recap model call is attempted (gate passes) but fails, we still
 /// persist a `RecapRequest` artifact (with `error` set) for offline replay —
 /// same idea as compaction request artifacts on failure.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn manual_recap_generation_failure_persists_request_artifact() {
     let local = tokio::task::LocalSet::new();
     local
@@ -439,7 +439,7 @@ async fn manual_recap_generation_failure_persists_request_artifact() {
 /// An automatic recap below the turn gate stays silent — it shows no spinner,
 /// so it must NOT emit `SessionRecapUnavailable` (which would be wasted wire
 /// traffic and could clear an unrelated manual spinner on another client).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn auto_recap_gated_does_not_emit_unavailable() {
     let local = tokio::task::LocalSet::new();
     local
@@ -469,7 +469,7 @@ async fn auto_recap_gated_does_not_emit_unavailable() {
 /// Over-budget recap: the persisted `RecapRequest` is trimmed within budget and
 /// the conversation is left unmutated (display-only). Seeds an oversized item so
 /// the over-budget branch runs deterministically with no network.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn manual_recap_over_budget_trims_persisted_request_and_is_display_only() {
     let local = tokio::task::LocalSet::new();
     local

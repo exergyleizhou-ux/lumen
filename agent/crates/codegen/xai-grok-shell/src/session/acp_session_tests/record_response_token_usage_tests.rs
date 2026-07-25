@@ -39,7 +39,7 @@ fn response_without_usage() -> ConversationResponse {
 /// to the model-reported value. Without this call, `total_tokens`
 /// stays frozen at the seed from `ChatState::new`, freezing
 /// `/context` and corrupting resume restore (the original bug).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn updates_chat_state_total_tokens_from_response_usage() {
     let local = tokio::task::LocalSet::new();
     local
@@ -77,7 +77,7 @@ async fn updates_chat_state_total_tokens_from_response_usage() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn preserves_total_tokens_when_response_has_no_usage() {
     let local = tokio::task::LocalSet::new();
     local
@@ -100,7 +100,7 @@ async fn preserves_total_tokens_when_response_has_no_usage() {
 /// `total_tokens` after a turn, and `usage_pct` / `free_tokens` /
 /// `message_tokens` must be server-computed (not derived by the renderer
 /// via subtraction).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn build_session_info_used_reflects_recorded_response() {
     let local = tokio::task::LocalSet::new();
     local
@@ -164,7 +164,7 @@ async fn build_session_info_used_reflects_recorded_response() {
 /// miss the entry and wrongly yield false. Proven on a NON-coding slug so the flag
 /// — not `is_coding_model_slug` — drives the value (the gate's coding-slug OR is
 /// covered by the `acp_types` / pager `format_session_info` tests).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn build_session_info_sources_show_model_fingerprint_from_catalog() {
     use crate::agent::config::{ModelEntry, ModelInfo};
 
@@ -211,7 +211,7 @@ async fn build_session_info_sources_show_model_fingerprint_from_catalog() {
 /// `record_response_token_usage` must also stash the per-turn `TokenUsage`
 /// in chat state so the next `PromptResponse._meta` can carry input/output
 /// token counts to the bot's telemetry layer.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn stashes_per_turn_usage_in_chat_state() {
     let local = tokio::task::LocalSet::new();
     local

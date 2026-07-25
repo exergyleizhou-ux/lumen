@@ -20,7 +20,7 @@ async fn make_actor() -> SessionActor {
 /// Owner-scoping: a session that does NOT own the managed client in
 /// `owned_clients` must refuse the in-place swap (a subagent holds the
 /// client as a shared Arc and recovers via the leader instead).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reactive_managed_reauth_skips_non_owned_client() {
     let local = tokio::task::LocalSet::new();
     local
@@ -43,7 +43,7 @@ async fn reactive_managed_reauth_skips_non_owned_client() {
 /// one cooldown failure — the next immediate attempt is gated, and the
 /// server is not yet parked in the terminal `auth_required` state (one
 /// failure is below the attempt cap).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reactive_managed_reauth_records_cooldown_on_failure() {
     let local = tokio::task::LocalSet::new();
     local

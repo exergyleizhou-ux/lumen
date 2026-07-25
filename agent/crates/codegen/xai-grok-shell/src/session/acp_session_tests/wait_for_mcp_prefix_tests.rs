@@ -41,7 +41,7 @@ fn dummy_stdio_config(name: &str) -> acp::McpServer {
             .env(vec![]),
     )
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn returns_immediately_for_default_template() {
     let local = tokio::task::LocalSet::new();
     local

@@ -81,7 +81,7 @@ async fn tool_result_text(actor: &SessionActor, call_id: &str) -> String {
 /// The headline: plan mode Active + allow-all permissions (the always-approve
 /// worst case) still rejects a grok edit outside the plan file, without ever
 /// reaching the permission layer, and steers the model to `exit_plan_mode`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn plan_mode_rejects_grok_edit_outside_plan_file_despite_allow_all_permissions() {
     let local = tokio::task::LocalSet::new();
     local
@@ -112,7 +112,7 @@ async fn plan_mode_rejects_grok_edit_outside_plan_file_despite_allow_all_permiss
 }
 /// The carve-out: the plan file itself prepares cleanly (the gate defers to
 /// `should_auto_approve_edit`, the same predicate as the permission bypass).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn plan_mode_allows_plan_file_edit() {
     let local = tokio::task::LocalSet::new();
     local
@@ -134,7 +134,7 @@ async fn plan_mode_allows_plan_file_edit() {
 }
 /// Control: with plan mode inactive the same edit prepares cleanly — the gate
 /// is plan-scoped, not a general edit block.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn inactive_plan_mode_does_not_gate_edits() {
     let local = tokio::task::LocalSet::new();
     local

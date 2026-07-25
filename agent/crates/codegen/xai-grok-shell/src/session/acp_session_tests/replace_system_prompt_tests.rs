@@ -25,7 +25,7 @@ async fn actor_with_history(history: Vec<ConversationItem>) -> SessionActor {
     actor
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn handle_replace_system_prompt_replaces_head_and_preserves_turns() {
     let local = tokio::task::LocalSet::new();
     local
@@ -50,7 +50,7 @@ async fn handle_replace_system_prompt_replaces_head_and_preserves_turns() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn handle_replace_system_prompt_skips_on_preserve_inherited_system() {
     let local = tokio::task::LocalSet::new();
     local

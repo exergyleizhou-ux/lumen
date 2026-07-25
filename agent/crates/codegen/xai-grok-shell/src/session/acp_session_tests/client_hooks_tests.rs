@@ -4,7 +4,7 @@ use super::*;
 /// Client hooks must fire even with no on-disk hook registry: `notify_client_hooks`
 /// reads `client_hooks` (never `hook_registry`) and its call sites sit outside the
 /// file-registry guard.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn client_hooks_fire_without_file_registry() {
     let local = tokio::task::LocalSet::new();
     local
@@ -57,7 +57,7 @@ async fn client_hooks_fire_without_file_registry() {
 /// `x.ai/hooks/run` request is answered with a deny and `run_pre_tool_use_client_hook`
 /// returns `ToolLoop::HookDenied`. Complements the pure `classify` test by covering the
 /// gate wiring (the one new path that can block tool execution).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_client_deny_blocks_the_tool() {
     let local = tokio::task::LocalSet::new();
     local
@@ -144,7 +144,7 @@ async fn pre_tool_use_client_deny_blocks_the_tool() {
 /// (`linear__save_issue`) gates the dispatch. Drives the real `prepare_tool_call`
 /// construction path (not a hand-built envelope); the deny only fires if the resolved
 /// name reached the envelope.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_resolves_meta_dispatch_tool_name_end_to_end() {
     let local = tokio::task::LocalSet::new();
     local
@@ -230,7 +230,7 @@ async fn pre_tool_use_resolves_meta_dispatch_tool_name_end_to_end() {
 /// exact clone into a child `SessionActor` (a full subagent spawn needs the sampler / child
 /// thread / gateway bridge, disproportionate here), then proves a subagent tool call hits the
 /// parent's PreToolUse gate (deny blocks it) and that the dispatch carries the `subagentType`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn subagent_inherits_parent_pre_tool_use_client_hook() {
     let local = tokio::task::LocalSet::new();
     local
@@ -342,7 +342,7 @@ async fn subagent_inherits_parent_pre_tool_use_client_hook() {
 /// A slow/hung callback must not starve a later deny: with the first-registered callback
 /// never replying and the second denying, the gate returns `HookDenied` quickly (a
 /// sequential gate would block on the hung one's full timeout). Pins the concurrency claim.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_slow_callback_does_not_starve_a_deny() {
     let local = tokio::task::LocalSet::new();
     local
@@ -433,7 +433,7 @@ async fn pre_tool_use_slow_callback_does_not_starve_a_deny() {
 /// PostToolUse. Guards the explicitly-hardened no-double-fire path (the PostToolUse
 /// success block routes through `dispatch_hook`, the same as the failure arm). Each
 /// post-tool event is observed as a fire-and-forget `x.ai/hooks/event` notification.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn post_tool_use_and_failure_never_double_fire() {
     let local = tokio::task::LocalSet::new();
     local
@@ -533,7 +533,7 @@ async fn post_tool_use_and_failure_never_double_fire() {
 /// which `execute_tool_calls` treated as a terminal `final_result` and the turn loop
 /// turned into `TurnOutcome::Cancelled` — ending the whole turn instead of letting
 /// the model retry based on the reason.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_deny_feeds_reason_back_and_continues_turn() {
     let local = tokio::task::LocalSet::new();
     local

@@ -15,7 +15,7 @@ enum TerminalCase {
     Failed,
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
 async fn goal_compose_enters_executor_restores_each_round_and_preserves_global_default() {
     let local = tokio::task::LocalSet::new();
@@ -108,7 +108,7 @@ async fn goal_compose_enters_executor_restores_each_round_and_preserves_global_d
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
 async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution() {
     let local = tokio::task::LocalSet::new();
@@ -211,7 +211,7 @@ async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial]
 async fn expert_session_model_and_effort_restore_on_every_terminal_without_global_write() {
     let local = tokio::task::LocalSet::new();
@@ -372,7 +372,7 @@ fn bash_tool_result(command: &str, exit_code: i32, output: &str) -> ToolRunResul
     }
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn successful_production_tool_result_is_required_for_expert_completed() {
     let local = tokio::task::LocalSet::new();
     local
@@ -465,7 +465,7 @@ async fn successful_production_tool_result_is_required_for_expert_completed() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn failed_off_restore_keeps_anchor_and_guard_until_retry_succeeds() {
     let local = tokio::task::LocalSet::new();
     local
@@ -554,7 +554,7 @@ async fn failed_off_restore_keeps_anchor_and_guard_until_retry_succeeds() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn stale_old_completion_cannot_restore_over_new_expert_task() {
     let local = tokio::task::LocalSet::new();
     local
@@ -601,7 +601,7 @@ async fn stale_old_completion_cannot_restore_over_new_expert_task() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn run_loop_rejects_external_model_switch_while_expert_owns_guard() {
     let local = tokio::task::LocalSet::new();
     local

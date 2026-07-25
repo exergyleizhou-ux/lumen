@@ -44,7 +44,7 @@ fn last_persisted_awaiting(
     last
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_plan_approval_issues_reverse_request_and_clears_flag() {
     let local = tokio::task::LocalSet::new();
     local
@@ -103,7 +103,7 @@ async fn request_plan_approval_issues_reverse_request_and_clears_flag() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_plan_approval_clears_flag_on_request_changes() {
     let local = tokio::task::LocalSet::new();
     local
@@ -143,7 +143,7 @@ async fn request_plan_approval_clears_flag_on_request_changes() {
 
 /// An unparseable approval response must fail CLOSED to `"cancelled"` (stay in
 /// plan mode), never fall open to `"approved"`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_plan_approval_parse_fallback_fails_closed() {
     let local = tokio::task::LocalSet::new();
     local
@@ -188,7 +188,7 @@ async fn request_plan_approval_parse_fallback_fails_closed() {
 /// assert the tool is NOT auto-executed, plan mode stays Active, and
 /// `awaiting_plan_approval=true` is PERSISTED (what would land in
 /// `plan_mode.json`) so a fresh resume re-parks.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn real_exit_plan_mode_disconnect_keeps_awaiting_persisted() {
     let local = tokio::task::LocalSet::new();
     local
@@ -259,7 +259,7 @@ async fn real_exit_plan_mode_disconnect_keeps_awaiting_persisted() {
 /// Headless / no UI client wired: the reverse-request can't be delivered, so
 /// `exit_plan_mode` falls through and executes (original behavior) — verified by
 /// `prepare_tool_call` returning a prepared call rather than Cancelled.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn real_exit_plan_mode_no_client_executes_tool() {
     let local = tokio::task::LocalSet::new();
     local
@@ -300,7 +300,7 @@ async fn real_exit_plan_mode_no_client_executes_tool() {
 /// A quit-while-parked (disconnect) keeps `awaiting_plan_approval` set so the
 /// next resume re-parks the gate. Not seeded: `request_plan_approval` sets the
 /// bit itself.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_plan_approval_keeps_flag_when_client_disconnects() {
     let local = tokio::task::LocalSet::new();
     local
@@ -344,7 +344,7 @@ async fn request_plan_approval_keeps_flag_when_client_disconnects() {
 
 /// Dropping the `request_plan_approval` future mid-await (the turn-cancel path)
 /// must clear the awaiting bit via `AwaitingApprovalGuard`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn request_plan_approval_future_drop_clears_flag() {
     let local = tokio::task::LocalSet::new();
     local
@@ -391,7 +391,7 @@ async fn request_plan_approval_future_drop_clears_flag() {
 
 /// Resume with the flag set but no `plan.md` on disk: clear the bit and issue NO
 /// reverse-request.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn resume_no_plan_md_clears_flag_without_request() {
     let local = tokio::task::LocalSet::new();
     local

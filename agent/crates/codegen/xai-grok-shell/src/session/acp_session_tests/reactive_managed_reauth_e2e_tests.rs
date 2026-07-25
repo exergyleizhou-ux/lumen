@@ -329,7 +329,7 @@ async fn recovers_on_second_attempt_and_pushes_managed_token_refreshed() {
 /// (the cooldown API takes `now`); the third — the real
 /// `reactive_managed_reauth` call — is what crosses the terminal cap and fires
 /// the NeedsAuth push.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn terminal_after_three_failures_pushes_needsauth_then_gates() {
     let local = tokio::task::LocalSet::new();
     local
@@ -407,7 +407,7 @@ async fn terminal_after_three_failures_pushes_needsauth_then_gates() {
 /// non-auth `Ok(is_error)` body (e.g. a 403 policy denial) untouched. Mirrors
 /// the exact classifier (`is_auth_rejection_message`) + managed-prefix gate the
 /// loop in `tool_calls.rs` keys on, plus the resulting side effect.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn entry_b_routes_auth_rejection_but_not_policy_denial() {
     use xai_grok_mcp::servers::{is_auth_rejection_message, parse_mcp_tool_name};
 

@@ -49,7 +49,7 @@ fn checkpoint_update(id: &str, prompt_index_at_compaction: usize) -> SessionUpda
     }))
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_pre_compaction_with_cancelled_turns_truncates_context_gb2961() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_rewind_scenario()).await;
@@ -162,7 +162,7 @@ async fn run_rewind_scenario() {
 /// is the on-disk snapshot index), so it no-ops to success when out of range —
 /// the property the bridge relies on when the chat-state index is empty.
 /// `ConversationOnly` is NOT exempt and still rejects an out-of-range target.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn files_only_rewind_is_exempt_from_chat_state_bound() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_files_only_bound_scenario()).await;
@@ -230,7 +230,7 @@ async fn run_files_only_bound_scenario() {
 
 /// `rewind_file_counts` (the `GetRewindFileCounts` actor arm) maps the
 /// file-state tracker's per-prompt snapshot metadata to `prompt_index → count`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_file_counts_maps_snapshot_metadata() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_file_counts_scenario()).await;
@@ -268,7 +268,7 @@ async fn run_file_counts_scenario() {
 /// conversation without a summary, so the stale `last_compaction_prompt_index`
 /// must be cleared — otherwise the per-model `x-compactions-remaining` header
 /// would wrongly report `0` for a session that no longer holds a summary.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_before_compaction_clears_stale_compaction_marker() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_clears_marker_scenario()).await;

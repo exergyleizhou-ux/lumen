@@ -21,7 +21,7 @@ fn usage_rows() -> Vec<(String, xai_chat_state::UsageTotals)> {
     )]
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn subagent_usage_fold_attribution_gate() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -177,7 +177,7 @@ fn project_from_ledger_never_drops_incomplete_flag() {
     assert_eq!(marked.totals.input_tokens, 3);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn nested_incomplete_fold_marks_parent_ledger() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -239,7 +239,7 @@ fn for_error_path_shared_policy() {
     assert_eq!(with_ledger.totals.input_tokens, 5);
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn error_path_omits_usage_when_never_billed() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -249,7 +249,7 @@ async fn error_path_omits_usage_when_never_billed() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn error_path_marks_incomplete_when_ledger_open() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -275,7 +275,7 @@ async fn error_path_marks_incomplete_when_ledger_open() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn session_only_incomplete_does_not_stain_live_open_prompt() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -327,7 +327,7 @@ async fn session_only_incomplete_does_not_stain_live_open_prompt() {
         .await;
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn snapshot_ors_ledger_incomplete_even_when_reply_complete() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -373,7 +373,7 @@ fn scripted_outstanding_responder(
 
 /// Drain timeout (wedged foreground child) fails closed: the report and both
 /// ledgers are marked incomplete.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn freeze_timeout_marks_report_and_both_ledgers() {
     use xai_grok_tools::implementations::grok_build::task::types::SubagentOutstandingReply;
     tokio::task::LocalSet::new()
@@ -412,7 +412,7 @@ async fn freeze_timeout_marks_report_and_both_ledgers() {
 
 /// A live background child flags only the report: no ledger is marked,
 /// because its fold still lands on the session ledger at completion.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn freeze_background_only_flags_report_not_ledgers() {
     use xai_grok_tools::implementations::grok_build::task::types::SubagentOutstandingReply;
     tokio::task::LocalSet::new()
@@ -453,7 +453,7 @@ async fn freeze_background_only_flags_report_not_ledgers() {
 }
 
 /// Cancel/freeze share `finalize_usage_from_outcome`: bg-only is report incomplete only.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn finalize_background_only_flags_report_not_ledgers() {
     use super::turn::UsageDrainOutcome;
     use xai_grok_tools::implementations::grok_build::task::types::SubagentOutstandingReply;
@@ -509,7 +509,7 @@ async fn finalize_background_only_flags_report_not_ledgers() {
 }
 
 /// Pin-aware apply-miss: stamped pin ≠ live open prompt stains session only.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn apply_miss_mismatched_pin_does_not_stain_live_prompt() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -554,7 +554,7 @@ async fn apply_miss_mismatched_pin_does_not_stain_live_prompt() {
 }
 
 /// Pin-aware apply-miss: matching pin stains both ledgers.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn apply_miss_matching_pin_stains_prompt_and_session() {
     tokio::task::LocalSet::new()
         .run_until(async {
@@ -597,7 +597,7 @@ async fn apply_miss_matching_pin_stains_prompt_and_session() {
 }
 
 /// Sticky (session-only) is report-only on freeze: session ledger stays complete.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn freeze_sticky_only_flags_report_not_ledgers() {
     use xai_grok_tools::implementations::grok_build::task::types::SubagentOutstandingReply;
     tokio::task::LocalSet::new()
@@ -653,7 +653,7 @@ async fn freeze_sticky_only_flags_report_not_ledgers() {
 }
 
 /// A fold landing mid-drain completes cleanly: no incomplete flag anywhere.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn freeze_completes_when_fold_lands_mid_drain() {
     use xai_grok_tools::implementations::grok_build::task::types::SubagentOutstandingReply;
     tokio::task::LocalSet::new()

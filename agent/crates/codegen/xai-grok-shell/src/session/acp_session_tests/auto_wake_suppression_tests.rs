@@ -73,7 +73,7 @@ fn monitor_event_notification(task_id: &str) -> PendingNotification {
 /// Monitor notifications in the idle drain collapse into ONE
 /// `format_monitor_events` block (same shape as the mid-turn injection);
 /// non-monitor notifications keep their raw blocks, `---`-separated.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn drain_batches_monitor_notifications_into_formatted_block() {
     let local = tokio::task::LocalSet::new();
     local
@@ -146,7 +146,7 @@ async fn drain_batches_monitor_notifications_into_formatted_block() {
 }
 /// Fix 1, TaskOutput(completed) — the matching pending `task-completed-{id}`
 /// input must be dropped; any non-matching synthetic prompt must survive.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn task_output_completed_drops_matching_pending_input() {
     let local = tokio::task::LocalSet::new();
     local
@@ -196,7 +196,7 @@ async fn task_output_completed_drops_matching_pending_input() {
 /// index 0, which the next interactive cancel resolves as Cancelled —
 /// destroying the user's message. Queued NON-running synthetics must still
 /// be dropped.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sweep_never_drops_running_turns_own_slot() {
     let local = tokio::task::LocalSet::new();
     local
@@ -239,7 +239,7 @@ async fn sweep_never_drops_running_turns_own_slot() {
 /// synthetic auto-wake turn is running must not delete the running turn's own
 /// front slot (or the user prompt lands at index 0 and the next interactive
 /// cancel destroys it). Queued non-running synthetics are still preempted.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn user_prompt_preempt_keeps_running_synthetic_slot() {
     let local = tokio::task::LocalSet::new();
     local
@@ -291,7 +291,7 @@ async fn user_prompt_preempt_keeps_running_synthetic_slot() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn await_text_completed_drops_matching_pending_input() {
     let local = tokio::task::LocalSet::new();
     local
@@ -335,7 +335,7 @@ async fn await_text_completed_drops_matching_pending_input() {
 }
 /// Fix 1, KillTask — same shape as get_task_output(completed): the
 /// matching synthetic prompt must be dropped.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn kill_task_drops_matching_pending_input() {
     let local = tokio::task::LocalSet::new();
     local
@@ -378,7 +378,7 @@ async fn kill_task_drops_matching_pending_input() {
 /// pending notification and asserts it is filtered out so the
 /// notification-sweep half of the helper is covered for the subagent
 /// shape too (not only in `sweep_clears_matching_pending_notifications`).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn subagent_completed_drops_matching_pending_input() {
     let local = tokio::task::LocalSet::new();
     local
@@ -441,7 +441,7 @@ async fn subagent_completed_drops_matching_pending_input() {
 }
 /// Fix 1, MultiResult — only the `status == "completed"` task_ids
 /// should be dropped from `pending_inputs`. Running ones are skipped.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn multi_task_output_drops_each_completed_id() {
     let local = tokio::task::LocalSet::new();
     local
@@ -489,7 +489,7 @@ async fn multi_task_output_drops_each_completed_id() {
 }
 /// Fix 1, status != "completed" — must NOT drop any inputs. A "running"
 /// result is just a poll snapshot, not a consumption of the completion.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn task_output_running_does_not_drop_pending_input() {
     let local = tokio::task::LocalSet::new();
     local
@@ -531,17 +531,17 @@ async fn task_output_running_does_not_drop_pending_input() {
 /// already enforces exhaustiveness via the match; these tests
 /// pin the *semantics* of the no-op arms (so a future contributor
 /// who adds a real id to one of these arms breaks the test).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn task_not_found_does_not_consume() {
     let out = ToolOutput::TaskOutput(TaskOutputOutput::TaskNotFound("missing".into()));
     assert!(consumed_completion_ids(&out).is_empty());
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn kill_task_not_found_does_not_consume() {
     let out = ToolOutput::KillTask(KillTaskOutput::TaskNotFound("missing".into()));
     assert!(consumed_completion_ids(&out).is_empty());
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn unrelated_tool_output_does_not_consume() {
     let bash = BashOutput {
         output: b"hi".to_vec(),
@@ -564,7 +564,7 @@ async fn unrelated_tool_output_does_not_consume() {
 /// Fix 1, pending notifications — same task_id in `pending_notifications`
 /// must also be cleared by the sweep (both BashTaskCompleted and
 /// MonitorEvent shapes).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sweep_clears_matching_pending_notifications() {
     let local = tokio::task::LocalSet::new();
     local
@@ -607,7 +607,7 @@ async fn sweep_clears_matching_pending_notifications() {
 /// Fix 4 — shutdown drain must keep real user inputs and drop every
 /// variant for which `PromptOrigin::is_synthetic()` returns true. ALL
 /// `pending_notifications` are cleared unconditionally.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn shutdown_drops_pending_synthetic_inputs() {
     let local = tokio::task::LocalSet::new();
     local
@@ -664,7 +664,7 @@ async fn shutdown_drops_pending_synthetic_inputs() {
 /// from `handle_bridge_tool_success` will be caught here even
 /// though the helper unit-tests still pass. Mirrors the call shape
 /// used by `execute_tool_calls`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
     let local = tokio::task::LocalSet::new();
     local
@@ -735,7 +735,7 @@ async fn already_reported(actor: &SessionActor, task_id: &str) -> bool {
 /// Pure decision: a goal-turn-origin task is dropped even when the blanket
 /// goal Active/Complete gate is OFF (status Blocked / paused / None) — the
 /// exact bug. Non-origin notifications survive.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn split_drops_goal_turn_origin_when_blanket_gate_off() {
     let mut goal_turn = std::collections::HashSet::new();
     goal_turn.insert("bg-goal".to_string());
@@ -759,7 +759,7 @@ async fn split_drops_goal_turn_origin_when_blanket_gate_off() {
 /// No goal involved (empty origin set, blanket gate off) — nothing is
 /// dropped, so normal background-task completions still surface. Guards
 /// against an over-suppression regression.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn split_surfaces_normal_completions_with_no_goal() {
     let goal_turn = std::collections::HashSet::new();
     let notifications = vec![
@@ -773,7 +773,7 @@ async fn split_surfaces_normal_completions_with_no_goal() {
 }
 /// Blanket gate ON (goal Active/Complete) drops everything — the existing
 /// behavior is preserved.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn split_blanket_gate_drops_all() {
     let goal_turn = std::collections::HashSet::new();
     let notifications = vec![
@@ -788,7 +788,7 @@ async fn split_blanket_gate_drops_all() {
 /// even though the goal status is `None` (goal cleared / never Active), and
 /// it is still marked reported so it can't resurface via the per-tool-call
 /// reminder path.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn drain_drops_goal_turn_origin_when_status_none_and_marks_reported() {
     let local = tokio::task::LocalSet::new();
     local
@@ -839,7 +839,7 @@ async fn drain_drops_goal_turn_origin_when_status_none_and_marks_reported() {
 /// time the reparent command lands — i.e. the case-(b) gate is the stable
 /// harness flag, not the racy `Active` status. Without this, a final-round
 /// skeptic's leftover server would still storm the idle parent.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reparented_harness_subagent_task_suppressed_when_status_not_active() {
     let local = tokio::task::LocalSet::new();
     local
@@ -883,7 +883,7 @@ async fn reparented_harness_subagent_task_suppressed_when_status_not_active() {
 /// The reparent record path is gated on the (stable) goal harness flag, so it
 /// is a no-op in a non-goal session — guards against over-suppression of a
 /// normal subagent's reparented tasks outside any goal.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn reparented_record_is_noop_without_goal_harness() {
     let local = tokio::task::LocalSet::new();
     local
@@ -906,7 +906,7 @@ async fn reparented_record_is_noop_without_goal_harness() {
 /// completion is reported twice — once as the auto-wake "Background subagent
 /// … completed" prompt and again as the "While you were idle, N background
 /// subagent(s) completed" reminder.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn between_turn_drain_suppresses_auto_wake_delivered_subagents() {
     use xai_grok_tools::implementations::grok_build::task::types::{
         SubagentCompletionSummary, SubagentEvent,
@@ -977,7 +977,7 @@ async fn between_turn_drain_suppresses_auto_wake_delivered_subagents() {
 /// read. Both the `true` set and the `false` reset funnel through this method,
 /// so this also covers the reset paths. Deleting the `store` line (or cloning
 /// the wrong Arc into the bridge) would break production suppression silently.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn set_goal_loop_active_resource_mirrors_into_gate() {
     use std::sync::atomic::Ordering::Relaxed;
     let local = tokio::task::LocalSet::new();
@@ -1068,7 +1068,7 @@ fn completed_bash_task(id: &str) -> xai_grok_tools::computer::types::TaskSnapsho
 /// Real-actor coverage for the `SessionCommand::IsBusy` predicate
 /// (`state_is_busy`) — exercises the production computation the leader's
 /// idle-unload decision depends on, rather than the test fake actor.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn state_is_busy_reflects_queued_inputs() {
     let local = tokio::task::LocalSet::new();
     local

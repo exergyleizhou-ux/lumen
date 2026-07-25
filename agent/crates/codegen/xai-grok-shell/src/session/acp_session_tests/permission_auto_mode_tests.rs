@@ -39,7 +39,7 @@ fn install_real_permissions(actor: &mut SessionActor) {
 
 /// Production entry: `SessionActor::wire_permission_auto_llm_classifier` after
 /// auto is enabled (same sequence as `SessionCommand::SetAutoMode { enabled: true }`).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn set_auto_mode_path_wires_live_side_query_via_session_actor() {
     let local = tokio::task::LocalSet::new();
     local
@@ -111,7 +111,7 @@ async fn set_auto_mode_path_wires_live_side_query_via_session_actor() {
 
 /// Spawn-time path: auto already on → wire installs side-query (same as
 /// post-`spawn_session_actor` call at acp_session.rs:6156-6159).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn spawn_auto_seed_wires_classifier_when_is_auto_mode() {
     let local = tokio::task::LocalSet::new();
     local
@@ -137,7 +137,7 @@ async fn spawn_auto_seed_wires_classifier_when_is_auto_mode() {
 }
 
 /// Disable path clears the live side-query flag (SetAutoMode { enabled: false }).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn set_auto_mode_off_clears_side_query_flag() {
     let local = tokio::task::LocalSet::new();
     local

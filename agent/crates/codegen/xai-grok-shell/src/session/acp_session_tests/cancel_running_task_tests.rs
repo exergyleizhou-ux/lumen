@@ -12,7 +12,7 @@ impl AsyncTerminalRunner for DummyTerminal {
         Err(TerminalError::Other("dummy terminal".into()))
     }
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn persist_ack_waits_for_disk_flush_before_success() {
     let local = tokio::task::LocalSet::new();
     local
@@ -359,7 +359,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
         }))
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn first_turn_memory_injection_persists_to_chat_history() {
     let local = tokio::task::LocalSet::new();
     local
@@ -479,7 +479,7 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history() {
     let local = tokio::task::LocalSet::new();
     local
@@ -828,7 +828,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
 /// aborts the running turn AND drains every queued prompt, responding
 /// `Cancelled` to each. Interactive cancel preserves the queue instead — see
 /// `cancel_running_task_interactive_preserves_queued_work`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_running_task_teardown_clears_running_and_pending_work() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1161,7 +1161,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
 /// `MidTurnAbort` interrupt cause on the EventTracker so the *next* real user
 /// prompt gets tagged `PriorTurnInterrupt::MidTurnAbort`. Guards the cancel →
 /// next-message marking contract and the one-shot (consumed-once) semantics.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_records_mid_turn_abort_interrupt_marker() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1203,7 +1203,7 @@ async fn cancel_records_mid_turn_abort_interrupt_marker() {
 /// dangling tool call to repair into a "cancelled" tool-result. So
 /// `cancel_running_task` must arm the one-shot `pending_interrupt_reminder` that
 /// the next real user prompt turns into a `<system-reminder>`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_without_active_tool_arms_interrupt_reminder() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1245,7 +1245,7 @@ async fn cancel_without_active_tool_arms_interrupt_reminder() {
 /// prior-interrupt category, and it must zero `blocking_wait_depth` so a
 /// zombie wait guard from the aborted turn can't auto-send-now-cancel (and
 /// drop) the next user prompt.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn send_now_cancel_arms_no_interrupt_signals_and_resets_wait_depth() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1306,7 +1306,7 @@ async fn send_now_cancel_arms_no_interrupt_signals_and_resets_wait_depth() {
 /// committed but NO tool is marked active yet (`has_active_tool()` is false).
 /// Gating on the dangling state rather than `had_active_tool` keeps both cases
 /// covered.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_with_dangling_tool_call_skips_interrupt_reminder() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1351,7 +1351,7 @@ async fn cancel_with_dangling_tool_call_skips_interrupt_reminder() {
 }
 /// Once armed, `maybe_inject_interrupt_reminder` injects the interrupt notice as
 /// a `<system-reminder>` user item exactly once (one-shot).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn maybe_inject_interrupt_reminder_injects_once() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1418,7 +1418,7 @@ async fn actor_with_persistence_drain() -> std::sync::Arc<SessionActor> {
 /// `PromptOrigin::User` call site in `handle_prompt` and the relative ordering.
 /// Synchronizes on the persist-ack (fires after both items are pushed, before
 /// the model call), then aborts the turn so the dead-URL model call can't hang.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1480,7 +1480,7 @@ async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
 /// between the abort and the user's resend must NOT consume the one-shot or
 /// inject the reminder — it has to survive to the next *genuine* user turn.
 /// Guards the `PromptOrigin::User` gate on the injection call.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn handle_prompt_synthetic_origin_preserves_interrupt_reminder() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1525,7 +1525,7 @@ async fn handle_prompt_synthetic_origin_preserves_interrupt_reminder() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_running_task_interactive_preserves_queued_work() {
     use tokio::sync::oneshot::error::TryRecvError;
     fn make_item(
@@ -1640,7 +1640,7 @@ async fn cancel_running_task_interactive_preserves_queued_work() {
 /// and the cancel destroys it instead — the message never runs and, since
 /// user messages are only persisted when their turn starts, it is silently
 /// lost from history.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_after_own_completion_sweep_preserves_queued_user_prompt() {
     use tokio::sync::oneshot::error::TryRecvError;
     let local = tokio::task::LocalSet::new();
@@ -1719,7 +1719,7 @@ async fn cancel_after_own_completion_sweep_preserves_queued_user_prompt() {
 /// `maybe_start_running_task`), the front's `respond_to` was dropped, hanging
 /// the client's `session/prompt` and spinning the spinner forever. The front
 /// (index 0) must now always be resolved; deeper queued prompts are preserved.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_resolves_front_when_running_task_is_none() {
     use tokio::sync::oneshot::error::TryRecvError;
     fn make_item(
@@ -1813,7 +1813,7 @@ async fn cancel_resolves_front_when_running_task_is_none() {
 }
 /// Regression: aborting `running_task` must propagate
 /// cancellation to the `SamplerHandle` so the sampler stops emitting.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
     use axum::Router;
     use axum::response::sse::{Event, Sse};
@@ -2181,7 +2181,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn skill_reminder_deferred_while_turn_running_flushed_when_idle() {
     use xai_grok_tools::types::skill_discovery_tracker::{SkillUpdateEffects, SkillUpdateKind};
     fn effects() -> SkillUpdateEffects {
@@ -2256,7 +2256,7 @@ async fn skill_reminder_deferred_while_turn_running_flushed_when_idle() {
 }
 /// Cancel (Esc/Ctrl+C) with prompts waiting behind the running one: the queue broadcast to clients
 /// keeps waiting prompts in order, drops only the cancelled one, leaves the next free to start.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_keeps_remaining_queued_prompts_visible_to_clients() {
     fn make_item(prompt_id: &str, queue_id: &str) -> InputItem {
         let (respond_to, _rx) = tokio::sync::oneshot::channel();

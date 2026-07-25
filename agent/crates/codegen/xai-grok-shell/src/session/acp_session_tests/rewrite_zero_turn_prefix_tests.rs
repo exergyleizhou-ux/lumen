@@ -49,7 +49,7 @@ fn skips_synthetic_reminder_at_index_one() {
 /// re-register `GoalUpdateHandle`, otherwise `update_goal` fails with
 /// "GoalUpdateHandle not registered" and the goal can never complete.
 /// Drives the real `handle_rebuild_agent_for_definition` path.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rebuild_reinjects_goal_update_handle() {
     use xai_grok_tools::implementations::grok_build::update_goal::{
         GoalUpdateHandle, UpdateGoalInput, envelope_for_test,
@@ -157,7 +157,7 @@ fn stale_source_reminder() -> ConversationItem {
 /// turn. Drives the real `inject_baseline_skill_reminder` seam that
 /// `handle_rebuild_agent_for_definition` calls; deleting the drain/inject makes
 /// this fail.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rebuild_reinjects_baseline_skill_reminder_for_non_cursor() {
     let local = tokio::task::LocalSet::new();
     local
@@ -202,7 +202,7 @@ async fn rebuild_reinjects_baseline_skill_reminder_for_non_cursor() {
 /// strip that stale reminder and inject exactly one fresh listing -- not append
 /// a second catalog. Pins the double-listing bug: without the strip the count
 /// is 2; without the inject the surviving reminder is the stale one.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rebuild_injects_exactly_one_reminder_when_source_reminder_present() {
     let local = tokio::task::LocalSet::new();
     local

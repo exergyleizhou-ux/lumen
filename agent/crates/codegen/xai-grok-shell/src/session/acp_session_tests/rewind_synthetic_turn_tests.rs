@@ -105,7 +105,7 @@ async fn run_rewind_over_synthetic_turn(mark_turn_starts: bool) {
 /// Marker-less items (sessions persisted before `UserItem.prompt_index`
 /// existed): the counting fallback must classify the synthetic auto-wake
 /// item as a turn start.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_removes_turn_after_synthetic_auto_wake_unmarked() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_rewind_over_synthetic_turn(false)).await;
@@ -113,7 +113,7 @@ async fn rewind_removes_turn_after_synthetic_auto_wake_unmarked() {
 
 /// Marked items (what `turn.rs` stamps on every turn start): the explicit
 /// per-item prompt index takes priority.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_removes_turn_after_synthetic_auto_wake_marked() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_rewind_over_synthetic_turn(true)).await;
@@ -121,7 +121,7 @@ async fn rewind_removes_turn_after_synthetic_auto_wake_marked() {
 
 /// Rewind on a session with no prompts: the picker has nothing to offer and
 /// an execute request is rejected (no silent no-op "success").
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_with_no_prompts_lists_no_points_and_rejects_execute() {
     let local = tokio::task::LocalSet::new();
     local
@@ -159,7 +159,7 @@ async fn rewind_with_no_prompts_lists_no_points_and_rejects_execute() {
 /// Rewind to the start of the conversation (target = 0) keeps only the
 /// session preamble — System + user_info + pre-turn synthetic reminders —
 /// even when turn 0 exists alongside synthetic auto-wake turns.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_to_start_keeps_only_preamble() {
     let local = tokio::task::LocalSet::new();
     local
@@ -224,7 +224,7 @@ async fn rewind_to_start_keeps_only_preamble() {
 /// Two sequential rewinds narrow the history correctly each time — the
 /// second rewind operates on the already-truncated conversation (markers
 /// still present on the surviving items).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_twice_narrows_history_each_time() {
     let local = tokio::task::LocalSet::new();
     local
@@ -336,7 +336,7 @@ async fn rewind_twice_narrows_history_each_time() {
 
 /// Midpoint rewind with synthetic turns on BOTH sides of the cut, in both
 /// marker and counting-fallback modes.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_to_midpoint_with_synthetic_turns_on_both_sides() {
     let local = tokio::task::LocalSet::new();
     local
@@ -422,7 +422,7 @@ async fn rewind_to_midpoint_with_synthetic_turns_on_both_sides() {
 
 /// Rewind to the auto-wake turn itself (target = 1) must cut the auto-wake
 /// item and everything after it.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_to_synthetic_auto_wake_turn_cuts_at_the_wake() {
     let local = tokio::task::LocalSet::new();
     local

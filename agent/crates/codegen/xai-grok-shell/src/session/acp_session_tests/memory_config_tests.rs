@@ -302,7 +302,7 @@ async fn create_test_actor_with_memory(
         trace_config_template: std::cell::RefCell::new(None),
     }
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_is_flushing_suppresses_auto_compact() {
     let local = tokio::task::LocalSet::new();
     local
@@ -332,7 +332,7 @@ async fn test_is_flushing_suppresses_auto_compact() {
 }
 /// Test that `force_compact` triggers auto-compact even below threshold,
 /// and is consumed (reset to false) after a single use.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_force_compact_triggers_below_threshold() {
     let local = tokio::task::LocalSet::new();
     local
@@ -365,7 +365,7 @@ async fn test_force_compact_triggers_below_threshold() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_flush_config_from_memory_config() {
     let local = tokio::task::LocalSet::new();
@@ -391,7 +391,7 @@ async fn test_flush_config_from_memory_config() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_memory_flush_enabled_from_config() {
     let local = tokio::task::LocalSet::new();
@@ -435,7 +435,7 @@ async fn test_memory_flush_enabled_from_config() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_memory_storage_created_when_enabled() {
     let local = tokio::task::LocalSet::new();
@@ -536,7 +536,7 @@ async fn create_injection_ready_actor(
 }
 /// Control: proves the harness setup is sufficient for injection, so the
 /// companion test below isolates the idempotency guard.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_first_turn_reminder_injects_without_persisted_block() {
     let local = tokio::task::LocalSet::new();
     local
@@ -567,7 +567,7 @@ async fn test_first_turn_reminder_injects_without_persisted_block() {
 }
 /// A block persisted by an earlier `--resume` segment must suppress the
 /// re-search — a re-scored block would bust the prompt-prefix KV cache.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_first_turn_reminder_skips_when_block_persisted() {
     let local = tokio::task::LocalSet::new();
     local
@@ -618,7 +618,7 @@ async fn test_first_turn_reminder_skips_when_block_persisted() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[allow(clippy::field_reassign_with_default)]
 async fn test_idle_flush_timeout_from_config() {
     let local = tokio::task::LocalSet::new();
