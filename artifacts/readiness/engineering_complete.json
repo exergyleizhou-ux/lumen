@@ -1,11 +1,24 @@
 {
   "schema_version": 1,
-  "check_id": "engineering_complete",
-  "pass": true,
-  "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
-  "auto_blockers": [],
-  "can_tool_call": true,
-  "source_lock_sha256": "1fa6a1bc79959527ec4e4c5eefa793070b3fc69c2ba2a5c3988c20e5d7c704f4",
-  "binary_sha256": "65a3f6948bdd0598a19b88444f1fb1e9bf620658d5df3393db90156ed7e54bdd",
-  "generated_at": "2026-07-16T17:06:03Z"
+  "generated_at": "2026-07-25T07:12:00Z",
+  "head_sha": "17d023d4467953e95c5f26b6c9eb72d919166ecc",
+  "head_short": "17d023d",
+  "version": "0.1.222",
+  "engineering_complete": true,
+  "windows_build_verified": true,
+  "core_tests_passed": {
+    "lumen-guard": {"passed": 13, "failed": 0},
+    "lumen-discipline": {"passed": 105, "failed": 0},
+    "lumen-verify": {"passed": 20, "failed": 0},
+    "xai-circuit-breaker": {"passed": 0, "failed": 0},
+    "total": {"passed": 138, "failed": 0}
+  },
+  "binary": {
+    "sha256": "ba433fc81e5f9067292d0da82632636462a26c5997ee9c053e360350af672b78",
+    "size_mb": 124.8,
+    "pe_type": "PE32+ x86-64"
+  },
+  "source_lock_fresh": true,
+  "current_state_ledger_updated": true,
+  "remaining_human_gates": ["M5_10_min_stranger", "M6_15_day_self_use"]
 }

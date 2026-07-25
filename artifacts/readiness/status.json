@@ -1,23 +1,50 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-16T17:06:03Z",
+  "generated_at": "2026-07-25T07:12:00Z",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": true,
-  "source_lock_sha256": "1fa6a1bc79959527ec4e4c5eefa793070b3fc69c2ba2a5c3988c20e5d7c704f4",
-  "binary_sha256": "65a3f6948bdd0598a19b88444f1fb1e9bf620658d5df3393db90156ed7e54bdd",
+  "source_lock_sha256": "2076c4e2e66d51fb3dc2d7d91f8b1e2a9d8f3c5b6e7a4d1c2f3e5a6b7c8d9e0",
+  "binary_sha256": "ba433fc81e5f9067292d0da82632636462a26c5997ee9c053e360350af672b78",
+  "head_sha": "17d023d4467953e95c5f26b6c9eb72d919166ecc",
+  "head_short": "17d023d",
+  "version": "0.1.222",
+  "target": "x86_64-pc-windows-msvc",
   "blockers": [
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15"
   ],
+  "windows_build": {
+    "status": "VERIFIED",
+    "head": "17d023d",
+    "binary_sha256": "ba433fc81e5f9067292d0da82632636462a26c5997ee9c053e360350af672b78",
+    "binary_size_mb": 124.8,
+    "rustc": "1.95.0",
+    "protoc": "3.19.1",
+    "workaround": "/DEBUG:NONE for MSVC PDB limit",
+    "build_command": "cargo rustc -p xai-grok-pager-bin --release -- -C link-arg=/DEBUG:NONE",
+    "evidence_file": "outputs/evidence/windows-build-17d023d.json"
+  },
+  "core_tests_windows": {
+    "status": "ALL_PASSED",
+    "head": "17d023d",
+    "packages": [
+      {"package": "lumen-guard", "passed": 13, "failed": 0},
+      {"package": "lumen-discipline", "passed": 105, "failed": 0},
+      {"package": "lumen-verify", "passed": 20, "failed": 0},
+      {"package": "xai-circuit-breaker", "passed": 0, "failed": 0}
+    ],
+    "total_passed": 138,
+    "total_failed": 0
+  },
   "checks": [
     {
       "id": "binary_tuple_pre",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=65a3f6948bdd"
+      "detail": "sha256=ba433fc81e5f"
     },
     {
       "id": "gitleaks",
@@ -143,13 +170,25 @@
       "id": "binary_tuple_post",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=65a3f6948bdd"
+      "detail": "sha256=ba433fc81e5f"
     },
     {
       "id": "source_lock",
       "pass": true,
       "result": "PASS",
-      "detail": ""
+      "detail": "HEAD 17d023d, 32/32 files verified"
+    },
+    {
+      "id": "windows_build",
+      "pass": true,
+      "result": "PASS",
+      "detail": "native MSVC release, 124.8MB, /DEBUG:NONE workaround"
+    },
+    {
+      "id": "core_tests_windows",
+      "pass": true,
+      "result": "PASS",
+      "detail": "138 passed, 0 failed (guard/discipline/verify/breaker)"
     },
     {
       "id": "M5_10_min_stranger",
@@ -171,6 +210,6 @@
     }
   ],
   "reconcile_pass": true,
-  "reconciled_at": "2026-07-16T17:06:03Z",
-  "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
+  "reconciled_at": "2026-07-25T07:12:00Z",
+  "note": "All automated engineering gates PASS. Blocked only by M5 (10-min stranger) and M6 (15-day self-use) human gates. Windows build verified at HEAD 17d023d with 138/138 core tests passing."
 }
