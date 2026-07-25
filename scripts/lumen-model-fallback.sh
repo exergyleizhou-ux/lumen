@@ -11,7 +11,14 @@
 #
 # Exit: 0 = healthy, 1 = failures detected, 2 = threshold exceeded
 
-set -euo pipefail
+# Cross-platform reverse-line reader (macOS: tail -r, Linux: tac)
+_reverse_lines() {
+    if command -v tac &>/dev/null; then
+        tac "$@"
+    else
+        tail -r "$@"
+    fi
+}
 
 LUMEN_DIR="${LUMEN_DIR:-$HOME/.lumen}"
 PROXY_LOG="$LUMEN_DIR/science/proxy.log"
@@ -45,13 +52,23 @@ cmd_check() {
 
     # Count consecutive failures (lines after last successful request)
     local consecutive
-    consecutive=$(tac "$PROXY_LOG" 2>/dev/null | while IFS= read -r line; do
+    if command -v tac &>/dev/null; then
+        consecutive=$(tac "$PROXY_LOG" 2>/dev/null | while IFS= read -r line; do
         if echo "$line" | grep -q "context canceled\|upstream jitter"; then
             echo "fail"
         else
             break
         fi
     done | wc -l | tr -d '[:space:]')
+    else
+        consecutive=$(tail -r "$PROXY_LOG" 2>/dev/null | while IFS= read -r line; do
+        if echo "$line" | grep -q "context canceled\|upstream jitter"; then
+            echo "fail"
+        else
+            break
+        fi
+    done | wc -l | tr -d '[:space:]')
+    fi
 
     if [[ "$consecutive" -ge "$THRESHOLD" ]]; then
         echo -e "${RED}✗${NC} API degraded — ${consecutive} consecutive failures (threshold: ${THRESHOLD})"
@@ -83,7 +100,11 @@ cmd_watch() {
     tail -n 0 -F "$PROXY_LOG" 2>/dev/null | while IFS= read -r line; do
         if echo "$line" | grep -q "context canceled\|upstream jitter.*retry"; then
             local count
-            count=$(tac "$PROXY_LOG" 2>/dev/null | head -20 | grep -c "context canceled\|upstream jitter" || echo "0")
+            if command -v tac &>/dev/null; then
+                count=$(tac "$PROXY_LOG" 2>/dev/null | head -20 | grep -c "context canceled\|upstream jitter" || echo "0")
+            else
+                count=$(tail -r "$PROXY_LOG" 2>/dev/null | head -20 | grep -c "context canceled\|upstream jitter" || echo "0")
+            fi
             echo -e "${YELLOW}[$(date +%H:%M:%S)]${NC} API failure detected (${count} recent)"
 
             if [[ "$count" -ge "$THRESHOLD" ]]; then

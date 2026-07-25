@@ -29,6 +29,10 @@ pub fn check_bash(command: &str) -> CheckResult {
     if unsafe_mode() {
         return CheckResult::ok();
     }
+    // git commit messages are arbitrary text — never inspect them.
+    if is_git_commit_command(command) {
+        return CheckResult::ok();
+    }
     let stripped = strip_hidden_chars(command);
     // 1) Whole command (preserves `|` for pipe-to-shell / base64|sh).
     let r = check_bash_normalized(&stripped);
@@ -44,6 +48,17 @@ pub fn check_bash(command: &str) -> CheckResult {
         }
     }
     CheckResult::ok()
+}
+
+/// git commit -m "..." messages are arbitrary user text, not shell commands.
+/// Never scan them for guard triggers.
+fn is_git_commit_command(cmd: &str) -> bool {
+    let trimmed = cmd.trim();
+    // Match `git commit` with any flags, regardless of what follows.
+    // Examples: "git commit -m '...'", "git commit --amend -m '...'"
+    trimmed.starts_with("git commit")
+        || trimmed.starts_with("git -C")
+            && trimmed.contains("commit")
 }
 
 fn check_bash_normalized(command: &str) -> CheckResult {
@@ -520,6 +535,9 @@ mod tests {
             "ps aux | grep lumen",
             "history",
             "find . -name '.env.example' -exec cat {} \\;",
+            "git commit -m 'fix: use scp for file transfer'",
+            "git commit -m \"check ps aux output\"",
+            "git -C /tmp commit -m 'chore: rm -rf old cache'",
         ] {
             let r = check_bash(cmd);
             assert!(r.safe, "safe blocked: {cmd} ({})", r.reason);
@@ -621,6 +639,20 @@ mod tests {
             assert!(s.safe, "rm -rf ./{target} should be safe: {}", s.reason);
             let s = check_bash(&format!("rm -rf {target}"));
             assert!(s.safe, "rm -rf {target} should be safe: {}", s.reason);
+        }
+    }
+
+    #[test]
+    fn git_commit_messages_are_exempt() {
+        // git commit messages are arbitrary text, never scan them.
+        for cmd in [
+            "git commit -m 'fix: add scp support'",
+            "git commit -m \"use ps aux for debugging\"",
+            "git commit --amend -m 'wip: rm -rf old stuff'",
+            "git -C /tmp commit -m 'chore: update scp config'",
+        ] {
+            let r = check_bash(cmd);
+            assert!(r.safe, "git commit must be exempt: {cmd} ({})", r.reason);
         }
     }
 
