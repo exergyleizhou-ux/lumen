@@ -96,7 +96,16 @@ pub fn parse_search(bytes: &[u8]) -> crate::Result<ParsedResponse> {
 
         let container = text_between(entry, "arxiv:primary_category")
             .or_else(|| {
-                // The primary_category is sometimes in an attribute. Fallback.
+                // Self-closing tag: <arxiv:primary_category term="cs.CL"/>
+                if let Some(start) = entry.find("<arxiv:primary_category") {
+                    let rest = &entry[start..];
+                    if let Some(term_start) = rest.find("term=\"") {
+                        let after = &rest[term_start + 6..];
+                        if let Some(term_end) = after.find('\"') {
+                            return Some(after[..term_end].to_string());
+                        }
+                    }
+                }
                 entry.find("arxiv:primary_category").map(|_| "arXiv".to_string())
             })
             .unwrap_or_else(|| "arXiv".to_string());

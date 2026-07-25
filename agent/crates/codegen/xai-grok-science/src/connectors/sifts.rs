@@ -9,7 +9,11 @@ pub fn best_structures_path(accession: &str) -> String {
 
 pub fn parse_search(bytes: &[u8]) -> crate::Result<ParsedResponse> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
-    // Response is keyed by uniProt accession
+    // Empty array: no matching structures (valid, but zero results).
+    if v.as_array().map(|a| a.is_empty()).unwrap_or(false) {
+        return Ok(ParsedResponse { total_hits: 0, records: vec![] });
+    }
+    // Normal response: object keyed by UniProt accession.
     let obj = v.as_object().ok_or_else(|| ScienceError::Invalid("sifts: not an object".into()))?;
     let mut records = Vec::new();
     for (_key, val) in obj {
