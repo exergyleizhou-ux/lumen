@@ -286,25 +286,69 @@ mod tests {
         }
     }
 
+    /// Helper: register every real adapter from the global REGISTRY into a
+    /// local test registry so coverage tests operate on the full 42-adapter
+    /// set, not a partial subset that drifts from descriptors.
+    fn register_all_real_adapters(registry: &mut AdapterRegistry) {
+        for adapter in REGISTRY.all() {
+            let id = adapter.descriptor().id;
+            let dup = registry.all().iter().any(|a| a.descriptor().id == id);
+            if !dup {
+                registry
+                    .register(Box::new(TestAdapter {
+                        id,
+                        display_name: adapter.descriptor().display_name,
+                        base_url: adapter.descriptor().base_url,
+                        egress_hosts: adapter.descriptor().egress_hosts.to_vec(),
+                        expected_exchanges: adapter.expected_exchanges(),
+                    }))
+                    .unwrap_or_else(|e| panic!("register {id}: {e}"));
+            }
+        }
+    }
+
+    /// Minimal adapter impl used by coverage tests to avoid pulling each
+    /// connector module's full fixture/parse logic.
+    struct TestAdapter {
+        id: &'static str,
+        display_name: &'static str,
+        base_url: &'static str,
+        egress_hosts: Vec<&'static str>,
+        expected_exchanges: usize,
+    }
+
+    impl ProtocolAdapter for TestAdapter {
+        fn descriptor(&self) -> &'static ConnectorDescriptor {
+            // Leak a static descriptor — safe in test-only code.
+            Box::leak(Box::new(ConnectorDescriptor {
+                id: self.id,
+                display_name: self.display_name,
+                auth_class: super::super::AuthClass::None,
+                base_url: self.base_url,
+                egress_hosts: self.egress_hosts.clone().leak(),
+                rate_limit: super::super::RateLimit { max_requests: 1, per_ms: 1_000 },
+                retry: super::super::RetryPolicy { max_attempts: 1, base_delay_ms: 100 },
+                tos_url: "https://example.com/tos",
+                user_notice: "test only",
+                data_class: super::super::DataClass::PublicReference,
+                cache_policy: super::super::CachePolicy::NoStore,
+                live_probe_path: "/test",
+            }))
+        }
+        fn expected_exchanges(&self) -> usize { self.expected_exchanges }
+        fn build_fixture_paths(&self, _q: &str, _m: u32, _f: &[Vec<u8>]) -> crate::Result<Vec<String>> {
+            Ok(vec!["/test".into()])
+        }
+        fn parse_responses(&self, _e: &[FetchExchange]) -> crate::Result<ParsedResponse> {
+            Ok(ParsedResponse { total_hits: 0, records: vec![] })
+        }
+    }
+
     #[test]
     fn coverage_rejects_orphan_adapter() {
         let mut registry = AdapterRegistry::new();
-        // Register all real adapters ...
-        registry.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
-        registry.register(Box::new(super::super::chembl::ChemblAdapter)).unwrap();
-        registry.register(Box::new(super::super::crossref::CrossrefAdapter)).unwrap();
-        registry.register(Box::new(super::super::uniprot::UniprotAdapter)).unwrap();
-        registry.register(Box::new(super::super::europepmc::EuropepmcAdapter)).unwrap();
-        registry.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
-        registry.register(Box::new(super::super::semantic_scholar::SemanticScholarAdapter)).unwrap();
-        registry.register(Box::new(super::super::arxiv::ArxivAdapter)).unwrap();
-        registry.register(Box::new(super::super::biorxiv::BiorxivAdapter)).unwrap();
-        registry.register(Box::new(super::super::rcsb_pdb::RcsbPdbAdapter)).unwrap();
-        registry.register(Box::new(super::super::pdbe::PdbeAdapter)).unwrap();
-        registry.register(Box::new(super::super::alphafold::AlphafoldAdapter)).unwrap();
-        registry.register(Box::new(super::super::interpro::InterproAdapter)).unwrap();
-        registry.register(Box::new(super::super::sifts::SiftsAdapter)).unwrap();
-        // ... plus one orphan whose descriptor is NOT in connectors::registry().
+        register_all_real_adapters(&mut registry);
+        // Add one orphan whose descriptor is NOT in connectors::registry().
         registry.register(Box::new(OrphanAdapter)).unwrap();
 
         let descriptors = super::super::registry();
