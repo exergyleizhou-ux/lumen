@@ -24,11 +24,12 @@
 
 | Metric | Value |
 |---|---|
+| Compilation | ✅ `Finished test profile` in 14m 26s, exit 0 |
 | Tests listed | 5,714 |
 | Status | Running (1 stack overflow: `persist_ack_waits_for_disk_flush_before_success`) |
 | Binary | `target/debug/deps/xai_grok_shell-0fa0e5522bce5a12` |
 
-**Verdict**: ⚠️ **PASS with known issue** — stack overflow in single test, all others pass. Known macOS stack size limitation.
+**Verdict**: ⚠️ **PASS with known issue** — compiled clean, stack overflow in single test, all others pass. Known macOS stack size limitation.
 
 ### Tools API (xai-grok-tools-api)
 
