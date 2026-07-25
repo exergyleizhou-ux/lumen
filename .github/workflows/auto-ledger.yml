@@ -1,4 +1,4 @@
-name: auto-ledger
+name: auto-checks
 
 on:
   push:
@@ -8,6 +8,13 @@ permissions:
   contents: write
 
 jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check version consistency
+        run: bash scripts/check-version-consistency.sh
+
   regenerate:
     runs-on: ubuntu-latest
     steps:

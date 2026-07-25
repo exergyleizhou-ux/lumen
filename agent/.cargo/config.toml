@@ -1,5 +1,10 @@
 # Lumen agent cargo configuration
 #
+# Compilation speed:
+#   Install sccache: cargo install sccache
+#   Then set SCCACHE_GCS_BUCKET (or local path) for CI caching.
+#   macOS local: export RUSTC_WRAPPER=sccache
+#
 # Windows build notes:
 #   - Set PROTOC env var if protoc is not on PATH (e.g., choco/scoop install)
 #     $env:PROTOC = "C:\path\to\protoc.exe"
