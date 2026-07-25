@@ -1,14 +1,8 @@
 //! L3: block writes to persistence / credential / system paths.
 
 use crate::hidden::strip_hidden_chars;
+use crate::unsafe_mode;
 use crate::CheckResult;
-
-/// Check whether the `LUMEN_UNSAFE` env var is set (allows bypassing all guards).
-fn unsafe_mode() -> bool {
-    std::env::var("LUMEN_UNSAFE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
 
 const SENSITIVE_SEGMENTS: &[(&str, &str)] = &[
     ("/.ssh/", "write into ~/.ssh (SSH key / authorized_keys injection)"),

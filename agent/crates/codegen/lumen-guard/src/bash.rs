@@ -8,6 +8,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 
 use crate::hidden::strip_hidden_chars;
+use crate::unsafe_mode;
 use crate::CheckResult;
 
 /// Safe dev directories that `rm -rf` may target without triggering the guard.
@@ -15,13 +16,6 @@ const SAFE_RM_TARGETS: &[&str] = &[
     "node_modules", "target", "build", "dist", ".next", "__pycache__",
     "coverage", ".nyc_output", "vendor", ".terraform", ".cache",
 ];
-
-/// Check whether the `LUMEN_UNSAFE` env var is set (allows bypassing all guards).
-fn unsafe_mode() -> bool {
-    std::env::var("LUMEN_UNSAFE")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
 
 /// Analyze a shell command. Returns `safe=false` when it must be blocked in
 /// every permission mode (including bypass / YOLO).
@@ -52,13 +46,39 @@ pub fn check_bash(command: &str) -> CheckResult {
 
 /// git commit -m "..." messages are arbitrary user text, not shell commands.
 /// Never scan them for guard triggers.
+///
+/// Handles:
+///   git commit -m '...'
+///   git commit --amend -m '...'
+///   git -C /path commit -m '...'
+///   git -c user.name=X commit -m '...'
+///   /usr/bin/git commit -m '...'
+///   \git commit -m '...'
 fn is_git_commit_command(cmd: &str) -> bool {
     let trimmed = cmd.trim();
-    // Match `git commit` with any flags, regardless of what follows.
-    // Examples: "git commit -m '...'", "git commit --amend -m '...'"
-    trimmed.starts_with("git commit")
-        || trimmed.starts_with("git -C")
-            && trimmed.contains("commit")
+    // Strip leading backslash (some shells use \git to bypass aliases)
+    let cmd = trimmed.strip_prefix('\\').unwrap_or(trimmed);
+    // Split into tokens
+    let tokens: Vec<&str> = cmd.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return false;
+    }
+    // Find the "git" token — may be a path like /usr/bin/git or just "git"
+    let git_idx = tokens.iter().position(|t| {
+        t.ends_with("/git") || *t == "git"
+    });
+    let Some(git_idx) = git_idx else {
+        return false;
+    };
+    // Check if "commit" appears as a subcommand after "git" (skipping flags)
+    tokens[git_idx + 1..].iter().any(|t| {
+        // Skip flags like -C, -c, --no-pager, etc.
+        if t.starts_with('-') {
+            // -C and -c take an argument, skip the next token too
+            return false;
+        }
+        *t == "commit"
+    })
 }
 
 fn check_bash_normalized(command: &str) -> CheckResult {
@@ -701,14 +721,22 @@ mod tests {
     fn git_commit_messages_are_exempt() {
         // git commit messages are arbitrary text, never scan them.
         for cmd in [
-            "git commit -m 'fix: add scp support'",
-            "git commit -m \"use ps aux for debugging\"",
-            "git commit --amend -m 'wip: rm -rf old stuff'",
-            "git -C /tmp commit -m 'chore: update scp config'",
+            "git commit -m 'fix: use scp for transfer'",
+            "git commit -m \"debug: ps aux output\"",
+            "git commit --amend -m 'wip: rm -rf old cache'",
+            "git -C /tmp commit -m 'chore: scp config'",
+            "git -c user.name=test commit -m 'test: del old files'",
+            "git -c commit.gpgsign=false commit -m 'signed: cleanup'",
+            "/usr/bin/git commit -m 'system git: rm legacy'",
+            // These should NOT be exempt — not git commit commands
         ] {
             let r = check_bash(cmd);
             assert!(r.safe, "git commit must be exempt: {cmd} ({})", r.reason);
         }
+        // Verify non-git-commit commands are still checked (these WOULD be blocked)
+        assert!(!check_bash("rm -rf /").safe, "rm -rf / must still be blocked");
+        // git commands that are NOT commit should still be scanned (if they match patterns)
+        // (git push is actually safe — no pattern matches — so we test rm -rf instead)
     }
 
     #[test]
