@@ -1,5 +1,14 @@
 //! Declarative workflow specification and execution engine.
-//! Seam contracts: LS5-15, LS5-16, LS5-17, LS5-18.
+//! Seam contracts: LS5-15, LS5-16, LS5-17, LS5-18, LS5-19, LS5-20, LS5-21.
+
+pub mod kernel;
+pub mod package;
+
+pub use kernel::{
+    AdmissionStatus, KernelAdmission, KernelKind, KernelManifest, ReproductionAttempt,
+    ReproductionLevel, ReproductionResult, ResourceCap,
+};
+pub use package::{ArtifactManifest, InputManifest, WorkflowPackage};
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
