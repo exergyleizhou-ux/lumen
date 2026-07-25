@@ -1,6 +1,7 @@
 # Lumen Current State Ledger — Phase 0
 
 **Generated**: 2026-07-25 01:00 UTC
+**Updated**: 2026-07-25 07:15 UTC (Windows build + SOURCE_LOCK refresh)
 **Auditor**: Lumen (Grok Build)
 **Purpose**: Single source of truth for all branches, merge status, and feature inventory before DeepSeek handoff.
 **Replaces**: stale ledger at `codex/cache-control-plane-hardening@0cd55c49` (generated 2026-07-24).
@@ -11,7 +12,7 @@
 
 | Question | Answer |
 |---|---|
-| Active git worktrees | **1** — `/Users/lei/code/lumen` on `main@dc78fcf2` |
+| Active git worktrees | **1** — Windows native on `main@98c4635` (prev: `dc78fcf2`) |
 | Local branches | **14** (all pushed to origin) |
 | Branches fully in main | **10 of 14** |
 | Branches NOT in main | **4** (science-fusion-full, production-ready-p1-rust, cherry P0, cherry P1) |
@@ -103,6 +104,28 @@
 | `install_truth_snapshot()` no runtime caller | 🔴 High | `agent/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs:118` | Method defined, only called in tests. Phase 3 task. |
 | Science Fusion 30 commits not in main | 🟡 Medium | `codex/science-fusion-full` | Phase 6–8 task. Needs integration after Phase 0–5 completion. |
 | `codex/production-ready-p1-rust` has 1 unmerged commit | 🟢 Low | `febb8332` | May already be covered by `877ecbd3` merge. Audit needed. |
+
+---
+
+## Windows Build Evidence (2026-07-25)
+
+| Item | Value |
+|---|---|
+| **HEAD** | `98c4635` (includes SOURCE_LOCK regeneration) |
+| **Binary** | `lumen 0.1.222 (98c4635)` |
+| **Binary SHA256** | `193459e4ff379db5748eb8306822f4f0ef546875ac6a810c6eddc142f35a84ce` |
+| **Binary Size** | 124.8 MB |
+| **Target** | `x86_64-pc-windows-msvc` |
+| **Rustc** | 1.95.0 |
+| **Build Command** | `cargo rustc -p xai-grok-pager-bin --release -- -C link-arg=/DEBUG:NONE` |
+| **Protoc** | 3.19.1 (with compatibility fix for pre-29.x dependency output) |
+| **Source Fixes** | protoc compat in `xai-proto-build/src/lib.rs`; `.cargo/config.toml` with Win notes |
+
+### Windows-Specific Fixes Applied (commit `221e0a6`)
+
+1. **protoc compatibility**: Handle pre-29.x dependency output format (no `: ` separator)
+2. **Build notes**: `.cargo/config.toml` documents PROTOC, PDB, and CJK temp path workarounds
+3. **`.gitignore`**: Exclude `/bin/` and `nul` junk files
 
 ---
 
