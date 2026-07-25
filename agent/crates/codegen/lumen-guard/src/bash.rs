@@ -338,6 +338,19 @@ static DESTRUCTIVE: Lazy<Vec<Pat>> = Lazy::new(|| {
             re: Regex::new(r":\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:").unwrap(),
             reason: "fork bomb",
         },
+        // ── Windows-specific destructive ──
+        Pat {
+            re: Regex::new(r"(?i)\bformat\s+[A-Za-z]:\s").unwrap(),
+            reason: "formatting a Windows drive",
+        },
+        Pat {
+            re: Regex::new(r"(?i)\bdel\s+/[fF]\s+/[sS]\s+/[qQ]\s+[A-Za-z]:[\\/]").unwrap(),
+            reason: "force-delete Windows drive root",
+        },
+        Pat {
+            re: Regex::new(r"(?i)\brmdir\s+/[sS]\s+/[qQ]\s+[A-Za-z]:[\\/]").unwrap(),
+            reason: "recursive remove of Windows drive root",
+        },
     ]
 });
 
@@ -352,11 +365,20 @@ fn check_destructive(cmd: &str) -> CheckResult {
 
 static RM_PRESENT: Lazy<Regex> = Lazy::new(|| Regex::new(r"(^|[;&|]|\s)rm\s").unwrap());
 static RM_RECURSIVE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\s-[a-z]*r").unwrap());
-static RM_DANGEROUS_TARGET: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"\s(/|~|\*|/\*|\$\{?home\}?)(\s|$)").unwrap());
+static RM_DANGEROUS_TARGET: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        // Unix: / ~ * $HOME / *
+        // Windows: C:\ C:/ /c/ (Git Bash on Windows)
+        r"\s(?:/|~|\*|/\*|\$\{?home\}?|[A-Za-z]:[\\/]|/[a-z]/)(?:\s|$)",
+    )
+    .unwrap()
+});
 static RM_HOME_DATA: Lazy<Regex> = Lazy::new(|| {
     Regex::new(
-        r"(~|\$\{?home\}?|/home/[^/ ]+|/users/[^/ ]+)/(documents|desktop|downloads|pictures|movies|music|library)/?(\s|$|;|&|\|)",
+        // Unix: ~ ~/ $HOME /home/ /users/
+        // Windows: C:\Users\ C:/Users/ /c/Users/
+        // Note: [\\/] used for path separators to handle both backslash and forward slash.
+        r"(?i)(?:~|\$\{?home\}?|/home/[^/ ]+|/users/[^/ ]+|[A-Za-z]:[\\/]users[\\/][^/\\ ]+|/[a-z]/users/[^/ ]+)[\\/](?:documents|desktop|downloads|pictures|movies|music|library)[\\/]?(?:\s|$|;|&|\|)",
     )
     .unwrap()
 });
@@ -467,6 +489,22 @@ mod tests {
             "rm -rf /Users/lei/Pictures",
             "rm -rf ~/Library",
             "rm -rf ${HOME}/Movies",
+            // Windows paths (Git Bash style)
+            "rm -rf /c/Users/lei/Documents",
+            "rm -rf C:/Users/lei/Desktop",
+            // rm.exe on Windows accepts backslash paths too
+            "rm -rf C:\\Users\\lei\\Downloads",
+        ] {
+            assert!(!check_bash(cmd).safe, "should block {cmd}");
+        }
+    }
+
+    #[test]
+    fn blocks_windows_destructive() {
+        for cmd in [
+            "format C: /fs:ntfs /q",
+            "del /f /s /q C:\\windows",
+            "rmdir /s /q C:\\",
         ] {
             assert!(!check_bash(cmd).safe, "should block {cmd}");
         }
