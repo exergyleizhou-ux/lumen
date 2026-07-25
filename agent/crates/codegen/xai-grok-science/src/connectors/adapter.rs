@@ -288,37 +288,61 @@ mod tests {
 
     #[test]
     fn coverage_rejects_orphan_adapter() {
-        let mut registry = AdapterRegistry::new();
-        // Register all real adapters ...
-        registry.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
-        registry.register(Box::new(super::super::chembl::ChemblAdapter)).unwrap();
-        registry.register(Box::new(super::super::crossref::CrossrefAdapter)).unwrap();
-        registry.register(Box::new(super::super::uniprot::UniprotAdapter)).unwrap();
-        registry.register(Box::new(super::super::europepmc::EuropepmcAdapter)).unwrap();
-        registry.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
-        registry.register(Box::new(super::super::semantic_scholar::SemanticScholarAdapter)).unwrap();
-        registry.register(Box::new(super::super::arxiv::ArxivAdapter)).unwrap();
-        registry.register(Box::new(super::super::biorxiv::BiorxivAdapter)).unwrap();
-        registry.register(Box::new(super::super::rcsb_pdb::RcsbPdbAdapter)).unwrap();
-        registry.register(Box::new(super::super::pdbe::PdbeAdapter)).unwrap();
-        registry.register(Box::new(super::super::alphafold::AlphafoldAdapter)).unwrap();
-        registry.register(Box::new(super::super::interpro::InterproAdapter)).unwrap();
-        registry.register(Box::new(super::super::sifts::SiftsAdapter)).unwrap();
-        // ... plus one orphan whose descriptor is NOT in connectors::registry().
-        registry.register(Box::new(OrphanAdapter)).unwrap();
-
+        let mut reg = AdapterRegistry::new();
+        // Register all 42 real adapters (each one is needed so the missing-adapter
+        // check passes, leaving only the orphan to be detected.)
+        fn register_all(reg: &mut AdapterRegistry) {
+            reg.register(Box::new(super::super::pubmed::PubmedAdapter)).unwrap();
+            reg.register(Box::new(super::super::chembl::ChemblAdapter)).unwrap();
+            reg.register(Box::new(super::super::crossref::CrossrefAdapter)).unwrap();
+            reg.register(Box::new(super::super::uniprot::UniprotAdapter)).unwrap();
+            reg.register(Box::new(super::super::europepmc::EuropepmcAdapter)).unwrap();
+            reg.register(Box::new(super::super::openalex::OpenalexAdapter)).unwrap();
+            reg.register(Box::new(super::super::semantic_scholar::SemanticScholarAdapter)).unwrap();
+            reg.register(Box::new(super::super::arxiv::ArxivAdapter)).unwrap();
+            reg.register(Box::new(super::super::biorxiv::BiorxivAdapter)).unwrap();
+            reg.register(Box::new(super::super::rcsb_pdb::RcsbPdbAdapter)).unwrap();
+            reg.register(Box::new(super::super::pdbe::PdbeAdapter)).unwrap();
+            reg.register(Box::new(super::super::alphafold::AlphafoldAdapter)).unwrap();
+            reg.register(Box::new(super::super::interpro::InterproAdapter)).unwrap();
+            reg.register(Box::new(super::super::sifts::SiftsAdapter)).unwrap();
+            reg.register(Box::new(super::super::pubchem::PubchemAdapter)).unwrap();
+            reg.register(Box::new(super::super::bindingdb::BindingdbAdapter)).unwrap();
+            reg.register(Box::new(super::super::gtopdb::GtopdbAdapter)).unwrap();
+            reg.register(Box::new(super::super::surechembl::SurechemblAdapter)).unwrap();
+            reg.register(Box::new(super::super::chebi::ChebiAdapter)).unwrap();
+            reg.register(Box::new(super::super::ensembl::EnsemblAdapter)).unwrap();
+            reg.register(Box::new(super::super::ncbi_gene::NcbiGeneAdapter)).unwrap();
+            reg.register(Box::new(super::super::dbsnp::DbsnpAdapter)).unwrap();
+            reg.register(Box::new(super::super::clinvar::ClinvarAdapter)).unwrap();
+            reg.register(Box::new(super::super::gnomad::GnomadAdapter)).unwrap();
+            reg.register(Box::new(super::super::ucsc::UcscAdapter)).unwrap();
+            reg.register(Box::new(super::super::mygene::MygeneAdapter)).unwrap();
+            reg.register(Box::new(super::super::myvariant::MyvariantAdapter)).unwrap();
+            reg.register(Box::new(super::super::reactome::ReactomeAdapter)).unwrap();
+            reg.register(Box::new(super::super::string_db::StringDbAdapter)).unwrap();
+            reg.register(Box::new(super::super::intact::IntactAdapter)).unwrap();
+            reg.register(Box::new(super::super::wikipathways::WikpathwaysAdapter)).unwrap();
+            reg.register(Box::new(super::super::opentargets::OpentargetsAdapter)).unwrap();
+            reg.register(Box::new(super::super::geo::GeoAdapter)).unwrap();
+            reg.register(Box::new(super::super::arrayexpress::ArrayexpressAdapter)).unwrap();
+            reg.register(Box::new(super::super::gtex::GtexAdapter)).unwrap();
+            reg.register(Box::new(super::super::hpa::HpaAdapter)).unwrap();
+            reg.register(Box::new(super::super::expression_atlas::ExpressionAtlasAdapter)).unwrap();
+            reg.register(Box::new(super::super::single_cell_atlas::SingleCellAtlasAdapter)).unwrap();
+            reg.register(Box::new(super::super::depmap::DepmapAdapter)).unwrap();
+            reg.register(Box::new(super::super::eutils::EutilsAdapter)).unwrap();
+            reg.register(Box::new(super::super::biogrid::BiogridAdapter)).unwrap();
+            reg.register(Box::new(super::super::kegg::KeggAdapter)).unwrap();
+        }
+        register_all(&mut reg);
+        reg.register(Box::new(OrphanAdapter)).unwrap();
         let descriptors = super::super::registry();
-        let result = validate_adapter_descriptor_coverage(&registry, descriptors);
+        let result = validate_adapter_descriptor_coverage(&reg, descriptors);
         assert!(result.is_err(), "should reject orphan adapters");
         let err = result.unwrap_err();
-        assert!(
-            err.contains("orphan-test-only"),
-            "error must contain orphan adapter ID, got: {err}"
-        );
-        assert!(
-            err.contains("has no matching descriptor"),
-            "error must state 'no matching descriptor', got: {err}"
-        );
+        assert!(err.contains("orphan-test-only"), "error must contain orphan adapter ID, got: {err}");
+        assert!(err.contains("has no matching descriptor"), "error must state 'no matching descriptor', got: {err}");
     }
 
     #[test]
