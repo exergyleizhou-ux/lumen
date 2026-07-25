@@ -767,6 +767,11 @@ impl AgentView {
                 if self.apply_reload_outcome(reload, success) {
                     crate::memory_release::release_retained_memory_with("reload-finalize");
                 }
+                // B2: refresh truth snapshot on session reload to capture
+                // filesystem/git_head/provider changes since last load.
+                if success {
+                    let _ = self.refresh_truth_snapshot();
+                }
                 true
             }
             Some(other) => {

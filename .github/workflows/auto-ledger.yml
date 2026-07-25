@@ -1,0 +1,29 @@
+name: auto-ledger
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Regenerate CURRENT_STATE_LEDGER.md
+        run: bash scripts/regenerate-ledger.sh
+
+      - name: Commit if changed
+        run: |
+          if ! git diff --exit-code CURRENT_STATE_LEDGER.md; then
+            git config user.name "lumen-bot"
+            git config user.email "bot@lumen.dev"
+            git add CURRENT_STATE_LEDGER.md
+            git commit -m "chore: auto-regenerate CURRENT_STATE_LEDGER.md [skip ci]"
+            git push
+          fi
