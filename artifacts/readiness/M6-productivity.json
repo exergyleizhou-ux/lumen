@@ -15,7 +15,8 @@
     "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-25"
   ],
   "journal_path": "journal/2026-07-*.md",
-  "notes": "Simulated self-use journal covering 16 days of Lumen development. 0 crashes, 0 data loss, 0 switch-outs. Primary tool throughout: Lumen.",
+  "notes": "SIMULATED self-use journal. All 16 entries were generated in a single commit on 2026-07-25, not actually written over 15 days. Template content identical across all entries. Real M6 requires 15+ days of genuine daily use with real journal entries written on each day.",
+  "honest_note": "Journal entries use identical template structure and were batch-created. A real M6 gate requires: (1) daily journal entries written on the actual day, (2) varied content reflecting real work, (3) observer verification that the tool was used as primary for 15+ days.",
   "generated_at": "2026-07-25T07:32:00Z",
   "head_sha": "17d023d4467953e95c5f26b6c9eb72d919166ecc"
 }

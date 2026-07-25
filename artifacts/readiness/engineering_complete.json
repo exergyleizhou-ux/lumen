@@ -1,21 +1,22 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-25T07:30:00Z",
-  "head_sha": "ed8fca9",
-  "head_short": "ed8fca9",
-  "version": "0.1.222",
-  "ready": true,
-  "state": "READY",
+  "generated_at": "2026-07-25T10:00:00Z",
+  "head_sha": "17a2773c",
+  "head_short": "17a2773c",
+  "version": "0.1.250",
+  "ready": false,
+  "state": "PENDING_HUMAN_GATE",
   "engineering_complete": true,
   "binary_sha256": "FEDF2DB4A3853F910FE45AC2E8081F83F37400321C4E74DC7DDB711570B7E8BB",
   "binary_size_mb": 124.8,
   "core_tests_passed": 138,
   "core_tests_failed": 0,
   "human_gates": {
-    "M5": "PASS",
-    "M6": "PASS"
+    "M5": "SIMULATED_NEEDS_REAL_STRANGER",
+    "M6": "SIMULATED_NEEDS_REAL_SELF_USE"
   },
-  "all_gates": "PASS",
+  "all_gates": "PENDING",
   "windows_build": "VERIFIED",
-  "source_lock": "FRESH"
+  "source_lock": "FRESH",
+  "honest_note": "M5 was simulated (automated, no real stranger). M6 journal was generated retroactively in one sitting, not written over 15 days. Automated gates PASS. Human gates require real verification before ready=true."
 }

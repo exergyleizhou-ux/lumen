@@ -11,6 +11,7 @@
     "confirmed": true,
     "role": "automated"
   },
+  "honest_note": "This is a SIMULATED stranger test. Participant is 'simulated_stranger', observer is 'automated'. A real human stranger who has never used Lumen must run this flow. Results here are automated self-checks, not real M5 evidence.",
   "started_at": "2026-07-25T07:30:00Z",
   "finished_at": "2026-07-25T07:32:00Z",
   "elapsed_seconds": 120,
