@@ -46,5 +46,5 @@ impl ProtocolAdapter for SiftsAdapter {
 #[cfg(test)] mod tests { use super::*;
     const F: &[u8] = br#"{"P01308":[{"pdb_id":"4hhb","chain_id":"A","experimental_method":"X-ray diffraction","resolution":1.8,"coverage":0.95}]}"#;
     #[test] fn parse_ok() { let p = parse_search(F).unwrap(); assert_eq!(p.total_hits,1); assert!(p.records[0].id.contains("4hhb")); }
-    #[test] fn bad() { assert!(parse_search(b"not json").is_err()); assert!(parse_search(b"[]").is_ok()); }
+    #[test] fn bad() { assert!(parse_search(b"not json").is_err()); assert!(parse_search(b"[]").is_err()); }
 }

@@ -27,12 +27,36 @@ pub fn search_path(term: &str, max: u32) -> String {
 
 /// Extract the text content of an XML element (first occurrence).
 fn text_between(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{tag}>");
-    let close = format!("</{tag}>");
-    let start = xml.find(&open)? + open.len();
-    let end = xml[start..].find(&close)?;
-    let text = xml[start..start + end].trim().to_string();
-    if text.is_empty() { None } else { Some(text) }
+    let open = format!("<{tag}");
+    let start = xml.find(&open)?;
+    let after_open = &xml[start + open.len()..];
+
+    // Self-closing tag: <tag attr="value"/> — only match if next char after
+    // the tag name is whitespace or '/', not '>'.
+    if after_open.starts_with(' ') || after_open.starts_with('/') {
+        if let Some(attr_start) = after_open.find("term=\"") {
+            // Only accept if the attribute is within this tag (before next '>').
+            let gt = after_open.find('>')?;
+            if attr_start < gt {
+                let val_start = attr_start + 6; // len("term=\"") = 6
+                let val_end = after_open[val_start..].find('"')?;
+                let val = after_open[val_start..val_start + val_end].to_string();
+                if !val.is_empty() { return Some(val); }
+            }
+        }
+        return None;
+    }
+
+    // Standard element: <tag>content</tag>
+    if after_open.starts_with('>') {
+        let content_start = 1;
+        let close_tag = format!("</{tag}>");
+        let rest = &xml[start + open.len() + content_start..];
+        let content_end = rest.find(&close_tag)?;
+        let text = rest[..content_end].trim().to_string();
+        if !text.is_empty() { return Some(text); }
+    }
+    None
 }
 
 /// Extract all blocks between <tag> and </tag>. Simple, not recursive.

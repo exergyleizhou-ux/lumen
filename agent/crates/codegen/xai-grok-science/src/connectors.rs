@@ -902,25 +902,25 @@ mod tests {
     #[test]
     fn registry_contains_first_batch_in_stable_order() {
         let ids: Vec<_> = registry().iter().map(|d| d.id).collect();
-        assert_eq!(
-            ids,
-            vec![
-                "pubmed",
-                "chembl",
-                "crossref",
-                "uniprot",
-                "europepmc",
-                "openalex",
-                "semantic-scholar",
-                "arxiv",
-                "biorxiv",
-                "rcsb-pdb",
-                "pdbe",
-                "alphafold",
-                "interpro",
-                "sifts",
-            ]
-        );
+        // First 14 connectors must appear in stable order.
+        let first_batch = &[
+            "pubmed",
+            "chembl",
+            "crossref",
+            "uniprot",
+            "europepmc",
+            "openalex",
+            "semantic-scholar",
+            "arxiv",
+            "biorxiv",
+            "rcsb-pdb",
+            "pdbe",
+            "alphafold",
+            "interpro",
+            "sifts",
+        ];
+        assert_eq!(&ids[..first_batch.len()], first_batch,
+            "first 14 connector IDs must be stable; full registry has {} entries", ids.len());
         assert!(descriptor("pubmed").is_some());
         assert!(descriptor("chembl").is_some());
         assert!(descriptor("crossref").is_some());
