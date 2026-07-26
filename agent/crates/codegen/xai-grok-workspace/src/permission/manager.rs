@@ -4285,10 +4285,15 @@ mod tests {
                     "in-cwd edit under auto must fast-path allow, got {d:?}"
                 );
 
-                // Out-of-workspace absolute edit → Allow too (no workspace restriction).
+                // Out-of-workspace absolute edit → Allow too (no workspace
+                // restriction). Uses a temp path rather than /etc/hosts: Lumen's
+                // guard hard-denies writes under /etc in EVERY mode including
+                // auto/YOLO, so the upstream fixture would be testing the guard,
+                // not the auto fast path.
+                let outside = std::env::temp_dir().join("lumen-auto-fastpath-outside.txt");
                 let d = mgr
                     .request(
-                        AccessKind::Edit("/etc/hosts".into()),
+                        AccessKind::Edit(outside.to_string_lossy().into_owned()),
                         mk("tc-edit-out"),
                         None,
                         None,
@@ -4298,6 +4303,21 @@ mod tests {
                 assert!(
                     matches!(d, Decision::Allow),
                     "out-of-workspace edit under auto must fast-path allow, got {d:?}"
+                );
+
+                // And the guard still wins over the auto fast path.
+                let d = mgr
+                    .request(
+                        AccessKind::Edit("/etc/hosts".into()),
+                        mk("tc-edit-guarded"),
+                        None,
+                        None,
+                        None,
+                    )
+                    .await;
+                assert!(
+                    matches!(d, Decision::Reject(_)),
+                    "lumen-guard must hard-deny an /etc write even under auto, got {d:?}"
                 );
             })
             .await;
