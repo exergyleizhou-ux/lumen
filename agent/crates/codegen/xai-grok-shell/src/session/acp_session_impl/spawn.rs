@@ -1258,7 +1258,14 @@ pub(crate) async fn spawn_session_actor(
         goal_turn_task_ids: parking_lot::Mutex::new(std::collections::HashSet::new()),
         goal_continuation_streak: std::sync::atomic::AtomicU32::new(0),
         goal_blocked_streak: std::sync::atomic::AtomicU32::new(0),
-        storm_breaker: std::cell::RefCell::new(lumen_discipline::StormBreaker::new(3)),
+        storm_breaker: std::cell::RefCell::new({
+            let mut breaker = lumen_discipline::StormBreaker::new(3);
+            // Opt-in hard-stop directive (StormAction::StopBatch) instead of
+            // the default nudge once a storm threshold is hit.
+            breaker.stop_after_nudge = std::env::var("LUMEN_STORM_STOP")
+                .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+            breaker
+        }),
         repeat_success_guard: std::cell::RefCell::new(lumen_discipline::RepeatSuccessGuard::new(3)),
         delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
         goal_update_rx: std::cell::RefCell::new(Some(goal_update_rx)),

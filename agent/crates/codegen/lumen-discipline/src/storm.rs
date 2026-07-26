@@ -19,7 +19,11 @@ pub fn hash_tool_args(args: &str) -> String {
 pub enum StormAction {
     /// Inject model-visible reminder to change strategy.
     Nudge(String),
-    /// Hard-stop further same-tool retries this batch.
+    /// Strongest directive: stop retrying this tool. The host dispatches an
+    /// approved batch concurrently (FuturesUnordered), so in-flight sibling
+    /// calls cannot be cancelled mid-batch; enforcement is the model-visible
+    /// directive plus the host's turn-level handling. Opt in via
+    /// `stop_after_nudge` (host wires `LUMEN_STORM_STOP=1`).
     StopBatch(String),
 }
 
@@ -146,6 +150,10 @@ impl RepeatSuccessGuard {
     pub fn on_tool_error(&mut self, _tool: &str) {
         self.last = None;
         self.count = 0;
+    }
+
+    pub fn count(&self) -> u32 {
+        self.count
     }
 }
 

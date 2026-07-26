@@ -1,22 +1,29 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-25T10:00:00Z",
-  "head_sha": "17a2773c",
-  "head_short": "17a2773c",
+  "check_id": "engineering_complete",
   "version": "0.1.250",
-  "ready": false,
-  "state": "PENDING_HUMAN_GATE",
-  "engineering_complete": true,
-  "binary_sha256": "FEDF2DB4A3853F910FE45AC2E8081F83F37400321C4E74DC7DDB711570B7E8BB",
-  "binary_size_mb": 124.8,
-  "core_tests_passed": 138,
-  "core_tests_failed": 0,
-  "human_gates": {
-    "M5": "SIMULATED_NEEDS_REAL_STRANGER",
-    "M6": "SIMULATED_NEEDS_REAL_SELF_USE"
-  },
-  "all_gates": "PENDING",
-  "windows_build": "VERIFIED",
-  "source_lock": "FRESH",
-  "honest_note": "M5 was simulated (automated, no real stranger). M6 journal was generated retroactively in one sitting, not written over 15 days. Automated gates PASS. Human gates require real verification before ready=true."
+  "head_short": "7861dad3",
+  "pass": false,
+  "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+  "auto_blockers": [
+    "binary_tuple_pre:exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen ",
+    "gitleaks:exit 1 \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1m533 commits scanned.\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~153768113 bytes (153.77 MB) in 11.5s\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 30\u001b[0m ",
+    "verticals:exit 1 Errors: 0 OK: all vertical packs present (science go files=210) FAIL: packs/science/standalone/go.mod missing ",
+    "binary_tuple_post:exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen ",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_missing:release:/Users/lei/code/lumen/agent/target/release/lumen', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismat",
+    "L4_fault_cancel:SKIP",
+    "R0_full:SKIP",
+    "L3_multi_tool:SKIP",
+    "L1_tool_calls:SKIP",
+    "eval_live:SKIP",
+    "L5_long_session:SKIP",
+    "L0_connect:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "L2_min_e2e:SKIP",
+    "R0_min:SKIP"
+  ],
+  "can_tool_call": false,
+  "source_lock_sha256": "e87ef8fab5b91f11be5dd6fc776d6ca0aaf40d2e1939344013ac84c703233e22",
+  "binary_sha256": "a07d69c801e9c66269279d6caf9a85dbfbc3ace20490c1d6b09260968e00a3ab",
+  "generated_at": "2026-07-26T09:41:57Z"
 }

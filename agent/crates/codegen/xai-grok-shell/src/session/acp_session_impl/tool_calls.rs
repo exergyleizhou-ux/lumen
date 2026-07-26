@@ -2074,7 +2074,12 @@ impl SessionActor {
         self.storm_breaker
             .borrow_mut()
             .on_tool_success(effective_tool_name);
-        // Repeat success guard: detect identical calls
+        // Repeat success guard: detect identical calls. The nudge must reach
+        // the model, not just the log — repeated identical successes (e.g.
+        // re-reading the same file) are invisible to the model otherwise.
+        // Throttled to exact threshold multiples so a long repeat run does
+        // not append a reminder after every call.
+        let mut repeat_nudge: Option<ConversationItem> = None;
         let args_str = tool_parsed_args.to_string();
         if let Some(action) = self
             .repeat_success_guard
@@ -2087,6 +2092,10 @@ impl SessionActor {
                 session_id = % self.session_info.id.0, tool_name = effective_tool_name,
                 "repeat-success-guard: {}", msg
             );
+            let guard = self.repeat_success_guard.borrow();
+            if guard.threshold > 0 && guard.count() % guard.threshold == 0 {
+                repeat_nudge = Some(ConversationItem::system_reminder(msg.clone()));
+            }
         }
         let path_rewriter = self.path_rewriter();
         let tool_meta = {
@@ -2243,6 +2252,9 @@ impl SessionActor {
         };
         self.chat_state_handle.push_tool_result(tool_chat);
         let mut deferred_followups = Vec::new();
+        if let Some(nudge) = repeat_nudge {
+            deferred_followups.push(nudge);
+        }
         if !extracted_images.is_empty() {
             let count = extracted_images.len();
             tracing::info!(
@@ -2287,9 +2299,9 @@ impl SessionActor {
     /// Handle a hard tool execution error (dispatch/validation failure).
     ///
     /// Emits the failed tool_result to the client and records failure signals.
-    /// Tool failures are not fed to the doom-loop detector (error-count streaks
-    /// were removed), so this never warns/terminates and returns no deferred
-    /// follow-ups today.
+    /// Feeds the storm breaker; when a storm threshold is hit this returns a
+    /// deferred follow-up for the model — an Expert breakout directive when
+    /// Expert is active, otherwise the storm-breaker reminder itself.
     pub(super) async fn handle_tool_error(
         &self,
         tool_call_id: &acp::ToolCallId,
@@ -2339,12 +2351,24 @@ impl SessionActor {
         .await;
         let tool_chat = ConversationItem::tool_result(call_id.to_string(), message);
         self.chat_state_handle.push_tool_result(tool_chat);
-        if storm_action.is_some()
-            && let Some(directive) = self
+        if let Some(action) = storm_action {
+            if let Some(directive) = self
                 .maybe_run_expert_storm_breakout(requested_tool_name, &err_str, true)
                 .await
-        {
-            return vec![ConversationItem::user(directive)];
+            {
+                return vec![ConversationItem::user(directive)];
+            }
+            // Non-Expert sessions must still see the storm-breaker text —
+            // dropping it here left ordinary DeepSeek sessions with no storm
+            // protection at all (the action only ever reached the log).
+            // Throttle to threshold multiples so a persistent storm nudges
+            // at 3, 6, 9 … failures instead of after every one.
+            use lumen_discipline::StormAction;
+            let (StormAction::Nudge(msg) | StormAction::StopBatch(msg)) = action;
+            let breaker = self.storm_breaker.borrow();
+            if breaker.threshold > 0 && breaker.count() % breaker.threshold == 0 {
+                return vec![ConversationItem::system_reminder(msg)];
+            }
         }
         vec![]
     }

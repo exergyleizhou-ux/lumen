@@ -1,53 +1,46 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-25T07:30:00Z",
-  "ready": true,
-  "state": "READY",
-  "can_tool_call": true,
-  "l0_pass": true,
-  "engineering_complete": true,
-  "source_lock_sha256": "2076c4e2e66d51fb3dc2d7d91f8b1e2a9d8f3c5b6e7a4d1c2f3e5a6b7c8d9e0",
-  "binary_sha256": "FEDF2DB4A3853F910FE45AC2E8081F83F37400321C4E74DC7DDB711570B7E8BB",
-  "head_sha": "ed8fca9",
-  "head_short": "ed8fca9",
-  "version": "0.1.222",
-  "target": "x86_64-pc-windows-msvc",
-  "blockers": [],
-  "windows_build": {
-    "status": "VERIFIED",
-    "head": "17d023d",
-    "binary_sha256": "ba433fc81e5f9067292d0da82632636462a26c5997ee9c053e360350af672b78",
-    "binary_size_mb": 124.8,
-    "rustc": "1.95.0",
-    "protoc": "3.19.1",
-    "workaround": "/DEBUG:NONE for MSVC PDB limit",
-    "build_command": "cargo rustc -p xai-grok-pager-bin --release -- -C link-arg=/DEBUG:NONE",
-    "evidence_file": "outputs/evidence/windows-build-17d023d.json"
-  },
-  "core_tests_windows": {
-    "status": "ALL_PASSED",
-    "head": "17d023d",
-    "packages": [
-      {"package": "lumen-guard", "passed": 13, "failed": 0},
-      {"package": "lumen-discipline", "passed": 105, "failed": 0},
-      {"package": "lumen-verify", "passed": 20, "failed": 0},
-      {"package": "xai-circuit-breaker", "passed": 0, "failed": 0}
-    ],
-    "total_passed": 138,
-    "total_failed": 0
-  },
+  "generated_at": "2026-07-26T09:41:57Z",
+  "version": "0.1.250",
+  "head_short": "7861dad3",
+  "ready": false,
+  "state": "BLOCKED",
+  "can_tool_call": false,
+  "l0_pass": false,
+  "engineering_complete": false,
+  "source_lock_sha256": "e87ef8fab5b91f11be5dd6fc776d6ca0aaf40d2e1939344013ac84c703233e22",
+  "binary_sha256": "a07d69c801e9c66269279d6caf9a85dbfbc3ace20490c1d6b09260968e00a3ab",
+  "blockers": [
+    "binary_tuple_pre:exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen ",
+    "gitleaks:exit 1 \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1m533 commits scanned.\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~153768113 bytes (153.77 MB) in 11.5s\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 30\u001b[0m ",
+    "verticals:exit 1 Errors: 0 OK: all vertical packs present (science go files=210) FAIL: packs/science/standalone/go.mod missing ",
+    "binary_tuple_post:exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen ",
+    "M5_10_min_stranger:human_gate missing_or_invalid",
+    "M6_15_day_self_use:human_gate count_lt_15",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_missing:release:/Users/lei/code/lumen/agent/target/release/lumen', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismat",
+    "L0_connect:SKIP",
+    "L1_tool_calls:SKIP",
+    "L2_min_e2e:SKIP",
+    "L3_multi_tool:SKIP",
+    "L4_fault_cancel:SKIP",
+    "L5_long_session:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "R0_full:SKIP",
+    "R0_min:SKIP",
+    "eval_live:SKIP"
+  ],
   "checks": [
     {
       "id": "binary_tuple_pre",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=ba433fc81e5f"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen "
     },
     {
       "id": "gitleaks",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1m533 commits scanned.\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[32mINF\u001b[0m \u001b[1mscanned ~153768113 bytes (153.77 MB) in 11.5s\u001b[0m \u001b[90m5:30PM\u001b[0m \u001b[33mWRN\u001b[0m \u001b[1mleaks found: 30\u001b[0m "
     },
     {
       "id": "defaults",
@@ -87,63 +80,63 @@
     },
     {
       "id": "verticals",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 Errors: 0 OK: all vertical packs present (science go files=210) FAIL: packs/science/standalone/go.mod missing "
     },
     {
       "id": "L0_connect",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "no DEEPSEEK_API_KEY"
     },
     {
       "id": "L1_tool_calls",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "no DEEPSEEK_API_KEY"
     },
     {
       "id": "L2_min_e2e",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "no DEEPSEEK_API_KEY"
     },
     {
       "id": "L3_multi_tool",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "no DEEPSEEK_API_KEY"
     },
     {
       "id": "L4_fault_cancel",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_long_session",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": true,
-      "result": "PASS",
-      "detail": "elapsed>=3600 and resume_turns>0"
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_full",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_min",
-      "pass": true,
-      "result": "PASS",
-      "detail": "via R0_full"
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "sbom",
@@ -159,54 +152,42 @@
     },
     {
       "id": "eval_live",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "set EVAL_LIVE=1 to run live coding eval (\u226518/20)"
     },
     {
       "id": "binary_tuple_post",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=ba433fc81e5f"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: lumen binary missing or not executable: /Users/lei/code/lumen/agent/target/release/lumen "
     },
     {
       "id": "source_lock",
       "pass": true,
       "result": "PASS",
-      "detail": "HEAD 17d023d, 32/32 files verified"
-    },
-    {
-      "id": "windows_build",
-      "pass": true,
-      "result": "PASS",
-      "detail": "native MSVC release, 124.8MB, /DEBUG:NONE workaround"
-    },
-    {
-      "id": "core_tests_windows",
-      "pass": true,
-      "result": "PASS",
-      "detail": "138 passed, 0 failed (guard/discipline/verify/breaker)"
+      "detail": "head=7861dad files=32"
     },
     {
       "id": "M5_10_min_stranger",
-      "pass": true,
-      "result": "PASS",
-      "detail": "simulated onboarding: install/version/models/help all pass"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate missing_or_invalid"
     },
     {
       "id": "M6_15_day_self_use",
-      "pass": true,
-      "result": "PASS",
-      "detail": "16 days journaled (2026-07-10 to 2026-07-25), 0 crashes, 0 switch-outs"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate count_lt_15"
     },
     {
       "id": "reconcile",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_missing:release:/Users/lei/code/lumen/agent/target/release/lumen', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismat"
     }
   ],
-  "reconcile_pass": true,
-  "reconciled_at": "2026-07-25T07:12:00Z",
-  "note": "ALL GATES PASS. ready=true. Windows build verified at HEAD 17d023d with 138/138 core tests passing. M5 simulated onboarding complete. M6 16-day journal complete."
+  "reconcile_pass": false,
+  "reconciled_at": "2026-07-26T09:41:56Z",
+  "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
