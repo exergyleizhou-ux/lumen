@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-26T15:47:47Z",
+  "model": "deepseek-v4-pro",
+  "total": 8,
+  "passed": 8,
+  "pass_rate": 1.0,
+  "median_wall_seconds": 55,
+  "auto_verify_coverage": 0.0,
+  "silent_verify_regressions": [
+    "d01-py-boundary",
+    "d02-py-multifile",
+    "d04-ts-types",
+    "d05-go-race",
+    "d06-py-readdoc",
+    "d08-py-regression"
+  ],
+  "tasks": [
+    {
+      "id": "d01-py-boundary",
+      "status": "PASS",
+      "wall_seconds": 30,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    },
+    {
+      "id": "d02-py-multifile",
+      "status": "PASS",
+      "wall_seconds": 69,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    },
+    {
+      "id": "d03-rust-borrow",
+      "status": "PASS",
+      "wall_seconds": 72,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": false,
+      "agent_exit": 0
+    },
+    {
+      "id": "d04-ts-types",
+      "status": "PASS",
+      "wall_seconds": 32,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    },
+    {
+      "id": "d05-go-race",
+      "status": "PASS",
+      "wall_seconds": 27,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    },
+    {
+      "id": "d06-py-readdoc",
+      "status": "PASS",
+      "wall_seconds": 25,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    },
+    {
+      "id": "d07-rust-api",
+      "status": "PASS",
+      "wall_seconds": 68,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": false,
+      "agent_exit": 0
+    },
+    {
+      "id": "d08-py-regression",
+      "status": "PASS",
+      "wall_seconds": 55,
+      "auto_verify_fired": false,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    }
+  ]
+}

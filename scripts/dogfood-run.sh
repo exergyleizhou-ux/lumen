@@ -61,6 +61,10 @@ if [[ ${#selected[@]} -eq 0 ]]; then
   while IFS= read -r d; do selected+=("$(basename "$d")"); done < <(find "$TASKS_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 fi
 
+# Probe prompt: make a trivial edit and have the model report the tool result
+# verbatim. This is the only honest way to observe model-visible feedback.
+VERIFY_ECHO_PROMPT='在工作区里新建文件 _probe_verify.py，内容正好是一行：return 1 （这是故意的语法错误，用于探测工具链）。然后逐字复述你收到的写入工具的完整返回内容。不要运行任何命令，不要修正这个错误。'
+
 results_file="$(mktemp)"
 trap 'rm -f "$results_file"' EXIT
 
@@ -100,11 +104,32 @@ for task in "${selected[@]}"; do
   test_ec=$?
   set -e
 
-  # Behavioural signals. The agent transcript is the only place the tool
-  # results appear; feedback never goes to stderr.
-  verify_fired=$(grep -c "verify-after-edit" "$log" 2>/dev/null || true)
-  discipline_fired=$(grep -cE "storm-breaker|repeat-success|delivery-reminder" "$log" 2>/dev/null || true)
-  turns=$(grep -c "^" "$log" 2>/dev/null || true)
+  # Behavioural signals.
+  #
+  # CRITICAL: verifier feedback and discipline reminders ride the TOOL RESULT
+  # into the model's context. They are NOT printed to stdout/stderr, so
+  # grepping the agent log finds nothing even when both are working — I made
+  # exactly that mistake twice today, once concluding a healthy feature was
+  # dead. The honest probe is to ask the model to echo what it received, so
+  # each task run appends a verification-echo turn and we inspect ITS output.
+  verify_fired=0
+  discipline_fired=0
+  if [[ "$expect_verify" == "True" ]]; then
+    echo_log="$scratch/echo.log"
+    set +e
+    HOME="$home" GROK_HOME="$home/grok" LUMEN_HOME="$home/lumen" \
+    run_with_timeout 120 "$LUMEN_BIN" \
+        --cwd "$scratch/ws" \
+        -m "$MODEL" \
+        --always-approve \
+        --permission-mode bypassPermissions \
+        --max-turns 4 \
+        --output-format plain \
+        -p "$VERIFY_ECHO_PROMPT" >"$echo_log" 2>&1
+    set -e
+    verify_fired=$(grep -cE "verify-after-edit|invalid-syntax|ruff|pytest" "$echo_log" 2>/dev/null || true)
+    discipline_fired=$(grep -cE "storm-breaker|repeat-success|delivery-reminder" "$echo_log" 2>/dev/null || true)
+  fi
 
   status="FAIL"
   [[ $test_ec -eq 0 ]] && status="PASS"

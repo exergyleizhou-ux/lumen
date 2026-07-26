@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-07-26T15:50:37Z",
+  "model": "deepseek-v4-pro",
+  "total": 1,
+  "passed": 1,
+  "pass_rate": 1.0,
+  "median_wall_seconds": 27,
+  "auto_verify_coverage": 1.0,
+  "silent_verify_regressions": [],
+  "tasks": [
+    {
+      "id": "d01-py-boundary",
+      "status": "PASS",
+      "wall_seconds": 27,
+      "auto_verify_fired": true,
+      "discipline_fired": false,
+      "expected_auto_verify": true,
+      "agent_exit": 0
+    }
+  ]
+}
