@@ -67,7 +67,30 @@ check_marker() {
   local label="$1" needle="$2" rel="$3" expect="${4:-present}"
   local f="$SIBLING/agent/crates/$rel"
   local found=no
-  [[ -f "$f" ]] && grep -q "$needle" "$f" && found=yes
+  if [[ "$expect" == "absent" ]]; then
+    # An "absent" marker asks whether the SHIPPED code still names the thing,
+    # so scan only the production half of the file. A fix of this shape lands
+    # with a regression test that names the very string being searched for
+    # (`assert!(!is_safe_command("cargo check"))`), so grepping the whole file
+    # reports MISSING exactly when the fix is properly tested.
+    #
+    # That false positive is not academic: it fired against lumen's own core,
+    # which is byte-identical to the source of truth for this very fix, and it
+    # cost a sync cycle chasing an item that was already done. A gate that
+    # cannot go green teaches people to ignore it.
+    # Done in a single awk rather than `awk | grep -q`: with `pipefail` set,
+    # grep -q exits on the first hit, awk dies of SIGPIPE, and the pipeline
+    # reports failure — which this checker would read as "marker absent", i.e.
+    # green. Whether that happens depends on how much awk got into the 64K pipe
+    # buffer first, so the pipeline form is a coin flip that fails open.
+    [[ -f "$f" ]] && awk -v needle="$needle" '
+      /^#\[cfg\(test\)\]/ { exit }
+      index($0, needle)   { hit = 1; exit }
+      END                 { exit !hit }
+    ' "$f" && found=yes
+  else
+    [[ -f "$f" ]] && grep -q "$needle" "$f" && found=yes
+  fi
   if [[ "$expect" == "absent" ]]; then
     # marker that must be GONE (e.g. an entry removed from an allowlist)
     if [[ "$found" == "yes" ]]; then

@@ -167,7 +167,14 @@ pub fn test_env_cmd_tokio(
         .env("GROK_HOME", home.join(".grok"))
         .env("GROK_CLI_CHAT_PROXY_BASE_URL", mock_url)
         .env("GROK_XAI_API_BASE_URL", mock_url)
+        // A model whose endpoint is embedded in default_models.json (any BYOK
+        // entry, and grok-4.5 via the Responses path) ignores the two vars
+        // above, so without this a "hermetic" test reaches the real provider —
+        // observed as live 400s from api.x.ai. Pin every endpoint, and supply
+        // the BYOK keys so nothing falls back to an interactive login.
+        .env("LUMEN_INFERENCE_BASE_URL", mock_url)
         .env("XAI_API_KEY", "test-key-for-ci")
+        .env("DEEPSEEK_API_KEY", "test-key-for-ci")
         .env("GROK_TELEMETRY_ENABLED", "false")
         .env("GROK_FEEDBACK_ENABLED", "false")
         .env("GROK_TRACE_UPLOAD", "false")

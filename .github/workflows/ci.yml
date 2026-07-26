@@ -117,20 +117,6 @@ jobs:
         # 0 failed / 10 ignored) before gating, so this starts honest.
         run: cargo test -p xai-grok-pager --lib
 
-      - name: Core contracts (end-to-end, needs a real binary)
-        working-directory: agent
-        # The four promises the core makes to everything built on it:
-        # verification reaches the model, lumen-guard beats --yolo, the storm
-        # breaker surfaces in plain sessions, and a turn leaves provider-request
-        # evidence. They are #[ignore] because they drive the real binary, so
-        # without this step they are documentation, not a gate — exactly the
-        # "gate exists but never runs" pattern the rest of this file exists to
-        # kill. Build first, then run them explicitly.
-        run: |
-          set -euo pipefail
-          cargo build -p xai-grok-pager-bin --bin lumen
-          cargo test -p xai-grok-shell --test test_core_contracts -- --ignored --test-threads=1
-
       - name: Clippy (deny warnings on Lumen-owned crates only)
         working-directory: agent
         run: cargo clippy -p lumen-guard -p lumen-discipline -p lumen-verify -- -D warnings

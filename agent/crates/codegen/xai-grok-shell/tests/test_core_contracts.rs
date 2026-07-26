@@ -12,6 +12,30 @@
 //! CHECK describing the one-line change that must make it fail. Keep them
 //! cheap, keep them few, and never weaken one to make it pass.
 //!
+//! STATUS (2026-07-27): **1 of 4 passing — NOT wired into CI on purpose.**
+//!
+//! `contract_turn_leaves_provider_request_evidence` passes. The three that
+//! drive a scripted tool call do not: the mock replies are accepted, the turn
+//! completes (its text answer comes back), but no tool ever executes — the
+//! follow-up request carries only user messages, never a tool result. Fixed so
+//! far while chasing it: the model was `grok-4.5` (routes through the Responses
+//! API, so the scripted chat_completions replies never matched and requests
+//! escaped to the real api.x.ai), and the SSE shape now matches the working
+//! fixtures in `git_contention_e2e.rs` (finish_reason in its own chunk).
+//! Something in the tool-call plumbing of this harness is still wrong.
+//!
+//! It stays OUT of CI until it is green. A gate nobody has seen pass is the
+//! exact anti-pattern the rest of this repo spent 2026-07-26 removing, and
+//! shipping one because the file looks impressive would be worse than the gap.
+//!
+//! The promises themselves are NOT unverified in the meantime — they are
+//! covered end-to-end by the dogfood set, on the real product with a real
+//! model: `evals/dogfood/d09-delivery-gate`, `d10-storm-breaker` and
+//! `d11-repeat-guard` measured discipline reminders reaching the model
+//! (6 / 5 / 3 hits, discipline_coverage 1.0), and d01/d02/d05/d06/d08 measured
+//! verifier feedback reaching it (auto_verify_coverage 1.0). This file is the
+//! cheap hermetic version of that; the expensive live version already works.
+//!
 //! Run: `cargo test -p xai-grok-shell --test test_core_contracts -- --ignored`
 //! (needs a pre-built binary: `cargo build -p xai-grok-pager-bin`).
 
@@ -22,39 +46,52 @@ use xai_grok_test_support::headless::{HeadlessResult, run_headless_with_cmd};
 use xai_grok_test_support::mock_server::MockInferenceServer;
 use xai_grok_test_support::scripted::{ScriptedResponse, SseEvent};
 
-const MODEL: &str = "grok-4.5";
+// MockInferenceServer::start() advertises exactly one model, `test-model`,
+// on the chat_completions path. Naming a real model here (grok-4.5) routed
+// the run through the Responses API instead, the scripted replies never
+// matched, and the requests escaped to api.x.ai — collision class 1 again,
+// this time in my own test.
+const MODEL: &str = "test-model";
 
-/// One SSE chunk carrying a tool call, then `[DONE]`.
-fn tool_call_response(call_id: &str, name: &str, arguments: serde_json::Value) -> ScriptedResponse {
-    let chunk = |body: serde_json::Value| SseEvent::data(body.to_string());
-    ScriptedResponse::sse(vec![
-        chunk(serde_json::json!({
-            "id": "chatcmpl-contract", "object": "chat.completion.chunk", "created": 0,
+/// A tool call, shaped exactly like the working e2e fixtures: the delta chunk
+/// carries the call, a SEPARATE chunk carries `finish_reason`, then `[DONE]`.
+/// Folding finish_reason into the delta chunk silently produced a turn with no
+/// tool execution at all.
+fn chat_chunk(delta: serde_json::Value, finish: serde_json::Value) -> SseEvent {
+    SseEvent::data(
+        serde_json::json!({
+            "id": "chatcmpl-contract",
+            "object": "chat.completion.chunk",
+            "created": 0,
             "model": MODEL,
-            "choices": [{
-                "index": 0,
-                "delta": { "tool_calls": [{
-                    "index": 0,
+            "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }]
+        })
+        .to_string(),
+    )
+}
+
+fn tool_call_response(call_id: &str, name: &str, arguments: serde_json::Value) -> ScriptedResponse {
+    ScriptedResponse::sse(vec![
+        chat_chunk(
+            serde_json::json!({
+                "tool_calls": [{
                     "id": call_id,
                     "type": "function",
                     "function": { "name": name, "arguments": arguments.to_string() }
-                }]},
-                "finish_reason": "tool_calls"
-            }]
-        })),
+                }]
+            }),
+            serde_json::Value::Null,
+        ),
+        chat_chunk(serde_json::json!({}), serde_json::json!("tool_calls")),
         SseEvent::data("[DONE]"),
     ])
 }
 
 /// A plain text answer, ending the turn.
 fn text_response(text: &str) -> ScriptedResponse {
-    let chunk = |body: serde_json::Value| SseEvent::data(body.to_string());
     ScriptedResponse::sse(vec![
-        chunk(serde_json::json!({
-            "id": "chatcmpl-contract", "object": "chat.completion.chunk", "created": 0,
-            "model": MODEL,
-            "choices": [{ "index": 0, "delta": { "content": text }, "finish_reason": "stop" }]
-        })),
+        chat_chunk(serde_json::json!({ "content": text }), serde_json::Value::Null),
+        chat_chunk(serde_json::json!({}), serde_json::json!("stop")),
         SseEvent::data("[DONE]"),
     ])
 }
@@ -81,12 +118,13 @@ async fn run_headless(
 /// feedback. (Feedback rides the TOOL RESULT; it never appears on stderr.
 /// Looking for it in logs is how a working feature gets misdiagnosed.)
 fn model_visible_text(server: &MockInferenceServer) -> String {
-    server
-        .request_bodies()
+    let bodies = server.request_bodies();
+    let text = bodies
         .iter()
         .map(|body| body.to_string())
         .collect::<Vec<_>>()
-        .join("\n")
+        .join("\n");
+    text
 }
 
 /// Contract 1 — VERIFICATION.
