@@ -24,6 +24,14 @@ if [[ -z "$BIN" ]]; then
   cargo build -p xai-grok-pager --bin xai-grok-pager
   BIN="$ROOT/agent/target/debug/xai-grok-pager"
 fi
+# R0 is a deterministic offline contract (fixture inference). With a real
+# DEEPSEEK_API_KEY in the environment the leader-death sessions authenticate
+# against the live API instead of the fixture and die on 401/governor
+# throttling — observed 2026-07-26 when the readiness aggregate exported the
+# key for the L-gates. Scrub every provider credential for this scope.
+unset DEEPSEEK_API_KEY XAI_API_KEY GROK_API_KEY GROK_CODE_XAI_API_KEY \
+  KIMI_API_KEY KIMI_CODE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GROK_AUTH || true
+
 export GROK_BINARY="$BIN"
 echo "GROK_BINARY=$GROK_BINARY"
 

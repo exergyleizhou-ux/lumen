@@ -45,6 +45,13 @@ run_script() {
   run_command "$id" "$script"
 }
 
+# Some harnesses (eval workspaces, long-session fixtures) can leak lumen agent
+# child processes. Later gates that count or kill process trees (R0) and the
+# final binary checks must not see strangers from an earlier gate.
+reap_stray_agents() {
+  pkill -f "$ROOT/agent/target/release/lumen agent" 2>/dev/null || true
+}
+
 record_l5_soak_contract() {
   if python3 - "$ART/L5-long-session.json" <<'PY'
 import json, sys
@@ -135,6 +142,8 @@ else
   record L5_one_hour_soak SKIP "binary tuple preflight failed"
 fi
 
+reap_stray_agents
+
 # R0: full contract smoke (writes R0-full.json + updates R0-min.json)
 if [[ $BINARY_TUPLE_PRE_OK -ne 1 ]]; then
   record R0_full SKIP "binary tuple preflight failed"
@@ -180,6 +189,8 @@ elif [[ "${EVAL_LIVE:-0}" == "1" ]]; then
 else
   record eval_live SKIP "set EVAL_LIVE=1 to run live coding eval (≥18/20)"
 fi
+
+reap_stray_agents
 
 # Verify that no gate mutated or replaced either binary.
 set +e

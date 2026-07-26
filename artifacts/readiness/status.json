@@ -1,31 +1,27 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T10:51:25Z",
+  "generated_at": "2026-07-26T11:10:42Z",
   "version": "0.1.250",
-  "head_short": "46c488e2",
+  "head_short": "82575742",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "877b6e8d6c5d9b6333af2ab65bfb828d18163c242aee941d5271eacc378eeffa",
-  "binary_sha256": "6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124",
+  "source_lock_sha256": "be3ee7ba81bd700cb78c09e51d460a4f3b918889d7d672eb202719f31b6d190b",
+  "binary_sha256": "7ff9a3f6cb3ebd5c17ee42fc33306ef761f3c9b1a0106c452d2d24de350e128e",
   "blockers": [
-    "L4_fault_cancel:exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) ",
     "R0_full:exit 101",
-    "eval_live:exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred",
-    "binary_tuple_post:exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919",
-    "source_lock:HEAD drift lock=f066956 current=46c488e",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=8257574', 'binary_sha256_mismatch', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'st"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=998c1117ca7a"
+      "detail": "sha256=7ff9a3f6cb3e"
     },
     {
       "id": "gitleaks",
@@ -101,9 +97,9 @@
     },
     {
       "id": "L4_fault_cancel",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) "
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L5_long_session",
@@ -143,21 +139,21 @@
     },
     {
       "id": "eval_live",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "binary_tuple_post",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919"
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=7ff9a3f6cb3e"
     },
     {
       "id": "source_lock",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "HEAD drift lock=f066956 current=46c488e"
+      "pass": true,
+      "result": "PASS",
+      "detail": "head=8257574 files=32"
     },
     {
       "id": "M5_10_min_stranger",
@@ -175,10 +171,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=8257574', 'binary_sha256_mismatch', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'st"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-07-26T10:51:24Z",
+  "reconciled_at": "2026-07-26T11:10:42Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

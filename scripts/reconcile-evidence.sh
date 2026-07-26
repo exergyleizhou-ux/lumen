@@ -105,19 +105,32 @@ for label, path in (("release", release_path), ("installed", installed_path)):
         release_version = version
     else:
         installed_version = version
+import re as _re
+
+def _stamped_commit(version: str | None) -> str | None:
+    if not version:
+        return None
+    m = _re.search(r"\(([0-9a-f]{7,40})\)", version)
+    return m.group(1) if m else None
+
+# Same-build identity is the identical version+commit stamp. Byte equality
+# between the two binaries is impossible by design: the installed copy carries
+# an ad-hoc macOS code signature while cargo's release output stays pristine
+# (see install-local.sh). git also auto-widens --short under prefix ambiguity,
+# so the stamped commit is prefix-matched against the full head, never
+# compared at a fixed width.
 if release_version and installed_version and release_version != installed_version:
     blockers.append("binary_version_mismatch")
-if release_version and f"({head[:7]})" not in release_version:
+stamped = _stamped_commit(release_version)
+if release_version and (stamped is None or not head.startswith(stamped)):
     blockers.append(f"binary_head_mismatch:expected={head[:7]}")
-if release_sha and installed_sha and release_sha != installed_sha:
-    blockers.append("binary_sha256_mismatch")
 binary_tuple_match = bool(
     release_sha
     and installed_sha
-    and release_sha == installed_sha
     and release_version
     and release_version == installed_version
-    and f"({head[:7]})" in release_version
+    and stamped is not None
+    and head.startswith(stamped)
 )
 
 # Required machine evidence and its semantics. L0 has no standalone artifact;

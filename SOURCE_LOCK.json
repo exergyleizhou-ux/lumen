@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T10:32:41Z",
+  "generated_at": "2026-07-26T10:57:40Z",
   "monorepo": {
-    "git_head": "f06695607d78ee29fcb2714dbd6c459a07f83f50",
-    "git_short": "f066956"
+    "git_head": "82575742f3a331158c0b78d446c4e75944d6b6ca",
+    "git_short": "8257574"
   },
   "lumen_version": "0.1.250",
   "upstream_pin": {
@@ -23,11 +23,11 @@
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "e0be26cdf91d23e1e7f8b7e07826fa5fd810af87538af2c767fd093c9714e0c9",
     "scripts/assert-defaults.sh": "1536f8a8fbad5274285090059826105643b4fcc31a2ad2eeecfe10aca4787746",
-    "scripts/check-binary-tuple.sh": "f22cfbbd847c0beb09e1cf56bdab1f9159b745db9db8970df38f3125638e702e",
+    "scripts/check-binary-tuple.sh": "0964a82accda98b0b1f27a64c1ac56411e4ca90bb202fa42217e7e4e1175ef99",
     "scripts/eval-coding.sh": "60780441fa7297713eab67b88cec58cebbe72137070151f8eaffe259160b1ae2",
-    "scripts/eval-coding-live.sh": "75ec5daa5d3ab64d7625a4c6542823936c833480a998c43ea712dcc169014744",
+    "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
     "scripts/generate-sbom.sh": "ab3b044a65b9a266e261bb0e5153120e7d2079c537e45da42bf11428a4381702",
-    "scripts/install-local.sh": "f4c8de37bdc76b31ee392b4d13c2d8a641e4cc13de48b0c311cf6ff53bd94d76",
+    "scripts/install-local.sh": "7166cbe67c341d8309d1933bf8736a039d616c34a00d39626e0c553b3ee7199a",
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
     "scripts/productivity-gate.sh": "f814b2ce106bd1f4234a901e2e9f85510998ad8dd5e377ae36ff85a0c38a922c",
     "scripts/reconcile-evidence.sh": "d73a942d42b6f2aaf43b75613529c5c4b128240bd2a551d3184f88afecdcc8cb",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "fc49a7ff8bfaf06a6995fc0202579cb5cc37b91871fe4dddb66ca68dfa2a0a51"
   },
-  "aggregate_critical_sha256": "b396612dd7944983f0405948db51e88b693cafa472b23031dfa1be1005d970ce"
+  "aggregate_critical_sha256": "ff0bd22f0d8ba523ad29c151f612489cbdccfd3a5f32cf8b4353c41d3d50dc25"
 }

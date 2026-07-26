@@ -1,115 +1,115 @@
 {
   "schema_version": 1,
   "check_id": "eval_live",
-  "pass": false,
-  "pass_count": 0,
-  "fail_count": 20,
+  "pass": true,
+  "pass_count": 20,
+  "fail_count": 0,
   "total": 20,
   "min_required": 18,
   "silent_corruption": 0,
   "tasks": [
     {
       "task": "01-average-empty",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "02-stack-lifo",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "03-reverse-runes",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "04-binary-search",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "05-counter-race",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "06-stringer-impl",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "07-nilmap-write",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "08-multifile-shapes",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "09-py-divzero",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "10-py-json-merge",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "11-ts-optional-chain",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "12-ts-async-race",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "13-go-context-cancel",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "14-go-error-wrap",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "15-py-path-traversal-fix",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "16-go-http-timeout",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "17-multi-pkg-go",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "18-fix-only-regression",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "19-readme-driven",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     },
     {
       "task": "20-flaky-to-stable",
-      "result": "FAIL",
-      "agent_ec": 1
+      "result": "PASS",
+      "agent_ec": 0
     }
   ],
   "binary": "/Users/lei/.local/bin/lumen",
-  "generated_at": "2026-07-26T10:51:23Z",
+  "generated_at": "2026-07-26T11:10:41Z",
   "note": "Live agent solves; PASS only when deterministic workspace tests pass after agent edit."
 }

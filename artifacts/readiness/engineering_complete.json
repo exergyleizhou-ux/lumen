@@ -2,19 +2,15 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "46c488e2",
+  "head_short": "82575742",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "L4_fault_cancel:exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) ",
     "R0_full:exit 101",
-    "eval_live:exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred",
-    "binary_tuple_post:exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919",
-    "source_lock:HEAD drift lock=f066956 current=46c488e",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=8257574', 'binary_sha256_mismatch', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'st"
   ],
   "can_tool_call": true,
-  "source_lock_sha256": "877b6e8d6c5d9b6333af2ab65bfb828d18163c242aee941d5271eacc378eeffa",
-  "binary_sha256": "6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124",
-  "generated_at": "2026-07-26T10:51:25Z"
+  "source_lock_sha256": "be3ee7ba81bd700cb78c09e51d460a4f3b918889d7d672eb202719f31b6d190b",
+  "binary_sha256": "7ff9a3f6cb3ebd5c17ee42fc33306ef761f3c9b1a0106c452d2d24de350e128e",
+  "generated_at": "2026-07-26T11:10:42Z"
 }
