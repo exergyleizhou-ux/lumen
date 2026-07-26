@@ -2,26 +2,16 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "26a465b4",
+  "head_short": "d2d597cd",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
-    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=26a465b', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_t",
-    "L1_tool_calls:SKIP",
-    "L5_one_hour_soak:SKIP",
-    "L3_multi_tool:SKIP",
-    "L0_connect:SKIP",
-    "R0_min:SKIP",
-    "R0_full:SKIP",
-    "L5_long_session:SKIP",
-    "L2_min_e2e:SKIP",
-    "L4_fault_cancel:SKIP"
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD d2d597cd: lumen 0.1.250 (29515713) ",
+    "source_lock:HEAD drift lock=2951571 current=d2d597c",
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=2951571 head=d2d597c', 'binary_head_mismatch:expected=d2d597c', 'm5_onboarding_semantics_invalid', 'statu"
   ],
-  "can_tool_call": false,
-  "source_lock_sha256": "61f0a00c4ac9d7fff3a3afa28043ecf7aebb3442ab4a3f73658c2725becb708f",
-  "binary_sha256": "b509311310599998a87804a3b08a08152259baab16d8bfb4c6dfc3b56618cca0",
-  "generated_at": "2026-07-26T11:54:37Z"
+  "can_tool_call": true,
+  "source_lock_sha256": "b93c4293e12a00731b258846c5e877220df32dfc512fb949dc196b9a86644a24",
+  "binary_sha256": "9f331f8bc66806c5f4929287e86340943fa9c1e52d949f8e499fa44e968c601d",
+  "generated_at": "2026-07-26T12:20:12Z"
 }

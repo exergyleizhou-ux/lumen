@@ -1,38 +1,28 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T11:54:37Z",
+  "generated_at": "2026-07-26T12:20:12Z",
   "version": "0.1.250",
-  "head_short": "26a465b4",
+  "head_short": "d2d597cd",
   "ready": false,
   "state": "BLOCKED",
-  "can_tool_call": false,
-  "l0_pass": false,
+  "can_tool_call": true,
+  "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "61f0a00c4ac9d7fff3a3afa28043ecf7aebb3442ab4a3f73658c2725becb708f",
-  "binary_sha256": "b509311310599998a87804a3b08a08152259baab16d8bfb4c6dfc3b56618cca0",
+  "source_lock_sha256": "b93c4293e12a00731b258846c5e877220df32dfc512fb949dc196b9a86644a24",
+  "binary_sha256": "9f331f8bc66806c5f4929287e86340943fa9c1e52d949f8e499fa44e968c601d",
   "blockers": [
-    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
-    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD d2d597cd: lumen 0.1.250 (29515713) ",
+    "source_lock:HEAD drift lock=2951571 current=d2d597c",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=26a465b', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_t",
-    "L0_connect:SKIP",
-    "L1_tool_calls:SKIP",
-    "L2_min_e2e:SKIP",
-    "L3_multi_tool:SKIP",
-    "L4_fault_cancel:SKIP",
-    "L5_long_session:SKIP",
-    "L5_one_hour_soak:SKIP",
-    "R0_full:SKIP",
-    "R0_min:SKIP"
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=2951571 head=d2d597c', 'binary_head_mismatch:expected=d2d597c', 'm5_onboarding_semantics_invalid', 'statu"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) "
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=9f331f8bc668"
     },
     {
       "id": "gitleaks",
@@ -84,57 +74,57 @@
     },
     {
       "id": "L0_connect",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L1_tool_calls",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L2_min_e2e",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L3_multi_tool",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L4_fault_cancel",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L5_long_session",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": "elapsed>=3600 and resume_turns>0"
     },
     {
       "id": "R0_full",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "R0_min",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": "via R0_full"
     },
     {
       "id": "sbom",
@@ -150,21 +140,21 @@
     },
     {
       "id": "eval_live",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "binary_tuple_post",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) "
+      "detail": "exit 1 FAIL: binary is not built from current HEAD d2d597cd: lumen 0.1.250 (29515713) "
     },
     {
       "id": "source_lock",
-      "pass": true,
-      "result": "PASS",
-      "detail": "head=26a465b files=32"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "HEAD drift lock=2951571 current=d2d597c"
     },
     {
       "id": "M5_10_min_stranger",
@@ -182,10 +172,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=26a465b', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_t"
+      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=2951571 head=d2d597c', 'binary_head_mismatch:expected=d2d597c', 'm5_onboarding_semantics_invalid', 'statu"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-07-26T11:54:37Z",
+  "reconciled_at": "2026-07-26T12:20:11Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

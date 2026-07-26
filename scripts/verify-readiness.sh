@@ -53,12 +53,16 @@ reap_stray_agents() {
 }
 
 record_l5_soak_contract() {
-  if python3 - "$ART/L5-long-session.json" <<'PY'
+  # The soak artifact must describe THIS binary. Reading only its contents let
+  # a 10-day-old soak (recorded against a long-replaced binary) keep reporting
+  # PASS — evidence for a build that no longer exists is not evidence.
+  if python3 - "$ART/L5-long-session.json" "${BINARY_PRE_SHA:-}" <<'PY'
 import json, sys
 try:
     doc = json.load(open(sys.argv[1]))
 except (OSError, json.JSONDecodeError):
     raise SystemExit(1)
+current_sha = sys.argv[2] if len(sys.argv) > 2 else ""
 soak = doc.get("soak") or {}
 ok = (
     doc.get("pass") is True
@@ -70,12 +74,27 @@ ok = (
     and type(soak.get("resume_turns")) is int
     and soak["resume_turns"] > 0
 )
-raise SystemExit(0 if ok else 1)
+if not ok:
+    raise SystemExit(1)
+if not current_sha:
+    print("no current binary sha to bind against", file=sys.stderr)
+    raise SystemExit(2)
+if doc.get("binary_sha256") != current_sha:
+    print(
+        f"soak evidence is for another binary: artifact={str(doc.get('binary_sha256'))[:12]} current={current_sha[:12]}",
+        file=sys.stderr,
+    )
+    raise SystemExit(3)
+raise SystemExit(0)
 PY
   then
-    record L5_one_hour_soak PASS "elapsed>=3600 and resume_turns>0"
+    record L5_one_hour_soak PASS "elapsed>=3600, resume_turns>0, binary-bound"
   else
-    record L5_one_hour_soak FAIL "explicit one-hour soak evidence missing"
+    case $? in
+      3) record L5_one_hour_soak FAIL "soak evidence belongs to a different binary — rerun LUMEN_L5_MODE=soak" ;;
+      2) record L5_one_hour_soak FAIL "no current binary sha to bind the soak evidence to" ;;
+      *) record L5_one_hour_soak FAIL "explicit one-hour soak evidence missing" ;;
+    esac
   fi
 }
 
