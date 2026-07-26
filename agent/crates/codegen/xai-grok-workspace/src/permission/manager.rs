@@ -665,7 +665,30 @@ fn clamp_yolo(requested: bool, yolo_pin: Option<&'static str>) -> bool {
 
 /// Lumen hard-deny (bash L0–L2 + writepath L3). Returns a reason when blocked.
 /// Enforced for every permission mode including YOLO / always-approve.
+///
+/// `LUMEN_UNSAFE=1` bypasses the deny, but never silently: every command the
+/// rule table would have blocked is audited to the log so a session that ran
+/// with the guard off leaves evidence of exactly what it skipped.
 fn lumen_guard_deny(access: &AccessKind) -> Option<String> {
+    if lumen_guard::unsafe_mode() {
+        let bypassed = match access {
+            AccessKind::Bash(cmd) => lumen_guard::check_bash_strict(cmd)
+                .deny_reason()
+                .map(|r| r.to_owned()),
+            AccessKind::Edit(path) => lumen_guard::check_write_path_strict(path)
+                .deny_reason()
+                .map(|r| r.to_owned()),
+            _ => None,
+        };
+        if let Some(reason) = bypassed {
+            tracing::warn!(
+                target: "lumen_guard",
+                reason = %reason,
+                "LUMEN_UNSAFE=1 bypassed a hard-deny that would otherwise have blocked this access"
+            );
+        }
+        return None;
+    }
     match access {
         AccessKind::Bash(cmd) => lumen_guard::check_bash(cmd)
             .deny_reason()

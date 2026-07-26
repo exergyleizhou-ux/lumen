@@ -153,11 +153,20 @@ pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
 
 /// No process-level child network filter is available on this platform.
 ///
+/// KNOWN GAP (Windows): returning `Ok(())` means `restrict_network` is
+/// silently a no-op — a sandboxed child on Windows has full network access.
+/// Do not present network isolation as available on Windows in any UI or
+/// readiness claim until a WFP/firewall-based filter exists. Tracked in
+/// docs/go-era-branch-map.md (安全 section) and the release notes.
+///
 /// # Safety
 ///
 /// No-op outside Linux and macOS.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
+    tracing::warn!(
+        "child network isolation is unavailable on this platform; the child runs with unrestricted network access"
+    );
     Ok(())
 }
 

@@ -2483,7 +2483,7 @@ impl SessionActor {
                     // Delivery gate: check if writer tools ran without verify
                     let delivery_action = lumen_discipline::on_turn_end(
                         &mut self.delivery_state.borrow_mut(),
-                        lumen_discipline::DeliveryStrictness::Soft,
+                        delivery_strictness_from_env(),
                     );
                     if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
                         delivery_action
@@ -2530,7 +2530,7 @@ impl SessionActor {
                             // Delivery gate: check if writer tools ran without verify
                             let delivery_action = lumen_discipline::on_turn_end(
                                 &mut self.delivery_state.borrow_mut(),
-                                lumen_discipline::DeliveryStrictness::Soft,
+                                delivery_strictness_from_env(),
                             );
                             if let lumen_discipline::DeliveryAction::InjectSystemReminder(
                                 ref reminder,
@@ -2784,4 +2784,23 @@ mod structured_output_validation_tests {
         let err = validate_structured_output(&bad, r#"{"name":"alice","age":1}"#).unwrap_err();
         assert_eq!(err, "invalid output schema: boom");
     }
+}
+
+/// Delivery-gate strictness, configurable via `LUMEN_DELIVERY_STRICTNESS`
+/// (`off` | `soft` | `strict`, default `soft`). Read once per process — the
+/// gate sits on the turn hot path.
+fn delivery_strictness_from_env() -> lumen_discipline::DeliveryStrictness {
+    static STRICTNESS: std::sync::OnceLock<lumen_discipline::DeliveryStrictness> =
+        std::sync::OnceLock::new();
+    *STRICTNESS.get_or_init(|| {
+        match std::env::var("LUMEN_DELIVERY_STRICTNESS")
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "off" => lumen_discipline::DeliveryStrictness::Off,
+            "strict" => lumen_discipline::DeliveryStrictness::Strict,
+            _ => lumen_discipline::DeliveryStrictness::Soft,
+        }
+    })
 }

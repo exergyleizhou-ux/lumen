@@ -87,13 +87,27 @@ pub fn capture_shape(
     }
 }
 
-/// Rough token estimate from UTF-8 length (~4 bytes/token for schema JSON).
+/// Rough token estimate for diagnostics (never billing).
+///
+/// ASCII-heavy text (schema JSON, English prose) tokenizes near 4 bytes/token,
+/// but CJK is ~3 bytes per char at roughly 1 token every 1–2 chars — a pure
+/// bytes/4 rule under-weights it… while counting raw bytes over-weights it by
+/// ~3×. Estimate per character class: ASCII at 4 chars/token, everything else
+/// at 1.5 chars/token (≈ two tokens per three CJK chars).
 pub fn estimate_tokens(s: &str) -> u64 {
     if s.is_empty() {
-        0
-    } else {
-        (s.len() as u64).div_ceil(4)
+        return 0;
     }
+    let (ascii, wide) = s
+        .chars()
+        .fold((0u64, 0u64), |(ascii, wide), c| {
+            if c.is_ascii() {
+                (ascii + 1, wide)
+            } else {
+                (ascii, wide + 1)
+            }
+        });
+    (ascii.div_ceil(4) + (wide * 2).div_ceil(3)).max(1)
 }
 
 /// Compare previous vs current shape; fold optional provider usage.
@@ -152,6 +166,23 @@ pub fn format_change_reasons(reasons: &[PrefixChangeReason]) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn estimate_tokens_ascii_stays_bytes_over_four() {
+        assert_eq!(super::estimate_tokens(""), 0);
+        assert_eq!(super::estimate_tokens("abcd"), 1);
+        assert_eq!(super::estimate_tokens(&"x".repeat(400)), 100);
+    }
+
+    #[test]
+    fn estimate_tokens_cjk_not_inflated_by_utf8_bytes() {
+        // 100 CJK chars = 300 UTF-8 bytes. The old bytes/4 rule said 75;
+        // per-char classing says ~67 (2 tokens per 3 chars) — and crucially
+        // NOT the ~3x inflation a raw byte count would give (300).
+        let s = "样".repeat(100);
+        let est = super::estimate_tokens(&s);
+        assert_eq!(est, 67);
+    }
+
     use super::*;
 
     #[test]

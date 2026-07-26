@@ -57,6 +57,9 @@ impl DeliverySessionState {
         self.writer_tools_this_turn = 0;
         self.verify_ok_this_turn = false;
         self.bash_success_with_test_hint = false;
+        // A new turn gets a fresh nudge budget; without this reset the Soft
+        // dedup in on_turn_end would fire at most once per SESSION, not per turn.
+        self.soft_nudge_count = 0;
     }
 }
 
@@ -165,9 +168,11 @@ pub fn on_turn_end(
     if !needs {
         return DeliveryAction::None;
     }
-    // Soft: at most one nudge per turn (tracked via soft_nudge_count on turn).
+    // Soft: at most one nudge per turn. The turn loop reaches on_turn_end
+    // from more than one exit branch, so without this dedup a single turn
+    // could append the reminder twice. Strict always injects.
     if state.soft_nudge_count > 0 && matches!(strictness, DeliveryStrictness::Soft) {
-        // already nudged this "episode" — still allow one per turn after begin_turn resets writers
+        return DeliveryAction::None;
     }
     state.soft_nudge_count = state.soft_nudge_count.saturating_add(1);
     DeliveryAction::InjectSystemReminder(DELIVERY_REMINDER.to_owned())
@@ -304,6 +309,44 @@ mod tests {
         ));
         assert!(is_verification_command("go test ./..."));
         assert!(is_verification_command("go build ./cmd/server"));
+    }
+
+    #[test]
+    fn soft_nudge_at_most_once_per_turn() {
+        let mut d = DeliverySessionState::default();
+        d.begin_turn();
+        d.on_writer_tool();
+        assert!(matches!(
+            on_turn_end(&mut d, DeliveryStrictness::Soft),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
+        // Second turn-end branch in the same turn must not nudge again.
+        assert!(matches!(
+            on_turn_end(&mut d, DeliveryStrictness::Soft),
+            DeliveryAction::None
+        ));
+        // Next turn gets a fresh budget.
+        d.begin_turn();
+        d.on_writer_tool();
+        assert!(matches!(
+            on_turn_end(&mut d, DeliveryStrictness::Soft),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
+    }
+
+    #[test]
+    fn strict_nudges_every_turn_end() {
+        let mut d = DeliverySessionState::default();
+        d.begin_turn();
+        d.on_writer_tool();
+        assert!(matches!(
+            on_turn_end(&mut d, DeliveryStrictness::Strict),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
+        assert!(matches!(
+            on_turn_end(&mut d, DeliveryStrictness::Strict),
+            DeliveryAction::InjectSystemReminder(_)
+        ));
     }
 
     #[test]

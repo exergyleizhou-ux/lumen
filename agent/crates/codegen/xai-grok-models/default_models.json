@@ -1,7 +1,7 @@
 {
   "default": "deepseek-v4-pro",
   "web_search": "deepseek-v4-pro",
-  "image_description": "deepseek-chat",
+  "image_description": "deepseek-v4-flash",
   "session_summary": "deepseek-v4-flash",
   "models": [
     {

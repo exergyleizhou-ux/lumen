@@ -12,7 +12,15 @@ use lumen_discipline::{
 
 static REGISTRY: OnceLock<Mutex<HashMap<String, Entry>>> = OnceLock::new();
 
+/// Upper bound on tracked sessions. drop_session is best-effort (a session
+/// that dies without passing its drop path never removes its entry), so a
+/// long-lived multi-session process needs an eviction backstop. 256 entries
+/// of diagnostics state is a few hundred KB at most.
+const MAX_TRACKED_SESSIONS: usize = 256;
+
 struct Entry {
+    /// LRU stamp for the eviction backstop.
+    last_used: std::time::Instant,
     model_id: String,
     /// Endpoint is part of the cache/security domain. The same model routed
     /// to another endpoint must never inherit a prefix tracker.
@@ -35,6 +43,7 @@ fn entry_mut<'a>(
     guard
         .entry(session_id.to_string())
         .and_modify(|e| {
+            e.last_used = std::time::Instant::now();
             let next_base_url = base_url.map(str::to_string);
             if e.model_id != model_id || e.base_url != next_base_url {
                 e.model_id = model_id.to_string();
@@ -44,12 +53,28 @@ fn entry_mut<'a>(
             }
         })
         .or_insert_with(|| Entry {
+            last_used: std::time::Instant::now(),
             model_id: model_id.to_string(),
             base_url: base_url.map(str::to_string),
             tracker: SessionCacheTracker::new(model_id.to_string(), base_url.map(str::to_string)),
             log_rewrite_version: 0,
             last_snap: None,
         })
+}
+
+/// Evict least-recently-used entries beyond the cap. Called after inserts;
+/// O(n) scans are fine at this size.
+fn enforce_cap(guard: &mut HashMap<String, Entry>) {
+    while guard.len() > MAX_TRACKED_SESSIONS {
+        let Some(oldest) = guard
+            .iter()
+            .min_by_key(|(_, e)| e.last_used)
+            .map(|(k, _)| k.clone())
+        else {
+            return;
+        };
+        guard.remove(&oldest);
+    }
 }
 
 /// Compaction / history rewrite invalidates automatic prefix cache.
@@ -64,6 +89,7 @@ pub fn bump_log_rewrite(session_id: &str) {
         guard.insert(
             session_id.to_string(),
             Entry {
+                last_used: std::time::Instant::now(),
                 model_id: "unknown".into(),
                 base_url: None,
                 tracker: SessionCacheTracker::new("unknown", None),
@@ -71,6 +97,7 @@ pub fn bump_log_rewrite(session_id: &str) {
                 last_snap: None,
             },
         );
+        enforce_cap(&mut guard);
     }
 }
 
@@ -106,6 +133,7 @@ pub fn observe_call(
         .tracker
         .snapshot(prompt_tokens, cache_hit_tokens, output_tokens);
     e.last_snap = Some(snap.clone());
+    enforce_cap(&mut guard);
     snap
 }
 
@@ -148,6 +176,28 @@ mod tests {
         let s2 = observe_call(sid, "deepseek-chat", None, "sys", &tools, 2000, 1500, 10);
         assert!(s2.stable_streak >= 1);
         drop_session(sid);
+    }
+
+    #[test]
+    fn registry_evicts_least_recently_used_beyond_cap() {
+        // Use a distinct prefix so parallel tests' sessions don't interfere.
+        let mk = |i: usize| format!("evict-test-{i}");
+        let tools = vec![("read".to_string(), "{}".to_string())];
+        for i in 0..(MAX_TRACKED_SESSIONS + 8) {
+            observe_call(&mk(i), "deepseek-v4-pro", None, "sys", &tools, 10, 0, 1);
+        }
+        let guard = map().lock().unwrap();
+        assert!(
+            guard.len() <= MAX_TRACKED_SESSIONS,
+            "registry must stay bounded, got {}",
+            guard.len()
+        );
+        // The earliest sessions are the LRU victims.
+        assert!(!guard.contains_key(&mk(0)));
+        drop(guard);
+        for i in 0..(MAX_TRACKED_SESSIONS + 8) {
+            drop_session(&mk(i));
+        }
     }
 
     #[test]
