@@ -11,12 +11,12 @@ For the generation date, see the last ledger commit in `git log`.
 | Question | Answer |
 |---|---|
 | Version (root VERSION) | **0.1.250** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=17 |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=15 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 20bbcc8 fix(science): retire stale standalone/go.mod checks — module root is packs/science/go.mod |
+| Last non-bot commit | 46c488e chore: refresh SOURCE_LOCK at f0669560 (critical gate scripts changed this batch) |
 
 ---
 
