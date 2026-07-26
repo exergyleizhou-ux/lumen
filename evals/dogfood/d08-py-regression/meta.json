@@ -1,0 +1,1 @@
+{"id": "d08-py-regression", "lang": "python", "kind": "regression-guard", "expect_auto_verify": true, "test_cmd": "python3 -m pytest -q retry.py"}

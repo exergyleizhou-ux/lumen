@@ -1,0 +1,1 @@
+{"id": "d01-py-boundary", "lang": "python", "kind": "boundary-bug", "expect_auto_verify": true, "test_cmd": "python3 -m pytest -q slugify.py"}

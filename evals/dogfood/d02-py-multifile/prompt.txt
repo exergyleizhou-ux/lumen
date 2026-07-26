@@ -1,0 +1,1 @@
+cart.py 的 apply_discount 有 bug：折扣叠加顺序错误导致结果不对，而且 pricing.py 里的 round_money 精度处理也有问题。两个文件都要改，让 pytest 全过。

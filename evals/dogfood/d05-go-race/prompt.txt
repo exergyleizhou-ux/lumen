@@ -1,0 +1,1 @@
+counter.go 有数据竞争，go test -race 会失败。修好它并保持 API 不变。

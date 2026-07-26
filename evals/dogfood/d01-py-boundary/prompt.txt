@@ -1,0 +1,1 @@
+修复 slugify.py 中 slugify 的 bug：连续分隔符会产生多余连字符，首尾连字符也没有去掉。让 pytest 全部通过。

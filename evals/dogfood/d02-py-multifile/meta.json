@@ -1,0 +1,1 @@
+{"id": "d02-py-multifile", "lang": "python", "kind": "multi-file", "expect_auto_verify": true, "test_cmd": "python3 -m pytest -q cart.py"}

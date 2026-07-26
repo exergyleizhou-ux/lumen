@@ -1,0 +1,1 @@
+按 SPEC.md 里描述的规则实现 parse_duration（现在是空壳）。必须先读 SPEC.md 才能知道规则。让 pytest 全过。

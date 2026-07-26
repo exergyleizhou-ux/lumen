@@ -1,0 +1,1 @@
+src/lib.rs 的 Config::merge 有 bug：后者的 None 字段会覆盖前者的已有值。修好它让 cargo test 通过。

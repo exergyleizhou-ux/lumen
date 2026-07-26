@@ -1,0 +1,1 @@
+{"id": "d04-ts-types", "lang": "typescript", "kind": "type-error", "expect_auto_verify": true, "test_cmd": "node --test"}

@@ -1,0 +1,1 @@
+{"id": "d03-rust-borrow", "lang": "rust", "kind": "compile-error", "expect_auto_verify": false, "test_cmd": "cargo test --offline"}

@@ -1,0 +1,1 @@
+{"id": "d05-go-race", "lang": "go", "kind": "data-race", "expect_auto_verify": true, "test_cmd": "go test -race ./..."}

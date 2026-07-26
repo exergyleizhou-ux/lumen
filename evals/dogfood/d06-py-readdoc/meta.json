@@ -1,0 +1,1 @@
+{"id": "d06-py-readdoc", "lang": "python", "kind": "read-docs-first", "expect_auto_verify": true, "test_cmd": "python3 -m pytest -q duration.py"}
