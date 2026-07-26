@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 1294c93 fix(verify): edit-verify really activates for python/typescript (caller re-gated it to Go) |
+| Last non-bot commit | d2d597c security(trust): a [permission]-only repo config must require folder trust |
 
 ---
 
