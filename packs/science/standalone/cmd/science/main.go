@@ -64,7 +64,8 @@ func runDoctor(args []string) error {
 		"proxy",
 		"native/brief",
 		"lab",
-		"standalone/go.mod",
+		"go.mod",
+		"standalone/cmd/science/main.go",
 	}
 	failures := 0
 	for _, relative := range required {
@@ -155,8 +156,10 @@ func findPackRoot(explicit string) (string, error) {
 		if err != nil {
 			continue
 		}
-		if _, err := os.Stat(filepath.Join(absolute, "standalone", "go.mod")); err == nil {
-			return absolute, nil
+		if _, err := os.Stat(filepath.Join(absolute, "go.mod")); err == nil {
+			if _, err := os.Stat(filepath.Join(absolute, "standalone", "cmd", "science", "main.go")); err == nil {
+				return absolute, nil
+			}
 		}
 	}
 	return "", fmt.Errorf("cannot locate packs/science; run from that directory or pass --root")
