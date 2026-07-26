@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 2951571 chore(evidence): record the R0-passing readiness run + document the install-local pipe trap |
+| Last non-bot commit | 1294c93 fix(verify): edit-verify really activates for python/typescript (caller re-gated it to Go) |
 
 ---
 
