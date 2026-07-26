@@ -1,26 +1,22 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T15:47:47Z",
+  "generated_at": "2026-07-26T15:58:12Z",
   "model": "deepseek-v4-pro",
   "total": 8,
   "passed": 8,
   "pass_rate": 1.0,
-  "median_wall_seconds": 55,
-  "auto_verify_coverage": 0.0,
+  "median_wall_seconds": 40,
+  "auto_verify_coverage": 0.667,
   "silent_verify_regressions": [
-    "d01-py-boundary",
-    "d02-py-multifile",
     "d04-ts-types",
-    "d05-go-race",
-    "d06-py-readdoc",
-    "d08-py-regression"
+    "d05-go-race"
   ],
   "tasks": [
     {
       "id": "d01-py-boundary",
       "status": "PASS",
-      "wall_seconds": 30,
-      "auto_verify_fired": false,
+      "wall_seconds": 24,
+      "auto_verify_fired": true,
       "discipline_fired": false,
       "expected_auto_verify": true,
       "agent_exit": 0
@@ -28,8 +24,8 @@
     {
       "id": "d02-py-multifile",
       "status": "PASS",
-      "wall_seconds": 69,
-      "auto_verify_fired": false,
+      "wall_seconds": 74,
+      "auto_verify_fired": true,
       "discipline_fired": false,
       "expected_auto_verify": true,
       "agent_exit": 0
@@ -37,7 +33,7 @@
     {
       "id": "d03-rust-borrow",
       "status": "PASS",
-      "wall_seconds": 72,
+      "wall_seconds": 71,
       "auto_verify_fired": false,
       "discipline_fired": false,
       "expected_auto_verify": false,
@@ -55,7 +51,7 @@
     {
       "id": "d05-go-race",
       "status": "PASS",
-      "wall_seconds": 27,
+      "wall_seconds": 28,
       "auto_verify_fired": false,
       "discipline_fired": false,
       "expected_auto_verify": true,
@@ -64,8 +60,8 @@
     {
       "id": "d06-py-readdoc",
       "status": "PASS",
-      "wall_seconds": 25,
-      "auto_verify_fired": false,
+      "wall_seconds": 40,
+      "auto_verify_fired": true,
       "discipline_fired": false,
       "expected_auto_verify": true,
       "agent_exit": 0
@@ -73,7 +69,7 @@
     {
       "id": "d07-rust-api",
       "status": "PASS",
-      "wall_seconds": 68,
+      "wall_seconds": 47,
       "auto_verify_fired": false,
       "discipline_fired": false,
       "expected_auto_verify": false,
@@ -82,8 +78,8 @@
     {
       "id": "d08-py-regression",
       "status": "PASS",
-      "wall_seconds": 55,
-      "auto_verify_fired": false,
+      "wall_seconds": 31,
+      "auto_verify_fired": true,
       "discipline_fired": false,
       "expected_auto_verify": true,
       "agent_exit": 0

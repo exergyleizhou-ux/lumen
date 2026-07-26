@@ -61,9 +61,19 @@ if [[ ${#selected[@]} -eq 0 ]]; then
   while IFS= read -r d; do selected+=("$(basename "$d")"); done < <(find "$TASKS_DIR" -mindepth 1 -maxdepth 1 -type d | sort)
 fi
 
-# Probe prompt: make a trivial edit and have the model report the tool result
-# verbatim. This is the only honest way to observe model-visible feedback.
-VERIFY_ECHO_PROMPT='在工作区里新建文件 _probe_verify.py，内容正好是一行：return 1 （这是故意的语法错误，用于探测工具链）。然后逐字复述你收到的写入工具的完整返回内容。不要运行任何命令，不要修正这个错误。'
+# Probe: make a deliberately broken edit IN THE TASK'S OWN LANGUAGE and have
+# the model echo the tool result verbatim — the only honest way to observe
+# model-visible feedback (it never reaches stdout/stderr). A single .py probe
+# would only ever exercise the Python path, reporting false "no verification"
+# for Go/Rust/JS projects.
+probe_prompt_for_lang() {
+  case "$1" in
+    python) echo '在工作区新建 _probe_verify.py，内容正好一行：return 1 （故意的语法错误，用于探测工具链）。然后逐字复述你收到的写入工具的完整返回内容。不要运行任何命令，不要修正这个错误。' ;;
+    go)     echo '把工作区里已有的某个 .go 文件中任意一个函数体改成 return 1 +++ 2 （故意的语法错误，用于探测工具链）。然后逐字复述你收到的写入工具的完整返回内容。不要运行任何命令，不要修正这个错误。' ;;
+    typescript) echo '把工作区里 index.js 的第一行改成 export const _probe = ((( （故意的语法错误，用于探测工具链）。然后逐字复述你收到的写入工具的完整返回内容。不要运行任何命令，不要修正这个错误。' ;;
+    *)      echo '' ;;
+  esac
+}
 
 results_file="$(mktemp)"
 trap 'rm -f "$results_file"' EXIT
@@ -114,7 +124,9 @@ for task in "${selected[@]}"; do
   # each task run appends a verification-echo turn and we inspect ITS output.
   verify_fired=0
   discipline_fired=0
-  if [[ "$expect_verify" == "True" ]]; then
+  lang="$(python3 -c "import json;print(json.load(open('$task_dir/meta.json'))['lang'])")"
+  probe_prompt="$(probe_prompt_for_lang "$lang")"
+  if [[ "$expect_verify" == "True" && -n "$probe_prompt" ]]; then
     echo_log="$scratch/echo.log"
     set +e
     HOME="$home" GROK_HOME="$home/grok" LUMEN_HOME="$home/lumen" \
@@ -125,9 +137,9 @@ for task in "${selected[@]}"; do
         --permission-mode bypassPermissions \
         --max-turns 4 \
         --output-format plain \
-        -p "$VERIFY_ECHO_PROMPT" >"$echo_log" 2>&1
+        -p "$probe_prompt" >"$echo_log" 2>&1
     set -e
-    verify_fired=$(grep -cE "verify-after-edit|invalid-syntax|ruff|pytest" "$echo_log" 2>/dev/null || true)
+    verify_fired=$(grep -cE "verify-after-edit|invalid-syntax|ruff|pytest|go build|go vet|tsc" "$echo_log" 2>/dev/null || true)
     discipline_fired=$(grep -cE "storm-breaker|repeat-success|delivery-reminder" "$echo_log" 2>/dev/null || true)
   fi
 

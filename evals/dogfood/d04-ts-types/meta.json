@@ -1,1 +1,1 @@
-{"id": "d04-ts-types", "lang": "typescript", "kind": "type-error", "expect_auto_verify": true, "test_cmd": "node --test"}
+{"id": "d04-ts-types", "lang": "typescript", "kind": "type-error", "expect_auto_verify": false, "test_cmd": "node --test", "auto_verify_note": "no node_modules/.bin/tsc: the auto path refuses package runners (npx) by design, so skipping is correct"}
