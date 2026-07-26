@@ -1,0 +1,1 @@
+{"id": "d09-delivery-gate", "lang": "python", "kind": "discipline-delivery", "expect_auto_verify": true, "expect_discipline": "delivery", "discipline_note": "no failing test and no benchmark: an edit followed by a completion claim must draw the delivery reminder", "test_cmd": "python3 -m pytest -q cache.py"}

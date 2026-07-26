@@ -1,0 +1,1 @@
+{"id": "d11-repeat-guard", "lang": "python", "kind": "discipline-repeat", "expect_auto_verify": false, "expect_discipline": "repeat-success", "discipline_note": "the prompt demands repeated re-reads of one short file; identical successful calls must surface the repeat-success reminder", "test_cmd": "test -f summary.txt"}

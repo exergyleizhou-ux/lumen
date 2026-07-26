@@ -87,6 +87,7 @@ for task in "${selected[@]}"; do
   prompt="$(cat "$task_dir/prompt.txt")"
   test_cmd="$(python3 -c "import json,sys;print(json.load(open('$task_dir/meta.json'))['test_cmd'])")"
   expect_verify="$(python3 -c "import json;print(json.load(open('$task_dir/meta.json')).get('expect_auto_verify',False))")"
+  expect_discipline="$(python3 -c "import json;print(json.load(open('$task_dir/meta.json')).get('expect_discipline',''))")"
 
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/dogfood-$task.XXXXXX")"
   cp -R "$task_dir/workspace" "$scratch/ws"
@@ -143,12 +144,35 @@ for task in "${selected[@]}"; do
     discipline_fired=$(grep -cE "storm-breaker|repeat-success|delivery-reminder" "$echo_log" 2>/dev/null || true)
   fi
 
+  # Discipline reminders ride the tool result into the model context, never
+  # stdout. Ask the model itself what system reminders it saw this session.
+  discipline_seen=""
+  if [[ -n "$expect_discipline" ]]; then
+    disc_log="$scratch/discipline.log"
+    set +e
+    HOME="$home" GROK_HOME="$home/grok" LUMEN_HOME="$home/lumen" \
+    run_with_timeout 120 "$LUMEN_BIN" \
+        --cwd "$scratch/ws" \
+        -m "$MODEL" \
+        --always-approve \
+        --permission-mode bypassPermissions \
+        --max-turns 3 \
+        --output-format plain \
+        --continue \
+        -p '逐字列出你这次会话里收到过的所有 system reminder / 系统提醒原文（例如包含 storm-breaker、repeat-success、delivery 之类标记的内容）。如果一个都没有收到，就只回答“NONE”。不要运行任何命令。' \
+        >"$disc_log" 2>&1
+    set -e
+    discipline_fired=$(grep -cE "storm-breaker|repeat-success|delivery" "$disc_log" 2>/dev/null || true)
+    discipline_seen=$(grep -oE "storm-breaker|repeat-success|delivery" "$disc_log" 2>/dev/null | sort -u | tr '\n' ',' || true)
+  fi
+
   status="FAIL"
   [[ $test_ec -eq 0 ]] && status="PASS"
   [[ $agent_ec -eq 124 ]] && status="TIMEOUT"
 
-  printf '%s|%s|%s|%s|%s|%s|%s\n' \
+  printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
     "$task" "$status" "$elapsed" "$verify_fired" "$discipline_fired" "$expect_verify" "$agent_ec" \
+    "$expect_discipline" "$discipline_seen" \
     >>"$results_file"
 
   printf '  %-22s %-7s %3ds  verify=%-3s discipline=%-3s\n' \
@@ -167,14 +191,19 @@ rows = [l.split("|") for l in Path(sys.argv[1]).read_text().strip().splitlines()
 out_dir, want_baseline, model = Path(sys.argv[2]), sys.argv[3] == "1", sys.argv[4]
 
 tasks = []
-for task, status, secs, verify, discipline, expect_verify, agent_ec in rows:
+for row in rows:
+    # older rows had 7 fields; pad so a stale results file still parses
+    row = (row + ["", ""])[:9]
+    task, status, secs, verify, discipline, expect_verify, agent_ec, expect_disc, disc_seen = row
     tasks.append({
         "id": task,
         "status": status,
         "wall_seconds": int(secs),
-        "auto_verify_fired": int(verify) > 0,
-        "discipline_fired": int(discipline) > 0,
+        "auto_verify_fired": int(verify or 0) > 0,
+        "discipline_fired": int(discipline or 0) > 0,
         "expected_auto_verify": expect_verify == "True",
+        "expected_discipline": expect_disc or None,
+        "discipline_seen": [d for d in (disc_seen or "").split(",") if d],
         "agent_exit": int(agent_ec),
     })
 
@@ -183,6 +212,16 @@ passed = sum(1 for t in tasks if t["status"] == "PASS")
 # regression of a core promise, even though its tests are green.
 silent = [t["id"] for t in tasks
           if t["expected_auto_verify"] and t["status"] == "PASS" and not t["auto_verify_fired"]]
+
+# A discipline task that never triggered its mechanism proves nothing about
+# the mechanism — the differentiator claim would be unbacked. Treat it as a
+# failure of the instrument's whole purpose, exactly like a silent verify.
+disc_expected = [t for t in tasks if t["expected_discipline"]]
+disc_missing = [
+    f"{t['id']}(expected {t['expected_discipline']})"
+    for t in disc_expected
+    if t["expected_discipline"] not in t["discipline_seen"]
+]
 
 report = {
     "schema_version": 1,
@@ -196,6 +235,9 @@ report = {
         sum(1 for t in tasks if t["expected_auto_verify"] and t["auto_verify_fired"])
         / max(1, sum(1 for t in tasks if t["expected_auto_verify"])), 3),
     "silent_verify_regressions": silent,
+    "discipline_coverage": round(
+        (len(disc_expected) - len(disc_missing)) / max(1, len(disc_expected)), 3),
+    "discipline_not_triggered": disc_missing,
     "tasks": tasks,
 }
 
@@ -209,6 +251,10 @@ print(f"pass {passed}/{len(tasks)}  rate={report['pass_rate']}  "
       f"auto_verify_coverage={report['auto_verify_coverage']}")
 if silent:
     print(f"SILENT VERIFY REGRESSION in: {', '.join(silent)}")
+if disc_expected:
+    print(f"discipline_coverage={report['discipline_coverage']}")
+if disc_missing:
+    print(f"DISCIPLINE NOT TRIGGERED: {', '.join(disc_missing)}")
 print(f"wrote {out_dir / 'latest.json'}" + ("  (+ baseline.json)" if want_baseline else ""))
 
 # Compare against the baseline when one exists: >20% degradation is a failure.
@@ -223,5 +269,5 @@ if base_path.is_file() and not want_baseline:
     if cov_drop > 0.2:
         print(f"FAIL: auto-verify coverage dropped {cov_drop:.1%} vs baseline")
         raise SystemExit(1)
-raise SystemExit(0 if not silent else 1)
+raise SystemExit(0 if (not silent and not disc_missing) else 1)
 PY
