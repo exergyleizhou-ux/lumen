@@ -7,7 +7,7 @@ export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 
 RELEASE_BIN="${LUMEN_RELEASE_BIN:-$ROOT/agent/target/release/lumen}"
 INSTALLED_BIN="${LUMEN_INSTALLED_BIN:-$HOME/.local/bin/lumen}"
-HEAD_SHORT="$(git -C "$ROOT" rev-parse --short=7 HEAD)"
+HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD)"
 
 for bin in "$RELEASE_BIN" "$INSTALLED_BIN"; do
   [[ -x "$bin" ]] || {
@@ -24,13 +24,14 @@ INSTALLED_VERSION="$("$INSTALLED_BIN" --version)"
   echo "installed=$INSTALLED_VERSION" >&2
   exit 1
 }
-case "$RELEASE_VERSION" in
-  *"($HEAD_SHORT)"*) ;;
-  *)
-    echo "FAIL: binary is not built from current HEAD $HEAD_SHORT: $RELEASE_VERSION" >&2
-    exit 1
-    ;;
-esac
+# The binary stamps `git rev-parse --short HEAD`, whose length git auto-widens
+# under prefix ambiguity (7, 8, … chars). Comparing against a fixed-width
+# short is wrong — extract the stamped commit and prefix-match the full sha.
+VER_COMMIT="$(printf '%s' "$RELEASE_VERSION" | sed -nE 's/.*\(([0-9a-f]{7,40})\).*/\1/p')"
+if [[ -z "$VER_COMMIT" || "$HEAD_FULL" != "$VER_COMMIT"* ]]; then
+  echo "FAIL: binary is not built from current HEAD ${HEAD_FULL:0:8}: $RELEASE_VERSION" >&2
+  exit 1
+fi
 
 RELEASE_SHA="$(shasum -a 256 "$RELEASE_BIN" | awk '{print $1}')"
 INSTALLED_SHA="$(shasum -a 256 "$INSTALLED_BIN" | awk '{print $1}')"

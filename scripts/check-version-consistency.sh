@@ -42,20 +42,25 @@ if [ -f artifacts/readiness/status.json ]; then
     echo "FAIL: status.json version ($STATUS_VER) != VERSION ($VER_FILE)"
     FAIL=1
   fi
-  CONTRADICTION=$(python3 - <<'PY' 2>/dev/null || echo "PARSE_ERROR"
+  # Fail closed: a READY claim must be AFFIRMATIVELY backed by a parseable
+  # engineering_complete.json with pass=true. Deleting or corrupting either
+  # file must never silence this check.
+  CONTRADICTION=$(python3 - <<'PY' 2>/dev/null || echo "FORGED"
 import json
 status = json.load(open('artifacts/readiness/status.json'))
-try:
-    eng = json.load(open('artifacts/readiness/engineering_complete.json'))
-except Exception:
-    eng = {}
-s_ready = bool(status.get("ready"))
-e_ok = eng.get("pass")
-print("CONTRADICTION" if (s_ready and e_ok is False) else "OK")
+if not bool(status.get("ready")):
+    print("OK")
+else:
+    try:
+        eng = json.load(open('artifacts/readiness/engineering_complete.json'))
+    except Exception:
+        print("FORGED")  # ready=true with missing/unreadable evidence
+        raise SystemExit(0)
+    print("OK" if eng.get("pass") is True else "FORGED")
 PY
 )
-  if [ "$CONTRADICTION" = "CONTRADICTION" ]; then
-    echo "FAIL: status.json claims ready=true while engineering_complete.json says pass=false"
+  if [ "$CONTRADICTION" != "OK" ]; then
+    echo "FAIL: status.json claims ready=true without affirmative engineering_complete pass=true evidence"
     FAIL=1
   fi
 fi
@@ -66,13 +71,20 @@ if [ "$VER_FILE" != "$CARGO_VER" ]; then
   FAIL=1
 fi
 
-if [ "$LOCK_VER" != "MISSING" ] && [ "$LOCK_VER" != "$VER_FILE" ] && [ "$LOCK_VER" != "PARSE_ERROR" ]; then
+# SOURCE_LOCK is a tracked provenance anchor: it must exist, parse, carry the
+# version, and match. All failure modes are hard failures.
+if [ "$LOCK_VER" = "MISSING" ] || [ "$LOCK_VER" = "PARSE_ERROR" ] || [ -z "$LOCK_VER" ]; then
+  echo "FAIL: SOURCE_LOCK.json ${LOCK_VER:-empty lumen_version} — provenance anchor must exist and parse; run scripts/source-lock.sh"
+  FAIL=1
+elif [ "$LOCK_VER" != "$VER_FILE" ]; then
   echo "FAIL: SOURCE_LOCK lumen_version ($LOCK_VER) != VERSION ($VER_FILE) — run scripts/source-lock.sh"
   FAIL=1
 fi
 
-if [ -n "$READY_VER" ] && [ "$READY_VER" != "MISSING" ] && [ "$READY_VER" != "$VER_FILE" ] && [ "$READY_VER" != "PARSE_ERROR" ]; then
-  echo "FAIL: readiness version ($READY_VER) != VERSION ($VER_FILE)"
+if [ "$READY_VER" != "MISSING" ] && [ "$READY_VER" != "PARSE_ERROR" ] && [ "$READY_VER" != "$VER_FILE" ]; then
+  # Empty means the file exists but carries no version stamp — since
+  # verify-readiness now always stamps one, absence is itself drift.
+  echo "FAIL: readiness version (${READY_VER:-unstamped}) != VERSION ($VER_FILE)"
   FAIL=1
 fi
 

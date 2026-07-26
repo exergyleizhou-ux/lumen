@@ -16,18 +16,33 @@ rejected_file="$(mktemp)"
 trap 'rm -f "$days_file" "$rejected_file"' EXIT
 
 # Anti-forgery contract: a journal only counts if it was committed close to the
-# day it claims to describe. A file first added to git more than GRACE days
-# after its filename date is a backfill and never counts. Files whose filename
-# date predates the repository's first commit are backfills by definition.
-# Uncommitted files count only while their filename date is within GRACE days
-# of today (a journal being written right now).
+# day it claims to describe — first git add (committer date) within GRACE days
+# AFTER the filename date, never before it, never in the future, never before
+# the repository existed, and never introduced by the burned 2026-07-25
+# backfill commit. Uncommitted files count only while their filename date is
+# within GRACE days of today (a journal being written right now).
+#
+# HONESTY NOTE: git author/committer dates are locally forgeable
+# (GIT_COMMITTER_DATE / git commit --date). This gate is a good-faith tripwire
+# against accidental or casual backfill, not a cryptographic security boundary
+# against a determined forger — that would need a trusted timestamp source
+# (e.g. server-side receive time of a pushed ref).
 GRACE_DAYS="${PRODUCTIVITY_GRACE_DAYS:-2}"
-REPO_BIRTH=$(cd "$ROOT" && git log --reverse --format=%ad --date=format:%Y-%m-%d 2>/dev/null | head -1 || echo "")
+REPO_BIRTH=$(cd "$ROOT" && git log --reverse --format=%cd --date=format:%Y-%m-%d 2>/dev/null | head -1 || echo "")
+# The commit that mass-created 14 simulated journals; anything it introduced
+# is permanently burned even if restored to the top-level journal/ dir.
+BURNED_ADD_COMMITS="ed8fca91"
 
 journal_date_ok() {
   local file="$1" fdate="$2"
-  local added
-  added=$(cd "$ROOT" && git log --diff-filter=A --format=%ad --date=format:%Y-%m-%d -- "${file#"$ROOT"/}" 2>/dev/null | tail -1 || echo "")
+  local added added_commit
+  added=$(cd "$ROOT" && git log --diff-filter=A --format=%cd --date=format:%Y-%m-%d -- "${file#"$ROOT"/}" 2>/dev/null | tail -1 || echo "")
+  added_commit=$(cd "$ROOT" && git log --diff-filter=A --format=%h -- "${file#"$ROOT"/}" 2>/dev/null | tail -1 || echo "")
+  for burned in $BURNED_ADD_COMMITS; do
+    if [[ -n "$added_commit" && "$added_commit" == "$burned"* ]]; then
+      return 1
+    fi
+  done
   python3 - "$fdate" "$added" "$REPO_BIRTH" "$GRACE_DAYS" <<'PY'
 import sys
 from datetime import date, timedelta
@@ -40,14 +55,18 @@ def parse(s):
         return None
 fdate, added, birth = parse(fdate_s), parse(added_s), parse(birth_s)
 grace = timedelta(days=int(grace_s))
+zero = timedelta(0)
 if fdate is None:
     raise SystemExit(1)
+if fdate > date.today():
+    raise SystemExit(1)  # claims a day that has not happened yet
 if birth is not None and fdate < birth:
     raise SystemExit(1)  # claims a day before the repo existed
 if added is None:
     # not committed yet: only acceptable for a journal being written now
-    raise SystemExit(0 if date.today() - fdate <= grace else 1)
-raise SystemExit(0 if added - fdate <= grace else 1)
+    raise SystemExit(0 if zero <= date.today() - fdate <= grace else 1)
+# Two-sided: a file first added BEFORE the day it claims is also forged.
+raise SystemExit(0 if zero <= added - fdate <= grace else 1)
 PY
 }
 

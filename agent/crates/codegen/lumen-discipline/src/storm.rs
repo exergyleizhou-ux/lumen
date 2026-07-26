@@ -78,16 +78,20 @@ impl StormBreaker {
             self.count = 1;
         }
         if self.count >= self.threshold {
-            let msg = format!(
+            if self.stop_after_nudge {
+                return Some(StormAction::StopBatch(format!(
+                    "<storm-breaker severity=\"stop\">\nTool `{tool}` failed {n} times with the \
+                     same error signature. STOP: do not call `{tool}` again this turn. Choose a \
+                     different tool or approach, or ask the user how to proceed.\n</storm-breaker>",
+                    n = self.count
+                )));
+            }
+            return Some(StormAction::Nudge(format!(
                 "<storm-breaker>\nTool `{tool}` failed {n} times with the same error signature. \
                  Stop retrying the same call. Change strategy (different tool, smaller scope, \
                  or ask the user).\n</storm-breaker>",
                 n = self.count
-            );
-            if self.stop_after_nudge {
-                return Some(StormAction::StopBatch(msg));
-            }
-            return Some(StormAction::Nudge(msg));
+            )));
         }
         None
     }
@@ -190,6 +194,21 @@ mod tests {
         s.on_tool_error("bash", "e");
         s.on_tool_success("bash");
         assert_eq!(s.count(), 0);
+    }
+
+    #[test]
+    fn stop_after_nudge_produces_distinct_stopbatch() {
+        let mut s = StormBreaker::new(3);
+        s.stop_after_nudge = true;
+        s.on_tool_error("bash", "e");
+        s.on_tool_error("bash", "e");
+        match s.on_tool_error("bash", "e").expect("threshold hit") {
+            StormAction::StopBatch(m) => {
+                assert!(m.contains("severity=\"stop\""));
+                assert!(m.contains("do not call `bash` again this turn"));
+            }
+            StormAction::Nudge(_) => panic!("expected StopBatch"),
+        }
     }
 
     #[test]

@@ -10,6 +10,9 @@ echo "=== lumen-guard unit tests (includes masterplan smoke cases) ==="
 (
   cd "$ROOT/agent"
   cargo test -p lumen-guard --lib -- --nocapture
+  # The LUMEN_UNSAFE bypass test lives in its own test binary (env-var race
+  # isolation) — --lib alone would silently skip it.
+  cargo test -p lumen-guard --test unsafe_mode -- --nocapture
 )
 
 echo "=== structural: guard wired into permission manager ==="

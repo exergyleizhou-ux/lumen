@@ -123,3 +123,6 @@ jobs:
 
       - name: version consistency
         run: bash scripts/check-version-consistency.sh
+
+      - name: artifact freshness (SOURCE_LOCK critical files)
+        run: bash scripts/check-artifact-freshness.sh

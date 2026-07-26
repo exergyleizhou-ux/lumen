@@ -17,6 +17,7 @@ echo "=== 1) lumen-guard (security parity B/F) ==="
 (
   cd "$ROOT/agent"
   cargo test -p lumen-guard --lib --quiet
+  cargo test -p lumen-guard --test unsafe_mode --quiet
 )
 
 echo "=== 2) lumen-discipline (S07–S09) ==="

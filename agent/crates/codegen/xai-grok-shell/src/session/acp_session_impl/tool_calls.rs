@@ -2079,24 +2079,28 @@ impl SessionActor {
         // re-reading the same file) are invisible to the model otherwise.
         // Throttled to exact threshold multiples so a long repeat run does
         // not append a reminder after every call.
-        let mut repeat_nudge: Option<ConversationItem> = None;
         let args_str = tool_parsed_args.to_string();
-        if let Some(action) = self
-            .repeat_success_guard
-            .borrow_mut()
-            .on_tool_success(effective_tool_name, &args_str)
-        {
-            use lumen_discipline::RepeatSuccessAction;
-            let RepeatSuccessAction::Nudge(ref msg) = action;
-            tracing::warn!(
-                session_id = % self.session_info.id.0, tool_name = effective_tool_name,
-                "repeat-success-guard: {}", msg
-            );
-            let guard = self.repeat_success_guard.borrow();
-            if guard.threshold > 0 && guard.count() % guard.threshold == 0 {
-                repeat_nudge = Some(ConversationItem::system_reminder(msg.clone()));
+        let repeat_nudge: Option<ConversationItem> = {
+            // Single RefMut for both the call and the count/threshold reads.
+            // An if-let on `self.repeat_success_guard.borrow_mut().on_tool_success(..)`
+            // keeps the scrutinee RefMut alive for the whole then-block (edition
+            // 2024), so any re-borrow inside would panic at runtime — and with
+            // panic="abort" that kills the whole process.
+            let mut guard = self.repeat_success_guard.borrow_mut();
+            match guard.on_tool_success(effective_tool_name, &args_str) {
+                Some(action) => {
+                    use lumen_discipline::RepeatSuccessAction;
+                    let RepeatSuccessAction::Nudge(msg) = action;
+                    tracing::warn!(
+                        session_id = % self.session_info.id.0, tool_name = effective_tool_name,
+                        "repeat-success-guard: {}", msg
+                    );
+                    (guard.threshold > 0 && guard.count() % guard.threshold == 0)
+                        .then(|| ConversationItem::system_reminder(msg))
+                }
+                None => None,
             }
-        }
+        };
         let path_rewriter = self.path_rewriter();
         let tool_meta = {
             let state = self.mcp_state.lock().await;
@@ -2361,13 +2365,23 @@ impl SessionActor {
             // Non-Expert sessions must still see the storm-breaker text —
             // dropping it here left ordinary DeepSeek sessions with no storm
             // protection at all (the action only ever reached the log).
-            // Throttle to threshold multiples so a persistent storm nudges
-            // at 3, 6, 9 … failures instead of after every one.
             use lumen_discipline::StormAction;
-            let (StormAction::Nudge(msg) | StormAction::StopBatch(msg)) = action;
-            let breaker = self.storm_breaker.borrow();
-            if breaker.threshold > 0 && breaker.count() % breaker.threshold == 0 {
-                return vec![ConversationItem::system_reminder(msg)];
+            match action {
+                // Nudge: throttle to threshold multiples so a persistent storm
+                // nudges at 3, 6, 9 … failures instead of after every one.
+                StormAction::Nudge(msg) => {
+                    let breaker = self.storm_breaker.borrow();
+                    if breaker.threshold > 0 && breaker.count() % breaker.threshold == 0 {
+                        return vec![ConversationItem::system_reminder(msg)];
+                    }
+                }
+                // StopBatch (LUMEN_STORM_STOP=1): the strongest directive —
+                // re-emitted on EVERY failure past the threshold, never
+                // throttled, so opting in is behaviorally different from the
+                // default nudge.
+                StormAction::StopBatch(msg) => {
+                    return vec![ConversationItem::system_reminder(msg)];
+                }
             }
         }
         vec![]

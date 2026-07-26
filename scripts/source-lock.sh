@@ -12,7 +12,7 @@ from pathlib import Path
 
 root = Path(".")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-version = Path("VERSION").read_text().strip()
+version = Path("VERSION").read_text().strip() if Path("VERSION").is_file() else None
 paths = [
     ".gitleaksignore",
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs",
