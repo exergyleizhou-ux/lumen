@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 # Refresh SOURCE_LOCK.json for the monorepo (FINAL-2.0 S0).
+#
+# ORDERING (this bit us three times on 2026-07-26/27): the lock records the
+# CURRENT git HEAD, and committing the lock creates a NEW commit — so a lock
+# that is committed always trails HEAD by one and `verify-readiness` reports
+# `source_lock: HEAD drift`. There is no way to commit a lock that names its
+# own commit. The workflow that actually works:
+#
+#   1. commit all real changes            (HEAD = X)
+#   2. scripts/install-local.sh           (binary stamped X, needs clean tree)
+#   3. scripts/source-lock.sh             (lock records X, LEAVE IT UNCOMMITTED)
+#   4. scripts/verify-readiness.sh        (source_lock passes: lock X == HEAD X)
+#   5. commit the lock afterwards         (it now trails by one until step 3
+#                                          regenerates it in the next round)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

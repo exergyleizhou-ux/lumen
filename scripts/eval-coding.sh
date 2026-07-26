@@ -21,18 +21,28 @@ echo "Tasks dir: $TASKS"
 echo ""
 
 # Portable run: capture stdout+stderr and exit code without GNU timeout.
+#
+# Runs in a COPY of the task workspace, never the source. Building in place
+# leaves artifacts (Go/Rust caches, __pycache__) in evals/tasks/, and when the
+# live eval runs in the same round its agent-fixed sources leaked back here —
+# the reverse gate then reported "1 tasks already pass" for a workspace that is
+# still broken in git. A gate that checks whether fixtures are broken must not
+# be able to break them.
 run_capture() {
   local dir="$1"
   shift
-  local outf ec
+  local outf ec sandbox
   outf="$(mktemp)"
+  sandbox="$(mktemp -d "${TMPDIR:-/tmp}/eval-harness.XXXXXX")"
+  cp -R "$dir/." "$sandbox/" 2>/dev/null || true
   set +e
   (
-    cd "$dir" || exit 127
+    cd "$sandbox" || exit 127
     "$@"
   ) >"$outf" 2>&1
   ec=$?
   set -e
+  rm -rf "$sandbox"
   cat "$outf"
   rm -f "$outf"
   return "$ec"

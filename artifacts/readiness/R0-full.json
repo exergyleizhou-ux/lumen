@@ -4,7 +4,7 @@
   "pass": true,
   "scope": "full_contract",
   "binary": "/Users/lei/code/lumen/agent/target/release/lumen",
-  "binary_sha256": "b19d1355ce53f5a7680c80520a99f569163d760b351745e443f507042b68f902",
+  "binary_sha256": "ffe717372bad502e3051a9e9409c3ab1013707c20318d9716e9712ee07bd8e61",
   "signed": {
     "R1_R2_session_markers": true,
     "R4_after_seq_bounded_replay": "acp_handler last_applied_event_seq skip + reconnect suite present; leader death recovery drives reconnect replay",
@@ -18,6 +18,6 @@
     "GROK_BINARY=\u2026 cargo test -p xai-grok-shell --test test_subagent_orphan_reconcile -- --ignored"
   ],
   "residual_optional_e2e": [],
-  "generated_at": "2026-07-26T17:19:06Z",
+  "generated_at": "2026-07-26T17:38:17Z",
   "note": "R0 residuals R4/R6/R7 signed with real binary e2e + shipped after_seq gate in acp_handler."
 }

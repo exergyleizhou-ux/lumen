@@ -1,27 +1,28 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T17:29:58Z",
+  "generated_at": "2026-07-26T17:47:44Z",
   "version": "0.1.250",
-  "head_short": "8bfaa41e",
+  "head_short": "aee7c007",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "0e5f286c3c39ba1a7384b011d66ca56dac084ee33f374e7b82f5fe0ca9735560",
-  "binary_sha256": "b19d1355ce53f5a7680c80520a99f569163d760b351745e443f507042b68f902",
+  "source_lock_sha256": "ce161bb3125751cd3d5ba251197285745a56e763713bc2407b43c51dc6fd91e1",
+  "binary_sha256": "ffe717372bad502e3051a9e9409c3ab1013707c20318d9716e9712ee07bd8e61",
   "blockers": [
-    "source_lock:HEAD drift lock=2c9e441 current=8bfaa41",
+    "eval_harness:exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval ",
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=True blockers=['source_lock_head_mismatch:lock=2c9e441 head=8bfaa41', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:source_lock'] wrote /User"
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:eval_harness'] wrote /Users/lei/code/lum"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=b19d1355ce53"
+      "detail": "sha256=ffe717372bad"
     },
     {
       "id": "gitleaks",
@@ -55,9 +56,9 @@
     },
     {
       "id": "eval_harness",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval "
     },
     {
       "id": "verify_cli",
@@ -109,9 +110,9 @@
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": true,
-      "result": "PASS",
-      "detail": "elapsed>=3600, resume_turns>0, binary-bound"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
     },
     {
       "id": "R0_full",
@@ -147,13 +148,13 @@
       "id": "binary_tuple_post",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=b19d1355ce53"
+      "detail": "sha256=ffe717372bad"
     },
     {
       "id": "source_lock",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "HEAD drift lock=2c9e441 current=8bfaa41"
+      "pass": true,
+      "result": "PASS",
+      "detail": "head=aee7c00 files=32"
     },
     {
       "id": "M5_10_min_stranger",
@@ -171,10 +172,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=True blockers=['source_lock_head_mismatch:lock=2c9e441 head=8bfaa41', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:source_lock'] wrote /User"
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:eval_harness'] wrote /Users/lei/code/lum"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-07-26T17:29:58Z",
+  "reconciled_at": "2026-07-26T17:47:44Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
