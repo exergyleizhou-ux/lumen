@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | c81345a wip(tests): isolate unit tests from real ~/.claude; segment-aware Bash allow; scope test for cargo check |
+| Last non-bot commit | 356fa84 docs: the Lumen-customization x upstream-assumption collision surface |
 
 ---
 
