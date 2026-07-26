@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 49e93ec fix(verify): auto edit-verify never ran in production — session cwd was not passed to the tool registry |
+| Last non-bot commit | 3eaeef3 ci: gate the whole xai-grok-workspace crate; document collision class 4 |
 
 ---
 
