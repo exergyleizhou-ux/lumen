@@ -1,9 +1,16 @@
 # Lumen 增强规格书 — 给 Codex 的执行指令
 
+> ⚠️ **状态快照过期提示（2026-07-26）**：下方"当前状态"表停在 2026-07-18 的审计。
+> 此后已发生：F 发布流水线已合入（`3cc2f98e`，`scripts/release.sh` + release.yml 四平台签名链已存在）；
+> `lumen update` 版本矛盾与 macOS 沙箱网络隔离 no-op 均已由 `6d910804` 修复
+> （`child_net.rs` 现走 `sandbox-exec` deny network*）；自有发布 remote 即
+> `origin=exergyleizhou-ux/lumen`。仍然真实未做的是 Phase C 多模型协作收尾与 D 桌面 / E IM。
+> 本文件保留为任务规格参考，勿把下方旧状态表当现状。
+
 > 本文档写给 Codex agent，让它能独立完成每个增强任务。
 > 每个任务包含：目标、参考实现、文件位置、验收标准。
 
-## 当前状态（2026-07-18）— 更新于 P1 合入后
+## 当前状态（2026-07-18）— 更新于 P1 合入后（已过期，见顶部提示）
 
 审计结论：**DONE_WITH_CONCERNS**。29 条验收标准中严格完成 7 条（24.14%）。
 
@@ -30,14 +37,11 @@
 1. ~~测试编译失败~~ ✅ 已修复（commit `a74305f`）：3 个测试文件补了 `delivery_state`/`repeat_success_guard`/`storm_breaker` 字段
 2. ~~P1 未合入~~ ✅ 已合入（commit `877ecbd`）：truth hardening 24 文件 +816/-108，编译通过，测试 76/76
 
-### 已知问题（待 Codex 修复）
-1. `lumen update --check --json` 报告 `currentVersion=0.2.0-dev` 与 `lumen --version` 的 `0.1.220-alpha.4` 矛盾
-2. macOS 沙箱网络隔离是 no-op（`xai-grok-sandbox/src/child_net.rs:108-110`）
-3. 无 Lumen 自有发布 remote，唯一 remote 是 `xai-org/grok-build`
-4. F 分支发布基础设施未合入，缺 `scripts/release.sh`、version bump、CHANGELOG 自动更新
-2. `lumen update --check --json` 报告 `currentVersion=0.2.0-dev` 与 `lumen --version` 的 `0.1.220-alpha.4` 矛盾
-3. macOS 沙箱网络隔离是 no-op（`xai-grok-sandbox/src/child_net.rs:108-110`）
-4. 无 Lumen 自有发布 remote，唯一 remote 是 `xai-org/grok-build`
+### 已知问题（历史记录 — 截至 2026-07-26 全部已修复）
+1. ~~`lumen update --check --json` 版本矛盾~~ ✅ `6d910804` 修复
+2. ~~macOS 沙箱网络隔离 no-op~~ ✅ `6d910804` 修复（`child_net.rs` 走 `sandbox-exec` deny network*；非 mac/linux 平台仍无隔离，见 docs）
+3. ~~无 Lumen 自有发布 remote~~ ✅ `origin=exergyleizhou-ux/lumen`
+4. ~~F 发布基础设施未合入~~ ✅ `3cc2f98e` 合入（`scripts/release.sh` + release.yml）
 
 ### 建议合入顺序
 1. 修复 main 中 3 个过期 `SessionActor` 测试构造器（补 `delivery_state`/`repeat_success_guard`/`storm_breaker`）

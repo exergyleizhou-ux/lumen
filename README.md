@@ -17,7 +17,7 @@ The earlier **Go** Lumen line that previously occupied GitHub `main` is preserve
 - branch: `archive/go-main` (tip was `dd8d71c`, includes Go v1.x releases)
 - historical tags such as `v1.1.2` remain available for old release assets
 
-Do not treat Go tags as the current shipping line. Current product version is in root `VERSION` (`0.1.220-alpha.4`).
+Do not treat Go tags as the current shipping line. The current product version is whatever the root `VERSION` file says (single source of truth; do not hardcode it here).
 
 ## 快速开始
 

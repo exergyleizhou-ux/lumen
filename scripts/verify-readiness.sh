@@ -105,27 +105,31 @@ run_script eval_harness "$ROOT/scripts/eval-coding.sh"
 run_script verify_cli "$ROOT/scripts/smoke-verify.sh"
 run_script verticals "$ROOT/scripts/doctor-verticals.sh"
 
+# L0-L3 need a live DEEPSEEK_API_KEY. L4/L5 run against the local fault-server
+# fixture with a deliberately fake key (see smoke-deepseek-l4.sh/l5.sh), so
+# they are deterministic contracts that must run whenever the binary is valid.
 if [[ -n "${DEEPSEEK_API_KEY:-}" && $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
   run_script L0_connect "$ROOT/scripts/smoke-deepseek.sh"
   run_script L1_tool_calls "$ROOT/scripts/smoke-deepseek-agent.sh"
   run_script L2_min_e2e "$ROOT/scripts/smoke-deepseek-l2.sh"
   run_script L3_multi_tool "$ROOT/scripts/smoke-deepseek-l3.sh"
-  run_script L4_fault_cancel "$ROOT/scripts/smoke-deepseek-l4.sh"
-  run_script L5_long_session "$ROOT/scripts/smoke-deepseek-l5.sh"
-  record_l5_soak_contract
 elif [[ -z "${DEEPSEEK_API_KEY:-}" ]]; then
   record L0_connect SKIP "no DEEPSEEK_API_KEY"
   record L1_tool_calls SKIP "no DEEPSEEK_API_KEY"
   record L2_min_e2e SKIP "no DEEPSEEK_API_KEY"
   record L3_multi_tool SKIP "no DEEPSEEK_API_KEY"
-  record L4_fault_cancel SKIP "no DEEPSEEK_API_KEY"
-  record L5_long_session SKIP "no DEEPSEEK_API_KEY"
-  record L5_one_hour_soak SKIP "no DEEPSEEK_API_KEY"
 else
   record L0_connect SKIP "binary tuple preflight failed"
   record L1_tool_calls SKIP "binary tuple preflight failed"
   record L2_min_e2e SKIP "binary tuple preflight failed"
   record L3_multi_tool SKIP "binary tuple preflight failed"
+fi
+
+if [[ $BINARY_TUPLE_PRE_OK -eq 1 ]]; then
+  run_script L4_fault_cancel "$ROOT/scripts/smoke-deepseek-l4.sh"
+  run_script L5_long_session "$ROOT/scripts/smoke-deepseek-l5.sh"
+  record_l5_soak_contract
+else
   record L4_fault_cancel SKIP "binary tuple preflight failed"
   record L5_long_session SKIP "binary tuple preflight failed"
   record L5_one_hour_soak SKIP "binary tuple preflight failed"
@@ -337,9 +341,20 @@ for cand in [repo / "agent" / "target" / "release" / "lumen", Path.home() / ".lo
         bin_sha = hashlib.sha256(cand.read_bytes()).hexdigest()
         break
 
+version_file = repo / "VERSION"
+version = version_file.read_text().strip() if version_file.is_file() else None
+head = None
+try:
+    import subprocess
+    head = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=repo, text=True).strip()
+except Exception:
+    pass
+
 status = {
     "schema_version": 1,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "version": version,
+    "head_short": head,
     "ready": ready,
     "state": "READY" if ready else "BLOCKED",
     "can_tool_call": can_tool,
@@ -358,6 +373,8 @@ Path(sys.argv[2]).write_text(json.dumps(status, indent=2) + "\n")
 eng = {
     "schema_version": 1,
     "check_id": "engineering_complete",
+    "version": version,
+    "head_short": head,
     "pass": eng_ok,
     "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
     "auto_blockers": auto_blockers,

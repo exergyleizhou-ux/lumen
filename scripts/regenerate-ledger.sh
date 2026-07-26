@@ -1,42 +1,65 @@
 #!/usr/bin/env bash
 # regenerate-ledger.sh — auto-generate CURRENT_STATE_LEDGER.md from live git state.
-# Called by CI on every push to main. Never requires manual editing.
+# Called by CI on every push to main (fetch-depth: 0 required so origin/* refs exist).
+# Content is deliberately timestamp-free and HEAD-free so the CI "commit if
+# changed" step only commits when a fact actually changed (no bot noise).
 set -euo pipefail
 
 REPO="${1:-$(git rev-parse --show-toplevel)}"
 cd "$REPO"
 
-HEAD=$(git rev-parse HEAD)
-HEAD_SHORT=$(git rev-parse --short HEAD)
-NOW=$(date -u +"%Y-%m-%d %H:%M UTC")
-BRANCH_COUNT=$(git branch | wc -l | tr -d ' ')
 WORKTREE_COUNT=$(git worktree list --porcelain | grep -c '^worktree ' || echo 0)
 
-# Count branches in/not in main
-IN_MAIN=0
+# Branch inventory: remote branches on origin (the shared truth), not local
+# branches — in a CI checkout only main exists locally, which used to make
+# this table permanently empty.
+MAIN_REF="origin/main"
+git rev-parse --verify -q "$MAIN_REF" >/dev/null || MAIN_REF="main"
+
+BRANCH_TOTAL=0
 NOT_IN_MAIN=0
 BRANCH_TABLE=""
-
-for b in $(git branch --format='%(refname:short)'); do
-  tracking=$(git branch --list "$b" --format='%(upstream:short)' 2>/dev/null || echo "—")
-  head_short=$(git rev-parse --short "$b" 2>/dev/null || echo "N/A")
-  if git merge-base --is-ancestor "$b" main 2>/dev/null; then
-    status="✅ YES"
-    IN_MAIN=$((IN_MAIN + 1))
+while IFS= read -r b; do
+  case "$b" in
+    ""|origin|origin/HEAD*|origin/main) continue ;;
+  esac
+  BRANCH_TOTAL=$((BRANCH_TOTAL + 1))
+  if git merge-base --is-ancestor "$b" "$MAIN_REF" 2>/dev/null; then
+    :
   else
-    status="❌ NO"
     NOT_IN_MAIN=$((NOT_IN_MAIN + 1))
-    ahead=$(git rev-list --count main.."$b" 2>/dev/null || echo "?")
-    BRANCH_TABLE="${BRANCH_TABLE}| $b | $head_short | $tracking | $status | $ahead |\n"
+    head_short=$(git rev-parse --short "$b" 2>/dev/null || echo "N/A")
+    ahead=$(git rev-list --count "$MAIN_REF".."$b" 2>/dev/null || echo "?")
+    BRANCH_TABLE="${BRANCH_TABLE}| $b | $head_short | $ahead |\n"
   fi
-done
+done < <(git branch -r --format='%(refname:short)' 2>/dev/null)
+IN_MAIN=$((BRANCH_TOTAL - NOT_IN_MAIN))
+
+VERSION_STR=$(tr -d ' \n' < VERSION 2>/dev/null || echo "unknown")
+
+READINESS_LINE="no artifacts/readiness/status.json"
+if [ -f artifacts/readiness/status.json ]; then
+  READINESS_LINE=$(python3 - <<'PY' 2>/dev/null || echo "status.json unreadable"
+import json
+s = json.load(open('artifacts/readiness/status.json'))
+state = s.get("state", "?")
+ready = s.get("ready")
+blockers = s.get("blockers") or []
+eng = s.get("engineering_complete")
+print(f"state={state} ready={ready} engineering_complete={eng} blockers={len(blockers)}")
+PY
+)
+fi
+
+LAST_HUMAN_COMMIT=$(git log --format='%h %s' --author-date-order \
+  --invert-grep --grep='auto-regenerate CURRENT_STATE_LEDGER' -1 2>/dev/null || echo "?")
 
 cat > CURRENT_STATE_LEDGER.md << EOF
-# Lumen Current State Ledger — Phase 0
+# Lumen Current State Ledger
 
-**Generated**: $NOW
-**HEAD**: $HEAD_SHORT
-**Auto-generated**: by CI \`regenerate-ledger.sh\` on push to main
+**Auto-generated** by CI \`regenerate-ledger.sh\` on push to main. All facts
+below are computed from git and readiness artifacts — nothing is hand-written.
+For the generation date, see the last ledger commit in \`git log\`.
 
 ---
 
@@ -44,33 +67,29 @@ cat > CURRENT_STATE_LEDGER.md << EOF
 
 | Question | Answer |
 |---|---|
-| Active git worktrees | **$WORKTREE_COUNT** |
-| Local branches | **$BRANCH_COUNT** |
-| Branches fully in main | **$IN_MAIN of $BRANCH_COUNT** |
-| Branches NOT in main | **$NOT_IN_MAIN of $BRANCH_COUNT** |
-| Current HEAD | $HEAD_SHORT |
+| Version (root VERSION) | **$VERSION_STR** |
+| Readiness | $READINESS_LINE |
+| Active git worktrees (this checkout) | $WORKTREE_COUNT |
+| Remote branches on origin (excl. main) | **$BRANCH_TOTAL** |
+| … fully merged into main | $IN_MAIN |
+| … NOT in main | **$NOT_IN_MAIN** |
+| Last non-bot commit | $LAST_HUMAN_COMMIT |
 
 ---
 
-## Branches NOT in Main
+## Remote Branches NOT in Main
 
-| Branch | HEAD | Tracking | In main? | Commits ahead |
-|---|---|---|---|---|
+| Branch | HEAD | Commits ahead |
+|---|---|---|
 $(echo -e "$BRANCH_TABLE")
 
----
-
-## Key Facts
-
-- Cache hardening: ✅ merged into main (\`dfef497f\`)
-- Expert E2/E3: ✅ all 5 key commits in main
-- TruthSnapshot: ✅ foundation in main; runtime callers exist
-- Science fusion: codex/science-fusion-full has ~30 unmerged commits
-- Windows build: ✅ verified (MSVC, 138 core tests)
+Branches listed here either carry unmerged work or are stale (e.g. the
+archived 2026-06 Go-era branches). See docs/go-era-branch-map.md for the
+Go-branch → Rust-backlog mapping.
 
 ---
 
-*This file is auto-generated. Do not edit manually. Last update: $NOW*
+*This file is auto-generated. Do not edit manually.*
 EOF
 
-echo "Ledger regenerated at HEAD $HEAD_SHORT"
+echo "Ledger regenerated: version=$VERSION_STR branches=$BRANCH_TOTAL not_in_main=$NOT_IN_MAIN"

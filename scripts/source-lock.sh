@@ -12,6 +12,7 @@ from pathlib import Path
 
 root = Path(".")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+version = Path("VERSION").read_text().strip()
 paths = [
     ".gitleaksignore",
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs",
@@ -65,6 +66,7 @@ lock = {
     "schema_version": 1,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "monorepo": {"git_head": head, "git_short": head[:7]},
+    "lumen_version": version,
     "upstream_pin": {
         "doc": "agent/UPSTREAM.md",
         "source": "xai-org/grok-build (local Desktop pin)",
