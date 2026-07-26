@@ -193,7 +193,6 @@ fn is_safe_command_words_str(cmd: &str) -> bool {
         || matches_command_prefix(cmd, "git ls-files")
         || matches_command_prefix(cmd, "git show")
         || matches_command_prefix(cmd, "git rev-parse")
-        || matches_command_prefix(cmd, "cargo check")
         || matches_command_prefix(cmd, "whoami")
         || matches_command_prefix(cmd, "hostname")
         || matches_command_prefix(cmd, "uptime")
@@ -243,7 +242,6 @@ const ALWAYS_SAFE_COMMANDS: &[&str] = &[
     "grep",
     "rg",
     // Build/check commands (read-only)
-    "cargo check",
     // Kubernetes read-only commands
     "kubectl get",
     "kubectl logs",
@@ -3237,9 +3235,10 @@ mod tests {
         assert!(is_safe_command("bin/explorer ls"));
         assert!(is_safe_command("bin/explorer ls /some/path"));
 
-        // cargo check
-        assert!(is_safe_command("cargo check"));
-        assert!(is_safe_command("cargo check --workspace"));
+        // cargo check runs build scripts and proc-macros — arbitrary code
+        // execution from the checked-out repo, so it is never auto-safe.
+        assert!(!is_safe_command("cargo check"));
+        assert!(!is_safe_command("cargo check --workspace"));
 
         // Commands with cd prefix should work
         assert!(is_safe_command("cd /some/path && ls"));

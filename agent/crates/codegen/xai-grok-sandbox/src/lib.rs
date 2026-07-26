@@ -247,6 +247,9 @@ pub fn bwrap_reexec_command(
     let self_exe = std::env::current_exe().ok()?;
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cmd = std::process::Command::new("bwrap");
+    // Drop every capability in the re-exec'd child: a sandbox that keeps
+    // ambient caps can undo its own bind mounts.
+    cmd.arg("--cap-drop").arg("ALL");
     cmd.arg("--bind").arg("/").arg("/");
     for path in deny_write {
         if Path::new(path).exists() {
