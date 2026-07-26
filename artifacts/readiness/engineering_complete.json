@@ -2,17 +2,17 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "39042268",
+  "head_short": "f4e7448d",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
     "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
-    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 0.1.250 (3eaeef33) installed=lumen 0.1.250 (c34cf278) ",
-    "source_lock:HEAD drift lock=cc7993d current=3904226",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=cc7993d head=3904226', 'binary_version_mismatch', 'binary_head_mismatch:expected=3904226', 'm5_onboarding"
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD f4e7448d: lumen 0.1.250 (2a661a49) ",
+    "source_lock:HEAD drift lock=13e4f9a current=f4e7448",
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=13e4f9a head=f4e7448', 'binary_head_mismatch:expected=f4e7448', 'm5_onboarding_semantics_invalid', 'statu"
   ],
   "can_tool_call": true,
-  "source_lock_sha256": "2850dde45aad826533ddf33b6fc0e6309e41bd6f468978d8fc1154915c7e7619",
-  "binary_sha256": "5543989cd9b3ebe839c401173b81e804c9154c3055e8340f3033f4c063680d51",
-  "generated_at": "2026-07-26T14:45:42Z"
+  "source_lock_sha256": "34d3d2cca9b6b486db3ece6cc779ece5433b34f8f82213add7a3952f9f2dfea2",
+  "binary_sha256": "163e9e184adfb393012302a1a785d564a40590274073d99f1c2fc1813f26fa52",
+  "generated_at": "2026-07-26T16:09:26Z"
 }
