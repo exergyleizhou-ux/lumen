@@ -33,14 +33,17 @@ echo ""
 
 # Find all Rust test files that contain async test patterns
 # Focus on e2e and integration test directories
-find "$REPO_ROOT/agent" -name "*.rs" -path "*/tests/*" -o -name "*.rs" -path "*/e2e*" | while IFS= read -r file; do
+# NOTE: process substitution (not `find | while`) so EXIT_CODE/VACUOUS_COUNT
+# survive the loop — the old pipeline ran the loop in a subshell and this
+# script always exited 0 no matter what it found.
+while IFS= read -r file; do
     # Only check files with async test constructs
     if ! grep -q 'with_local_set\|tokio::test\|#\[tokio::test' "$file" 2>/dev/null; then
         continue
     fi
 
-    with_local_count=$(grep -c 'with_local_set' "$file" 2>/dev/null || echo "0")
-    await_count=$(grep -c '\.await' "$file" 2>/dev/null || echo "0")
+    with_local_count=$(grep -c 'with_local_set' "$file" 2>/dev/null || true)
+    await_count=$(grep -c '\.await' "$file" 2>/dev/null || true)
 
     # Normalize: strip whitespace
     with_local_count=$(echo "$with_local_count" | tr -d '[:space:]')
@@ -61,12 +64,12 @@ find "$REPO_ROOT/agent" -name "*.rs" -path "*/tests/*" -o -name "*.rs" -path "*/
         VACUOUS_COUNT=$((VACUOUS_COUNT + 1))
         EXIT_CODE=1
     fi
-done
+done < <(find "$REPO_ROOT/agent" \( -name "*.rs" -path "*/tests/*" \) -o \( -name "*.rs" -path "*/e2e*" \))
 
 # Also check for the specific pattern: `with_local_set(...)` followed by `;` without `.await`
 echo ""
 echo "--- Deep scan: with_local_set without .await ---"
-grep -rn 'with_local_set' "$REPO_ROOT/agent" --include='*.rs' 2>/dev/null | while IFS= read -r line; do
+while IFS= read -r line; do
     # Check if the same line has `.await` somewhere (rough)
     if ! echo "$line" | grep -q '\.await'; then
         file=$(echo "$line" | cut -d: -f1)
@@ -79,7 +82,7 @@ grep -rn 'with_local_set' "$REPO_ROOT/agent" --include='*.rs' 2>/dev/null | whil
             echo ""
         fi
     fi
-done
+done < <(grep -rn 'with_local_set' "$REPO_ROOT/agent" --include='*.rs' 2>/dev/null)
 
 echo ""
 if [ "$EXIT_CODE" -eq 0 ]; then

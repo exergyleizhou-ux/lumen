@@ -61,3 +61,65 @@ jobs:
           cargo test -p xai-grok-shell --lib zero_http -- --test-threads=1
           cargo test -p xai-grok-shell --lib dual_two -- --test-threads=1
           cargo test -p xai-grok-shell --lib session::expert:: -- --test-threads=1
+
+  lumen-crates:
+    name: Lumen crates (guard/discipline/verify tests + clippy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            agent/target
+          key: ${{ runner.os }}-cargo-lumen-${{ hashFiles('agent/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-lumen-
+
+      - name: Tests
+        working-directory: agent
+        run: cargo test -p lumen-guard -p lumen-discipline -p lumen-verify
+
+      - name: Clippy (deny warnings on Lumen-owned crates only)
+        working-directory: agent
+        run: cargo clippy -p lumen-guard -p lumen-discipline -p lumen-verify -- -D warnings
+
+  offline-gates:
+    name: Offline gates (defaults / shellcheck / vacuous-e2e / versions)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: assert-defaults
+        run: bash scripts/assert-defaults.sh
+
+      - name: shellcheck scripts
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y && sudo apt-get install -y shellcheck
+          fail=0
+          for f in scripts/*.sh; do
+            # gate on error-severity findings only; style parity with local baseline
+            if ! shellcheck -S error "$f"; then fail=1; fi
+          done
+          exit $fail
+
+      - name: vacuous e2e checker
+        run: bash scripts/check-vacuous-e2e.sh
+
+      - name: version consistency
+        run: bash scripts/check-version-consistency.sh

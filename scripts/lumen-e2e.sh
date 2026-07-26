@@ -60,13 +60,17 @@ echo ""
 echo -e "${YELLOW}Running e2e tests...${NC}"
 
 cd "$AGENT_DIR"
+# --test-threads is a libtest flag, so it must come AFTER `--` (passing it to
+# cargo itself is an immediate error). Capture the exit code with set -e off —
+# under `set -e` the old bare `EXIT=$?` line was unreachable on failure.
+set +e
 if [[ -n "$TEST_FILTER" ]]; then
-    cargo test --test-threads="$TEST_THREADS" -- "$TEST_FILTER" 2>&1
+    cargo test -- "$TEST_FILTER" --test-threads="$TEST_THREADS" 2>&1
 else
-    cargo test --test-threads="$TEST_THREADS" 2>&1
+    cargo test -- --test-threads="$TEST_THREADS" 2>&1
 fi
-
 EXIT=$?
+set -e
 echo ""
 if [[ $EXIT -eq 0 ]]; then
     echo -e "${GREEN}✓ All e2e tests passed${NC}"

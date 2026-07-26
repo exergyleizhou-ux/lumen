@@ -3,8 +3,8 @@
 # 0 = all gates pass. Non-0 = hard stop.
 set -euo pipefail
 
-SCRATCH="${1:-/var/folders/dn/_prdhdnn5l53lb71bhtx_n5w0000gn/T/grok-goal-b501dabee145/implementer}"
-REPO="/Users/lei/code/lumen"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
+SCRATCH="${1:-$(mktemp -d "${TMPDIR:-/tmp}/lumen-verify-goal.XXXXXX")}"
 mkdir -p "$SCRATCH"
 
 cd "$REPO"
@@ -39,23 +39,39 @@ echo "PASS: 0 SC10 errors"
 echo "=== 4. cargo test --workspace ==="
 cd "$REPO/agent"
 unset XAI_API_KEY GROK_API_KEY GROK_CODE_XAI_API_KEY DEEPSEEK_API_KEY KIMI_API_KEY KIMI_CODE_API_KEY OPENAI_API_KEY ANTHROPIC_API_KEY GROK_AUTH LUMEN_HOME GROK_HOME
-cargo test --workspace --offline 2>&1 > "$SCRATCH/test-full.log" || true
-FAILED=$(grep -c 'FAILED' "$SCRATCH/test-full.log" || true)
-IGNORED_NET=$(grep -c 'open_socket_allows_wss\|open_socket_allows_plaintext_ws_when_insecure_opt_in' "$SCRATCH/test-full.log" || true)
-if [ "$FAILED" -gt 0 ] && [ "$IGNORED_NET" -ne 2 ]; then
-  echo "FAIL: $FAILED test failures (non-network)"
-  grep 'FAILED' "$SCRATCH/test-full.log" | grep -v 'open_socket'
+# NOTE: `> log 2>&1` (both streams into the log). The old `2>&1 > log` sent
+# stderr to the terminal, so compile errors never reached the log and the
+# FAILED count was always 0 — the gate was vacuous. Gate on the cargo exit
+# code, not on grepping.
+set +e
+cargo test --workspace --offline > "$SCRATCH/test-full.log" 2>&1
+TEST_EC=$?
+set -e
+FAILED=$(grep -c '^test result: FAILED' "$SCRATCH/test-full.log" || true)
+if [ "$TEST_EC" -ne 0 ]; then
+  echo "FAIL: cargo test exit $TEST_EC ($FAILED failing suites)"
+  grep -E '^test result: FAILED|^error(\[|:)' "$SCRATCH/test-full.log" | head -20
   exit 1
 fi
-echo "PASS: test suite (ignored network tests: $IGNORED_NET)"
+echo "PASS: test suite (cargo exit 0, $(grep -c '^test result: ok' "$SCRATCH/test-full.log" || true) suites ok)"
 
 echo "=== 5. cargo clippy ==="
 cd "$REPO/agent"
-cargo clippy --workspace --offline 2>&1 > "$SCRATCH/clippy.log" || true
-CLIPPY_ERRS=$(grep -c 'error\[' "$SCRATCH/clippy.log" || true)
+# Same redirect fix as step 4. Errors gate (hard stop); warnings are
+# reported but do not gate (upstream pin carries style noise we refuse to
+# churn — see agent/UPSTREAM.md).
+set +e
+cargo clippy --workspace --offline > "$SCRATCH/clippy.log" 2>&1
+CLIPPY_EC=$?
+set -e
+CLIPPY_ERRS=$(grep -Ec '^error(\[|:)' "$SCRATCH/clippy.log" || true)
 CLIPPY_WARN=$(grep -c 'warning:' "$SCRATCH/clippy.log" || true)
-echo "cli
-ppy: $CLIPPY_ERRS errors, $CLIPPY_WARN warnings (captured, not gating)"
+if [ "$CLIPPY_EC" -ne 0 ] || [ "$CLIPPY_ERRS" -gt 0 ]; then
+  echo "FAIL: clippy exit $CLIPPY_EC, $CLIPPY_ERRS errors"
+  grep -E '^error(\[|:)' "$SCRATCH/clippy.log" | head -10
+  exit 1
+fi
+echo "PASS: clippy 0 errors ($CLIPPY_WARN warnings, warnings not gating)"
 
 echo "=== 6. cargo build --release ==="
 cd "$REPO/agent"
