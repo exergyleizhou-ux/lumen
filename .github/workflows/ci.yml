@@ -101,6 +101,22 @@ jobs:
         # fixed, so the WHOLE crate is gated now — no exclusion list to rot.
         run: cargo test -p xai-grok-workspace
 
+      - name: Shell crate (the agent main loop)
+        working-directory: agent
+        # 5155 tests, of which CI ran five Expert filters. The auto-verify
+        # four-layer breakage of 2026-07-26 happened entirely on this path
+        # with no gate watching. Baseline verified 5718/0 locally before
+        # gating (one red test was an env leak: a developer machine holding
+        # KIMI_CODE_API_KEY broke an auth-fallthrough assertion).
+        run: cargo test -p xai-grok-shell --lib
+
+      - name: Pager crate (the entire TUI / interaction layer)
+        working-directory: agent
+        # 7132 tests, zero CI coverage until now — the one layer the user
+        # actually touches. Baseline verified green locally (7132 passed /
+        # 0 failed / 10 ignored) before gating, so this starts honest.
+        run: cargo test -p xai-grok-pager --lib
+
       - name: Clippy (deny warnings on Lumen-owned crates only)
         working-directory: agent
         run: cargo clippy -p lumen-guard -p lumen-discipline -p lumen-verify -- -D warnings

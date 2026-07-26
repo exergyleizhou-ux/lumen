@@ -2599,6 +2599,13 @@ async fn cached_token_fallthrough_falls_to_grok_com_without_credentials() {
     let _legacy = EnvGuard::unset(LEGACY_XAI_API_KEY_ENV_VAR);
     let _deepseek = EnvGuard::unset("DEEPSEEK_API_KEY");
     let _openai = EnvGuard::unset("OPENAI_API_KEY");
+    // Every provider key the auth path can advertise must be cleared, not just
+    // the popular ones: a developer machine holding e.g. KIMI_CODE_API_KEY made
+    // this assert "xai.api_key" instead of interactive grok.com, so the test
+    // failed on real workstations and passed on bare CI.
+    let _kimi = EnvGuard::unset("KIMI_API_KEY");
+    let _kimi_code = EnvGuard::unset("KIMI_CODE_API_KEY");
+    let _grok_code = EnvGuard::unset("GROK_CODE_XAI_API_KEY");
     let agent = build_minimal_agent_for_tests();
     assert_eq!(
         agent
