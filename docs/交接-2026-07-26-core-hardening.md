@@ -58,9 +58,21 @@ eval 20/20、R0 端到端通过,只剩两个人类门。
    上游 e2e harness 注入 MockInferenceServer 的地方。结果 leader/R0 全部端到端测试
    **向真实 api.deepseek.com 发 prompt**,撞线上 401。修:`LUMEN_INFERENCE_BASE_URL`
    硬覆盖 + harness 强制注入 + 三态回归测试。**这是 R0 门挂的真因。**
-2. **edit→verify 多语言在产品里根本不存在**:`lumen-verify` 已支持 py/ts 且测试全绿,
-   但调用方 `verify_after_edit.rs` 自己又写了两处 `extension != "go" → return None`。
-   **由 dogfood 发现**(用 lumen 修真实 Python bug,发现什么验证都没跑)。
+2. **edit→verify 多语言在产品里根本不存在**:两层缺陷叠加。
+   (a) `lumen-verify` 已支持 py/ts 且测试全绿,但调用方 `verify_after_edit.rs`
+   自己又写了两处 `extension != "go" → return None`;
+   (b) 更外层 `workspace_ops.rs::call_tool` 把 `cwd_override` 写死 `None`,
+   而生产环境无人插入 `Cwd` 资源 → registry 的 `workspace_root` 恒为 `None`
+   → 钩子每次走空分支(**对所有语言,包括 Go**)。修:把 `WorkspaceSession::cwd()`
+   传下去。**由 dogfood 发现**(用 lumen 修真实 Python bug,发现什么验证都没跑)。
+
+   > **排查方法论的教训(比 bug 本身值钱)**:修好后我又连续三轮误判"还是没跑",
+   > 因为一直在 **stderr 日志**里找反馈——而它按设计只进**模型的工具结果**,
+   > 不进日志。最后靠两个直接证据定案:在产品路径打印 `run_after_edit` 返回值
+   > (`RESULT: Some(ok=false, steps=2)`,ruff+pytest 真的跑了并抓到语法错误),
+   > 以及让模型**逐字复述**工具返回(完整吐出 `[verify-after-edit]` 的 ruff 诊断)。
+   > **用间接信号代替直接证据,会让你把好功能判成坏的** —— 与第 2 类缺陷
+   > "把坏功能判成好的"正好互为镜像。
 3. **上游权限测试假设 guard 不存在**:见下节。
 
 ## 五、7 个躺了几周的红测试(全部修绿,422/422)
