@@ -91,18 +91,15 @@ jobs:
         working-directory: agent
         run: cargo test -p lumen-guard -p lumen-discipline -p lumen-verify
 
-      - name: Permission + folder-trust gate (the security seam)
+      - name: Workspace crate (permission / folder-trust / foreign-sessions)
         working-directory: agent
-        # The permission engine + folder-trust detector are where lumen-guard,
-        # session grants, the classifier and repo-config authority all meet —
-        # the core's most security-sensitive surface. Seven tests here were red
-        # for weeks unnoticed because only expert-gate ran in CI. This closes
-        # that gap. foreign_sessions::* is EXCLUDED on purpose: 15 pure-upstream
-        # session-DB importer tests are red since Day-0 import and tracked
-        # separately — do not let that noise mask a real permission regression.
-        run: |
-          cargo test -p xai-grok-workspace --lib permission::
-          cargo test -p xai-grok-workspace --lib folder_trust::
+        # xai-grok-workspace holds the core's most security-sensitive surface:
+        # the permission engine and folder-trust detector, where lumen-guard,
+        # session grants, the classifier and repo-config authority all meet.
+        # 22 tests in this crate were red for weeks unnoticed (7 permission,
+        # 15 foreign_sessions) because only expert-gate ran in CI. All are
+        # fixed, so the WHOLE crate is gated now — no exclusion list to rot.
+        run: cargo test -p xai-grok-workspace
 
       - name: Clippy (deny warnings on Lumen-owned crates only)
         working-directory: agent
