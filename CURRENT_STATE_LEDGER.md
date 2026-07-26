@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 093db75 fix(test-hygiene): contain BYOK defaults in hermetic harnesses (LUMEN_INFERENCE_BASE_URL) + guard property tests |
+| Last non-bot commit | b73d5b9 security(upstream-cherry): cargo check is not auto-safe; bwrap drops all capabilities |
 
 ---
 
