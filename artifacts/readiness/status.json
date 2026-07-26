@@ -1,28 +1,29 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T12:20:12Z",
+  "generated_at": "2026-07-26T14:45:42Z",
   "version": "0.1.250",
-  "head_short": "d2d597cd",
+  "head_short": "39042268",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "b93c4293e12a00731b258846c5e877220df32dfc512fb949dc196b9a86644a24",
-  "binary_sha256": "9f331f8bc66806c5f4929287e86340943fa9c1e52d949f8e499fa44e968c601d",
+  "source_lock_sha256": "2850dde45aad826533ddf33b6fc0e6309e41bd6f468978d8fc1154915c7e7619",
+  "binary_sha256": "5543989cd9b3ebe839c401173b81e804c9154c3055e8340f3033f4c063680d51",
   "blockers": [
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD d2d597cd: lumen 0.1.250 (29515713) ",
-    "source_lock:HEAD drift lock=2951571 current=d2d597c",
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 0.1.250 (3eaeef33) installed=lumen 0.1.250 (c34cf278) ",
+    "source_lock:HEAD drift lock=cc7993d current=3904226",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=2951571 head=d2d597c', 'binary_head_mismatch:expected=d2d597c', 'm5_onboarding_semantics_invalid', 'statu"
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=cc7993d head=3904226', 'binary_version_mismatch', 'binary_head_mismatch:expected=3904226', 'm5_onboarding"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=9f331f8bc668"
+      "detail": "sha256=86103b2d6471"
     },
     {
       "id": "gitleaks",
@@ -110,9 +111,9 @@
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": true,
-      "result": "PASS",
-      "detail": "elapsed>=3600 and resume_turns>0"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
     },
     {
       "id": "R0_full",
@@ -148,13 +149,13 @@
       "id": "binary_tuple_post",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: binary is not built from current HEAD d2d597cd: lumen 0.1.250 (29515713) "
+      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 0.1.250 (3eaeef33) installed=lumen 0.1.250 (c34cf278) "
     },
     {
       "id": "source_lock",
       "pass": false,
       "result": "FAIL",
-      "detail": "HEAD drift lock=2951571 current=d2d597c"
+      "detail": "HEAD drift lock=cc7993d current=3904226"
     },
     {
       "id": "M5_10_min_stranger",
@@ -172,10 +173,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=2951571 head=d2d597c', 'binary_head_mismatch:expected=d2d597c', 'm5_onboarding_semantics_invalid', 'statu"
+      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=cc7993d head=3904226', 'binary_version_mismatch', 'binary_head_mismatch:expected=3904226', 'm5_onboarding"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-07-26T12:20:11Z",
+  "reconciled_at": "2026-07-26T14:45:41Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
