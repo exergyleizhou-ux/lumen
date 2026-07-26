@@ -838,14 +838,19 @@ fn state_database_probes_have_a_supported_generation_ceiling() {
     fs::write(&boundary, "").unwrap();
     fs::write(&beyond, "").unwrap();
     let approved_root = ApprovedRoot::new(root.path()).unwrap();
+    // Probe results are rooted at the canonical approved root, which can
+    // differ in spelling from the tempdir (macOS `/var` -> `/private/var`).
     assert_eq!(
         state_databases(&approved_root).collect::<Vec<_>>(),
-        vec![boundary.clone(), root.path().join("state_2.sqlite")]
+        vec![
+            approved_root.join(format!("state_{MAX_STATE_DB_GENERATION}.sqlite")),
+            approved_root.join("state_2.sqlite"),
+        ]
     );
     fs::remove_file(boundary).unwrap();
     assert_eq!(
         state_databases(&approved_root).collect::<Vec<_>>(),
-        vec![root.path().join("state_2.sqlite")]
+        vec![approved_root.join("state_2.sqlite")]
     );
 }
 

@@ -155,8 +155,23 @@ impl ApprovedRoot {
     }
 
     fn relative_path(&self, path: &Path) -> Option<PathBuf> {
+        let canonical;
         let relative = if path.is_absolute() {
-            path.strip_prefix(&self.path).ok()?
+            match path.strip_prefix(&self.path) {
+                Ok(relative) => relative,
+                // The root is stored canonicalized, so an absolute path spelled
+                // through a symlinked prefix (macOS `/var` -> `/private/var`, a
+                // symlinked `$HOME` component) fails the literal strip even when
+                // it names a file inside the root. Resolve the spelling and
+                // re-check containment — mirroring the Windows arm of
+                // `open_regular_file`. Containment stays capability-enforced:
+                // the actual open still walks the pinned directory fd with
+                // symlinks refused per component.
+                Err(_) => {
+                    canonical = dunce::canonicalize(path).ok()?;
+                    canonical.strip_prefix(&self.path).ok()?
+                }
+            }
         } else {
             path
         };
