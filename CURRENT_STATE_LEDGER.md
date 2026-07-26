@@ -11,12 +11,12 @@ For the generation date, see the last ledger commit in `git log`.
 | Question | Answer |
 |---|---|
 | Version (root VERSION) | **0.1.250** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=15 |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=5 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | d2d597c security(trust): a [permission]-only repo config must require folder trust |
+| Last non-bot commit | 017453b security(marketplace): reject option-shaped git operands; bind L5 soak evidence to the current binary |
 
 ---
 
