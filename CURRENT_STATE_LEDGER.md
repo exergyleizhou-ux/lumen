@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 0d4e1a8 chore: refresh SOURCE_LOCK + readiness evidence for the final clean round |
+| Last non-bot commit | 7ef7ad3 ci: gate shell + pager crates — CI test coverage 11% -> ~100% |
 
 ---
 
