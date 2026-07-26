@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Build the current source commit and atomically install `lumen` to ~/.local/bin.
+#
+# NOTE for callers: piping this script (e.g. `install-local.sh | tail -2`)
+# discards its exit code — a refused dirty-tree build then looks like success
+# and the caller silently proceeds with a STALE binary. Either check
+# ${PIPESTATUS[0]}, set `set -o pipefail` in the caller, or don't pipe.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"

@@ -2,15 +2,26 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "82575742",
+  "head_short": "26a465b4",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "R0_full:exit 101",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=8257574', 'binary_sha256_mismatch', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'st"
+    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
+    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 26a465b4: lumen 0.1.250 (093db754) ",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=26a465b', 'm5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_t",
+    "L1_tool_calls:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "L3_multi_tool:SKIP",
+    "L0_connect:SKIP",
+    "R0_min:SKIP",
+    "R0_full:SKIP",
+    "L5_long_session:SKIP",
+    "L2_min_e2e:SKIP",
+    "L4_fault_cancel:SKIP"
   ],
-  "can_tool_call": true,
-  "source_lock_sha256": "be3ee7ba81bd700cb78c09e51d460a4f3b918889d7d672eb202719f31b6d190b",
-  "binary_sha256": "7ff9a3f6cb3ebd5c17ee42fc33306ef761f3c9b1a0106c452d2d24de350e128e",
-  "generated_at": "2026-07-26T11:10:42Z"
+  "can_tool_call": false,
+  "source_lock_sha256": "61f0a00c4ac9d7fff3a3afa28043ecf7aebb3442ab4a3f73658c2725becb708f",
+  "binary_sha256": "b509311310599998a87804a3b08a08152259baab16d8bfb4c6dfc3b56618cca0",
+  "generated_at": "2026-07-26T11:54:37Z"
 }
