@@ -1165,9 +1165,15 @@ fn spawn_permission_manager_with_pin(
                     // Evaluate managed policy (direct access + per-segment Bash command
                     // rules + Bash shell-file args) up front so the YOLO/sandbox fast
                     // paths below honor a deny or forced prompt.
-                    let direct_decision = compiled_policy
-                        .as_ref()
-                        .and_then(|policy| policy.evaluate(&access));
+                    let direct_decision = compiled_policy.as_ref().and_then(|policy| {
+                        // Bash goes through the segment-aware evaluator so a
+                        // whole-string Allow cannot smuggle an unallowed
+                        // command in a chain (`git status && curl|sh`).
+                        match &access {
+                            AccessKind::Bash(cmd) => policy.evaluate_bash_access(cmd),
+                            other => policy.evaluate(other),
+                        }
+                    });
                     let shell_command_decision = match (&compiled_policy, &access) {
                         (Some(policy), AccessKind::Bash(cmd)) => {
                             policy.evaluate_bash_command_policy(cmd)
@@ -3278,9 +3284,12 @@ mod tests {
             default_always_allow_scope(&words("kubectl get pods -o json")),
             2
         );
+        // `cargo check` is no longer safe-listed (it runs build scripts and
+        // proc-macros), so it keeps the generic two-words-plus-flags scope
+        // instead of narrowing to the safe two-word prefix.
         assert_eq!(
             default_always_allow_scope(&words("cargo check --workspace")),
-            2
+            3
         );
         // Non-safe commands keep the two-words-plus-flags default.
         // `rg --pre` is not fully safe-listed, so do not narrow to bare `rg`.

@@ -372,6 +372,16 @@ pub fn find_claude_settings_paths(cwd: &Path) -> Vec<PathBuf> {
 /// so a path returned here reliably tests as global in the import scanner's
 /// `is_global` check.
 fn global_claude_settings_paths() -> Vec<PathBuf> {
+    // Unit tests must never read the developer's real `~/.claude/settings.json`.
+    // Every machine running Claude Code has one, so permission tests that
+    // assert "nothing should load" or that a heuristic auto-allows a command
+    // failed on any real workstation while passing on a bare CI box — seven of
+    // them were red in this repo for weeks, unnoticed because no gate ran this
+    // crate. Integration tests link the non-test build, so the real user-tier
+    // path stays covered there; set LUMEN_TEST_REAL_GLOBAL_CLAUDE to opt back in.
+    if cfg!(test) && std::env::var_os("LUMEN_TEST_REAL_GLOBAL_CLAUDE").is_none() {
+        return Vec::new();
+    }
     let mut paths = Vec::new();
     if let Some(home) = dirs::home_dir() {
         let global = home.join(".claude");
