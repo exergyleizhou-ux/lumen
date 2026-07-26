@@ -2,16 +2,26 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "aee7c007",
+  "head_short": "7548d47c",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "eval_harness:exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval ",
-    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:eval_harness'] wrote /Users/lei/code/lum"
+    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 7548d47c: lumen 0.1.250 (f9b61ee3) ",
+    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 7548d47c: lumen 0.1.250 (f9b61ee3) ",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=7548d47', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_con",
+    "L5_long_session:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "L2_min_e2e:SKIP",
+    "L3_multi_tool:SKIP",
+    "R0_full:SKIP",
+    "L0_connect:SKIP",
+    "L1_tool_calls:SKIP",
+    "R0_min:SKIP",
+    "L4_fault_cancel:SKIP"
   ],
-  "can_tool_call": true,
-  "source_lock_sha256": "ce161bb3125751cd3d5ba251197285745a56e763713bc2407b43c51dc6fd91e1",
-  "binary_sha256": "ffe717372bad502e3051a9e9409c3ab1013707c20318d9716e9712ee07bd8e61",
-  "generated_at": "2026-07-26T17:47:44Z"
+  "can_tool_call": false,
+  "source_lock_sha256": "fbf1ef7687ed6cf1322ff1db789955cc464b22f962373d585dc7bb018af3902b",
+  "binary_sha256": "7966e5e4911ffc6b35fef781ac342e57bd02123b441e455126ce86d93bcee08d",
+  "generated_at": "2026-07-26T19:03:38Z"
 }
