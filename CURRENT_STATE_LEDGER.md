@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 127fc8a chore(readiness): honest BLOCKED status + triaged gitleaks baseline + fresh SOURCE_LOCK |
+| Last non-bot commit | 20bbcc8 fix(science): retire stale standalone/go.mod checks — module root is packs/science/go.mod |
 
 ---
 
