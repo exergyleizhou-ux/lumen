@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | f4e7448 fix(dogfood): language-aware probe; d04 skip is correct behaviour not a regression |
+| Last non-bot commit | 8bfaa41 chore: SOURCE_LOCK pinned for the closing verification |
 
 ---
 
