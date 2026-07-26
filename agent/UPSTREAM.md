@@ -52,7 +52,8 @@ git diff $OLD..$NEW --stat -- crates/codegen/xai-grok-shell crates/codegen/xai-g
 
 | Date | upstream/main tip | 自基线漂移 | 处置 |
 |------|-------------------|------------|------|
-| 2026-07-26 | `47348d13` | 6 次 "Synced from monorepo"，957 files，+129,902/−48,086（shell/test 大改） | **登记不吸收**：漂移量级需要专门会话做逐域辩证审查（先看 xai-grok-shell 安全面 + sampler + sandbox）；本批次不做任何 cherry，基线保持 `ba76b0a`/0.2.106 |
+| 2026-07-26 | `47348d13` | 同批漂移（6 次 sync、957 files、+129.9k/−48.1k）已完成 5 域逐域辩证审查：shell / sampler / workspace+sandbox / pager / mcp-http | **批准 23 项点状 cherry 计划**（10 安全 · 10 正确性 · 2 竞态 · 1 alias）：安全重点 = folder-trust 权限门禁（未信任仓库 [permission] 直通 RCE 类）、marketplace git 参数注入（Lumen 落后基线，无 validate/`--`）、chained-allow 绕过、kubectl/ps/cargo-check 安全表、bearer fail-closed、init 先杀开关后闸门；正确性重点 = fork 数据丢失内核（避让 Expert dual-copy，组合不覆盖）、compact 期 401 丢 prompt、merge.rs 空稿吞会话、http fresh-client panic；**拒**：workflows、/doctor、教程/语音、权限引擎重构（护 lumen-guard）、hooks 大包、subagent/调度器重写、session relocation、默认模型 grok-4.5、prompt_cache_key（护 cache 优势区）、ReasoningEffort alias 删除、全部 json!/rustfmt churn；判官另砍 AgentShutdownGuard（高险依赖优势区新常量）与 momentum-scroll（UX 级）。基线保持 `ba76b0a`/0.2.106，各 cherry 单独落地、单独登记上方 cherry 表后方可动 tip 行 |
+| 2026-07-26 | — | — | 计划全文：`docs/upstream-cherry-plan-20260726.md`；已落地 #1 `cargo check` 非自动安全 + #3 bwrap `--cap-drop ALL`（`b73d5b95`） |
 
 ## Cherry-picks applied（辩证 · 相对 ba76b0a / 0.2.106）
 
