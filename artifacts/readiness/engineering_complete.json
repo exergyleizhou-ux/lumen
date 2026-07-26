@@ -2,26 +2,19 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.250",
-  "head_short": "20bbcc8e",
+  "head_short": "46c488e2",
   "pass": false,
   "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) ",
-    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) ",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=20bbcc8', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_con",
-    "R0_min:SKIP",
-    "L3_multi_tool:SKIP",
-    "L1_tool_calls:SKIP",
-    "L2_min_e2e:SKIP",
-    "R0_full:SKIP",
-    "L0_connect:SKIP",
-    "L4_fault_cancel:SKIP",
-    "L5_one_hour_soak:SKIP",
-    "L5_long_session:SKIP"
+    "L4_fault_cancel:exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) ",
+    "R0_full:exit 101",
+    "eval_live:exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred",
+    "binary_tuple_post:exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919",
+    "source_lock:HEAD drift lock=f066956 current=46c488e",
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
   ],
-  "can_tool_call": false,
-  "source_lock_sha256": "7eeb98b54c2ca00460b86dd20541917b83741970ecb2a5f4cae64111b1aa88ca",
-  "binary_sha256": "c8716352086f9d55a066b45a9ecc08c954c046ff08c21f7389d9ca0d97eb1998",
-  "generated_at": "2026-07-26T10:28:09Z"
+  "can_tool_call": true,
+  "source_lock_sha256": "877b6e8d6c5d9b6333af2ab65bfb828d18163c242aee941d5271eacc378eeffa",
+  "binary_sha256": "6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124",
+  "generated_at": "2026-07-26T10:51:25Z"
 }

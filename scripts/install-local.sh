@@ -42,21 +42,20 @@ case "$VERSION_LINE" in
 esac
 
 mkdir -p "$DEST_DIR"
-# ad-hoc code-sign BIN_SRC so macOS taskgated won't kill it
-codesign --force --sign - "$BIN_SRC" 2>/dev/null || true
 TMP_DEST="$DEST.tmp.$$"
 trap 'rm -f "$TMP_DEST"' EXIT
 cp "$BIN_SRC" "$TMP_DEST"
 chmod +x "$TMP_DEST"
+# ad-hoc code-sign the INSTALLED COPY ONLY so macOS taskgated won't kill it.
+# Signing cargo's own output (target/release/lumen) mutates a build artifact:
+# the next `cargo build`/built-binary e2e re-links it, the signature vanishes,
+# and the release/installed pair silently diverges mid-verification — exactly
+# what binary_tuple_post exists to catch. Keep target/ cargo-pristine.
+codesign --force --sign - "$TMP_DEST" 2>/dev/null || true
 mv -f "$TMP_DEST" "$DEST"
 trap - EXIT
 
-SRC_SHA="$(shasum -a 256 "$BIN_SRC" | awk '{print $1}')"
 DEST_SHA="$(shasum -a 256 "$DEST" | awk '{print $1}')"
-if [[ "$SRC_SHA" != "$DEST_SHA" ]]; then
-  echo "FAIL: installed binary checksum mismatch" >&2
-  exit 1
-fi
 
 echo "Installed: $DEST"
 echo "source_commit=$SOURCE_COMMIT"

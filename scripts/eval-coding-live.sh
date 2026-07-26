@@ -66,10 +66,13 @@ for task_dir in "$TASKS"/*/; do
   echo "  RUN $name …"
   set +e
   # isolated home + always approve tools; headless single prompt with multi-turn agent loop
-  GROK_HOME="$home" \
+  HOME="$home" \
+  GROK_HOME="$home/grok-home" \
+  LUMEN_HOME="$home/lumen-home" \
   DEEPSEEK_API_KEY="$DEEPSEEK_API_KEY" \
   "$LUMEN_BIN" \
     --cwd "$work/ws" \
+    -m "${LUMEN_EVAL_MODEL:-deepseek-v4-pro}" \
     --always-approve \
     --permission-mode bypassPermissions \
     --max-turns "$MAX_TURNS" \

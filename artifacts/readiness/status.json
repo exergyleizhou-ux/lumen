@@ -1,38 +1,31 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-26T10:28:09Z",
+  "generated_at": "2026-07-26T10:51:25Z",
   "version": "0.1.250",
-  "head_short": "20bbcc8e",
+  "head_short": "46c488e2",
   "ready": false,
   "state": "BLOCKED",
-  "can_tool_call": false,
-  "l0_pass": false,
+  "can_tool_call": true,
+  "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "7eeb98b54c2ca00460b86dd20541917b83741970ecb2a5f4cae64111b1aa88ca",
-  "binary_sha256": "c8716352086f9d55a066b45a9ecc08c954c046ff08c21f7389d9ca0d97eb1998",
+  "source_lock_sha256": "877b6e8d6c5d9b6333af2ab65bfb828d18163c242aee941d5271eacc378eeffa",
+  "binary_sha256": "6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124",
   "blockers": [
-    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) ",
-    "eval_live:EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple",
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) ",
+    "L4_fault_cancel:exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) ",
+    "R0_full:exit 101",
+    "eval_live:exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred",
+    "binary_tuple_post:exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919",
+    "source_lock:HEAD drift lock=f066956 current=46c488e",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=20bbcc8', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_con",
-    "L0_connect:SKIP",
-    "L1_tool_calls:SKIP",
-    "L2_min_e2e:SKIP",
-    "L3_multi_tool:SKIP",
-    "L4_fault_cancel:SKIP",
-    "L5_long_session:SKIP",
-    "L5_one_hour_soak:SKIP",
-    "R0_full:SKIP",
-    "R0_min:SKIP"
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
-      "pass": false,
-      "result": "FAIL",
-      "detail": "exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) "
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=998c1117ca7a"
     },
     {
       "id": "gitleaks",
@@ -84,57 +77,57 @@
     },
     {
       "id": "L0_connect",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L1_tool_calls",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L2_min_e2e",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L3_multi_tool",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L4_fault_cancel",
       "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "result": "FAIL",
+      "detail": "exit 1 === L4 disconnect: transient fault -> retry -> one effect === === L4 timeout: terminal idle timeout, zero effect === FAIL: timeout must terminate non-zero before harness deadline (exit=0) "
     },
     {
       "id": "L5_long_session",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": "elapsed>=3600 and resume_turns>0"
     },
     {
       "id": "R0_full",
       "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "result": "FAIL",
+      "detail": "exit 101"
     },
     {
       "id": "R0_min",
-      "pass": false,
-      "result": "SKIP",
-      "detail": "binary tuple preflight failed"
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
     },
     {
       "id": "sbom",
@@ -152,19 +145,19 @@
       "id": "eval_live",
       "pass": false,
       "result": "FAIL",
-      "detail": "EVAL_LIVE=1 requires DEEPSEEK_API_KEY and a valid binary tuple"
+      "detail": "exit 1     | Internal error: \"Unauthorized (401) from https://api.kimi.com/coding/v1/chat/completions: {\\\"error\\\":{\\\"message\\\":\\\"The API Key appears to be invalid or may have expired. Please verify your cred"
     },
     {
       "id": "binary_tuple_post",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: binary is not built from current HEAD 20bbcc8: lumen 0.1.250 (20bbcc8e) "
+      "detail": "exit 1 FAIL: release/installed binary SHA-256 mismatch release_sha256=6dfc2bd626aa709f9d17e4460b5e9add135df77e89ef61870f49019e4e0fd124 installed_sha256=998c1117ca7a0e66dc9742da749ec730f996dd581de87e643dbd919"
     },
     {
       "id": "source_lock",
-      "pass": true,
-      "result": "PASS",
-      "detail": "head=20bbcc8 files=32"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "HEAD drift lock=f066956 current=46c488e"
     },
     {
       "id": "M5_10_min_stranger",
@@ -182,10 +175,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_head_mismatch:expected=20bbcc8', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_con"
+      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_head_mismatch:lock=f066956 head=46c488e', 'binary_head_mismatch:expected=46c488e', 'binary_sha256_mismatch', 'artifact_not_p"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-07-26T10:28:09Z",
+  "reconciled_at": "2026-07-26T10:51:24Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
