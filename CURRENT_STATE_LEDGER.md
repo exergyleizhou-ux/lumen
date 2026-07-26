@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | cc7993d ci: gate the permission + folder-trust security seam in CI |
+| Last non-bot commit | c34cf27 chore: refresh SOURCE_LOCK before the final verification round |
 
 ---
 
