@@ -11,12 +11,12 @@ For the generation date, see the last ledger commit in `git log`.
 | Question | Answer |
 |---|---|
 | Version (root VERSION) | **0.1.250** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=15 |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | beede2d evidence: readiness + soak artifacts from the 2026-07-27 rounds |
+| Last non-bot commit | bc47922 evidence: 23 gates green — every automated gate passes honestly |
 
 ---
 
