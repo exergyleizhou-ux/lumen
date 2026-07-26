@@ -48,7 +48,7 @@ with open(sys.argv[1], encoding="utf-8") as f:
 
 assert root["default"] == "deepseek-v4-pro"
 assert root["web_search"] == "deepseek-v4-pro"
-assert root["image_description"] == "deepseek-chat"
+assert root["image_description"] == "deepseek-v4-flash"
 assert root["session_summary"] == "deepseek-v4-flash"
 models = root["models"]
 assert len(models) >= 29, len(models)

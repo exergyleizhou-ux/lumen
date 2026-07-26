@@ -11,18 +11,13 @@ class Lumen < Formula
   homepage "https://github.com/exergyleizhou-ux/lumen"
   url "https://github.com/exergyleizhou-ux/lumen.git",
       tag:      "v0.1.250-macos",
-      revision: "2fb3271e7a0f3c0f5e1d8a9b4c6e7f8a9b0c1d2e"
+      revision: "15050e3a4ef3f1c14a723a8a44b53eecae6d1b41"
   license "Apache-2.0"
   version "0.1.250"
   head "https://github.com/exergyleizhou-ux/lumen.git", branch: "main"
 
   depends_on "rust" => :build
   depends_on "git"
-  depends_on "make"
-
-  # Optional: for science features
-  depends_on "python@3.11" => :optional
-  depends_on "tesseract" => :optional
 
   def install
     # Build from the agent subdirectory (monorepo layout)
@@ -53,7 +48,7 @@ class Lumen < Formula
         export DEEPSEEK_API_KEY=your-key
         export KIMI_CODE_API_KEY=your-key
 
-      For science features, install with --with-python@3.11.
+      Science features ship separately (lumen-science); see docs/science.
     EOS
   end
 
@@ -61,13 +56,4 @@ class Lumen < Formula
     system "#{bin}/lumen", "--version"
   end
 
-  # Service support (macOS LaunchAgent)
-  service do
-    run [opt_bin/"lumen-science", "serve"]
-    keep_alive true
-    log_path var/"log/lumen-science.log"
-    error_log_path var/"log/lumen-science.err.log"
-    working_dir var/"lumen"
-    environment_variables PATH: std_service_path_env
-  end
 end

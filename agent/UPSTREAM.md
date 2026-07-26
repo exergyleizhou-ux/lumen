@@ -48,6 +48,12 @@ git diff $OLD..$NEW --stat -- crates/codegen/xai-grok-shell crates/codegen/xai-g
 
 ---
 
+## 巡检记录（不改基线）
+
+| Date | upstream/main tip | 自基线漂移 | 处置 |
+|------|-------------------|------------|------|
+| 2026-07-26 | `47348d13` | 6 次 "Synced from monorepo"，957 files，+129,902/−48,086（shell/test 大改） | **登记不吸收**：漂移量级需要专门会话做逐域辩证审查（先看 xai-grok-shell 安全面 + sampler + sandbox）；本批次不做任何 cherry，基线保持 `ba76b0a`/0.2.106 |
+
 ## Cherry-picks applied（辩证 · 相对 ba76b0a / 0.2.106）
 
 | Date | Upstream area | What we took | What we refused | Lumen 合入 |

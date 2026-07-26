@@ -4,6 +4,11 @@
 #   Install sccache: cargo install sccache
 #   Then set SCCACHE_GCS_BUCKET (or local path) for CI caching.
 #   macOS local: export RUSTC_WRAPPER=sccache
+#   DECISION (2026-07-26): deliberately NOT enabled by default on the primary
+#   dev machine — flipping RUSTC_WRAPPER invalidates the existing warm target/
+#   cache (>100GB) and forces a full recompile for zero incremental benefit on
+#   a single-checkout workflow. sccache pays off for cold/CI/multi-worktree
+#   builds; enable it there, not here.
 #
 # Windows build notes:
 #   - Set PROTOC env var if protoc is not on PATH (e.g., choco/scoop install)

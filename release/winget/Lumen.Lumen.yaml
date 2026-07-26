@@ -44,6 +44,11 @@ Tags:
   - productivity
   - developer-tools
 
+# TEMPLATE — before submitting to winget-pkgs:
+#   1. Pin InstallerUrl to the release tag (never `latest`: the fixed sha below
+#      would silently mismatch the next release).
+#   2. Fill InstallerSha256 from the published asset:
+#      certutil -hashfile lumen-windows-x86_64.zip SHA256
 ReleaseDate: 2026-07-25
 Installers:
   - Architecture: x64
