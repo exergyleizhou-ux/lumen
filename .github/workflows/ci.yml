@@ -33,6 +33,10 @@ jobs:
           sudo apt-get update -y
           sudo apt-get install -y protobuf-compiler
           protoc --version
+          # Point build scripts at the system binary explicitly: the repo's
+          # agent/bin/protoc is a dotslash wrapper and its fallback-to-PATH
+          # path is not something to rely on.
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -65,11 +69,28 @@ jobs:
   lumen-crates:
     name: Lumen crates (guard/discipline/verify tests + clippy)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           persist-credentials: false
+
+      # xai-grok-tools-api/build.rs needs protoc. The repo ships bin/protoc as
+      # a dotslash wrapper, which CI has no dotslash to run, so the build script
+      # panics ("likely dotslash is missing"). expert-gate installs the system
+      # package; this job started needing it too once the workspace/shell/pager
+      # test steps were added, and failed three runs in a row before anyone
+      # looked at Actions instead of the local terminal.
+      - name: Install protoc
+        run: |
+          set -euo pipefail
+          sudo apt-get update -y
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
+          # Point build scripts at the system binary explicitly: the repo's
+          # agent/bin/protoc is a dotslash wrapper and its fallback-to-PATH
+          # path is not something to rely on.
+          echo "PROTOC=$(command -v protoc)" >> "$GITHUB_ENV"
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
