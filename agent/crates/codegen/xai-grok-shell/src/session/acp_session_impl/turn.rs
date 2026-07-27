@@ -2830,6 +2830,11 @@ mod dead_chat_state_request_tests {
         )
         .expect_err("dead actor must fail only this turn");
         assert_eq!(
+            error.code,
+            agent_client_protocol::ErrorCode::InternalError,
+            "shutdown race must stay an ACP internal error rather than panic"
+        );
+        assert_eq!(
             error.data.as_ref().and_then(serde_json::Value::as_str),
             Some("chat state actor unavailable (session shutting down?)")
         );
