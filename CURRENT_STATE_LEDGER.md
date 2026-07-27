@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 2a656b5 feat(measure): cache economics instrument — first real numbers for the biggest lever we own |
+| Last non-bot commit | bbcf623 ci: install protoc in the lumen-crates job — three red runs nobody looked at |
 
 ---
 
