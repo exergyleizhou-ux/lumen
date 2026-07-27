@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **71** |
 | … fully merged into main | 6 |
 | … NOT in main | **65** |
-| Last non-bot commit | 2cd3fc3 docs: provider failover design — the wheel exists, it is bolted to the wrong axle |
+| Last non-bot commit | d2bf537 test(guard): adversarial bypass combinatorics — 54 wrappers, chains, and the documented blind spots |
 
 ---
 
