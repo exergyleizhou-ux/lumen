@@ -51,8 +51,12 @@ function Get-LatestVersion {
         $tag = $release.tag_name
         $version = $tag -replace '^v', ''
 
-        # Find Windows asset
-        $asset = $release.assets | Where-Object { $_.name -match 'windows|win64|x86_64' } | Select-Object -First 1
+        # Find Windows x64 asset (exact match only)
+        $asset = $release.assets | Where-Object { $_.name -match 'lumen-windows-amd64\.zip$' } | Select-Object -First 1
+        if (-not $asset) {
+            Write-Host "No Windows x64 asset found in release $($release.tag_name)"
+            exit 1
+        }
 
         return @{
             Version = $version
@@ -127,8 +131,8 @@ $tempZip = Join-Path $tempDir $latest.Name
 try {
     Invoke-WebRequest -Uri $latest.Url -OutFile $tempZip -TimeoutSec 120
 } catch {
-    Write-Host "Download failed. Building from source instead..."
-    Write-Host "Run: cd agent && cargo build --release -p xai-grok-pager-bin"
+    Write-Host "Download failed. Cannot update without network."
+    Write-Host "For manual Windows build: cd agent && cargo rustc --locked --release -p xai-grok-pager-bin --features release-dist --target x86_64-pc-windows-msvc -- -C link-arg=/DEBUG:NONE"
     exit 1
 }
 
@@ -145,23 +149,29 @@ if (-not $newBinary) {
     exit 1
 }
 
-# Verify SHA-256
+# Verify SHA-256 (MUST be present and match)
 $shaFile = Get-ChildItem -Path $extractDir -Recurse -Filter "SHA256SUMS.txt" | Select-Object -First 1
-if ($shaFile) {
-    $expected = (Get-Content $shaFile.FullName | Select-String "lumen.exe").ToString().Split()[0]
-    $actual = (Get-FileHash $newBinary.FullName -Algorithm SHA256).Hash
-    if ($expected -and $actual -ne $expected) {
-        Write-Host "ERROR: SHA-256 mismatch!"
-        Write-Host "  Expected: $expected"
-        Write-Host "  Actual:   $actual"
-        exit 1
-    }
-    Write-Host "  ${Green}✓${Reset} SHA-256 verified"
+if (-not $shaFile) {
+    Write-Host "ERROR: SHA256SUMS.txt not found in release archive — cannot verify integrity"
+    exit 1
 }
+$expected = (Get-Content $shaFile.FullName | Select-String "lumen.exe").ToString().Split()[0]
+$actual = (Get-FileHash $newBinary.FullName -Algorithm SHA256).Hash
+if (-not $expected) {
+    Write-Host "ERROR: Could not find SHA-256 for lumen.exe in SHA256SUMS.txt"
+    exit 1
+}
+if ($actual -ne $expected) {
+    Write-Host "ERROR: SHA-256 mismatch!"
+    Write-Host "  Expected: $expected"
+    Write-Host "  Actual:   $actual"
+    exit 1
+}
+Write-Host "  ${Green}✓${Reset} SHA-256 verified"
 
 # Backup old binary
 $lumenPath = Get-LumenExePath
-$backup = "$lumenPath.bak.$($current ?? 'unknown')"
+$backup = "$lumenPath.bak.$(if ($current) { $current } else { 'unknown' })"
 Copy-Item -Force $lumenPath $backup
 Write-Host "  ${Green}✓${Reset} Backup saved: $backup"
 

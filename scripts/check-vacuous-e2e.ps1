@@ -22,7 +22,7 @@ param(
     [switch]$Fix
 )
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $AgentDir = Join-Path $RepoRoot "agent"
 $exitCode = 0
 $vacuousCount = 0

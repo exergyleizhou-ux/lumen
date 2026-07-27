@@ -109,20 +109,18 @@ Write-Host ""
 # ── Clone / update source ──
 Write-Host "$Bold[2/5] Preparing source code...$Reset"
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $IsFromRepo = Test-Path (Join-Path $RepoRoot "agent" "Cargo.toml")
 
 if (-not $IsFromRepo) {
     $CloneDir = "$env:TEMP\lumen-src"
     if (Test-Path $CloneDir) {
-        Write-Host "  Updating existing clone..."
-        Push-Location $CloneDir
-        git pull origin main 2>&1 | Out-Null
-        Pop-Location
-    } else {
-        Write-Host "  Cloning lumen repository..."
-        git clone https://github.com/exergyleizhou-ux/lumen.git $CloneDir 2>&1 | Out-Null
+        Write-Host "  Removing stale clone..."
+        Remove-Item -Recurse -Force $CloneDir
     }
+    Write-Host "  Cloning lumen repository (depth 1)..."
+    git clone --depth 1 https://github.com/exergyleizhou-ux/lumen.git $CloneDir 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Git clone failed" }
     $RepoRoot = $CloneDir
 } else {
     Write-Host "  ${Green}✓${Reset} Running from lumen repository"
@@ -136,9 +134,9 @@ if (-not $SkipBuild) {
     $AgentDir = Join-Path $RepoRoot "agent"
     Push-Location $AgentDir
     try {
-        Write-Host "  Compiling (this may take 5-10 minutes)..."
-        $env:CARGO_BUILD_JOBS = [Math]::Max(1, [Environment]::ProcessorCount - 1).ToString()
-        cargo build --release -p xai-grok-pager-bin
+        Write-Host "  Building with Windows MSVC toolchain..."
+        Write-Host "  (using /DEBUG:NONE to avoid PDB symbol limit)"
+        cargo rustc --locked --release -p xai-grok-pager-bin --features release-dist --target x86_64-pc-windows-msvc -- -C link-arg=/DEBUG:NONE
         if ($LASTEXITCODE -ne 0) { throw "Build failed" }
         Write-Host "  ${Green}✓${Reset} Build successful"
     } finally {
@@ -229,7 +227,8 @@ if (-not $NoTerminalProfile) {
     $wtSettings = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
     if (Test-Path $wtSettings) {
         Write-Host "  ${Green}✓${Reset} Windows Terminal found"
-        Write-Host "    To add a Lumen profile, run: .\scripts\lumen-terminal.ps1"
+        Write-Host "    To add a Lumen profile, configure Windows Terminal manually"
+        Write-Host "    (Settings > Add a new profile > Command line: $InstallDir\lumen.exe)"
     }
 }
 
