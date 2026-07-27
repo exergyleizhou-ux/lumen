@@ -10,13 +10,13 @@ For the generation date, see the last ledger commit in `git log`.
 
 | Question | Answer |
 |---|---|
-| Version (root VERSION) | **0.1.250** |
+| Version (root VERSION) | **0.1.251** |
 | Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **72** |
 | … fully merged into main | 7 |
 | … NOT in main | **65** |
-| Last non-bot commit | 2a5003a Merge pull request #131 from exergyleizhou-ux/agent/typed-verify-after-edit |
+| Last non-bot commit | 88a204c chore(release): prepare v0.1.251 |
 
 ---
 
