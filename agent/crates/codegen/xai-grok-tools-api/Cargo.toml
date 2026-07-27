@@ -1,7 +1,7 @@
 [package]
 license = "Apache-2.0"
 name = "xai-grok-tools-api"
-version = "0.1.250"
+version = "0.1.251"
 edition.workspace = true
 description = "Protobuf API definitions for Grok tools"
 
