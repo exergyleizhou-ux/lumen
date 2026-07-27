@@ -222,6 +222,30 @@ async fn load_paths_tolerate_torn_rewind_point_line() {
     assert_eq!(full.rewind_points.len(), 1, "torn line skipped, valid point kept");
     assert_eq!(adapter.load_rewind_points(&info).await.unwrap().len(), 1);
 }
+/// The lenient reader must reach line-level recovery even when a crash tears
+/// the final line inside a multi-byte UTF-8 code point. Reading the whole file
+/// as `String` would reject these bytes before the malformed line can be
+/// skipped.
+#[tokio::test]
+async fn load_paths_tolerate_torn_multibyte_utf8_rewind_point_line() {
+    use xai_grok_workspace::session::file_state::RewindPoint;
+    let temp_dir = TempDir::new().unwrap();
+    let info = create_test_info();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    adapter.init_session(&info, default_model_id()).await.unwrap();
+    adapter.append_rewind_point(&info, &RewindPoint::new(0)).await.unwrap();
+    let path = adapter.rewind_points_file_path(&info).unwrap();
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(br#"{"prompt_index":1,"torn":""#).unwrap();
+        f.write_all(&"错".as_bytes()[..2]).unwrap();
+    }
+
+    let full = adapter.load_session(&info).await.unwrap();
+    assert_eq!(full.rewind_points.len(), 1, "invalid UTF-8 tail skipped");
+    assert_eq!(adapter.load_rewind_points(&info).await.unwrap().len(), 1);
+}
 /// The disk-authoritative ConversationOnly merge persists the correct
 /// merged/truncated set.
 #[tokio::test]

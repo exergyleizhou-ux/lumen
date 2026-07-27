@@ -300,15 +300,15 @@ impl JsonlStorageAdapter {
             return Ok(Vec::new());
         }
         let mut file = OpenOptions::new().read(true).open(&path)?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)?;
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents)?;
         let mut items = Vec::new();
         let mut skipped: usize = 0;
-        for line in contents.lines() {
-            if line.trim().is_empty() {
+        for line in contents.split(|byte| *byte == b'\n') {
+            if line.iter().all(|byte| byte.is_ascii_whitespace()) {
                 continue;
             }
-            match serde_json::from_str::<T>(line) {
+            match serde_json::from_slice::<T>(line) {
                 Ok(item) => items.push(item),
                 Err(error) => {
                     skipped += 1;
