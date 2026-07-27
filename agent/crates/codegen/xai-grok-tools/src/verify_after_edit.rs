@@ -33,12 +33,42 @@ impl VerifyAfterEditState {
     }
 }
 
+/// Typed outcome of an automatic verify-after-edit pass. Set only from the
+/// actual step results — model prose cannot manufacture it, which is what
+/// lets the delivery gate trust it as verification evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerifyAfterEditOutcome {
+    /// Every fixed step that could run passed.
+    Pass,
+    /// At least one step produced diagnostics.
+    Failed,
+}
+
+/// Feedback from the automatic verifier: the prompt text plus, when a
+/// conclusive verification actually ran, its typed outcome. Skipped /
+/// blocked / error paths carry `outcome: None` — "nothing conclusive ran"
+/// must stay distinguishable from a pass or a failure.
+pub(crate) struct VerifyFeedback {
+    pub text: String,
+    pub outcome: Option<VerifyAfterEditOutcome>,
+}
+
+impl VerifyFeedback {
+    fn inconclusive(text: String) -> Self {
+        Self {
+            text,
+            outcome: None,
+        }
+    }
+}
+
 pub(crate) async fn feedback_for_output(
     workspace_root: PathBuf,
     session_id: String,
     state: VerifyAfterEditState,
     output: &ToolOutput,
-) -> Option<String> {
+) -> Option<VerifyFeedback> {
     let changed_file = match output {
         ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(applied)) => {
             &applied.absolute_path
@@ -64,10 +94,10 @@ pub(crate) async fn feedback_for_output(
     {
         Ok(cfg) => cfg,
         Err(error) => {
-            return Some(truncate_feedback(format!(
+            return Some(VerifyFeedback::inconclusive(truncate_feedback(format!(
                 "[verify-after-edit] ERROR: user [verify] configuration could not be loaded safely: {error:#}. \
                  No verification command was run; treat this edit as unverified."
-            )));
+            ))));
         }
     };
     feedback_for_output_with_config(workspace_root, session_id, state, output, cfg).await
@@ -79,7 +109,7 @@ async fn feedback_for_output_with_config(
     state: VerifyAfterEditState,
     output: &ToolOutput,
     cfg: lumen_verify::config::Config,
-) -> Option<String> {
+) -> Option<VerifyFeedback> {
     let changed_file = match output {
         ToolOutput::SearchReplace(SearchReplaceOutput::EditsApplied(applied)) => {
             applied.absolute_path.clone()
@@ -115,11 +145,11 @@ async fn feedback_for_output_with_config(
             failures,
             max_repair,
         } => {
-            return Some(format!(
+            return Some(VerifyFeedback::inconclusive(format!(
                 "[verify-after-edit] BLOCKED: automatic verification stopped after {failures}/{max_repair} \
                  consecutive failed attempts for this file in this session. No verification command was run. \
                  Report the blocker and use an explicit manual check or a new session after changing strategy."
-            ));
+            )));
         }
     };
 
@@ -131,7 +161,7 @@ async fn feedback_for_output_with_config(
     let feedback = match outcome {
         Ok(Ok(None)) => return None,
         Ok(Ok(Some(result))) if result.step_results.iter().all(|step| step.skipped) => {
-            "[verify-after-edit] SKIPPED: no allowed verifier executable was available on PATH for this language. The edit remains unverified.".to_string()
+            VerifyFeedback::inconclusive("[verify-after-edit] SKIPPED: no allowed verifier produced a conclusive result (tools were unavailable or no tests were collected). The edit remains unverified.".to_string())
         }
         Ok(Ok(Some(result))) if result.ok => {
             tracker.record_pass(&repair_key);
@@ -141,21 +171,25 @@ async fn feedback_for_output_with_config(
                 .filter(|step| !step.skipped)
                 .count();
             let skipped = result.step_results.len().saturating_sub(ran);
-            if skipped == 0 {
+            let text = if skipped == 0 {
                 format!(
-                    "[verify-after-edit] PASS: {ran} fixed Go build/vet/test step(s) passed after this edit."
+                    "[verify-after-edit] PASS: {ran} fixed verification step(s) passed after this edit."
                 )
             } else {
                 format!(
-                    "[verify-after-edit] PASS: {ran} fixed Go verification step(s) passed; {skipped} unavailable step(s) were skipped."
+                    "[verify-after-edit] PASS: {ran} fixed verification step(s) passed; {skipped} unavailable or inconclusive step(s) were skipped."
                 )
+            };
+            VerifyFeedback {
+                text,
+                outcome: Some(VerifyAfterEditOutcome::Pass),
             }
         }
         Ok(Ok(Some(result))) => {
             let failures = tracker.record_failure(&repair_key);
             let diagnostics = lumen_verify::format_diagnostics(&result.step_results);
             let mut feedback = format!(
-                "[verify-after-edit] FAILED (attempt {attempt}/{max_repair}): automatic Go build/vet/test found errors after this edit.\n\
+                "[verify-after-edit] FAILED (attempt {attempt}/{max_repair}): automatic verification found errors after this edit.\n\
                  {diagnostics}"
             );
             if failures >= max_repair {
@@ -167,19 +201,25 @@ async fn feedback_for_output_with_config(
                     "\nFix these diagnostics and edit again; the next successful write will verify again.",
                 );
             }
-            feedback
+            VerifyFeedback {
+                text: feedback,
+                outcome: Some(VerifyAfterEditOutcome::Failed),
+            }
         }
-        Ok(Err(error)) => format!(
+        Ok(Err(error)) => VerifyFeedback::inconclusive(format!(
             "[verify-after-edit] ERROR: automatic verification could not run safely: {error:#}. \
              Treat this edit as unverified and report the blocker if it cannot be corrected."
-        ),
-        Err(error) => format!(
+        )),
+        Err(error) => VerifyFeedback::inconclusive(format!(
             "[verify-after-edit] ERROR: verifier worker failed: {error}. \
              Treat this edit as unverified and report the blocker."
-        ),
+        )),
     };
 
-    Some(truncate_feedback(feedback))
+    Some(VerifyFeedback {
+        text: truncate_feedback(feedback.text),
+        outcome: feedback.outcome,
+    })
 }
 
 fn load_user_verify_config() -> anyhow::Result<lumen_verify::config::Config> {
@@ -215,6 +255,24 @@ mod tests {
                 unicode_normalized: false,
             },
         ))
+    }
+
+    #[cfg(unix)]
+    fn typescript_fixture(tmp: &tempfile::TempDir, script: &str, executable: bool) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        std::fs::write(tmp.path().join("package.json"), "{}\n").unwrap();
+        let changed = tmp.path().join("index.ts");
+        std::fs::write(&changed, "export const value = 1;\n").unwrap();
+        let bin_dir = tmp.path().join("node_modules/.bin");
+        std::fs::create_dir_all(&bin_dir).unwrap();
+        let tsc = bin_dir.join("tsc");
+        std::fs::write(&tsc, script).unwrap();
+        let mode = if executable { 0o755 } else { 0o644 };
+        let mut permissions = std::fs::metadata(&tsc).unwrap().permissions();
+        permissions.set_mode(mode);
+        std::fs::set_permissions(tsc, permissions).unwrap();
+        changed
     }
 
     #[test]
@@ -295,15 +353,135 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn successful_steps_return_typed_pass() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let changed = typescript_fixture(&tmp, "#!/bin/sh\nexit 0\n", true);
+
+        let feedback = feedback_for_output_with_config(
+            tmp.path().to_path_buf(),
+            "session-pass".to_string(),
+            VerifyAfterEditState::default(),
+            &applied_edit(changed),
+            lumen_verify::config::Config::default(),
+        )
+        .await
+        .expect("pass feedback");
+
+        assert_eq!(feedback.outcome, Some(VerifyAfterEditOutcome::Pass));
+        assert!(feedback.text.contains("[verify-after-edit] PASS"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn passed_steps_with_an_unavailable_sibling_return_typed_pass() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        let changed = typescript_fixture(&tmp, "#!/bin/sh\nexit 0\n", true);
+        let jest = tmp.path().join("node_modules/.bin/jest");
+        std::fs::write(&jest, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut permissions = std::fs::metadata(&jest).unwrap().permissions();
+        permissions.set_mode(0o644);
+        std::fs::set_permissions(jest, permissions).unwrap();
+
+        let feedback = feedback_for_output_with_config(
+            tmp.path().to_path_buf(),
+            "session-partial-availability".to_string(),
+            VerifyAfterEditState::default(),
+            &applied_edit(changed),
+            lumen_verify::config::Config::default(),
+        )
+        .await
+        .expect("pass feedback");
+
+        assert_eq!(feedback.outcome, Some(VerifyAfterEditOutcome::Pass));
+        assert!(feedback.text.contains("[verify-after-edit] PASS"));
+        assert!(
+            feedback
+                .text
+                .contains("1 unavailable or inconclusive step(s) were skipped")
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unavailable_steps_are_skipped_without_typed_pass() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let changed = typescript_fixture(&tmp, "", false);
+
+        let feedback = feedback_for_output_with_config(
+            tmp.path().to_path_buf(),
+            "session-skipped".to_string(),
+            VerifyAfterEditState::default(),
+            &applied_edit(changed),
+            lumen_verify::config::Config::default(),
+        )
+        .await
+        .expect("skipped feedback");
+
+        assert_eq!(feedback.outcome, None);
+        assert!(feedback.text.contains("[verify-after-edit] SKIPPED"));
+        assert!(feedback.text.contains("remains unverified"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn failed_steps_return_typed_failure() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let changed = typescript_fixture(
+            &tmp,
+            "#!/bin/sh\nprintf 'index.ts(1,1): error TS9999: broken\\n' >&2\nexit 1\n",
+            true,
+        );
+
+        let feedback = feedback_for_output_with_config(
+            tmp.path().to_path_buf(),
+            "session-failed".to_string(),
+            VerifyAfterEditState::default(),
+            &applied_edit(changed),
+            lumen_verify::config::Config::default(),
+        )
+        .await
+        .expect("failed feedback");
+
+        assert_eq!(feedback.outcome, Some(VerifyAfterEditOutcome::Failed));
+        assert!(feedback.text.contains("[verify-after-edit] FAILED"));
+        assert!(feedback.text.contains("TS9999"));
+    }
+
+    #[tokio::test]
+    async fn verifier_error_is_inconclusive() {
+        let workspace = tempfile::TempDir::new().unwrap();
+        let outside = tempfile::TempDir::new().unwrap();
+        let changed = outside.path().join("index.ts");
+        std::fs::write(&changed, "export const value = 1;\n").unwrap();
+
+        let feedback = feedback_for_output_with_config(
+            workspace.path().to_path_buf(),
+            "session-error".to_string(),
+            VerifyAfterEditState::default(),
+            &applied_edit(changed),
+            lumen_verify::config::Config::default(),
+        )
+        .await
+        .expect("error feedback");
+
+        assert_eq!(feedback.outcome, None);
+        assert!(feedback.text.contains("[verify-after-edit] ERROR"));
+        assert!(feedback.text.contains("outside workspace"));
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn third_failure_closes_loop_without_requesting_another_edit() {
-        if which::which("go").is_err() {
-            return;
-        }
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("go.mod"), "module example.com/limit\n").unwrap();
-        let file = tmp.path().join("main.go");
-        std::fs::write(&file, "package main\nfunc main() { missingAtLimit() }\n").unwrap();
+        let file = typescript_fixture(
+            &tmp,
+            "#!/bin/sh\nprintf 'index.ts(1,1): error TS9999: at-limit\\n' >&2\nexit 1\n",
+            true,
+        );
         let state = VerifyAfterEditState::default();
         let session_id = "session-a".to_string();
         let key = RepairKey::new(&session_id, dunce::canonicalize(&file).unwrap());
@@ -323,17 +501,17 @@ mod tests {
         .await
         .expect("third failure feedback");
 
-        assert!(feedback.contains("FAILED (attempt 3/3)"));
-        assert!(feedback.contains("[verify-after-edit] BLOCKED"));
-        assert!(!feedback.contains("edit again"));
+        assert_eq!(feedback.outcome, Some(VerifyAfterEditOutcome::Failed));
+        assert!(feedback.text.contains("FAILED (attempt 3/3)"));
+        assert!(feedback.text.contains("[verify-after-edit] BLOCKED"));
+        assert!(!feedback.text.contains("edit again"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn exhausted_fourth_attempt_returns_explicit_blocked_without_running() {
         let tmp = tempfile::TempDir::new().unwrap();
-        std::fs::write(tmp.path().join("go.mod"), "module example.com/blocked\n").unwrap();
-        let file = tmp.path().join("main.go");
-        std::fs::write(&file, "package main\nfunc main() {}\n").unwrap();
+        let file = typescript_fixture(&tmp, "#!/bin/sh\ntouch verifier-ran\nexit 0\n", true);
         let state = VerifyAfterEditState::default();
         let session_id = "session-a".to_string();
         let key = RepairKey::new(&session_id, dunce::canonicalize(&file).unwrap());
@@ -354,8 +532,13 @@ mod tests {
         .await
         .expect("blocked feedback");
 
-        assert!(feedback.contains("[verify-after-edit] BLOCKED"));
-        assert!(feedback.contains("3/3"));
-        assert!(feedback.contains("No verification command was run"));
+        assert_eq!(feedback.outcome, None);
+        assert!(feedback.text.contains("[verify-after-edit] BLOCKED"));
+        assert!(feedback.text.contains("3/3"));
+        assert!(feedback.text.contains("No verification command was run"));
+        assert!(
+            !tmp.path().join("verifier-ran").exists(),
+            "repair-limit path must not execute the verifier"
+        );
     }
 }

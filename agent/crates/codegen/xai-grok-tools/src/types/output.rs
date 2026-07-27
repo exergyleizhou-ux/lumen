@@ -142,6 +142,13 @@ pub struct ToolRunResult {
     /// `use_tool` → `linear__save_issue`), this carries the effective tool name.
     /// `None` means the requested tool and executed tool are the same.
     pub effective_tool_name: Option<String>,
+    /// Typed outcome of the automatic verify-after-edit pass, when one ran to
+    /// a conclusion for this tool call. Set only by the tool runtime from the
+    /// actual step results — model prose cannot manufacture it — which is what
+    /// allows the host delivery gate to count a `Pass` as verification
+    /// evidence without parsing `prompt_text`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_outcome: Option<crate::verify_after_edit::VerifyAfterEditOutcome>,
 }
 impl ToolRunResult {
     /// Like [`TypedToolOutput::from_value`], but reattaches `chat_completion_output` from `output`.
@@ -2412,8 +2419,27 @@ mod tests {
         ToolRunResult {
             prompt_text: "prompt".into(),
             effective_tool_name: None,
+            verify_outcome: None,
             output,
         }
+    }
+    #[test]
+    fn verify_outcome_serde_is_backward_compatible() {
+        let run = sample_run_result(ToolOutput::Text(TextOutput::from("ok")));
+        let legacy_shape = serde_json::to_value(&run).unwrap();
+        assert!(
+            legacy_shape.get("verify_outcome").is_none(),
+            "None must stay absent from the wire shape"
+        );
+        let decoded: ToolRunResult = serde_json::from_value(legacy_shape).unwrap();
+        assert_eq!(decoded.verify_outcome, None);
+
+        let mut passed = sample_run_result(ToolOutput::Text(TextOutput::from("ok")));
+        passed.verify_outcome = Some(crate::VerifyAfterEditOutcome::Pass);
+        assert_eq!(
+            serde_json::to_value(&passed).unwrap()["verify_outcome"],
+            "pass"
+        );
     }
     fn bash_tool_id() -> xai_tool_protocol::ToolId {
         xai_tool_protocol::ToolId::new("bash").unwrap()

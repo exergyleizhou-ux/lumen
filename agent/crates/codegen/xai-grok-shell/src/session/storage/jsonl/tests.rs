@@ -199,6 +199,53 @@ async fn load_session_without_updates_defers_rewind_points() {
     let path = adapter.rewind_points_file_path(&info).unwrap();
     assert!(path.ends_with("rewind_points.jsonl"));
 }
+/// A torn trailing line in `rewind_points.jsonl` (crash / ENOSPC mid-append —
+/// appends are not crash-atomic, see `append_jsonl_line`) must not brick
+/// session resume: the LENIENT load paths skip it. The STRICT merge/truncate
+/// rewrite paths still abort so the torn bytes are never silently dropped
+/// from disk (see `merge_rewind_points_from_aborts_on_malformed_without_writing`).
+#[tokio::test]
+async fn load_paths_tolerate_torn_rewind_point_line() {
+    use xai_grok_workspace::session::file_state::RewindPoint;
+    let temp_dir = TempDir::new().unwrap();
+    let info = create_test_info();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    adapter.init_session(&info, default_model_id()).await.unwrap();
+    adapter.append_rewind_point(&info, &RewindPoint::new(0)).await.unwrap();
+    let path = adapter.rewind_points_file_path(&info).unwrap();
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(br#"{"prompt_index":1,"file_snap"#).unwrap();
+    }
+    let full = adapter.load_session(&info).await.unwrap();
+    assert_eq!(full.rewind_points.len(), 1, "torn line skipped, valid point kept");
+    assert_eq!(adapter.load_rewind_points(&info).await.unwrap().len(), 1);
+}
+/// The lenient reader must reach line-level recovery even when a crash tears
+/// the final line inside a multi-byte UTF-8 code point. Reading the whole file
+/// as `String` would reject these bytes before the malformed line can be
+/// skipped.
+#[tokio::test]
+async fn load_paths_tolerate_torn_multibyte_utf8_rewind_point_line() {
+    use xai_grok_workspace::session::file_state::RewindPoint;
+    let temp_dir = TempDir::new().unwrap();
+    let info = create_test_info();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    adapter.init_session(&info, default_model_id()).await.unwrap();
+    adapter.append_rewind_point(&info, &RewindPoint::new(0)).await.unwrap();
+    let path = adapter.rewind_points_file_path(&info).unwrap();
+    {
+        use std::io::Write as _;
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(br#"{"prompt_index":1,"torn":""#).unwrap();
+        f.write_all(&"错".as_bytes()[..2]).unwrap();
+    }
+
+    let full = adapter.load_session(&info).await.unwrap();
+    assert_eq!(full.rewind_points.len(), 1, "invalid UTF-8 tail skipped");
+    assert_eq!(adapter.load_rewind_points(&info).await.unwrap().len(), 1);
+}
 /// The disk-authoritative ConversationOnly merge persists the correct
 /// merged/truncated set.
 #[tokio::test]
@@ -232,6 +279,25 @@ async fn merge_rewind_points_from_aborts_on_malformed_without_writing() {
     assert_eq!(
         tokio::fs::read_to_string(& path). await .unwrap(), original,
         "rewind_points.jsonl must be preserved when the merge aborts"
+    );
+}
+/// A malformed on-disk line makes the STRICT truncate read abort BEFORE
+/// writing, leaving `rewind_points.jsonl` untouched (never drop the line).
+#[tokio::test]
+async fn truncate_rewind_points_from_aborts_on_malformed_without_writing() {
+    let temp_dir = TempDir::new().unwrap();
+    let info = create_test_info();
+    let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
+    adapter.init_session(&info, default_model_id()).await.unwrap();
+    let path = adapter.rewind_points_file_path(&info).unwrap();
+    let original = "garbage{not json\n";
+    tokio::fs::write(&path, original).await.unwrap();
+    let res = adapter.truncate_rewind_points_from(&info, 1).await;
+    assert!(res.is_err(), "malformed read must abort the truncate");
+    assert_eq!(
+        tokio::fs::read_to_string(&path).await.unwrap(),
+        original,
+        "rewind_points.jsonl must be preserved when the truncate aborts"
     );
 }
 /// File-content `file_snapshots` must round-trip through the on-disk

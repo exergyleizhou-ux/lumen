@@ -3442,8 +3442,8 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             // runs sent real prompts to api.deepseek.com (observed 2026-07-26 —
             // the R0 gate failed on a live 401 while a mock server sat idle).
             let (base_url, api_base_url, env_key) = if let Some(ref byok_url) = m.base_url {
-                let url = inference_base_url_override()
-                    .unwrap_or_else(|| byok_url.trim().to_owned());
+                let url =
+                    inference_base_url_override().unwrap_or_else(|| byok_url.trim().to_owned());
                 let api = if m.byok || m.env_key.is_some() {
                     None
                 } else {
@@ -7732,18 +7732,18 @@ reasoning_effort = "low"
     #[test]
     #[serial]
     fn e2e_default_byok_model_does_not_forward_external_xai_key() {
+        let _xai_key = EnvGuard::set("XAI_API_KEY", "xai-external-key");
+        let _deepseek_key = EnvGuard::unset("DEEPSEEK_API_KEY");
         let (_, models) = resolve_models_from_toml("", None);
         let model = models
             .get(crate::models::default_model())
             .expect("default model should exist");
-        unsafe { std::env::set_var("XAI_API_KEY", "xai-external-key") };
         let sampling = resolve_sampling(model, None);
         assert_eq!(sampling.api_key, None);
         assert_eq!(
             sampling.base_url, "https://api.deepseek.com/v1",
             "xAI credentials must not cross the DeepSeek provider boundary"
         );
-        unsafe { std::env::remove_var("XAI_API_KEY") };
     }
     #[test]
     fn e2e_user_config_overrides_prefetched_model() {

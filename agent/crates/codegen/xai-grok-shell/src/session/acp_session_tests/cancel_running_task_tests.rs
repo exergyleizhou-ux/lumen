@@ -12,8 +12,23 @@ impl AsyncTerminalRunner for DummyTerminal {
         Err(TerminalError::Other("dummy terminal".into()))
     }
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn persist_ack_waits_for_disk_flush_before_success() {
+#[test]
+fn persist_ack_waits_for_disk_flush_before_success() {
+    let test_thread = std::thread::Builder::new()
+        .name("persist-ack-large-fixture".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(persist_ack_waits_for_disk_flush_before_success_inner());
+        })
+        .expect("large-stack test thread");
+    test_thread.join().expect("persist-ack test thread");
+}
+async fn persist_ack_waits_for_disk_flush_before_success_inner() {
     let local = tokio::task::LocalSet::new();
     local
         // Keep this deliberately large actor fixture off the current-thread test stack:
@@ -1480,8 +1495,23 @@ async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
 /// between the abort and the user's resend must NOT consume the one-shot or
 /// inject the reminder — it has to survive to the next *genuine* user turn.
 /// Guards the `PromptOrigin::User` gate on the injection call.
-#[tokio::test(flavor = "multi_thread")]
-async fn handle_prompt_synthetic_origin_preserves_interrupt_reminder() {
+#[test]
+fn handle_prompt_synthetic_origin_preserves_interrupt_reminder() {
+    let test_thread = std::thread::Builder::new()
+        .name("synthetic-origin-large-fixture".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            runtime.block_on(handle_prompt_synthetic_origin_preserves_interrupt_reminder_inner());
+        })
+        .expect("large-stack test thread");
+    test_thread.join().expect("synthetic-origin test thread");
+}
+async fn handle_prompt_synthetic_origin_preserves_interrupt_reminder_inner() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
