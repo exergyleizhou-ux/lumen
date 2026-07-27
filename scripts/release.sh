@@ -86,6 +86,9 @@ fi
 python3 "$VERSION_TOOL" --root "$ROOT" set "$NEXT" >/dev/null
 python3 "$CHANGELOG_TOOL" --root "$ROOT" "$NEXT"
 python3 "$VERSION_TOOL" --root "$ROOT" check >/dev/null
+"$ROOT/scripts/source-lock.sh"
+python3 "$ROOT/scripts/invalidate-release-readiness.py" --root "$ROOT"
+"$ROOT/scripts/check-version-consistency.sh" "$ROOT"
 git -C "$ROOT" diff --check
 (cd "$ROOT/agent" && cargo check --locked --package xai-grok-pager-bin --features release-dist)
 "$ROOT/scripts/test-release-prep.sh"
@@ -96,6 +99,9 @@ RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
 VERSION_PATHS=(
   VERSION
   CHANGELOG.md
+  SOURCE_LOCK.json
+  artifacts/readiness/engineering_complete.json
+  artifacts/readiness/status.json
   agent/Cargo.lock
   agent/crates/codegen/xai-grok-version/Cargo.toml
   agent/crates/codegen/xai-grok-pager/Cargo.toml
@@ -108,7 +114,9 @@ VERSION_PATHS=(
 )
 while IFS= read -r changed_path; do
   case "$changed_path" in
-    VERSION|CHANGELOG.md|agent/Cargo.lock|\
+    VERSION|CHANGELOG.md|SOURCE_LOCK.json|\
+    artifacts/readiness/engineering_complete.json|\
+    artifacts/readiness/status.json|agent/Cargo.lock|\
     agent/crates/codegen/xai-grok-version/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
