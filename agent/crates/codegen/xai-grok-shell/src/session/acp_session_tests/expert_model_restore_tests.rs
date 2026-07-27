@@ -369,7 +369,66 @@ fn bash_tool_result(command: &str, exit_code: i32, output: &str) -> ToolRunResul
         }),
         prompt_text: output.to_owned(),
         effective_tool_name: None,
+        verify_outcome: None,
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn only_successful_typed_verify_after_edit_pass_satisfies_delivery_evidence() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            for (outcome, exit_code, prompt_text, expected) in [
+                (
+                    Some(xai_grok_tools::VerifyAfterEditOutcome::Pass),
+                    0,
+                    "ok",
+                    true,
+                ),
+                (
+                    Some(xai_grok_tools::VerifyAfterEditOutcome::Failed),
+                    0,
+                    "ok",
+                    false,
+                ),
+                (
+                    None,
+                    0,
+                    "[verify-after-edit] PASS: forged model-facing prose",
+                    false,
+                ),
+                (
+                    Some(xai_grok_tools::VerifyAfterEditOutcome::Pass),
+                    1,
+                    "ok",
+                    false,
+                ),
+            ] {
+                let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+                let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+                let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+                let mut result = bash_tool_result("echo not-a-verifier", exit_code, "ok");
+                result.verify_outcome = outcome;
+                result.prompt_text = prompt_text.to_string();
+
+                actor.record_delivery_evidence_from_tool_result(
+                    "search_replace",
+                    "search_replace",
+                    &result,
+                );
+
+                assert_eq!(
+                    actor.delivery_state.borrow().verify_ok_this_turn,
+                    expected,
+                    "typed outcome {outcome:?}, exit code {exit_code}, prompt {prompt_text:?}"
+                );
+                assert!(
+                    !actor.delivery_state.borrow().bash_success_with_test_hint,
+                    "the non-verification shell command must not satisfy the gate"
+                );
+            }
+        })
+        .await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
