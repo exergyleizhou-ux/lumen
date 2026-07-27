@@ -13,8 +13,9 @@ const MAX_CAPTURE_BYTES: usize = 256 * 1024;
 
 /// Run a single verification step with timeout.
 ///
-/// If the tool is not found on PATH the step is skipped (returns ok=true with
-/// a "SKIP" note) — a missing tool is never a failure.
+/// If the tool is not found on PATH, or a test runner reports that it collected
+/// no tests, the step is skipped (returns ok=true) — neither condition is a
+/// verification failure, but neither is conclusive evidence of a pass.
 pub fn run_step(root: &Path, step: &Step, timeout_secs: u64) -> Result<StepResult> {
     let start = Instant::now();
 
@@ -98,6 +99,7 @@ pub fn run_step(root: &Path, step: &Step, timeout_secs: u64) -> Result<StepResul
     // test suite yet and must not read as a verification failure.
     let pytest_no_tests = step.command.ends_with("pytest") && status.code() == Some(5);
     let ok = (status.success() || pytest_no_tests) && !timed_out;
+    let skipped = pytest_no_tests && !timed_out;
     let mut diagnostics = if ok {
         vec![]
     } else {
@@ -120,7 +122,7 @@ pub fn run_step(root: &Path, step: &Step, timeout_secs: u64) -> Result<StepResul
         output: combined,
         diagnostics,
         duration_ms: start.elapsed().as_millis() as u64,
-        skipped: false,
+        skipped,
         timed_out,
     })
 }
@@ -278,5 +280,31 @@ mod tests {
         assert!(!result.ok);
         assert!(result.output.contains("timed out after 1 seconds"));
         assert!(started.elapsed() < Duration::from_secs(4));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pytest_no_tests_is_inconclusive_not_a_verification_pass() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let tmp = TempDir::new().unwrap();
+        let pytest = tmp.path().join("pytest");
+        std::fs::write(&pytest, "#!/bin/sh\nexit 5\n").unwrap();
+        std::fs::set_permissions(&pytest, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let step = Step {
+            language: "python".into(),
+            label: "pytest".into(),
+            command: pytest.to_string_lossy().into_owned(),
+            args: vec!["-q".into()],
+        };
+
+        let result = run_step(tmp.path(), &step, 5).unwrap();
+
+        assert!(result.ok, "no tests is not a verifier failure");
+        assert!(
+            result.skipped,
+            "no tests must not become conclusive PASS evidence"
+        );
+        assert!(!result.timed_out);
     }
 }

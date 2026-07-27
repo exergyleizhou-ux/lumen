@@ -161,7 +161,7 @@ async fn feedback_for_output_with_config(
     let feedback = match outcome {
         Ok(Ok(None)) => return None,
         Ok(Ok(Some(result))) if result.step_results.iter().all(|step| step.skipped) => {
-            VerifyFeedback::inconclusive("[verify-after-edit] SKIPPED: no allowed verifier executable was available on PATH for this language. The edit remains unverified.".to_string())
+            VerifyFeedback::inconclusive("[verify-after-edit] SKIPPED: no allowed verifier produced a conclusive result (tools were unavailable or no tests were collected). The edit remains unverified.".to_string())
         }
         Ok(Ok(Some(result))) if result.ok => {
             tracker.record_pass(&repair_key);
@@ -173,11 +173,11 @@ async fn feedback_for_output_with_config(
             let skipped = result.step_results.len().saturating_sub(ran);
             let text = if skipped == 0 {
                 format!(
-                    "[verify-after-edit] PASS: {ran} fixed Go build/vet/test step(s) passed after this edit."
+                    "[verify-after-edit] PASS: {ran} fixed verification step(s) passed after this edit."
                 )
             } else {
                 format!(
-                    "[verify-after-edit] PASS: {ran} fixed Go verification step(s) passed; {skipped} unavailable step(s) were skipped."
+                    "[verify-after-edit] PASS: {ran} fixed verification step(s) passed; {skipped} unavailable or inconclusive step(s) were skipped."
                 )
             };
             VerifyFeedback {
@@ -189,7 +189,7 @@ async fn feedback_for_output_with_config(
             let failures = tracker.record_failure(&repair_key);
             let diagnostics = lumen_verify::format_diagnostics(&result.step_results);
             let mut feedback = format!(
-                "[verify-after-edit] FAILED (attempt {attempt}/{max_repair}): automatic Go build/vet/test found errors after this edit.\n\
+                "[verify-after-edit] FAILED (attempt {attempt}/{max_repair}): automatic verification found errors after this edit.\n\
                  {diagnostics}"
             );
             if failures >= max_repair {
@@ -398,7 +398,11 @@ mod tests {
 
         assert_eq!(feedback.outcome, Some(VerifyAfterEditOutcome::Pass));
         assert!(feedback.text.contains("[verify-after-edit] PASS"));
-        assert!(feedback.text.contains("1 unavailable step(s) were skipped"));
+        assert!(
+            feedback
+                .text
+                .contains("1 unavailable or inconclusive step(s) were skipped")
+        );
     }
 
     #[cfg(unix)]
