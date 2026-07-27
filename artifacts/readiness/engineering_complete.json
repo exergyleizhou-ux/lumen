@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
   "check_id": "engineering_complete",
-  "version": "0.1.250",
-  "head_short": "beede2dd",
+  "version": "0.1.251",
+  "head_short": "2ba98105",
   "pass": false,
-  "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+  "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
   "auto_blockers": [
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
+    "release_version_changed:rerun scripts/verify-readiness.sh for 0.1.251 at 2ba981053d509c32bc6ab7a603f4a371bb10b822"
   ],
-  "can_tool_call": true,
-  "source_lock_sha256": "dd152c3ec1ee9faee9b1dcf2fd3f1cfca674a88f440bd0497c7059ae9c30fcb1",
-  "binary_sha256": "974b311638ebf13713521d22569de401c1f96675c6ffad8551af976a2fb12d3a",
-  "generated_at": "2026-07-26T20:21:36Z"
+  "can_tool_call": false,
+  "source_lock_sha256": "2efc6b847284bbe5efdea2a88aaa3c1e5d41973fc804aea0400b93d4eb27d72a",
+  "binary_sha256": null,
+  "generated_at": "2026-07-27T09:01:32Z"
 }
