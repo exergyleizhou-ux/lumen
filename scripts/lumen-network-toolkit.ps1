@@ -37,6 +37,7 @@ param(
     [switch]$ScanOnly,
     [switch]$ResetProxy,
     [switch]$ApiPush,
+    [switch]$PushNow,
     [string]$Branch
 )
 
@@ -189,12 +190,14 @@ function Invoke-AutoFix {
         return $true
     }
 
-    # 4. SOCKS5 detected but no HTTP — note limitation
+    # 4. SOCKS5 detected — try git native SOCKS5, fall back to direct retry
     $socksPort = Find-SocksProxy
     if ($socksPort) {
-        Write-Host "   ${Yellow}SOCKS5 on port $socksPort found, but git needs HTTP proxy.$Reset"
-        Write-Host "   ${Yellow}Enable HTTP inbound in V2RayN/Clash (typically port 10809 or 7890)$Reset"
-        Write-Host "   ${Yellow}Or use -ApiPush to push via GitHub API$Reset"
+        Write-Host "   ${Yellow}SOCKS5 on port $socksPort — trying git socks5:// proxy...$Reset"
+        git config --global http.proxy "socks5://127.0.0.1:${socksPort}"
+        git config --global https.proxy "socks5://127.0.0.1:${socksPort}"
+        Write-Host "   Git proxy set to socks5://127.0.0.1:${socksPort}"
+        Write-Host "   (V2RayN needs active servers for this to work — check V2RayN GUI)"
     }
 
     # 5. Cargo mirror configuration
@@ -394,6 +397,31 @@ function Show-Diagnostics {
     }
 }
 
+function Invoke-PushNow {
+    <#
+    .SYNOPSIS
+        Push current branch with auto-retry (GFW window strategy).
+        Retries up to 10 times with 5-second intervals.
+        Returns true on success, false if all retries exhausted.
+    #>
+    Write-Host "${Bold}[PushNow] Auto-retry push...$Reset"
+    for ($i=1; $i -le 10; $i++) {
+        Write-Host "  Attempt $i/10..."
+        $result = git push origin windows-fix-ps-scripts 2>&1
+        $ok = ($LASTEXITCODE -eq 0) -or ($result -match "up-to-date|Everything")
+        if ($ok) {
+            Write-Host "  ${Green}SUCCESS on attempt $i!$Reset"
+            return $true
+        }
+        if ($i -lt 10) {
+            Write-Host "  Retrying in 5s..."
+            Start-Sleep -Seconds 5
+        }
+    }
+    Write-Host "  ${Red}Failed after 10 attempts. GFW window closed.$Reset"
+    return $false
+}
+
 function Invoke-ResetProxy {
     git config --global --unset http.proxy 2>$null
     git config --global --unset https.proxy 2>$null
@@ -408,6 +436,8 @@ if ($ResetProxy) {
     Invoke-ResetProxy
 } elseif ($ApiPush) {
     $null = Invoke-ApiPush -BranchName $Branch
+} elseif ($PushNow) {
+    $null = Invoke-PushNow
 } elseif ($ScanOnly) {
     Show-Diagnostics
     Write-Host ""
@@ -421,10 +451,11 @@ if ($ResetProxy) {
     Show-Diagnostics
     Write-Host ""
     Write-Host "Usage:"
-    Write-Host "  $Bold-AutoFix$Reset     Auto-detect and configure best proxy"
-    Write-Host "  $Bold-ScanOnly$Reset    Show diagnostics only"
-    Write-Host "  $Bold-ResetProxy$Reset  Clear git proxy config"
-    Write-Host "  $Bold-ApiPush$Reset     Push via GitHub API (fallback)"
-    Write-Host "  $Bold-Branch$Reset NAME Branch for -ApiPush"
+    Write-Host "  -AutoFix      Auto-detect and configure best proxy"
+    Write-Host "  -ScanOnly     Show diagnostics only"
+    Write-Host "  -ResetProxy   Clear git proxy config"
+    Write-Host "  -PushNow      Push with auto-retry (10x, 5s intervals)"
+    Write-Host "  -ApiPush      Push via GitHub API (fallback)"
+    Write-Host "  -Branch NAME  Branch for -ApiPush"
 }
 
