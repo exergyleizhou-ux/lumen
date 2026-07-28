@@ -644,9 +644,17 @@ mod win {
                 (*context_record).Rip as usize,
                 (*context_record).Rbp as usize,
             );
-            // ARM64 Windows: capture PC only; frame-pointer walking is
-            // unreliable without verifying the exact windows-sys CONTEXT layout.
-            #[cfg(not(target_arch = "x86_64"))]
+            // ARM64 Windows: CONTEXT has Pc and Fp (X29) fields.
+            // Pc is a direct field on the ARM64 CONTEXT struct; Fp lives
+            // inside the Anonymous union (CONTEXT_0 -> CONTEXT_0_0.Fp).
+            #[cfg(target_arch = "aarch64")]
+            let (crash_pc, crash_fp) = {
+                let pc = (*context_record).Pc as usize;
+                let fp = unsafe { (*context_record).Anonymous.Anonymous.Fp as usize };
+                (pc, fp)
+            };
+            // Fallback for any other architecture: capture nothing.
+            #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
             let (crash_pc, crash_fp) = (0usize, 0usize);
 
             if crash_pc != 0 {

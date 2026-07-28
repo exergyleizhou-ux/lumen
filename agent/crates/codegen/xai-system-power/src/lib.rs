@@ -96,6 +96,13 @@ pub fn current_power_state() -> PowerState {
     imp::current_power_state()
 }
 
+/// Returns whether the display is currently on. On Windows this is tracked
+/// by `PowerSettingRegisterNotification` callbacks; on other platforms this
+/// returns `true` (conservative default).
+pub fn is_display_on() -> bool {
+    imp::is_display_on()
+}
+
 #[cfg(target_os = "macos")]
 #[path = "macos.rs"]
 mod imp;
@@ -122,6 +129,10 @@ mod imp {
 
     pub(crate) fn current_power_state() -> super::PowerState {
         super::PowerState::Unknown
+    }
+
+    pub(crate) fn is_display_on() -> bool {
+        true
     }
 }
 
