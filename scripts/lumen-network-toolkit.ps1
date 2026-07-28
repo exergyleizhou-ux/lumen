@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Lumen Windows Network Toolkit �diagnose and bypass network restrictions.
+    Lumen Windows Network Toolkit — diagnose and bypass network restrictions.
 .DESCRIPTION
     GFW / corporate firewall blocking GitHub / crates.io
     This toolkit auto-detects proxies, configures git/cargo, and provides
@@ -107,7 +107,7 @@ function Find-SocksProxy {
         try {
             $tcp = New-Object System.Net.Sockets.TcpClient
             $tcp.Connect("127.0.0.1", $p)
-            Write-Host "  ${Yellow}SOCKS5:$Reset port $p responds (SOCKS5 �needs HTTP bridge for git)"
+            Write-Host "  ${Yellow}SOCKS5:$Reset port $p responds (SOCKS5 -- needs HTTP bridge for git)"
             $tcp.Close()
             $tcp.Dispose()
             return $p
@@ -152,7 +152,7 @@ function Invoke-AutoFix {
     Write-Host "1. Direct connectivity..."
     try {
         $r = Invoke-WebRequest -Uri "https://github.com" -TimeoutSec 5 -UseBasicParsing
-        Write-Host "   ${Green}Direct connection OK$Reset �no proxy needed"
+        Write-Host "   ${Green}Direct connection OK$Reset — no proxy needed"
         git config --global --unset http.proxy 2>$null
         git config --global --unset https.proxy 2>$null
         return $true
@@ -189,7 +189,7 @@ function Invoke-AutoFix {
         return $true
     }
 
-    # 4. SOCKS5 detected but no HTTP �note limitation
+    # 4. SOCKS5 detected but no HTTP — note limitation
     $socksPort = Find-SocksProxy
     if ($socksPort) {
         Write-Host "   ${Yellow}SOCKS5 on port $socksPort found, but git needs HTTP proxy.$Reset"
@@ -229,7 +229,7 @@ function Invoke-ApiPush {
     <#
     .SYNOPSIS
         Push the current HEAD via GitHub REST API directly.
-        Bypasses git protocol restrictions �only needs HTTPS connectivity
+        Bypasses git protocol restrictions — only needs HTTPS connectivity
         to api.github.com (which may be less aggressively blocked).
         Requires git credentials in Windows Credential Manager.
     #>
@@ -283,7 +283,7 @@ function Invoke-ApiPush {
         $existingSha = $ref.object.sha
         Write-Host "  Existing remote SHA: $existingSha"
     } catch {
-        Write-Host "  Ref does not exist yet �will create"
+        Write-Host "  Ref does not exist yet — will create"
     }
 
     # Update/create ref
