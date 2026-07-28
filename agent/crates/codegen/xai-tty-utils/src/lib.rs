@@ -228,6 +228,8 @@ pub struct ProcessGroup {
     leader: Option<ProcessGroupId>,
     #[cfg(windows)]
     job: windows::Win32::Foundation::HANDLE,
+    #[cfg(windows)]
+    child_pid: u32,
 }
 
 #[cfg(windows)]
@@ -271,7 +273,7 @@ impl ProcessGroup {
                 return Err(io::Error::other(format!("SetInformationJobObject: {e}")));
             }
 
-            Ok(Self { job })
+            Ok(Self { job, child_pid: 0 })
         }
     }
 
@@ -313,6 +315,9 @@ impl ProcessGroup {
             let assign_result = unsafe { AssignProcessToJobObject(self.job, process_handle) };
             let _ = unsafe { CloseHandle(process_handle) };
 
+            if assign_result.is_ok() {
+                self.child_pid = pid;
+            }
             assign_result
                 .map_err(|e| io::Error::other(format!("AssignProcessToJobObject({pid}): {e}")))
         }
@@ -325,7 +330,7 @@ impl ProcessGroup {
         }
         #[cfg(windows)]
         {
-            self.terminate_job(1)
+            self.shutdown_job(500)
         }
     }
 
@@ -336,7 +341,7 @@ impl ProcessGroup {
         }
         #[cfg(windows)]
         {
-            self.terminate_job(1)
+            self.shutdown_job(2000)
         }
     }
 
@@ -353,9 +358,22 @@ impl ProcessGroup {
     }
 
     #[cfg(windows)]
-    fn terminate_job(&self, exit_code: u32) -> io::Result<()> {
+    fn shutdown_job(&self, grace_ms: u32) -> io::Result<()> {
+        use windows::Win32::System::Console::{CTRL_BREAK_EVENT, GenerateConsoleCtrlEvent};
         use windows::Win32::System::JobObjects::TerminateJobObject;
-        unsafe { TerminateJobObject(self.job, exit_code) }
+        use windows::Win32::System::Threading::Sleep;
+
+        if self.child_pid != 0 {
+            // Send CTRL_BREAK_EVENT to the child process group, giving it a
+            // chance to clean up (flush buffers, close handles, etc.) before
+            // the hard kill.
+            unsafe {
+                let _ = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, self.child_pid);
+            }
+            unsafe { Sleep(grace_ms); }
+        }
+        // Hard kill any remaining processes in the job.
+        unsafe { TerminateJobObject(self.job, 1) }
             .map_err(|e| io::Error::other(format!("TerminateJobObject: {e}")))
     }
 }
@@ -609,6 +627,26 @@ fn is_wsl_from_inputs(env: &HashMap<String, String>, osrelease: Option<&str>) ->
         let lower = s.to_ascii_lowercase();
         lower.contains("microsoft") || lower.contains("wsl")
     })
+}
+
+/// Returns true when the current process owns the foreground console.
+/// On Windows: GetConsoleWindow() == GetForegroundWindow(). Headless → true.
+pub fn is_foreground() -> bool {
+    #[cfg(windows)] {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetConsoleWindow() -> isize;
+        }
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn GetForegroundWindow() -> isize;
+        }
+        let c = unsafe { GetConsoleWindow() };
+        if c == 0 { return true; }
+        let f = unsafe { GetForegroundWindow() };
+        c == f
+    }
+    #[cfg(not(windows))] { true }
 }
 
 #[cfg(test)]
@@ -934,5 +972,10 @@ mod tests {
         let foreign = if own == 2 { 3 } else { 2 };
         let id = ProcessGroupId::new(foreign).expect("foreign pgid should be accepted");
         assert_eq!(id.get(), foreign);
+    }
+
+    #[test]
+    fn foreground_test_process_is_foreground() {
+        assert!(super::is_foreground(), "test process must be foreground");
     }
 }

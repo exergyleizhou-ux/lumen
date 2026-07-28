@@ -192,8 +192,40 @@ impl SandboxManager {
             }
         }
     }
-    /// Stub when `enforce` feature is disabled — sandbox is not applied.
-    #[cfg(not(all(feature = "enforce", unix)))]
+    /// Windows: process-level sandbox via Job Objects (raw FFI, no new deps).
+    #[cfg(all(feature = "enforce", windows))]
+    pub fn apply(&mut self, _workspace: &Path) -> anyhow::Result<()> {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn CreateJobObjectW(a: *const std::ffi::c_void, b: *const u16) -> isize;
+            fn SetInformationJobObject(h: isize, c: u32, p: *const std::ffi::c_void, s: u32) -> i32;
+            fn AssignProcessToJobObject(h: isize, p: isize) -> i32;
+            fn GetCurrentProcess() -> isize;
+        }
+        use std::mem::MaybeUninit;
+        #[repr(C)] struct Bl { t1:i64,t2:i64,flags:u32,ws1:usize,ws2:usize,pl:u32,aff:usize,prio:u32,sched:u32 }
+        #[repr(C)] struct Io { r:u64,w:u64,o:u64,rt:u64,wt:u64,ot:u64 }
+        #[repr(C)] struct El { basic:Bl, io:Io, pmem:usize,jmem:usize,ppmem:usize,pjmem:usize }
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job == 0 { anyhow::bail!("CreateJobObjectW failed"); }
+            let mut ext: MaybeUninit<El> = MaybeUninit::zeroed();
+            let e = ext.assume_init_mut();
+            e.basic.pl = 1; e.basic.flags = 0x08;
+            if SetInformationJobObject(job,9,e as *const _ as _,std::mem::size_of::<El>() as u32) == 0
+                { anyhow::bail!("SetInformationJobObject limits failed"); }
+            let ui: u32 = 0x40|0x10|0x80|0x20|0x01|0x02|0x08|0x04;
+            if SetInformationJobObject(job,11,&ui as *const _ as _,4) == 0
+                { anyhow::bail!("SetInformationJobObject UI failed"); }
+            if AssignProcessToJobObject(job, GetCurrentProcess()) == 0
+                { anyhow::bail!("AssignProcessToJobObject failed"); }
+            tracing::info!(profile=%self.profile, "Windows job-object sandbox applied");
+        }
+        self.applied = true;
+        Ok(())
+    }
+
+    #[cfg(not(any(all(feature = "enforce", unix), all(feature = "enforce", windows))))]
     pub fn apply(&mut self, _workspace: &Path) -> anyhow::Result<()> {
         tracing::info!(
             profile = % self.profile,
