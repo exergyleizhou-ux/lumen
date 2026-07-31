@@ -116,7 +116,8 @@ try {
 }
 
 # ── Composite Score ──
-$totalScore = [Math]::Round(($cpuScore * 0.4) + ($memScore * 0.1) + ($readScore * 0.1) + ([Math]::Max(0, 1000 - ($results["network_latency_ms"] ?? 500)) * 0.4), 0)
+$netLatency = if ($results["network_latency_ms"] -ge 0) { $results["network_latency_ms"] } else { 500 }
+$totalScore = [Math]::Round(($cpuScore * 0.4) + ($memScore * 0.1) + ($readScore * 0.1) + ([Math]::Max(0, 1000 - $netLatency) * 0.4), 0)
 $results["composite_score"] = $totalScore
 
 # Rating

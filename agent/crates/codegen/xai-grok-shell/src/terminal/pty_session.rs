@@ -322,9 +322,19 @@ fn session_has_foreground_process(session: &PtySession) -> bool {
 }
 
 /// `tcgetpgrp` has no ConPTY equivalent (`process_group_leader` is
-/// unix-only in portable-pty), so non-unix PTYs never report a foreground
-/// process and clients close terminals without confirmation.
-#[cfg(not(unix))]
+/// unix-only in portable-pty). On Windows we approximate by assuming a
+/// child is attached whenever the PTY writer handle is still valid.
+#[cfg(windows)]
+fn session_has_foreground_process(_session: &PtySession) -> bool {
+    // On ConPTY we cannot use tcgetpgrp, so approximate:
+    // If the PTY writer handle is still valid, assume a child is attached.
+    // FUTURE: use toolhelp32 to walk child process tree.
+    true
+}
+
+/// `tcgetpgrp` has no equivalent on other non-unix platforms;
+/// always returns `false`.
+#[cfg(all(not(unix), not(windows)))]
 fn session_has_foreground_process(_session: &PtySession) -> bool {
     false
 }

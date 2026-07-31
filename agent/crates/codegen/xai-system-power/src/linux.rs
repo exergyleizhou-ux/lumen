@@ -91,3 +91,8 @@ pub(crate) fn current_power_state() -> crate::PowerState {
     // logind `PrepareForSleep` path.
     crate::PowerState::Unknown
 }
+
+/// Linux has no direct display-on query; return `true` conservatively.
+pub(crate) fn is_display_on() -> bool {
+    true
+}

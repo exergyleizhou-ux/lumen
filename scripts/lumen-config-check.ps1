@@ -61,14 +61,14 @@ Write-Host "--- Model defaults ---"
 $lumenDefault = ""
 $grokDefault  = ""
 
-$lumenMatch = Select-String -Path $LumenConf -Pattern '^default\s*=' -SimpleMatch | Select-Object -First 1
+$lumenMatch = Select-String -Path $LumenConf -Pattern '^default\s*=' | Select-Object -First 1
 if ($lumenMatch) {
     if ($lumenMatch.Line -match 'default\s*=\s*"([^"]*)"') {
         $lumenDefault = $Matches[1]
     }
 }
 
-$grokMatch = Select-String -Path $GrokConf -Pattern '^default\s*=' -SimpleMatch | Select-Object -First 1
+$grokMatch = Select-String -Path $GrokConf -Pattern '^default\s*=' | Select-Object -First 1
 if ($grokMatch) {
     if ($grokMatch.Line -match 'default\s*=\s*"([^"]*)"') {
         $grokDefault = $Matches[1]

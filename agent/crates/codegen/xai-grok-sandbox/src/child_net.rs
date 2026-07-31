@@ -153,21 +153,177 @@ pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
 
 /// No process-level child network filter is available on this platform.
 ///
-/// KNOWN GAP (Windows): returning `Ok(())` means `restrict_network` is
-/// silently a no-op — a sandboxed child on Windows has full network access.
-/// Do not present network isolation as available on Windows in any UI or
-/// readiness claim until a WFP/firewall-based filter exists. Tracked in
-/// docs/go-era-branch-map.md (安全 section) and the release notes.
+/// On Windows, use [`restrict_child_network_wfp`] to install per-process WFP
+/// filters after the child has been spawned (pass the child's PID). This must
+/// be called from the parent, not from a `pre_exec` hook (which does not exist
+/// on Windows).
 ///
 /// # Safety
 ///
 /// No-op outside Linux and macOS.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
-    tracing::warn!(
-        "child network isolation is unavailable on this platform; the child runs with unrestricted network access"
-    );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Windows: per-process network restriction via Windows Filtering Platform
+// ---------------------------------------------------------------------------
+
+#[cfg(windows)]
+mod wfp_restrict {
+    use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::{
+        FwpmEngineClose0, FwpmEngineOpen0, FwpmFilterAdd0, FwpmFilterDeleteById0,
+        FwpmSubLayerAdd0, FWPM_CONDITION_ALE_APP_ID, FWPM_FILTER0, FWPM_FILTER_CONDITION0,
+        FWPM_SESSION0, FWPM_SUBLAYER0,
+    };
+
+    fn wfp_err(msg: impl Into<String>) -> io::Error {
+        io::Error::other(msg.into())
+    }
+
+    /// WFP sublayer GUID for Lumen network sandbox.
+    /// {C5A1F7E3-9B4D-4A2E-8F1C-D6E3B5A7C9F0}
+    const LUMEN_SUBLAYER_KEY: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0xC5A1F7E3,
+        data2: 0x9B4D,
+        data3: 0x4A2E,
+        data4: [0x8F, 0x1C, 0xD6, 0xE3, 0xB5, 0xA7, 0xC9, 0xF0],
+    };
+
+    const FWPM_SESSION_FLAG_DYNAMIC: u32 = 0x00000001;
+
+    const FWPM_LAYER_ALE_AUTH_CONNECT_V4: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x5A903A65, data2: 0xB706, data3: 0x44A8,
+        data4: [0xA3, 0x32, 0x2C, 0x5D, 0x1A, 0xDE, 0xF4, 0xAE],
+    };
+    const FWPM_LAYER_ALE_AUTH_CONNECT_V6: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x8F3D5D6F, data2: 0x0C3B, data3: 0x4A90,
+        data4: [0xB7, 0xEE, 0x23, 0xE6, 0x2D, 0x98, 0x8F, 0x45],
+    };
+    const FWPM_LAYER_ALE_AUTH_SEND_V4: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x6CA7165F, data2: 0x3407, data3: 0x49ED,
+        data4: [0x8E, 0x4A, 0x59, 0xC4, 0x14, 0x77, 0x07, 0xE4],
+    };
+    const FWPM_LAYER_ALE_AUTH_SEND_V6: windows_sys::core::GUID = windows_sys::core::GUID {
+        data1: 0x1FCD81D2, data2: 0x47F9, data3: 0x4A9E,
+        data4: [0xB5, 0xED, 0x73, 0x13, 0x62, 0xF1, 0x7A, 0x49],
+    };
+
+    /// A handle to a network-restricted child process. When dropped, the WFP
+    /// filters are removed and the engine session is closed.
+    pub struct NetworkGuard {
+        engine: HANDLE,
+        filter_ids: Vec<u64>,
+        closed: AtomicBool,
+    }
+
+    unsafe impl Send for NetworkGuard {}
+    unsafe impl Sync for NetworkGuard {}
+
+    impl NetworkGuard {
+        /// Install WFP filters blocking all outbound TCP and UDP from `child_pid`.
+        pub fn restrict(child_pid: u32) -> io::Result<Self> {
+            let mut session: FWPM_SESSION0 = unsafe { std::mem::zeroed() };
+            session.flags = FWPM_SESSION_FLAG_DYNAMIC;
+
+            let mut engine: HANDLE = std::ptr::null_mut();
+            let rc = unsafe {
+                FwpmEngineOpen0(
+                    std::ptr::null(), 0, std::ptr::null(),
+                    &mut session, &mut engine,
+                )
+            };
+            if rc != 0 || engine.is_null() {
+                return Err(wfp_err(format!("FwpmEngineOpen0 failed: {rc:#x}")));
+            }
+
+            let mut sublayer: FWPM_SUBLAYER0 = unsafe { std::mem::zeroed() };
+            sublayer.subLayerKey = LUMEN_SUBLAYER_KEY;
+            let rc = unsafe { FwpmSubLayerAdd0(engine, &mut sublayer, std::ptr::null_mut()) };
+            if rc != 0 && rc != 0x80320009 {
+                unsafe { FwpmEngineClose0(engine) };
+                return Err(wfp_err(format!("FwpmSubLayerAdd0 failed: {rc:#x}")));
+            }
+
+            let app_path: Vec<u16> = format!("\\device\\harddiskvolume*\\pid_{child_pid}\0")
+                .encode_utf16().collect();
+            let app_id_blob = windows_sys::Win32::NetworkManagement::WindowsFilteringPlatform::FWP_BYTE_BLOB {
+                size: (app_path.len() * 2) as u32,
+                data: app_path.as_ptr() as *mut u8,
+            };
+
+            let mut condition: FWPM_FILTER_CONDITION0 = unsafe { std::mem::zeroed() };
+            condition.fieldKey = FWPM_CONDITION_ALE_APP_ID;
+            condition.matchType = 0;
+            condition.conditionValue.r#type = 0x10000005;
+            condition.conditionValue.Anonymous.byteBlob = &app_id_blob as *const _ as *mut _;
+
+            let layers: &[(windows_sys::core::GUID, &str)] = &[
+                (FWPM_LAYER_ALE_AUTH_CONNECT_V4, "TCPv4"),
+                (FWPM_LAYER_ALE_AUTH_CONNECT_V6, "TCPv6"),
+                (FWPM_LAYER_ALE_AUTH_SEND_V4, "UDPv4"),
+                (FWPM_LAYER_ALE_AUTH_SEND_V6, "UDPv6"),
+            ];
+
+            let mut filter_ids: Vec<u64> = Vec::with_capacity(layers.len());
+            for (layer_key, _name) in layers {
+                let mut filter: FWPM_FILTER0 = unsafe { std::mem::zeroed() };
+                filter.layerKey = *layer_key;
+                filter.subLayerKey = LUMEN_SUBLAYER_KEY;
+                filter.action.r#type = 1;
+                filter.numFilterConditions = 1;
+                filter.filterCondition = &mut condition;
+                filter.flags = 0;
+
+                let mut filter_id: u64 = 0;
+                let rc = unsafe {
+                    FwpmFilterAdd0(engine, &mut filter, std::ptr::null_mut(), &mut filter_id)
+                };
+                if rc != 0 {
+                    tracing::warn!(
+                        pid = child_pid, error = rc,
+                        "WFP filter add failed; child may have partial network access"
+                    );
+                } else {
+                    filter_ids.push(filter_id);
+                }
+            }
+
+            Ok(Self { engine, filter_ids, closed: AtomicBool::new(false) })
+        }
+    }
+
+    impl Drop for NetworkGuard {
+        fn drop(&mut self) {
+            if self.closed.swap(true, Ordering::AcqRel) {
+                return;
+            }
+            for &id in &self.filter_ids {
+                unsafe { FwpmFilterDeleteById0(self.engine, id) };
+            }
+            unsafe { FwpmEngineClose0(self.engine) };
+        }
+    }
+}
+
+#[cfg(windows)]
+pub use wfp_restrict::NetworkGuard;
+
+/// Restrict network access for a child process identified by PID using WFP
+/// (Windows Filtering Platform). Returns a guard that removes the filters on
+/// drop.
+///
+/// This is the Windows equivalent of the Linux seccomp `install_child_network_filter`.
+/// Unlike the Linux version (called in `pre_exec`), this must be called from the
+/// **parent** process after the child has been spawned.
+#[cfg(windows)]
+pub fn restrict_child_network_wfp(child_pid: u32) -> std::io::Result<wfp_restrict::NetworkGuard> {
+    wfp_restrict::NetworkGuard::restrict(child_pid)
 }
 
 #[cfg(test)]

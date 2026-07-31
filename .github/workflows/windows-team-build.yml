@@ -7,6 +7,14 @@ on:
     paths:
       - ".github/workflows/windows-team-build.yml"
       - "agent/**"
+      - "scripts/*.ps1"
+      - "VERSION"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/windows-team-build.yml"
+      - "agent/**"
+      - "scripts/*.ps1"
       - "VERSION"
 
 concurrency:
@@ -28,9 +36,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust (pinned 1.92.0)
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: "1.92.0"
           targets: x86_64-pc-windows-msvc
 
       - name: Install protoc
@@ -57,17 +66,12 @@ jobs:
         shell: pwsh
         env:
           CARGO_BUILD_JOBS: "4"
-          # MSVC creates a PDB for debug information.  The monolithic CLI
-          # exceeds the PDB public-symbol limit, while this distributable does
-          # not ship a matching symbol bundle.  Force a symbol-free release
-          # specifically for the Windows team package.
-          CARGO_PROFILE_RELEASE_DEBUG: "0"
-          CARGO_PROFILE_RELEASE_STRIP: "symbols"
         run: |
-          cargo build --locked --release `
+          cargo rustc --locked --release `
             --package xai-grok-pager-bin `
             --features release-dist `
-            --target x86_64-pc-windows-msvc
+            --target x86_64-pc-windows-msvc `
+            -- -C link-arg=/DEBUG:NONE
 
       - name: Smoke test native Windows binary
         shell: pwsh

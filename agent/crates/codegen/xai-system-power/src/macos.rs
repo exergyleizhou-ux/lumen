@@ -117,6 +117,12 @@ pub(crate) fn current_power_state() -> PowerState {
     classify_capabilities(caps)
 }
 
+/// macOS does not distinguish display state independently from power state;
+/// return `true` conservatively.
+pub(crate) fn is_display_on() -> bool {
+    true
+}
+
 /// Lives for the duration of the run loop; pointed to by the IOKit `refcon`.
 /// Only touched from the run-loop thread (registration sets `root_port`
 /// before the loop runs; the callback reads both fields on that same thread).

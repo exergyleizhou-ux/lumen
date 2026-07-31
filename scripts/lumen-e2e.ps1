@@ -31,7 +31,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$RepoRoot = Split-Path -Parent $PSScriptRoot
 $AgentDir = Join-Path $RepoRoot "agent"
 $TestThreads = if ($env:LUMEN_E2E_TEST_THREADS) { $env:LUMEN_E2E_TEST_THREADS } else { "4" }
 $Profile = if ($Release) { "release" } else { "debug" }
@@ -48,10 +48,11 @@ if (-not $NoBuild) {
     Push-Location $AgentDir
     try {
         if ($Release) {
-            cargo build -p xai-grok-pager-bin --release
+            cargo build --locked -p xai-grok-pager-bin --release --features release-dist --target x86_64-pc-windows-msvc
         } else {
-            cargo build -p xai-grok-pager-bin
+            cargo build --locked -p xai-grok-pager-bin --target x86_64-pc-windows-msvc
         }
+        if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
     } finally {
         Pop-Location
     }
@@ -78,9 +79,11 @@ Write-Host "${Yellow}Running e2e tests...${Reset}"
 
 Push-Location $AgentDir
 try {
-    $testArgs = @("test", "--test-threads=$TestThreads")
+    $testArgs = @("test", "--locked")
     if ($Test) {
-        $testArgs += "--", $Test
+        $testArgs += "--", $Test, "--test-threads=$TestThreads"
+    } else {
+        $testArgs += "--", "--test-threads=$TestThreads"
     }
     & cargo @testArgs
     $exitCode = $LASTEXITCODE

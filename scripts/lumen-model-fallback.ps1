@@ -9,18 +9,18 @@
 .PARAMETER Watch
     Continuously monitor the proxy log for failures.
 
-.PARAMETER Reset
+.PARAMETER ClearState
     Clear the failure counter state file.
 
 .EXAMPLE
-    .\scripts\lumen-model-fallback.ps1           # one-shot check
-    .\scripts\lumen-model-fallback.ps1 -Watch     # continuous monitoring
-    .\scripts\lumen-model-fallback.ps1 -Reset     # clear failure counters
+    .\scripts\lumen-model-fallback.ps1                 # one-shot check
+    .\scripts\lumen-model-fallback.ps1 -Watch           # continuous monitoring
+    .\scripts\lumen-model-fallback.ps1 -ClearState      # clear failure counters
 #>
 
 param(
     [switch]$Watch,
-    [switch]$Reset
+    [switch]$ClearState
 )
 
 $Red    = "$([char]27)[0;31m"
@@ -117,7 +117,7 @@ function Watch-Log {
 }
 
 # ── Main ──
-if ($Reset) {
+if ($ClearState) {
     Reset-State
 } elseif ($Watch) {
     Watch-Log
