@@ -1276,7 +1276,9 @@ impl SessionActor {
                     summary: "executor cancelled".to_owned(),
                     ..VerificationSummary::default()
                 },
-                Ok(TurnOutcome::MaxTurnsReached { .. }) | Err(_) => VerificationSummary {
+                Ok(TurnOutcome::MaxTurnsReached { .. })
+                | Ok(TurnOutcome::StationarityEnded { .. })
+                | Err(_) => VerificationSummary {
                     outcome: HostVerificationOutcome::Failed,
                     summary: "executor did not finish successfully".to_owned(),
                     ..VerificationSummary::default()

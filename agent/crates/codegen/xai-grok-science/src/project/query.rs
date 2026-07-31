@@ -4,8 +4,7 @@
 use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
-use super::evidence_graph::{EdgeKind, EvidenceEdge, EvidenceGraph, EvidenceNode, NodeId, NodeKind};
-use super::model::ProjectId;
+use super::evidence_graph::{EdgeKind, EvidenceGraph, NodeId, NodeKind};
 
 // ── Query types ────────────────────────────────────────────────────
 

@@ -53,7 +53,8 @@ pub fn install_plugin(source: &str, cwd: &Path) -> Result<InstallOutcome, Instal
     let is_local = matches!(install_source, git_install::InstallSource::Local { .. });
     let mut registry = InstallRegistry::load();
 
-    let result = git_install::install_from_source(&install_source, &registry)?;
+    let result =
+        git_install::install_from_source(&install_source, &registry, marketplace_require_sha())?;
 
     let repo = git_install::build_installed_repo(&result, &install_source);
     registry.insert(result.repo_key.clone(), repo);
@@ -281,11 +282,13 @@ fn update_marketplace_repo(
             name: provenance.plugin_subdir.clone(),
         })?;
 
+    let require_sha = crate::plugin::marketplace_require_sha();
     installer::update_from_marketplace_entry_transactional(
         &marketplace_root.path,
         &entry,
         provenance,
         registry,
+        require_sha,
     )
 }
 
@@ -398,7 +401,7 @@ pub fn update_plugins_by_selector(
                 },
             }
         } else {
-            match git_install::update_repo(repo_key, repo) {
+            match git_install::update_repo(repo_key, repo, marketplace_require_sha()) {
                 Ok(UpdateStatus::Updated(result)) if result.changed => {
                     apply_update_to_registry(&mut registry, repo_key, &result);
                     RepoUpdateOutcome::Updated {
@@ -527,8 +530,8 @@ pub fn classify_install_error(err: &InstallError) -> String {
         InstallError::Json { .. } => "json",
         InstallError::PluginNotFound { .. } => "not_found",
         InstallError::ShaMismatch { .. } => "sha_mismatch",
-        InstallError::InstallFailed { .. } => "install_failed",
         InstallError::UnpinnedRemoteRefused { .. } => "unpinned_remote_refused",
+        InstallError::InstallFailed { .. } => "install_failed",
     }
     .to_string()
 }
@@ -1069,7 +1072,7 @@ fn install_marketplace_entry(
     };
 
     let result = if let Some(remote_url) = entry.remote_url.as_deref() {
-        let require_sha = marketplace_require_sha();
+        let require_sha = crate::plugin::marketplace_require_sha();
         installer::install_from_remote_url(
             remote_url,
             entry.remote_ref.as_deref(),
@@ -1442,6 +1445,13 @@ mod tests {
             "sha_mismatch"
         );
         assert_eq!(
+            classify_install_error(&InstallError::UnpinnedRemoteRefused {
+                plugin: "p".into(),
+                url: "u".into()
+            }),
+            "unpinned_remote_refused"
+        );
+        assert_eq!(
             classify_install_error(&InstallError::InstallFailed { detail: "x".into() }),
             "install_failed"
         );
@@ -1481,7 +1491,7 @@ mod tests {
             plugins: HashMap::new(),
             marketplace: None,
         };
-        let status = git_install::update_repo("local", &repo).unwrap();
+        let status = git_install::update_repo("local", &repo, false).unwrap();
         assert!(matches!(status, UpdateStatus::LiveLocal));
     }
 

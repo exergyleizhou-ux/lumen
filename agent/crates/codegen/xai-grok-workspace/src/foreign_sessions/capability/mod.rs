@@ -155,25 +155,23 @@ impl ApprovedRoot {
     }
 
     fn relative_path(&self, path: &Path) -> Option<PathBuf> {
-        let canonical;
         let relative = if path.is_absolute() {
-            match path.strip_prefix(&self.path) {
-                Ok(relative) => relative,
-                // The root is stored canonicalized, so an absolute path spelled
-                // through a symlinked prefix (macOS `/var` -> `/private/var`, a
-                // symlinked `$HOME` component) fails the literal strip even when
-                // it names a file inside the root. Resolve the spelling and
-                // re-check containment — mirroring the Windows arm of
-                // `open_regular_file`. Containment stays capability-enforced:
-                // the actual open still walks the pinned directory fd with
-                // symlinks refused per component.
-                Err(_) => {
-                    canonical = dunce::canonicalize(path).ok()?;
-                    canonical.strip_prefix(&self.path).ok()?
-                }
-            }
+            // `self.path` is always canonical. Prefer a pure strip so openat
+            // paths still resolve after the on-disk entry is replaced
+            // (symlink swap); fall back to canonicalize for non-canonical
+            // absolute inputs.
+            path.strip_prefix(&self.path)
+                .ok()
+                .map(|r| r.to_path_buf())
+                .or_else(|| {
+                    let absolute = dunce::canonicalize(path).ok()?;
+                    absolute
+                        .strip_prefix(&self.path)
+                        .ok()
+                        .map(|r| r.to_path_buf())
+                })?
         } else {
-            path
+            path.to_path_buf()
         };
         relative
             .components()
@@ -183,7 +181,7 @@ impl ApprovedRoot {
                     std::path::Component::Normal(_) | std::path::Component::CurDir
                 )
             })
-            .then(|| relative.to_path_buf())
+            .then_some(relative)
     }
 
     pub fn resolve_regular_file(&self, path: &Path) -> Option<(PathBuf, Metadata)> {

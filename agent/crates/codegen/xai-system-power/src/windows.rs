@@ -140,3 +140,16 @@ mod tests {
         // Must not panic or leak on drop.
     }
 }
+
+/// No power-assertion support on this platform: callers carry on unprotected,
+/// which is the same behaviour as before assertions existed.
+///
+/// Never constructed here (`hold_awake` always returns `None`); it exists so
+/// the cross-platform `SleepAssertion` has a field type on every target.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct Assertion;
+
+pub(crate) fn hold_awake(_reason: &str) -> Option<Assertion> {
+    None
+}

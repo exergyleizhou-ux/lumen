@@ -92,7 +92,7 @@ xai-tool-types = { workspace = true }
 tokio-util = { workspace = true, features = ["rt"] }
 urlencoding = "2"
 xai-fast-worktree = { path = "../xai-fast-worktree", features = ["metadata"] }
-# tonic stays for `tonic::Status`/`Code` mapping in workspace_ops deploy errors.
+# tonic: Status/Code mapping for deploy errors in workspace_ops.
 tonic = { workspace = true }
 
 xai-fsnotify = { path = "../xai-fsnotify" }
@@ -125,8 +125,8 @@ path = "src/bin/workspace_server_probe.rs"
 [features]
 default = ["sandbox-enforce"]
 compression = []
-sandbox-enforce = ["xai-grok-sandbox/enforce"]
 test-support = []
+sandbox-enforce = ["xai-grok-sandbox/enforce"]
 default-bazel = [
     "sandbox-enforce",
     ]

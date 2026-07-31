@@ -10,8 +10,23 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use xai_grok_tools::implementations::skills::types::SkillScope;
+
 use super::acp_command::AcpSlashCommand;
 use super::command::SlashCommand;
+use super::mode_support::ModeSupport;
+
+fn client_collision_qualified_name(
+    cmd: &agent_client_protocol::AvailableCommand,
+) -> Option<String> {
+    let meta = cmd.meta.as_ref()?;
+    meta.get("path").and_then(|v| v.as_str())?;
+    let scope: SkillScope = serde_json::from_value(meta.get("scope")?.clone()).ok()?;
+    if scope == SkillScope::Plugin {
+        return None;
+    }
+    Some(format!("{}:{}", scope.as_ref(), cmd.name))
+}
 
 /// Source of a command in the registry. Used for precedence and replacement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,13 +155,18 @@ impl CommandRegistry {
         hidden.insert("voice".to_string());
         // `/auto` is fail-closed: hidden until `set_auto_mode_available(true)`.
         hidden.insert("auto".to_string());
+        // `/share` starts menu-hidden (still dispatchable) until
+        // `set_share_visible(true)`. Menu-only so typed `/share` can
+        // surface a client disable message rather than PassThrough.
+        let mut menu_hidden = HashSet::new();
+        menu_hidden.insert("share".to_string());
         let mut reg = Self {
             commands: builtins,
             sources,
             key_to_index: HashMap::new(),
             triggers: Vec::new(),
             hidden,
-            menu_hidden: HashSet::new(),
+            menu_hidden,
             restricted: HashSet::new(),
             available_tools: None,
         };
@@ -198,6 +218,15 @@ impl CommandRegistry {
             .filter(|cmd| !self.hidden.contains(cmd.name()))
             .filter(|cmd| !self.restricted_match(cmd))
             .filter(|cmd| self.tools_satisfied(cmd))
+    }
+
+    /// Declared modes for `key` (canonical name or alias), unfiltered by any
+    /// runtime gate.
+    pub(crate) fn mode_support(&self, key: &str) -> ModeSupport {
+        self.commands
+            .iter()
+            .find(|cmd| cmd.name() == key || cmd.aliases().contains(&key))
+            .map_or(ModeSupport::Both, |cmd| cmd.mode_support())
     }
 
     /// Normalize a deny-list entry: trim, strip one leading `/`, lowercase.
@@ -354,16 +383,20 @@ impl CommandRegistry {
         self.available_tools = Some(tools);
     }
 
-    /// Show or hide the /share command.
-    /// When hidden, it won't appear in the dropdown or be executable.
+    /// Show or hide `/share` in the completion menu.
+    ///
+    /// Menu-only: when not visible the command is absent from dropdown /
+    /// triggers but still resolves via [`Self::get_for_dispatch`], so a
+    /// fully typed `/share` reaches the pager handler (e.g. temporary
+    /// client disable) instead of falling through as an unknown command.
     pub fn set_share_visible(&mut self, visible: bool) {
-        self.set_command_visible("share", visible);
-    }
-
-    /// Show or hide the /usage command.
-    /// When hidden, it won't appear in the dropdown or be executable.
-    pub fn set_usage_visible(&mut self, visible: bool) {
-        self.set_command_visible("usage", visible);
+        self.hidden.remove("share");
+        if visible {
+            self.menu_hidden.remove("share");
+        } else {
+            self.menu_hidden.insert("share".to_string());
+        }
+        self.rebuild_triggers();
     }
 
     /// Show or hide the `/dashboard` command (feature-flag gating).
@@ -487,16 +520,20 @@ impl CommandRegistry {
             "reload-plugins",
         ];
 
-        // Add new ACP commands, skipping collisions with builtins and blocked names.
         for acp_cmd in commands {
             let name_lower = acp_cmd.name.to_lowercase();
-            if builtin_keys.contains(&name_lower) {
-                continue;
-            }
-            if BLOCKED_NAMES
-                .iter()
-                .any(|b| b.eq_ignore_ascii_case(&name_lower))
-            {
+            let name_reserved = builtin_keys.contains(&name_lower)
+                || BLOCKED_NAMES
+                    .iter()
+                    .any(|b| b.eq_ignore_ascii_case(&name_lower));
+            if name_reserved {
+                if let Some(qualified) = client_collision_qualified_name(acp_cmd) {
+                    let mut renamed = acp_cmd.clone();
+                    renamed.name = qualified;
+                    self.commands
+                        .push(Arc::new(AcpSlashCommand::from(&renamed)));
+                    self.sources.push(CommandSource::Acp);
+                }
                 continue;
             }
             self.commands.push(Arc::new(AcpSlashCommand::from(acp_cmd)));
@@ -721,50 +758,27 @@ mod tests {
         });
         let mut registry = CommandRegistry::new(vec![share, other]);
 
-        // Default: /share is visible.
-        assert!(registry.get("share").is_some());
-        assert!(registry.triggers().iter().any(|t| t.canonical == "share"));
-
-        // Hiding /share removes it from lookup and triggers.
-        registry.set_share_visible(false);
+        // Default: /share is menu-hidden (offered nowhere) but still dispatchable.
         assert!(registry.get("share").is_none());
+        assert!(
+            registry.get_for_dispatch("share").is_some(),
+            "typed /share must still resolve while menu-hidden"
+        );
         assert!(!registry.triggers().iter().any(|t| t.canonical == "share"));
-        // Other commands are unaffected.
-        assert!(registry.get("exit").is_some());
 
-        // Re-enabling restores it.
+        // Revealing /share restores menu lookup and triggers.
         registry.set_share_visible(true);
         assert!(registry.get("share").is_some());
+        assert!(registry.get_for_dispatch("share").is_some());
         assert!(registry.triggers().iter().any(|t| t.canonical == "share"));
-    }
-
-    #[test]
-    fn set_usage_visible_hides_and_restores_usage_command() {
-        let usage: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
-            name: "usage",
-            aliases: &[],
-        });
-        let other: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
-            name: "exit",
-            aliases: &[],
-        });
-        let mut registry = CommandRegistry::new(vec![usage, other]);
-
-        // Default: /usage is visible.
-        assert!(registry.get("usage").is_some());
-        assert!(registry.triggers().iter().any(|t| t.canonical == "usage"));
-
-        // Hiding /usage removes it from lookup and triggers.
-        registry.set_usage_visible(false);
-        assert!(registry.get("usage").is_none());
-        assert!(!registry.triggers().iter().any(|t| t.canonical == "usage"));
         // Other commands are unaffected.
         assert!(registry.get("exit").is_some());
 
-        // Re-enabling restores it.
-        registry.set_usage_visible(true);
-        assert!(registry.get("usage").is_some());
-        assert!(registry.triggers().iter().any(|t| t.canonical == "usage"));
+        // Hiding again is menu-only: no offer, typed path still works.
+        registry.set_share_visible(false);
+        assert!(registry.get("share").is_none());
+        assert!(registry.get_for_dispatch("share").is_some());
+        assert!(!registry.triggers().iter().any(|t| t.canonical == "share"));
     }
 
     #[test]
@@ -852,17 +866,17 @@ mod tests {
 
     #[test]
     fn restricted_wins_over_visible_setters() {
-        let usage: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
-            name: "usage",
+        let share: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "share",
             aliases: &[],
         });
-        let mut registry = CommandRegistry::new(vec![usage]);
+        let mut registry = CommandRegistry::new(vec![share]);
 
-        registry.set_restricted_commands(&["usage".to_string()]);
-        // A later `set_usage_visible(true)` (auth-meta path) must NOT
-        // resurrect a restricted command.
-        registry.set_usage_visible(true);
-        assert!(registry.get("usage").is_none());
+        registry.set_restricted_commands(&["share".to_string()]);
+        // A later `set_share_visible(true)` must NOT resurrect a
+        // restricted command — deny wins over every visibility gate.
+        registry.set_share_visible(true);
+        assert!(registry.get("share").is_none());
     }
 
     #[test]
@@ -943,6 +957,108 @@ mod tests {
         registry.set_acp_commands(&acp_cmds);
         // Still only the builtin.
         assert_eq!(registry.command_count(), 1);
+    }
+
+    fn acp_skill(name: &str, scope: &str) -> agent_client_protocol::AvailableCommand {
+        let meta = serde_json::json!({ "scope": scope, "path": "/x/SKILL.md" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        agent_client_protocol::AvailableCommand::new(name.to_string(), format!("{name} skill"))
+            .meta(meta)
+    }
+
+    #[test]
+    fn acp_nonplugin_skill_colliding_with_builtin_is_requalified() {
+        let builtin: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "login",
+            aliases: &[],
+        });
+        let mut registry = CommandRegistry::new(vec![builtin]);
+        registry.set_acp_commands(&[acp_skill("login", "local")]);
+
+        assert!(registry.get("login").is_some());
+        assert!(registry.is_builtin("login"));
+        assert!(registry.get("local:login").is_some());
+        assert!(!registry.is_builtin("local:login"));
+        assert_eq!(registry.command_count(), 2, "builtin + re-homed skill");
+        assert!(
+            registry
+                .triggers()
+                .iter()
+                .any(|t| t.canonical == "local:login"),
+            "re-homed skill should have a dropdown trigger"
+        );
+    }
+
+    #[test]
+    fn acp_malformed_skill_meta_colliding_with_builtin_is_dropped() {
+        let builtin: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "login",
+            aliases: &[],
+        });
+        let mut registry = CommandRegistry::new(vec![builtin]);
+        let meta = serde_json::json!({ "scope": "local" })
+            .as_object()
+            .cloned()
+            .unwrap();
+        let cmd = agent_client_protocol::AvailableCommand::new(
+            "login".to_string(),
+            "malformed".to_string(),
+        )
+        .meta(meta);
+        registry.set_acp_commands(&[cmd]);
+        assert_eq!(
+            registry.command_count(),
+            1,
+            "malformed-meta collision drops"
+        );
+        assert!(registry.get("local:login").is_none());
+    }
+
+    #[test]
+    fn acp_skill_named_after_blocked_name_is_requalified() {
+        let builtin: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "exit",
+            aliases: &[],
+        });
+        let mut registry = CommandRegistry::new(vec![builtin]);
+        registry.set_acp_commands(&[acp_skill("hooks-add", "local")]);
+        assert!(registry.get("local:hooks-add").is_some());
+        assert!(registry.get("hooks-add").is_none());
+    }
+
+    #[test]
+    fn acp_plugin_skill_colliding_with_builtin_is_dropped_not_requalified() {
+        let builtin: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "login",
+            aliases: &[],
+        });
+        let mut registry = CommandRegistry::new(vec![builtin]);
+        registry.set_acp_commands(&[acp_skill("login", "plugin")]);
+
+        assert!(registry.get("login").is_some());
+        assert!(registry.is_builtin("login"));
+        assert!(
+            registry.get("plugin:login").is_none(),
+            "pager must not fabricate a plugin-qualified name"
+        );
+        assert_eq!(registry.command_count(), 1, "only the builtin remains");
+    }
+
+    #[test]
+    fn acp_nonskill_colliding_with_builtin_is_dropped() {
+        let builtin: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "login",
+            aliases: &[],
+        });
+        let mut registry = CommandRegistry::new(vec![builtin]);
+        registry.set_acp_commands(&[agent_client_protocol::AvailableCommand::new(
+            "login".to_string(),
+            "shell login".to_string(),
+        )]);
+        assert_eq!(registry.command_count(), 1);
+        assert!(registry.is_builtin("login"));
     }
 
     #[test]
@@ -1120,9 +1236,9 @@ mod tests {
     /// unresolvable for dispatch, exactly like `get()`.
     #[test]
     fn get_for_dispatch_respects_hard_gates() {
-        // Hard-hidden by name (e.g. /dashboard default, /share toggle).
-        let share: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
-            name: "share",
+        // Hard-hidden by name (e.g. /dashboard default).
+        let dashboard: Arc<dyn SlashCommand> = Arc::new(DummyCommand {
+            name: "dashboard",
             aliases: &[],
         });
         // Tier-restricted.
@@ -1135,11 +1251,14 @@ mod tests {
             name: "loop",
             required: &["scheduler_create"],
         });
-        let mut reg = CommandRegistry::new(vec![share, usage, gated]);
-        reg.set_share_visible(false);
+        let mut reg = CommandRegistry::new(vec![dashboard, usage, gated]);
+        reg.set_dashboard_visible(false);
         reg.set_restricted_commands(&["usage".to_string()]);
 
-        assert!(reg.get_for_dispatch("share").is_none(), "hidden stays hard");
+        assert!(
+            reg.get_for_dispatch("dashboard").is_none(),
+            "hard-hidden stays hard"
+        );
         assert!(
             reg.get_for_dispatch("usage").is_none(),
             "restricted stays blocked (upsell path owns it)"
