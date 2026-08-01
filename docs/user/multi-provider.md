@@ -110,7 +110,7 @@ Grok；无法分类时保留 pool 顺序。若希望自己决定顺序：
 这套 pool 路由当前只覆盖新建 Expert 任务。普通 turn/后台任务的同等 no-replay 接线仍在 Lumen 2
 路线中，不能把上述行为扩大宣称为全局自动切模型。
 
-## 普通 turn：显式池、零输出才重路由
+## 普通 turn：显式池、前台预选与零输出重路由
 
 普通会话也可以启用独立的 `[model_routing]`；它默认关闭，且不复用 Expert 的临时模型状态：
 
@@ -121,13 +121,14 @@ model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
 priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
 ```
 
-这是一条受限的恢复路径，不是“自动让模型随时换人”：
+这是受限的前台策略，不是“自动让模型随时换人”：
 
+- 每个普通前台 turn 开始前，若没有 `/model` pin 且 `priority` 为空，才会在用户 allowlist 内按任务分类预选模型；这个决策只读本地配置和被动健康记录，不探测、不发请求、不消耗额度；
 - 只有已观察到的 `402`、额度耗尽、限流、超时或上游失败才会把 endpoint 暂时标记为降级；不会主动探测或消耗额度；
 - 原请求必须尚未收到模型响应、工具调用或工具副作用，才会切到池内下一健康候选并重建同一请求；
 - `/model` 的显式用户 pin 禁止自动切换；任何 subagent（前台或后台）和已进入输出约束的路径也禁止该重放；
 - 所有候选降级、未配置或安装切换失败时，保留原始错误，不回退到池外模型；
-- `priority` 为空时按 `model_pool` 声明顺序；priority 中不在 pool 的 ID 被忽略。
+- `priority` 为空时在 pool 内按任务选择：implementation 优先 Flash，review/research 优先 Grok；没有匹配候选时才保留 pool 顺序。priority 中不在 pool 的 ID 被忽略。
 
 当前这一能力覆盖普通前台 sampler turn。后台 workflow/subagent 的独立预算、幂等任务键和恢复语义仍由 Kairos 阶段接线，不能把本节扩大为“所有后台任务已自动切模型”。
 

@@ -38,7 +38,8 @@ default = "deepseek-v4-pro"
 # [model_routing]
 # enabled = true
 # model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
-# priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+# priority = [] # auto: implementation→Flash, review/research→Grok
+# To force an order instead, list only IDs from model_pool.
 
 # ── DeepSeek (preferred default) ────────────────────────────────────────────
 [model.deepseek-v4-pro]

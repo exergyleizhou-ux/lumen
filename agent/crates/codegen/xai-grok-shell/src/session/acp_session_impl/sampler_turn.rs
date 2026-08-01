@@ -861,6 +861,62 @@ impl SessionActor {
         self.sampler_handle.update_config(sampler_config);
     }
 
+    /// Apply the user-selected ordinary model pool before sampling starts.
+    /// Unlike failure recovery this may select the current healthy model; only
+    /// an actual different choice mutates session state. Explicit user pins and
+    /// all child sessions remain outside the policy boundary.
+    async fn maybe_select_ordinary_model_for_task(&self, task: &str) {
+        if self.tool_context.subagent_depth > 0 || self.models_manager.user_selected_model() {
+            return;
+        }
+        let policy = self.models_manager.model_routing_config();
+        if !policy.enabled || policy.model_pool.is_empty() {
+            return;
+        }
+        let Some(next_model) = self.models_manager.select_healthy_model_for_task(
+            &policy.model_pool,
+            &policy.priority,
+            task,
+        ) else {
+            return;
+        };
+        let active = self.reconstruct_full_config().await;
+        if active.model == next_model {
+            return;
+        }
+        let Some(mut config) = self.resolve_aux_sampler_config(&next_model).await else {
+            return;
+        };
+        crate::agent::config::stamp_session_local_sampler_fields(
+            &mut config,
+            &active,
+            self.client_identifier.clone(),
+            Some(self.max_retries),
+        );
+        if self
+            .handle_set_session_model(
+                config,
+                false,
+                false,
+                true,
+                self.compaction.threshold_percent.get(),
+            )
+            .await
+            .is_ok()
+        {
+            self.models_manager
+                .set_current_model_id_for_routing(acp::ModelId::new(next_model.clone()));
+            xai_grok_telemetry::unified_log::info(
+                "model routing: selected ordinary turn model from user pool",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({
+                    "to_model": next_model,
+                    "reason": if policy.priority.is_empty() { "task_policy" } else { "user_priority" },
+                })),
+            );
+        }
+    }
+
     /// Move an ordinary session to a healthy user-allowlisted model after a
     /// sampler request failed before returning a response. This is deliberately
     /// unavailable to task-output children (their caller owns the retry
@@ -1335,6 +1391,16 @@ impl SessionActor {
         self: &Arc<Self>,
         request: ConversationRequest,
     ) -> Result<SamplerTurnOutcome, acp::Error> {
+        let task_hint = request
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                ConversationItem::User(_) => Some(item.text_content()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.maybe_select_ordinary_model_for_task(&task_hint).await;
         self.prepare_sampler_for_turn().await;
         let stream_drained_rx = {
             let (tx, rx) = tokio::sync::oneshot::channel();

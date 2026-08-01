@@ -70,6 +70,41 @@ fn explicit_pool_selects_healthy_priority_without_expanding_allowlist() {
 }
 
 #[test]
+fn empty_priority_uses_task_policy_only_inside_the_user_pool() {
+    let manager = ModelsManager::default();
+    let entry = |model: &str, base_url: &str| {
+        let mut info = crate::agent::config::ModelInfo::fallback(model);
+        info.base_url = base_url.to_owned();
+        crate::agent::config::ModelEntry {
+            info,
+            api_key: Some("test-key".to_owned()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: Some(base_url.to_owned()),
+        }
+    };
+    manager.insert_test_entry("flash", entry("flash", "https://flash.example.test/v1"));
+    manager.insert_test_entry("grok", entry("grok", "https://grok.example.test/v1"));
+
+    assert_eq!(
+        manager.select_healthy_model_for_task(
+            &["flash".to_owned(), "grok".to_owned()],
+            &[],
+            "review the security boundary",
+        ),
+        Some("grok".to_owned())
+    );
+    assert_eq!(
+        manager.select_healthy_model_for_task(
+            &["flash".to_owned(), "grok".to_owned()],
+            &[],
+            "implement the parser",
+        ),
+        Some("flash".to_owned())
+    );
+}
+
+#[test]
 fn provider_failure_domain_includes_non_default_port() {
     assert_eq!(
         provider_failure_domain("https://provider.example.test:8443/v1"),

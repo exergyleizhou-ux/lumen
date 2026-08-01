@@ -555,6 +555,31 @@ impl ModelsManager {
         candidates.into_iter().next()
     }
 
+    /// Pick from the user's ordinary-turn pool before a request starts. A
+    /// nonempty priority is exact user order; otherwise reuse the deterministic
+    /// local task policy shared with Expert. This only observes the catalog and
+    /// passive provider-health ledger; it never probes or spends.
+    pub fn select_healthy_model_for_task(
+        &self,
+        pool: &[String],
+        priority: &[String],
+        task: &str,
+    ) -> Option<String> {
+        let catalog = self.models();
+        let routable_ids = catalog
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(
+                    self.provider_health(&entry.info.base_url),
+                    ProviderHealthSnapshot::Degraded { .. }
+                )
+            })
+            .flat_map(|(key, entry)| [key.clone(), entry.info.model.clone()])
+            .collect::<Vec<_>>();
+        crate::session::expert::advisor_pool_executor_selection(task, pool, priority, routable_ids)
+            .map(|selection| selection.model_id)
+    }
+
     pub fn set_current_model_id(&self, id: acp::ModelId) {
         self.inner
             .user_selected_model
