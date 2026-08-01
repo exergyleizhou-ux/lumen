@@ -35,6 +35,84 @@ fn drop_cli_catchall_allows(
     }
     (kept, dropped)
 }
+
+/// Build the host-owned shared working-memory port for every memory-enabled
+/// session in a task tree, including its root.
+///
+/// The root must be able to review a child's proposal.  Restricting this port
+/// to sessions that already have a `subagent_event_tx` creates a dead end:
+/// children can propose, but the root has no `task_tree_memory` resource with
+/// which to accept/reject/supersede the fact.  The ledger still binds review
+/// authority to `root_session_id`, so making the resource available to the
+/// root does not grant children promotion authority.
+fn task_tree_memory_backend_for_session(
+    storage: Option<&xai_grok_memory::MemoryStorage>,
+    workspace_dir: Option<&std::path::Path>,
+    root_session_id: &str,
+) -> Option<std::sync::Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>> {
+    let storage = storage?;
+    let ledger = match workspace_dir {
+        Some(workspace_dir) => {
+            xai_grok_memory::WorkingMemoryLedger::for_workspace_dir(workspace_dir, root_session_id)
+        }
+        None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(storage, root_session_id),
+    };
+    Some(std::sync::Arc::new(
+        xai_grok_memory::WorkingMemoryLedgerBackend::new(ledger),
+    ))
+}
+
+#[cfg(test)]
+mod task_tree_memory_backend_tests {
+    use super::task_tree_memory_backend_for_session;
+    use xai_grok_memory::{MemoryStorage, WorkingMemoryLedger};
+    use xai_grok_tools::types::task_tree_memory::{
+        TaskTreeMemoryBackend, TaskTreeMemoryFact, TaskTreeMemoryFactKind,
+        TaskTreeMemoryReviewState,
+    };
+
+    fn fact(revision: u64, text: &str) -> TaskTreeMemoryFact {
+        TaskTreeMemoryFact {
+            branch_id: "child-branch".to_owned(),
+            fact_id: "build-result".to_owned(),
+            revision,
+            kind: TaskTreeMemoryFactKind::Evidence,
+            evidence_ref: Some("test://cargo-check".to_owned()),
+            confidence: 95,
+            text: text.to_owned(),
+        }
+    }
+
+    #[tokio::test]
+    async fn root_session_can_review_child_fact_in_the_shared_ledger() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage =
+            MemoryStorage::with_paths(temp.path().join("global"), temp.path().join("workspace"));
+        // A root session does not have a subagent event sender. It must still
+        // receive this backend or no actor can accept a child's proposal.
+        let backend = task_tree_memory_backend_for_session(Some(&storage), None, "root")
+            .expect("memory-enabled root gets a working-memory backend");
+
+        backend
+            .propose("child", fact(1, "child observed a passing check"))
+            .await
+            .unwrap();
+        backend
+            .review(
+                "root",
+                fact(2, "root verified the passing check"),
+                TaskTreeMemoryReviewState::Accepted,
+            )
+            .await
+            .unwrap();
+
+        let ledger = WorkingMemoryLedger::for_task_tree(&storage, "root");
+        let accepted = ledger.accepted_facts().unwrap();
+        assert_eq!(accepted.len(), 1);
+        assert_eq!(accepted[0].author_session_id, "root");
+        assert_eq!(accepted[0].text, "root verified the passing check");
+    }
+}
 /// Build the per-session current-thread tokio runtime.
 ///
 /// Construction acquires fds (epoll/kqueue, waker) and fails with
@@ -918,27 +996,11 @@ pub(crate) async fn spawn_session_actor(
         .task_tree_root_session_id
         .clone()
         .unwrap_or_else(|| session_info.id.0.to_string());
-    let task_tree_memory_backend_for_spec: Option<
-        std::sync::Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>,
-    > = memory_storage_for_session
-        .as_ref()
-        .filter(|_| tool_context.subagent_event_tx.is_some())
-        .map(|storage| {
-            let ledger = match tool_context.task_tree_memory_workspace_dir.as_deref() {
-                Some(workspace_dir) => xai_grok_memory::WorkingMemoryLedger::for_workspace_dir(
-                    workspace_dir,
-                    task_tree_root_session_id.clone(),
-                ),
-                None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(
-                    storage,
-                    task_tree_root_session_id.clone(),
-                ),
-            };
-            std::sync::Arc::new(xai_grok_memory::WorkingMemoryLedgerBackend::new(ledger))
-                as std::sync::Arc<
-                    dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend,
-                >
-        });
+    let task_tree_memory_backend_for_spec = task_tree_memory_backend_for_session(
+        memory_storage_for_session.as_ref(),
+        tool_context.task_tree_memory_workspace_dir.as_deref(),
+        &task_tree_root_session_id,
+    );
     let context_window_tokens = context_window_override
         .map(|c| c.get())
         .unwrap_or(sampling_config.context_window);

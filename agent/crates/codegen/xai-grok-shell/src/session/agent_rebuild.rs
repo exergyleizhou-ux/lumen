@@ -377,6 +377,24 @@ impl AgentRebuildSpec {
             }
         }
         if let Some(backend) = task_tree_memory_backend.clone() {
+            // A child already receives these identities with its task-event
+            // resources above. The root has no `subagent_event_tx`, but is
+            // the only session authorized to review a child's working-memory
+            // proposal, so supply its identities here without changing the
+            // existing child task/scheduler path.
+            if subagent_event_tx.is_none() {
+                use xai_grok_tools::implementations::grok_build::task::types::{
+                    SessionIdResource, TaskTreeRootSessionId,
+                };
+                agent
+                    .tool_bridge()
+                    .update_resource(SessionIdResource(session_id_str.clone()))
+                    .await;
+                agent
+                    .tool_bridge()
+                    .update_resource(TaskTreeRootSessionId(task_tree_root_session_id.clone()))
+                    .await;
+            }
             agent
                 .tool_bridge()
                 .update_resource(
@@ -490,6 +508,44 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
 mod tests {
     use super::*;
     use crate::agent::config::{EndpointsConfig, ModelEntry};
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        SessionIdResource, TaskTreeRootSessionId,
+    };
+    use xai_grok_tools::types::task_tree_memory::{
+        TaskTreeMemoryBackend, TaskTreeMemoryBackendResource, TaskTreeMemoryFact,
+        TaskTreeMemoryReviewState, TaskTreeMemoryWriteReceipt,
+    };
+
+    struct RootReviewBackend;
+
+    #[async_trait::async_trait]
+    impl TaskTreeMemoryBackend for RootReviewBackend {
+        async fn propose(
+            &self,
+            _author_session_id: &str,
+            fact: TaskTreeMemoryFact,
+        ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+            Ok(TaskTreeMemoryWriteReceipt {
+                fact_id: fact.fact_id,
+                revision: fact.revision,
+                state: "proposed",
+            })
+        }
+
+        async fn review(
+            &self,
+            _reviewer_session_id: &str,
+            fact: TaskTreeMemoryFact,
+            state: TaskTreeMemoryReviewState,
+        ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+            Ok(TaskTreeMemoryWriteReceipt {
+                fact_id: fact.fact_id,
+                revision: fact.revision,
+                state: state.label(),
+            })
+        }
+    }
+
     fn model_entry(internal_id: &str) -> ModelEntry {
         ModelEntry::fallback(internal_id, &EndpointsConfig::default())
     }
@@ -563,6 +619,50 @@ mod tests {
                          - beta-public\n\
                          - zeta-public"
                     )
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn root_with_working_memory_gets_host_identity_and_review_port() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut spec = test_rebuild_spec_default();
+                {
+                    let spec = Arc::get_mut(&mut spec)
+                        .expect("test rebuild spec should be uniquely owned");
+                    spec.session_id_str = "root-session".to_owned();
+                    spec.task_tree_root_session_id = "root-session".to_owned();
+                    spec.task_tree_memory_backend = Some(Arc::new(RootReviewBackend));
+                }
+
+                let agent = spec
+                    .build_agent(AgentDefinition::default_grok_build())
+                    .await
+                    .expect("root agent build should succeed");
+                let toolset = agent.tool_bridge().toolset();
+                assert!(
+                    toolset
+                        .tool_definitions()
+                        .into_iter()
+                        .any(|definition| { definition.function.name == "task_tree_memory" })
+                );
+                let session_id = toolset
+                    .get_resource_cloned::<SessionIdResource>()
+                    .await
+                    .expect("root receives its host session identity");
+                let root_id = toolset
+                    .get_resource_cloned::<TaskTreeRootSessionId>()
+                    .await
+                    .expect("root receives its task-tree identity");
+                assert_eq!(session_id.0, "root-session");
+                assert_eq!(root_id.0, "root-session");
+                assert!(
+                    toolset
+                        .get_resource_cloned::<TaskTreeMemoryBackendResource>()
+                        .await
+                        .is_some()
                 );
             })
             .await;
