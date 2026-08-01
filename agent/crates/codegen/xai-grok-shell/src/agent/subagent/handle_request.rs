@@ -1493,6 +1493,7 @@ pub(crate) async fn run_shell_child(
                         },
                         subagent_id: request.id.clone(),
                         child_session_id: child_session_id.0.to_string(),
+                        model_id: None,
                         tool_calls,
                         turns,
                         duration_ms,
@@ -1523,6 +1524,7 @@ pub(crate) async fn run_shell_child(
                     },
                     subagent_id: request.id.clone(),
                     child_session_id: child_session_id.0.to_string(),
+                    model_id: None,
                     tool_calls,
                     turns,
                     duration_ms,
@@ -1630,6 +1632,12 @@ pub(crate) async fn run_shell_child(
             }
         }
     };
+    // The resolved model is fixed before the first child request (and a
+    // resumed child is explicitly pinned to its source model above).  Attach
+    // that identity to every terminal outcome before any persistence or
+    // scheduler receipt is emitted; a later parent picker change must never
+    // rewrite historical background-run provenance.
+    result.model_id = Some(tracker_model_id.clone());
     if let Some(trace_gcs_config) = gcs_upload_ctx.upload_method.as_ref().map(|method| {
         crate::session::repo_changes::TraceExportConfig {
             bucket_url: gcs_upload_ctx.bucket_url.clone(),

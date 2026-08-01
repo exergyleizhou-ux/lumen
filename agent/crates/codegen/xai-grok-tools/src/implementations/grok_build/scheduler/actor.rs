@@ -953,6 +953,7 @@ impl SchedulerActor {
                     Utc::now(),
                     result.duration_ms,
                     result.total_tokens_used,
+                    result.model_id.clone(),
                     result.output_usage_incomplete,
                 ));
                 task.usage_verification_required = result.output_usage_incomplete;
@@ -2509,6 +2510,7 @@ mod tests {
                 child_session_id: request.id.clone(),
                 duration_ms: 42,
                 total_tokens_used: 99,
+                model_id: Some("deepseek-v4-flash".to_owned()),
                 output_usage_incomplete: true,
                 ..Default::default()
             })
@@ -2529,13 +2531,15 @@ mod tests {
                     (
                         receipt.run_id().to_owned(),
                         receipt.status(),
+                        receipt.model_id().map(str::to_owned),
                         receipt.output_usage_incomplete(),
                     )
                 })
             };
-            if let Some((receipt_run_id, status, usage_incomplete)) = received {
+            if let Some((receipt_run_id, status, model_id, usage_incomplete)) = received {
                 assert_eq!(receipt_run_id, run_id);
                 assert_eq!(status, SchedulerRunStatus::Completed);
+                assert_eq!(model_id.as_deref(), Some("deepseek-v4-flash"));
                 assert!(
                     usage_incomplete,
                     "receipt must retain incomplete usage truth"

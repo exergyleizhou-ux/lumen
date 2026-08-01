@@ -304,6 +304,11 @@ pub(crate) struct SchedulerRunReceipt {
     completed_at: DateTime<Utc>,
     duration_ms: u64,
     total_tokens_used: u64,
+    /// Model resolved for the child at execution start.  Older receipts did
+    /// not record this, so absence is preserved as unknown rather than
+    /// retroactively guessed from current configuration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model_id: Option<String>,
     /// `true` means the token total is not safe to use as a budget or cost
     /// proof.  Keep this durable instead of silently presenting zero/partial
     /// usage as a complete background-run receipt.
@@ -326,6 +331,7 @@ impl SchedulerRunReceipt {
         completed_at: DateTime<Utc>,
         duration_ms: u64,
         total_tokens_used: u64,
+        model_id: Option<String>,
         output_usage_incomplete: bool,
     ) -> Self {
         Self {
@@ -334,6 +340,7 @@ impl SchedulerRunReceipt {
             completed_at,
             duration_ms,
             total_tokens_used,
+            model_id,
             output_usage_incomplete,
         }
     }
@@ -349,6 +356,10 @@ impl SchedulerRunReceipt {
 
     pub(crate) fn output_usage_incomplete(&self) -> bool {
         self.output_usage_incomplete
+    }
+
+    pub(crate) fn model_id(&self) -> Option<&str> {
+        self.model_id.as_deref()
     }
 }
 
@@ -733,6 +744,15 @@ mod tests {
         assert_eq!(task.consecutive_run_failures, 0);
         assert!(task.retry_not_before.is_none());
         assert!(!task.dead_lettered);
+    }
+
+    #[test]
+    fn legacy_run_receipt_keeps_model_identity_unknown() {
+        let receipt: SchedulerRunReceipt = serde_json::from_str(
+            r#"{"runId":"run-1","status":"completed","completedAt":"2026-01-01T00:00:00Z","durationMs":7,"totalTokensUsed":11,"outputUsageIncomplete":false}"#,
+        )
+        .unwrap();
+        assert_eq!(receipt.model_id(), None);
     }
 
     #[test]

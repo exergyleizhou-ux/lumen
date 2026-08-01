@@ -465,6 +465,14 @@ pub struct SubagentResult {
     pub subagent_id: String,
     /// The child session ID (same as subagent_id for MVP).
     pub child_session_id: String,
+    /// Canonical model ID resolved for this child before its first request.
+    ///
+    /// This is execution provenance, not a user-selectable setting: callers
+    /// must not infer a model from an error string or the parent's current
+    /// picker after the child has finished.  Background schedulers persist it
+    /// with their terminal receipt so recovery/audit can distinguish a model
+    /// change from a repeated run of the same model.
+    pub model_id: Option<String>,
     pub tool_calls: u32,
     pub turns: u32,
     pub duration_ms: u64,
@@ -490,6 +498,7 @@ impl Default for SubagentResult {
             cancelled: false,
             subagent_id: String::new(),
             child_session_id: String::new(),
+            model_id: None,
             tool_calls: 0,
             turns: 0,
             duration_ms: 0,

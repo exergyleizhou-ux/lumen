@@ -31,6 +31,11 @@ pub struct ScheduledTaskSummary {
     /// be used as a cost/budget proof.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_usage_complete: Option<bool>,
+    /// Canonical model identity captured when the latest background child
+    /// started. `None` means this is a legacy or otherwise unverifiable
+    /// receipt, not the model currently selected in the parent session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_model_id: Option<String>,
     /// Timestamp of the last safe recovery takeover. This intentionally does
     /// not expose the prior scheduler owner identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -80,6 +85,10 @@ fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
             .last_run_receipt
             .as_ref()
             .map(|receipt| !receipt.output_usage_incomplete()),
+        last_run_model_id: task
+            .last_run_receipt
+            .as_ref()
+            .and_then(|receipt| receipt.model_id().map(str::to_owned)),
         last_lease_takeover_at: task
             .last_run_lease_takeover
             .as_ref()
@@ -215,6 +224,7 @@ mod tests {
             now,
             7,
             11,
+            Some("deepseek-v4-flash".into()),
             true,
         ));
         let summary = summary_from_task(task);
@@ -225,6 +235,10 @@ mod tests {
         assert!(!summary.usage_verification_required);
         assert_eq!(summary.last_run_status.as_deref(), Some("failed"));
         assert_eq!(summary.last_run_usage_complete, Some(false));
+        assert_eq!(
+            summary.last_run_model_id.as_deref(),
+            Some("deepseek-v4-flash")
+        );
     }
 
     #[test]
