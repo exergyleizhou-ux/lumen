@@ -780,6 +780,7 @@ async fn spawn_session_child(
     let mut req = request(id, false);
     req.await_to_completion = true;
     req.parent_session_id = session.to_owned();
+    req.lineage = SubagentLineage::direct(session);
     let backend = harness.backend.clone();
     let handle = tokio::spawn(async move { backend.spawn(req).await });
     assert_eq!(
@@ -831,6 +832,50 @@ async fn teardown_session_children_spares_other_sessions() {
     let _ = harness.finish.send(());
     let keep = keep.await.unwrap().unwrap();
     assert!(keep.success && !keep.cancelled);
+    harness.actor.abort();
+}
+
+#[tokio::test]
+async fn root_teardown_cascades_to_nested_pending_child() {
+    // Keep cancellation observable while both the direct child and its nested
+    // child remain in the coordinator's active/pending state.
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let outer = spawn_session_child(&mut harness, "outer", "parent").await;
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("outer"));
+
+    let mut nested_request = request("nested", false);
+    nested_request.await_to_completion = true;
+    nested_request.parent_session_id = "outer".to_owned();
+    let nested = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(nested_request).await }
+    });
+    let observed = harness.requests.recv().await.expect("nested request");
+    assert_eq!(observed.lineage.root_session_id, "parent");
+    assert_eq!(observed.lineage.lineage_path, ["parent", "outer"]);
+
+    harness
+        .backend
+        .sender()
+        .send(SubagentEvent::TeardownSession {
+            parent_session_id: "parent".to_owned(),
+        })
+        .expect("actor command channel open");
+    assert!(
+        outer
+            .await
+            .expect("outer join")
+            .expect("outer reply")
+            .cancelled
+    );
+    assert!(
+        nested
+            .await
+            .expect("nested join")
+            .expect("nested reply")
+            .cancelled
+    );
     harness.actor.abort();
 }
 

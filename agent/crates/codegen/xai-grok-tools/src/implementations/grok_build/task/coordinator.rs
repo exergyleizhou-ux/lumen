@@ -371,8 +371,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let _ = request.respond_to.send(completions);
             }
             SubagentEvent::TeardownSession { parent_session_id } => {
-                self.pending_completions
-                    .retain(|completion| completion.parent_session_id != parent_session_id);
+                self.pending_completions.retain(|completion| {
+                    completion.parent_session_id != parent_session_id
+                        && completion.root_session_id != parent_session_id
+                        && !completion
+                            .lineage_path
+                            .iter()
+                            .any(|id| id == &parent_session_id)
+                });
                 self.spawn_blocked_sessions.remove(&parent_session_id);
                 self.teardown_session_children(&parent_session_id);
             }
@@ -699,6 +705,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
             self.pending_completions.push(BufferedCompletion {
                 parent_session_id: request.parent_session_id.clone(),
+                root_session_id: request.lineage.root_session_id.clone(),
+                lineage_path: request.lineage.lineage_path.clone(),
                 summary,
             });
             // Bound the buffer (drop oldest): sessions unloaded without a
@@ -818,7 +826,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     fn teardown_session_children(&mut self, parent_session_id: &str) {
         let mut cancelled = 0;
         for child in self.active.values_mut() {
-            if child.request.parent_session_id == parent_session_id {
+            if belongs_to_teardown_tree(&child.request, parent_session_id) {
                 // Parent is gone: do not rebuffer this completion for a later
                 // resume of the same session id.
                 child.request.surface_completion = false;
@@ -828,7 +836,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
         }
         for child in self.pending.values_mut() {
-            if child.request.parent_session_id == parent_session_id {
+            if belongs_to_teardown_tree(&child.request, parent_session_id) {
                 child.request.surface_completion = false;
                 child.cancellation.cancel();
                 cancelled += 1;
@@ -980,6 +988,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 fn belongs_to_session(request: &SubagentRequest, parent_session_id: Option<&str>) -> bool {
     parent_session_id
         .is_none_or(|id| request.parent_session_id == id || request.lineage.root_session_id == id)
+}
+
+/// Whether `session_id` owns this child or is an ancestor of its direct
+/// parent. Teardown is stronger than a normal parent query: once a session is
+/// gone, every descendant must lose its runtime and buffered completion.
+fn belongs_to_teardown_tree(request: &SubagentRequest, session_id: &str) -> bool {
+    request.parent_session_id == session_id
+        || request.lineage.root_session_id == session_id
+        || request
+            .lineage
+            .lineage_path
+            .iter()
+            .any(|id| id == session_id)
 }
 
 impl<R: ChildRunner> Drop for SubagentCoordinator<R> {

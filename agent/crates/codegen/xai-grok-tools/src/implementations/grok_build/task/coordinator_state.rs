@@ -275,6 +275,10 @@ pub(super) struct BlockingWaiter {
 
 pub(super) struct BufferedCompletion {
     pub(super) parent_session_id: String,
+    /// Retain task-tree ownership so teardown can discard a root's nested
+    /// descendants even though their immediate parent is another child.
+    pub(super) root_session_id: String,
+    pub(super) lineage_path: Vec<String>,
     pub(super) summary: SubagentCompletionSummary,
 }
 
