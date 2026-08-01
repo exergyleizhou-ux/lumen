@@ -692,6 +692,13 @@ mod scheduler_model_routing_tests {
             "the review task uses the configured root pool before it starts"
         );
 
+        manager.record_provider_failure("https://grok.example.test/v1", "quota_exhausted");
+        assert_eq!(
+            scheduler_preflight_model(&request, 0, &manager),
+            Some("flash".to_owned()),
+            "a later fresh scheduler iteration skips a quota-exhausted provider"
+        );
+
         let mut resumed = request.clone();
         resumed.resume_from = Some("prior-child".to_owned());
         assert_eq!(scheduler_preflight_model(&resumed, 0, &manager), None);
