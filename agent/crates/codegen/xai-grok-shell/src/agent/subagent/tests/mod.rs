@@ -118,6 +118,41 @@ fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
     assert!(injection.contains("[assumption:build-status"));
     assert!(!injection.contains("unreviewed claim"));
 }
+
+#[test]
+fn shared_working_memory_renderer_refuses_torn_ledger_tail() {
+    use std::io::Write;
+
+    use xai_grok_memory::{WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryState};
+    use xai_grok_tools::types::task_tree_memory::TaskTreeMemoryFactKind;
+
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("ledger.jsonl");
+    let ledger = WorkingMemoryLedger::with_path("root", &path);
+    ledger
+        .propose(WorkingMemoryFact {
+            task_tree_id: "root".to_owned(),
+            branch_id: "branch".to_owned(),
+            fact_id: "verified".to_owned(),
+            revision: 1,
+            kind: TaskTreeMemoryFactKind::Fact,
+            author_session_id: "child".to_owned(),
+            evidence_ref: Some("test://evidence".to_owned()),
+            confidence: 90,
+            state: WorkingMemoryState::Proposed,
+            text: "valid before power loss".to_owned(),
+        })
+        .unwrap();
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .unwrap()
+        .write_all(b"{torn")
+        .unwrap();
+
+    let error = render_task_tree_working_memory(&ledger).unwrap_err();
+    assert!(error.to_string().contains("recovery review required"));
+}
 #[tokio::test]
 async fn usage_ack_precedes_terminal_presentation() {
     let mut ctx = ctx_with_toggle(HashMap::new());

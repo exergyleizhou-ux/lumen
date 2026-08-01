@@ -94,6 +94,13 @@ pub enum WorkingMemoryLedgerError {
         line: usize,
         message: String,
     },
+    /// The final append may have been interrupted.  This is recoverable only
+    /// by an explicit root-owned repair, never by silently continuing to use
+    /// or extend the journal.
+    TornFinalRecord {
+        line: usize,
+        message: String,
+    },
 }
 
 impl std::fmt::Display for WorkingMemoryLedgerError {
@@ -120,6 +127,10 @@ impl std::fmt::Display for WorkingMemoryLedgerError {
                     "corrupt working-memory ledger record at line {line}: {message}"
                 )
             }
+            Self::TornFinalRecord { line, message } => write!(
+                f,
+                "working-memory ledger has a torn final record at line {line}; recovery review required: {message}"
+            ),
         }
     }
 }
@@ -344,9 +355,17 @@ impl WorkingMemoryLedger {
             }
             match serde_json::from_str::<WorkingMemoryFact>(line) {
                 Ok(fact) => facts.push(fact),
-                // A power loss can tear only the final append. Do not invent a
-                // fact from it; corruption in the middle remains a hard error.
-                Err(_) if Some(index) == last_nonempty => break,
+                // A power loss can tear only the final append.  Earlier code
+                // silently skipped it, then allowed the next writer to append
+                // after the torn bytes; that turns recoverable tail damage into
+                // middle-of-journal corruption.  Fail closed until the root
+                // explicitly repairs and reviews the ledger.
+                Err(error) if Some(index) == last_nonempty => {
+                    return Err(WorkingMemoryLedgerError::TornFinalRecord {
+                        line: index + 1,
+                        message: error.to_string(),
+                    });
+                }
                 Err(error) => {
                     return Err(WorkingMemoryLedgerError::CorruptRecord {
                         line: index + 1,
@@ -599,7 +618,7 @@ mod tests {
     }
 
     #[test]
-    fn torn_final_record_is_ignored_but_middle_corruption_is_rejected() {
+    fn torn_final_record_blocks_reads_and_new_appends_pending_recovery() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("ledger.jsonl");
         let ledger = WorkingMemoryLedger::with_path("root", &path);
@@ -610,7 +629,18 @@ mod tests {
             .unwrap()
             .write_all(b"{torn")
             .unwrap();
-        assert_eq!(ledger.load_all().unwrap().len(), 1);
+        assert!(matches!(
+            ledger.load_all(),
+            Err(WorkingMemoryLedgerError::TornFinalRecord { line: 2, .. })
+        ));
+        assert!(matches!(
+            ledger.accepted_facts(),
+            Err(WorkingMemoryLedgerError::TornFinalRecord { .. })
+        ));
+        assert!(matches!(
+            ledger.propose(fact("fact-b", 1, "child", "must not append after damage")),
+            Err(WorkingMemoryLedgerError::TornFinalRecord { .. })
+        ));
 
         std::fs::write(&path, b"{bad}\n{also-bad}\n").unwrap();
         assert!(matches!(
