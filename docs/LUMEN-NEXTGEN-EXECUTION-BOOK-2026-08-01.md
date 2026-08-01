@@ -568,6 +568,16 @@ ProviderAttemptReceiptV1 {
 
 唯一可切换条件是 `NoOutput + NoToolCall + None`，且是 allowlisted 新候选、无 user pin、预算 reservation 未消费、同一 attempt id 只一次。任一 `Unknown`、已发文字块、tool call、shell/network/write effect、usage 不可判断，都按 partial failure：展示原错误，保留 receipt，等待 root/user，不重放。
 
+**实施接缝（不是抽象愿望）：**
+
+1. `agent/crates/codegen/xai-grok-shell/src/session/acp_session.rs`：由 `SessionActor` 持有按 `attempt_id` 索引的、初始即 `Unknown` 的 observation；不能让 sampler 或 child 自己宣称安全。
+2. `.../acp_session_impl/sampler_turn.rs`：在 `run_turn_via_sampler` 创建 attempt，在 `handle_sampling_failure` 只读取 sealed observation；新增的 recovery variant 必须带 replacement model、receipt 和一次性 retry token。
+3. `.../acp_session_impl/tool_calls.rs`：`SamplingEvent::ChannelToken`、`ToolCallDelta`、`BackendToolCallStarted` 先原子升级 observation，后发送 ACP 更新；事件遗漏或 event/order 不明均保持 `Unknown`。
+4. `.../acp_session_impl/turn.rs` 和 `tool_dispatch.rs`：模型 tool call 被接受、任何 dispatch 开始、shell/network/write effect 可能发生时升级为 `Possible` 或 `Confirmed`；这里是 P4b 当前并行修改区，未经同步不能偷改。
+5. `.../acp_session_tests/provider_failure_routing_tests.rs` 以及 mock sampler event 测试：分别证伪 NoOutput 重试、首 token、thought-only、tool delta、backend tool、dispatch race、event channel closed、重复 failure 和 retry 后 failure。
+
+P4b 必须作为独立 commit；它不得混入并行的 `turn.rs` 改动、模型 UI 重构或 source-lock evidence。先交付 mock/fault matrix，再决定是否开放 feature flag。
+
 | 来源 | 必读事实 |
 |---|---|
 | docs/provider-failover-design.md:1-19 | 设计未实施；模型 preset 不等于 live 验证。 |
