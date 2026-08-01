@@ -92,7 +92,12 @@ fn inject_task_tree_working_memory(
         );
         return;
     };
-    let ledger = xai_grok_memory::WorkingMemoryLedger::for_task_tree(&storage, root_session_id);
+    let ledger = match ctx.task_tree_memory_workspace_dir.as_deref() {
+        Some(workspace_dir) => {
+            xai_grok_memory::WorkingMemoryLedger::for_workspace_dir(workspace_dir, root_session_id)
+        }
+        None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(&storage, root_session_id),
+    };
     match render_task_tree_working_memory(&ledger) {
         Ok(Some(injection)) => {
             definition.prompt_body =
@@ -830,6 +835,7 @@ pub(crate) async fn run_shell_child(
     tool_ctx.monitor_event_buffer = Some(MonitorEventBuffer::default());
     tool_ctx.subagent_depth = child_depth;
     tool_ctx.task_tree_root_session_id = Some(request.lineage.root_session_id.clone());
+    tool_ctx.task_tree_memory_workspace_dir = ctx.task_tree_memory_workspace_dir.clone();
     tool_ctx.lsp = ctx.lsp.clone();
     tool_ctx.process_scope = ctx.process_scope.clone();
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();

@@ -269,6 +269,7 @@ impl MvpAgent {
             fs,
             terminal,
             session_env,
+            task_tree_memory_workspace_dir,
             parent_attribution_callback,
             parent_agent_name,
             parent_managed_mcp_proxy_base_url,
@@ -304,6 +305,7 @@ impl MvpAgent {
                     }),
                 ps.map(|h| h.tool_context.session_env.clone())
                     .unwrap_or_else(|| std::sync::Arc::new(std::collections::HashMap::new())),
+                ps.and_then(|h| h.tool_context.task_tree_memory_workspace_dir.clone()),
                 ps.and_then(|h| h.attribution_callback.clone()),
                 ps.map(|h| h.agent_name.clone()),
                 ps.map(|h| h.managed_mcp_proxy_base_url.clone()),
@@ -439,6 +441,7 @@ impl MvpAgent {
             terminal,
             session_env,
             memory_config: self.memory_config.clone(),
+            task_tree_memory_workspace_dir,
             web_search_sampling_config: self.prepare_web_search_sampling_config(),
             web_fetch_config: self.prepare_web_fetch_config(),
             image_gen_config: self.prepare_image_gen_config(),

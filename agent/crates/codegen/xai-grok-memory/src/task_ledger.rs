@@ -142,12 +142,23 @@ pub struct WorkingMemoryLedger {
 
 impl WorkingMemoryLedger {
     pub fn for_task_tree(storage: &MemoryStorage, root_session_id: impl Into<String>) -> Self {
+        Self::for_workspace_dir(storage.workspace_dir(), root_session_id)
+    }
+
+    /// Resolve a ledger from the workspace memory directory captured by the
+    /// root session. Nested children may use isolated worktrees, so deriving
+    /// this location again from a child's current directory would split one
+    /// task tree into multiple, incompatible ledgers.
+    pub fn for_workspace_dir(
+        workspace_dir: impl AsRef<Path>,
+        root_session_id: impl Into<String>,
+    ) -> Self {
         let root_session_id = root_session_id.into();
         let hash = blake3::hash(root_session_id.as_bytes()).to_hex();
         Self {
             root_session_id,
-            path: storage
-                .workspace_dir()
+            path: workspace_dir
+                .as_ref()
                 .join("task-ledgers")
                 .join(format!("{}.jsonl", &hash[..16])),
         }
@@ -355,6 +366,24 @@ mod tests {
             error,
             WorkingMemoryLedgerError::UnauthorizedReview { .. }
         ));
+    }
+
+    #[test]
+    fn root_workspace_directory_keeps_isolated_descendants_on_one_ledger() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_workspace_memory = temp.path().join("root-workspace-memory");
+        let root_ledger = WorkingMemoryLedger::for_workspace_dir(&root_workspace_memory, "root");
+
+        // A child worktree would normally resolve a different workspace memory
+        // directory. Passing the root-selected directory is what keeps the
+        // whole nested task tree on the same reviewed-fact ledger.
+        let isolated_child_workspace = temp.path().join("child-worktree-memory");
+        let child_ledger = WorkingMemoryLedger::for_workspace_dir(&root_workspace_memory, "root");
+        let incorrectly_recomputed =
+            WorkingMemoryLedger::for_workspace_dir(&isolated_child_workspace, "root");
+
+        assert_eq!(root_ledger.path(), child_ledger.path());
+        assert_ne!(root_ledger.path(), incorrectly_recomputed.path());
     }
 
     #[test]

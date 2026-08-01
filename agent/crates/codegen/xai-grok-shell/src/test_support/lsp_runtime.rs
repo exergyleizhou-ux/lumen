@@ -74,6 +74,7 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         )),
         session_env: Arc::new(HashMap::new()),
         memory_config: None,
+        task_tree_memory_workspace_dir: None,
         web_search_sampling_config: None,
         web_fetch_config: Default::default(),
         image_gen_config: Default::default(),

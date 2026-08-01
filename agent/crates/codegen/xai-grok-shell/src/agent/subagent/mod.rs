@@ -175,6 +175,9 @@ pub(crate) struct SubagentSpawnContext {
     /// Parent's memory config — shared so the child can access the same
     /// cross-session memory store.
     pub memory_config: Option<crate::config::MemoryConfig>,
+    /// Root-selected workspace-memory directory for the task tree's reviewed
+    /// fact ledger. This must not be recomputed from an isolated child worktree.
+    pub task_tree_memory_workspace_dir: Option<PathBuf>,
     /// Resolved sampling config for web_search.
     pub web_search_sampling_config: Option<xai_grok_sampler::SamplerConfig>,
     /// Resolved config for web fetch.

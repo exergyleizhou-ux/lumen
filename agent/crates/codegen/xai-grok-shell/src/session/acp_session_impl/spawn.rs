@@ -667,6 +667,22 @@ pub(crate) async fn spawn_session_actor(
             goal_loop_active: tool_context.goal_loop_active_gate.clone(),
         },
     );
+    if tool_context.task_tree_memory_workspace_dir.is_none()
+        && let Some(memory_config) = memory_config.as_ref().filter(|config| config.enabled)
+    {
+        let storage = if memory_config.flat_memory_root {
+            memory_config.root_dir_override.as_ref().map(|root| {
+                crate::session::memory::MemoryStorage::new_flat(tool_context.cwd.as_path(), root)
+            })
+        } else {
+            Some(crate::session::memory::MemoryStorage::new(
+                tool_context.cwd.as_path(),
+                memory_config.root_dir_override.as_deref(),
+            ))
+        };
+        tool_context.task_tree_memory_workspace_dir =
+            storage.map(|storage| storage.workspace_dir().to_path_buf());
+    }
     let tool_context_for_handle = tool_context.clone();
     let cursor_harness = false;
     let terminal_backend_kind = select_terminal_backend_kind(

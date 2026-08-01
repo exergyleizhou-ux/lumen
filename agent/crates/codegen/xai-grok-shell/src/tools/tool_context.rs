@@ -160,6 +160,9 @@ pub struct ToolContext {
     /// Stable identity of the root session that owns this task tree. `None`
     /// means this is the root session itself and is resolved at agent build.
     pub task_tree_root_session_id: Option<String>,
+    /// Workspace-memory directory chosen by the root session for the shared
+    /// task-tree ledger. Carries across worktree-isolated descendants.
+    pub task_tree_memory_workspace_dir: Option<std::path::PathBuf>,
     /// Unified subagent event sender — carries spawn, query, cancel,
     /// list-active, completions, and outstanding messages to the coordinator.
     /// `None` if subagent support is not enabled.
@@ -273,6 +276,7 @@ impl ToolContext {
             prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
             subagent_depth: 0,
             task_tree_root_session_id: None,
+            task_tree_memory_workspace_dir: None,
             subagent_event_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
@@ -315,6 +319,7 @@ impl ToolContext {
             prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
             subagent_depth: 0,
             task_tree_root_session_id: None,
+            task_tree_memory_workspace_dir: None,
             subagent_event_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
@@ -410,6 +415,7 @@ mod tests {
                 prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
                 subagent_depth: 0,
                 task_tree_root_session_id: None,
+                task_tree_memory_workspace_dir: None,
                 subagent_event_tx: None,
                 lsp: None,
                 lsp_server_names: Vec::new(),
