@@ -6,6 +6,38 @@ use crate::session::repo_changes::UploadMethod;
 struct ShellChildRunner {
     agent_ref: LocalRef<MvpAgent>,
 }
+
+/// Select a model for a fresh root-owned scheduler iteration before the child
+/// exists.  This deliberately reuses the user's ordinary-turn allowlist, but
+/// has a narrower boundary: only the scheduler's internal loop request may
+/// opt in.  A resume must retain its source model, an explicit override is a
+/// pin, and nested children remain outside automatic routing until they have
+/// their own retry/recovery contract.
+fn scheduler_preflight_model(
+    request: &xai_grok_tools::implementations::grok_build::task::types::SubagentRequest,
+    parent_depth: u32,
+    models_manager: &crate::agent::models::ModelsManager,
+) -> Option<String> {
+    if parent_depth > 0
+        || request.resume_from.is_some()
+        || request.runtime_overrides.model.is_some()
+        || request.runtime_overrides.loop_task_id.is_none()
+        || models_manager.user_selected_model()
+    {
+        return None;
+    }
+    let policy = models_manager.model_routing_config();
+    if !policy.enabled || policy.model_pool.is_empty() {
+        return None;
+    }
+    models_manager.select_healthy_model_for_task(
+        &policy.model_pool,
+        &policy.priority,
+        &policy.task_preferences,
+        &request.prompt,
+    )
+}
+
 impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
     for ShellChildRunner
 {
@@ -33,7 +65,7 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         let agent_ref = self.agent_ref.clone();
         Box::pin(async move {
             let xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunRequest {
-                request,
+                mut request,
                 cancellation,
                 reporter,
             } = run;
@@ -69,6 +101,19 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
                 ctx.client_hooks = handle.snapshot_client_hooks().await;
                 let definitions = handle.snapshot_tool_definitions().await;
                 ctx.parent_tool_definitions = (!definitions.is_empty()).then_some(definitions);
+            }
+            if let Some(model) =
+                scheduler_preflight_model(&request, ctx.parent_depth, &ctx.models_manager)
+            {
+                tracing::info!(
+                    parent_session_id = %request.parent_session_id,
+                    subagent_id = %request.id,
+                    model = %model,
+                    "Selected scheduler child model from user routing pool before execution"
+                );
+                request.runtime_overrides.model = Some(model);
+                request.runtime_overrides.model_override_provenance =
+                    xai_grok_tools::implementations::grok_build::task::types::ModelOverrideProvenance::Harness;
             }
             crate::agent::subagent::run_shell_child(
                 request,
@@ -579,5 +624,87 @@ impl MvpAgent {
             parent_notification_handle: parent_notification_handle.clone(),
             parent_scheduler_handle: parent_scheduler_handle.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod scheduler_model_routing_tests {
+    use super::*;
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        SubagentLineage, SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
+    };
+
+    fn scheduler_request() -> SubagentRequest {
+        SubagentRequest {
+            id: "scheduled-child".to_owned(),
+            prompt: "review the security boundary".to_owned(),
+            description: "scheduled review".to_owned(),
+            subagent_type: "general-purpose".to_owned(),
+            parent_session_id: "root".to_owned(),
+            lineage: SubagentLineage::direct("root"),
+            parent_prompt_id: None,
+            resume_from: None,
+            cwd: None,
+            runtime_overrides: SubagentRuntimeOverrides {
+                loop_task_id: Some("loop-1".to_owned()),
+                ..Default::default()
+            },
+            run_in_background: true,
+            surface_completion: true,
+            await_to_completion: false,
+            fork_context: false,
+            owner: SubagentOwner::Task,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+        }
+    }
+
+    fn model_entry(model: &str, base_url: &str) -> crate::agent::config::ModelEntry {
+        let mut info = crate::agent::config::ModelInfo::fallback(model);
+        info.base_url = base_url.to_owned();
+        crate::agent::config::ModelEntry {
+            info,
+            api_key: Some("test-key".to_owned()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: Some(base_url.to_owned()),
+        }
+    }
+
+    #[test]
+    fn scheduler_pool_selects_only_fresh_root_loop_children() {
+        let manager = crate::agent::models::ModelsManager::default();
+        manager.insert_test_entry(
+            "flash",
+            model_entry("flash", "https://flash.example.test/v1"),
+        );
+        manager.insert_test_entry("grok", model_entry("grok", "https://grok.example.test/v1"));
+        manager.set_model_routing_config(crate::agent::config::ModelRoutingConfig {
+            enabled: true,
+            model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+            priority: vec![],
+            task_preferences: Default::default(),
+        });
+
+        let request = scheduler_request();
+        assert_eq!(
+            scheduler_preflight_model(&request, 0, &manager),
+            Some("grok".to_owned()),
+            "the review task uses the configured root pool before it starts"
+        );
+
+        let mut resumed = request.clone();
+        resumed.resume_from = Some("prior-child".to_owned());
+        assert_eq!(scheduler_preflight_model(&resumed, 0, &manager), None);
+        assert_eq!(scheduler_preflight_model(&request, 1, &manager), None);
+
+        let mut explicit = request;
+        explicit.runtime_overrides.model = Some("flash".to_owned());
+        assert_eq!(scheduler_preflight_model(&explicit, 0, &manager), None);
+
+        manager.set_current_model_id(acp::ModelId::new("flash"));
+        assert_eq!(
+            scheduler_preflight_model(&scheduler_request(), 0, &manager),
+            None
+        );
     }
 }
