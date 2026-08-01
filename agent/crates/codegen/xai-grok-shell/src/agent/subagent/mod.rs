@@ -739,16 +739,33 @@ fn session_bearer_resolver(
         crate::auth::credential_provider::WireValidBearerResolver::shared(ctx.auth_manager.clone())
     })
 }
-/// [`session_bearer_resolver`] for an inherited config, where only the model
-/// string is known: BYOK comes from the catalog memo.
+/// [`session_bearer_resolver`] for an inherited config.
+///
+/// The parent session's catalog snapshot is authoritative: an alias can have
+/// a different credential policy from its routing slug.  Only if that snapshot
+/// no longer contains the selected model do we fall back to the process-wide
+/// config lookup, which preserves the conservative BYOK handling during an
+/// early catalog refresh.
 fn inherited_bearer_resolver(
     ctx: &SubagentSpawnContext,
     model: &str,
     base_url: &str,
 ) -> Option<xai_grok_sampler::SharedBearerResolver> {
-    let byok = crate::agent::config::resolve_model_auth_facts_and_provider(model)
-        .0
-        .byok;
+    let byok =
+        crate::agent::config::find_model_by_id(&ctx.available_models, ctx.model_id.0.as_ref())
+            .or_else(|| crate::agent::config::find_model_by_id(&ctx.available_models, model))
+            .map(|entry| {
+                if entry.has_own_credentials() {
+                    crate::agent::auth_method::ModelByok::Byok
+                } else {
+                    crate::agent::auth_method::ModelByok::NotByok
+                }
+            })
+            .unwrap_or_else(|| {
+                crate::agent::config::resolve_model_auth_facts_and_provider(model)
+                    .0
+                    .byok
+            });
     session_bearer_resolver(ctx, byok, base_url)
 }
 /// Read the parent session's actual current sampling config.

@@ -1921,8 +1921,8 @@ async fn read_parent_sampling_config_ignores_global_default() {
 /// Every subagent config path must carry the live bearer resolver: a
 /// config frozen at spawn 401s for the rest of the subagent's life once
 /// the parent rotates its token (the wake-from-sleep failure mode).
-/// First-party base URL so the assertion holds whether the catalog memo
-/// reports `NotByok` or `Unknown`.
+/// The session catalog is the source of truth even when its selected alias
+/// routes to a different inference slug.
 #[tokio::test]
 async fn read_parent_sampling_config_fallback_wires_bearer_resolver() {
     let mut ctx = ctx_with_toggle(HashMap::new());
@@ -1930,10 +1930,34 @@ async fn read_parent_sampling_config_fallback_wires_bearer_resolver() {
     ctx.auth_method_id = acp::AuthMethodId::new(
         crate::agent::auth_method::CACHED_TOKEN_AUTH_METHOD_ID,
     );
+    ctx.model_id = acp::ModelId::new("session-grok");
     ctx.sampling_config.model = "grok-4.5".to_string();
     ctx.sampling_config.base_url = "https://api.x.ai/v1".to_string();
+    ctx.available_models.insert(
+        "session-grok".to_string(),
+        test_model_entry("grok-4.5"),
+    );
     let (config, _) = read_parent_sampling_config(&ctx).await;
     assert!(config.bearer_resolver.is_some());
+}
+/// An alias with a dedicated key is BYOK even if its routing slug is
+/// first-party.  The fallback path must never replace that key with a session
+/// bearer resolver.
+#[tokio::test]
+async fn read_parent_sampling_config_fallback_keeps_catalog_byok_key() {
+    let mut ctx = ctx_with_toggle(HashMap::new());
+    ctx.parent_chat_state = None;
+    ctx.auth_method_id = acp::AuthMethodId::new(
+        crate::agent::auth_method::CACHED_TOKEN_AUTH_METHOD_ID,
+    );
+    ctx.model_id = acp::ModelId::new("session-byok");
+    ctx.sampling_config.model = "grok-4.5".to_string();
+    ctx.sampling_config.base_url = "https://api.x.ai/v1".to_string();
+    let mut byok = test_model_entry("grok-4.5");
+    byok.api_key = Some("sk-byok".to_string());
+    ctx.available_models.insert("session-byok".to_string(), byok);
+    let (config, _) = read_parent_sampling_config(&ctx).await;
+    assert!(config.bearer_resolver.is_none());
 }
 /// The inherit-live path honors `would_strip_fallback_key` like the
 /// other two paths (it used to install the resolver unconditionally,
