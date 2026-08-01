@@ -1,8 +1,8 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
 use super::handle_request::{
-    canonical_total_tokens, mcp_inheritance_allowed_at_depth, record_subagent_usage,
-    usage_is_incomplete,
+    capability_ceiling_at_depth, canonical_total_tokens, mcp_inheritance_allowed_at_depth,
+    record_subagent_usage, subagent_yolo_allowed, usage_is_incomplete,
 };
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, test_gateway_with_receiver,
@@ -35,6 +35,29 @@ fn third_generation_child_cannot_inherit_mcp() {
     assert!(mcp_inheritance_allowed_at_depth(2));
     assert!(!mcp_inheritance_allowed_at_depth(3));
     assert!(!mcp_inheritance_allowed_at_depth(4));
+}
+
+#[test]
+fn third_generation_child_is_forced_read_only() {
+    use xai_tool_types::SubagentCapabilityMode;
+
+    assert_eq!(
+        capability_ceiling_at_depth(Some(SubagentCapabilityMode::All), 3),
+        Some(SubagentCapabilityMode::ReadOnly)
+    );
+    assert_eq!(
+        capability_ceiling_at_depth(Some(SubagentCapabilityMode::Execute), 4),
+        Some(SubagentCapabilityMode::ReadOnly)
+    );
+    assert_eq!(
+        capability_ceiling_at_depth(Some(SubagentCapabilityMode::ReadWrite), 2),
+        Some(SubagentCapabilityMode::ReadWrite)
+    );
+}
+
+#[test]
+fn child_sessions_never_inherit_yolo() {
+    assert!(!subagent_yolo_allowed());
 }
 #[tokio::test]
 async fn usage_ack_precedes_terminal_presentation() {
@@ -149,7 +172,7 @@ fn subagent_bypass_permission_mode_gated_by_policy_pin() {
     const PIN: &str = xai_grok_workspace::permission::resolution::YOLO_PIN_REASON_REQUIREMENTS;
     assert_eq!(
             resolve_subagent_permission_mode(PermissionMode::BypassPermissions, false, None),
-            PermissionMode::BypassPermissions,
+            PermissionMode::Default,
         );
     assert_eq!(
             resolve_subagent_permission_mode(PermissionMode::BypassPermissions, false, Some(PIN)),

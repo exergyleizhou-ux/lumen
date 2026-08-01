@@ -9,6 +9,29 @@ pub(super) const fn mcp_inheritance_allowed_at_depth(child_depth: u32) -> bool {
     child_depth < 3
 }
 
+/// Third-generation children are terminal review/evidence leaves.  Their
+/// requested role or runtime override can only be narrowed to read-only; it
+/// cannot restore write or shell execution authority from an ancestor.
+pub(super) fn capability_ceiling_at_depth(
+    requested: Option<xai_tool_types::SubagentCapabilityMode>,
+    child_depth: u32,
+) -> Option<xai_tool_types::SubagentCapabilityMode> {
+    if child_depth >= 3 {
+        xai_grok_subagent_resolution::intersect_capability_modes(
+            requested,
+            Some(xai_tool_types::SubagentCapabilityMode::ReadOnly),
+        )
+    } else {
+        requested
+    }
+}
+
+/// Child sessions never inherit a parent's YOLO/bypass grant.  A child has a
+/// separate authority boundary even when its root session is in bypass mode.
+pub(super) const fn subagent_yolo_allowed() -> bool {
+    false
+}
+
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
     totals.total_tokens()
 }
@@ -388,6 +411,8 @@ pub(crate) async fn run_shell_child(
         .runtime_overrides
         .spawn_depth
         .unwrap_or(ctx.parent_depth + 1);
+    effective_runtime.capability_mode =
+        capability_ceiling_at_depth(effective_runtime.capability_mode, child_depth);
     let tools_before_policy = definition.tool_config.tools.len();
     let allow_nested_subagents = child_depth < ctx.subagents_max_depth;
     xai_grok_subagent_resolution::apply_child_tool_policy(
@@ -1105,11 +1130,7 @@ pub(crate) async fn run_shell_child(
         None,
         ctx.managed_mcp_proxy_base_url.clone(),
         effective_model_id,
-        ctx.yolo_mode
-            || matches!(
-                agent_permission_mode,
-                xai_grok_agent::config::PermissionMode::BypassPermissions
-            ),
+        subagent_yolo_allowed(),
         false,
         None,
         ctx.inference_idle_timeout_secs,

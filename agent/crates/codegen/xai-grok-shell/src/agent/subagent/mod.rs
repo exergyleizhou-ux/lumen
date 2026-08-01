@@ -1761,18 +1761,19 @@ fn parent_source_cwd(ctx: &SubagentSpawnContext) -> std::path::PathBuf {
         .map(|i| std::path::PathBuf::from(&i.cwd))
         .unwrap_or_else(|| std::path::PathBuf::from(&ctx.parent_cwd))
 }
-/// Effective permission mode for a spawned subagent. Plugin agents never honor a
-/// non-default mode; under the pin, `bypassPermissions` downgrades to `Default`
-/// so a repo/profile/`--agents` def can't restore auto-approve. Caller logs it.
+/// Effective permission mode for a spawned subagent. Subagents never honor
+/// `bypassPermissions`: a repo/profile/`--agents` definition cannot turn a
+/// child into an auto-approve authority boundary. Plugin agents likewise only
+/// use the default mode. Caller logs any downgrade.
 fn resolve_subagent_permission_mode(
     requested: xai_grok_agent::config::PermissionMode,
     is_plugin: bool,
-    policy_block: Option<&'static str>,
+    _policy_block: Option<&'static str>,
 ) -> xai_grok_agent::config::PermissionMode {
     if is_plugin {
         return PermissionMode::Default;
     }
-    if policy_block.is_some() && requested == PermissionMode::BypassPermissions {
+    if requested == PermissionMode::BypassPermissions {
         return PermissionMode::Default;
     }
     requested
