@@ -44,6 +44,10 @@ async fn goal_compose_enters_executor_restores_each_round_and_preserves_global_d
             let original = actor.reconstruct_full_config().await;
             let mut expert = ExpertModeState::configured();
             expert.require_consult_on_medium = false;
+            // This test verifies temporary restoration for a specifically
+            // requested Pro executor.  Flash is the production default; Pro
+            // is only its configured fallback, so make the fixture explicit.
+            expert.executor_requested = "deepseek-v4-pro".to_owned();
             actor.state.lock().await.expert = expert;
             {
                 let mut goal = actor.goal_tracker.lock();
