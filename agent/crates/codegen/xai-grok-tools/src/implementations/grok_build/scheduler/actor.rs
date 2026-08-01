@@ -2772,6 +2772,7 @@ mod tests {
                 task.record_terminal_run_status(SchedulerRunStatus::Failed, Utc::now());
             }
             assert!(task.dead_lettered);
+            task.usage_verification_required = true;
         }
 
         let (update_tx, update_rx) = tokio::sync::oneshot::channel();
@@ -2788,6 +2789,10 @@ mod tests {
         assert_eq!(updated.consecutive_run_failures, 0);
         assert!(updated.retry_not_before.is_none());
         assert!(!updated.dead_lettered);
+        assert!(
+            !updated.usage_verification_required,
+            "an explicit prompt repair also authorizes a fresh usage-verification attempt"
+        );
 
         cancel.cancel();
     }
