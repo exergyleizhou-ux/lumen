@@ -244,6 +244,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     if request.runtime_overrides.loop_task_id.is_none() {
                         request.runtime_overrides.loop_task_id = loop_task_id;
                     }
+                } else if let Err(reason) = request
+                    .lineage
+                    .validate_direct_for(&request.parent_session_id)
+                {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(format!("invalid direct task-tree lineage: {reason}")),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
                 }
                 // Late Task spawn after user Stop (detached TaskTool background).
                 if !request.owner.is_workflow()

@@ -182,6 +182,40 @@ fn request(id: &str, background: bool) -> SubagentRequest {
     }
 }
 
+#[tokio::test]
+async fn direct_spawn_rejects_forged_task_tree_lineage() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let invalid_lineages = [
+        SubagentLineage {
+            root_session_id: "other-root".to_owned(),
+            ..SubagentLineage::direct("parent")
+        },
+        SubagentLineage {
+            depth: 2,
+            ..SubagentLineage::direct("parent")
+        },
+        SubagentLineage {
+            lineage_path: vec!["parent".to_owned(), "forged-ancestor".to_owned()],
+            ..SubagentLineage::direct("parent")
+        },
+    ];
+
+    for (index, lineage) in invalid_lineages.into_iter().enumerate() {
+        let mut req = request(&format!("forged-{index}"), false);
+        req.lineage = lineage;
+        let result = harness.backend.spawn(req).await.unwrap();
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|error| error.contains("invalid direct task-tree lineage"))
+        );
+    }
+    assert!(harness.requests.try_recv().is_err());
+    harness.actor.abort();
+}
+
 struct Harness {
     backend: ChannelBackend,
     start: tokio::sync::broadcast::Sender<()>,

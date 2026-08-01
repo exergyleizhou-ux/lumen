@@ -148,6 +148,31 @@ impl SubagentLineage {
             lineage_path,
         }
     }
+
+    /// Validate a direct (root-session) spawn before it enters the
+    /// coordinator. Nested spawns are rebuilt from their registered parent by
+    /// the coordinator, but a direct request has no trusted parent record to
+    /// overwrite it. Accepting caller-provided root/depth/path fields there
+    /// would let a session forge tree ownership, budget attribution, or the
+    /// shared-memory namespace.
+    pub fn validate_direct_for(&self, parent_session_id: &str) -> Result<(), &'static str> {
+        if parent_session_id.trim().is_empty() {
+            return Err("parent session id must not be empty");
+        }
+        if self.root_session_id != parent_session_id {
+            return Err("direct child root_session_id must equal parent_session_id");
+        }
+        if self.immediate_parent_session_id != parent_session_id {
+            return Err("direct child immediate_parent_session_id must equal parent_session_id");
+        }
+        if self.depth != 1 {
+            return Err("direct child depth must be 1");
+        }
+        if !matches!(self.lineage_path.as_slice(), [only] if only == parent_session_id) {
+            return Err("direct child lineage_path must contain only parent_session_id");
+        }
+        Ok(())
+    }
 }
 
 /// Spawn command envelope owned by the coordinator mailbox.
