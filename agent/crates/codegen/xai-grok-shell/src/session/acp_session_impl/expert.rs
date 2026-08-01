@@ -726,21 +726,13 @@ impl SessionActor {
                     provider_degraded(&executor),
                     provider_degraded(&consultant),
                 );
-                if crate::session::expert::advisor_fallback_switch_allowed(
-                    &advice,
-                    actor.expert.advisor_auto_switch_fallback_enabled,
+                let fallback_provider_degraded = provider_degraded(&advice.executor_candidate);
+                if actor.expert.apply_advisor_fallback_before_output(
+                    &mut advice,
                     continuation.is_none(),
-                    provider_degraded(&advice.executor_candidate),
+                    fallback_provider_degraded,
                 ) {
-                    executor = advice.executor_candidate.clone();
-                    actor.expert.executor_requested = executor.clone();
-                    advice.automatic_switch_allowed = true;
-                    actor.expert.audit(
-                        "advisor_fallback_applied_before_output",
-                        None,
-                        None,
-                        Some(executor.clone()),
-                    );
+                    executor = actor.expert.executor_requested.clone();
                 }
                 actor.expert.audit(
                     "advisor_shadow_recorded",

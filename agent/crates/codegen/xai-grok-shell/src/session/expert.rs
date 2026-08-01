@@ -961,6 +961,34 @@ impl ExpertModeState {
         Ok(task)
     }
 
+    /// Apply the narrow P4 fallback only while the SessionActor is still
+    /// preparing a fresh task. This owns the persistent executor mutation and
+    /// its audit evidence so callers cannot change one without the other.
+    pub fn apply_advisor_fallback_before_output(
+        &mut self,
+        advice: &mut AdvisorShadowAdvice,
+        is_new_task: bool,
+        fallback_provider_degraded: bool,
+    ) -> bool {
+        if !advisor_fallback_switch_allowed(
+            advice,
+            self.advisor_auto_switch_fallback_enabled,
+            is_new_task,
+            fallback_provider_degraded,
+        ) {
+            return false;
+        }
+        self.executor_requested = advice.executor_candidate.clone();
+        advice.automatic_switch_allowed = true;
+        self.audit(
+            "advisor_fallback_applied_before_output",
+            None,
+            None,
+            Some(self.executor_requested.clone()),
+        );
+        true
+    }
+
     pub fn transition(
         &mut self,
         expected: ExpertPhase,
@@ -2359,6 +2387,45 @@ mod tests {
         assert!(!advisor_fallback_switch_allowed(
             &degraded, true, true, false
         ));
+    }
+
+    #[test]
+    fn fallback_application_mutates_executor_and_leaves_audit_evidence() {
+        let mut state = ExpertModeState::configured();
+        state.advisor_auto_switch_fallback_enabled = true;
+        state
+            .start(
+                "implement the orchestration safeguard",
+                ExpertMode::Default,
+                "missing-primary",
+            )
+            .unwrap();
+        let mut advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(state.apply_advisor_fallback_before_output(&mut advice, true, false));
+        assert_eq!(state.executor_requested, "deepseek-v4-flash");
+        assert!(advice.automatic_switch_allowed);
+        assert!(
+            state
+                .audit_events
+                .iter()
+                .any(|event| event.event == "advisor_fallback_applied_before_output")
+        );
+
+        let executor_after_switch = state.executor_requested.clone();
+        assert!(!state.apply_advisor_fallback_before_output(&mut advice, false, false));
+        assert_eq!(state.executor_requested, executor_after_switch);
     }
 
     #[test]
