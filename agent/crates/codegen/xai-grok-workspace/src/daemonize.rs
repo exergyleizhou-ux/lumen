@@ -791,13 +791,33 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[allow(clippy::disallowed_methods)] // test fixture; the test kills it
     fn spawn_predecessor() -> Child {
-        Command::new("sleep")
+        let mut child = Command::new("sleep")
             .arg("300")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .expect("spawn sleep")
+            .expect("spawn sleep");
+
+        // `Command::spawn` can return before Linux has published the child's
+        // final argv in `/proc/<pid>/cmdline`, especially on a loaded remote
+        // CI worker. The takeover path rightly declines an unverifiable PID,
+        // so make the fixture satisfy the same verification prerequisite
+        // before a test asserts that it was signalled.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !process_name_matches(child.id(), "sleep") {
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("spawned predecessor never became verifiable");
+            }
+            if child.try_wait().expect("probe predecessor").is_some() {
+                panic!("spawned predecessor exited before it became verifiable");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        child
     }
 
     /// Wait (bounded) for a child to exit; returns true if it did.
