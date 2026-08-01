@@ -417,6 +417,14 @@ impl SchedulerActor {
         let last_subagent_id = task.last_subagent_id.clone();
         let iterations_since_fresh = task.iterations_since_fresh;
         let chain_reset_pending = task.chain_reset_pending;
+        // An expired lease left by another SchedulerActor is not evidence that
+        // its child is gone.  It may be a process-recovery boundary, so never
+        // degrade it to a foreground injection before the coordinator has
+        // supplied a terminal snapshot for the recorded child.
+        let recovery_lease_requires_proof = task
+            .active_run_lease
+            .as_ref()
+            .is_some_and(|lease| lease.owner_id() != owner_id);
         let transition_count = if is_expired {
             1
         } else if should_remove {
@@ -562,8 +570,16 @@ impl SchedulerActor {
                     last_subagent_id,
                     iterations_since_fresh,
                     chain_reset_pending,
+                    recovery_lease_requires_proof,
                 )
                 .await
+            }
+            None if recovery_lease_requires_proof => {
+                tracing::warn!(
+                    task_id = %task_id,
+                    "Skipping recovered scheduler lease: subagent coordinator is unavailable"
+                );
+                LoopFireOutcome::Skipped
             }
             None => LoopFireOutcome::Foreground,
         };
@@ -636,7 +652,15 @@ impl SchedulerActor {
         last_subagent_id: Option<String>,
         iterations_since_fresh: u32,
         chain_reset_pending: bool,
+        recovery_lease_requires_proof: bool,
     ) -> LoopFireOutcome {
+        if recovery_lease_requires_proof && last_subagent_id.is_none() {
+            tracing::warn!(
+                task_id = %task_id,
+                "Skipping recovered scheduler lease with no child identity to verify"
+            );
+            return LoopFireOutcome::Skipped;
+        }
         let prev_snapshot = match &last_subagent_id {
             Some(prev_id) => {
                 let (respond_to, rx) = tokio::sync::oneshot::channel();
@@ -655,6 +679,14 @@ impl SchedulerActor {
                         biased;
                         _ = self.cancel_token.cancelled() => return LoopFireOutcome::Skipped,
                         snapshot = rx => match snapshot {
+                            Ok(None) if recovery_lease_requires_proof => {
+                                tracing::warn!(
+                                    task_id = %task_id,
+                                    previous_subagent = %prev_id,
+                                    "Skipping recovered scheduler lease: coordinator cannot prove prior child terminal"
+                                );
+                                return LoopFireOutcome::Skipped;
+                            }
                             Ok(s) => s,
                             Err(_) => return LoopFireOutcome::Skipped,
                         },
@@ -1310,6 +1342,71 @@ mod tests {
         assert!(
             delay >= Duration::from_secs(55),
             "restored foreign lease must defer due dispatch instead of spinning: {delay:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_foreign_lease_never_falls_back_to_foreground_without_coordinator() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "watch ci".into(), true, true);
+        task.last_fired_at = Some(now - chrono::Duration::seconds(10));
+        task.last_subagent_id = Some("possibly-still-running".into());
+        task.acquire_run_lease(
+            "scheduler:crashed-actor",
+            now - chrono::Duration::seconds(10),
+            chrono::Duration::seconds(1),
+        )
+        .unwrap();
+        let (mut actor, mut notifications) = make_boundary_actor(vec![task], 0);
+
+        actor.fire_next_task().await;
+
+        let notification = next_event(&mut notifications).await;
+        assert!(matches!(
+            notification,
+            ToolNotification::ScheduledTaskCreated(_)
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), notifications.recv())
+                .await
+                .is_err(),
+            "a recovered foreign lease must not emit a foreground fire"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovered_foreign_lease_requires_terminal_snapshot_before_takeover() {
+        let (actor, _notifications) = make_boundary_actor(Vec::new(), 0);
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let events = SubagentEventSender(event_tx);
+        let fire = actor.fire_as_loop_subagent(
+            &events,
+            "parent-session".into(),
+            "task-1",
+            "watch ci",
+            "every minute",
+            Some("possibly-still-running".into()),
+            1,
+            false,
+            true,
+        );
+        tokio::pin!(fire);
+
+        let query = tokio::select! {
+            _outcome = &mut fire => panic!("expected a coordinator query before a recovery decision"),
+            event = event_rx.recv() => event.expect("coordinator event channel open"),
+        };
+        let SubagentEvent::Query(query) = query else {
+            panic!("recovered lease must query its prior child first");
+        };
+        query.respond_to.send(None).unwrap();
+
+        assert!(matches!(fire.await, LoopFireOutcome::Skipped));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), event_rx.recv())
+                .await
+                .is_err(),
+            "unknown child must not be restarted after a recovery lease"
         );
     }
 
