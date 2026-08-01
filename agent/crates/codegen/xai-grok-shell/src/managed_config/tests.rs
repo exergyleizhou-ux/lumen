@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn caller_endpoints_bind_managed_config_sync_url() {
+    let endpoints = crate::agent::config::EndpointsConfig {
+        managed_config_url: Some("http://127.0.0.1:43123/deployment/config".to_owned()),
+        ..Default::default()
+    };
+    assert_eq!(
+        sync_managed_config_url(Some(&endpoints)),
+        "http://127.0.0.1:43123/deployment/config",
+        "the prefetch-owned sync must use the caller's explicit endpoint"
+    );
+}
+
 /// Fail closed only for a managed principal AND compromised policy; every other combination proceeds.
 #[test]
 fn gate_blocks_only_managed_principal_with_compromised_policy() {

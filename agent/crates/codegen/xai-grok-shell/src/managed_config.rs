@@ -494,6 +494,22 @@ pub async fn sync() -> Result<bool, ManagedConfigError> {
     Ok(sync_with_budget(SyncBudget::Standard, None).await?.wrote)
 }
 
+/// Equivalent to [`sync`], but binds the request URL to an already-resolved
+/// caller endpoint configuration. Startup prefetch uses this so a hermetic
+/// test proxy cannot be bypassed by re-reading process-effective config on a
+/// detached thread.
+pub async fn sync_with_endpoints(
+    endpoints: &crate::agent::config::EndpointsConfig,
+) -> Result<bool, ManagedConfigError> {
+    Ok(sync_with_budget_at_url(
+        SyncBudget::Standard,
+        None,
+        Some(sync_managed_config_url(Some(endpoints))),
+    )
+    .await?
+    .wrote)
+}
+
 struct SyncOutcome {
     wrote: bool,
     /// Server returned a config row for the consulted principal (independent of apply).
@@ -504,6 +520,15 @@ struct SyncOutcome {
     source: Option<ManagedConfigSource>,
     /// Verification active and envelope rejected — nothing persisted.
     signature_rejected: bool,
+}
+
+fn sync_managed_config_url(endpoints: Option<&crate::agent::config::EndpointsConfig>) -> String {
+    endpoints
+        .map(crate::agent::config::EndpointsConfig::resolve_managed_config_url)
+        .unwrap_or_else(|| {
+            crate::agent::config::EndpointsConfig::from_effective_config()
+                .resolve_managed_config_url()
+        })
 }
 
 impl SyncOutcome {
@@ -556,13 +581,13 @@ enum FetchedConfig {
 async fn fetch_for_principal(
     budget: SyncBudget,
     team_override: Option<GrokAuth>,
+    managed_config_url: Option<String>,
 ) -> Result<FetchedConfig, ManagedConfigError> {
     let max_attempts = budget.max_attempts();
     // Resolve from the merged config (managed_config_url > cli_chat_proxy_base_url,
     // including the enterprise single-endpoint derivation) so endpoint overrides
     // are honored and the bearer isn't sent to the public default.
-    let url =
-        crate::agent::config::EndpointsConfig::from_effective_config().resolve_managed_config_url();
+    let url = managed_config_url.unwrap_or_else(|| sync_managed_config_url(None));
 
     let team_auth = team_override.or_else(read_active_team_auth);
 
@@ -616,7 +641,15 @@ async fn sync_with_budget(
     budget: SyncBudget,
     team_override: Option<GrokAuth>,
 ) -> Result<SyncOutcome, ManagedConfigError> {
-    match fetch_for_principal(budget, team_override).await? {
+    sync_with_budget_at_url(budget, team_override, None).await
+}
+
+async fn sync_with_budget_at_url(
+    budget: SyncBudget,
+    team_override: Option<GrokAuth>,
+    managed_config_url: Option<String>,
+) -> Result<SyncOutcome, ManagedConfigError> {
+    match fetch_for_principal(budget, team_override, managed_config_url).await? {
         FetchedConfig::DeploymentKey { key, body } => {
             let source = ManagedConfigSource::DeploymentKey;
             let fingerprint = deployment_key_fingerprint(&key);
@@ -1072,7 +1105,7 @@ pub struct SetupReport {
 /// Fetches the report behind `grok setup --json` without writing anything:
 /// no artifacts, no signature sidecar, no sync marker.
 pub async fn fetch_setup_report() -> Result<SetupReport, ManagedConfigError> {
-    let (source, body) = match fetch_for_principal(SyncBudget::Standard, None).await? {
+    let (source, body) = match fetch_for_principal(SyncBudget::Standard, None, None).await? {
         FetchedConfig::DeploymentKey { body, .. } => (Some("deploymentKey"), body),
         FetchedConfig::Team { body, .. } => (Some("teamOauth"), body),
         FetchedConfig::NoPrincipal => (None, ManagedConfigResponse::default()),

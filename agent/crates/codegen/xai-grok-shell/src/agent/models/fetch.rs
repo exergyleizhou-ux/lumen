@@ -229,6 +229,9 @@ fn start_early_prefetch_impl_with_endpoints(
 ) -> Option<EarlyPrefetchHandle> {
     let grok_home = crate::util::grok_home::grok_home();
     let auth = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default()).current();
+    if sync_managed {
+        spawn_managed_config_sync_if_stale(&endpoints);
+    }
     let env = resolve_prefetch_env_from_parts(
         auth,
         endpoints,
@@ -262,7 +265,8 @@ fn spawn_managed_config_sync_if_stale(endpoints: &config::EndpointsConfig) {
     if !should_sync {
         return;
     }
-    std::thread::spawn(|| {
+    let endpoints = endpoints.clone();
+    std::thread::spawn(move || {
         let Ok(rt) = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -274,7 +278,7 @@ fn spawn_managed_config_sync_if_stale(endpoints: &config::EndpointsConfig) {
         let _ = rt.block_on(async {
             tokio::time::timeout(
                 crate::http::STARTUP_FETCH_TIMEOUT,
-                crate::managed_config::sync(),
+                crate::managed_config::sync_with_endpoints(&endpoints),
             )
             .await
         });
