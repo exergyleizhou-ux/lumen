@@ -1,4 +1,6 @@
-# Lumen NextGen 最终可执行总纲
+# Lumen 2 — Governed Agent Runtime
+
+## NextGen 最终可执行总纲
 
 **日期：** 2026-08-01（北京时间）
 **性质：** Lumen 后续实施的唯一排序、依赖、验收与交接总纲；不是功能完成、CI 通过、发布、安装或 live/provider 证明。
@@ -7,6 +9,15 @@
 **证据窗口：** 2026-07-27 至 2026-08-01 的 Lumen 提交、当前源码、当前 GitHub 和当前工作树。窗口外旧规划仅是历史，不是需求、优先级或完成依据。
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
+
+### 发布身份与版本边界
+
+- **产品代际名：** `Lumen 2 — Governed Agent Runtime`；`Lumen NextGen` 是实施代号。
+- **首个候选标签：** `v2.0.0-rc.1`，只有 clean source candidate、exact-SHA CI、source lock、SBOM、readiness 和人工门全部闭合后才能创建。
+- **当前兼容版本：** 根 `VERSION=0.1.251` 只描述当前旧发布线；它不是 NextGen 已发布或已验收的宣称。
+- **上游身份：** `xai-grok-version` 是 Grok Build 协议/客户端身份，可独立为 `0.2.116`；它绝不能决定 Lumen 的产品 version、tag 或 release。
+
+因此，在 R0 完成以前任何 `0.1.251` 或 `0.2.116` 输出只能表示当前源码/上游组件，不代表我们放弃换代，也不能提前伪装为 Lumen 2。
 
 ---
 
@@ -58,7 +69,7 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 | 分叉量 | origin/main...HEAD 为 0 / 105（本节复核时） | 候选领先 105 个提交；仍须 R0 分组审查、exact CI 与人工 merge。 |
 | 工作树 | 有并行未提交源码修改；数量和归属会变 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
-| 版本 | VERSION 为 0.1.251 | version、tag、release 与同步分门。 |
+| 版本 | 当前兼容 VERSION 为 0.1.251；Lumen 2 首候选目标为 2.0.0-rc.1 | version、tag、release 与同步分门，未过 R0 不得提前 bump/tag。 |
 | GitHub CI | 本书复核未重新跑 exact HEAD 的远端 CI | CI 状态为 NOT RUN；不得沿用旧 run 说全绿。 |
 | readiness | SOURCE_LOCK 当前仍锚定 3dd9613 | 旧 evidence 不证明 393a7792 或后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |

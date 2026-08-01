@@ -1,6 +1,8 @@
-# Lumen
+# Lumen 2 — Governed Agent Runtime
 
-终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
+下一代终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
+
+产品代际名是 **Lumen 2**，实施代号为 **Lumen NextGen**；首个正式候选将是 `v2.0.0-rc.1`。当前根 `VERSION` 仍是旧兼容发布线 `0.1.251`，在 exact-SHA CI、source lock、SBOM、readiness 和人工发布门完成前，不得把它称为已发布的 Lumen 2。`xai-grok-version` 是独立的上游协议/客户端身份，不是 Lumen 产品版本。
 
 - 当前执行书：[docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md](docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md)
 - 运行时：`agent/`（Grok pin，~135 万行 Rust）
