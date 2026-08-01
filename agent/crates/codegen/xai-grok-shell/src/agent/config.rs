@@ -148,6 +148,15 @@ pub struct ExpertConfig {
     pub executor_model: String,
     pub consultant_model: String,
     pub fallback_executor_model: String,
+    /// User-selected executor candidates for a new, unpinned Expert task.
+    /// Empty preserves the explicit executor/consultant/fallback configuration.
+    #[serde(default)]
+    pub advisor_model_pool: Vec<String>,
+    /// Optional user order inside `advisor_model_pool`. An empty order lets
+    /// the deterministic local task policy choose only inside that pool; it
+    /// never admits a model that was not selected.
+    #[serde(default)]
+    pub advisor_model_priority: Vec<String>,
     pub consult_cap_default: u32,
     pub consult_cap_deep: u32,
     pub require_consult_on_medium: bool,
@@ -186,7 +195,9 @@ impl Default for ExpertConfig {
             default_mode: "default".to_owned(),
             executor_model: crate::session::expert::DEFAULT_EXECUTOR_MODEL.to_owned(),
             consultant_model: crate::session::expert::GROK_MODEL.to_owned(),
-            fallback_executor_model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
+            fallback_executor_model: crate::session::expert::PRO_EXECUTOR_MODEL.to_owned(),
+            advisor_model_pool: Vec::new(),
+            advisor_model_priority: Vec::new(),
             consult_cap_default: crate::session::expert::DEFAULT_CONSULT_CAP,
             consult_cap_deep: 5,
             require_consult_on_medium: true,

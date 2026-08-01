@@ -462,9 +462,14 @@ impl ModelsManager {
 
     /// Record a passive endpoint-domain failure. Auth/configuration/content
     /// failures are intentionally ignored: they do not establish provider
-    /// unavailability and must not influence later routing advice.
+    /// unavailability and must not influence later routing advice. A 402 or
+    /// explicit credit-limit response is a provider-routing fact, but remains
+    /// short lived so topping up does not require restarting the shell.
     pub fn record_provider_failure(&self, base_url: &str, failure_kind: &str) {
-        if !matches!(failure_kind, "rate_limited" | "timeout" | "upstream") {
+        if !matches!(
+            failure_kind,
+            "rate_limited" | "quota_exhausted" | "timeout" | "upstream"
+        ) {
             return;
         }
         let Some(domain) = provider_failure_domain(base_url) else {

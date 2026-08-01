@@ -1896,6 +1896,9 @@ mod parallel_dispatch_tests;
 #[path = "acp_session_tests/prompt_context_persistence_tests.rs"]
 mod prompt_context_persistence_tests;
 #[cfg(test)]
+#[path = "acp_session_tests/provider_failure_routing_tests.rs"]
+mod provider_failure_routing_tests;
+#[cfg(test)]
 #[path = "acp_session_tests/reactive_managed_reauth_e2e_tests.rs"]
 mod reactive_managed_reauth_e2e_tests;
 #[cfg(test)]

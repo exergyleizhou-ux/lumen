@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const EXPERT_SCHEMA_VERSION: u32 = 1;
-pub const DEFAULT_EXECUTOR_MODEL: &str = "deepseek-v4-pro";
 pub const FLASH_EXECUTOR_MODEL: &str = "deepseek-v4-flash";
+pub const PRO_EXECUTOR_MODEL: &str = "deepseek-v4-pro";
+/// New Expert sessions follow the user's configured primary preference:
+/// Flash first, with the configured consultant and fallback kept separate.
+pub const DEFAULT_EXECUTOR_MODEL: &str = FLASH_EXECUTOR_MODEL;
 pub const GROK_MODEL: &str = "grok-4.5";
 pub const DEFAULT_CONSULT_CAP: u32 = 3;
 pub const DEFAULT_CONSULT_TOKEN_CAP: u64 = 3_072;
@@ -66,6 +69,109 @@ pub enum AdvisorTaskClass {
     Implementation,
     Review,
     Research,
+}
+
+/// Why the locally configured executor pool chose a candidate. The source is
+/// persisted in the owning Expert state's audit trail; it never grants any
+/// write, completion, or provider authority by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorPoolSelectionSource {
+    UserPriority,
+    TaskPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvisorPoolSelection {
+    pub model_id: String,
+    pub source: AdvisorPoolSelectionSource,
+    /// Models the user allowed but which were not currently routable. This is
+    /// evidence, not a diagnosis: the caller owns the health reason and must
+    /// never invent one here.
+    pub skipped_unavailable_candidates: Vec<String>,
+}
+
+fn classify_advisor_task(task: &str) -> AdvisorTaskClass {
+    let task_lower = task.to_ascii_lowercase();
+    if ["review", "audit", "security", "verify", "test"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Review
+    } else if ["research", "design", "architecture", "investigate"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Research
+    } else {
+        AdvisorTaskClass::Implementation
+    }
+}
+
+/// Select an executor only from a user's configured pool. A nonempty priority
+/// order wins deterministically; otherwise the local policy prefers a Grok
+/// candidate for review/research and a Flash candidate for implementation.
+///
+/// `routable_catalog_ids` must already exclude models that are absent or whose
+/// provider is currently degraded. An empty configured pool returns `None`,
+/// preserving legacy explicit executor configuration.
+pub fn advisor_pool_executor_selection(
+    task: &str,
+    configured_pool: &[String],
+    configured_priority: &[String],
+    routable_catalog_ids: impl IntoIterator<Item = String>,
+) -> Option<AdvisorPoolSelection> {
+    if configured_pool.is_empty() {
+        return None;
+    }
+    let routable: std::collections::HashSet<_> = routable_catalog_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+    let mut eligible = Vec::new();
+    for model in configured_pool {
+        if !model.trim().is_empty()
+            && routable.contains(model)
+            && !eligible.iter().any(|candidate: &String| candidate == model)
+        {
+            eligible.push(model.clone());
+        }
+    }
+    if eligible.is_empty() {
+        return None;
+    }
+    let skipped_unavailable_candidates = configured_pool
+        .iter()
+        .filter(|model| !model.trim().is_empty() && !eligible.contains(model))
+        .fold(Vec::new(), |mut unique, model| {
+            if !unique.contains(model) {
+                unique.push(model.clone());
+            }
+            unique
+        });
+    for preferred in configured_priority {
+        if eligible.iter().any(|candidate| candidate == preferred) {
+            return Some(AdvisorPoolSelection {
+                model_id: preferred.clone(),
+                source: AdvisorPoolSelectionSource::UserPriority,
+                skipped_unavailable_candidates,
+            });
+        }
+    }
+    let task_class = classify_advisor_task(task);
+    let preferred_marker = match task_class {
+        AdvisorTaskClass::Review | AdvisorTaskClass::Research => "grok",
+        AdvisorTaskClass::Implementation => "flash",
+    };
+    let selected = eligible
+        .iter()
+        .find(|model| model.to_ascii_lowercase().contains(preferred_marker))
+        .unwrap_or(&eligible[0]);
+    Some(AdvisorPoolSelection {
+        model_id: selected.clone(),
+        source: AdvisorPoolSelectionSource::TaskPolicy,
+        skipped_unavailable_candidates,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -165,20 +271,7 @@ pub fn advisor_shadow_advice_with_fallback(
     executor_provider_degraded: bool,
     consultant_provider_degraded: bool,
 ) -> AdvisorShadowAdvice {
-    let task_lower = task.to_ascii_lowercase();
-    let task_class = if ["review", "audit", "security", "verify", "test"]
-        .iter()
-        .any(|needle| task_lower.contains(needle))
-    {
-        AdvisorTaskClass::Review
-    } else if ["research", "design", "architecture", "investigate"]
-        .iter()
-        .any(|needle| task_lower.contains(needle))
-    {
-        AdvisorTaskClass::Research
-    } else {
-        AdvisorTaskClass::Implementation
-    };
+    let task_class = classify_advisor_task(task);
     let mut eligible_model_ids: Vec<_> = catalog_model_ids
         .into_iter()
         .filter(|model| !model.trim().is_empty())
@@ -571,6 +664,21 @@ pub struct ExpertAuditEvent {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Durable, user-readable evidence for a new-task executor choice. This is
+/// deliberately separate from the redacted audit hash: model identifiers are
+/// needed to explain a user-defined priority or a provider-health skip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvisorPoolRoutingEvidence {
+    pub from_model: String,
+    pub to_model: String,
+    pub source: AdvisorPoolSelectionSource,
+    pub skipped_unavailable_candidates: Vec<String>,
+    /// Always false for this mechanism. A model choice is made only before a
+    /// task begins; the sampler never replays an already-started response.
+    pub had_output: bool,
+    pub timestamp: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpertModeState {
     pub schema_version: u32,
@@ -587,10 +695,17 @@ pub struct ExpertModeState {
     pub task_hash: Option<String>,
     pub plan: Vec<String>,
     pub executor_requested: String,
-    /// Host-configured model-pool fallback used only for shadow advice until
-    /// a later SessionActor-approved routing phase is enabled.
+    /// Host-configured emergency fallback for the narrow missing-primary gate.
     #[serde(default = "default_fallback_executor_model")]
     pub fallback_executor_requested: String,
+    /// User-selected candidate pool for Advisor. Empty retains the legacy
+    /// explicit executor/consultant/fallback triplet.
+    #[serde(default)]
+    pub advisor_model_pool: Vec<String>,
+    /// User-authored priority order within `advisor_model_pool`. Empty means
+    /// no priority was supplied; it is not silently replaced by one.
+    #[serde(default)]
+    pub advisor_model_priority: Vec<String>,
     pub executor_resolved: Option<String>,
     pub consultant_requested: String,
     pub consultant_resolved: Option<String>,
@@ -649,12 +764,16 @@ pub struct ExpertModeState {
     /// so evidence accumulates even when the narrow P4 fallback gate is off.
     #[serde(default = "default_true")]
     pub advisor_shadow_enabled: bool,
-    /// Explicitly enables only the P4 missing-primary fallback gate. General
-    /// model-pool routing remains disabled.
+    /// Explicitly enables only the P4 missing-primary fallback gate. It is
+    /// independent from a user-configured pool, which is selected only before
+    /// a new, unpinned task begins.
     #[serde(default)]
     pub advisor_auto_switch_fallback_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advisor_shadow_advice: Option<AdvisorShadowAdvice>,
+    /// Bounded, persisted choices from the user-selected Advisor model pool.
+    #[serde(default)]
+    pub advisor_pool_routing_evidence: Vec<AdvisorPoolRoutingEvidence>,
     pub evidence_fields: Vec<String>,
     #[serde(default)]
     pub evidence_bundle_hash: Option<String>,
@@ -702,7 +821,9 @@ impl Default for ExpertModeState {
             task_hash: None,
             plan: Vec::new(),
             executor_requested: DEFAULT_EXECUTOR_MODEL.to_owned(),
-            fallback_executor_requested: FLASH_EXECUTOR_MODEL.to_owned(),
+            fallback_executor_requested: PRO_EXECUTOR_MODEL.to_owned(),
+            advisor_model_pool: Vec::new(),
+            advisor_model_priority: Vec::new(),
             executor_resolved: None,
             consultant_requested: GROK_MODEL.to_owned(),
             consultant_resolved: None,
@@ -734,6 +855,7 @@ impl Default for ExpertModeState {
             advisor_shadow_enabled: true,
             advisor_auto_switch_fallback_enabled: false,
             advisor_shadow_advice: None,
+            advisor_pool_routing_evidence: Vec::new(),
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
             audit_events: Vec::new(),
@@ -758,7 +880,7 @@ fn default_dual_rollout() -> String {
 }
 
 fn default_fallback_executor_model() -> String {
-    FLASH_EXECUTOR_MODEL.to_owned()
+    PRO_EXECUTOR_MODEL.to_owned()
 }
 
 fn default_consultant_tool_cap() -> u32 {
@@ -775,6 +897,8 @@ impl ExpertModeState {
         state.enabled = config.enabled;
         state.executor_requested = config.executor_model.clone();
         state.fallback_executor_requested = config.fallback_executor_model.clone();
+        state.advisor_model_pool = config.advisor_model_pool.clone();
+        state.advisor_model_priority = config.advisor_model_priority.clone();
         state.consultant_requested = config.consultant_model.clone();
         state.budget.attempt_cap = config.consult_cap_default;
         state.budget.token_cap = u64::from(config.consult_cap_default)
@@ -898,6 +1022,7 @@ impl ExpertModeState {
         self.evidence_fields.clear();
         self.evidence_bundle_hash = None;
         self.audit_events.clear();
+        self.advisor_pool_routing_evidence.clear();
         self.finished_at = None;
         self.last_outcome = None;
         self.updated_at = Utc::now();
@@ -1522,6 +1647,36 @@ impl ExpertModeState {
         });
     }
 
+    /// Record a model-pool selection made before the task has emitted output.
+    /// The state object is the sole writer so this evidence remains attached to
+    /// the exact Expert task that consumed the choice.
+    pub fn record_advisor_pool_routing(&mut self, selection: &AdvisorPoolSelection, from: &str) {
+        if self.advisor_pool_routing_evidence.len() == MAX_AUDIT_EVENTS {
+            self.advisor_pool_routing_evidence.remove(0);
+        }
+        self.advisor_pool_routing_evidence
+            .push(AdvisorPoolRoutingEvidence {
+                from_model: from.to_owned(),
+                to_model: selection.model_id.clone(),
+                source: selection.source,
+                skipped_unavailable_candidates: selection.skipped_unavailable_candidates.clone(),
+                had_output: false,
+                timestamp: Utc::now(),
+            });
+        let detail = format!(
+            "{from}\u{0}{}\u{0}{:?}\u{0}{}",
+            selection.model_id,
+            selection.source,
+            selection.skipped_unavailable_candidates.join("\u{1}"),
+        );
+        self.audit(
+            "advisor_pool_selected_before_output",
+            None,
+            None,
+            Some(sha256_hex(detail.as_bytes())),
+        );
+    }
+
     pub fn status(&self, verbose: bool) -> String {
         let mut out = format!(
             "Expert: {:?} | Phase: {:?}\nExecutor: {}{} | Consultant: {}\nConsult budget: {}/{} attempts, {}/{} tokens",
@@ -1591,6 +1746,28 @@ impl ExpertModeState {
                 out.push_str(&format!(
                     "\nDual: pending | rollout={} (not active until /expert dual with task)",
                     self.dual_rollout
+                ));
+            }
+        }
+        if !self.advisor_model_pool.is_empty() {
+            let priority = if self.advisor_model_priority.is_empty() {
+                "task-policy".to_owned()
+            } else {
+                self.advisor_model_priority.join(" > ")
+            };
+            out.push_str(&format!(
+                "\nAdvisor pool: [{}] | priority={priority}",
+                self.advisor_model_pool.join(", ")
+            ));
+            if let Some(last) = self.advisor_pool_routing_evidence.last() {
+                let skipped = if last.skipped_unavailable_candidates.is_empty() {
+                    "none".to_owned()
+                } else {
+                    last.skipped_unavailable_candidates.join(", ")
+                };
+                out.push_str(&format!(
+                    "\nAdvisor pool choice: {} -> {} ({:?}; skipped={skipped}; had_output={})",
+                    last.from_model, last.to_model, last.source, last.had_output
                 ));
             }
         }
@@ -2262,6 +2439,97 @@ mod tests {
     }
 
     #[test]
+    fn advisor_pool_honors_user_priority_and_skips_unavailable_candidates() {
+        let pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            GROK_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        let priority = vec![GROK_MODEL.to_owned(), FLASH_EXECUTOR_MODEL.to_owned()];
+        let selection = advisor_pool_executor_selection(
+            "implement a durable task ledger",
+            &pool,
+            &priority,
+            [
+                FLASH_EXECUTOR_MODEL.to_owned(),
+                PRO_EXECUTOR_MODEL.to_owned(),
+            ],
+        )
+        .expect("at least one selected model remains routable");
+
+        assert_eq!(selection.model_id, FLASH_EXECUTOR_MODEL);
+        assert_eq!(selection.source, AdvisorPoolSelectionSource::UserPriority);
+        assert_eq!(selection.skipped_unavailable_candidates, vec![GROK_MODEL]);
+    }
+
+    #[test]
+    fn advisor_pool_uses_task_policy_only_inside_user_pool() {
+        let pool = vec![
+            PRO_EXECUTOR_MODEL.to_owned(),
+            GROK_MODEL.to_owned(),
+            FLASH_EXECUTOR_MODEL.to_owned(),
+        ];
+        let review = advisor_pool_executor_selection(
+            "review the evidence and test plan",
+            &pool,
+            &[],
+            pool.clone(),
+        )
+        .expect("all pool members are routable");
+        assert_eq!(review.model_id, GROK_MODEL);
+        assert_eq!(review.source, AdvisorPoolSelectionSource::TaskPolicy);
+
+        let implementation = advisor_pool_executor_selection(
+            "implement the actor boundary",
+            &pool,
+            &[],
+            pool.clone(),
+        )
+        .expect("all pool members are routable");
+        assert_eq!(implementation.model_id, FLASH_EXECUTOR_MODEL);
+
+        assert!(advisor_pool_executor_selection("implement", &[], &[], pool).is_none());
+    }
+
+    #[test]
+    fn advisor_pool_routing_evidence_is_pre_output_and_persisted() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start(
+                "implement safe routing",
+                ExpertMode::Default,
+                FLASH_EXECUTOR_MODEL,
+            )
+            .unwrap();
+        let selection = AdvisorPoolSelection {
+            model_id: PRO_EXECUTOR_MODEL.to_owned(),
+            source: AdvisorPoolSelectionSource::UserPriority,
+            skipped_unavailable_candidates: vec![GROK_MODEL.to_owned()],
+        };
+        state.record_advisor_pool_routing(&selection, FLASH_EXECUTOR_MODEL);
+
+        let evidence = state.advisor_pool_routing_evidence.last().unwrap();
+        assert_eq!(evidence.from_model, FLASH_EXECUTOR_MODEL);
+        assert_eq!(evidence.to_model, PRO_EXECUTOR_MODEL);
+        assert!(!evidence.had_output);
+        assert_eq!(evidence.skipped_unavailable_candidates, vec![GROK_MODEL]);
+        assert!(
+            state
+                .audit_events
+                .iter()
+                .any(|event| event.event == "advisor_pool_selected_before_output")
+        );
+        state.advisor_model_pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        state.advisor_model_priority = vec![PRO_EXECUTOR_MODEL.to_owned()];
+        assert!(state.status(false).contains("Advisor pool choice"));
+        let wire = serde_json::to_string(&state).unwrap();
+        assert!(wire.contains("advisor_pool_routing_evidence"));
+    }
+
+    #[test]
     fn advisor_shadow_reports_missing_configured_candidate_without_fallback() {
         let advice = advisor_shadow_advice(
             "Design a resilient orchestration architecture",
@@ -2747,11 +3015,25 @@ mod tests {
     }
 
     #[test]
+    fn default_expert_model_priority_is_flash_then_grok_then_pro_fallback() {
+        let config = crate::agent::config::ExpertConfig::default();
+        let state = ExpertModeState::from_config(&config);
+        assert_eq!(state.executor_requested, FLASH_EXECUTOR_MODEL);
+        assert_eq!(state.consultant_requested, GROK_MODEL);
+        assert_eq!(state.fallback_executor_requested, PRO_EXECUTOR_MODEL);
+    }
+
+    #[test]
     fn runtime_config_is_applied_and_disabled_feature_fails_closed() {
         let mut config = crate::agent::config::ExpertConfig::default();
         config.enabled = false;
         config.executor_model = FLASH_EXECUTOR_MODEL.to_owned();
         config.consultant_model = "consult-test".to_owned();
+        config.advisor_model_pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        config.advisor_model_priority = vec![PRO_EXECUTOR_MODEL.to_owned()];
         config.consult_cap_default = 2;
         config.max_consult_output_tokens = 99;
         config.consult_timeout_secs = 7;
@@ -2759,6 +3041,8 @@ mod tests {
         assert_eq!(state.feature_state, ExpertFeatureState::Off);
         assert_eq!(state.executor_requested, FLASH_EXECUTOR_MODEL);
         assert_eq!(state.consultant_requested, "consult-test");
+        assert_eq!(state.advisor_model_pool, config.advisor_model_pool);
+        assert_eq!(state.advisor_model_priority, config.advisor_model_priority);
         assert_eq!(state.budget.attempt_cap, 2);
         assert_eq!(state.budget.token_cap, 198);
         assert_eq!(state.consult_timeout_secs, 7);

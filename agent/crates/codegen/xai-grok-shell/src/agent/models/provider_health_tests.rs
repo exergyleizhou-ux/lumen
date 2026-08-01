@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn provider_health_tracks_only_passive_connectivity_failures() {
+fn provider_health_tracks_only_passive_routing_failures() {
     let manager = ModelsManager::default();
     let endpoint = "https://api.example.test/v1/chat/completions";
     assert_eq!(
@@ -24,6 +24,15 @@ fn provider_health_tracks_only_passive_connectivity_failures() {
             failure_kind: "rate_limited".to_owned()
         },
         "one endpoint domain must share passive health across route suffixes"
+    );
+
+    manager.record_provider_failure(endpoint, "quota_exhausted");
+    assert_eq!(
+        manager.provider_health(endpoint),
+        ProviderHealthSnapshot::Degraded {
+            failure_kind: "quota_exhausted".to_owned()
+        },
+        "a passive credit-limit response may skip a provider for a later task"
     );
 }
 

@@ -656,15 +656,47 @@ impl SessionActor {
             .into_iter()
             .flat_map(|(key, entry)| [key, entry.info.model])
             .collect();
+        // This is deliberately a passive snapshot. It consults only the
+        // locally observed provider-health ledger; it must not probe, bill, or
+        // validate credentials while deciding a new Expert task.
+        let advisor_routable_catalog_ids: Vec<_> = advisor_model_catalog
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(
+                    self.models_manager.provider_health(&entry.info.base_url),
+                    crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+                )
+            })
+            .flat_map(|(key, entry)| [key.clone(), entry.info.model.clone()])
+            .collect();
         let advisor_user_model_pinned = self.models_manager.user_selected_model();
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
             let mut executor = actor.expert.executor_requested.clone();
             let fallback_executor = actor.expert.fallback_executor_requested.clone();
+            let pool_selection = if continuation.is_none() && !advisor_user_model_pinned {
+                crate::session::expert::advisor_pool_executor_selection(
+                    task,
+                    &actor.expert.advisor_model_pool,
+                    &actor.expert.advisor_model_priority,
+                    advisor_routable_catalog_ids.clone(),
+                )
+            } else {
+                None
+            };
+            let executor_before_pool_selection = executor.clone();
+            if let Some(selection) = &pool_selection {
+                executor.clone_from(&selection.model_id);
+            }
             if let Some(repair) = continuation {
                 actor.expert.start_continuation(repair, &executor)?;
             } else {
                 actor.expert.start(task, mode, &executor)?;
+                if let Some(selection) = &pool_selection {
+                    actor
+                        .expert
+                        .record_advisor_pool_routing(selection, &executor_before_pool_selection);
+                }
             }
             // Own Goal rolling charges for the whole task, including mid-round
             // `/goalexpert off` (policy may flip while storm/post still runs).

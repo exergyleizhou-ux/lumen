@@ -3,6 +3,42 @@
 //! recovery, and per-response usage recording.
 use super::*;
 
+/// Classify only observed failures that make a provider unsuitable for a
+/// *later* new task. This function deliberately does not authorize retry or
+/// model switching for the current turn: after any output or side effect,
+/// replay would be unsafe.
+pub(super) fn provider_failure_kind_for_sampling_error(
+    error: &xai_grok_sampler::SamplingErrorInfo,
+) -> Option<&'static str> {
+    use xai_grok_sampler::SamplingErrorKind;
+
+    if error.status_code == Some(402) {
+        return Some("quota_exhausted");
+    }
+    let message = error.message.to_ascii_lowercase();
+    if matches!(error.kind, SamplingErrorKind::Api)
+        && [
+            "out of credits",
+            "run out of credits",
+            "spending limit",
+            "insufficient balance",
+        ]
+        .iter()
+        .any(|needle| message.contains(needle))
+    {
+        return Some("quota_exhausted");
+    }
+    match error.kind {
+        SamplingErrorKind::RateLimited => Some("rate_limited"),
+        SamplingErrorKind::IdleTimeout => Some("timeout"),
+        SamplingErrorKind::Http => Some("upstream"),
+        SamplingErrorKind::Api if error.status_code.is_some_and(|status| status >= 500) => {
+            Some("upstream")
+        }
+        _ => None,
+    }
+}
+
 /// Map only mutations whose cache effect is represented faithfully by the
 /// provider-neutral evidence vocabulary. Other durable rewrites still rotate
 /// the epoch, but are not mislabeled as a compaction or memory change.
@@ -913,15 +949,7 @@ impl SessionActor {
             .await
             .map(|c| (c.model, c.base_url))
             .unwrap_or_default();
-        let provider_failure_kind = match error.kind {
-            SamplingErrorKind::RateLimited => Some("rate_limited"),
-            SamplingErrorKind::IdleTimeout => Some("timeout"),
-            SamplingErrorKind::Http => Some("upstream"),
-            SamplingErrorKind::Api if error.status_code.is_some_and(|status| status >= 500) => {
-                Some("upstream")
-            }
-            _ => None,
-        };
+        let provider_failure_kind = provider_failure_kind_for_sampling_error(&error);
         if let Some(kind) = provider_failure_kind {
             self.models_manager
                 .record_provider_failure(&failed_base_url, kind);
