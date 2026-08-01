@@ -365,6 +365,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     });
                     return;
                 }
+                let live_for_parent = self.live_children_for_parent(&request.parent_session_id);
+                if live_for_parent >= self.config.max_live_children_per_parent {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(format!(
+                            "subagent parent fan-out limit reached (max: {})",
+                            self.config.max_live_children_per_parent
+                        )),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
                 let id = request.id.clone();
                 if self.pending.contains_key(&id)
                     || self.active.contains_key(&id)
@@ -659,6 +674,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .active
                 .values()
                 .filter(|child| child.request.lineage.root_session_id == root_session_id)
+                .count()
+    }
+
+    fn live_children_for_parent(&self, parent_session_id: &str) -> usize {
+        self.pending
+            .values()
+            .filter(|child| child.request.parent_session_id == parent_session_id)
+            .count()
+            + self
+                .active
+                .values()
+                .filter(|child| child.request.parent_session_id == parent_session_id)
                 .count()
     }
 

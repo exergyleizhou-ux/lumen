@@ -132,6 +132,10 @@ pub trait ChildRunner: 'static {
 #[derive(Debug, Clone)]
 pub struct CoordinatorConfig {
     pub foreground_budget: std::time::Duration,
+    /// Maximum pending + active children that one immediate parent may own.
+    /// This prevents a single branch from monopolizing a root tree's global
+    /// concurrency slots during broad fan-out.
+    pub max_live_children_per_parent: usize,
     /// Maximum wall-clock lifetime of one root task tree. This is independent
     /// of foreground waiting: a backgrounded child must not run forever.
     pub tree_wall_time_budget: std::time::Duration,
@@ -158,6 +162,7 @@ impl Default for CoordinatorConfig {
     fn default() -> Self {
         Self {
             foreground_budget: std::time::Duration::from_secs(45),
+            max_live_children_per_parent: 4,
             tree_wall_time_budget: std::time::Duration::from_secs(2 * 60 * 60),
             tree_total_token_budget: None,
             tree_tool_call_budget: None,

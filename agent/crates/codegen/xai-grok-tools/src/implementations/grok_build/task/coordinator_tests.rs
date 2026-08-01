@@ -1692,7 +1692,13 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
 
 #[tokio::test]
 async fn root_tree_concurrency_cap_rejects_ninth_pending_child() {
-    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let mut harness = harness_with_config(
+        true,
+        CoordinatorConfig {
+            max_live_children_per_parent: MAX_LIVE_SUBAGENTS_PER_TREE,
+            ..CoordinatorConfig::default()
+        },
+    );
     let mut admitted = Vec::new();
     for index in 0..MAX_LIVE_SUBAGENTS_PER_TREE {
         let id = format!("tree-live-{index}");
@@ -1728,6 +1734,76 @@ async fn root_tree_concurrency_cap_rejects_ninth_pending_child() {
     for child in admitted {
         assert!(child.await.expect("join").expect("reply").cancelled);
     }
+    harness.actor.abort();
+}
+
+#[tokio::test]
+async fn parent_fan_out_cap_preserves_capacity_for_other_branches() {
+    let mut harness = harness_with_config(
+        true,
+        CoordinatorConfig {
+            max_live_children_per_parent: 2,
+            ..CoordinatorConfig::default()
+        },
+    );
+    let mut admitted = Vec::new();
+    for index in 0..2 {
+        let id = format!("parent-fanout-{index}");
+        admitted.push(tokio::spawn({
+            let backend = harness.backend.clone();
+            async move { backend.spawn(request(&id, true)).await }
+        }));
+        assert_eq!(
+            harness.requests.recv().await.expect("admitted child").id,
+            format!("parent-fanout-{index}")
+        );
+    }
+
+    let rejected = harness
+        .backend
+        .spawn(request("parent-fanout-overflow", true))
+        .await
+        .expect("fan-out rejection reply");
+    assert!(!rejected.success);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("fan-out limit"))
+    );
+
+    // A different immediate parent still has its own bounded capacity.  It
+    // gets a distinct root for this direct-request harness, but proves the
+    // parent cap is not a hidden global cap.
+    let other = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move {
+            let mut request = request("other-parent-child", true);
+            request.parent_session_id = "other-parent".to_owned();
+            request.lineage = SubagentLineage::direct("other-parent");
+            backend.spawn(request).await
+        }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .expect("other parent admitted")
+            .id,
+        "other-parent-child"
+    );
+
+    for id in ["parent-fanout-0", "parent-fanout-1", "other-parent-child"] {
+        assert!(matches!(
+            harness.backend.cancel(id).await,
+            SubagentCancelOutcome::Cancelled
+        ));
+    }
+    for child in admitted {
+        assert!(child.await.expect("join").expect("reply").cancelled);
+    }
+    assert!(other.await.expect("other join").expect("reply").cancelled);
     harness.actor.abort();
 }
 

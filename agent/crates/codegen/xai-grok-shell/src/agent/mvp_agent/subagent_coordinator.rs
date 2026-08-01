@@ -171,6 +171,11 @@ impl MvpAgent {
                         "GROK_SUBAGENT_AWAIT_BUDGET_MS",
                         std::time::Duration::from_secs(600),
                     ),
+                max_live_children_per_parent: std::env::var("GROK_SUBAGENT_PARENT_FANOUT")
+                    .ok()
+                    .and_then(|value| value.parse::<usize>().ok())
+                    .filter(|value| (1..=8).contains(value))
+                    .unwrap_or(4),
                 tree_wall_time_budget:
                     xai_grok_tools::implementations::grok_build::task::backend::env_duration_or(
                         "GROK_SUBAGENT_TREE_WALL_TIME_BUDGET_MS",
