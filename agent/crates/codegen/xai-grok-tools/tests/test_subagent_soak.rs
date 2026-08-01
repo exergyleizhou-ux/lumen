@@ -27,8 +27,8 @@ use xai_grok_tools::implementations::grok_build::task::coordinator::{
     LocalBoxFuture, MAX_COMPLETED_ENTRIES, StartedChild, SubagentCoordinator, SubagentProgress,
 };
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentDescribeOutcome, SubagentOwner, SubagentRegistryCounts, SubagentRequest,
-    SubagentResult, SubagentValidateTypeOutcome,
+    SubagentDescribeOutcome, SubagentLineage, SubagentOwner, SubagentRegistryCounts,
+    SubagentRequest, SubagentResult, SubagentValidateTypeOutcome,
 };
 
 const PARENT_SESSION_ID: &str = "subagent-soak-parent";
@@ -382,6 +382,7 @@ fn soak_request(id: String, background: bool) -> SubagentRequest {
         description: "soak child".to_owned(),
         subagent_type: "explore".to_owned(),
         parent_session_id: PARENT_SESSION_ID.to_owned(),
+        lineage: SubagentLineage::direct(PARENT_SESSION_ID),
         parent_prompt_id: Some("soak-prompt".to_owned()),
         resume_from: None,
         cwd: None,

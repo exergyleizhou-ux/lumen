@@ -39,6 +39,9 @@ pub struct TaskTreeMemoryInput {
     pub fact_id: String,
     pub revision: u64,
     pub branch_id: String,
+    /// Required and non-empty for `accept`: accepted facts are injected into
+    /// descendant prompts as reviewed shared state.  Proposals may omit it
+    /// when the branch is explicitly reporting an uncertainty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_ref: Option<String>,
     pub confidence: u8,
@@ -100,6 +103,17 @@ impl xai_tool_runtime::Tool for TaskTreeMemoryTool {
         ctx: xai_tool_runtime::ToolCallContext,
         input: TaskTreeMemoryInput,
     ) -> Result<Self::Output, xai_tool_runtime::ToolError> {
+        if matches!(input.action, TaskTreeMemoryAction::Accept)
+            && input
+                .evidence_ref
+                .as_deref()
+                .is_none_or(|reference| reference.trim().is_empty())
+        {
+            return Err(xai_tool_runtime::ToolError::execution(
+                self.id(),
+                "accepted task-tree facts require a non-empty evidence_ref",
+            ));
+        }
         use crate::types::tool_metadata::shared_resources;
         let resources = shared_resources(&ctx)?;
         let (backend, session_id) = {
@@ -217,5 +231,26 @@ mod tests {
             backend.authors.lock().unwrap().as_slice(),
             ["child-session"]
         );
+    }
+
+    #[tokio::test]
+    async fn accept_rejects_missing_evidence_before_reaching_backend() {
+        let error = xai_tool_runtime::Tool::run(
+            &TaskTreeMemoryTool,
+            test_ctx(Resources::new().into_shared()),
+            TaskTreeMemoryInput {
+                action: TaskTreeMemoryAction::Accept,
+                fact_id: "fact-a".to_owned(),
+                revision: 2,
+                branch_id: "root-branch".to_owned(),
+                evidence_ref: None,
+                confidence: 90,
+                text: "unproven claim".to_owned(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(error.to_string().contains("evidence_ref"));
     }
 }

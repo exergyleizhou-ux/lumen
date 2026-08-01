@@ -285,6 +285,22 @@ impl WorkingMemoryLedger {
                 "review state must not be proposed".to_owned(),
             ));
         }
+        // Accepted facts are injected into descendant prompts as shared task
+        // truth.  A root review is necessary but not sufficient: without a
+        // durable evidence reference a plausible-looking assertion can still
+        // become a cross-agent hallucination amplifier.  Rejections and
+        // supersessions remain evidence-optional because they never enter the
+        // shared fact view.
+        if state == WorkingMemoryState::Accepted
+            && fact
+                .evidence_ref
+                .as_deref()
+                .is_none_or(|reference| reference.trim().is_empty())
+        {
+            return Err(WorkingMemoryLedgerError::Invalid(
+                "accepted working-memory facts require a non-empty evidence_ref".to_owned(),
+            ));
+        }
         fact.author_session_id = reviewer_session_id.to_owned();
         fact.state = state;
         self.append_checked(fact, true)
@@ -451,6 +467,24 @@ mod tests {
             error,
             WorkingMemoryLedgerError::UnauthorizedReview { .. }
         ));
+    }
+
+    #[test]
+    fn root_cannot_accept_a_fact_without_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fact-a", 1, "child", "unreviewed"))
+            .unwrap();
+        let mut reviewed = fact("fact-a", 2, "root", "would be shared without proof");
+        reviewed.evidence_ref = None;
+        let error = ledger
+            .review("root", reviewed, WorkingMemoryState::Accepted)
+            .unwrap_err();
+        assert!(
+            matches!(error, WorkingMemoryLedgerError::Invalid(message) if message.contains("evidence_ref"))
+        );
+        assert!(ledger.accepted_facts().unwrap().is_empty());
     }
 
     #[test]
