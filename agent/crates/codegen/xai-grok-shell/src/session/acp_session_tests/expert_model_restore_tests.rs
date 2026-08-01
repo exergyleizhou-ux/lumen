@@ -37,6 +37,7 @@ async fn goal_compose_enters_executor_restores_each_round_and_preserves_global_d
                     info: crate::agent::config::ModelInfo::fallback("deepseek-v4-pro"),
                     api_key: Some("test-key".into()),
                     env_key: None,
+                    auth_provider: None,
                     api_base_url: Some("http://localhost".into()),
                 },
             );
@@ -169,8 +170,22 @@ async fn goal_compose_reserves_rolling_before_consultant_and_executor_resolution
                 server.requests().is_empty(),
                 "rolling charge + reservation must not poll providers when models are missing"
             );
-            assert_eq!(observed_rx.recv().await, Some("goal"));
-            assert_eq!(observed_rx.recv().await, Some("ack"));
+            // The rolling charge's GoalModeState persist MUST precede the
+            // expert durability barrier (FIFO channel); the goal-updated
+            // notification also persists a fresh GoalModeState, so consume
+            // any number of goal writes before the ack.
+            let mut saw_goal_charge = false;
+            loop {
+                match observed_rx.recv().await {
+                    Some("goal") => saw_goal_charge = true,
+                    Some("ack") => break,
+                    other => panic!("unexpected persistence event: {other:?}"),
+                }
+            }
+            assert!(
+                saw_goal_charge,
+                "rolling charge must persist before the expert barrier"
+            );
             assert_eq!(
                 actor
                     .goal_tracker
@@ -304,7 +319,7 @@ async fn expert_session_model_and_effort_restore_on_every_terminal_without_globa
                                     snapshot: Box::new(None),
                                     tools_called: vec![],
                                     structured_output: None,
-                                    refusal: false,
+                                    refusal: None,
                                 }),
                             )
                             .await;
@@ -504,7 +519,7 @@ async fn successful_production_tool_result_is_required_for_expert_completed() {
                             snapshot: Box::new(None),
                             tools_called: vec!["bash".to_owned()],
                             structured_output: None,
-                            refusal: false,
+                            refusal: None,
                         }),
                     )
                     .await;

@@ -99,7 +99,9 @@ mod tests {
         let v = embedded_catalog();
         assert_eq!(v["default"], "deepseek-v4-pro");
         assert_eq!(v["web_search"], "deepseek-v4-pro");
-        assert_eq!(v["image_description"], "deepseek-chat");
+        // Pinned by scripts/assert-defaults.sh (release gate): the flash tier
+        // is the image-description fallback role.
+        assert_eq!(v["image_description"], "deepseek-v4-flash");
         assert_eq!(v["session_summary"], "deepseek-v4-flash");
         let models = v["models"].as_array().expect("models array");
         for id in ["deepseek-v4-pro", "deepseek-v4-flash"] {

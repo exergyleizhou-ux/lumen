@@ -193,6 +193,7 @@ impl AgentViewLayout {
         let inner_area = outer_block.inner(area);
         let mut constraints = vec![
             Constraint::Length(1), // StatusBar
+            Constraint::Length(1), // TruthBar (FINAL-5UX provider/capability/permission/cache/verification truth)
         ];
         if startup_warning_height > 0 {
             constraints.push(Constraint::Length(startup_warning_height));

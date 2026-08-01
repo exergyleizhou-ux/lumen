@@ -261,6 +261,14 @@ impl SessionActor {
             )
         };
         self.apply_tool_overrides_update(tool_overrides_update);
+        // A completion-id-bearing synthetic prompt (auto-wake) becoming the
+        // turn IS the delivery of that completion: release its reservation so
+        // the completion can surface normally and the reminder can't dangle.
+        if let Some(completion_id) = origin.completion_id()
+            && let Some(reservations) = &self.tool_context.task_completion_reservations
+        {
+            reservations.release(completion_id);
+        }
         if matches!(origin, super::PromptOrigin::User) {
             if let Some(gate) = &self.tool_context.task_wake_suppressed {
                 gate.set(false);

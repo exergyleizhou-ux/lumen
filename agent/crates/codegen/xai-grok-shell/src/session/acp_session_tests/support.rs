@@ -233,6 +233,7 @@ pub(crate) async fn create_test_actor_ex(
         tokio_util::sync::CancellationToken::new(),
     );
     chat_state_handle.record_token_usage(total_tokens);
+    let (goal_update_tx, goal_update_rx) = tokio::sync::mpsc::unbounded_channel();
     let actor = SessionActor {
         session_info: SessionInfo {
             id: acp::SessionId::new("test-actor"),
@@ -356,8 +357,8 @@ pub(crate) async fn create_test_actor_ex(
         delivery_state: std::cell::RefCell::new(lumen_discipline::DeliverySessionState::default()),
         goal_update_rx: std::cell::RefCell::new(Some(goal_update_rx)),
         goal_update_tx,
-        goal_update_rx: std::cell::RefCell::new(Some(goal_update_rx)),
-        goal_update_tx,
+        workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle().0,
+        workflow_launch_tx: tokio::sync::mpsc::unbounded_channel().0,
         goal_classifier_enabled: false,
         goal_planner_enabled: false,
         goal_summary_enabled: false,

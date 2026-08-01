@@ -783,6 +783,7 @@ pub async fn run_single_turn(
     agent_config.resolve_runtime_fields(&xai_grok_shell::agent::config::RuntimeResolutionContext {
         raw_config: &raw_config,
         remote_settings: None,
+        cwd: options.cwd.as_deref(),
         is_headless: true,
         cli_subagents: None,
         cli_web_search_model: None,

@@ -186,7 +186,8 @@ fn text_chunk_event(content: &str, finish: bool) -> Event {
 async fn spawn_then_active_count_zero_then_cancel_unknown_is_noop() {
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let cfg = test_config("http://127.0.0.1:0/v1".into(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
     assert_eq!(handle.active_count().await, 0);
     handle.cancel(RequestId::from("nonexistent"));
     // Re-querying should still be 0 (cancel of unknown id is no-op).
@@ -211,12 +212,13 @@ async fn submit_emits_started_first_token_channel_completed() {
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-1");
     handle.submit(rid.clone(), user_request("hi"));
 
-    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(5)).await;
+    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(20)).await;
     server.shutdown();
 
     assert!(matches!(events[0], SamplingEvent::StreamStarted { .. }));
@@ -274,7 +276,8 @@ async fn submit_and_collect_returns_response() {
     let server = MockServer::spawn(app).await;
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-collect");
     let result = handle
@@ -308,7 +311,8 @@ async fn cancel_in_flight_request_terminates_task() {
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-cancel");
     handle.submit(rid.clone(), user_request("hi"));
@@ -317,7 +321,7 @@ async fn cancel_in_flight_request_terminates_task() {
     let _ = await_event_matching(
         &mut event_rx,
         |e| matches!(e, SamplingEvent::FirstToken { .. }),
-        Duration::from_secs(5),
+        Duration::from_secs(20),
     )
     .await
     .expect("first token");
@@ -328,7 +332,7 @@ async fn cancel_in_flight_request_terminates_task() {
     let failed = await_event_matching(
         &mut event_rx,
         |e| matches!(e, SamplingEvent::Failed { .. }),
-        Duration::from_secs(5),
+        Duration::from_secs(20),
     )
     .await
     .expect("Failed event after cancel");
@@ -367,7 +371,8 @@ async fn two_concurrent_requests_complete_with_correct_request_ids() {
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid_a = RequestId::from("req-a");
     let rid_b = RequestId::from("req-b");
@@ -377,7 +382,7 @@ async fn two_concurrent_requests_complete_with_correct_request_ids() {
     // Drain until we see Completed for both.
     let mut completed_a = false;
     let mut completed_b = false;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
     while !(completed_a && completed_b) {
         let now = tokio::time::Instant::now();
         if now >= deadline {
@@ -436,7 +441,8 @@ async fn retries_on_500_then_succeeds() {
     // Lots of retries available; backoff is jittered around 2s on first
     // retry, so this test takes a bit to run.
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-retry");
     handle.submit(rid.clone(), user_request("hi"));
@@ -494,7 +500,8 @@ async fn wire_observation_tracks_every_normal_retry_attempt() {
     let mut config = test_config(server.base_url(), "test-model");
     config.max_retries = Some(3);
     config.request_observer = Some(observer.clone());
-    let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
 
     let response = handle
         .submit_and_collect_with_wire_context(
@@ -560,7 +567,8 @@ async fn image_strip_retry_changes_material_once_without_rotating_epoch() {
     let observer = Arc::new(RetryRecordingObserver::default());
     let mut config = test_config(server.base_url(), "test-model");
     config.request_observer = Some(observer.clone());
-    let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(config, RetryPolicy::default(), event_tx);
 
     handle
         .submit_and_collect_with_wire_context(
@@ -631,7 +639,8 @@ async fn rate_limit_exhausts_at_threshold_and_yields_failed() {
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-429");
     handle.submit(rid.clone(), user_request("hi"));
@@ -683,12 +692,13 @@ async fn auth_401_emits_failed_immediately_no_retry() {
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "test-model");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let rid = RequestId::from("req-auth");
     handle.submit(rid.clone(), user_request("hi"));
 
-    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(5)).await;
+    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(20)).await;
     server.shutdown();
 
     // Auth errors are session-owned -- `classify_error` returns
@@ -718,6 +728,20 @@ fn messages_config(base_url: String) -> SamplerConfig {
     cfg
 }
 
+
+/// Warm the process-wide shared HTTP client once. The first reqwest client
+/// build loads the system root store (rustls-native-certs); in this test
+/// binary that can take ~15s (macOS keychain access under the full workspace
+/// link set). Building it here, before any test's drain deadline starts,
+/// keeps that one-time cost out of every deadline.
+static WARM_SHARED_CLIENT: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+fn warm_shared_client() {
+    WARM_SHARED_CLIENT.get_or_init(|| {
+        let cfg = test_config("http://127.0.0.1:1".into(), "warm-model");
+        let _ = xai_grok_sampler::SamplingClient::new(cfg);
+    });
+}
+
 /// Regression for the refusal-stop_reason incident: a well-formed stream
 /// terminated by `stop_reason: "refusal"` must produce a successful
 /// completion from EXACTLY ONE request — no retry storm.
@@ -744,7 +768,8 @@ async fn messages_refusal_stream_completes_with_single_request() {
     );
     let server = MockServer::spawn(app).await;
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let handle = SamplerActor::spawn(
+    warm_shared_client();
+        let handle = SamplerActor::spawn(
         messages_config(server.base_url()),
         RetryPolicy::default(),
         event_tx,
@@ -791,7 +816,8 @@ async fn messages_empty_refusal_completes_without_retry() {
     );
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let handle = SamplerActor::spawn(
+    warm_shared_client();
+        let handle = SamplerActor::spawn(
         messages_config(server.base_url()),
         RetryPolicy::default(),
         event_tx,
@@ -849,14 +875,15 @@ async fn messages_unparseable_event_is_fatal_without_retry() {
         );
     let server = MockServer::spawn(app).await;
     let (event_tx, mut event_rx) = mpsc::unbounded_channel();
-    let handle = SamplerActor::spawn(
+    warm_shared_client();
+        let handle = SamplerActor::spawn(
         messages_config(server.base_url()),
         RetryPolicy::default(),
         event_tx,
     );
 
     handle.submit(RequestId::from("req-bad-event"), user_request("hi"));
-    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(10)).await;
+    let events = drain_until_terminal(&mut event_rx, Duration::from_secs(30)).await;
     server.shutdown();
 
     assert!(
@@ -906,7 +933,8 @@ async fn update_config_changes_subsequent_request_model() {
     let server = MockServer::spawn(app).await;
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
     let cfg = test_config(server.base_url(), "model-A");
-    let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
+    warm_shared_client();
+        let handle = SamplerActor::spawn(cfg, RetryPolicy::default(), event_tx);
 
     let _ = handle
         .submit_and_collect(RequestId::from("req-1"), user_request("hi"))
@@ -970,7 +998,8 @@ async fn responses_doom_loop_signals_reach_completed_response() {
     );
     let server = MockServer::spawn(app).await;
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let handle = SamplerActor::spawn(
+    warm_shared_client();
+        let handle = SamplerActor::spawn(
         responses_config(server.base_url(), Some(DoomLoopRecoveryPolicy::default())),
         RetryPolicy::default(),
         event_tx,
@@ -1027,7 +1056,8 @@ async fn responses_confident_doom_loop_signal_resamples_once() {
     );
     let server = MockServer::spawn(app).await;
     let (event_tx, _event_rx) = mpsc::unbounded_channel();
-    let handle = SamplerActor::spawn(
+    warm_shared_client();
+        let handle = SamplerActor::spawn(
         responses_config(server.base_url(), Some(DoomLoopRecoveryPolicy::default())),
         RetryPolicy::default(),
         event_tx,

@@ -315,7 +315,7 @@ async fn same_session_rolls_over_once_when_local_date_advances() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rollover_reminder_follows_the_custom_template_date_intent() {
     let local = tokio::task::LocalSet::new();
     local
@@ -363,7 +363,7 @@ async fn rollover_reminder_follows_the_custom_template_date_intent() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rollover_reminder_fires_when_fallback_stamps_a_date_free_template() {
     let local = tokio::task::LocalSet::new();
     local

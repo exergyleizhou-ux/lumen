@@ -1153,6 +1153,7 @@ fn apply_requirements_inner(
     pin_feature!(web_fetch);
     pin_feature!(ask_user_question);
     pin_feature!(image_gen);
+    pin_feature!(voice_mode);
     pin_requirement_only!(image_edit);
     pin_feature!(video_gen);
     pin_feature!(write_file);

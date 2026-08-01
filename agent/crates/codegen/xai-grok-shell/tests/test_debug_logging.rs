@@ -240,6 +240,7 @@ async fn debug_flag_master_switch_enables_firehose() {
             sandbox,
             &[],
             &["--debug"],
+            PermissionResponse::AllowOnce,
         )
         .await;
         client.initialize_with_timeout().await;

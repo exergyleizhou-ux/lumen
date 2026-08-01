@@ -225,6 +225,7 @@ async fn test_grok_agent_env_overrides_model_agent_type() {
                     sandbox,
                     &[("GROK_AGENT", "grok-build")],
                     &[],
+                    PermissionResponse::AllowOnce,
                 )
                 .await;
             client.initialize_with_timeout().await;

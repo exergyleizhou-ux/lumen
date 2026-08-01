@@ -195,6 +195,24 @@ pub fn start_early_prefetch_settings_only(
     start_early_prefetch_impl(grok_com_config, false)
 }
 
+/// Variants that resolve the startup endpoints from the CALLER's config
+/// (the agent's `EndpointsConfig`) instead of the process-effective config,
+/// so a hermetic test harness's mock proxy is honored and the prefetch never
+/// phones the real backend from inside tests.
+pub fn start_early_prefetch_with_endpoints(
+    grok_com_config: Option<GrokComConfig>,
+    endpoints: config::EndpointsConfig,
+) -> Option<EarlyPrefetchHandle> {
+    start_early_prefetch_impl_with_endpoints(grok_com_config, true, endpoints)
+}
+
+pub fn start_early_prefetch_settings_only_with_endpoints(
+    grok_com_config: Option<GrokComConfig>,
+    endpoints: config::EndpointsConfig,
+) -> Option<EarlyPrefetchHandle> {
+    start_early_prefetch_impl_with_endpoints(grok_com_config, false, endpoints)
+}
+
 fn start_early_prefetch_impl(
     grok_com_config: Option<GrokComConfig>,
     sync_managed: bool,
@@ -202,6 +220,21 @@ fn start_early_prefetch_impl(
     let grok_home = crate::util::grok_home::grok_home();
     let auth = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default()).current();
     start_early_prefetch_with_auth_gated(auth, sync_managed)
+}
+
+fn start_early_prefetch_impl_with_endpoints(
+    grok_com_config: Option<GrokComConfig>,
+    sync_managed: bool,
+    endpoints: config::EndpointsConfig,
+) -> Option<EarlyPrefetchHandle> {
+    let grok_home = crate::util::grok_home::grok_home();
+    let auth = AuthManager::new(&grok_home, grok_com_config.unwrap_or_default()).current();
+    let env = resolve_prefetch_env_from_parts(
+        auth,
+        endpoints,
+        crate::util::config::resolve_remote_fetch_enabled(),
+    )?;
+    Some(spawn_prefetch_thread(env))
 }
 
 fn spawn_prefetch_thread(env: PrefetchEnv) -> EarlyPrefetchHandle {

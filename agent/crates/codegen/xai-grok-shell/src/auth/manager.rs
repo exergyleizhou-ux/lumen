@@ -278,6 +278,10 @@ enum LockOutcome {
 
 impl AuthManager {
     pub fn new(grok_home: &Path, grok_com_config: GrokComConfig) -> Self {
+        // jsonwebtoken 10 requires an explicit process-level crypto provider;
+        // install it once (idempotent) so JWT mint/verify works regardless of
+        // which auth entry point (or test) runs first.
+        let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
         let scope = grok_com_config.auth_scope();
         let proxy_base_url =
             crate::agent::config::EndpointsConfig::from_effective_config().proxy_url();

@@ -104,7 +104,6 @@ fn build_http_client_http1() -> Result<reqwest::Client, reqwest::Error> {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(10);
-
     xai_grok_extra_ca::with_extra_root_certificates(
         reqwest::Client::builder()
             .pool_max_idle_per_host(0)

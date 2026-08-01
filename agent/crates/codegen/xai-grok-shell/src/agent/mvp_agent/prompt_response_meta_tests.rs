@@ -45,6 +45,8 @@ fn enriches_meta_with_camelcase_token_keys() {
         reasoning_tokens: 75,
         cached_prompt_tokens: 1000,
         cache_creation_prompt_tokens: 0,
+        provider_cache_hit_tokens: None,
+        cache_miss_prompt_tokens: None,
     };
     let meta = build_prompt_response_meta(PromptResponseMetaArgs {
         last_turn_usage: Some(&usage),
@@ -53,9 +55,23 @@ fn enriches_meta_with_camelcase_token_keys() {
     // Bot's _META_TOKEN_KEY_MAP expects exactly these camelCase keys.
     assert_eq!(meta["inputTokens"], 1500);
     assert_eq!(meta["outputTokens"], 200);
-    assert_eq!(meta["cachedReadTokens"], 1000);
+    // Only provider-reported cache truth may surface as a hit — the
+    // compatibility `cached_prompt_tokens` mirror stays hidden (see
+    // `does_not_promote_compatibility_tokens_to_cache_read_metadata`).
+    assert!(meta.get("cachedReadTokens").is_none());
     // Reasoning tokens carried through for diagnostic visibility.
     assert_eq!(meta["reasoningTokens"], 75);
+
+    // A provider-reported hit does surface as cachedReadTokens.
+    let with_provider_hit = TokenUsage {
+        provider_cache_hit_tokens: Some(1000),
+        ..usage
+    };
+    let meta = build_prompt_response_meta(PromptResponseMetaArgs {
+        last_turn_usage: Some(&with_provider_hit),
+        ..args("sess-1", "prompt-1", 1_700, "grok-4.5")
+    });
+    assert_eq!(meta["cachedReadTokens"], 1000);
 }
 
 #[test]
@@ -69,6 +85,8 @@ fn suppresses_zero_cache_truth_from_hit_metadata() {
         reasoning_tokens: 0,
         cached_prompt_tokens: 0,
         cache_creation_prompt_tokens: 0,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
     };
     let meta = build_prompt_response_meta(PromptResponseMetaArgs {
         last_turn_usage: Some(&usage),
@@ -86,6 +104,7 @@ fn does_not_promote_compatibility_tokens_to_cache_read_metadata() {
         total_tokens: 110,
         reasoning_tokens: 0,
         cached_prompt_tokens: 90,
+        cache_creation_prompt_tokens: 0,
         provider_cache_hit_tokens: None,
         cache_miss_prompt_tokens: None,
     };
@@ -108,6 +127,8 @@ fn usage_object_lands_on_meta() {
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
             cache_creation_prompt_tokens: 0,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
         },
         None,
         None,

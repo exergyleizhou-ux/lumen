@@ -97,6 +97,11 @@ impl ReportedTaskCompletions {
         }
         self.reported.insert(id.to_owned())
     }
+    /// Read-only membership check (test/telemetry helpers must not mutate
+    /// the reported set just to observe it).
+    pub fn contains(&self, id: &str) -> bool {
+        self.reported.contains(id)
+    }
 }
 crate::register_resource!(
     "grok_build",

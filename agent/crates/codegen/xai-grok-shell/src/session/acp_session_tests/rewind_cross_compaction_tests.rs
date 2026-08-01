@@ -93,7 +93,7 @@ fn write_compacted_session_fixture(session_dir: &std::path::Path, ckpt_id: &str)
     std::fs::write(session_dir.join("updates.jsonl"), content).unwrap();
 }
 
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_pre_compaction_with_cancelled_turns_truncates_context_gb2961() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_rewind_scenario()).await;
@@ -361,7 +361,7 @@ async fn run_clears_marker_scenario() {
 /// referenced file, so without the copy every rewind in the forked session
 /// fails with "compaction checkpoint file missing". Drives the production
 /// `fork_session` path so this test tracks its copy wiring.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn rewind_succeeds_in_forked_session_with_compaction_checkpoint() {
     let local = tokio::task::LocalSet::new();
     local.run_until(run_forked_rewind_scenario()).await;

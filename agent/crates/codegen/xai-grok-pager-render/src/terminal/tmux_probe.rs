@@ -385,6 +385,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[serial_test::serial(tmux_probe_path)]
+    // macOS: the test burns 1.2s of its 1.5s query budget (the remaining
+    // 300ms == POST_EXIT_CLEANUP_GRACE is load-bearing by design), so the
+    // default parallel test harness routinely starves it under any real load
+    // (fails in full-suite runs, passes in isolation). Same treatment as the
+    // FSEvents watcher tests: keep for CI, ignore on macOS.
+    #[cfg_attr(target_os = "macos", ignore = "flaky on macOS under parallel test threads: 1.5s budget with 300ms margin (upstream test)")]
     fn successful_near_deadline_exit_still_returns_captured_output() {
         use std::os::unix::fs::PermissionsExt as _;
 

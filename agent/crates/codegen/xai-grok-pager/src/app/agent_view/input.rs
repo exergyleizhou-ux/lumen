@@ -143,6 +143,7 @@ impl AgentView {
             && !self.prompt.file_search_visible()
             && self.no_input_overlay_pending()
             && !self.modal_owns_input()
+            && self.jump_state.is_none()
     }
     pub(crate) fn workflow_runs_newest_first(
         &self,
@@ -161,6 +162,7 @@ impl AgentView {
             && !self.show_workflows
             && self.rewind_state.is_none()
             && self.btw_state.is_none()
+            && self.jump_state.is_none()
     }
     /// Effective screen mode of this process, as injected per agent at
     /// session creation (`apply_app_scoped_gates` →
@@ -484,6 +486,14 @@ impl AgentView {
                 return child_view.handle_input_inner(ev, registry, prompt_paging);
             }
             return InputOutcome::Unchanged;
+        }
+        if self.dismiss_jump_picker_if_suppressed()
+            && let Event::Key(key) = ev
+            && key.kind != KeyEventKind::Release
+            && key.code == KeyCode::Esc
+            && key.modifiers.is_empty()
+        {
+            return InputOutcome::Changed;
         }
         if let Event::Paste(text) = ev
             && let Some(outcome) = self.try_handle_wrap_host_image_paste(text)
@@ -1689,6 +1699,7 @@ mod btw_focus_tests {
     use crate::actions::ActionRegistry;
     use crate::app::app_view::InputOutcome;
     use crate::views::btw_overlay::BtwOverlayState;
+    use crate::views::jump::{JumpRestore, JumpState};
     use crossterm::event::{
         Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };

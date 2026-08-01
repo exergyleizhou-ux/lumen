@@ -264,9 +264,6 @@ async fn persist_ack_waits_for_disk_flush_before_success_inner() {
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
-                goal_update_rx: std::cell::RefCell::new(Some(
-                    tokio::sync::mpsc::unbounded_channel().1,
-                )),
                 goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
                 workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle()
                     .0,
@@ -432,6 +429,7 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
                     compaction_at_tokens: None,
                     doom_loop_recovery: None,
                     header_injector: None,
+                    request_observer: None,
                 })
                 .expect("sampling client should build for persistence actor");
             let persistence = crate::session::persistence::new_with_explicit_dir(
@@ -511,20 +509,45 @@ async fn first_turn_memory_injection_persists_to_chat_history() {
         })
         .await;
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let session_dir = tempfile::tempdir().expect("tempdir");
-            let session_info = crate::session::info::Info {
-                id: acp::SessionId::new("persist-memory-disabled"),
-                cwd: session_dir.path().to_string_lossy().to_string(),
-            };
-            let cwd = AbsPathBuf::new(session_dir.path().to_path_buf()).unwrap();
-            let fs = Arc::new(xai_grok_workspace::file_system::MockFs::new(
-                cwd.to_path_buf(),
-            ));
+// The turn processor's future chain is deep (the upstream merge grew it) and
+// the tokio `thread_stack_size` setting only sizes worker threads — the turn
+// itself runs on the `block_on` thread. Run the whole test body on a thread
+// with a large stack so the turn + its in-turn config parse fit.
+#[test]
+fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history() {
+    std::thread::Builder::new()
+        .name("first-turn-memory-disabled".into())
+        .stack_size(128 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            rt.block_on(async {
+                let local = tokio::task::LocalSet::new();
+                local
+                    .run_until(async {
+                        run_first_turn_memory_injection_disabled_body().await;
+                    })
+                    .await;
+            });
+        })
+        .expect("spawn big-stack test thread")
+        .join()
+        .expect("test body panicked");
+}
+
+async fn run_first_turn_memory_injection_disabled_body() {
+    let session_dir = tempfile::tempdir().expect("tempdir");
+    let session_info = crate::session::info::Info {
+        id: acp::SessionId::new("persist-memory-disabled"),
+        cwd: session_dir.path().to_string_lossy().to_string(),
+    };
+    let cwd = AbsPathBuf::new(session_dir.path().to_path_buf()).unwrap();
+    let fs = Arc::new(xai_grok_workspace::file_system::MockFs::new(
+        cwd.to_path_buf(),
+    ));
             let terminal = Arc::new(DummyTerminal {});
             let (hunk_tx, _hunk_rx) = tokio::sync::mpsc::unbounded_channel();
             let hunk_tracker_handle = xai_hunk_tracker::HunkTrackerActor::spawn(
@@ -769,9 +792,6 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
-                goal_update_rx: std::cell::RefCell::new(Some(
-                    tokio::sync::mpsc::unbounded_channel().1,
-                )),
                 goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
                 workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle()
                     .0,
@@ -870,8 +890,6 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     .injection_count
                     .load(std::sync::atomic::Ordering::Relaxed)
             );
-        })
-        .await;
 }
 /// Hard teardown (`kill_background_tasks = true`, the subagent-shutdown path)
 /// aborts the running turn AND drains every queued prompt, responding
@@ -1475,61 +1493,79 @@ async fn actor_with_persistence_drain() -> std::sync::Arc<SessionActor> {
 /// `PromptOrigin::User` call site in `handle_prompt` and the relative ordering.
 /// Synchronizes on the persist-ack (fires after both items are pushed, before
 /// the model call), then aborts the turn so the dead-URL model call can't hang.
-#[tokio::test(flavor = "multi_thread")]
-async fn handle_prompt_injects_interrupt_reminder_before_user_message() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let actor = actor_with_persistence_drain().await;
-            actor.events.set_pending_interrupt_reminder();
-            let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new("follow-up after interrupt".to_string()))];
-            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
-            let actor_for_prompt = actor.clone();
-            let prompt_task = tokio::task::spawn_local(async move {
-                actor_for_prompt
-                    .handle_prompt(
-                        "interrupt-wiring-test",
-                        prompt_blocks,
-                        PromptMode::Agent,
-                        None,
-                        None,
-                        None,
-                        None,
-                        true,
-                        None,
-                        Some(ack_tx),
-                        None,
-                    )
-                    .await
+/// Runs on a large-stack thread: the turn's future chain plus its in-turn
+/// config parse overflows the 2MiB harness thread (see the memory-injection
+/// test above for the same pattern).
+#[test]
+fn handle_prompt_injects_interrupt_reminder_before_user_message() {
+    std::thread::Builder::new()
+        .name("handle-prompt-interrupt".into())
+        .stack_size(128 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            rt.block_on(async {
+                let local = tokio::task::LocalSet::new();
+                local
+                    .run_until(async {
+                        let actor = actor_with_persistence_drain().await;
+                        actor.events.set_pending_interrupt_reminder();
+                        let prompt_blocks = vec![acp::ContentBlock::Text(acp::TextContent::new("follow-up after interrupt".to_string()))];
+                        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+                        let actor_for_prompt = actor.clone();
+                        let prompt_task = tokio::task::spawn_local(async move {
+                            actor_for_prompt
+                                .handle_prompt(
+                                    "interrupt-wiring-test",
+                                    prompt_blocks,
+                                    PromptMode::Agent,
+                                    None,
+                                    None,
+                                    None,
+                                    None,
+                                    true,
+                                    None,
+                                    Some(ack_tx),
+                                    None,
+                                )
+                                .await
+                        });
+                        assert!(ack_rx.await.is_ok(), "persist ack should resolve");
+                        let conv = actor.chat_state_handle.get_conversation().await;
+                        let user_idx = conv
+                            .iter()
+                            .position(|item| {
+                                matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_none()) && item.text_content().contains("follow-up after interrupt")
+                            })
+                            .expect("the user message must be in the conversation");
+                        assert!(
+                            user_idx > 0,
+                            "a reminder must precede the user message (found it at index 0)"
+                        );
+                        let preceding = &conv[user_idx - 1];
+                        assert!(
+                            matches!(preceding, ConversationItem::User(u)
+                                if u.synthetic_reason == Some(SyntheticReason::SystemReminder)),
+                            "the item immediately before the user message must be a system-reminder, got: {preceding:?}"
+                        );
+                        assert!(
+                            preceding
+                                .text_content()
+                                .contains(crate::session::acp_session::INTERRUPT_REMINDER),
+                            "the preceding system-reminder must carry the interrupt notice"
+                        );
+                        assert!(!actor.events.take_pending_interrupt_reminder());
+                        prompt_task.abort();
+                    })
+                    .await;
             });
-            assert!(ack_rx.await.is_ok(), "persist ack should resolve");
-            let conv = actor.chat_state_handle.get_conversation().await;
-            let user_idx = conv
-                .iter()
-                .position(|item| {
-                    matches!(item, ConversationItem::User(u) if u.synthetic_reason.is_none()) && item.text_content().contains("follow-up after interrupt")
-                })
-                .expect("the user message must be in the conversation");
-            assert!(
-                user_idx > 0,
-                "a reminder must precede the user message (found it at index 0)"
-            );
-            let preceding = &conv[user_idx - 1];
-            assert!(
-                matches!(preceding, ConversationItem::User(u)
-                    if u.synthetic_reason == Some(SyntheticReason::SystemReminder)),
-                "the item immediately before the user message must be a system-reminder, got: {preceding:?}"
-            );
-            assert!(
-                preceding
-                    .text_content()
-                    .contains(crate::session::acp_session::INTERRUPT_REMINDER),
-                "the preceding system-reminder must carry the interrupt notice"
-            );
-            assert!(!actor.events.take_pending_interrupt_reminder());
-            prompt_task.abort();
         })
-        .await;
+        .expect("spawn big-stack test thread")
+        .join()
+        .expect("test body panicked");
 }
 /// Integration: a synthetic-origin turn (here `scheduler-fired-*`) driven
 /// between the abort and the user's resend must NOT consume the one-shot or
@@ -1779,7 +1815,7 @@ async fn cancel_after_own_completion_sweep_preserves_queued_user_prompt() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn interactive_cancel_drops_queued_task_wakes_and_promotes_user() {
     use tokio::sync::oneshot::error::TryRecvError;
     let local = tokio::task::LocalSet::new();
@@ -1898,7 +1934,7 @@ async fn interactive_cancel_drops_queued_task_wakes_and_promotes_user() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn ctrl_c_clears_turn_active_before_background_completion_routes() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1925,7 +1961,7 @@ async fn ctrl_c_clears_turn_active_before_background_completion_routes() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn non_ctrl_c_cancel_preserves_queued_task_wakes_and_does_not_arm_barrier() {
     let local = tokio::task::LocalSet::new();
     local

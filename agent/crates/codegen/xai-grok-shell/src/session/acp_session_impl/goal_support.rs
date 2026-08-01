@@ -249,6 +249,7 @@ pub(super) fn render_goal_rules(
     };
     GOAL_RULES_TEMPLATE
         .replace("{OBJECTIVE}", objective)
+        .replace("{GOAL_TOOL}", &names.goal)
         .replace("{TASK_TOOL}", &names.task)
         .replace("{TODO_TOOL}", &names.todo)
         .replace("{PLAN_BLOCK}", &plan_block)
@@ -408,6 +409,7 @@ pub(super) fn render_goal_continuation_directive(
     reverify_block: &str,
     next_step: &str,
     todo_tool: &str,
+    goal_tool: &str,
     scratch_dir: &str,
     scratch_ready: bool,
 ) -> String {
@@ -432,6 +434,7 @@ pub(super) fn render_goal_continuation_directive(
         .replace("{reverify_block}", reverify_block)
         .replace("{next_step}", &next_step)
         .replace("{todo_tool}", todo_tool)
+        .replace("{goal_tool}", goal_tool)
         // `{SCRATCH}` is left literal — the model resolves it to this dir.
         .replace("{scratch_dir}", scratch_dir)
         // Only claim the dir exists when the harness actually created it.

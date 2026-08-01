@@ -148,7 +148,26 @@ impl GrokStdioClient {
         cwd: &Path,
         sandbox: TestSandbox,
     ) -> Self {
-        Self::spawn_with_sandbox_env_and_args(server, cwd, sandbox, &[], &[]).await
+        Self::spawn_with_sandbox_env_and_args(server, cwd, sandbox, &[], &[], PermissionResponse::AllowOnce)
+            .await
+    }
+
+    /// Spawn an ACP product process with an explicit client-side permission
+    /// behavior. The agent still owns permission policy and terminal state.
+    pub async fn spawn_with_permission_response(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        permission_response: PermissionResponse,
+    ) -> Self {
+        Self::spawn_with_sandbox_env_and_args(
+            server,
+            cwd,
+            TestSandbox::new(),
+            &[],
+            &[],
+            permission_response,
+        )
+        .await
     }
 
     pub async fn spawn_with_sandbox_env_and_args(
@@ -157,6 +176,7 @@ impl GrokStdioClient {
         mut sandbox: TestSandbox,
         extra_env: &[(&str, &str)],
         leading_args: &[&str],
+        permission_response: PermissionResponse,
     ) -> Self {
         let mut process = spawn_agent_process(&mut sandbox, server, cwd, extra_env, leading_args);
 

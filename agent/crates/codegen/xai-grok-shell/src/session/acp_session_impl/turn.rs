@@ -698,6 +698,12 @@ impl SessionActor {
                 Some(serde_json::json!({ "reason": "handle_prompt_user_start" })),
             );
             self.consume_deferred_completions_for_user_turn().await;
+        } else if let Some(completion_id) = origin.completion_id()
+            && let Some(reservations) = &self.tool_context.task_completion_reservations
+        {
+            // A synthetic auto-wake turn IS the delivery of its completion:
+            // release the reservation so the reminder can't dangle.
+            reservations.release(completion_id);
         }
         self.drain_between_turn_completions().await;
         self.inject_workflow_status_reminder().await;

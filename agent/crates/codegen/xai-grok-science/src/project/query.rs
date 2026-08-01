@@ -270,6 +270,7 @@ mod tests {
     use super::*;
     use super::super::evidence_graph::EvidenceEdge;
     use super::super::model::ProjectId;
+    use crate::project::EvidenceNode;
     use chrono::Utc;
     use std::collections::BTreeMap;
 

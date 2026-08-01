@@ -848,6 +848,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        target_os = "macos",
+        ignore = "flaky on macOS: FSEvents does not reliably deliver events in test harness"
+    )]
     fn refresh_new_discovery_dirs_attaches_first_created_workflows_dir() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path();

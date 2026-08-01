@@ -2075,7 +2075,23 @@ impl MvpAgent {
     /// Fetch remote settings after authentication when early prefetch had none.
     /// Notifies the pager so soft-default permission_mode applies post-login.
     pub(super) async fn maybe_fetch_post_auth_settings(&self) {
+        // The startup prefetch may already have landed settings (upstream
+        // bootstrap fallback). The post-auth effects — external-OTEL gate,
+        // storage upgrade, client notification — must still run so a settings
+        // arrival is fully applied regardless of which path delivered it.
         if self.cfg.borrow().remote_settings.is_some() {
+            let identity = self
+                .auth_manager
+                .current()
+                .map(|a| a.user_id)
+                .unwrap_or_default();
+            self.otel_gate.rearm_on_switch(&identity);
+            let outcome = crate::remote::SettingsFetch::Fetched(
+                self.cfg.borrow().remote_settings.clone().unwrap().into(),
+            );
+            let live = self.auth_manager.current_or_expired().map(|a| a.user_id);
+            self.otel_gate.resolve(&identity, outcome, live.as_deref());
+            self.on_remote_settings_changed();
             return;
         }
         if !crate::util::config::resolve_remote_fetch_enabled() {

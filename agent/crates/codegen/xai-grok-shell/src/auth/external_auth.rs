@@ -127,13 +127,15 @@ mod tests {
             stderr: vec![],
         };
 
-        // x.ai issuer claim → first-party session (relay-eligible).
+        // x.ai issuer claim → stored as metadata, but an External-mode
+        // credential is NEVER first-party (Lumen: a CLI-provided issuer claim
+        // must not grant xAI privileges — only real OIDC logins are xai auth).
         let auth = parse_output(&ok(
             r#"{"access_token":"t","expires_in":900,"issuer":"https://auth.x.ai"}"#,
         ))
         .unwrap();
         assert_eq!(auth.oidc_issuer.as_deref(), Some("https://auth.x.ai"));
-        assert!(auth.is_xai_auth());
+        assert!(!auth.is_xai_auth());
 
         // Non-x.ai issuer is stored but stays third-party.
         let auth = parse_output(&ok(

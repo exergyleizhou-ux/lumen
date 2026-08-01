@@ -1299,6 +1299,7 @@ impl SessionActor {
                 &reverify_block,
                 &next_step,
                 todo_tool,
+                goal_tool,
                 &scratch_dir,
                 scratch_ready,
             )

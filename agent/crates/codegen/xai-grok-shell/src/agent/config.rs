@@ -625,6 +625,14 @@ impl EndpointsConfig {
         format!("{}/models", base)
     }
 }
+/// `LUMEN_INFERENCE_BASE_URL` — the hermetic-harness override for embedded
+/// BYOK endpoints (see `default_models`).
+pub fn inference_base_url_override() -> Option<String> {
+    std::env::var("LUMEN_INFERENCE_BASE_URL")
+        .ok()
+        .map(|v| v.trim().to_owned())
+        .filter(|v| !v.is_empty())
+}
 impl Default for EndpointsConfig {
     fn default() -> Self {
         Self {
@@ -717,6 +725,9 @@ pub struct Requirements {
 pub struct RuntimeResolutionContext<'a> {
     pub raw_config: &'a toml::Value,
     pub remote_settings: Option<&'a crate::util::config::RemoteSettings>,
+    /// Session working directory, used by config resolution that consults the
+    /// workspace (e.g. sandbox profile detection).
+    pub cwd: Option<&'a std::path::Path>,
     pub is_headless: bool,
     /// `Some(true)` = CLI explicitly enabled, `None` = defer to config/env/remote.
     pub cli_subagents: Option<bool>,
@@ -2367,6 +2378,7 @@ impl Config {
         let ctx = RuntimeResolutionContext {
             raw_config,
             remote_settings: remote_settings.as_ref(),
+            cwd: None,
             is_headless: self.mode == AgentMode::Headless,
             cli_subagents: self.cli_subagents,
             cli_web_search_model: cli_web_search_model.as_deref(),
@@ -2570,7 +2582,7 @@ impl Config {
         let enabled = BoolFlag::env("GROK_DOOM_LOOP_RECOVERY")
             .config(self.doom_loop_recovery.enabled)
             .feature_flag(remote.and_then(|s| s.enabled))
-            .default(true)
+            .default(false)
             .resolve()
             .value;
         enabled.then(|| Policy {
@@ -2782,9 +2794,6 @@ impl Config {
     /// remote settings `goal_enabled` flag, so the default must not carve them out.
     pub(crate) fn resolve_goal(&self) -> Resolved<bool> {
         let ff = self.remote_settings.as_ref().and_then(|s| s.goal_enabled);
-        if ff == Some(false) {
-            return Resolved::new(false, ConfigSource::Remote);
-        }
         BoolFlag::env("GROK_GOAL")
             .config(self.goal.enabled)
             .feature_flag(ff)
@@ -3672,7 +3681,36 @@ pub fn resolve_model_list(
                 tracing::debug!(model_key = %key, "prefetched model overriding default");
             }
         }
-        resolved = prefetched;
+        // Remote / session prefetch still replaces non-BYOK bundled entries (xAI
+        // entitlement list). Lumen multi-provider BYOK rows (env_key set) must
+        // survive — otherwise a cold start with ~/.grok OIDC models_cache that
+        // only lists grok-4.5 wipes deepseek-v4-pro and the status bar freezes on
+        // the wrong product default. Empty prefetch stays empty (server said none).
+        let byok_survivors: IndexMap<String, ModelEntry> = if prefetched.is_empty() {
+            IndexMap::new()
+        } else {
+            resolved
+                .iter()
+                .filter(|(key, entry)| entry.env_key.is_some() && !prefetched.contains_key(*key))
+                .map(|(key, entry)| (key.clone(), entry.clone()))
+                .collect()
+        };
+        if byok_survivors.is_empty() {
+            resolved = prefetched;
+        } else {
+            tracing::debug!(
+                count = byok_survivors.len(),
+                "retaining bundled BYOK models not listed in remote catalog"
+            );
+            let mut merged = IndexMap::new();
+            for (key, entry) in byok_survivors {
+                merged.insert(key, entry);
+            }
+            for (key, entry) in prefetched {
+                merged.insert(key, entry);
+            }
+            resolved = merged;
+        }
     }
     for (key, model_override) in &cfg.config_models {
         let had_base = resolved.contains_key(key);
@@ -3912,6 +3950,20 @@ struct DefaultModelJson {
     auto_compact_threshold_percent: Option<u8>,
     #[serde(default)]
     system_prompt_label: Option<String>,
+    #[serde(default)]
+    stream_tool_calls: Option<bool>,
+    #[serde(default)]
+    laziness_detector: LazinessDetectorPerModelConfig,
+    /// Optional third-party / BYOK inference base URL (e.g. DeepSeek).
+    /// When set, replaces the xAI proxy base URL for this default model.
+    #[serde(default)]
+    base_url: Option<String>,
+    /// Optional env var name(s) holding the API key for this model.
+    #[serde(default)]
+    env_key: Option<EnvKeys>,
+    /// When true with `base_url`, clear `api_base_url` so all auth uses base_url.
+    #[serde(default)]
+    byok: bool,
 }
 fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryConfig> {
     let root: serde_json::Value = serde_json::from_str(crate::models::DEFAULT_MODELS_JSON)
@@ -3938,11 +3990,36 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
             let context_window = m
                 .context_window
                 .unwrap_or_else(|| NonZeroU64::new(200_000).expect("200000 is non-zero"));
+            // Lumen BYOK defaults (e.g. deepseek-v4-pro): honor embedded base_url/env_key
+            // instead of routing through the xAI cli-chat-proxy.
+            //
+            // `LUMEN_INFERENCE_BASE_URL`, when set, overrides even the embedded
+            // BYOK endpoint. Without it a hermetic test harness cannot contain a
+            // BYOK default: the upstream e2e fixtures inject their mock through
+            // GROK_XAI_API_BASE_URL, which this branch bypasses, so leader/R0
+            // runs sent real prompts to api.deepseek.com (observed 2026-07-26 —
+            // the R0 gate failed on a live 401 while a mock server sat idle).
+            let (base_url, api_base_url, env_key) = if let Some(ref byok_url) = m.base_url {
+                let url =
+                    inference_base_url_override().unwrap_or_else(|| byok_url.trim().to_owned());
+                let api = if m.byok || m.env_key.is_some() {
+                    None
+                } else {
+                    Some(endpoints.xai_api_base_url.clone())
+                };
+                (url, api, m.env_key)
+            } else {
+                (
+                    endpoints.resolve_inference_base_url(),
+                    Some(endpoints.xai_api_base_url.clone()),
+                    None,
+                )
+            };
             let config = ModelEntryConfig {
                 id: m.id,
                 model: m.model,
-                base_url: endpoints.resolve_inference_base_url(),
-                api_base_url: Some(endpoints.xai_api_base_url.clone()),
+                base_url,
+                api_base_url,
                 name: m.name,
                 description: m.description,
                 context_window,
@@ -3957,7 +4034,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 inference_idle_timeout_secs: m.inference_idle_timeout_secs,
                 max_retries: None,
                 api_key: None,
-                env_key: None,
+                env_key,
                 extra_headers: IndexMap::new(),
                 use_concise: false,
                 hidden: m.hidden,
@@ -3969,8 +4046,8 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 compactions_remaining: m.compactions_remaining,
                 compaction_at_tokens: m.compaction_at_tokens,
                 show_model_fingerprint: m.show_model_fingerprint,
-                stream_tool_calls: None,
-                laziness_detector: LazinessDetectorPerModelConfig::default(),
+                stream_tool_calls: m.stream_tool_calls,
+                laziness_detector: m.laziness_detector,
             };
             (key, config)
         })
@@ -5485,6 +5562,48 @@ pub fn to_acp_model_info(
             let total_context_tokens = info.context_window.get();
             let meta = {
                 let mut map = serde_json::Map::new();
+                // Lumen: emit redacted endpoint/provider identity so the ACP
+                // client can bind truth without leaking credentials. Credentials
+                // in the raw URL (user:pass, query token, fragment) are stripped;
+                // the URL is trimmed of a trailing slash before comparison.
+                let mut endpoint_ids = [Some(info.base_url.as_str()), model.api_base_url.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|raw| {
+                        let mut url = url::Url::parse(raw).ok()?;
+                        let _ = url.set_username("");
+                        let _ = url.set_password(None);
+                        url.set_query(None);
+                        url.set_fragment(None);
+                        Some(url.to_string().trim_end_matches('/').to_owned())
+                    })
+                    .collect::<Vec<_>>();
+                endpoint_ids.sort();
+                endpoint_ids.dedup();
+                let mut provider_ids = endpoint_ids
+                    .iter()
+                    .filter_map(|endpoint| {
+                        let url = url::Url::parse(endpoint).ok()?;
+                        Some(match url.port() {
+                            Some(port) => format!("{}:{port}", url.host_str()?),
+                            None => url.host_str()?.to_owned(),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                provider_ids.sort();
+                provider_ids.dedup();
+                if !endpoint_ids.is_empty() {
+                    map.insert(
+                        "baseUrl".to_string(),
+                        serde_json::Value::String(endpoint_ids.join("|")),
+                    );
+                }
+                if !provider_ids.is_empty() {
+                    map.insert(
+                        "providerId".to_string(),
+                        serde_json::Value::String(provider_ids.join("|")),
+                    );
+                }
                 map.insert(
                     "totalContextTokens".to_string(),
                     serde_json::Value::Number(total_context_tokens.into()),
@@ -6101,6 +6220,8 @@ reasoning_effort = "low"
                 api_backend: ApiBackend::default(),
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
+                query_params: IndexMap::new(),
+                env_http_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(200_000).unwrap(),
                 auto_compact_threshold_percent: None,
                 system_prompt_label: None,
@@ -6122,6 +6243,7 @@ reasoning_effort = "low"
             },
             api_key: api_key.map(|s| s.to_string()),
             env_key: env_key.map(EnvKeys::single),
+            auth_provider: None,
             api_base_url: api_base_url.map(|s| s.to_string()),
         }
     }
@@ -6725,7 +6847,10 @@ reasoning_effort = "low"
     }
     #[test]
     fn resolve_model_auth_facts_empty_model_id_is_unknown() {
-        assert_eq!(resolve_model_auth_facts("").byok, ModelByok::Unknown);
+        assert_eq!(
+            resolve_model_auth_facts_and_provider("").0.byok,
+            ModelByok::Unknown,
+        );
     }
     #[test]
     fn user_override_adds_api_key_to_default_model() {
@@ -11391,6 +11516,8 @@ default = "grok-4.5"
                 api_backend,
                 auth_scheme: Default::default(),
                 extra_headers: IndexMap::new(),
+                query_params: IndexMap::new(),
+                env_http_headers: IndexMap::new(),
                 context_window: NonZeroU64::new(context_window).unwrap(),
                 use_concise: false,
                 agent_type: default_agent_type(),
@@ -11412,6 +11539,7 @@ default = "grok-4.5"
             },
             api_key: None,
             env_key: None,
+            auth_provider: None,
             api_base_url: None,
         }
     }

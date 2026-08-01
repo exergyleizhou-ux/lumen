@@ -642,6 +642,7 @@ pub(super) async fn validate_and_extract_user_info(
     expected_client_id: &str,
     expected_nonce: &str,
 ) -> anyhow::Result<OidcUserInfo> {
+    let _ = jsonwebtoken::crypto::rust_crypto::DEFAULT_PROVIDER.install_default();
     let header = jsonwebtoken::decode_header(token)?;
     let kid = header
         .kid

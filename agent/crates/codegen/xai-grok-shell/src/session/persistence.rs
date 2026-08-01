@@ -3430,7 +3430,19 @@ mod expert_session_file_lifecycle_tests {
             .await
             .unwrap();
         age_tree(&session_dir);
-        let stats = cleanup_stale_sessions_inner(&sessions_root, 1, None);
+        let relocation_view =
+            crate::session::storage::relocation::RelocationView::load_for_sessions_root(
+                &sessions_root,
+            )
+            .unwrap();
+        let stats = cleanup_stale_sessions_inner(
+            &sessions_root,
+            1,
+            None,
+            &relocation_view,
+            tmp.path(),
+            CleanupLevel::SessionsRoot,
+        );
         assert!(
             stats.files_deleted >= 2,
             "summary and expert state were collected"

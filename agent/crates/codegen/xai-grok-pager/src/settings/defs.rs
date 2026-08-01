@@ -302,6 +302,20 @@ const HUNK_TRACKER_MODE_CHOICES: &[EnumChoice] = &[
     },
 ];
 
+// Default screen-mode catalog. SHELL-owned, persisted to `[ui].screen_mode`.
+const SCREEN_MODE_CHOICES: &[EnumChoice] = &[
+    EnumChoice {
+        canonical: "fullscreen",
+        display: "Fullscreen",
+        description: "Open plain grok in the standard fullscreen TUI. Default when unset.",
+    },
+    EnumChoice {
+        canonical: "minimal",
+        display: "Minimal",
+        description: "Open plain grok in scrollback-native (minimal) mode.",
+    },
+];
+
 // Voice-capture-mode catalog. SHELL-owned, persisted to `[ui].voice_capture_mode`.
 // `hold` is gated on `kitty_releases_reported`; `effective_enum_choices` hides it
 // elsewhere, and it falls back to `toggle` at runtime. "Kitty-protocol terminal"
@@ -527,6 +541,34 @@ pub fn default_settings() -> Vec<SettingMeta> {
                 default: ui_default.compact_mode,
             },
             restart_required: false,
+            hidden_in_minimal: false,
+        },
+        SettingMeta {
+            key: "screen_mode",
+            category: SettingCategory::Appearance,
+            owner: SettingOwner::Shell,
+            label: "Default screen mode",
+            description: "How plain grok opens next time: Fullscreen (default when unset) or \
+                          Minimal. Writes [ui] screen_mode in config.toml. Restart required. \
+                          Switch this session only with /minimal or /fullscreen.",
+            keywords: &[
+                "screen",
+                "mode",
+                "minimal",
+                "fullscreen",
+                "full",
+                "scrollback",
+                "native",
+                "alt-screen",
+                "render",
+                "default",
+            ],
+            kind: SettingKind::Enum {
+                default: "fullscreen",
+                choices: SCREEN_MODE_CHOICES,
+                supports_preview: false,
+            },
+            restart_required: true,
             hidden_in_minimal: false,
         },
         SettingMeta {

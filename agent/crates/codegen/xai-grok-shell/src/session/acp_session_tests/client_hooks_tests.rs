@@ -101,7 +101,7 @@ async fn client_hooks_fire_without_file_registry() {
 /// hooks as its resolved target, so a matcher keyed on the qualified MCP name
 /// (`linear__save_issue`) gates the dispatch. Drives the real `prepare_tool_call` path;
 /// the deny fires only if the resolved name reached the envelope.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_resolves_meta_dispatch_tool_name_end_to_end() {
     let local = tokio::task::LocalSet::new();
     local
@@ -162,7 +162,7 @@ async fn pre_tool_use_resolves_meta_dispatch_tool_name_end_to_end() {
 /// Reproduces the prod inheritance seam (subagent.rs `ctx.client_hooks.clone()`) by
 /// cloning the parent's hooks into a child `SessionActor`, so the subagent call hits
 /// the parent's PreToolUse gate carrying the `subagentType`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn subagent_inherits_parent_pre_tool_use_client_hook() {
     let local = tokio::task::LocalSet::new();
     local
@@ -346,7 +346,7 @@ async fn pre_tool_use_slow_callback_does_not_starve_a_deny() {
 /// PostToolUse and PostToolUseFailure must never both fire for one tool call: a hard
 /// dispatch error fires only PostToolUseFailure; a successful dispatch fires only
 /// PostToolUse.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn post_tool_use_and_failure_never_double_fire() {
     let local = tokio::task::LocalSet::new();
     local
@@ -441,7 +441,7 @@ async fn post_tool_use_and_failure_never_double_fire() {
 ///
 /// Regression guard: the deny once surfaced as `ToolLoop::HookDenied`, which
 /// `execute_tool_calls` treated as a terminal result, cancelling the whole turn.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_tool_use_deny_feeds_reason_back_and_continues_turn() {
     let local = tokio::task::LocalSet::new();
     local
@@ -495,7 +495,7 @@ async fn pre_tool_use_deny_feeds_reason_back_and_continues_turn() {
 }
 
 /// The Stop client gate collects every deny as a block (no short-circuit).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn stop_client_gate_collects_denies() {
     let local = tokio::task::LocalSet::new();
     local
@@ -569,7 +569,7 @@ async fn stop_client_gate_collects_denies() {
 
 /// `continue: false` becomes a force-stop (with `stopReason`) and `additionalContext`
 /// becomes non-error feedback, matching what file hooks express.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn stop_client_gate_carries_continue_false_and_context() {
     let local = tokio::task::LocalSet::new();
     local
@@ -642,7 +642,7 @@ async fn stop_client_gate_carries_continue_false_and_context() {
 
 /// End-to-end through `run_stop_gate`: a client deny becomes `KeepWorking`, no hooks
 /// allows the stop, and the consecutive-block cap overrides the gate.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn run_stop_gate_keep_working_and_cap() {
     let local = tokio::task::LocalSet::new();
     local
@@ -718,7 +718,7 @@ fn file_registry_with_stop_spec(
 
 /// A file-hook force-stop skips the client run gate (its signals would be discarded)
 /// but still delivers the observe `x.ai/hooks/event` notification.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn file_force_stop_skips_client_gate_but_notifies() {
     let local = tokio::task::LocalSet::new();
     local
@@ -794,7 +794,7 @@ async fn file_force_stop_skips_client_gate_but_notifies() {
 
 /// Two client callbacks both force-stop; attribution follows registration order even
 /// when that callback responds last (completion order must not decide it).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn client_force_stop_attribution_is_registration_ordered() {
     let local = tokio::task::LocalSet::new();
     local
@@ -876,7 +876,7 @@ async fn client_force_stop_attribution_is_registration_ordered() {
 
 /// A subagent session gates on `SubagentStop` specs (not `Stop`), with the gate-phase
 /// payload.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn subagent_session_gates_on_subagent_stop() {
     let local = tokio::task::LocalSet::new();
     local
@@ -926,7 +926,7 @@ async fn subagent_session_gates_on_subagent_stop() {
 
 /// Alias fire sites serialize the canonical event name: a `SubagentEnd` envelope reads
 /// `"subagent_stop"` on the wire, matching `GROK_HOOK_EVENT`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn alias_envelope_serializes_canonical_event_name() {
     let local = tokio::task::LocalSet::new();
     local

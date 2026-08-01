@@ -48,7 +48,7 @@ pub mod scripted;
 pub mod sse;
 #[cfg(unix)]
 pub mod uds_proxy;
-pub use acp_client::{GrokStdioClient, RawStdioClient};
+pub use acp_client::{GrokStdioClient, PermissionResponse, RawStdioClient};
 pub use counting_server::spawn_counting_server;
 pub use env::{EnvGuard, git_workdir, grok_binary};
 pub use headless::{

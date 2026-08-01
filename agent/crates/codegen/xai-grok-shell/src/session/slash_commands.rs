@@ -1616,7 +1616,18 @@ pub(super) fn resolve(
         .iter()
         .find(|builtin| builtin.name == command_name || builtin.aliases.contains(&command_name))
     {
-        let action = (builtin.resolve)(args);
+        let mut action = (builtin.resolve)(args);
+        // `/expert vision` (and any image-carrying expert start) must keep the
+        // prompt's real image blocks, in order — they become the vision input.
+        if let BuiltinAction::ExpertStart { images, .. } = &mut action {
+            *images = prompt_blocks
+                .iter()
+                .filter_map(|block| match block {
+                    acp::ContentBlock::Image(image) => Some(image.clone()),
+                    _ => None,
+                })
+                .collect();
+        }
         if matches!(action, BuiltinAction::WorkflowLaunch { .. }) && !availability.workflows {
             return Ok(prompt_blocks);
         }
@@ -2979,7 +2990,31 @@ mod tests {
 
     fn resolve_expert_for_test(args: &str) -> BuiltinAction {
         let blocks = vec![text_block(&format!("/expert {args}"))];
-        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+        match resolve(
+            blocks,
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err()
+        {
+            SlashCommandOutcome::Builtin(action) => action,
+            _ => panic!("expected Builtin outcome"),
+        }
+    }
+
+    fn resolve_goalexpert(args: &str) -> BuiltinAction {
+        let blocks = vec![text_block(&format!("/goalexpert {args}"))];
+        match resolve(
+            blocks,
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err()
+        {
             SlashCommandOutcome::Builtin(action) => action,
             _ => panic!("expected Builtin outcome"),
         }
@@ -3070,7 +3105,14 @@ mod tests {
             acp::ContentBlock::Image(second),
         ];
         let action =
-            match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+            match resolve(
+                blocks,
+                &[],
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &[],
+            )
+            .unwrap_err() {
                 SlashCommandOutcome::Builtin(action) => action,
                 _ => panic!("expected builtin"),
             };

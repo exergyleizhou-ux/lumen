@@ -435,8 +435,9 @@ const ALWAYS_SAFE_COMMANDS: &[&str] = &[
     "grep",
     "rg",
     // Build/check commands (read-only)
-    // Build/check commands (read-only)
-    "cargo check",
+    // Intentionally empty: `cargo check` runs the checked-out repo's build
+    // scripts and proc-macros — arbitrary code execution — so it is never
+    // auto-safe (upstream added it here; lumen deliberately excludes it).
     // Kubernetes read-only commands
     "kubectl get",
     "kubectl logs",
@@ -2405,7 +2406,7 @@ fn spawn_permission_manager_with_pin(
                         false,
                         user_prompted,
                         Some(outcome_str),
-                        Some(prompt_trigger),
+                        Some(trigger),
                     );
                     let _ = respond_to.send(decision);
                 }
@@ -2669,14 +2670,34 @@ mod tests {
                 let cwd = AbsPathBuf::new(tmp.path().to_path_buf()).unwrap();
                 let transport = fake_hub(serde_json::json!({ "outcome": "always_approve" }));
                 let (mgr, _e) = test_manager_with_hub(&cwd, transport.clone());
-                for path in ["src/first.rs", "src/second.rs", "~/.zshrc"] {
+                // Plain workspace edits ride the always-approve hub.
+                for path in ["src/first.rs", "src/second.rs"] {
                     assert_eq!(
                         mgr.request(AccessKind::Edit(path.into()), tool_call(), None, None, None)
                             .await,
                         Decision::Allow
                     );
                 }
-                assert_eq!(transport.seen.lock().unwrap().len(), 2);
+                // Lumen's guard hard-denies shell startup files even under
+                // always-approve — the session grant cannot cover them.
+                assert!(
+                    matches!(
+                        mgr.request(
+                            AccessKind::Edit("~/.zshrc".into()),
+                            tool_call(),
+                            None,
+                            None,
+                            None,
+                        )
+                        .await,
+                        Decision::PolicyDeny(_)
+                    ),
+                    "~/.zshrc must be guard-denied, not granted"
+                );
+                // One hub call: the first edit establishes the session-wide
+                // always-approve grant; the second rides it, and the protected
+                // file never reaches the hub.
+                assert_eq!(transport.seen.lock().unwrap().len(), 1);
             })
             .await;
     }
@@ -3168,7 +3189,9 @@ mod tests {
                     "hard PolicyDeny must not prompt the user"
                 );
                 // Uncertain/malformed env -S: Ask floor blocks YOLO and reaches the
-                // user prompt (not silent Allow, not hard PolicyDeny).
+                // user prompt (not silent Allow, not hard PolicyDeny) — unless
+                // lumen's guard decodes the packed script and hard-denies the
+                // payload (e.g. `rm -rf`) first, which also must never Allow.
                 let uncertain = [
                     "env -S",
                     "env -S 'echo $HOME'",
@@ -3176,19 +3199,26 @@ mod tests {
                     "env -iS 'rm -rf /tmp/victim'",
                     "env -P /usr/bin -S 'echo $HOME'",
                 ];
+                let mut prompted = 0;
                 for cmd in uncertain {
                     let d = mgr
                         .request(AccessKind::Bash(cmd.into()), tool_call(), None, None, None)
                         .await;
-                    assert!(
-                        matches!(d, Decision::Reject(_)),
-                        "uncertain env -S must prompt under YOLO (reject answer), not Allow/PolicyDeny: {cmd}, got {d:?}"
-                    );
+                    match d {
+                        Decision::Reject(_) => prompted += 1,
+                        Decision::PolicyDeny(ref reason) => assert!(
+                            reason.contains("lumen-guard"),
+                            "uncertain env -S must not hard-deny outside the guard: {cmd}, got {d:?}"
+                        ),
+                        other => panic!(
+                            "uncertain env -S must deny under YOLO, not Allow: {cmd}, got {other:?}"
+                        ),
+                    }
                 }
                 assert_eq!(
                     prompts.borrow().len(),
-                    uncertain.len(),
-                    "each uncertain env -S shape must hit the user prompt once under YOLO"
+                    prompted,
+                    "each prompting uncertain env -S shape must hit the user prompt once under YOLO"
                 );
                 // Ordinary env assignment still denies the peeled command under YOLO.
                 let d = mgr
@@ -3206,7 +3236,7 @@ mod tests {
                 );
                 assert_eq!(
                     prompts.borrow().len(),
-                    uncertain.len(),
+                    prompted,
                     "ordinary env assignment PolicyDeny must not add prompts"
                 );
             })
@@ -3518,10 +3548,10 @@ mod tests {
     /// Like [`manager_with_recording_client`] but lets a test pin the
     /// `remember_tool_approvals` gate (which decides whether an explicit grant
     /// can satisfy an `ask` policy floor).
-    fn manager_with_recording_client_remember(
+    fn manager_with_recording_client_remember<C: acp::Client + 'static>(
         cwd: &AbsPathBuf,
         config: Option<crate::permission::types::PermissionConfig>,
-        client: RecordingClient,
+        client: C,
         client_type: ClientType,
         remember_tool_approvals: bool,
     ) -> (PermissionHandle, mpsc::UnboundedReceiver<PermissionEvent>) {
@@ -4446,12 +4476,20 @@ mod tests {
                     mgr.set_classifier(Some(clf));
 
                     // Decomposed deny match in a non-leading segment is denied
-                    // before the classifier is ever consulted.
+                    // before the classifier is ever consulted — either by the
+                    // managed policy rule or by lumen's guard (rm -rf outside
+                    // the safe dev dirs is hard-denied first).
                     let d =
                         request(&mgr, AccessKind::Bash("echo hi && rm -rf /tmp/x".into())).await;
                     assert!(matches!(d, Decision::PolicyDeny(_)), "{d:?}");
                     let ev = events.try_recv().expect("event must be emitted");
-                    assert_eq!(ev.decision_reason.as_deref(), Some(reasons::POLICY_DENY));
+                    assert!(
+                        matches!(
+                            ev.decision_reason.as_deref(),
+                            Some(reasons::POLICY_DENY) | Some(reasons::LUMEN_GUARD_DENY)
+                        ),
+                        "{d:?}"
+                    );
                     assert_eq!(prompts.borrow().len(), 0);
                     assert_eq!(seen.lock().unwrap().len(), 0);
                 })
@@ -4864,22 +4902,44 @@ mod tests {
                     )
                     .await
                     .expect("permission request must resolve, not hang");
-                    assert!(
-                        matches!(d, Decision::Reject(_)),
-                        "chained/non-allowed must prompt (recording client rejects): {cmd}, got {d:?}"
-                    );
-                    assert_eq!(
-                        prompts.borrow().len(),
-                        before + 1,
-                        "exactly one prompt for the full script: {cmd}"
-                    );
-                    let ev = events.try_recv().expect("event must be emitted");
-                    assert_ne!(
-                        ev.decision_reason.as_deref(),
-                        Some(reasons::POLICY_ALLOW),
-                        "must not auto-allow via policy_allow: {cmd}"
-                    );
-                    assert!(ev.user_prompted, "{cmd}");
+                    // Either the command prompts (recording client rejects) or
+                    // lumen's guard hard-denies the payload (e.g.
+                    // download-and-execute) before the floor runs — never Allow.
+                    match d {
+                        Decision::Reject(_) => {
+                            assert_eq!(
+                                prompts.borrow().len(),
+                                before + 1,
+                                "exactly one prompt for the full script: {cmd}"
+                            );
+                            let ev = events.try_recv().expect("event must be emitted");
+                            assert_ne!(
+                                ev.decision_reason.as_deref(),
+                                Some(reasons::POLICY_ALLOW),
+                                "must not auto-allow via policy_allow: {cmd}"
+                            );
+                            assert!(ev.user_prompted, "{cmd}");
+                        }
+                        Decision::PolicyDeny(ref reason) => {
+                            assert!(
+                                reason.contains("lumen-guard"),
+                                "unexpected guard deny for {cmd}: {d:?}"
+                            );
+                            assert_eq!(
+                                prompts.borrow().len(),
+                                before,
+                                "guard deny must not prompt: {cmd}"
+                            );
+                            let ev = events.try_recv().expect("event must be emitted");
+                            assert_eq!(
+                                ev.decision_reason.as_deref(),
+                                Some(reasons::LUMEN_GUARD_DENY),
+                                "{cmd}"
+                            );
+                            assert!(!ev.user_prompted, "{cmd}");
+                        }
+                        other => panic!("chained/non-allowed must deny: {cmd}, got {other:?}"),
+                    }
                 }
 
                 // Inline shell: even with both outer `bash` and `git` allows, a
@@ -5069,6 +5129,7 @@ mod tests {
                 mgr.set_classifier(Some(LlmPermissionClassifier::with_fixed_model_text(
                     r#"{"thinking":"looks fine","shouldBlock":false,"reason":"ok"}"#,
                 )));
+                let mut prompted = 0;
                 for cmd in [
                     "bash -c 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.pager GIT_CONFIG_VALUE_0=cat git status'",
                     "sh -c 'LD_PRELOAD=/x ls'",
@@ -5079,11 +5140,36 @@ mod tests {
                     let d = mgr
                         .request(AccessKind::Bash(cmd.into()), tool_call(), None, None, None)
                         .await;
-                    assert!(matches!(d, Decision::Reject(_)), "{cmd}: {d:?}");
-                    let ev = events.try_recv().expect("event must be emitted");
-                    assert_eq!(ev.decision_reason.as_deref(), Some("opaque_shell"), "{cmd}");
+                    // Lumen's guard hard-denies the dynamically-constructed
+                    // shells (eval / opaque env rewrites) before the floor
+                    // logic; the rest prompt via the opaque-shell floor. Both
+                    // are denials — the classifier's Allow must never win.
+                    match d {
+                        Decision::Reject(_) => {
+                            prompted += 1;
+                            let ev = events.try_recv().expect("event must be emitted");
+                            assert_eq!(
+                                ev.decision_reason.as_deref(),
+                                Some("opaque_shell"),
+                                "{cmd}"
+                            );
+                        }
+                        Decision::PolicyDeny(ref reason) => {
+                            assert!(
+                                reason.contains("lumen-guard"),
+                                "unexpected deny for {cmd}: {d:?}"
+                            );
+                            let ev = events.try_recv().expect("event must be emitted");
+                            assert_eq!(
+                                ev.decision_reason.as_deref(),
+                                Some(reasons::LUMEN_GUARD_DENY),
+                                "{cmd}"
+                            );
+                        }
+                        other => panic!("{cmd}: classifier Allow must not win, got {other:?}"),
+                    }
                 }
-                assert_eq!(prompts.borrow().len(), 5);
+                assert_eq!(prompts.borrow().len(), prompted);
             })
             .await;
     }
@@ -5221,6 +5307,16 @@ mod tests {
                         let decision = mgr
                             .request(AccessKind::Edit(path.into()), tool_call(), None, None, None)
                             .await;
+                        // lumen-guard hard-denies protected paths (/etc writes,
+                        // hooks dir) before the policy/floor logic in every
+                        // mode — the floor's "must never silently allow"
+                        // invariant then holds by construction, without a prompt.
+                        if let Decision::PolicyDeny(reason) = &decision
+                            && reason.contains("lumen-guard")
+                        {
+                            assert_eq!(prompts.borrow().len(), 0, "{name} {path}");
+                            continue;
+                        }
                         assert_eq!(prompts.borrow().len(), expected_prompts, "{name} {path}");
                         if policy_deny {
                             assert!(matches!(decision, Decision::PolicyDeny(_)), "{name} {path}");
@@ -6059,10 +6155,6 @@ mod tests {
         assert!(!is_safe_command("cargo check"));
         assert!(!is_safe_command("cargo check --workspace"));
 
-        // cargo check
-        assert!(is_safe_command("cargo check"));
-        assert!(is_safe_command("cargo check --workspace"));
-
         // Commands with cd prefix should work
         assert!(is_safe_command("cd /some/path && ls"));
         assert!(is_safe_command("cd /some/path && git status"));
@@ -6112,19 +6204,11 @@ mod tests {
             default_always_allow_scope(&words("cargo check --workspace")),
             3
         );
-        assert_eq!(
-            default_always_allow_scope(&words("cargo check --workspace")),
-            2
-        );
         // Non-safe commands keep the two-words-plus-flags default.
         // `rg --pre` is not fully safe-listed, so do not narrow to bare `rg`.
         assert_eq!(
             default_always_allow_scope(&words("rg --pre cat pattern")),
             2
-        );
-        assert_eq!(
-            default_always_allow_scope(&words("cargo check --workspace")),
-            3
         );
         assert_eq!(default_always_allow_scope(&words("cargo test --lib")), 3);
         assert_eq!(default_always_allow_scope(&words("npm run build")), 2);
@@ -7847,7 +7931,6 @@ mod tests {
                 let d = mgr
                     .request(
                         AccessKind::Edit(outside.to_string_lossy().into_owned()),
-                        AccessKind::Edit("/etc/hosts".into()),
                         mk("tc-edit-out"),
                         None,
                         None,
@@ -7930,15 +8013,14 @@ mod tests {
                 assert!(
                     matches!(d, Decision::PolicyDeny(_) | Decision::Reject(_)),
                     "auto must deny rm -rf / (lumen-guard hard-denies it before                      the heuristic even runs), got {d:?}"
-                    matches!(d, Decision::Reject(_)),
-                    "heuristic auto must deny rm -rf /, got {d:?}"
                 );
                 let event = events.try_recv().expect("event must be emitted");
-                // Exec-risk floors skip auto classify entirely (do not defer to
-                // the classifier); prompt_trigger is the bash request floor.
+                // Lumen's guard hard-denies `rm -rf /` before the exec-risk
+                // floor logic ever runs, so the recorded reason is the guard's,
+                // not the floor's — and the classifier is skipped either way.
                 assert_eq!(
                     event.decision_reason.as_deref(),
-                    Some(reasons::BASH_REQUEST_FLOOR)
+                    Some(reasons::LUMEN_GUARD_DENY)
                 );
                 assert!(event.classifier_source.is_none());
                 assert!(event.classifier_latency_ms.is_none());
@@ -8844,9 +8926,12 @@ mod tests {
             .await;
     }
 
-    /// Approve-all + dangerous + classifier Block must still prompt (not Allow).
+    /// Approve-all + dangerous + classifier Block must auto-block (deny with
+    /// guidance), never silently Allow: the classifier's Block verdict outranks
+    /// the persisted always-approve. Within the denial budget the manager
+    /// denies; at the budget it escalates to prompting.
     #[tokio::test]
-    async fn auto_approve_all_bash_dangerous_still_prompts_on_classifier_block() {
+    async fn auto_approve_all_bash_dangerous_auto_blocks_on_classifier_block() {
         use crate::permission::auto_mode::LlmPermissionClassifier;
         let local = tokio::task::LocalSet::new();
         local
@@ -8885,13 +8970,13 @@ mod tests {
                 .await
                 .expect("must resolve, not hang");
                 assert!(
-                    matches!(d, Decision::Reject(_)),
-                    "approve-all under classifier Block must prompt, got {d:?}"
+                    matches!(d, Decision::PolicyDeny(_)),
+                    "approve-all under classifier Block must auto-block, got {d:?}"
                 );
                 assert_eq!(
                     prompts.borrow().len(),
-                    1,
-                    "dangerous cmd must prompt once, not silently Allow via approve-all"
+                    0,
+                    "dangerous cmd must be auto-blocked, not silently Allow via approve-all"
                 );
             })
             .await;

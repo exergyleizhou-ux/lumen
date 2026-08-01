@@ -166,6 +166,121 @@ pub fn diff_hunks_from_strings(old_text: &str, new_text: &str, start_line: usize
     build_diff_hunks(&[detail])
 }
 
+/// Stitch adjacent/overlapping hunks of the same file into one hunk when they
+/// describe one contiguous post-state region. Conservative: anything that
+/// cannot be proven contiguous (gaps, unpaired inserts, line-count-changing
+/// shapes) keeps the pair separate. Kept rows retain the `lo` of their own
+/// snapshot — the same convention the unmerged per-hunk display already uses
+/// for its old-file column.
+pub fn stitch_overlapping_hunks(hunks: Vec<DiffHunk>) -> Vec<DiffHunk> {
+    let mut out: Vec<DiffHunk> = Vec::with_capacity(hunks.len());
+    for hunk in hunks {
+        if let Some(last) = out.last_mut()
+            && let Some(stitched) = stitch_hunk_pair(last, &hunk)
+        {
+            *last = stitched;
+            continue;
+        }
+        out.push(hunk);
+    }
+    out
+}
+
+/// Post-state (`ln`) coverage of a hunk's rendered rows (Equal/Insert).
+fn render_range(hunk: &DiffHunk) -> Option<(usize, usize)> {
+    let mut range: Option<(usize, usize)> = None;
+    for line in hunk {
+        if line.tag == ChangeTag::Delete {
+            continue;
+        }
+        range = Some(match range {
+            None => (line.ln, line.ln),
+            Some((min, max)) => (min.min(line.ln), max.max(line.ln)),
+        });
+    }
+    range
+}
+
+/// Row index in `hunk` rendering post-state line `ln` (Equal or Insert).
+fn render_pos(hunk: &DiffHunk, ln: usize) -> Option<usize> {
+    hunk.iter()
+        .position(|l| l.tag != ChangeTag::Delete && l.ln == ln)
+}
+
+fn trimmed(text: &str) -> &str {
+    text.trim_end_matches(['\r', '\n'])
+}
+
+/// Fold `b` into `a` when both describe one contiguous post-state region;
+/// `None` keeps the pair as separate hunks.
+fn stitch_hunk_pair(a: &DiffHunk, b: &DiffHunk) -> Option<DiffHunk> {
+    let (a_min, a_max) = render_range(a)?;
+    let (b_min, _) = render_range(b)?;
+    if b_min < a_min || b_min > a_max + 1 {
+        return None;
+    }
+
+    let mut out = a.clone();
+    let mut max_ln = a_max;
+    let mut i = 0;
+    while i < b.len() {
+        let row = &b[i];
+        if row.ln > max_ln {
+            // Past the stitched coverage: `b` is the sole source for this
+            // tail, so splice its remaining rows in verbatim (rendered rows
+            // must stay contiguous).
+            for rest in &b[i..] {
+                if rest.tag != ChangeTag::Delete {
+                    if rest.ln != max_ln + 1 {
+                        return None;
+                    }
+                    max_ln = rest.ln;
+                }
+                out.push(rest.clone());
+            }
+            break;
+        }
+        match row.tag {
+            ChangeTag::Equal => {
+                let pos = render_pos(&out, row.ln)?;
+                if trimmed(&out[pos].text) != trimmed(&row.text) {
+                    return None;
+                }
+                i += 1;
+            }
+            ChangeTag::Delete => {
+                // Only single-line replacement pairs keep line counts (and
+                // therefore every later `ln`) truthful.
+                let next = b.get(i + 1)?;
+                if next.tag != ChangeTag::Insert || next.ln != row.ln {
+                    return None;
+                }
+                let pos = render_pos(&out, row.ln)?;
+                if trimmed(&out[pos].text) != trimmed(&row.text) {
+                    return None;
+                }
+                match out[pos].tag {
+                    // A context line the later call edited: show its -/+ pair.
+                    ChangeTag::Equal => {
+                        out[pos] = row.clone();
+                        out.insert(pos + 1, next.clone());
+                    }
+                    // Same line edited twice: keep the earlier delete (if
+                    // any), drop the intermediate text, keep the final insert.
+                    ChangeTag::Insert => {
+                        out[pos] = next.clone();
+                    }
+                    ChangeTag::Delete => unreachable!("render_pos skips deletes"),
+                }
+                i += 2;
+            }
+            // Unpaired insert inside the covered range: line-count growth.
+            ChangeTag::Insert => return None,
+        }
+    }
+    Some(out)
+}
+
 /// Extract diff hunks from an ACP ToolCall's raw_output or content.
 ///
 /// Tries three strategies in order:

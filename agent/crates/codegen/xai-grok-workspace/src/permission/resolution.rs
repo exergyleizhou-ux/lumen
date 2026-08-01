@@ -2899,6 +2899,11 @@ mod tests {
         let _home_guard = EnvVarGuard::set("HOME", home.path());
         let _grok_guard = EnvVarGuard::set("GROK_HOME", home.path());
         let _marker_guard = EnvVarGuard::unset("_GROK_CLAUDE_MARKER_OVERRIDE");
+        // This test seeds its own temp global `~/.claude` and asserts on it, so
+        // opt back into global-path loading (unit tests skip it by default to
+        // keep the developer's real settings out of the suite).
+        let _real_global_guard =
+            EnvVarGuard::set("LUMEN_TEST_REAL_GLOBAL_CLAUDE", std::path::Path::new("1"));
 
         // Global user-tier allow (must survive untrusted project).
         let global_claude = home.path().join(".claude");

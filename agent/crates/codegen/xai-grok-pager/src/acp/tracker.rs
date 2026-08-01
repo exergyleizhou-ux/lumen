@@ -11,11 +11,12 @@ use crate::scrollback::blocks::tool::search::{
     SearchFileMatch, SearchInputMeta, SearchLineMatch, SearchOutputMode, SearchToolCallBlock,
 };
 use crate::scrollback::blocks::tool::{
-    DiscoveredTool, EditToolCallBlock, ExecuteToolCallBlock, IntegrationSearchToolCallBlock,
-    LineRange, MemorySearchToolCallBlock, OtherToolCallBlock, ReadMediaKind, ReadToolCallBlock,
-    ToolCallBlock, UseToolCallBlock, WebFetchToolCallBlock, WebSearchToolCallBlock,
+    DiscoveredTool, EditHighlightPhase, EditToolCallBlock, ExecuteToolCallBlock,
+    IntegrationSearchToolCallBlock, LineRange, MemorySearchToolCallBlock, OtherToolCallBlock,
+    ReadMediaKind, ReadToolCallBlock, ToolCallBlock, UseToolCallBlock, WebFetchToolCallBlock,
+    WebSearchToolCallBlock,
 };
-use crate::scrollback::entry::EntryId;
+use crate::scrollback::entry::{EntryId, ScrollbackEntry};
 use crate::scrollback::state::ScrollbackState;
 use crate::scrollback::state::verb_group::verb_group_kind_changed;
 use agent_client_protocol as acp;
@@ -610,7 +611,139 @@ impl AcpUpdateTracker {
             self.pending_edit_hl.push(id);
         }
         scrollback.finish_running(id);
+        self.try_coalesce_edit(id, scrollback, is_replay);
         id
+    }
+    /// The Edit block of `entry` if it qualifies for coalescing with an
+    /// adjacent same-file Edit: completed successfully with hunks, a
+    /// trustworthy one-liner summary, and free of per-entry attachments a
+    /// merge would misplace.
+    fn coalescable_edit(entry: &ScrollbackEntry) -> Option<&EditToolCallBlock> {
+        if entry.is_running || entry.is_pending_user_input || entry.hook_data.is_some() {
+            return None;
+        }
+        let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &entry.block else {
+            return None;
+        };
+        (edit.error.is_none() && !edit.hunks.is_empty() && !edit.summary_untrusted).then_some(edit)
+    }
+    /// Whether the completed Edit entries `earlier` and `later` target the
+    /// same file and may merge into one block.
+    fn edits_can_merge(
+        &self,
+        scrollback: &ScrollbackState,
+        earlier: EntryId,
+        later: EntryId,
+    ) -> bool {
+        if scrollback.is_committed(earlier) || scrollback.is_committed(later) {
+            return false;
+        }
+        let (Some(a), Some(b)) = (
+            scrollback
+                .get_by_id(earlier)
+                .and_then(Self::coalescable_edit),
+            scrollback.get_by_id(later).and_then(Self::coalescable_edit),
+        ) else {
+            return false;
+        };
+        if a.prefix != b.prefix {
+            return false;
+        }
+        let cwd = self.session_cwd.as_deref();
+        let resolve = |p: &str| crate::render::tool_paths::resolve_tool_path_target(p, cwd);
+        match (resolve(&a.path), resolve(&b.path)) {
+            (Some(pa), Some(pb)) => pa == pb,
+            (None, None) => a.path == b.path,
+            _ => false,
+        }
+    }
+    /// Coalesce the just-completed Edit at `entry_id` with strictly adjacent
+    /// completed Edits of the same file, so back-to-back edits render as one
+    /// block with a summed diffstat. The earlier entry always survives.
+    ///
+    /// Checks the previous neighbor (sequential completions) and the next one
+    /// (parallel calls can complete out of push order, so the pair only
+    /// becomes mergeable when the earlier call lands). Loops so runs of 3+
+    /// collapse pairwise.
+    ///
+    /// Ingestion-time only: a later `collapsed_edit_blocks` flip never
+    /// merges or unmerges rows that already landed.
+    fn try_coalesce_edit(
+        &mut self,
+        entry_id: EntryId,
+        scrollback: &mut ScrollbackState,
+        is_replay: bool,
+    ) {
+        if !crate::appearance::cache::load_collapsed_edit_blocks() {
+            return;
+        }
+        if scrollback
+            .get_by_id(entry_id)
+            .and_then(Self::coalescable_edit)
+            .is_none()
+        {
+            return;
+        }
+        let mut survivor = entry_id;
+        loop {
+            let Some(idx) = scrollback.index_of_id(survivor) else {
+                return;
+            };
+            let prev_id = idx
+                .checked_sub(1)
+                .and_then(|i| scrollback.get(i))
+                .map(|e| e.id);
+            if let Some(prev_id) = prev_id
+                && self.edits_can_merge(scrollback, prev_id, survivor)
+            {
+                self.merge_edit_entries(prev_id, survivor, scrollback, is_replay);
+                survivor = prev_id;
+                continue;
+            }
+            let next_id = scrollback.get(idx + 1).map(|e| e.id);
+            if let Some(next_id) = next_id
+                && self.edits_can_merge(scrollback, survivor, next_id)
+            {
+                self.merge_edit_entries(survivor, next_id, scrollback, is_replay);
+                continue;
+            }
+            return;
+        }
+    }
+    /// Append `removed`'s hunks onto `survivor` (the earlier entry) —
+    /// stitching overlapping/adjacent ones into unified hunks — and drop
+    /// `removed` from the scrollback and the edit-HL queue.
+    fn merge_edit_entries(
+        &mut self,
+        survivor: EntryId,
+        removed: EntryId,
+        scrollback: &mut ScrollbackState,
+        is_replay: bool,
+    ) {
+        let (removed_hunks, removed_edit_count) =
+            match scrollback.get_by_id(removed).map(|e| &e.block) {
+                Some(RenderBlock::ToolCall(ToolCallBlock::Edit(edit))) => {
+                    (edit.hunks.clone(), edit.edit_count)
+                }
+                _ => return,
+            };
+        if let Some(entry) = scrollback.get_by_id_mut(survivor) {
+            if let RenderBlock::ToolCall(ToolCallBlock::Edit(edit)) = &mut entry.block {
+                let merged_edit_count = edit.edit_count + removed_edit_count;
+                let mut hunks = std::mem::take(&mut edit.hunks);
+                hunks.extend(removed_hunks);
+                edit.set_hunks(crate::diff::stitch_overlapping_hunks(hunks));
+                edit.edit_count = merged_edit_count;
+                edit.highlight = EditHighlightPhase::HunkOnly;
+            }
+            entry.invalidate_cache();
+        }
+        scrollback.mark_structurally_dirty(survivor);
+        scrollback.remove_entry(removed);
+        self.pending_edit_hl.retain(|id| *id != removed);
+        if !is_replay && !self.pending_edit_hl.contains(&survivor) {
+            self.pending_edit_hl.push(survivor);
+        }
     }
     /// Process a single SessionUpdate, mutating the scrollback.
     ///
@@ -1092,6 +1225,7 @@ impl AcpUpdateTracker {
                     self.queue_edit_hl_if_needed(entry_id, &entry.block, is_replay);
                 }
                 scrollback.finish_running(entry_id);
+                self.try_coalesce_edit(entry_id, scrollback, is_replay);
             } else {
                 self.finish_completed_tool(block, scrollback, is_replay);
             }

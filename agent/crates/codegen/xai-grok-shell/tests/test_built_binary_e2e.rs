@@ -22,12 +22,19 @@
 //! ```
 
 use std::future::Future;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command};
 use std::time::Duration;
 
 use base64::Engine;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use xai_grok_test_support::acp_client::PermissionResponse;
+use xai_grok_test_support::env::test_env_cmd_tokio;
 use xai_grok_test_support::*;
+
+/// Model id the mock server serves for chat-completions fixtures.
+const CHAT_COMPLETIONS_MODEL: &str = "chat-completions-model";
 
 /// Run an async test body inside a `LocalSet` (required by ACP's `!Send` futures).
 /// Eliminates the `let local = LocalSet::new(); local.run_until(async { ... }).await`

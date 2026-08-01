@@ -635,7 +635,7 @@ fn over_budget_recap_serializes_to_well_formed_messages_request() {
 
 /// Recap wire shape: main-turn tools + `prompt_cache_key` = session id, so the
 /// request rides the parent turn's prefix cache instead of cold-prefilling.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn recap_request_rides_parent_prompt_cache() {
     use xai_grok_test_support::MockInferenceServer;
 
@@ -705,7 +705,7 @@ async fn recap_request_rides_parent_prompt_cache() {
 
 /// Hosted tools serialize into the token prefix on the Responses path, so a recap in a backend-search session must send the main turn's hosted
 /// tools or its prefix diverges and cold-misses the cache.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn recap_request_sends_hosted_tools_under_backend_search() {
     use xai_grok_sampling_types::HostedTool;
     use xai_grok_test_support::MockInferenceServer;
@@ -785,7 +785,7 @@ async fn recap_request_sends_hosted_tools_under_backend_search() {
 
 /// A recap must serialize the main turn's *effective* hosted tools, so an active per-turn cutoff
 /// reaches the recap's `x_search` entry rather than an unbounded tool.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn recap_hosted_tools_reflect_the_active_per_turn_override() {
     use xai_grok_sampling_types::{HostedTool, SearchDateBound, ToolOverrides, XSearchOptions};
     use xai_grok_test_support::MockInferenceServer;

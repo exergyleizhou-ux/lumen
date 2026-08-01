@@ -579,6 +579,9 @@ impl SessionActor {
         if let Some(running_task) = running_task {
             running_task.abort();
         }
+        if abort_expert {
+            let _ = self.restore_disabled_expert().await;
+        }
         if let Some(is_turn_active) = &self.tool_context.is_turn_active {
             is_turn_active.store(false, std::sync::atomic::Ordering::Relaxed);
         }

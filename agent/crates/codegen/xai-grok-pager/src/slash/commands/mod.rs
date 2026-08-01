@@ -35,6 +35,7 @@ pub mod home;
 pub mod imagine;
 pub mod imagine_video;
 pub mod import_claude;
+pub mod jump;
 pub mod login;
 pub mod logout;
 pub mod loop_cmd;
@@ -62,6 +63,7 @@ pub mod share;
 pub mod status;
 pub mod tasks;
 pub mod theme;
+pub mod timeline;
 pub mod timestamps;
 pub mod toggle_mouse_reporting;
 pub mod transcript;
@@ -134,10 +136,12 @@ pub fn builtin_commands() -> Vec<Arc<dyn SlashCommand>> {
         Arc::new(imagine::ImagineCommand),
         Arc::new(imagine_video::ImagineVideoCommand),
         Arc::new(timestamps::TimestampsCommand),
+        Arc::new(timeline::TimelineCommand),
         Arc::new(toggle_mouse_reporting::ToggleMouseReportingCommand),
         Arc::new(settings_cmd::SettingsCommand),
         Arc::new(privacy::PrivacyCommand),
         Arc::new(rewind::RewindCommand),
+        Arc::new(jump::JumpCommand),
         Arc::new(login::LoginCommand),
         Arc::new(logout::LogoutCommand),
         Arc::new(import_claude::ImportClaudeCommand),
@@ -282,6 +286,7 @@ mod tests {
             "full",
             "fullscreen",
             "gboom",
+            "goal",
             "guides",
             "help",
             "history",
@@ -312,6 +317,7 @@ mod tests {
             "preferences",
             "prefs",
             "privacy",
+            "probe",
             "queue",
             "quit",
             "recap",
@@ -327,6 +333,7 @@ mod tests {
             "share",
             "show-plan",
             "skills",
+            "status",
             "summarize",
             "tasks",
             "terminal-check",

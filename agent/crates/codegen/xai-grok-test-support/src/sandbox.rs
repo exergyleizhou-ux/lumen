@@ -57,6 +57,13 @@ impl TestSandbox {
         &self.workspace
     }
 
+    /// Alias for [`TestSandbox::workspace`], kept for tests that predate the
+    /// sandbox API and called `git_workdir().path()` on the old `TempDir`
+    /// return type. New code should use `workspace()`.
+    pub fn path(&self) -> &Path {
+        &self.workspace
+    }
+
     /// Isolated `TMPDIR` / `TMP` / `TEMP`.
     pub fn temp_dir(&self) -> &Path {
         &self.temp

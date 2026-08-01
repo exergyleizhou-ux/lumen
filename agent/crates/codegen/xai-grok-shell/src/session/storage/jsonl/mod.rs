@@ -1836,8 +1836,15 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
             )?;
+        let expert_mode_state = self
+            .read_optional_json_sync::<crate::session::expert::ExpertModeState>(
+                &self.expert_mode_state_file(info),
+            )?;
         let workflow_runs = self.load_workflow_runs_sync(info)?;
-        let rewind_points = self.read_jsonl::<RewindPoint>(self.rewind_points_file(info))?;
+        // Lenient: rewind points are appended non-atomically; a torn trailing
+        // line (crash/ENOSPC) must be skipped, not brick session resume. The
+        // strict reader is reserved for the merge/truncate rewrite paths.
+        let rewind_points = self.read_jsonl_lenient::<RewindPoint>(self.rewind_points_file(info))?;
         let result = PersistedData {
             summary,
             chat_history,
@@ -1848,6 +1855,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             signals,
             announcement_state,
             goal_mode_state,
+            expert_mode_state,
             workflow_runs,
         };
         tracing::info!(
@@ -1890,6 +1898,10 @@ impl StorageAdapter for JsonlStorageAdapter {
             .read_optional_json_sync::<crate::session::goal_tracker::GoalOrchestration>(
                 &self.goal_mode_state_file(info),
             )?;
+        let expert_mode_state = self
+            .read_optional_json_sync::<crate::session::expert::ExpertModeState>(
+                &self.expert_mode_state_file(info),
+            )?;
         let workflow_runs = self.load_workflow_runs_sync(info)?;
         let result = super::PersistedDataLight {
             summary,
@@ -1899,6 +1911,7 @@ impl StorageAdapter for JsonlStorageAdapter {
             signals,
             announcement_state,
             goal_mode_state,
+            expert_mode_state,
             workflow_runs,
         };
         tracing::info!(

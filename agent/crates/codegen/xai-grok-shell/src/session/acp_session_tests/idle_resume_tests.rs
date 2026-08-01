@@ -272,9 +272,6 @@ async fn test_e2e_idle_resume_refreshes_model_metadata() {
                 goal_update_rx: std::cell::RefCell::new(Some(
                     tokio::sync::mpsc::unbounded_channel().1,
                 )),
-                goal_update_rx: std::cell::RefCell::new(Some(
-                    tokio::sync::mpsc::unbounded_channel().1,
-                )),
                 goal_update_tx: tokio::sync::mpsc::unbounded_channel().0,
                 workflow_manager: crate::session::workflow::manager::WorkflowManager::test_bundle()
                     .0,

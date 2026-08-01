@@ -1122,9 +1122,11 @@ async fn run_agent_command(
     }
     apply_agent_endpoint_args(&agent_args, &mut agent_config);
     agent_config.remote_settings = remote_settings.clone();
+    let launch_cwd = std::env::current_dir().ok();
     agent_config.resolve_runtime_fields(&xai_grok_shell::agent::config::RuntimeResolutionContext {
         raw_config: &raw_config,
         remote_settings: remote_settings.as_ref(),
+        cwd: launch_cwd.as_deref(),
         is_headless: !is_leader,
         cli_subagents: None,
         cli_web_search_model: None,

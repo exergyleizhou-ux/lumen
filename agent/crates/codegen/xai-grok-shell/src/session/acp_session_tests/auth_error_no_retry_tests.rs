@@ -243,22 +243,10 @@ async fn sampler_401_with_api_key_auth_skips_refresh_and_surfaces_error() {
         .await;
 }
 
-/// Per-turn pre-flight refresh dispatches on `AuthManager`'s
-/// `TokenType`, not `creds.auth_type`. Pins that a stale
-/// When `creds.auth_type` is `ApiKey` (BYOK model), the pre-flight
-/// refresh must NOT fire — the model's own API key must not be
-/// overwritten by the session JWT.
-#[tokio::test(flavor = "multi_thread")]
-/// Per-turn pre-flight refresh dispatches on `AuthManager`'s
-/// `TokenType`, not `creds.auth_type`. Pins that a stale
-/// When `creds.auth_type` is `ApiKey` (BYOK model), the pre-flight
-/// refresh must NOT fire — the model's own API key must not be
-/// overwritten by the session JWT.
-#[tokio::test(flavor = "current_thread")]
 /// Per-turn pre-flight refresh must not fire when `creds.auth_type` is
 /// `ApiKey` (a BYOK model): the model's own API key must not be overwritten
 /// by the session JWT.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_refresh_skips_api_key_auth_type() {
     let local = tokio::task::LocalSet::new();
@@ -297,7 +285,7 @@ async fn pre_flight_refresh_skips_api_key_auth_type() {
 
 /// Hard-expired session token: pre-flight must call the refresher and must
 /// not leave credentials stuck while pretending the JWT/config path applies.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_refreshes_hard_expired_session_token() {
     let local = tokio::task::LocalSet::new();
@@ -338,7 +326,7 @@ async fn pre_flight_refreshes_hard_expired_session_token() {
 
 /// Hard-expired + failed refresh: do not fall through to JWT/config.toml;
 /// strip the chat-state seed so default headers cannot carry a dead AT.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_hard_expired_refresh_failure_skips_jwt_fallthrough() {
     let local = tokio::task::LocalSet::new();
@@ -392,7 +380,7 @@ async fn pre_flight_hard_expired_refresh_failure_skips_jwt_fallthrough() {
 
 /// Soft-expired (early-invalidation buffer) + transient fail: retain the seed
 /// so a still-accepted wire AT can continue until 401 recovery.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 #[serial_test::serial(attribution_emit_count)]
 async fn pre_flight_soft_expired_transient_fail_retains_seed() {
     let local = tokio::task::LocalSet::new();
@@ -984,7 +972,7 @@ async fn session_born_on_api_key_recovers_after_oidc_login_without_restart() {
 
 /// The cache-hit branch is what lets a later config parse failure (`Unknown`)
 /// fall back to the last-known-good status.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn model_auth_memo_serves_cached_status_and_keys_on_model() {
     use crate::agent::auth_method::ModelByok;
     use crate::agent::config::ModelAuthFacts;
@@ -1176,7 +1164,7 @@ async fn seed_provider_memo(actor: &Arc<SessionActor>, provider: crate::auth::Au
 /// must drop the minted provider token from the chat credentials, so it can
 /// never ride a later request to `api.x.ai`. Mirrors the forward direction in
 /// `set_session_model_invalidates_byok_memo_for_same_model_id`.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn switch_to_first_party_model_drops_minted_provider_token() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1228,6 +1216,7 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
                 compaction_at_tokens: None,
                 doom_loop_recovery: None,
                 header_injector: None,
+                request_observer: None,
             };
             let _ = actor
                 .handle_set_session_model(cfg, false, false, true, 85)
@@ -1245,7 +1234,7 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
 }
 
 /// Arm 4c: a 401 on a provider-backed model re-mints once and resubmits.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_on_provider_model_remints_and_resubmits() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1280,7 +1269,7 @@ async fn sampler_401_on_provider_model_remints_and_resubmits() {
 }
 
 /// Arm 4c also fires for a bare 401 that did not classify as `Auth`-kind.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_non_auth_kind_401_on_provider_model_still_recovers() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1313,7 +1302,7 @@ async fn sampler_non_auth_kind_401_on_provider_model_still_recovers() {
 
 /// A 401 on a request that went out with no key mints instead of
 /// recovering.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_with_no_key_on_provider_model_mints_and_resubmits() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1347,7 +1336,7 @@ async fn sampler_401_with_no_key_on_provider_model_mints_and_resubmits() {
 /// refresher (4a/4b vs 4c exclusivity). The actor uses a session-based method,
 /// so the gate would be active for a non-BYOK model; the BYOK memo is what
 /// shadows it, which is the invariant under test.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_on_provider_model_never_refreshes_session() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1394,7 +1383,7 @@ async fn sampler_401_on_provider_model_never_refreshes_session() {
 /// provider token into chat-state, and the session refresher never fires. The
 /// actor uses a session-based method, so the gate would be active for a
 /// non-BYOK model; the BYOK memo is what keeps the refresher silent.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn pre_turn_on_provider_model_never_installs_session_token() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1439,7 +1428,7 @@ async fn pre_turn_on_provider_model_never_installs_session_token() {
 
 /// A token rejected moments after mint surfaces the 401 (fresh-mint
 /// guard).
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn sampler_401_on_fresh_provider_token_surfaces_error() {
     let local = tokio::task::LocalSet::new();
     local

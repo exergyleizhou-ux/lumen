@@ -2751,6 +2751,7 @@ async fn cached_token_fallthrough_falls_to_grok_com_without_credentials() {
     // failed on real workstations and passed on bare CI.
     let _kimi = EnvGuard::unset("KIMI_API_KEY");
     let _kimi_code = EnvGuard::unset("KIMI_CODE_API_KEY");
+    let _minimax = EnvGuard::unset("MINIMAX_API_KEY");
     let _grok_code = EnvGuard::unset("GROK_CODE_XAI_API_KEY");
     let agent = build_minimal_agent_for_tests();
     assert_eq!(
@@ -4153,13 +4154,12 @@ async fn post_auth_settings_xai_upgrades_writeback_emits_and_opens_gate() {
     use crate::auth::{GrokAuth, XAI_OAUTH2_ISSUER};
     let _restore = RestoreOtelGate;
     let _storage_env = crate::env::EnvVarGuard::remove("GROK_STORAGE_MODE");
+    // Build the agent against an empty mock so the startup prefetch 404s and
+    // the agent boots Local (the post-auth fetch below is what delivers the
+    // settings); only then arm `/v1/settings`.
     let server = xai_grok_test_support::MockInferenceServer::start()
         .await
         .unwrap();
-    server.set_settings(serde_json::json!({
-        "writeback_enabled": true,
-        "allow_access": true,
-    }));
     let xai_auth = GrokAuth {
         oidc_issuer: Some(XAI_OAUTH2_ISSUER.to_string()),
         ..GrokAuth::test_default()
@@ -4167,6 +4167,10 @@ async fn post_auth_settings_xai_upgrades_writeback_emits_and_opens_gate() {
     assert!(xai_auth.is_xai_auth(), "precondition: first-party xAI auth");
     let (agent, mut rx) =
         build_agent_with_auth_and_proxy(xai_auth, server.url(), AgentMode::Leader);
+    server.set_settings(serde_json::json!({
+        "writeback_enabled": true,
+        "allow_access": true,
+    }));
     assert_eq!(
         agent.storage_mode(),
         StorageMode::Local,
@@ -4345,16 +4349,18 @@ async fn settings_not_cached_when_identity_logs_out_during_fetch() {
     use crate::agent::config::AgentMode;
     use crate::auth::{GrokAuth, XAI_OAUTH2_ISSUER};
     let _restore = RestoreOtelGate;
+    // Build against an empty mock so the startup prefetch 404s (nothing is
+    // cached before the refresh below); arm `/v1/settings` after construction.
     let server = xai_grok_test_support::MockInferenceServer::start()
         .await
         .unwrap();
-    server.set_settings(serde_json::json!({ "allow_access": true }));
     let xai_auth = GrokAuth {
         oidc_issuer: Some(XAI_OAUTH2_ISSUER.to_string()),
         ..GrokAuth::test_default()
     };
     let (agent, _rx) =
         build_agent_with_auth_and_proxy(xai_auth.clone(), server.url(), AgentMode::Leader);
+    server.set_settings(serde_json::json!({ "allow_access": true }));
     agent.auth_manager.clear_in_memory();
     agent.refresh_remote_settings(&xai_auth).await;
     assert!(

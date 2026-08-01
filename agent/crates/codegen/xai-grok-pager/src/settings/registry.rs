@@ -590,6 +590,9 @@ pub fn current_value_for(
         "hunk_tracker_mode" => Some(SettingValue::Enum(canonical_hunk_tracker_mode(
             ui.hunk_tracker_mode.as_deref(),
         ))),
+        "screen_mode" => Some(SettingValue::Enum(canonical_screen_mode(
+            ui.screen_mode.as_deref(),
+        ))),
         // SHELL — whether the Ctrl+Space / F8 chord is active; None → true.
         "voice_keybind_enabled" => {
             Some(SettingValue::Bool(ui.voice_keybind_enabled.unwrap_or(true)))
@@ -1054,6 +1057,17 @@ mod tests {
                         *default,
                         canonical_hunk_tracker_mode(ui.hunk_tracker_mode.as_deref()),
                         "hunk_tracker_mode default drifts from UiConfig::default()",
+                    );
+                }
+                ("screen_mode", SettingKind::Enum { default, .. }) => {
+                    assert_eq!(
+                        ui.screen_mode, None,
+                        "test assumes UiConfig::default().screen_mode is None",
+                    );
+                    assert_eq!(
+                        *default,
+                        canonical_screen_mode(ui.screen_mode.as_deref()),
+                        "screen_mode default drifts from UiConfig::default()",
                     );
                 }
                 // render_mermaid: Option<String>; None → "auto".

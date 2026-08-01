@@ -63,11 +63,15 @@ fn ensure_remote_settings_side_effects(cfg: &mut AgentConfig, sync_managed: bool
     // thread the result into `cfg.remote_settings` skip this entirely.
     if cfg.remote_settings.is_none() {
         let handle = if sync_managed {
-            crate::agent::models::start_early_prefetch(Some(cfg.grok_com_config.clone()))
+            crate::agent::models::start_early_prefetch_with_endpoints(
+                Some(cfg.grok_com_config.clone()),
+                cfg.endpoints.clone(),
+            )
         } else {
-            crate::agent::models::start_early_prefetch_settings_only(Some(
-                cfg.grok_com_config.clone(),
-            ))
+            crate::agent::models::start_early_prefetch_settings_only_with_endpoints(
+                Some(cfg.grok_com_config.clone()),
+                cfg.endpoints.clone(),
+            )
         };
         if let Some(handle) = handle {
             match handle.join() {

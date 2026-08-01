@@ -249,29 +249,33 @@ pub(crate) fn resolve_voice_mode_live(remote: Option<bool>, is_api_key: bool) ->
 #[cfg(test)]
 mod voice_gate_tests {
     use super::resolve_voice_mode_enabled;
+    use xai_grok_test_support::EnvGuard;
     #[test]
     fn voice_defaults_on_when_env_and_remote_absent() {
-        assert!(resolve_voice_mode_enabled(None, None));
+        assert!(resolve_voice_mode_enabled(None, None, None, false));
     }
     #[test]
     fn voice_remote_false_is_kill_switch() {
-        assert!(!resolve_voice_mode_enabled(None, Some(false)));
+        assert!(!resolve_voice_mode_enabled(None, None, Some(false), false));
     }
     #[test]
     fn voice_remote_true_enables() {
-        assert!(resolve_voice_mode_enabled(None, Some(true)));
+        assert!(resolve_voice_mode_enabled(None, None, Some(true), false));
     }
     #[test]
     fn voice_env_overrides_remote_kill_switch() {
-        assert!(resolve_voice_mode_enabled(Some(true), Some(false)));
+        let _guard = EnvGuard::set("GROK_VOICE_MODE", "1");
+        assert!(resolve_voice_mode_enabled(None, None, Some(false), false));
     }
     #[test]
     fn voice_env_force_off_overrides_remote_true() {
-        assert!(!resolve_voice_mode_enabled(Some(false), Some(true)));
+        let _guard = EnvGuard::set("GROK_VOICE_MODE", "0");
+        assert!(!resolve_voice_mode_enabled(None, None, Some(true), false));
     }
     #[test]
     fn voice_env_force_off_overrides_default_on() {
-        assert!(!resolve_voice_mode_enabled(Some(false), None));
+        let _guard = EnvGuard::set("GROK_VOICE_MODE", "0");
+        assert!(!resolve_voice_mode_enabled(None, None, None, false));
     }
 }
 /// Sticky banner shown while mouse reporting is off, telling the user how to

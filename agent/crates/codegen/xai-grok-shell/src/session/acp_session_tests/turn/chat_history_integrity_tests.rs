@@ -95,58 +95,70 @@ fn tool_results_by_call_id(conv: &[ConversationItem]) -> HashMap<String, Vec<Str
 /// Pre-fix this failed: the nudge was pushed after the assistant `tool_use`
 /// was committed and before `execute_tool_calls`, so integrity repair wrote
 /// a cancel result and the real result landed beside it under the same id.
-#[tokio::test(flavor = "current_thread")]
-async fn mid_turn_user_injection_must_not_duplicate_tool_results_for_one_tool_use_id() {
-    let local = tokio::task::LocalSet::new();
-    local
-        .run_until(async {
-            let server = MockInferenceServer::start().await.expect("mock inference server");
-            for i in 1..=IDENTICAL_CALLS_TO_TRIP_NUDGE {
-                server.enqueue_response(
-                    "/v1/responses",
-                    tool_call_sse(&format!("stat-call-{i}")),
-                );
-            }
-            server.enqueue_response(
-                "/v1/responses",
-                ScriptedResponse::sse(responses_api_script_exact("done", "test")),
-            );
+///
+/// Runs on a large-stack thread: the full turn's future chain plus its
+/// in-turn config parse overflows the 2MiB harness thread.
+#[test]
+fn mid_turn_user_injection_must_not_duplicate_tool_results_for_one_tool_use_id() {
+    std::thread::Builder::new()
+        .name("mid-turn-integrity".into())
+        .stack_size(128 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("test runtime");
+            rt.block_on(async {
+                let local = tokio::task::LocalSet::new();
+                local
+                    .run_until(async {
+                        let server = MockInferenceServer::start().await.expect("mock inference server");
+                        for i in 1..=IDENTICAL_CALLS_TO_TRIP_NUDGE {
+                            server.enqueue_response(
+                                "/v1/responses",
+                                tool_call_sse(&format!("stat-call-{i}")),
+                            );
+                        }
+                        server.enqueue_response(
+                            "/v1/responses",
+                            ScriptedResponse::sse(responses_api_script_exact("done", "test")),
+                        );
 
-            let sampling_cfg = xai_grok_sampler::SamplerConfig {
-                api_key: Some("test-key".to_string()),
-                base_url: server.url(),
-                model: "test".to_string(),
-                api_backend: xai_grok_sampler::ApiBackend::Responses,
-                context_window: 256_000,
-                max_retries: Some(0),
-                idle_timeout_secs: Some(30),
-                ..Default::default()
-            };
+                        let sampling_cfg = xai_grok_sampler::SamplerConfig {
+                            api_key: Some("test-key".to_string()),
+                            base_url: server.url(),
+                            model: "test".to_string(),
+                            api_backend: xai_grok_sampler::ApiBackend::Responses,
+                            context_window: 256_000,
+                            max_retries: Some(0),
+                            idle_timeout_secs: Some(30),
+                            ..Default::default()
+                        };
 
-            let (sampler_event_tx, sampler_event_rx) =
-                tokio::sync::mpsc::unbounded_channel::<xai_grok_sampler::SamplingEvent>();
-            let sampler_handle = xai_grok_sampler::SamplerActor::spawn(
-                sampling_cfg,
-                xai_grok_sampler::RetryPolicy {
-                    max_retries: 0,
-                    rate_limit_retry_threshold: 0,
-                    ..Default::default()
-                },
-                sampler_event_tx,
-            );
+                        let (sampler_event_tx, sampler_event_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<xai_grok_sampler::SamplingEvent>();
+                        let sampler_handle = xai_grok_sampler::SamplerActor::spawn(
+                            sampling_cfg,
+                            xai_grok_sampler::RetryPolicy {
+                                max_retries: 0,
+                                rate_limit_retry_threshold: 0,
+                                ..Default::default()
+                            },
+                            sampler_event_tx,
+                        );
 
-            let (gateway_tx, gateway_rx) =
-                tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-            drain_gateway(gateway_rx);
-            let (persistence_tx, persistence_rx) =
-                tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
-            drain_persistence(persistence_rx);
+                        let (gateway_tx, gateway_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+                        drain_gateway(gateway_rx);
+                        let (persistence_tx, persistence_rx) =
+                            tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+                        drain_persistence(persistence_rx);
 
-            let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
-            actor.sampler_handle = sampler_handle;
-            *actor.agent.borrow_mut() = test_grok_build_agent_with_todo().await;
+                        let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
+                        actor.sampler_handle = sampler_handle;
+                        *actor.agent.borrow_mut() = test_grok_build_agent_with_todo().await;
 
-            let mut cfg = actor
+                        let mut cfg = actor
                 .chat_state_handle
                 .get_sampling_config()
                 .await
@@ -247,6 +259,11 @@ async fn mid_turn_user_injection_must_not_duplicate_tool_results_for_one_tool_us
                  run; deleting the nudge is not a valid fix for chat-history corruption. \
                  conversation={conv:#?}"
             );
+                    })
+                    .await;
+            });
         })
-        .await;
+        .expect("spawn big-stack test thread")
+        .join()
+        .expect("test body panicked");
 }

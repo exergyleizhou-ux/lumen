@@ -3,10 +3,6 @@
   "web_search": "deepseek-v4-pro",
   "image_description": "deepseek-v4-flash",
   "session_summary": "deepseek-v4-flash",
-  "default": "grok-build",
-  "web_search": "grok-4.20-multi-agent",
-  "image_description": "grok-build",
-  "session_summary": "grok-build",
   "models": [
     {
       "id": "deepseek-v4-pro",
@@ -265,9 +261,6 @@
       "model": "grok-4.5",
       "name": "Grok 4.5",
       "description": "xAI Grok 4.5 — bounded consultant and multimodal frontier model; set XAI_API_KEY, GROK_CODE_XAI_API_KEY, or GROK_API_KEY",
-      "model": "grok-build",
-      "name": "Grok Build",
-      "description": "Best for advanced coding tasks",
       "context_window": 500000,
       "api_backend": "responses",
       "supported_in_api": true,
@@ -614,7 +607,6 @@
       "base_url": "http://127.0.0.1:8000/v1",
       "env_key": "LOCAL_API_KEY",
       "byok": true
-      "supported_in_api": false
     }
   ]
 }

@@ -1810,8 +1810,13 @@ pub fn extra_raw_tools(hosted_tools: &[HostedTool]) -> Vec<serde_json::Value> {
             // WebSearch is handled natively via rs::Tool::WebSearch in
             // build_responses_tools() — no raw JSON injection needed.
             HostedTool::WebSearch { .. } => {}
-            HostedTool::XSearch { .. } => {
-                raw.push(serde_json::json!({"type": "x_search"}));
+            HostedTool::XSearch { options } => {
+                // Serialize the options (date bounds etc.) — a bare
+                // {"type":"x_search"} would silently drop per-turn cutoffs.
+                raw.push(match options {
+                    Some(o) => o.to_tool_entry(),
+                    None => XSearchOptions::default().to_tool_entry(),
+                });
             }
         }
     }

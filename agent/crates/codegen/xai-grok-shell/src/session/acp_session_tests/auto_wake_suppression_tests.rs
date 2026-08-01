@@ -115,6 +115,7 @@ fn pending_notification_cap_keeps_newest_entries() {
         notifications_suppressed: true,
         rewindable: false,
         nudges_used_this_session: 0,
+        expert: crate::session::expert::ExpertModeState::default(),
     };
     for index in 0..(MAX_PENDING_NOTIFICATIONS + 3) {
         SessionActor::push_pending_notification(
@@ -130,7 +131,7 @@ fn pending_notification_cap_keeps_newest_entries() {
         newest
     );
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn drain_batches_monitor_notifications_into_formatted_block() {
     let local = tokio::task::LocalSet::new();
     local
@@ -207,7 +208,7 @@ async fn drain_batches_monitor_notifications_into_formatted_block() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn cancel_barrier_rejects_task_completion_wake_without_reporting_it() {
     let local = tokio::task::LocalSet::new();
     local
@@ -270,12 +271,14 @@ async fn cancel_barrier_rejects_task_completion_wake_without_reporting_it() {
             ));
             drop(state);
             assert!(reservations.contains("bg-suppressed"));
-            let res = resources.lock().await;
-            assert!(
-                res.get::<xai_grok_tools::types::resources::State<
+            let mut res = resources.lock().await;
+            let was_already_reported = res
+                .get_mut::<xai_grok_tools::types::resources::State<
                     xai_grok_tools::reminders::task_completion::ReportedTaskCompletions,
                 >>()
-                .is_none(),
+                .is_some_and(|s| !s.mark_reported("bg-suppressed"));
+            assert!(
+                !was_already_reported,
                 "declined admission must not report before user re-engagement"
             );
             drop(res);
@@ -292,7 +295,7 @@ async fn cancel_barrier_rejects_task_completion_wake_without_reporting_it() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
     let local = tokio::task::LocalSet::new();
     local
@@ -328,7 +331,7 @@ async fn closed_admission_ack_stores_fallback_before_prompt_rejection() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
     let local = tokio::task::LocalSet::new();
     local
@@ -360,7 +363,7 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn task_completion_wake_is_admitted_without_cancel_barrier() {
     let local = tokio::task::LocalSet::new();
     local
@@ -428,14 +431,19 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
                 .clone()
                 .shared_resources()
                 .await;
+            // Read-only: must NOT mutate the reported set here. A mutating
+            // check would satisfy the poll below before the synthetic turn
+            // starts, aborting it before `handle_prompt`'s entry marks the
+            // completion reported and releases the reservation.
+            let reported_after_queue = resources
+                .lock()
+                .await
+                .get::<xai_grok_tools::types::resources::State<
+                    xai_grok_tools::reminders::task_completion::ReportedTaskCompletions,
+                >>()
+                .is_some_and(|s| s.contains("bg-normal"));
             assert!(
-                resources
-                    .lock()
-                    .await
-                    .get::<xai_grok_tools::types::resources::State<
-                        xai_grok_tools::reminders::task_completion::ReportedTaskCompletions,
-                    >>()
-                    .is_none(),
+                !reported_after_queue,
                 "queue acceptance alone must not mark the completion reported"
             );
             let actor_for_turn = actor.clone();
@@ -484,7 +492,7 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn genuine_user_start_consumes_deferred_completions_without_notification_turn() {
     let local = tokio::task::LocalSet::new();
     local
@@ -615,7 +623,7 @@ async fn genuine_user_start_consumes_deferred_completions_without_notification_t
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn accepted_reservation_survives_user_start() {
     let local = tokio::task::LocalSet::new();
     local
@@ -677,7 +685,7 @@ async fn accepted_reservation_survives_user_start() {
         })
         .await;
 }
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn same_id_bash_completion_does_not_suppress_monitor_event() {
     let local = tokio::task::LocalSet::new();
     local
@@ -1317,16 +1325,17 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
 }
 /// Helper: returns `true` iff `task_id` was already marked reported in the
 /// tool layer's `ReportedTaskCompletions` (so the per-tool-call
-/// `TaskCompletionReminder` won't resurface it). Mirrors the resource access
-/// in `SessionActor::mark_completions_reported`.
+/// `TaskCompletionReminder` won't resurface it). READ-ONLY: must not mutate
+/// the set, or a polling caller would satisfy its own wait (the id it just
+/// inserted reads as "already reported" on the next iteration).
 async fn already_reported(actor: &SessionActor, task_id: &str) -> bool {
     use xai_grok_tools::reminders::task_completion::ReportedTaskCompletions;
     use xai_grok_tools::types::resources::State;
     let bridge = actor.agent.borrow().tool_bridge().clone();
     let resources = bridge.shared_resources().await;
     let mut res = resources.lock().await;
-    let reported = res.get_or_default::<State<ReportedTaskCompletions>>();
-    !reported.mark_reported(task_id)
+    res.get::<State<ReportedTaskCompletions>>()
+        .is_some_and(|reported| reported.contains(task_id))
 }
 /// Pure decision: a goal-turn-origin task is dropped even when the blanket
 /// goal Active/Complete gate is OFF (status Blocked / paused / None) — the
@@ -1502,7 +1511,7 @@ async fn reparented_record_is_noop_without_goal_harness() {
 /// completion is reported twice — once as the auto-wake "Background subagent
 /// … completed" prompt and again as the "While you were idle, N background
 /// subagent(s) completed" reminder.
-#[tokio::test(flavor = "current_thread")]
+#[tokio::test(flavor = "multi_thread")]
 async fn between_turn_drain_suppresses_reserved_subagents() {
     use xai_grok_tools::implementations::grok_build::task::types::{
         SubagentCompletionSummary, SubagentEvent,
