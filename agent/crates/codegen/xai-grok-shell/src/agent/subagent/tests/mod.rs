@@ -2,7 +2,8 @@
 use super::*;
 use super::handle_request::{
     capability_ceiling_at_depth, canonical_total_tokens, mcp_inheritance_allowed_at_depth,
-    record_subagent_usage, subagent_yolo_allowed, usage_is_incomplete,
+    record_subagent_usage, render_task_tree_working_memory, subagent_yolo_allowed,
+    usage_is_incomplete,
 };
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, test_gateway_with_receiver,
@@ -58,6 +59,39 @@ fn third_generation_child_is_forced_read_only() {
 #[test]
 fn child_sessions_never_inherit_yolo() {
     assert!(!subagent_yolo_allowed());
+}
+
+#[test]
+fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
+    use xai_grok_memory::{WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryState};
+
+    let temp = tempfile::tempdir().unwrap();
+    let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+    let proposed = |revision: u64, text: &str| WorkingMemoryFact {
+        task_tree_id: "root".to_owned(),
+        branch_id: "branch".to_owned(),
+        fact_id: "build-status".to_owned(),
+        revision,
+        author_session_id: "child".to_owned(),
+        evidence_ref: Some("test://evidence".to_owned()),
+        confidence: 90,
+        state: WorkingMemoryState::Proposed,
+        text: text.to_owned(),
+    };
+    ledger.propose(proposed(1, "unreviewed claim")).unwrap();
+    assert!(render_task_tree_working_memory(&ledger).unwrap().is_none());
+    ledger
+        .review(
+            "root",
+            proposed(2, "cargo check passed"),
+            WorkingMemoryState::Accepted,
+        )
+        .unwrap();
+    let injection = render_task_tree_working_memory(&ledger)
+        .unwrap()
+        .expect("accepted facts inject");
+    assert!(injection.contains("cargo check passed"));
+    assert!(!injection.contains("unreviewed claim"));
 }
 #[tokio::test]
 async fn usage_ack_precedes_terminal_presentation() {

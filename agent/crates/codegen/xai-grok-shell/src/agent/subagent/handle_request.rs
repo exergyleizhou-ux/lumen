@@ -32,6 +32,83 @@ pub(super) const fn subagent_yolo_allowed() -> bool {
     false
 }
 
+/// Render only root-reviewed facts for a child prompt.  Working memory is
+/// intentionally separate from session history and agent-private MEMORY.md:
+/// it is the task tree's shared evidence ledger, not a channel for a child to
+/// pass an unverified instruction to siblings.
+pub(super) fn render_task_tree_working_memory(
+    ledger: &xai_grok_memory::WorkingMemoryLedger,
+) -> Result<Option<String>, xai_grok_memory::WorkingMemoryLedgerError> {
+    const MAX_FACTS: usize = 40;
+    const MAX_BYTES: usize = 12 * 1024;
+    let facts = ledger.accepted_facts()?;
+    if facts.is_empty() {
+        return Ok(None);
+    }
+    let mut rendered = String::from(
+        "\n\n<task-tree-working-memory>\nVerified shared facts from the root session. \
+         Treat evidence as authoritative; report conflicts as a new proposal, not an overwrite.\n",
+    );
+    for fact in facts.into_iter().take(MAX_FACTS) {
+        let evidence = fact.evidence_ref.as_deref().unwrap_or("not recorded");
+        rendered.push_str(&format!(
+            "- [{} r{} confidence={}] {} (evidence: {})\n",
+            fact.fact_id, fact.revision, fact.confidence, fact.text, evidence
+        ));
+        if rendered.len() >= MAX_BYTES {
+            rendered =
+                xai_grok_tools::util::truncate::truncate_str(&rendered, MAX_BYTES).to_string();
+            rendered.push_str("\n[working-memory truncated]\n");
+            break;
+        }
+    }
+    rendered.push_str("</task-tree-working-memory>");
+    Ok(Some(rendered))
+}
+
+fn inject_task_tree_working_memory(
+    definition: &mut xai_grok_agent::config::AgentDefinition,
+    ctx: &SubagentSpawnContext,
+    root_session_id: &str,
+) {
+    let Some(memory_config) = ctx.memory_config.as_ref().filter(|config| config.enabled) else {
+        return;
+    };
+    let storage = if memory_config.flat_memory_root {
+        memory_config
+            .root_dir_override
+            .as_ref()
+            .map(|root| xai_grok_memory::MemoryStorage::new_flat(&ctx.parent_cwd, root))
+    } else {
+        Some(xai_grok_memory::MemoryStorage::new(
+            &ctx.parent_cwd,
+            memory_config.root_dir_override.as_deref(),
+        ))
+    };
+    let Some(storage) = storage else {
+        tracing::warn!(
+            root_session_id,
+            "working-memory ledger skipped: flat memory root has no directory"
+        );
+        return;
+    };
+    let ledger = xai_grok_memory::WorkingMemoryLedger::for_task_tree(&storage, root_session_id);
+    match render_task_tree_working_memory(&ledger) {
+        Ok(Some(injection)) => {
+            definition.prompt_body =
+                Some(definition.prompt_body.take().unwrap_or_default() + injection.as_str());
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(
+                root_session_id,
+                error = %error,
+                "working-memory ledger unreadable; refusing to inject partial facts"
+            );
+        }
+    }
+}
+
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
     totals.total_tokens()
 }
@@ -792,6 +869,7 @@ pub(crate) async fn run_shell_child(
         effective_sampling_config.attribution_callback.clone();
     let agent_memory_scope = definition.memory;
     let agent_name_for_memory = definition.name.clone();
+    inject_task_tree_working_memory(&mut definition, &ctx, &request.lineage.root_session_id);
     let is_plugin_agent = definition.plugin_name.is_some();
     let yolo_policy_block = xai_grok_workspace::permission::resolution::yolo_disabled_by_policy();
     let agent_permission_mode = resolve_subagent_permission_mode(
