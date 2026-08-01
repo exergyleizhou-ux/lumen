@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T18:15:05Z",
+  "generated_at": "2026-08-01T18:17:57Z",
   "monorepo": {
-    "git_head": "078c8949aea5587efef9bd4b18e04d226532925b",
-    "git_short": "078c894"
+    "git_head": "a582ada30967a092f3e1ca6ac8523caec9ddda48",
+    "git_short": "a582ada"
   },
   "lumen_version": "0.1.251",
   "upstream_pin": {
@@ -27,7 +27,7 @@
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
     "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
     "scripts/generate-sbom.sh": "94944d320801e3e92d9250a3aff8f748a627076e32f6c18ee67e5cf2aa4ce2de",
-    "scripts/install-local.sh": "fd2f208b657b7f81d6c283dbdfeb9da4c61b820ed7b4085ab29074660e898ba0",
+    "scripts/install-local.sh": "5c695f69a8dc8719510e4ad5777ca5c48598026a16a2098c1ba00622d270473f",
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
     "scripts/productivity-gate.sh": "f814b2ce106bd1f4234a901e2e9f85510998ad8dd5e377ae36ff85a0c38a922c",
     "scripts/reconcile-evidence.sh": "094cc63be58424e2ac1b2a89fd989830da7d47f9281d2c6ee72c0297b7cea3a4",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "24245bbc2ffae4339ef50ee7856cd201ddb39102f14fc4a4f3f0e08242f31925"
+  "aggregate_critical_sha256": "3f0a41934e2e68371f5e8a05ba3d611888eea257b4c7d296f100fdb1991174f1"
 }
