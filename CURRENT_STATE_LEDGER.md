@@ -13,10 +13,10 @@ For the generation date, see the last ledger commit in `git log`.
 | Version (root VERSION) | **0.1.251** |
 | Readiness | state=BLOCKED ready=False engineering_complete=False blockers=1 |
 | Active git worktrees (this checkout) | 1 |
-| Remote branches on origin (excl. main) | **73** |
+| Remote branches on origin (excl. main) | **74** |
 | … fully merged into main | 8 |
-| … NOT in main | **65** |
-| Last non-bot commit | 0306379 Merge pull request #132 from exergyleizhou-ux/agent/release-metadata-consistency |
+| … NOT in main | **66** |
+| Last non-bot commit | d29f031 docs: add relay-station config (0731 中转站方案, keys redacted) |
 
 ---
 
@@ -89,6 +89,7 @@ For the generation date, see the last ledger commit in `git log`.
 | origin/s3-pr4-audit-jsonl | 2cc86bc | 258 |
 | origin/s3-pr5-injection-ssrf | 677b679 | 260 |
 | origin/test/eval-tasks-wellformed | 5d33767 | 263 |
+| origin/windows-fix-ps-scripts | 4a39ab2 | 14 |
 
 Branches listed here either carry unmerged work or are stale (e.g. the
 archived 2026-06 Go-era branches). See docs/go-era-branch-map.md for the
