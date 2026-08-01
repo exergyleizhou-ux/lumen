@@ -34,6 +34,10 @@ impl SchedulerVersion {
 #[derive(Debug)]
 pub(crate) struct SchedulerClock {
     version: SchedulerVersion,
+    /// Identifies this in-memory SchedulerActor lifetime, independently from
+    /// the externally visible version generation that can roll over at
+    /// `u64::MAX`.
+    run_lease_owner: uuid::Uuid,
 }
 
 #[derive(Debug)]
@@ -104,11 +108,16 @@ impl SchedulerClock {
                 generation: uuid::Uuid::now_v7(),
                 revision: 0,
             },
+            run_lease_owner: uuid::Uuid::now_v7(),
         }
     }
 
     pub(crate) fn snapshot(&self) -> SchedulerVersion {
         self.version
+    }
+
+    pub(crate) fn run_lease_owner_id(&self) -> String {
+        format!("scheduler:{}", self.run_lease_owner)
     }
 
     pub(crate) fn prepare_transition(&self, count: usize) -> SchedulerReservation {
@@ -648,5 +657,16 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(clock.snapshot(), before);
+    }
+
+    #[test]
+    fn run_lease_owner_survives_scheduler_generation_rollover() {
+        let mut clock = SchedulerClock::at_revision_for_test(u64::MAX);
+        let owner = clock.run_lease_owner_id();
+        let mut reservation = clock.prepare_transition(1);
+        let commit = reservation.commit_next(&mut clock);
+
+        assert!(commit.rollover.is_some());
+        assert_eq!(clock.run_lease_owner_id(), owner);
     }
 }

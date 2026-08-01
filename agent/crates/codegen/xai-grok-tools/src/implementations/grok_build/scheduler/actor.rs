@@ -111,7 +111,7 @@ pub struct SchedulerActor {
 
 impl SchedulerActor {
     fn run_lease_owner_id(&self) -> String {
-        format!("scheduler:{}", self.clock.snapshot().generation())
+        self.clock.run_lease_owner_id()
     }
 
     async fn await_bounded<T, E>(
