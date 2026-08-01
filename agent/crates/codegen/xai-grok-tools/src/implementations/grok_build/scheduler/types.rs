@@ -225,6 +225,45 @@ pub struct ScheduledTask {
     /// iteration.
     #[serde(default)]
     pub chain_reset_pending: bool,
+    /// Durable ownership of an in-flight background iteration.  A restored
+    /// scheduler must treat an unexpired lease as running work rather than
+    /// spawning a second copy after a process restart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) active_run_lease: Option<SchedulerRunLease>,
+}
+
+/// A bounded, persisted claim to execute one scheduler task.
+///
+/// It deliberately carries no process handle or credentials: those stay in
+/// the SessionActor/coordinator.  This record only establishes the durable
+/// ownership fence used before a background process is created or resumed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SchedulerRunLease {
+    owner_id: String,
+    acquired_at: DateTime<Utc>,
+    heartbeat_at: DateTime<Utc>,
+    expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulerLeaseError {
+    InvalidOwner,
+    InvalidTtl,
+    HeldByActiveOwner,
+    NotHeld,
+    OwnerMismatch,
+    Expired,
+}
+
+impl SchedulerRunLease {
+    pub(crate) fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+
+    pub(crate) fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        now >= self.expires_at
+    }
 }
 
 pub const LOOP_FRESH_CHAIN_EVERY: u32 = 10;
@@ -274,7 +313,70 @@ impl ScheduledTask {
             last_subagent_id: None,
             iterations_since_fresh: 0,
             chain_reset_pending: false,
+            active_run_lease: None,
         }
+    }
+
+    pub(crate) fn acquire_run_lease(
+        &mut self,
+        owner_id: &str,
+        now: DateTime<Utc>,
+        ttl: chrono::Duration,
+    ) -> Result<(), SchedulerLeaseError> {
+        validate_lease_request(owner_id, ttl)?;
+        if self
+            .active_run_lease
+            .as_ref()
+            .is_some_and(|lease| !lease.is_expired(now))
+        {
+            return Err(SchedulerLeaseError::HeldByActiveOwner);
+        }
+        let expires_at = now
+            .checked_add_signed(ttl)
+            .ok_or(SchedulerLeaseError::InvalidTtl)?;
+        self.active_run_lease = Some(SchedulerRunLease {
+            owner_id: owner_id.to_owned(),
+            acquired_at: now,
+            heartbeat_at: now,
+            expires_at,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn renew_run_lease(
+        &mut self,
+        owner_id: &str,
+        now: DateTime<Utc>,
+        ttl: chrono::Duration,
+    ) -> Result<(), SchedulerLeaseError> {
+        validate_lease_request(owner_id, ttl)?;
+        let lease = self
+            .active_run_lease
+            .as_mut()
+            .ok_or(SchedulerLeaseError::NotHeld)?;
+        if lease.owner_id != owner_id {
+            return Err(SchedulerLeaseError::OwnerMismatch);
+        }
+        if lease.is_expired(now) {
+            return Err(SchedulerLeaseError::Expired);
+        }
+        lease.heartbeat_at = now;
+        lease.expires_at = now
+            .checked_add_signed(ttl)
+            .ok_or(SchedulerLeaseError::InvalidTtl)?;
+        Ok(())
+    }
+
+    pub(crate) fn release_run_lease(&mut self, owner_id: &str) -> Result<(), SchedulerLeaseError> {
+        let lease = self
+            .active_run_lease
+            .as_ref()
+            .ok_or(SchedulerLeaseError::NotHeld)?;
+        if lease.owner_id != owner_id {
+            return Err(SchedulerLeaseError::OwnerMismatch);
+        }
+        self.active_run_lease = None;
+        Ok(())
     }
 
     /// Next fire time, computed from `last_fired_at` (or `created_at` if never fired).
@@ -287,6 +389,19 @@ impl ScheduledTask {
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         self.expires_at.is_some_and(|exp| now >= exp)
     }
+}
+
+fn validate_lease_request(
+    owner_id: &str,
+    ttl: chrono::Duration,
+) -> Result<(), SchedulerLeaseError> {
+    if owner_id.trim().is_empty() || owner_id.len() > 256 {
+        return Err(SchedulerLeaseError::InvalidOwner);
+    }
+    if ttl <= chrono::Duration::zero() || ttl > chrono::Duration::minutes(10) {
+        return Err(SchedulerLeaseError::InvalidTtl);
+    }
+    Ok(())
 }
 
 /// Persisted state for the scheduler, stored via Resources + ResourcesPersistence.
@@ -411,6 +526,70 @@ mod tests {
                        "lastFiredAt":null,"expiresAt":null}"#;
         let task: ScheduledTask = serde_json::from_str(json).unwrap();
         assert!(task.recurring && !task.durable);
+        assert!(task.active_run_lease.is_none());
+    }
+
+    #[test]
+    fn run_lease_is_owner_fenced_and_requires_heartbeat_before_expiry() {
+        let now = Utc::now();
+        let ttl = chrono::Duration::seconds(30);
+        let mut task = ScheduledTask::new(300, "test".into(), true, true);
+
+        task.acquire_run_lease("scheduler-a", now, ttl).unwrap();
+        assert_eq!(
+            task.acquire_run_lease("scheduler-b", now, ttl),
+            Err(SchedulerLeaseError::HeldByActiveOwner)
+        );
+        assert_eq!(
+            task.renew_run_lease("scheduler-b", now + chrono::Duration::seconds(1), ttl),
+            Err(SchedulerLeaseError::OwnerMismatch)
+        );
+        assert_eq!(
+            task.release_run_lease("scheduler-b"),
+            Err(SchedulerLeaseError::OwnerMismatch)
+        );
+
+        task.renew_run_lease("scheduler-a", now + chrono::Duration::seconds(20), ttl)
+            .unwrap();
+        let lease = task.active_run_lease.as_ref().unwrap();
+        assert_eq!(lease.owner_id(), "scheduler-a");
+        assert!(!lease.is_expired(now + chrono::Duration::seconds(49)));
+    }
+
+    #[test]
+    fn expired_run_lease_can_be_taken_over_but_old_owner_cannot_release_it() {
+        let now = Utc::now();
+        let ttl = chrono::Duration::seconds(30);
+        let mut task = ScheduledTask::new(300, "test".into(), true, true);
+
+        task.acquire_run_lease("scheduler-a", now, ttl).unwrap();
+        let takeover = now + chrono::Duration::seconds(31);
+        task.acquire_run_lease("scheduler-b", takeover, ttl)
+            .unwrap();
+        assert_eq!(
+            task.release_run_lease("scheduler-a"),
+            Err(SchedulerLeaseError::OwnerMismatch)
+        );
+        assert_eq!(
+            task.renew_run_lease("scheduler-a", takeover, ttl),
+            Err(SchedulerLeaseError::OwnerMismatch)
+        );
+        task.release_run_lease("scheduler-b").unwrap();
+        assert!(task.active_run_lease.is_none());
+    }
+
+    #[test]
+    fn run_lease_rejects_invalid_owner_and_ttl() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(300, "test".into(), true, true);
+        assert_eq!(
+            task.acquire_run_lease("", now, chrono::Duration::seconds(30)),
+            Err(SchedulerLeaseError::InvalidOwner)
+        );
+        assert_eq!(
+            task.acquire_run_lease("scheduler-a", now, chrono::Duration::zero()),
+            Err(SchedulerLeaseError::InvalidTtl)
+        );
     }
 
     #[test]
