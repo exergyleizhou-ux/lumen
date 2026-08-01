@@ -34,11 +34,15 @@ use xai_tool_types::{SubagentCompletedOutput, SubagentIsolationMode, TaskToolInp
 
 /// Default max nesting depth when [`MaxSubagentDepth`] is not injected.
 pub const MAX_SUBAGENT_DEPTH: u32 = 1;
+/// Product safety ceiling: the root session is depth 0, so this permits at
+/// most three generations of child agents. Hosts may choose a lower limit but
+/// cannot turn an accidental config value into an unbounded task tree.
+pub const HARD_MAX_SUBAGENT_DEPTH: u32 = 3;
 
 pub fn effective_max_subagent_depth(resources: &crate::types::resources::Resources) -> u32 {
     resources
         .get::<MaxSubagentDepth>()
-        .map(|d| d.0)
+        .map(|d| d.0.clamp(1, HARD_MAX_SUBAGENT_DEPTH))
         .unwrap_or(MAX_SUBAGENT_DEPTH)
 }
 
@@ -52,6 +56,23 @@ pub struct TaskTool;
 // ───────────────────────────────────────────────────────────────────────────
 // Tests
 // ───────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod depth_tests {
+    use super::{HARD_MAX_SUBAGENT_DEPTH, effective_max_subagent_depth};
+    use crate::implementations::grok_build::task::types::MaxSubagentDepth;
+    use crate::types::resources::Resources;
+
+    #[test]
+    fn configured_depth_cannot_exceed_three_generations() {
+        let mut resources = Resources::new();
+        resources.insert(MaxSubagentDepth(99));
+        assert_eq!(
+            effective_max_subagent_depth(&resources),
+            HARD_MAX_SUBAGENT_DEPTH
+        );
+    }
+}
 
 impl crate::types::tool_metadata::ToolMetadata for TaskTool {
     fn kind(&self) -> ToolKind {

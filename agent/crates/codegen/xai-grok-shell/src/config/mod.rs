@@ -435,8 +435,11 @@ impl SubagentsConfig {
     }
     pub const ENV_MAX_DEPTH: &'static str = "GROK_SUBAGENTS_MAX_DEPTH";
     pub const DEFAULT_MAX_DEPTH: u32 = 1;
-    /// Clamp to `1..=u32::MAX`. Values below 1 (including 0 / negatives) warn
-    /// and become 1 so nesting is never accidentally disabled.
+    pub const HARD_MAX_DEPTH: u32 =
+        xai_grok_tools::implementations::grok_build::task::HARD_MAX_SUBAGENT_DEPTH;
+    /// Clamp to `1..=HARD_MAX_DEPTH`. Values below 1 (including 0 / negatives)
+    /// warn and become 1; values above the product's three-generation safety
+    /// ceiling are reduced before they reach session construction.
     pub fn clamp_max_depth(raw: i64, source: &str) -> u32 {
         if raw < i64::from(Self::DEFAULT_MAX_DEPTH) {
             tracing::warn!(
@@ -445,13 +448,14 @@ impl SubagentsConfig {
                 "subagents max_depth < 1; clamping to 1"
             );
             Self::DEFAULT_MAX_DEPTH
-        } else if raw > i64::from(u32::MAX) {
+        } else if raw > i64::from(Self::HARD_MAX_DEPTH) {
             tracing::warn!(
                 source,
                 value = raw,
-                "subagents max_depth exceeds u32::MAX; clamping"
+                max_depth = Self::HARD_MAX_DEPTH,
+                "subagents max_depth exceeds product safety ceiling; clamping"
             );
-            u32::MAX
+            Self::HARD_MAX_DEPTH
         } else {
             raw as u32
         }

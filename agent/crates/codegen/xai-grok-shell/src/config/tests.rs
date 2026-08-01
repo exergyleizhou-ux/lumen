@@ -1033,7 +1033,16 @@ fn subagents_max_depth_toml_beats_remote() {
 }
 #[test]
 fn subagents_max_depth_remote_used_when_local_absent() {
-    assert_eq!(SubagentsConfig::resolve_max_depth(None, None, Some(5)), 5);
+    assert_eq!(SubagentsConfig::resolve_max_depth(None, None, Some(5)), 3);
+}
+
+#[test]
+fn subagents_max_depth_clamps_above_three_generations() {
+    assert_eq!(SubagentsConfig::clamp_max_depth(4, "test"), 3);
+    assert_eq!(
+        SubagentsConfig::resolve_max_depth(Some("99"), Some(2), Some(1)),
+        3
+    );
 }
 #[test]
 fn subagents_max_depth_clamps_below_one_to_one() {
