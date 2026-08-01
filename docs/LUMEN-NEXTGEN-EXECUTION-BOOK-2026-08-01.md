@@ -737,4 +737,3 @@ NOT RUN / BLOCKED / manual gates / known risks / generated_at
 11. 全部通过后才进入 release candidate、long soak 和人工门。
 
 这是可验证、可停止、可回退的路线。任何没有 source、命令、负例和证据的愿景，不获得执行或完成权。
-
