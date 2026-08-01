@@ -18,6 +18,7 @@ use futures::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
+use super::HARD_MAX_SUBAGENT_DEPTH;
 use super::coordinator_state::{
     ActiveChild, BlockingWaiter, BufferedCompletion, ChildRecord, CompletedChild, InternalEvent,
     ListRequest, PendingChild, ProgressFuture, ProgressTarget, ReplyFuture, TaggedFuture,
@@ -252,6 +253,24 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     let _ = command.result_tx.send(SubagentResult {
                         success: false,
                         error: Some(format!("invalid direct task-tree lineage: {reason}")),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                // Tool-side depth checks are the normal admission path, but
+                // this coordinator owns the shared mailbox and must retain a
+                // final hard ceiling.  Otherwise a caller that can construct
+                // an event directly could grow an unbounded task tree.
+                if request.lineage.depth > HARD_MAX_SUBAGENT_DEPTH {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(format!(
+                            "subagent depth limit exceeded (depth: {}, max: {HARD_MAX_SUBAGENT_DEPTH})",
+                            request.lineage.depth
+                        )),
                         subagent_id: id.clone(),
                         child_session_id: id,
                         ..Default::default()

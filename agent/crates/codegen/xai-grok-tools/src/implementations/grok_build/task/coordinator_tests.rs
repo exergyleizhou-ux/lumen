@@ -216,6 +216,54 @@ async fn direct_spawn_rejects_forged_task_tree_lineage() {
     harness.actor.abort();
 }
 
+#[tokio::test]
+async fn coordinator_hard_rejects_a_fourth_subagent_generation() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let mut live_spawns = Vec::new();
+    let mut parent_session_id = "parent".to_owned();
+
+    for (depth, id) in [(1, "depth-1"), (2, "depth-2"), (3, "depth-3")] {
+        let mut child = request(id, true);
+        child.parent_session_id = parent_session_id.clone();
+        let spawn = tokio::spawn({
+            let backend = harness.backend.clone();
+            async move { backend.spawn(child).await }
+        });
+        let observed = harness
+            .requests
+            .recv()
+            .await
+            .expect("admitted child request");
+        assert_eq!(observed.id, id);
+        assert_eq!(observed.lineage.depth, depth);
+        let _ = harness.start.send(());
+        assert_eq!(harness.started.recv().await.as_deref(), Some(id));
+        parent_session_id = id.to_owned();
+        live_spawns.push(spawn);
+    }
+
+    let mut fourth = request("depth-4", true);
+    fourth.parent_session_id = parent_session_id;
+    let refused = harness.backend.spawn(fourth).await.unwrap();
+    assert!(!refused.success);
+    assert!(
+        refused
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("subagent depth limit exceeded (depth: 4, max: 3)"))
+    );
+    assert!(harness.requests.try_recv().is_err());
+
+    assert!(matches!(
+        parent_backend(&harness).cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled
+    ));
+    for spawn in live_spawns {
+        assert!(spawn.await.unwrap().unwrap().cancelled);
+    }
+    harness.actor.abort();
+}
+
 struct Harness {
     backend: ChannelBackend,
     start: tokio::sync::broadcast::Sender<()>,
@@ -1582,6 +1630,7 @@ async fn teardown_session_drops_only_that_sessions_buffer() {
     for (id, parent) in [("child-a", "parent-a"), ("child-b", "parent-b")] {
         let mut request = request(id, true);
         request.parent_session_id = parent.to_owned();
+        request.lineage = SubagentLineage::direct(parent);
         let spawn = tokio::spawn({
             let backend = harness.backend.clone();
             async move { backend.spawn(request).await }
@@ -1636,6 +1685,7 @@ async fn completion_drain_is_scoped_to_parent_session() {
     for (id, parent) in [("child-a", "parent-a"), ("child-b", "parent-b")] {
         let mut request = request(id, true);
         request.parent_session_id = parent.to_owned();
+        request.lineage = SubagentLineage::direct(parent);
         let spawn = tokio::spawn({
             let backend = harness.backend.clone();
             async move { backend.spawn(request).await }
