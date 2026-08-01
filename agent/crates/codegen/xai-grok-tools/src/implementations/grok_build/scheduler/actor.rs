@@ -6,9 +6,10 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::implementations::grok_build::task::types::{
-    SessionIdResource, SubagentEvent, SubagentEventSender, SubagentLineage,
-    SubagentLoopUnitActiveRequest, SubagentOwner, SubagentQueryRequest, SubagentRequest,
-    SubagentRuntimeOverrides, SubagentSnapshotStatus, SubagentSpawnRequest,
+    SessionIdResource, SubagentCancelRequest, SubagentCancelTarget, SubagentEvent,
+    SubagentEventSender, SubagentLineage, SubagentLoopUnitActiveRequest, SubagentOwner,
+    SubagentQueryRequest, SubagentRequest, SubagentRuntimeOverrides, SubagentSnapshotStatus,
+    SubagentSpawnRequest,
 };
 use crate::notification::types::ToolNotificationHandle;
 use crate::notification::{
@@ -220,6 +221,64 @@ impl SchedulerActor {
         }
     }
 
+    /// Ask the authoritative subagent coordinator to stop only the children
+    /// still leased by this SchedulerActor lifetime.  Never issue OS-level
+    /// kills here: coordinator ownership preserves session accounting and
+    /// avoids cancelling a child recovered by a different actor.
+    async fn cancel_owned_background_runs_on_shutdown(&self) {
+        let owner_id = self.run_lease_owner_id();
+        let (events, parent_session_id, subagent_ids) = {
+            let resources = self.resources.lock().await;
+            let events = resources.get::<SubagentEventSender>().cloned();
+            let parent_session_id = resources.get::<SessionIdResource>().map(|id| id.0.clone());
+            let subagent_ids = resources
+                .get::<State<SchedulerState>>()
+                .map(|state| {
+                    state
+                        .tasks
+                        .iter()
+                        .filter(|task| {
+                            task.active_run_lease
+                                .as_ref()
+                                .is_some_and(|lease| lease.owner_id() == owner_id)
+                        })
+                        .filter_map(|task| task.last_subagent_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            (events, parent_session_id, subagent_ids)
+        };
+        let (Some(events), Some(parent_session_id)) = (events, parent_session_id) else {
+            return;
+        };
+        for subagent_id in subagent_ids {
+            let (respond_to, response_rx) = tokio::sync::oneshot::channel();
+            if events
+                .0
+                .send(SubagentEvent::Cancel(SubagentCancelRequest {
+                    parent_session_id: Some(parent_session_id.clone()),
+                    target: SubagentCancelTarget::SubagentId(subagent_id.clone()),
+                    respond_to,
+                }))
+                .is_err()
+            {
+                tracing::warn!(%subagent_id, "Scheduler shutdown could not reach subagent coordinator");
+                continue;
+            }
+            match tokio::time::timeout(Duration::from_secs(5), response_rx).await {
+                Ok(Ok(outcome)) => {
+                    tracing::info!(%subagent_id, ?outcome, "Scheduler requested leased background child cancellation")
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!(%subagent_id, "Subagent coordinator dropped scheduler shutdown cancellation reply")
+                }
+                Err(_) => {
+                    tracing::warn!(%subagent_id, "Timed out waiting for scheduler shutdown cancellation reply")
+                }
+            }
+        }
+    }
+
     pub async fn run(mut self) {
         self.await_subagent_wiring_for_due_tasks().await;
         self.announce_existing_tasks().await;
@@ -253,6 +312,8 @@ impl SchedulerActor {
                 }
             }
         }
+
+        self.cancel_owned_background_runs_on_shutdown().await;
 
         let task_ids: Vec<String> = {
             let res = self.resources.lock().await;
@@ -2122,6 +2183,73 @@ mod tests {
         }));
 
         cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_only_the_scheduler_owned_leased_child() {
+        let (handle, cancel, _notif_rx, mut subagent_rx, _resources) =
+            make_test_actor_with_subagents_at(0);
+        create_due_task(&handle, "check deploy status", false).await;
+
+        let SubagentEvent::Spawn(spawn) = next_event(&mut subagent_rx).await else {
+            panic!("expected Spawn");
+        };
+        let subagent_id = spawn.id.clone();
+        cancel.cancel();
+
+        let SubagentEvent::Cancel(request) = next_event(&mut subagent_rx).await else {
+            panic!("expected coordinator Cancel on scheduler shutdown");
+        };
+        assert_eq!(request.parent_session_id.as_deref(), Some("parent-session"));
+        let SubagentCancelTarget::SubagentId(cancelled_id) = request.target else {
+            panic!("expected direct subagent cancellation");
+        };
+        assert_eq!(cancelled_id, subagent_id);
+        request
+            .respond_to
+            .send(crate::implementations::grok_build::task::types::SubagentCancelOutcome::Cancelled)
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_never_cancels_a_foreign_lease_owner_child() {
+        let (handle, cancel, _notif_rx, mut subagent_rx, resources) =
+            make_test_actor_with_subagents_at(0);
+        let task = ScheduledTask::new(3600, "watch ci".into(), true, false);
+        let task_id = task.id.clone();
+        let (create_tx, create_rx) = tokio::sync::oneshot::channel();
+        handle
+            .0
+            .send(SchedulerCommand::Create {
+                task,
+                reply: create_tx,
+            })
+            .unwrap();
+        create_rx.await.unwrap().unwrap();
+        {
+            let mut resources = resources.lock().await;
+            let task = resources
+                .get_or_default::<State<SchedulerState>>()
+                .tasks
+                .iter_mut()
+                .find(|task| task.id == task_id)
+                .unwrap();
+            task.last_subagent_id = Some("foreign-child".into());
+            task.acquire_run_lease(
+                "scheduler:foreign-owner",
+                Utc::now(),
+                chrono::Duration::minutes(10),
+            )
+            .unwrap();
+        }
+
+        cancel.cancel();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), subagent_rx.recv())
+                .await
+                .is_err(),
+            "scheduler shutdown must not cancel a foreign lease owner child"
+        );
     }
 
     #[tokio::test]
