@@ -25,6 +25,10 @@ pub struct ScheduledTaskSummary {
     pub dead_lettered: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_status: Option<String>,
+    /// `false` means the last run's token total was incomplete and must not
+    /// be used as a cost/budget proof.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_usage_complete: Option<bool>,
     /// Timestamp of the last safe recovery takeover. This intentionally does
     /// not expose the prior scheduler owner identity.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -69,6 +73,10 @@ fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
             }
             .to_owned()
         }),
+        last_run_usage_complete: task
+            .last_run_receipt
+            .as_ref()
+            .map(|receipt| !receipt.output_usage_incomplete()),
         last_lease_takeover_at: task
             .last_run_lease_takeover
             .as_ref()
@@ -204,6 +212,7 @@ mod tests {
             now,
             7,
             11,
+            true,
         ));
         let summary = summary_from_task(task);
 
@@ -211,6 +220,7 @@ mod tests {
         assert!(summary.retry_not_before.is_some());
         assert!(!summary.dead_lettered);
         assert_eq!(summary.last_run_status.as_deref(), Some("failed"));
+        assert_eq!(summary.last_run_usage_complete, Some(false));
     }
 
     #[test]

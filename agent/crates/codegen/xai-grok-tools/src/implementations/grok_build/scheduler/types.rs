@@ -299,6 +299,11 @@ pub(crate) struct SchedulerRunReceipt {
     completed_at: DateTime<Utc>,
     duration_ms: u64,
     total_tokens_used: u64,
+    /// `true` means the token total is not safe to use as a budget or cost
+    /// proof.  Keep this durable instead of silently presenting zero/partial
+    /// usage as a complete background-run receipt.
+    #[serde(default)]
+    output_usage_incomplete: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -316,6 +321,7 @@ impl SchedulerRunReceipt {
         completed_at: DateTime<Utc>,
         duration_ms: u64,
         total_tokens_used: u64,
+        output_usage_incomplete: bool,
     ) -> Self {
         Self {
             run_id,
@@ -323,6 +329,7 @@ impl SchedulerRunReceipt {
             completed_at,
             duration_ms,
             total_tokens_used,
+            output_usage_incomplete,
         }
     }
 
@@ -333,6 +340,10 @@ impl SchedulerRunReceipt {
 
     pub(crate) fn status(&self) -> SchedulerRunStatus {
         self.status
+    }
+
+    pub(crate) fn output_usage_incomplete(&self) -> bool {
+        self.output_usage_incomplete
     }
 }
 
