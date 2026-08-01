@@ -632,6 +632,15 @@ pub enum SessionUpdate {
         subagent_id: String,
         /// The parent session that spawned this subagent.
         parent_session_id: String,
+        /// Root session of the bounded task tree. Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root_session_id: Option<String>,
+        /// Depth within the bounded task tree (root = 0). Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        depth: Option<u32>,
+        /// Ordered ancestors from root through the immediate parent. Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lineage_path: Option<Vec<String>>,
         /// The parent prompt/turn that spawned this subagent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_prompt_id: Option<String>,
@@ -1582,6 +1591,9 @@ mod tests {
         let spawned = serde_json::to_value(SessionUpdate::SubagentSpawned {
             subagent_id: "s".into(),
             parent_session_id: "p".into(),
+            root_session_id: Some("root".into()),
+            depth: Some(2),
+            lineage_path: Some(vec!["root".into(), "p".into()]),
             parent_prompt_id: None,
             child_session_id: "c".into(),
             subagent_type: "explore".into(),

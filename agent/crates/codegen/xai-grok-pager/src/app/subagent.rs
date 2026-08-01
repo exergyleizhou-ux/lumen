@@ -27,6 +27,12 @@ pub struct SubagentInfo {
     /// "read-only", "read-write", "execute", or "all".
     pub capability_mode: Option<Arc<str>>,
     pub workflow_run_id: Option<Arc<str>>,
+    /// Stable task-tree root, if emitted by a lineage-aware shell.
+    pub root_session_id: Option<Arc<str>>,
+    /// Task-tree depth (root = 0), if emitted by a lineage-aware shell.
+    pub depth: Option<u32>,
+    /// Ordered ancestor session IDs from root through immediate parent.
+    pub lineage_path: Option<Vec<Arc<str>>>,
     /// Whether the context was normalized into `<background_context>`.
     pub context_normalized: bool,
     pub parent_prompt_id: Option<Arc<str>>,
@@ -514,6 +520,9 @@ mod tests {
             resumed_from: None,
             capability_mode: None,
             workflow_run_id: None,
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
             context_normalized: false,
             parent_prompt_id: None,
             started_at: Instant::now(),

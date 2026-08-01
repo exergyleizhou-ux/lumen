@@ -1347,7 +1347,12 @@ fn track_background_lifecycle(
                 );
             }
         }
-        ExtEvent::SubagentSpawned { subagent_id } => {
+        ExtEvent::SubagentSpawned {
+            subagent_id,
+            root_session_id,
+            depth,
+            lineage_path,
+        } => {
             let work = BackgroundWork::Subagent(subagent_id);
             if completed_bg.contains(&work) {
                 tracing::debug!(
@@ -1357,6 +1362,9 @@ fn track_background_lifecycle(
                 pending_bg.insert(work);
                 tracing::debug!(
                     pending = pending_bg.len(),
+                    ?root_session_id,
+                    ?depth,
+                    ?lineage_path,
                     "headless: tracking background subagent"
                 );
             }

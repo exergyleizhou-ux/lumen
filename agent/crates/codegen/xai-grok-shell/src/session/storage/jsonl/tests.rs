@@ -504,6 +504,9 @@ async fn test_subagent_notifications_round_trip() {
         update: XaiSessionUpdateType::SubagentSpawned {
             subagent_id: "child-001".to_string(),
             parent_session_id: "parent-session".to_string(),
+            root_session_id: Some("root-session".to_string()),
+            depth: Some(2),
+            lineage_path: Some(vec!["root-session".to_string(), "parent-session".to_string()]),
             parent_prompt_id: Some("turn-123".to_string()),
             child_session_id: "child-001".to_string(),
             subagent_type: "general-purpose".to_string(),
@@ -547,12 +550,18 @@ async fn test_subagent_notifications_round_trip() {
                     child_session_id,
                     description,
                     subagent_type,
+                    root_session_id,
+                    depth,
+                    lineage_path,
                     ..
                 } => {
                     assert_eq!(subagent_id, "child-001");
                     assert_eq!(child_session_id, "child-001");
                     assert_eq!(description, "Read README.md");
                     assert_eq!(subagent_type, "general-purpose");
+                    assert_eq!(root_session_id.as_deref(), Some("root-session"));
+                    assert_eq!(*depth, Some(2));
+                    assert_eq!(lineage_path.as_deref(), Some(&["root-session".to_string(), "parent-session".to_string()][..]));
                 }
                 other => panic!("Expected SubagentSpawned, got {other:?}"),
             }
@@ -622,6 +631,9 @@ async fn test_subagent_spawned_resumed_roundtrip() {
         update: XaiSessionUpdateType::SubagentSpawned {
             subagent_id: "child-resumed".to_string(),
             parent_session_id: "resume-parent".to_string(),
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
             parent_prompt_id: Some("turn-5".to_string()),
             child_session_id: "child-resumed".to_string(),
             subagent_type: "general-purpose".to_string(),

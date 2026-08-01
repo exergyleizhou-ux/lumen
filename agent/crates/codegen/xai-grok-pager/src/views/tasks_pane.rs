@@ -422,10 +422,18 @@ impl TaskEntry {
         // the overlay (just to the left of the elapsed/duration). The label
         // string below still includes the model so it remains searchable.
         let type_sep = if description.is_empty() { "" } else { " " };
-        let mut spans = vec![
+        let lineage_prefix = info.depth.map(|depth| format!("L{depth} "));
+        let mut spans = Vec::new();
+        if let Some(prefix) = &lineage_prefix {
+            spans.push(Span::styled(
+                prefix.clone(),
+                Style::default().fg(theme.text_secondary),
+            ));
+        }
+        spans.extend([
             Span::styled(format!("{type_label}{type_sep}"), type_style),
             Span::styled(shown_desc, desc_style),
-        ];
+        ]);
         if let Some(activity) = activity {
             spans.push(Span::styled(
                 format!(" \u{2014} {activity}"),
@@ -439,6 +447,7 @@ impl TaskEntry {
             (false, true) => format!("{type_label} {description}"),
             (false, false) => format!("{type_label} {description} {model_suffix}"),
         };
+        let label = format!("{}{label}", lineage_prefix.unwrap_or_default());
         let styled = Line::from(spans);
 
         // Use a different hash namespace to avoid collisions with bg tasks
@@ -1949,6 +1958,9 @@ mod tests {
             resumed_from: None,
             capability_mode: None,
             workflow_run_id: None,
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
             context_normalized: false,
             parent_prompt_id: None,
             started_at: Instant::now(),
@@ -3085,6 +3097,18 @@ mod tests {
             _ => panic!("expected Agent variant"),
         };
         assert_eq!(label, "Explore Find API endpoints");
+    }
+
+    #[test]
+    fn entry_label_exposes_task_tree_depth_when_available() {
+        let mut info = make_info();
+        info.depth = Some(3);
+        let entry = TaskEntry::from_subagent(&info);
+        let label = match &entry {
+            TaskEntry::Agent { label, .. } => label.as_str(),
+            _ => panic!("expected Agent variant"),
+        };
+        assert_eq!(label, "L3 Explore Find API endpoints");
     }
 
     #[test]

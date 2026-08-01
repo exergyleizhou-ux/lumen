@@ -185,6 +185,12 @@
             .expect("SubagentSpawned must register subagent_sessions");
         assert_eq!(info.description.as_ref(), "scan src/");
         assert_eq!(info.subagent_type.as_ref(), "explore");
+        assert_eq!(info.root_session_id.as_deref(), Some("root-session"));
+        assert_eq!(info.depth, Some(2));
+        assert_eq!(
+            info.lineage_path.as_deref(),
+            Some(&["root-session".into(), "sess-parent".into()][..])
+        );
         assert!(
             agent.subagent_views.contains_key(child_sid),
             "SubagentSpawned must create subagent_views eagerly"
@@ -866,4 +872,3 @@
             "ext notification routed to a non-active agent must not request a redraw"
         );
     }
-

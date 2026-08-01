@@ -883,7 +883,9 @@ async fn simulate_completion_with_result(actor: &SessionActor, result: PromptTur
     if let Some(message) = infra_pause_message {
         actor.apply_infra_pause_after_turn_err(message).await;
     }
-    actor.handle_turn_end(turn_succeeded, suppress_goal_continuation).await;
+    actor
+        .handle_turn_end(turn_succeeded, suppress_goal_continuation)
+        .await;
 }
 
 fn agent_message_text_from_notification(n: &acp::SessionNotification) -> Option<String> {
@@ -2893,7 +2895,8 @@ async fn reserve_classifier_attempt_slot_returns_none_without_orchestration() {
             // tracker API (the helper is structurally
             // `snapshot_mut()?` → increment → `Some(attempt)`).
             let attempt = actor.goal_tracker.lock().snapshot_mut().map(|snapshot| {
-                snapshot.classifier_runs_attempted = snapshot.classifier_runs_attempted.saturating_add(1);
+                snapshot.classifier_runs_attempted =
+                    snapshot.classifier_runs_attempted.saturating_add(1);
                 snapshot.classifier_max_runs = Some(policy.max_runs);
                 snapshot.rounds_since_verify = 0;
                 snapshot.classifier_runs_attempted
@@ -3220,6 +3223,9 @@ fn spawn_notif(subagent_id: &str, resumed_from: Option<&str>) -> XaiSessionNotif
         update: XaiSessionUpdate::SubagentSpawned {
             subagent_id: subagent_id.into(),
             parent_session_id: "test-actor".into(),
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
             parent_prompt_id: None,
             child_session_id: subagent_id.into(),
             subagent_type: "general-purpose".into(),

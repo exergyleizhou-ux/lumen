@@ -302,6 +302,9 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
             context_normalized,
             parent_prompt_id,
             workflow_run_id,
+            root_session_id,
+            depth,
+            lineage_path,
             ..
         } => {
             tracing::info!(
@@ -332,6 +335,10 @@ pub(super) fn handle_session_notification(notif: &acp::ExtNotification, app: &mu
                     resumed_from: resumed_from.map(Arc::from),
                     capability_mode: capability_mode.map(Arc::from),
                     workflow_run_id: workflow_run_id.clone().map(Arc::from),
+                    root_session_id: root_session_id.map(Arc::from),
+                    depth,
+                    lineage_path: lineage_path
+                        .map(|path| path.into_iter().map(Arc::from).collect()),
                     context_normalized,
                     parent_prompt_id: parent_prompt_id.map(Arc::from),
                     started_at: std::time::Instant::now(),

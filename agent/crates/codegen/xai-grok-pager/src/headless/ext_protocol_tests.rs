@@ -143,6 +143,9 @@ fn headless_subagent_spawned_and_finished_parse() {
             "sessionUpdate": "subagent_spawned",
             "subagent_id": "sub-1",
             "parent_session_id": "p",
+            "root_session_id": "root",
+            "depth": 2,
+            "lineage_path": ["root", "p"],
             "child_session_id": "c",
             "subagent_type": "explore",
             "description": "test"
@@ -150,7 +153,32 @@ fn headless_subagent_spawned_and_finished_parse() {
     );
     assert!(matches!(
         handle_ext_notification(&spawned),
-        ExtEvent::SubagentSpawned { subagent_id } if subagent_id == "sub-1"
+        ExtEvent::SubagentSpawned {
+            subagent_id,
+            root_session_id: Some(root_session_id),
+            depth: Some(2),
+            lineage_path: Some(lineage_path),
+        } if subagent_id == "sub-1" && root_session_id == "root" && lineage_path == ["root", "p"]
+    ));
+    let legacy_spawned = make_ext_notif(
+        "x.ai/session_notification",
+        serde_json::json!({
+            "sessionUpdate": "subagent_spawned",
+            "subagent_id": "legacy-sub",
+            "parent_session_id": "p",
+            "child_session_id": "c",
+            "subagent_type": "explore",
+            "description": "legacy"
+        }),
+    );
+    assert!(matches!(
+        handle_ext_notification(&legacy_spawned),
+        ExtEvent::SubagentSpawned {
+            subagent_id,
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
+        } if subagent_id == "legacy-sub"
     ));
     let finished = make_ext_notif(
         "x.ai/session_notification",

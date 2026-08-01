@@ -1737,6 +1737,9 @@ fn notification_subagent_spawned_includes_resumed_from() {
     let notification = SessionUpdate::SubagentSpawned {
         subagent_id: "sa-resumed".into(),
         parent_session_id: "parent".into(),
+        root_session_id: Some("root".into()),
+        depth: Some(2),
+        lineage_path: Some(vec!["root".into(), "parent".into()]),
         parent_prompt_id: Some("prompt-1".into()),
         child_session_id: "child-resumed".into(),
         subagent_type: "general-purpose".into(),
@@ -1752,12 +1755,18 @@ fn notification_subagent_spawned_includes_resumed_from() {
     };
     let json = serde_json::to_value(&notification).unwrap();
     assert_eq!(json["resumed_from"], "prev-agent-id");
+    assert_eq!(json["root_session_id"], "root");
+    assert_eq!(json["depth"], 2);
+    assert_eq!(json["lineage_path"], serde_json::json!(["root", "parent"]));
     assert_eq!(json["effective_context_source"], "resumed");
     assert_eq!(json["role"], serde_json::Value::Null);
     assert_eq!(json["model"], serde_json::Value::Null);
     let fresh = SessionUpdate::SubagentSpawned {
         subagent_id: "sa-fresh".into(),
         parent_session_id: "p".into(),
+        root_session_id: None,
+        depth: None,
+        lineage_path: None,
         parent_prompt_id: None,
         child_session_id: "c".into(),
         subagent_type: "explore".into(),
@@ -1773,6 +1782,9 @@ fn notification_subagent_spawned_includes_resumed_from() {
     };
     let json = serde_json::to_value(&fresh).unwrap();
     assert!(json.get("resumed_from").is_none());
+    assert!(json.get("root_session_id").is_none());
+    assert!(json.get("depth").is_none());
+    assert!(json.get("lineage_path").is_none());
     assert!(json.get("role").is_none());
     assert!(json.get("model").is_none());
 }

@@ -15,6 +15,9 @@ fn lifecycle_tracking_is_independent_of_wait_flag() {
     super::track_background_lifecycle(
         super::ExtEvent::SubagentSpawned {
             subagent_id: "s1".into(),
+            root_session_id: None,
+            depth: None,
+            lineage_path: None,
         },
         &mut pending,
         &mut completed,
@@ -94,6 +97,9 @@ fn duplicate_subagent_spawn_after_finish_stays_dead() {
     let mut completed = std::collections::HashSet::new();
     let spawn = || super::ExtEvent::SubagentSpawned {
         subagent_id: "s1".into(),
+        root_session_id: None,
+        depth: None,
+        lineage_path: None,
     };
     super::track_background_lifecycle(spawn(), &mut pending, &mut completed);
     super::track_background_lifecycle(

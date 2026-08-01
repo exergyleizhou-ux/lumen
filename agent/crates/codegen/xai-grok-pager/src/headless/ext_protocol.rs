@@ -33,10 +33,22 @@ fn session_update_tag(params: &str) -> Option<String> {
 
 pub(crate) enum ExtEvent {
     None,
-    TaskBackgrounded { task_id: String, is_monitor: bool },
-    TaskCompleted { task_id: String },
-    SubagentSpawned { subagent_id: String },
-    SubagentFinished { subagent_id: String },
+    TaskBackgrounded {
+        task_id: String,
+        is_monitor: bool,
+    },
+    TaskCompleted {
+        task_id: String,
+    },
+    SubagentSpawned {
+        subagent_id: String,
+        root_session_id: Option<String>,
+        depth: Option<u32>,
+        lineage_path: Option<Vec<String>>,
+    },
+    SubagentFinished {
+        subagent_id: String,
+    },
     MonitorEvent,
     Lifecycle(Lifecycle),
     Stream(Box<StreamEvent>),
@@ -179,6 +191,12 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         },
         SubagentSpawned {
             subagent_id: String,
+            #[serde(default)]
+            root_session_id: Option<String>,
+            #[serde(default)]
+            depth: Option<u32>,
+            #[serde(default)]
+            lineage_path: Option<Vec<String>>,
         },
         SubagentFinished {
             subagent_id: String,
@@ -250,7 +268,17 @@ fn decode_session_notification(method: &str, params: &str) -> ExtEvent {
         XaiUpdate::ImageCompressed { message } => {
             ExtEvent::Lifecycle(Lifecycle::ImageCompressed { message })
         }
-        XaiUpdate::SubagentSpawned { subagent_id } => ExtEvent::SubagentSpawned { subagent_id },
+        XaiUpdate::SubagentSpawned {
+            subagent_id,
+            root_session_id,
+            depth,
+            lineage_path,
+        } => ExtEvent::SubagentSpawned {
+            subagent_id,
+            root_session_id,
+            depth,
+            lineage_path,
+        },
         XaiUpdate::SubagentFinished { subagent_id, .. } => {
             ExtEvent::SubagentFinished { subagent_id }
         }
