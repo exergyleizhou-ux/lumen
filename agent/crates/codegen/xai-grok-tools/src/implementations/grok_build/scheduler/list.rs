@@ -22,7 +22,9 @@ pub struct ScheduledTaskSummary {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SchedulerListOutput {
     pub tasks: Vec<ScheduledTaskSummary>,
+    #[serde(default)]
     pub recovery_required: bool,
+    #[serde(default)]
     pub quarantined_one_shot_count: usize,
 }
 
@@ -148,5 +150,19 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
             recovery_required: snapshot.recovery_required,
             quarantined_one_shot_count: snapshot.quarantined_one_shot_count,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_scheduler_list_response_defaults_recovery_health() {
+        let restored: SchedulerListOutput =
+            serde_json::from_value(serde_json::json!({ "tasks": [] }))
+                .expect("old scheduler list response remains readable");
+        assert!(!restored.recovery_required);
+        assert_eq!(restored.quarantined_one_shot_count, 0);
     }
 }
