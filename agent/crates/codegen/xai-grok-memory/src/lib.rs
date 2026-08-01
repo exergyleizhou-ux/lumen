@@ -42,7 +42,8 @@ pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendPar
 pub use index::{MemoryIndex, init_sqlite_vec};
 pub use storage::{MemoryScope, MemoryStorage};
 pub use task_ledger::{
-    WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryLedgerError, WorkingMemoryState,
+    WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryLedgerBackend, WorkingMemoryLedgerError,
+    WorkingMemoryState,
 };
 
 /// Embed all chunks that don't have embeddings yet.

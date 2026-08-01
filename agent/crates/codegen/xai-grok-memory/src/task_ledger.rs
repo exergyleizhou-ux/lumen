@@ -15,6 +15,10 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::MemoryStorage;
+use xai_grok_tools::types::task_tree_memory::{
+    TaskTreeMemoryBackend, TaskTreeMemoryFact as BackendFact, TaskTreeMemoryReviewState,
+    TaskTreeMemoryWriteReceipt,
+};
 
 /// `flock` serializes cooperating processes, but is not enough on its own for
 /// two independently-opened descriptors in this process. Keep the check and
@@ -138,6 +142,87 @@ impl From<serde_json::Error> for WorkingMemoryLedgerError {
 pub struct WorkingMemoryLedger {
     root_session_id: String,
     path: PathBuf,
+}
+
+/// Shell-owned implementation of the tools crate's narrow task-tree memory
+/// port. It retains the root identity and ledger location chosen by the host;
+/// a model call never supplies either value.
+#[derive(Debug, Clone)]
+pub struct WorkingMemoryLedgerBackend {
+    ledger: WorkingMemoryLedger,
+}
+
+impl WorkingMemoryLedgerBackend {
+    pub fn new(ledger: WorkingMemoryLedger) -> Self {
+        Self { ledger }
+    }
+
+    fn into_fact(
+        &self,
+        author_session_id: &str,
+        fact: BackendFact,
+        state: WorkingMemoryState,
+    ) -> WorkingMemoryFact {
+        WorkingMemoryFact {
+            task_tree_id: self.ledger.root_session_id.clone(),
+            branch_id: fact.branch_id,
+            fact_id: fact.fact_id,
+            revision: fact.revision,
+            author_session_id: author_session_id.to_owned(),
+            evidence_ref: fact.evidence_ref,
+            confidence: fact.confidence,
+            state,
+            text: fact.text,
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TaskTreeMemoryBackend for WorkingMemoryLedgerBackend {
+    async fn propose(
+        &self,
+        author_session_id: &str,
+        fact: BackendFact,
+    ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+        let fact = self.into_fact(author_session_id, fact, WorkingMemoryState::Proposed);
+        let receipt = TaskTreeMemoryWriteReceipt {
+            fact_id: fact.fact_id.clone(),
+            revision: fact.revision,
+            state: "proposed",
+        };
+        self.ledger
+            .propose(fact)
+            .map_err(|error| error.to_string())?;
+        Ok(receipt)
+    }
+
+    async fn review(
+        &self,
+        reviewer_session_id: &str,
+        fact: BackendFact,
+        state: TaskTreeMemoryReviewState,
+    ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+        let state = match state {
+            TaskTreeMemoryReviewState::Accepted => WorkingMemoryState::Accepted,
+            TaskTreeMemoryReviewState::Rejected => WorkingMemoryState::Rejected,
+            TaskTreeMemoryReviewState::Superseded => WorkingMemoryState::Superseded,
+        };
+        let fact = self.into_fact(reviewer_session_id, fact, state);
+        let receipt = TaskTreeMemoryWriteReceipt {
+            fact_id: fact.fact_id.clone(),
+            revision: fact.revision,
+            state: match state {
+                WorkingMemoryState::Accepted => "accepted",
+                WorkingMemoryState::Rejected => "rejected",
+                WorkingMemoryState::Superseded => "superseded",
+                WorkingMemoryState::Proposed => unreachable!("review cannot be proposed"),
+            },
+        };
+        self.ledger
+            .review(reviewer_session_id, fact, state)
+            .map_err(|error| error.to_string())?;
+        Ok(receipt)
+    }
 }
 
 impl WorkingMemoryLedger {
@@ -384,6 +469,48 @@ mod tests {
 
         assert_eq!(root_ledger.path(), child_ledger.path());
         assert_ne!(root_ledger.path(), incorrectly_recomputed.path());
+    }
+
+    #[tokio::test]
+    async fn backend_allows_child_proposal_but_only_root_review() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let backend = WorkingMemoryLedgerBackend::new(ledger.clone());
+        let proposed = BackendFact {
+            branch_id: "branch-a".to_owned(),
+            fact_id: "fact-a".to_owned(),
+            revision: 1,
+            evidence_ref: Some("test://evidence".to_owned()),
+            confidence: 80,
+            text: "child observation".to_owned(),
+        };
+        let receipt = backend.propose("child", proposed).await.unwrap();
+        assert_eq!(receipt.state, "proposed");
+        assert!(ledger.accepted_facts().unwrap().is_empty());
+
+        let review = BackendFact {
+            branch_id: "branch-a".to_owned(),
+            fact_id: "fact-a".to_owned(),
+            revision: 2,
+            evidence_ref: Some("test://evidence".to_owned()),
+            confidence: 95,
+            text: "root reviewed observation".to_owned(),
+        };
+        let error = backend
+            .review("child", review.clone(), TaskTreeMemoryReviewState::Accepted)
+            .await
+            .unwrap_err();
+        assert!(error.contains("only root session"));
+
+        let receipt = backend
+            .review("root", review, TaskTreeMemoryReviewState::Accepted)
+            .await
+            .unwrap();
+        assert_eq!(receipt.state, "accepted");
+        assert_eq!(
+            ledger.accepted_facts().unwrap()[0].text,
+            "root reviewed observation"
+        );
     }
 
     #[test]

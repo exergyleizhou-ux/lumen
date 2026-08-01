@@ -27,6 +27,7 @@ pub mod search_replace;
 pub(crate) mod storage;
 pub mod task;
 pub mod task_output;
+pub mod task_tree_memory;
 pub mod todo;
 pub mod update_goal;
 pub mod video_gen;
@@ -58,6 +59,7 @@ pub use scheduler::list::SchedulerListTool;
 pub use search_replace::SearchReplaceTool;
 pub use task::TaskTool;
 pub use task_output::{GetTerminalCommandOutputTool, TaskOutputTool, WaitTasksTool};
+pub use task_tree_memory::TaskTreeMemoryTool;
 pub use todo::TodoWriteTool;
 pub use update_goal::{UPDATE_GOAL_TOOL_NAME, UpdateGoalTool};
 pub use video_gen::{

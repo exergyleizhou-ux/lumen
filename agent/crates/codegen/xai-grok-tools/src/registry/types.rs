@@ -698,6 +698,7 @@ impl ToolRegistryBuilder {
         b.register::<grok_build::GetTerminalCommandOutputTool>();
         b.register::<grok_build::WaitTasksTool>();
         b.register::<grok_build::TaskTool>();
+        b.register::<grok_build::TaskTreeMemoryTool>();
         b.register::<grok_build::WebSearchTool>();
         b.register_with_params::<grok_build::WebFetchTool, grok_build::web_fetch::WebFetchParams>();
         b.register::<grok_build::LspTool>();
@@ -1688,8 +1689,7 @@ impl FinalizedToolset {
             crate::types::resources::InvokingToolParamNames::from_reverse_params(&reverse_params),
         );
         if let Some(cwd) = cwd_override.as_ref() {
-            ctx.extensions
-                .insert(xai_tool_runtime::Cwd(cwd.clone()));
+            ctx.extensions.insert(xai_tool_runtime::Cwd(cwd.clone()));
         }
         if let Some(cancellation) = cancellation {
             ctx.extensions

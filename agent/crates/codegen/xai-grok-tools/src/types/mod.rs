@@ -16,6 +16,7 @@ pub mod resources;
 pub mod schema;
 pub mod session_mode;
 pub mod skill_discovery_tracker;
+pub mod task_tree_memory;
 pub mod template_renderer;
 pub mod tool;
 pub mod tool_index;

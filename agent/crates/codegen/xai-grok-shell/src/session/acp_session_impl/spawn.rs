@@ -914,6 +914,31 @@ pub(crate) async fn spawn_session_actor(
         );
         None
     };
+    let task_tree_root_session_id = tool_context
+        .task_tree_root_session_id
+        .clone()
+        .unwrap_or_else(|| session_info.id.0.to_string());
+    let task_tree_memory_backend_for_spec: Option<
+        std::sync::Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>,
+    > = memory_storage_for_session
+        .as_ref()
+        .filter(|_| tool_context.subagent_event_tx.is_some())
+        .map(|storage| {
+            let ledger = match tool_context.task_tree_memory_workspace_dir.as_deref() {
+                Some(workspace_dir) => xai_grok_memory::WorkingMemoryLedger::for_workspace_dir(
+                    workspace_dir,
+                    task_tree_root_session_id.clone(),
+                ),
+                None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(
+                    storage,
+                    task_tree_root_session_id.clone(),
+                ),
+            };
+            std::sync::Arc::new(xai_grok_memory::WorkingMemoryLedgerBackend::new(ledger))
+                as std::sync::Arc<
+                    dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend,
+                >
+        });
     let context_window_tokens = context_window_override
         .map(|c| c.get())
         .unwrap_or(sampling_config.context_window);
@@ -972,6 +997,7 @@ pub(crate) async fn spawn_session_actor(
             .as_ref()
             .map(|s| s.workspace_memory_file().to_string_lossy().into_owned()),
         memory_backend: memory_backend_for_spec,
+        task_tree_memory_backend: task_tree_memory_backend_for_spec,
         web_search_config: web_search_config.clone(),
         backend_search: backend_tools_enabled,
         web_fetch_config: web_fetch_config.clone(),
@@ -1002,10 +1028,7 @@ pub(crate) async fn spawn_session_actor(
         subagent_depth: tool_context.subagent_depth,
         subagents_max_depth,
         session_id_str: session_info.id.0.to_string(),
-        task_tree_root_session_id: tool_context
-            .task_tree_root_session_id
-            .clone()
-            .unwrap_or_else(|| session_info.id.0.to_string()),
+        task_tree_root_session_id,
         blocking_wait_depth: tool_context.blocking_wait_depth.clone(),
         respect_gitignore,
         path_not_found_hints,

@@ -91,6 +91,8 @@ pub(crate) struct AgentRebuildSpec {
     pub memory_global_path: Option<String>,
     pub memory_workspace_path: Option<String>,
     pub memory_backend: Option<Arc<dyn MemoryBackend>>,
+    pub task_tree_memory_backend:
+        Option<Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>>,
     pub web_search_config: WebSearchConfig,
     pub backend_search: bool,
     pub web_fetch_config: WebFetchConfig,
@@ -196,6 +198,7 @@ impl AgentRebuildSpec {
             memory_global_path,
             memory_workspace_path,
             memory_backend,
+            task_tree_memory_backend,
             web_search_config,
             backend_search,
             web_fetch_config,
@@ -251,6 +254,7 @@ impl AgentRebuildSpec {
         .with_compaction_policy(compaction_policy.clone())
         .with_reminder_policy(reminder_policy.clone())
         .with_memory_enabled(*memory_enabled)
+        .with_task_tree_memory_enabled(task_tree_memory_backend.is_some())
         .with_memory_paths(memory_global_path.clone(), memory_workspace_path.clone())
         .with_is_non_interactive(*is_non_interactive)
         .with_system_prompt_label(system_prompt_label.clone())
@@ -372,6 +376,14 @@ impl AgentRebuildSpec {
                 agent.tool_bridge().update_resource(buffer).await;
             }
         }
+        if let Some(backend) = task_tree_memory_backend.clone() {
+            agent
+                .tool_bridge()
+                .update_resource(
+                    xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackendResource(backend),
+                )
+                .await;
+        }
         agent
             .tool_bridge()
             .update_resource(xai_grok_tools::types::resources::RespectGitignore(
@@ -428,6 +440,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         memory_global_path: None,
         memory_workspace_path: None,
         memory_backend: None,
+        task_tree_memory_backend: None,
         web_search_config: WebSearchConfig::default(),
         backend_search: false,
         web_fetch_config: WebFetchConfig::Disabled,

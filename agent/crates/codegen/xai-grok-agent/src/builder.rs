@@ -86,6 +86,7 @@ pub struct AgentBuilder {
     session_env: Option<Arc<HashMap<String, String>>>,
     state_path: Option<PathBuf>,
     memory_backend: Option<Arc<dyn xai_grok_tools::types::memory_backend::MemoryBackend>>,
+    task_tree_memory_enabled: bool,
     web_search_config: xai_grok_tools::implementations::web_search::WebSearchConfig,
     /// When true, web search and X search are sent as native server-side
     /// tools for execution by the agentic sampler, instead of being
@@ -230,6 +231,7 @@ impl AgentBuilder {
             session_env: None,
             state_path: None,
             memory_backend: None,
+            task_tree_memory_enabled: false,
             web_search_config: Default::default(),
             backend_search: false,
             web_fetch_config: Default::default(),
@@ -403,6 +405,12 @@ impl AgentBuilder {
         backend: Arc<dyn xai_grok_tools::types::memory_backend::MemoryBackend>,
     ) -> Self {
         self.memory_backend = Some(backend);
+        self
+    }
+    /// Enable the host-owned task-tree working-memory tool. The concrete
+    /// backend resource is injected by the shell after construction.
+    pub fn with_task_tree_memory_enabled(mut self, enabled: bool) -> Self {
+        self.task_tree_memory_enabled = enabled;
         self
     }
     /// Set a custom filesystem backend for the ToolBridge.
@@ -722,6 +730,11 @@ impl AgentBuilder {
                 tool_config
                     .tools
                     .push((&memory::get_tool::MemoryGetImpl).into());
+            }
+            if self.task_tree_memory_enabled {
+                tool_config.tools.push(
+                    (&xai_grok_tools::implementations::grok_build::TaskTreeMemoryTool).into(),
+                );
             }
             if self.web_search_config.is_enabled() {
                 use xai_grok_tools::implementations::grok_build;
