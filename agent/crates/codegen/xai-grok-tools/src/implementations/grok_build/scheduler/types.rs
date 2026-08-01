@@ -239,6 +239,11 @@ pub struct ScheduledTask {
     /// spawning a second copy after a process restart.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) active_run_lease: Option<SchedulerRunLease>,
+    /// Durable audit receipt emitted when an expired lease is replaced by a
+    /// new actor.  This is distinct from ordinary acquire/release events so
+    /// recovery tooling can surface an autonomous takeover for review.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_run_lease_takeover: Option<SchedulerRunLeaseTakeover>,
 }
 
 /// A bounded, persisted claim to execute one scheduler task.
@@ -253,6 +258,20 @@ pub(crate) struct SchedulerRunLease {
     acquired_at: DateTime<Utc>,
     heartbeat_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SchedulerRunLeaseTakeover {
+    previous_owner_id: String,
+    previous_heartbeat_at: DateTime<Utc>,
+    taken_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulerLeaseAcquisition {
+    Fresh,
+    ReplacedExpiredLease,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +342,7 @@ impl ScheduledTask {
             iterations_since_fresh: 0,
             chain_reset_pending: false,
             active_run_lease: None,
+            last_run_lease_takeover: None,
         }
     }
 
@@ -331,15 +351,22 @@ impl ScheduledTask {
         owner_id: &str,
         now: DateTime<Utc>,
         ttl: chrono::Duration,
-    ) -> Result<(), SchedulerLeaseError> {
+    ) -> Result<SchedulerLeaseAcquisition, SchedulerLeaseError> {
         validate_lease_request(owner_id, ttl)?;
-        if self
-            .active_run_lease
-            .as_ref()
-            .is_some_and(|lease| !lease.is_expired(now))
-        {
-            return Err(SchedulerLeaseError::HeldByActiveOwner);
-        }
+        let acquisition = match self.active_run_lease.as_ref() {
+            Some(lease) if !lease.is_expired(now) => {
+                return Err(SchedulerLeaseError::HeldByActiveOwner);
+            }
+            Some(lease) => {
+                self.last_run_lease_takeover = Some(SchedulerRunLeaseTakeover {
+                    previous_owner_id: lease.owner_id.clone(),
+                    previous_heartbeat_at: lease.heartbeat_at,
+                    taken_at: now,
+                });
+                SchedulerLeaseAcquisition::ReplacedExpiredLease
+            }
+            None => SchedulerLeaseAcquisition::Fresh,
+        };
         let expires_at = now
             .checked_add_signed(ttl)
             .ok_or(SchedulerLeaseError::InvalidTtl)?;
@@ -349,7 +376,7 @@ impl ScheduledTask {
             heartbeat_at: now,
             expires_at,
         });
-        Ok(())
+        Ok(acquisition)
     }
 
     pub(crate) fn renew_run_lease(
@@ -536,6 +563,7 @@ mod tests {
         let task: ScheduledTask = serde_json::from_str(json).unwrap();
         assert!(task.recurring && !task.durable);
         assert!(task.active_run_lease.is_none());
+        assert!(task.last_run_lease_takeover.is_none());
     }
 
     #[test]
@@ -544,7 +572,10 @@ mod tests {
         let ttl = chrono::Duration::seconds(30);
         let mut task = ScheduledTask::new(300, "test".into(), true, true);
 
-        task.acquire_run_lease("scheduler-a", now, ttl).unwrap();
+        assert_eq!(
+            task.acquire_run_lease("scheduler-a", now, ttl).unwrap(),
+            SchedulerLeaseAcquisition::Fresh
+        );
         assert_eq!(
             task.acquire_run_lease("scheduler-b", now, ttl),
             Err(SchedulerLeaseError::HeldByActiveOwner)
@@ -571,10 +602,20 @@ mod tests {
         let ttl = chrono::Duration::seconds(30);
         let mut task = ScheduledTask::new(300, "test".into(), true, true);
 
-        task.acquire_run_lease("scheduler-a", now, ttl).unwrap();
+        assert_eq!(
+            task.acquire_run_lease("scheduler-a", now, ttl).unwrap(),
+            SchedulerLeaseAcquisition::Fresh
+        );
         let takeover = now + chrono::Duration::seconds(31);
-        task.acquire_run_lease("scheduler-b", takeover, ttl)
-            .unwrap();
+        assert_eq!(
+            task.acquire_run_lease("scheduler-b", takeover, ttl)
+                .unwrap(),
+            SchedulerLeaseAcquisition::ReplacedExpiredLease
+        );
+        let receipt = task.last_run_lease_takeover.as_ref().unwrap();
+        assert_eq!(receipt.previous_owner_id, "scheduler-a");
+        assert_eq!(receipt.previous_heartbeat_at, now);
+        assert_eq!(receipt.taken_at, takeover);
         assert_eq!(
             task.release_run_lease("scheduler-a"),
             Err(SchedulerLeaseError::OwnerMismatch)

@@ -717,11 +717,18 @@ impl SchedulerActor {
                 task.release_run_lease(&lease_owner_id)
                     .expect("current scheduler owner owns its terminal iteration lease");
             }
-            if let Err(error) =
-                task.acquire_run_lease(&lease_owner_id, Utc::now(), BACKGROUND_RUN_LEASE_TTL)
-            {
-                tracing::info!(task_id = %task_id, ?error, "Skipping loop fire: durable run lease is unavailable");
-                return LoopFireOutcome::Skipped;
+            match task.acquire_run_lease(&lease_owner_id, Utc::now(), BACKGROUND_RUN_LEASE_TTL) {
+                Ok(super::types::SchedulerLeaseAcquisition::Fresh) => {}
+                Ok(super::types::SchedulerLeaseAcquisition::ReplacedExpiredLease) => {
+                    tracing::warn!(
+                        task_id = %task_id,
+                        "Taking over an expired durable scheduler run lease"
+                    );
+                }
+                Err(error) => {
+                    tracing::info!(task_id = %task_id, ?error, "Skipping loop fire: durable run lease is unavailable");
+                    return LoopFireOutcome::Skipped;
+                }
             }
             task.last_subagent_id = Some(subagent_id.clone());
             task.iterations_since_fresh = next_iterations_since_fresh;
