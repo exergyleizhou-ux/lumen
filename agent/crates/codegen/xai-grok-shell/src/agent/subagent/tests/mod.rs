@@ -88,6 +88,7 @@ fn memory_configuration_cannot_restore_write_tools_to_read_only_leaf() {
 #[test]
 fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
     use xai_grok_memory::{WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryState};
+    use xai_grok_tools::types::task_tree_memory::TaskTreeMemoryFactKind;
 
     let temp = tempfile::tempdir().unwrap();
     let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
@@ -96,6 +97,7 @@ fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
         branch_id: "branch".to_owned(),
         fact_id: "build-status".to_owned(),
         revision,
+        kind: xai_grok_tools::types::task_tree_memory::TaskTreeMemoryFactKind::Fact,
         author_session_id: "child".to_owned(),
         evidence_ref: Some("test://evidence".to_owned()),
         confidence: 90,
@@ -104,17 +106,16 @@ fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
     };
     ledger.propose(proposed(1, "unreviewed claim")).unwrap();
     assert!(render_task_tree_working_memory(&ledger).unwrap().is_none());
+    let mut reviewed = proposed(2, "cargo check passed");
+    reviewed.kind = TaskTreeMemoryFactKind::Assumption;
     ledger
-        .review(
-            "root",
-            proposed(2, "cargo check passed"),
-            WorkingMemoryState::Accepted,
-        )
+        .review("root", reviewed, WorkingMemoryState::Accepted)
         .unwrap();
     let injection = render_task_tree_working_memory(&ledger)
         .unwrap()
         .expect("accepted facts inject");
     assert!(injection.contains("cargo check passed"));
+    assert!(injection.contains("[assumption:build-status"));
     assert!(!injection.contains("unreviewed claim"));
 }
 #[tokio::test]

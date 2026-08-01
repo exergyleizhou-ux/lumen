@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::implementations::grok_build::task::types::SessionIdResource;
 use crate::types::requirements::Expr;
 use crate::types::task_tree_memory::{
-    TaskTreeMemoryBackendResource, TaskTreeMemoryFact, TaskTreeMemoryReviewState,
+    TaskTreeMemoryBackendResource, TaskTreeMemoryFact, TaskTreeMemoryFactKind,
+    TaskTreeMemoryReviewState,
 };
 use crate::types::tool::{ToolKind, ToolNamespace};
 
@@ -17,6 +18,31 @@ pub enum TaskTreeMemoryAction {
     Accept,
     Reject,
     Supersede,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTreeMemoryClaimKind {
+    #[default]
+    Fact,
+    Progress,
+    Evidence,
+    Assumption,
+    Blocker,
+    Decision,
+}
+
+impl From<TaskTreeMemoryClaimKind> for TaskTreeMemoryFactKind {
+    fn from(kind: TaskTreeMemoryClaimKind) -> Self {
+        match kind {
+            TaskTreeMemoryClaimKind::Fact => Self::Fact,
+            TaskTreeMemoryClaimKind::Progress => Self::Progress,
+            TaskTreeMemoryClaimKind::Evidence => Self::Evidence,
+            TaskTreeMemoryClaimKind::Assumption => Self::Assumption,
+            TaskTreeMemoryClaimKind::Blocker => Self::Blocker,
+            TaskTreeMemoryClaimKind::Decision => Self::Decision,
+        }
+    }
 }
 
 impl TaskTreeMemoryAction {
@@ -39,6 +65,10 @@ pub struct TaskTreeMemoryInput {
     pub fact_id: String,
     pub revision: u64,
     pub branch_id: String,
+    /// Preserved after review and rendered to sibling agents. Old callers
+    /// default to `fact` for wire compatibility.
+    #[serde(default)]
+    pub claim_kind: TaskTreeMemoryClaimKind,
     /// Required and non-empty for `accept`: accepted facts are injected into
     /// descendant prompts as reviewed shared state.  Proposals may omit it
     /// when the branch is explicitly reporting an uncertainty.
@@ -142,6 +172,7 @@ impl xai_tool_runtime::Tool for TaskTreeMemoryTool {
             branch_id: input.branch_id,
             fact_id: input.fact_id,
             revision: input.revision,
+            kind: input.claim_kind.into(),
             evidence_ref: input.evidence_ref,
             confidence: input.confidence,
             text: input.text,
@@ -218,6 +249,7 @@ mod tests {
                 fact_id: "fact-a".to_owned(),
                 revision: 1,
                 branch_id: "child-branch".to_owned(),
+                claim_kind: TaskTreeMemoryClaimKind::Fact,
                 evidence_ref: Some("test://evidence".to_owned()),
                 confidence: 80,
                 text: "observed fact".to_owned(),
@@ -243,6 +275,7 @@ mod tests {
                 fact_id: "fact-a".to_owned(),
                 revision: 2,
                 branch_id: "root-branch".to_owned(),
+                claim_kind: TaskTreeMemoryClaimKind::Fact,
                 evidence_ref: None,
                 confidence: 90,
                 text: "unproven claim".to_owned(),

@@ -6,12 +6,41 @@
 
 use std::sync::Arc;
 
+/// What a task-tree memory claim represents.  The label remains attached to
+/// the claim after root review so an accepted assumption cannot masquerade as
+/// a verified fact in a sibling's prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTreeMemoryFactKind {
+    #[default]
+    Fact,
+    Progress,
+    Evidence,
+    Assumption,
+    Blocker,
+    Decision,
+}
+
+impl TaskTreeMemoryFactKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fact => "fact",
+            Self::Progress => "progress",
+            Self::Evidence => "evidence",
+            Self::Assumption => "assumption",
+            Self::Blocker => "blocker",
+            Self::Decision => "decision",
+        }
+    }
+}
+
 /// A structured fact proposal or reviewed revision.
 #[derive(Debug, Clone)]
 pub struct TaskTreeMemoryFact {
     pub branch_id: String,
     pub fact_id: String,
     pub revision: u64,
+    pub kind: TaskTreeMemoryFactKind,
     pub evidence_ref: Option<String>,
     pub confidence: u8,
     pub text: String,

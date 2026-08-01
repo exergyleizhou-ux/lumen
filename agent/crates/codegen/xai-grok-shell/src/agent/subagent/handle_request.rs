@@ -83,8 +83,13 @@ pub(super) fn render_task_tree_working_memory(
     for fact in facts.into_iter().take(MAX_FACTS) {
         let evidence = fact.evidence_ref.as_deref().unwrap_or("not recorded");
         rendered.push_str(&format!(
-            "- [{} r{} confidence={}] {} (evidence: {})\n",
-            fact.fact_id, fact.revision, fact.confidence, fact.text, evidence
+            "- [{}:{} r{} confidence={}] {} (evidence: {})\n",
+            fact.kind.label(),
+            fact.fact_id,
+            fact.revision,
+            fact.confidence,
+            fact.text,
+            evidence
         ));
         if rendered.len() >= MAX_BYTES {
             rendered =

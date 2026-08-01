@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::MemoryStorage;
 use xai_grok_tools::types::task_tree_memory::{
-    TaskTreeMemoryBackend, TaskTreeMemoryFact as BackendFact, TaskTreeMemoryReviewState,
-    TaskTreeMemoryWriteReceipt,
+    TaskTreeMemoryBackend, TaskTreeMemoryFact as BackendFact, TaskTreeMemoryFactKind,
+    TaskTreeMemoryReviewState, TaskTreeMemoryWriteReceipt,
 };
 
 /// `flock` serializes cooperating processes, but is not enough on its own for
@@ -43,6 +43,8 @@ pub struct WorkingMemoryFact {
     pub branch_id: String,
     pub fact_id: String,
     pub revision: u64,
+    #[serde(default)]
+    pub kind: TaskTreeMemoryFactKind,
     pub author_session_id: String,
     pub evidence_ref: Option<String>,
     pub confidence: u8,
@@ -168,6 +170,7 @@ impl WorkingMemoryLedgerBackend {
             branch_id: fact.branch_id,
             fact_id: fact.fact_id,
             revision: fact.revision,
+            kind: fact.kind,
             author_session_id: author_session_id.to_owned(),
             evidence_ref: fact.evidence_ref,
             confidence: fact.confidence,
@@ -422,6 +425,7 @@ mod tests {
             branch_id: "branch-a".to_owned(),
             fact_id: fact_id.to_owned(),
             revision,
+            kind: TaskTreeMemoryFactKind::Fact,
             author_session_id: author.to_owned(),
             evidence_ref: Some("test://evidence".to_owned()),
             confidence: 80,
@@ -488,6 +492,19 @@ mod tests {
     }
 
     #[test]
+    fn legacy_journal_record_without_kind_defaults_to_fact() {
+        let mut record = serde_json::to_value(fact("fact-a", 1, "child", "legacy"))
+            .expect("test fact serializes");
+        record
+            .as_object_mut()
+            .expect("fact is a JSON object")
+            .remove("kind");
+        let restored: WorkingMemoryFact =
+            serde_json::from_value(record).expect("old journal record remains readable");
+        assert_eq!(restored.kind, TaskTreeMemoryFactKind::Fact);
+    }
+
+    #[test]
     fn root_workspace_directory_keeps_isolated_descendants_on_one_ledger() {
         let temp = tempfile::tempdir().unwrap();
         let root_workspace_memory = temp.path().join("root-workspace-memory");
@@ -514,6 +531,7 @@ mod tests {
             branch_id: "branch-a".to_owned(),
             fact_id: "fact-a".to_owned(),
             revision: 1,
+            kind: TaskTreeMemoryFactKind::Fact,
             evidence_ref: Some("test://evidence".to_owned()),
             confidence: 80,
             text: "child observation".to_owned(),
@@ -526,6 +544,7 @@ mod tests {
             branch_id: "branch-a".to_owned(),
             fact_id: "fact-a".to_owned(),
             revision: 2,
+            kind: TaskTreeMemoryFactKind::Fact,
             evidence_ref: Some("test://evidence".to_owned()),
             confidence: 95,
             text: "root reviewed observation".to_owned(),
