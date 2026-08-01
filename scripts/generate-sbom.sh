@@ -5,9 +5,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
 OUT="$ROOT/SBOM.spdx.json"
+VERSION_FILE="$ROOT/VERSION"
 META="$(mktemp)"
 GO_META="$(mktemp)"
 trap 'rm -f "$META" "$GO_META"' EXIT
+[[ -s "$VERSION_FILE" ]] || {
+  echo "FAIL: missing or empty VERSION" >&2
+  exit 1
+}
+LUMEN_VERSION="$(tr -d '[:space:]' <"$VERSION_FILE")"
+[[ -n "$LUMEN_VERSION" ]] || {
+  echo "FAIL: VERSION is empty after whitespace normalization" >&2
+  exit 1
+}
 cd "$ROOT/agent"
 
 echo "=== generate-sbom ==="
@@ -19,7 +29,7 @@ if [[ -f "$ROOT/packs/science/go.mod" ]]; then
   (cd "$ROOT/packs/science" && go list -m -json all >"$GO_META")
 fi
 
-python3 - "$ROOT" "$OUT" "$META" "$GO_META" <<'PY'
+python3 - "$ROOT" "$OUT" "$META" "$GO_META" "$LUMEN_VERSION" <<'PY'
 import hashlib, json, sys, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,8 +38,23 @@ root = Path(sys.argv[1])
 out = Path(sys.argv[2])
 meta = json.loads(Path(sys.argv[3]).read_text())
 go_meta_text = Path(sys.argv[4]).read_text()
+lumen_version = sys.argv[5].strip()
 now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+evidence_head = subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
+
+# An SBOM is evidence for the immutable source candidate, not for its later
+# SOURCE_LOCK/SBOM/readiness suffix. Reconciliation therefore keys it to the
+# source SHA frozen in SOURCE_LOCK.json, while retaining the writer commit as
+# separate provenance metadata.
+try:
+    source_lock = json.loads((root / "SOURCE_LOCK.json").read_text())
+    source_head = (source_lock.get("monorepo") or {}).get("git_head") or ""
+except (OSError, json.JSONDecodeError) as exc:
+    raise SystemExit(f"SOURCE_LOCK.json is required for SBOM provenance: {exc}")
+if len(source_head) != 40 or any(char not in "0123456789abcdef" for char in source_head):
+    raise SystemExit("SOURCE_LOCK.json has no valid monorepo.git_head")
+if not lumen_version:
+    raise SystemExit("empty Lumen version")
 
 packages = []
 relationships = []
@@ -43,7 +68,7 @@ def spdx_id(name: str) -> str:
 packages.append({
     "SPDXID": root_pkg_id,
     "name": "lumen",
-    "versionInfo": "0.1.220-alpha.4",
+    "versionInfo": lumen_version,
     "downloadLocation": "NOASSERTION",
     "filesAnalyzed": False,
     "licenseConcluded": "Apache-2.0",
@@ -53,7 +78,7 @@ packages.append({
     "externalRefs": [{
         "referenceCategory": "OTHER",
         "referenceType": "gitCommit",
-        "referenceLocator": head,
+        "referenceLocator": source_head,
     }],
 })
 relationships.append({
@@ -147,8 +172,8 @@ doc = {
     "spdxVersion": "SPDX-2.3",
     "dataLicense": "CC0-1.0",
     "SPDXID": doc_id,
-    "name": f"lumen-{head[:7]}",
-    "documentNamespace": f"https://lumen.local/spdx/{head}",
+    "name": f"lumen-{source_head[:7]}",
+    "documentNamespace": f"https://lumen.local/spdx/{source_head}",
     "creationInfo": {
         "created": now,
         "creators": ["Tool: scripts/generate-sbom.sh", "Organization: Lumen"],
@@ -161,7 +186,9 @@ doc = {
         "annotator": "Tool: scripts/generate-sbom.sh",
         "annotationDate": now,
         "comment": json.dumps({
-            "monorepo_git_head": head,
+            "monorepo_git_head": source_head,
+            "evidence_git_head": evidence_head,
+            "lumen_version": lumen_version,
             "package_count": len(packages),
             "file_sha256": file_hashes,
             "go_module_count": len(go_modules),
@@ -170,5 +197,8 @@ doc = {
     }],
 }
 out.write_text(json.dumps(doc, indent=2) + "\n")
-print(f"OK: wrote {out} packages={len(packages)} head={head[:7]}")
+print(
+    f"OK: wrote {out} packages={len(packages)} "
+    f"source={source_head[:7]} evidence={evidence_head[:7]} version={lumen_version}"
+)
 PY
