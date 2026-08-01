@@ -171,6 +171,11 @@ impl MvpAgent {
                         "GROK_SUBAGENT_AWAIT_BUDGET_MS",
                         std::time::Duration::from_secs(600),
                     ),
+                tree_wall_time_budget:
+                    xai_grok_tools::implementations::grok_build::task::backend::env_duration_or(
+                        "GROK_SUBAGENT_TREE_WALL_TIME_BUDGET_MS",
+                        std::time::Duration::from_secs(2 * 60 * 60),
+                    ),
                 buffer_completions: true,
                 buffered_completion_output_cap: None,
             };

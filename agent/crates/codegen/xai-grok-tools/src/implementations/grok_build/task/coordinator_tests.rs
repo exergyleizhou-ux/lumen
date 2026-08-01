@@ -1696,6 +1696,58 @@ async fn root_tree_concurrency_cap_rejects_ninth_pending_child() {
     harness.actor.abort();
 }
 
+#[tokio::test(start_paused = true)]
+async fn tree_wall_time_budget_cancels_children_and_rejects_later_spawn() {
+    let mut harness = harness_with_config(
+        true,
+        CoordinatorConfig {
+            tree_wall_time_budget: std::time::Duration::from_secs(1),
+            ..CoordinatorConfig::default()
+        },
+    );
+    let first = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("tree-timeout-first", true)).await }
+    });
+    assert_eq!(
+        harness.requests.recv().await.expect("initial request").id,
+        "tree-timeout-first"
+    );
+
+    tokio::time::advance(std::time::Duration::from_secs(1)).await;
+    for _ in 0..4 {
+        tokio::task::yield_now().await;
+    }
+
+    let first_result = first.await.expect("join").expect("cancelled result");
+    assert!(first_result.cancelled);
+
+    let rejected = harness
+        .backend
+        .spawn(request("tree-timeout-later", true))
+        .await
+        .expect("budget rejection reply");
+    assert!(!rejected.success);
+    assert!(rejected.cancelled);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("wall-time budget exhausted"))
+    );
+
+    let completed = harness
+        .backend
+        .query("tree-timeout-first", true, Some(100))
+        .await
+        .expect("cancelled child completion");
+    assert!(matches!(
+        completed.status,
+        SubagentSnapshotStatus::Cancelled { .. }
+    ));
+    harness.actor.abort();
+}
+
 #[tokio::test]
 async fn completed_cache_evicts_oldest_entry_at_cap() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));

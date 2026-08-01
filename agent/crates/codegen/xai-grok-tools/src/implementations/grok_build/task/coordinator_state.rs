@@ -132,6 +132,9 @@ pub trait ChildRunner: 'static {
 #[derive(Debug, Clone)]
 pub struct CoordinatorConfig {
     pub foreground_budget: std::time::Duration,
+    /// Maximum wall-clock lifetime of one root task tree. This is independent
+    /// of foreground waiting: a backgrounded child must not run forever.
+    pub tree_wall_time_budget: std::time::Duration,
     /// Whether the host drains completion summaries between turns.
     pub buffer_completions: bool,
     /// Extra cap applied to BUFFERED summary outputs only (the request's own
@@ -148,6 +151,7 @@ impl Default for CoordinatorConfig {
     fn default() -> Self {
         Self {
             foreground_budget: std::time::Duration::from_secs(45),
+            tree_wall_time_budget: std::time::Duration::from_secs(2 * 60 * 60),
             buffer_completions: false,
             buffered_completion_output_cap: None,
         }

@@ -60,6 +60,12 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     /// are rejected until [`SubagentEvent::OpenSpawnAdmission`] (next turn) or
     /// teardown, so a detached late `TaskTool` spawn cannot outrun Stop.
     spawn_blocked_sessions: HashSet<String>,
+    /// Root task trees whose total wall-clock budget has expired. Kept until
+    /// root teardown so a completed child cannot restart an exhausted tree.
+    expired_tree_roots: HashSet<String>,
+    /// First admitted child time for every root tree. Sequential fan-out
+    /// therefore shares one wall-clock budget.
+    tree_started_at: HashMap<String, tokio::time::Instant>,
     usage_not_applied_prompts: HashSet<PromptScope>,
     pending_completions: Vec<BufferedCompletion>,
     runs: FuturesUnordered<
@@ -107,6 +113,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             waiters: HashMap::new(),
             workflow_cancel_waiters: HashMap::new(),
             spawn_blocked_sessions: HashSet::new(),
+            expired_tree_roots: HashSet::new(),
+            tree_started_at: HashMap::new(),
             usage_not_applied_prompts: HashSet::new(),
             pending_completions: Vec::new(),
             runs: FuturesUnordered::new(),
@@ -229,12 +237,45 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     && self
                         .spawn_blocked_sessions
                         .contains(&request.lineage.root_session_id)
+                    && !self
+                        .expired_tree_roots
+                        .contains(&request.lineage.root_session_id)
                 {
                     let id = request.id.clone();
                     let _ = command.result_tx.send(SubagentResult {
                         success: false,
                         cancelled: true,
                         error: Some("parent session is stopped".to_owned()),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                let root_session_id = request.lineage.root_session_id.clone();
+                if self.expired_tree_roots.contains(&root_session_id) {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        cancelled: true,
+                        error: Some("subagent tree wall-time budget exhausted".to_owned()),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                let started_at = *self
+                    .tree_started_at
+                    .entry(root_session_id.clone())
+                    .or_insert_with(tokio::time::Instant::now);
+                if tokio::time::Instant::now() >= started_at + self.config.tree_wall_time_budget {
+                    self.expire_tree(&root_session_id);
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        cancelled: true,
+                        error: Some("subagent tree wall-time budget exhausted".to_owned()),
                         subagent_id: id.clone(),
                         child_session_id: id,
                         ..Default::default()
@@ -371,6 +412,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let _ = request.respond_to.send(completions);
             }
             SubagentEvent::TeardownSession { parent_session_id } => {
+                self.tree_started_at.remove(&parent_session_id);
+                self.expired_tree_roots.remove(&parent_session_id);
                 self.pending_completions.retain(|completion| {
                     completion.parent_session_id != parent_session_id
                         && completion.root_session_id != parent_session_id
@@ -925,6 +968,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .flatten()
                     .map(|waiter| waiter.deadline),
             )
+            .chain(
+                self.tree_started_at
+                    .iter()
+                    .filter(|(root, _)| !self.expired_tree_roots.contains(*root))
+                    .map(|(_, started_at)| *started_at + self.config.tree_wall_time_budget),
+            )
             .min()
     }
 
@@ -945,6 +994,17 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         for child in self.active.values_mut() {
             background_at_deadline(child, now, self.config.foreground_budget);
+        }
+
+        let expired_roots: Vec<_> = self
+            .tree_started_at
+            .iter()
+            .filter_map(|(root, started_at)| {
+                (*started_at + self.config.tree_wall_time_budget <= now).then(|| root.clone())
+            })
+            .collect();
+        for root in expired_roots {
+            self.expire_tree(&root);
         }
 
         let ids: Vec<_> = self.waiters.keys().cloned().collect();
@@ -982,6 +1042,31 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for child in self.pending.values() {
             child.cancellation.cancel();
         }
+    }
+
+    /// The wall-time limit is a whole-tree stop, so it includes workflow
+    /// children that user Stop deliberately leaves to their owner policy.
+    fn expire_tree(&mut self, root_session_id: &str) {
+        if !self.expired_tree_roots.insert(root_session_id.to_owned()) {
+            return;
+        }
+        self.spawn_blocked_sessions
+            .insert(root_session_id.to_owned());
+        for child in self.active.values() {
+            if child.request.lineage.root_session_id == root_session_id {
+                child.cancellation.cancel();
+                child.control.cancel();
+            }
+        }
+        for child in self.pending.values() {
+            if child.request.lineage.root_session_id == root_session_id {
+                child.cancellation.cancel();
+            }
+        }
+        tracing::warn!(
+            root_session_id,
+            "subagent tree wall-time budget exhausted; cancelled tree"
+        );
     }
 }
 
