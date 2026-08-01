@@ -318,9 +318,7 @@ fn lumen_goal_incomplete_gate(
 ) -> Result<(), xai_tool_runtime::ToolError> {
     use crate::implementations::grok_build::todo::{TodoState, TodoStatus};
     use crate::types::resources::State;
-    use lumen_discipline::{
-        gate_goal_complete, GoalGate, GoalIncompletePolicy, TodoSnapshot,
-    };
+    use lumen_discipline::{GoalGate, GoalIncompletePolicy, TodoSnapshot, gate_goal_complete};
 
     let snapshots: Vec<TodoSnapshot> = res
         .get::<State<TodoState>>()
@@ -346,10 +344,9 @@ fn lumen_goal_incomplete_gate(
         true,
     ) {
         GoalGate::Allow => Ok(()),
-        GoalGate::Reject { reason, detail } => Err(xai_tool_runtime::ToolError::custom(
-            reason,
-            detail,
-        )),
+        GoalGate::Reject { reason, detail } => {
+            Err(xai_tool_runtime::ToolError::custom(reason, detail))
+        }
     }
 }
 

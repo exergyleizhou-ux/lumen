@@ -182,7 +182,8 @@ pub(super) fn handle_settings_update(notif: &acp::ExtNotification, app: &mut App
     if let Some(remote_v) = update.voice_mode_enabled {
         // Same resolution as startup: env > remote > default on. API-key sessions
         // keep voice on (billable STT) even when remote is a kill switch.
-        let v = crate::app::resolve_voice_mode_enabled(None, None, Some(remote_v), app.is_api_key_auth);
+        let v =
+            crate::app::resolve_voice_mode_enabled(None, None, Some(remote_v), app.is_api_key_auth);
         // Kill-switch: tear down capture so a remote false doesn't leave the mic armed
         // (skipped for API keys via the OR above).
         if !v {

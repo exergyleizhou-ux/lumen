@@ -2299,118 +2299,115 @@ impl SessionActor {
                 let model_id = self.current_model_id().await;
                 xai_grok_telemetry::session_ctx::log_event(
                     xai_grok_telemetry::events::ModelResponseReceived {
-                            model_id,
-                            duration_ms: model_duration_ms,
-                            stop_reason: response
-                                .stop_reason
-                                .as_ref()
-                                .map(|r| format!("{r:?}").to_ascii_lowercase()),
-                            prompt_tokens: response.usage.as_ref().map(|u| u.prompt_tokens),
-                            completion_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
-                            reasoning_tokens: response.usage.as_ref().map(|u| u.reasoning_tokens),
-                            cached_prompt_tokens: response
-                                .usage
-                                .as_ref()
-                                .and_then(|u| u.definitive_provider_cache_hit_tokens()),
-                            provider_cache_accounting: response.usage.as_ref().map(|u| {
-                                match u.provider_cache_usage_truth() {
-                                    xai_grok_sampling_types::CacheUsageTruth::Reported {
-                                        ..
-                                    } => "reported".to_string(),
-                                    xai_grok_sampling_types::CacheUsageTruth::Contradictory {
-                                        ..
-                                    } => "contradictory".to_string(),
-                                    xai_grok_sampling_types::CacheUsageTruth::Unavailable => {
-                                        "unavailable".to_string()
-                                    }
+                        model_id,
+                        duration_ms: model_duration_ms,
+                        stop_reason: response
+                            .stop_reason
+                            .as_ref()
+                            .map(|r| format!("{r:?}").to_ascii_lowercase()),
+                        prompt_tokens: response.usage.as_ref().map(|u| u.prompt_tokens),
+                        completion_tokens: response.usage.as_ref().map(|u| u.completion_tokens),
+                        reasoning_tokens: response.usage.as_ref().map(|u| u.reasoning_tokens),
+                        cached_prompt_tokens: response
+                            .usage
+                            .as_ref()
+                            .and_then(|u| u.definitive_provider_cache_hit_tokens()),
+                        provider_cache_accounting: response.usage.as_ref().map(|u| {
+                            match u.provider_cache_usage_truth() {
+                                xai_grok_sampling_types::CacheUsageTruth::Reported { .. } => {
+                                    "reported".to_string()
                                 }
-                            }),
-                            provider_cache_hit_tokens: response
-                                .usage
-                                .as_ref()
-                                .and_then(|u| u.provider_cache_hit_tokens),
-                            provider_cache_miss_tokens: response
-                                .usage
-                                .as_ref()
-                                .and_then(|u| u.cache_miss_prompt_tokens),
-                        },
+                                xai_grok_sampling_types::CacheUsageTruth::Contradictory {
+                                    ..
+                                } => "contradictory".to_string(),
+                                xai_grok_sampling_types::CacheUsageTruth::Unavailable => {
+                                    "unavailable".to_string()
+                                }
+                            }
+                        }),
+                        provider_cache_hit_tokens: response
+                            .usage
+                            .as_ref()
+                            .and_then(|u| u.provider_cache_hit_tokens),
+                        provider_cache_miss_tokens: response
+                            .usage
+                            .as_ref()
+                            .and_then(|u| u.cache_miss_prompt_tokens),
+                    },
                 );
             }
             self.record_response_token_usage(&response, Some(model_duration_ms));
-                // Prompt-cache stack: shape + rolling hit (DeepSeek-first multi-provider).
-                {
-                    let systems: Vec<&str> = request
-                        .items
-                        .iter()
-                        .filter_map(|it| match it {
-                            ConversationItem::System(s) => Some(s.content.as_ref()),
-                            _ => None,
-                        })
-                        .collect();
-                    let system_text = lumen_discipline::join_system_texts(systems);
-                    let tools: Vec<(String, String)> = request
-                        .tools
-                        .iter()
-                        .map(|t| {
-                            (
-                                t.name.clone(),
-                                serde_json::to_string(&t.parameters)
-                                    .unwrap_or_else(|_| "{}".into()),
-                            )
-                        })
-                        .collect();
-                    let model_id = if let Some(m) = request.model.clone() {
-                        m
-                    } else {
-                        self.current_model_id().await
-                    };
-                    let base_url = self
-                        .chat_state_handle
-                        .get_sampling_config()
-                        .await
-                        .map(|c| c.base_url);
-                    let (prompt_tok, hit_tok, out_tok) = response
-                        .usage
-                        .as_ref()
-                        .map(|u| {
-                            let definitive_hit = u.definitive_provider_cache_hit_tokens();
-                            if definitive_hit.is_none()
-                                && u.cached_prompt_tokens > 0
-                            {
-                                tracing::debug!(
-                                    prompt_tokens = u.prompt_tokens,
-                                    cached_prompt_tokens = u.cached_prompt_tokens,
-                                    truth = ?u.provider_cache_usage_truth(),
-                                    "cache compatibility tokens are not definitive provider cache truth"
-                                );
-                            }
-                            (
-                                u64::from(u.prompt_tokens),
-                                u64::from(definitive_hit.unwrap_or(0)),
-                                u64::from(u.completion_tokens),
-                            )
-                        })
-                        .unwrap_or((0, 0, 0));
-                    let snap = crate::session::prompt_cache_registry::observe_call(
-                        self.session_info.id.0.as_ref(),
-                        &model_id,
-                        base_url.as_deref(),
-                        &system_text,
-                        &tools,
-                        prompt_tok,
-                        hit_tok,
-                        out_tok,
-                    );
-                    tracing::debug!(
-                        target: "lumen.prompt_cache",
-                        session = %self.session_info.id.0,
-                        stability = snap.stability_score,
-                        streak = snap.stable_streak,
-                        profile = snap.profile_label,
-                        line = %snap.cache_line,
-                        "prompt cache session snapshot"
-                    );
-                }
+            // Prompt-cache stack: shape + rolling hit (DeepSeek-first multi-provider).
+            {
+                let systems: Vec<&str> = request
+                    .items
+                    .iter()
+                    .filter_map(|it| match it {
+                        ConversationItem::System(s) => Some(s.content.as_ref()),
+                        _ => None,
+                    })
+                    .collect();
+                let system_text = lumen_discipline::join_system_texts(systems);
+                let tools: Vec<(String, String)> = request
+                    .tools
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.name.clone(),
+                            serde_json::to_string(&t.parameters).unwrap_or_else(|_| "{}".into()),
+                        )
+                    })
+                    .collect();
+                let model_id = if let Some(m) = request.model.clone() {
+                    m
+                } else {
+                    self.current_model_id().await
+                };
+                let base_url = self
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .map(|c| c.base_url);
+                let (prompt_tok, hit_tok, out_tok) = response
+                    .usage
+                    .as_ref()
+                    .map(|u| {
+                        let definitive_hit = u.definitive_provider_cache_hit_tokens();
+                        if definitive_hit.is_none() && u.cached_prompt_tokens > 0 {
+                            tracing::debug!(
+                                prompt_tokens = u.prompt_tokens,
+                                cached_prompt_tokens = u.cached_prompt_tokens,
+                                truth = ?u.provider_cache_usage_truth(),
+                                "cache compatibility tokens are not definitive provider cache truth"
+                            );
+                        }
+                        (
+                            u64::from(u.prompt_tokens),
+                            u64::from(definitive_hit.unwrap_or(0)),
+                            u64::from(u.completion_tokens),
+                        )
+                    })
+                    .unwrap_or((0, 0, 0));
+                let snap = crate::session::prompt_cache_registry::observe_call(
+                    self.session_info.id.0.as_ref(),
+                    &model_id,
+                    base_url.as_deref(),
+                    &system_text,
+                    &tools,
+                    prompt_tok,
+                    hit_tok,
+                    out_tok,
+                );
+                tracing::debug!(
+                    target: "lumen.prompt_cache",
+                    session = %self.session_info.id.0,
+                    stability = snap.stability_score,
+                    streak = snap.stable_streak,
+                    profile = snap.profile_label,
+                    line = %snap.cache_line,
+                    "prompt cache session snapshot"
+                );
+            }
 
             let response_completed = self.response_completed_update(&response);
             if let Some(pt) = prompt_timing.take() {
@@ -2570,16 +2567,16 @@ impl SessionActor {
                     );
                     continue;
                 }
-                    // Delivery gate: check if writer tools ran without verify
-                    let delivery_action = lumen_discipline::on_turn_end(
-                        &mut self.delivery_state.borrow_mut(),
-                        delivery_strictness_from_env(),
-                    );
-                    if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
-                        delivery_action
-                    {
-                        self.push_system_reminder(reminder);
-                    }
+                // Delivery gate: check if writer tools ran without verify
+                let delivery_action = lumen_discipline::on_turn_end(
+                    &mut self.delivery_state.borrow_mut(),
+                    delivery_strictness_from_env(),
+                );
+                if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
+                    delivery_action
+                {
+                    self.push_system_reminder(reminder);
+                }
                 let structured_output = match (
                     structured_output_validator.as_ref(),
                     final_answer_text.as_ref(),
@@ -2616,16 +2613,17 @@ impl SessionActor {
                                 model_fingerprint.clone(),
                             )
                             .await;
-                    // Delivery gate: check if writer tools ran without verify
-                    let delivery_action = lumen_discipline::on_turn_end(
-                        &mut self.delivery_state.borrow_mut(),
-                        delivery_strictness_from_env(),
-                    );
-                    if let lumen_discipline::DeliveryAction::InjectSystemReminder(ref reminder) =
-                        delivery_action
-                    {
-                        self.push_system_reminder(reminder);
-                    }
+                        // Delivery gate: check if writer tools ran without verify
+                        let delivery_action = lumen_discipline::on_turn_end(
+                            &mut self.delivery_state.borrow_mut(),
+                            delivery_strictness_from_env(),
+                        );
+                        if let lumen_discipline::DeliveryAction::InjectSystemReminder(
+                            ref reminder,
+                        ) = delivery_action
+                        {
+                            self.push_system_reminder(reminder);
+                        }
                         return Ok(TurnOutcome::Completed {
                             snapshot: Box::new(snapshot),
                             tools_called: turn_tools_called,

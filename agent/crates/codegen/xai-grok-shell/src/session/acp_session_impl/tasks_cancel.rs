@@ -160,21 +160,20 @@ async fn run_task(
     // Detach the heavy prompt state machine from the command/notification
     // dispatcher poll before constructing and polling it on the actor.
     tokio::task::yield_now().await;
-    let result = Box::pin(session
-        .handle_prompt(
-            &prompt_id,
-            input,
-            prompt_mode,
-            trace_gcs_config,
-            artifact_tracker,
-            client_identifier,
-            screen_mode,
-            verbatim,
-            json_schema,
-            persist_ack,
-            parsed_prompt_tx,
-        ))
-        .await;
+    let result = Box::pin(session.handle_prompt(
+        &prompt_id,
+        input,
+        prompt_mode,
+        trace_gcs_config,
+        artifact_tracker,
+        client_identifier,
+        screen_mode,
+        verbatim,
+        json_schema,
+        persist_ack,
+        parsed_prompt_tx,
+    ))
+    .await;
     let _ = completion_tx.send((prompt_id, result));
 }
 

@@ -96,10 +96,7 @@ fn spawn_coordinator(
     (tx, counters)
 }
 
-async fn answer_summarizer(
-    behaviour: SummarizerBehaviour,
-    req: SubagentSpawnRequest,
-) {
+async fn answer_summarizer(behaviour: SummarizerBehaviour, req: SubagentSpawnRequest) {
     match behaviour {
         SummarizerBehaviour::ReturnSummary => {
             let _ = req.respond_with(|req| SubagentResult {
@@ -124,11 +121,7 @@ async fn answer_summarizer(
     }
 }
 
-async fn answer_skeptic(
-    verdict: SkepticVerdict,
-    spawn_idx: usize,
-    req: SubagentSpawnRequest,
-) {
+async fn answer_skeptic(verdict: SkepticVerdict, spawn_idx: usize, req: SubagentSpawnRequest) {
     if let Some(p) =
         crate::session::goal_classifier::parse_skeptic_details_path_from_prompt(&req.prompt)
     {

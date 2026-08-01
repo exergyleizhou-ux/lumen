@@ -26,14 +26,15 @@ impl SessionActor {
             return Err(acp::Error::invalid_params()
                 .data("expert_active: session model is guarded until Expert restores its anchor"));
         }
-        let result = self.handle_set_session_model(
-            sampling_config,
-            use_concise,
-            apply_prompt_override,
-            skip_prompt_rewrite,
-            auto_compact_threshold_percent,
-        )
-        .await;
+        let result = self
+            .handle_set_session_model(
+                sampling_config,
+                use_concise,
+                apply_prompt_override,
+                skip_prompt_rewrite,
+                auto_compact_threshold_percent,
+            )
+            .await;
         drop(state_guard);
         result
     }
@@ -175,20 +176,19 @@ impl SessionActor {
         // Expert cannot acquire model ownership between validation and commit.
         let state_guard = self.state.lock().await;
         if matches!(
-                state_guard.expert.feature_state,
-                crate::session::expert::ExpertFeatureState::Active
-                    | crate::session::expert::ExpertFeatureState::Disabling
+            state_guard.expert.feature_state,
+            crate::session::expert::ExpertFeatureState::Active
+                | crate::session::expert::ExpertFeatureState::Disabling
         ) {
-            return Err(acp::Error::invalid_params().data(
-                "expert_active: agent harness is guarded until Expert restores its anchor",
-            ));
+            return Err(acp::Error::invalid_params()
+                .data("expert_active: agent harness is guarded until Expert restores its anchor"));
         }
         if state_guard.running_task.is_some() {
-                tracing::warn!(
-                    session_id = %self.session_info.id.0,
-                    new_agent_type = %definition.name,
-                    "handle_rebuild_agent_for_definition: turn in flight, rejecting rebuild"
-                );
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                new_agent_type = %definition.name,
+                "handle_rebuild_agent_for_definition: turn in flight, rejecting rebuild"
+            );
             return Err(acp::Error::internal_error()
                 .data("rebuild_agent: turn in flight, refusing to rebuild harness"));
         }

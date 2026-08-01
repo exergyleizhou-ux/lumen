@@ -6,8 +6,8 @@
 /// correctly serialises/deserialises its state snapshot for persistence.
 #[cfg(test)]
 mod plan_mode_shipped {
+    use crate::session::plan_mode::{PlanModeSnapshot, PlanModeTracker};
     use std::path::PathBuf;
-    use crate::session::plan_mode::{PlanModeTracker, PlanModeSnapshot};
 
     #[test]
     fn new_plan_mode_tracker_is_inactive() {
@@ -33,8 +33,8 @@ mod plan_mode_shipped {
             reminder_count: 0,
             pending_exit_reminder: false,
         };
-        let restored = PlanModeTracker::from_snapshot(
-            PathBuf::from("/tmp/test-session"), snap_pending);
+        let restored =
+            PlanModeTracker::from_snapshot(PathBuf::from("/tmp/test-session"), snap_pending);
         // Shipped invariant: Pending collapses to Inactive on restore
         assert!(!restored.is_active());
     }
@@ -44,8 +44,8 @@ mod plan_mode_shipped {
 /// enforces readonly tools and bounded attempt caps.
 #[cfg(test)]
 mod expert_shipped {
-    use crate::session::expert::{ExpertModeState, ExpertFeatureState};
     use crate::session::expert::consultant_tool_allowed;
+    use crate::session::expert::{ExpertFeatureState, ExpertModeState};
 
     #[test]
     fn expert_default_state_matches_shipped_defaults() {
@@ -60,10 +60,14 @@ mod expert_shipped {
     #[test]
     fn configured_expert_has_positive_bounded_cap() {
         let state = ExpertModeState::configured();
-        assert!(state.budget.attempt_cap > 0,
-            "configured expert must have a positive attempt cap");
-        assert!(state.budget.attempt_cap <= 20,
-            "attempt cap must be bounded at 20");
+        assert!(
+            state.budget.attempt_cap > 0,
+            "configured expert must have a positive attempt cap"
+        );
+        assert!(
+            state.budget.attempt_cap <= 20,
+            "attempt cap must be bounded at 20"
+        );
         assert!(state.enabled);
     }
 
@@ -100,8 +104,10 @@ mod goal_shipped {
             GoalStatus::Blocked,
         ];
         for variant in &paused_variants {
-            assert!(variant.is_paused(),
-                "paused variant {variant:?} must report is_paused()");
+            assert!(
+                variant.is_paused(),
+                "paused variant {variant:?} must report is_paused()"
+            );
         }
     }
 
@@ -116,8 +122,11 @@ mod goal_shipped {
         for (status, expect_paused) in &cases {
             let wire = serde_json::to_string(status).expect("serialise");
             let restored: GoalStatus = serde_json::from_str(&wire).expect("deserialise");
-            assert_eq!(restored.is_paused(), *expect_paused,
-                "status {status:?} wire round-trip mismatch");
+            assert_eq!(
+                restored.is_paused(),
+                *expect_paused,
+                "status {status:?} wire round-trip mismatch"
+            );
         }
     }
 
@@ -126,8 +135,10 @@ mod goal_shipped {
         // Shipped invariant: unknown wire values must restore as paused,
         // never as Active (fail-safe)
         let restored = GoalStatus::from_wire_str("unknown_future_status");
-        assert!(restored.is_paused(),
-            "unknown status must default to UserPaused (paused)");
+        assert!(
+            restored.is_paused(),
+            "unknown status must default to UserPaused (paused)"
+        );
     }
 }
 
@@ -135,8 +146,8 @@ mod goal_shipped {
 /// before Expert barrier can proceed (durable-before-side-effect).
 #[cfg(test)]
 mod persistence_order_shipped {
-    use crate::session::persistence::PersistenceMsg;
     use crate::session::expert::ExpertModeState;
+    use crate::session::persistence::PersistenceMsg;
 
     #[test]
     fn expert_barrier_is_always_acked_not_bare_write() {
@@ -219,19 +230,25 @@ mod persistence_order_shipped {
 
         // First transition succeeds
         assert!(
-            state.compare_exchange(ACTIVE, COMPLETED, Ordering::SeqCst, Ordering::SeqCst).is_ok(),
+            state
+                .compare_exchange(ACTIVE, COMPLETED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok(),
             "first terminal transition must succeed"
         );
 
         // Second transition (different terminal) must fail
         assert!(
-            state.compare_exchange(ACTIVE, CANCELLED, Ordering::SeqCst, Ordering::SeqCst).is_err(),
+            state
+                .compare_exchange(ACTIVE, CANCELLED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err(),
             "second terminal transition must fail — state already Complete"
         );
 
         // Even same terminal state must not be re-set
         assert!(
-            state.compare_exchange(ACTIVE, COMPLETED, Ordering::SeqCst, Ordering::SeqCst).is_err(),
+            state
+                .compare_exchange(ACTIVE, COMPLETED, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err(),
             "re-setting same terminal state must fail"
         );
     }

@@ -1321,7 +1321,8 @@ fn clear_resets_has_fetched_real_catalog() {
     mgr.apply_refresh_result(&cfg, Some(prefetched), None);
     let current = mgr.current_model_id().0.clone();
     assert!(
-        mgr.available().contains_key(&acp::ModelId::new(current.clone())),
+        mgr.available()
+            .contains_key(&acp::ModelId::new(current.clone())),
         "current model must be a valid catalog entry after a fresh refresh (got {current})"
     );
 }

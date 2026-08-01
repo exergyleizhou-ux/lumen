@@ -102,10 +102,7 @@ fn spawn_coordinator(
     (tx, counters)
 }
 
-async fn answer_strategist(
-    behaviour: StrategistBehaviour,
-    req: SubagentSpawnRequest,
-) {
+async fn answer_strategist(behaviour: StrategistBehaviour, req: SubagentSpawnRequest) {
     match behaviour {
         StrategistBehaviour::WriteNoteThenDone => {
             if let Some(p) = parse_strategy_path(&req.prompt) {
@@ -136,11 +133,7 @@ async fn answer_strategist(
     }
 }
 
-async fn answer_skeptic(
-    verdict: SkepticVerdict,
-    spawn_idx: usize,
-    req: SubagentSpawnRequest,
-) {
+async fn answer_skeptic(verdict: SkepticVerdict, spawn_idx: usize, req: SubagentSpawnRequest) {
     if let Some(p) = parse_details_path(&req.prompt) {
         let _ = tokio::fs::write(&p, b"# mock skeptic details\n").await;
     }

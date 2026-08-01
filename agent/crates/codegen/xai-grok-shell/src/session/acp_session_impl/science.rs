@@ -113,11 +113,9 @@ impl SessionActor {
             .map_err(|_| {
                 crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
             })?;
-        response
-            .await
-            .map_err(|_| {
-                crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
-            })?;
+        response.await.map_err(|_| {
+            crate::session::science_goal::ScienceGoalReviewError::AuditPersistenceFailed
+        })?;
         Ok(report)
     }
 

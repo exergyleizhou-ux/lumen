@@ -1663,11 +1663,6 @@ mod record_response_token_usage_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/replay_buffer_send_update_tests.rs"]
 mod replay_buffer_send_update_tests;
-/// SessionActor invariant tests: single-writer, durable-before-side-effect,
-/// terminal exactly-once, plan-mode dual-writer safety, Expert sandbox.
-#[cfg(test)]
-#[path = "acp_session_impl/session_actor_invariants.rs"]
-mod session_actor_invariants;
 #[cfg(test)]
 #[path = "acp_session_tests/reverse_request_session_id_tests.rs"]
 mod reverse_request_session_id_tests;
@@ -1677,6 +1672,11 @@ mod rewind_cross_compaction_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/rewind_synthetic_turn_tests.rs"]
 mod rewind_synthetic_turn_tests;
+/// SessionActor invariant tests: single-writer, durable-before-side-effect,
+/// terminal exactly-once, plan-mode dual-writer safety, Expert sandbox.
+#[cfg(test)]
+#[path = "acp_session_impl/session_actor_invariants.rs"]
+mod session_actor_invariants;
 /// Pins the `SubagentFinished` usage-fold attribution gate.
 #[cfg(test)]
 #[path = "acp_session_tests/subagent_usage_fold_tests.rs"]
@@ -2105,14 +2105,14 @@ mod managed_gateway_tool_tests {
     }
 }
 #[cfg(test)]
-#[path = "acp_session_tests/goal/goal_planner_e2e_tests.rs"]
-mod goal_planner_e2e_tests;
-#[cfg(test)]
 #[path = "acp_session_tests/goal/goal_backoff_tests.rs"]
 mod goal_backoff_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/goal/goal_classifier_e2e_tests.rs"]
 mod goal_classifier_e2e_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/goal/goal_planner_e2e_tests.rs"]
+mod goal_planner_e2e_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/goal/goal_reminder_subagent_rules_tests.rs"]
 mod goal_reminder_subagent_rules_tests;
@@ -2123,9 +2123,6 @@ mod goal_strategist_e2e_tests;
 #[path = "acp_session_tests/goal/goal_summarizer_e2e_tests.rs"]
 mod goal_summarizer_e2e_tests;
 #[cfg(test)]
-#[path = "acp_session_tests/rewrite_zero_turn_prefix_tests.rs"]
-mod rewrite_zero_turn_prefix_tests;
-#[cfg(test)]
 #[path = "acp_session_tests/interjection_tests.rs"]
 mod interjection_tests;
 #[cfg(test)]
@@ -2134,3 +2131,6 @@ mod recap_display_only_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/reminder_policy_tests.rs"]
 mod reminder_policy_tests;
+#[cfg(test)]
+#[path = "acp_session_tests/rewrite_zero_turn_prefix_tests.rs"]
+mod rewrite_zero_turn_prefix_tests;
