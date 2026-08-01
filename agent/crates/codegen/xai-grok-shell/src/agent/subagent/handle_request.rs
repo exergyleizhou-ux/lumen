@@ -32,6 +32,37 @@ pub(super) const fn subagent_yolo_allowed() -> bool {
     false
 }
 
+/// Add the private-memory file tools and immediately reapply the child's
+/// capability ceiling. Memory support is assembled after the main toolset has
+/// been filtered, so skipping this second filter would let a read-only leaf
+/// regain edit/write tools through `memory:` configuration.
+pub(super) fn add_agent_memory_tools_with_policy(
+    definition: &mut xai_grok_agent::config::AgentDefinition,
+    capability_mode: Option<xai_tool_types::SubagentCapabilityMode>,
+    allow_nested_subagents: bool,
+) {
+    let memory_tools: Vec<xai_grok_tools::registry::types::ToolConfig> = vec![
+        (&grok_build::ReadFileTool).into(),
+        (&grok_build::SearchReplaceTool).into(),
+        (&opencode::OpenCodeWriteTool).into(),
+    ];
+    for tool in memory_tools {
+        if !definition
+            .tool_config
+            .tools
+            .iter()
+            .any(|present| present.id == tool.id)
+        {
+            definition.tool_config.tools.push(tool);
+        }
+    }
+    xai_grok_subagent_resolution::apply_child_tool_policy(
+        definition,
+        capability_mode,
+        allow_nested_subagents,
+    );
+}
+
 /// Render only root-reviewed facts for a child prompt.  Working memory is
 /// intentionally separate from session history and agent-private MEMORY.md:
 /// it is the task tree's shared evidence ledger, not a channel for a child to
@@ -899,16 +930,11 @@ pub(crate) async fn run_shell_child(
         }
     }
     if let Some(scope) = agent_memory_scope {
-        let memory_tools: Vec<xai_grok_tools::registry::types::ToolConfig> = vec![
-            (&grok_build::ReadFileTool).into(),
-            (&grok_build::SearchReplaceTool).into(),
-            (&opencode::OpenCodeWriteTool).into(),
-        ];
-        for tc in memory_tools {
-            if !definition.tool_config.tools.iter().any(|t| t.id == tc.id) {
-                definition.tool_config.tools.push(tc);
-            }
-        }
+        add_agent_memory_tools_with_policy(
+            &mut definition,
+            effective_runtime.capability_mode,
+            allow_nested_subagents,
+        );
         let resolved_mem = scope.resolve_dir(&agent_name_for_memory, &ctx.parent_cwd);
         let memory_dir = &resolved_mem.path;
         let memory_md = memory_dir.join("MEMORY.md");
