@@ -674,9 +674,10 @@ impl SessionActor {
             let mut actor = self.state.lock().await;
             let mut executor = actor.expert.executor_requested.clone();
             let fallback_executor = actor.expert.fallback_executor_requested.clone();
-            let pool_selection = if continuation.is_none()
+            let pool_routing_requested = continuation.is_none()
                 && (!advisor_user_model_pinned || actor.expert.advisor_model_pool_user_override)
-            {
+                && !actor.expert.advisor_model_pool.is_empty();
+            let pool_selection = if pool_routing_requested {
                 crate::session::expert::advisor_pool_executor_selection(
                     task,
                     &actor.expert.advisor_model_pool,
@@ -686,6 +687,12 @@ impl SessionActor {
             } else {
                 None
             };
+            if pool_routing_requested && pool_selection.is_none() {
+                // A user-selected pool is an allowlist, not a hint. Falling
+                // back to the legacy executor here could spend on a model the
+                // user deliberately excluded. No sampler request has begun.
+                return Err(ExpertErrorCode::ModelMissing);
+            }
             let executor_before_pool_selection = executor.clone();
             if let Some(selection) = &pool_selection {
                 executor.clone_from(&selection.model_id);

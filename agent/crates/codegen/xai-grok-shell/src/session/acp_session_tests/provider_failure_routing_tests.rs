@@ -134,6 +134,49 @@ async fn expert_pool_skips_quota_exhausted_priority_before_a_new_task() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn expert_pool_fails_closed_when_no_selected_candidate_is_routable() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.models_manager.insert_test_entry(
+                crate::session::expert::GROK_MODEL,
+                test_model_entry(
+                    crate::session::expert::GROK_MODEL,
+                    "https://grok.example.test/v1",
+                ),
+            );
+            actor.models_manager.record_provider_failure(
+                "https://grok.example.test/v1/chat/completions",
+                "quota_exhausted",
+            );
+            let mut expert = crate::session::expert::ExpertModeState::configured();
+            expert.require_consult_on_medium = false;
+            expert.advisor_model_pool = vec![crate::session::expert::GROK_MODEL.to_owned()];
+            expert.advisor_model_priority = expert.advisor_model_pool.clone();
+            actor.state.lock().await.expert = expert;
+
+            assert!(matches!(
+                actor
+                    .begin_expert_turn(
+                        "implement a deterministic routing rule",
+                        crate::session::expert::ExpertMode::Fast,
+                        Vec::new(),
+                    )
+                    .await,
+                Err(crate::session::expert::ExpertErrorCode::ModelMissing)
+            ));
+            assert!(
+                !actor.state.lock().await.expert.is_active(),
+                "no candidate must fail before starting an Expert task"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn explicit_user_model_pin_blocks_expert_pool_override() {
     let local = tokio::task::LocalSet::new();
     local
