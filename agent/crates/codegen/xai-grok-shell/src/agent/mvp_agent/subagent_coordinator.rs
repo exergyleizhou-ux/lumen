@@ -179,6 +179,9 @@ impl MvpAgent {
                 tree_total_token_budget: std::env::var("GROK_SUBAGENT_TREE_TOTAL_TOKEN_BUDGET")
                     .ok()
                     .and_then(|value| value.parse().ok()),
+                tree_tool_call_budget: std::env::var("GROK_SUBAGENT_TREE_TOOL_CALL_BUDGET")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
                 buffer_completions: true,
                 buffered_completion_output_cap: None,
             };

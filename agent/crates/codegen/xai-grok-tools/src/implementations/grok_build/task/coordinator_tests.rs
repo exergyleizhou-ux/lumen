@@ -1790,6 +1790,46 @@ async fn tree_total_token_budget_rejects_later_spawn_after_reported_usage() {
 }
 
 #[tokio::test]
+async fn tree_tool_call_budget_rejects_later_spawn_after_reported_usage() {
+    let mut harness = harness_with_config(
+        false,
+        CoordinatorConfig {
+            tree_tool_call_budget: Some(3),
+            ..CoordinatorConfig::default()
+        },
+    );
+    let first = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("tree-tool-first", false)).await }
+    });
+    assert_eq!(
+        harness.requests.recv().await.expect("initial request").id,
+        "tree-tool-first"
+    );
+    assert_eq!(
+        harness.started.recv().await.expect("started child"),
+        "tree-tool-first"
+    );
+    let _ = harness.finish.send(());
+    assert!(first.await.expect("join").expect("completion").success);
+
+    let rejected = harness
+        .backend
+        .spawn(request("tree-tool-later", false))
+        .await
+        .expect("tool-call budget rejection reply");
+    assert!(!rejected.success);
+    assert!(rejected.cancelled);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("tool-call budget exhausted"))
+    );
+    harness.actor.abort();
+}
+
+#[tokio::test]
 async fn completed_cache_evicts_oldest_entry_at_cap() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     for index in 0..=MAX_COMPLETED_ENTRIES {

@@ -72,6 +72,8 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     /// report, because accepting another child would make the ceiling a lie.
     tree_usage_incomplete_roots: HashSet<String>,
     exhausted_tree_token_budgets: HashSet<String>,
+    tree_tool_calls_used: HashMap<String, u64>,
+    exhausted_tree_tool_call_budgets: HashSet<String>,
     usage_not_applied_prompts: HashSet<PromptScope>,
     pending_completions: Vec<BufferedCompletion>,
     runs: FuturesUnordered<
@@ -124,6 +126,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             tree_total_tokens_used: HashMap::new(),
             tree_usage_incomplete_roots: HashSet::new(),
             exhausted_tree_token_budgets: HashSet::new(),
+            tree_tool_calls_used: HashMap::new(),
+            exhausted_tree_tool_call_budgets: HashSet::new(),
             usage_not_applied_prompts: HashSet::new(),
             pending_completions: Vec::new(),
             runs: FuturesUnordered::new(),
@@ -268,6 +272,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         success: false,
                         cancelled: true,
                         error: Some("subagent tree total-token budget exhausted".to_owned()),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                if self
+                    .exhausted_tree_tool_call_budgets
+                    .contains(&root_session_id)
+                {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        cancelled: true,
+                        error: Some("subagent tree tool-call budget exhausted".to_owned()),
                         subagent_id: id.clone(),
                         child_session_id: id,
                         ..Default::default()
@@ -454,6 +473,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 self.tree_total_tokens_used.remove(&parent_session_id);
                 self.tree_usage_incomplete_roots.remove(&parent_session_id);
                 self.exhausted_tree_token_budgets.remove(&parent_session_id);
+                self.tree_tool_calls_used.remove(&parent_session_id);
+                self.exhausted_tree_tool_call_budgets
+                    .remove(&parent_session_id);
                 self.pending_completions.retain(|completion| {
                     completion.parent_session_id != parent_session_id
                         && completion.root_session_id != parent_session_id
@@ -711,6 +733,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 
         let request = record.request().clone();
         self.record_tree_token_usage(&request.lineage.root_session_id, &output.result);
+        self.record_tree_tool_call_usage(&request.lineage.root_session_id, &output.result);
         let explicitly_killed = record.explicitly_killed();
         let (
             started_at,
@@ -1156,6 +1179,31 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             if child.request.lineage.root_session_id == root_session_id {
                 child.cancellation.cancel();
             }
+        }
+    }
+
+    fn record_tree_tool_call_usage(&mut self, root_session_id: &str, result: &SubagentResult) {
+        let Some(limit) = self.config.tree_tool_call_budget else {
+            return;
+        };
+        let used = {
+            let used = self
+                .tree_tool_calls_used
+                .entry(root_session_id.to_owned())
+                .or_default();
+            *used = used.saturating_add(u64::from(result.tool_calls));
+            *used
+        };
+        if used >= limit {
+            self.exhausted_tree_tool_call_budgets
+                .insert(root_session_id.to_owned());
+            self.cancel_tree(root_session_id);
+            tracing::warn!(
+                root_session_id,
+                used,
+                limit,
+                "subagent tree tool-call budget exhausted"
+            );
         }
     }
 }
