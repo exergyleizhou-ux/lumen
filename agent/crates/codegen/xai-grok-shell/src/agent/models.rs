@@ -1271,3 +1271,7 @@ pub(crate) use resolution::*;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "models/provider_health_tests.rs"]
+mod provider_health_tests;
