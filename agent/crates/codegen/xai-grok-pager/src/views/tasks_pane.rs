@@ -12,7 +12,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::StatefulWidget;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::time::{Instant, SystemTime};
 use unicode_width::UnicodeWidthStr;
@@ -236,6 +236,10 @@ pub enum TaskEntry {
         /// Capitalized agent-type / persona label (e.g. `Explore`, `Plan`,
         /// `General`). Used to order subagents by type within their group.
         type_label: String,
+        /// Complete root-to-child path used to keep a visible task tree in
+        /// parent-before-descendant order. Older servers may omit lineage;
+        /// those rows retain the historical type/time ordering.
+        lineage_sort_key: Option<Vec<String>>,
     },
     Scheduled {
         id: u64,
@@ -422,7 +426,10 @@ impl TaskEntry {
         // the overlay (just to the left of the elapsed/duration). The label
         // string below still includes the model so it remains searchable.
         let type_sep = if description.is_empty() { "" } else { " " };
-        let lineage_prefix = info.depth.map(|depth| format!("L{depth} "));
+        let lineage_prefix = info.depth.map(|depth| match depth {
+            0 | 1 => format!("L{depth} "),
+            _ => format!("{}└─ L{depth} ", "  ".repeat((depth - 1).min(2) as usize)),
+        });
         let mut spans = Vec::new();
         if let Some(prefix) = &lineage_prefix {
             spans.push(Span::styled(
@@ -465,6 +472,11 @@ impl TaskEntry {
             running: info.is_running(),
             started_at: info.started_at,
             type_label,
+            lineage_sort_key: info.lineage_path.as_ref().map(|path| {
+                let mut key: Vec<String> = path.iter().map(ToString::to_string).collect();
+                key.push(info.child_session_id.to_string());
+                key
+            }),
         }
     }
 
@@ -938,11 +950,25 @@ impl TasksPane {
             }
         }
 
+        // A completed parent remains a visible tree anchor while any direct or
+        // indirect descendant is still working. Without this exception the
+        // default "hide completed" view turns a live task tree back into an
+        // untraceable flat list. This is deliberately limited to ancestors of
+        // active subagents; unrelated completed history stays hidden.
+        let active_ancestor_session_ids: HashSet<&str> = subagents
+            .values()
+            .filter(|info| info.workflow_run_id.is_none() && info.is_running())
+            .flat_map(|info| info.lineage_path.iter().flatten())
+            .map(|session_id| session_id.as_ref())
+            .collect();
+
         for info in subagents.values() {
             if info.workflow_run_id.is_some() {
                 continue;
             }
-            if self.show_done || info.is_running() {
+            let is_active_tree_anchor =
+                active_ancestor_session_ids.contains(info.child_session_id.as_ref());
+            if self.show_done || info.is_running() || is_active_tree_anchor {
                 self.items.push(TaskEntry::from_subagent(info));
             }
         }
@@ -980,10 +1006,29 @@ impl TasksPane {
             //    subagents → tasks → monitors → scheduled.
             a.type_order()
                 .cmp(&b.type_order())
-                // 2. Running before done *within* each group.
+                // 2. A known task-tree path outranks live state: a completed
+                //    parent must remain next to (and ahead of) its running
+                //    descendants. Rows without lineage keep the old behavior.
+                .then_with(|| match (a, b) {
+                    (
+                        TaskEntry::Agent {
+                            lineage_sort_key: Some(ka),
+                            ..
+                        },
+                        TaskEntry::Agent {
+                            lineage_sort_key: Some(kb),
+                            ..
+                        },
+                    ) => ka.cmp(kb),
+                    _ => std::cmp::Ordering::Equal,
+                })
+                // 3. Running before done for legacy/non-tree rows.
                 .then_with(|| b.is_running().cmp(&a.is_running()))
-                // 3. Within a (group, run-state): subagents order by agent
-                //    type (alphabetical) then newest-first; tasks/monitors/
+                // 4. Within a (group, run-state), lineage-aware subagents
+                //    use their full root-to-child path. A parent's path is a
+                //    prefix of its child, so this puts parent before child and
+                //    keeps siblings contiguous. Legacy rows without lineage
+                //    retain the historical type/time order. Tasks/monitors/
                 //    loops order newest-first. Avoids mixing SystemTime and
                 //    Instant across types.
                 .then_with(|| match (a, b) {
@@ -991,14 +1036,19 @@ impl TasksPane {
                         TaskEntry::Agent {
                             type_label: ta,
                             started_at: sa,
+                            lineage_sort_key: ka,
                             ..
                         },
                         TaskEntry::Agent {
                             type_label: tb,
                             started_at: sb,
+                            lineage_sort_key: kb,
                             ..
                         },
-                    ) => ta.cmp(tb).then_with(|| sb.cmp(sa)),
+                    ) => match (ka, kb) {
+                        (Some(_), Some(_)) => sb.cmp(sa),
+                        _ => ta.cmp(tb).then_with(|| sb.cmp(sa)),
+                    },
                     (
                         TaskEntry::Scheduled { started_at: a, .. },
                         TaskEntry::Scheduled { started_at: b, .. },
@@ -3055,6 +3105,48 @@ mod tests {
     }
 
     #[test]
+    fn lineage_aware_subagents_render_parent_before_descendant() {
+        let mut pane = TasksPane::new();
+        let mut subagents = HashMap::new();
+        let mut parent = make_info();
+        parent.child_session_id = "code-agent".into();
+        parent.subagent_id = "code-task".into();
+        parent.depth = Some(1);
+        parent.lineage_path = Some(vec!["root".into()]);
+        parent.finished = true;
+
+        let mut child = make_info();
+        child.child_session_id = "review-agent".into();
+        child.subagent_id = "review-task".into();
+        child.depth = Some(2);
+        child.lineage_path = Some(vec!["root".into(), "code-agent".into()]);
+
+        // Insert out of order to prove the pane uses the path, not map order.
+        subagents.insert("review-agent".into(), child);
+        subagents.insert("code-agent".into(), parent);
+        pane.sync(
+            &std::collections::BTreeMap::new(),
+            &subagents,
+            &HashMap::new(),
+            None,
+            &HashSet::new(),
+            &[],
+        );
+
+        let sessions: Vec<&str> = pane
+            .items
+            .iter()
+            .map(|entry| match entry {
+                TaskEntry::Agent {
+                    child_session_id, ..
+                } => child_session_id.as_str(),
+                _ => panic!("expected Agent"),
+            })
+            .collect();
+        assert_eq!(sessions, vec!["code-agent", "review-agent"]);
+    }
+
+    #[test]
     fn entry_label_includes_type_badge() {
         let info = make_info();
         let entry = TaskEntry::from_subagent(&info);
@@ -3108,7 +3200,7 @@ mod tests {
             TaskEntry::Agent { label, .. } => label.as_str(),
             _ => panic!("expected Agent variant"),
         };
-        assert_eq!(label, "L3 Explore Find API endpoints");
+        assert_eq!(label, "    └─ L3 Explore Find API endpoints");
     }
 
     #[test]
