@@ -363,6 +363,11 @@ PY
 # it documents. A later source change is tested below and must still fail.
 git -C "$FIX" add SOURCE_LOCK.json SBOM.spdx.json artifacts/readiness
 git -C "$FIX" commit -qm evidence
+if ! HOME="$FIX_HOME" "$FIX/scripts/check-binary-tuple.sh" >"$TMP/binary-evidence-suffix.out" 2>&1; then
+  cat "$TMP/binary-evidence-suffix.out" >&2
+  fail "binary_evidence_only_suffix"
+fi
+grep -q '^source_commit=' "$TMP/binary-evidence-suffix.out"
 HOME="$FIX_HOME" "$FIX/scripts/reconcile-evidence.sh" >/dev/null
 python3 - "$FIX/artifacts/readiness/reconcile.json" <<'PY'
 import json, sys
@@ -419,6 +424,7 @@ printf 'head drift\n' >"$FIX/head-drift.txt"
 git -C "$FIX" add head-drift.txt
 git -C "$FIX" commit -qm drift
 NEW_HEAD="$(git -C "$FIX" rev-parse HEAD)"
+expect_fail binary_head_drift env HOME="$FIX_HOME" "$FIX/scripts/check-binary-tuple.sh"
 expect_fail reconcile_head_drift env HOME="$FIX_HOME" "$FIX/scripts/reconcile-evidence.sh"
 python3 - "$FIX/artifacts/readiness/reconcile.json" "$NEW_HEAD" <<'PY'
 import json, sys
