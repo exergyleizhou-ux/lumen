@@ -4,7 +4,7 @@
   "pass": true,
   "scope": "full_contract_short",
   "binary": "/Users/lei/code/lumen/agent/target/release/lumen",
-  "binary_sha256": "3321e3cfe4aadfaa61d1354eb3160ba1d18f034ed5c6432521765d6e945caba6",
+  "binary_sha256": "dc27c5a9f1a91a928c9f72a140d2acafa12d3a9f968cf9168eeaf64ce3e423f0",
   "scenarios": {
     "429": {
       "pass": true,
@@ -61,5 +61,5 @@
   "retry_policy": "429, 5xx, and interrupted SSE retry; IdleTimeout is terminal by shipped policy",
   "side_effect_invariant": "retry-success cases execute exactly one effect; timeout/cancel execute zero",
   "process_tree_suite": "cargo test -p xai-tty-utils --lib kill_all",
-  "generated_at": "2026-08-01T16:24:03Z"
+  "generated_at": "2026-08-01T18:21:15Z"
 }
