@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FINAL-2.0 readiness aggregator — honest blockers + engineering_complete.
+# Lumen readiness aggregator — honest blockers + engineering_complete.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"
@@ -9,7 +9,7 @@ mkdir -p "$ART"
 TMP="$(mktemp)"
 trap 'rm -f "$TMP"' EXIT
 
-echo "=== Lumen verify-readiness (FINAL-2.0) ==="
+echo "=== Lumen verify-readiness ==="
 
 record() {
   local id="$1" result="$2" detail="${3:-}"
@@ -237,8 +237,26 @@ except (OSError, json.JSONDecodeError) as exc:
     raise SystemExit(1)
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
 locked_head = ((lock.get("monorepo") or {}).get("git_head") or "")
-if locked_head != head:
-    print(f"HEAD drift lock={locked_head[:7] or '?'} current={head[:7]}")
+try:
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", locked_head, head],
+        cwd=root,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+except (OSError, subprocess.CalledProcessError):
+    print(f"source lock is not an ancestor lock={locked_head[:7] or '?'} current={head[:7]}")
+    raise SystemExit(1)
+suffix = subprocess.check_output(
+    ["git", "diff", "--name-only", f"{locked_head}..{head}"],
+    cwd=root,
+    text=True,
+).splitlines()
+allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+unexpected = [path for path in suffix if not path.startswith(allowed_suffixes)]
+if unexpected:
+    print("non-evidence drift after source lock: " + ", ".join(unexpected[:8]))
     raise SystemExit(1)
 critical = lock.get("critical_file_sha256")
 if not isinstance(critical, dict) or not critical:
@@ -253,7 +271,8 @@ for relative, expected in critical.items():
 if mismatched:
     print("content drift: " + ",".join(mismatched[:8]))
     raise SystemExit(1)
-print(f"head={head[:7]} files={len(critical)}")
+suffix_state = "exact" if locked_head == head else f"evidence-only+{len(suffix)}"
+print(f"source={locked_head[:7]} head={head[:7]} suffix={suffix_state} files={len(critical)}")
 PY
 )
 source_lock_ec=$?
@@ -406,7 +425,7 @@ eng = {
     "version": version,
     "head_short": head,
     "pass": eng_ok,
-    "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+    "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
     "auto_blockers": auto_blockers,
     "can_tool_call": can_tool,
     "source_lock_sha256": lock_sha,

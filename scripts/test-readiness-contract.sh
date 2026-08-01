@@ -92,9 +92,48 @@ do
     fail "source-lock missing $required"
 done
 
+echo "=== source-lock rejects dirty source ==="
+LOCK_ROOT="$TMP/source-lock"
+LOCK_HOME="$TMP/source-lock-home"
+mkdir -p "$LOCK_ROOT/scripts" "$LOCK_HOME"
+cp "$ROOT/scripts/source-lock.sh" "$LOCK_ROOT/scripts/source-lock.sh"
+chmod +x "$LOCK_ROOT/scripts/source-lock.sh"
+python3 - "$LOCK_ROOT" "$ROOT/scripts/source-lock.sh" <<'PY'
+from pathlib import Path
+import re, sys
+
+fixture = Path(sys.argv[1])
+source = Path(sys.argv[2]).read_text()
+match = re.search(r"paths = \[(.*?)\n\]", source, re.S)
+assert match, "source-lock paths list not found"
+for relative in re.findall(r'^\s*"([^"]+)",?\s*$', match.group(1), re.M):
+    path = fixture / relative
+    if path.exists():
+        continue
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"source-lock fixture placeholder: {relative}\n")
+PY
+init_git "$LOCK_ROOT"
+git -C "$LOCK_ROOT" add .
+git -C "$LOCK_ROOT" commit -qm base
+HOME="$LOCK_HOME" "$LOCK_ROOT/scripts/source-lock.sh" >/dev/null
+rm "$LOCK_ROOT/SOURCE_LOCK.json"
+
+printf 'dirty\n' >>"$LOCK_ROOT/.gitleaksignore"
+expect_fail source_lock_tracked_dirty env HOME="$LOCK_HOME" \
+  "$LOCK_ROOT/scripts/source-lock.sh"
+grep -q 'refuses a dirty source tree' "$TMP/source_lock_tracked_dirty.out"
+git -C "$LOCK_ROOT" restore .gitleaksignore
+
+printf 'untracked\n' >"$LOCK_ROOT/source-lock-scratch.txt"
+expect_fail source_lock_untracked_dirty env HOME="$LOCK_HOME" \
+  "$LOCK_ROOT/scripts/source-lock.sh"
+grep -q 'refuses a dirty source tree' "$TMP/source_lock_untracked_dirty.out"
+rm "$LOCK_ROOT/source-lock-scratch.txt"
+
 echo "=== readiness fixture ==="
 FIX="$TMP/readiness"
-FIX_HOME="$FIX/home"
+FIX_HOME="$TMP/readiness-home"
 mkdir -p \
   "$FIX/scripts" \
   "$FIX/artifacts/readiness" \
@@ -106,6 +145,7 @@ cp "$ROOT/scripts/check-binary-tuple.sh" "$FIX/scripts/check-binary-tuple.sh"
 cp "$ROOT/scripts/source-lock.sh" "$FIX/scripts/source-lock.sh"
 chmod +x "$FIX/scripts/"*.sh
 printf '# exact fixture ignore\n' >"$FIX/.gitleaksignore"
+printf 'agent/target/\n' >"$FIX/.gitignore"
 python3 - "$FIX/LEGAL.md" <<'PY'
 from pathlib import Path
 import sys
@@ -129,8 +169,8 @@ script, filename, check_id = sys.argv[1:4]
 Path(script).write_text(f'''#!/bin/sh
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-python3 - "$ROOT/artifacts/readiness/{filename}" <<'PY2'
-import json, sys
+python3 - "$ROOT/artifacts/readiness/{filename}" "$ROOT/agent/target/release/lumen" <<'PY2'
+import hashlib, json, sys
 from pathlib import Path
 doc = {{"schema_version": 1, "check_id": "{check_id}", "pass": True, "generated_at": "fixture"}}
 if "{check_id}" == "L4_full":
@@ -146,6 +186,7 @@ if "{check_id}" == "L5_full":
         "scope": "full_contract_soak", "resume_same_session": True,
         "compaction_persisted": True, "cache_visible": True,
         "update_event_id_count": 8, "update_event_ids_unique": True,
+        "binary_sha256": hashlib.sha256(Path(sys.argv[2]).read_bytes()).hexdigest(),
         "soak": {{"executed": True, "elapsed_seconds": 3600, "resume_turns": 2}},
     }})
 Path(sys.argv[1]).write_text(json.dumps(doc, indent=2) + "\\n")
@@ -248,7 +289,7 @@ for relative in re.findall(r'^\s*"([^"]+)",?\s*$', match.group(1), re.M):
 PY
 
 init_git "$FIX"
-git -C "$FIX" add .gitleaksignore LEGAL.md scripts
+git -C "$FIX" add .gitignore .gitleaksignore LEGAL.md scripts agent docs
 git -C "$FIX" commit -qm base
 FIX_SHORT="$(git -C "$FIX" rev-parse --short=7 HEAD)"
 printf '#!/bin/sh\necho "lumen fixture (%s)"\n' "$FIX_SHORT" \
@@ -281,15 +322,24 @@ assert check["result"] == "SKIP", check
 assert d["engineering_complete"] is False
 PY
 
-echo "=== binary tuple mismatch ==="
-printf '\n# changed bytes\n' >>"$FIX_HOME/.local/bin/lumen"
-expect_fail binary_mismatch env HOME="$FIX_HOME" "$FIX/scripts/check-binary-tuple.sh"
+echo "=== binary tuple version mismatch ==="
+python3 - "$FIX_HOME/.local/bin/lumen" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+path.write_text(path.read_text().replace("lumen fixture", "lumen tampered"))
+PY
+expect_fail binary_version_mismatch env HOME="$FIX_HOME" "$FIX/scripts/check-binary-tuple.sh"
 cp "$FIX/agent/target/release/lumen" "$FIX_HOME/.local/bin/lumen"
 chmod +x "$FIX_HOME/.local/bin/lumen"
 
 echo "=== explicit live fixture + semantic reconcile ==="
-HOME="$FIX_HOME" DEEPSEEK_API_KEY=fake EVAL_LIVE=1 \
-  "$FIX/scripts/verify-readiness.sh" >"$TMP/verify-live.out"
+if ! HOME="$FIX_HOME" DEEPSEEK_API_KEY=fake EVAL_LIVE=1 \
+  "$FIX/scripts/verify-readiness.sh" >"$TMP/verify-live.out" 2>&1; then
+  cat "$TMP/verify-live.out" >&2
+  fail "verify_live_fixture"
+fi
 [[ -e "$FIX/eval-called" ]] || fail "EVAL_LIVE=1 did not invoke live script"
 python3 - "$FIX/artifacts/readiness/status.json" "$FIX/artifacts/readiness/reconcile.json" <<'PY'
 import json, sys
@@ -307,6 +357,22 @@ assert status["blockers"] == [
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
 ]
+PY
+
+# A lock/SBOM/readiness commit must remain attributable to the source commit
+# it documents. A later source change is tested below and must still fail.
+git -C "$FIX" add SOURCE_LOCK.json SBOM.spdx.json artifacts/readiness
+git -C "$FIX" commit -qm evidence
+HOME="$FIX_HOME" "$FIX/scripts/reconcile-evidence.sh" >/dev/null
+python3 - "$FIX/artifacts/readiness/reconcile.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+assert d["source_lock_head_match"] is True, d["blockers"]
+assert d["source_lock_head_exact"] is False
+assert d["source_lock_head_ancestor"] is True
+assert d["source_lock_evidence_only_suffix"] is True
+assert d["source_git_head"] == d["source_lock_git_head"]
+assert d["source_git_head"] != d["monorepo_git_head"]
 PY
 
 # Materially identical reconcile keeps its old timestamp.

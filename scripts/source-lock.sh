@@ -1,22 +1,33 @@
 #!/usr/bin/env bash
-# Refresh SOURCE_LOCK.json for the monorepo (FINAL-2.0 S0).
+# Refresh SOURCE_LOCK.json for the monorepo's current execution contract.
 #
-# ORDERING (this bit us three times on 2026-07-26/27): the lock records the
-# CURRENT git HEAD, and committing the lock creates a NEW commit — so a lock
-# that is committed always trails HEAD by one and `verify-readiness` reports
-# `source_lock: HEAD drift`. There is no way to commit a lock that names its
-# own commit. The workflow that actually works:
+# ORDERING: the lock records the source commit used to build and collect
+# evidence. Committing the lock creates a new evidence-only commit, so a
+# committed lock cannot name its own commit. Verifiers therefore accept a lock
+# commit that is an ancestor of HEAD only when every intervening change is a
+# lock, SBOM, or readiness-evidence file. Any source change remains a failure.
+# The workflow is:
 #
 #   1. commit all real changes            (HEAD = X)
 #   2. scripts/install-local.sh           (binary stamped X, needs clean tree)
-#   3. scripts/source-lock.sh             (lock records X, LEAVE IT UNCOMMITTED)
-#   4. scripts/verify-readiness.sh        (source_lock passes: lock X == HEAD X)
-#   5. commit the lock afterwards         (it now trails by one until step 3
-#                                          regenerates it in the next round)
+#   3. scripts/source-lock.sh             (lock records X)
+#   4. scripts/verify-readiness.sh        (evidence applies to X)
+#   5. commit lock/SBOM/readiness only    (verifier accepts evidence-only suffix)
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export PATH="/opt/homebrew/bin:$HOME/.local/bin:$PATH"
+
+# A source lock is evidence about an already committed candidate, never a way
+# to bless whatever happens to be in a developer's worktree. This rejects
+# staged, unstaged, and untracked inputs before the script writes its own lock
+# file; the prescribed evidence-only commit happens after this command.
+dirty_status="$(git status --porcelain=v1)"
+if [[ -n "$dirty_status" ]]; then
+  echo "FAIL: source-lock refuses a dirty source tree; commit the source candidate first" >&2
+  printf '%s\n' "$dirty_status" >&2
+  exit 1
+fi
 
 python3 <<'PY'
 import hashlib, json, subprocess
@@ -56,7 +67,7 @@ paths = [
     "scripts/verify-readiness.sh",
     "scripts/probe-local.sh",
     "scripts/doctor-verticals.sh",
-    "docs/masterplan/09-FINAL-2.0-执行路径.md",
+    "docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md",
     "docs/masterplan/M5-onboarding-evidence.template.json",
     "docs/masterplan/00A-来源锁与运行合同.md",
 ]
@@ -85,10 +96,10 @@ lock = {
         "source": "xai-org/grok-build (local Desktop pin)",
         "policy": "PINNED; security-only cherry-picks",
     },
-    "masterplan_authority": {
-        "desktop": "Lumen Masterplan FINAL-2.0 - 生产级执行方案.docx",
-        "baseline": "Lumen Masterplan.docx FINAL-1.1",
-        "repo": "docs/masterplan/",
+    "execution_authority": {
+        "repo": "docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md",
+        "evidence_window": "2026-07-27..2026-08-01",
+        "policy": "Current NextGen execution contract; historical plans are not authority",
     },
     "critical_file_sha256": files,
     "aggregate_critical_sha256": h.hexdigest(),
