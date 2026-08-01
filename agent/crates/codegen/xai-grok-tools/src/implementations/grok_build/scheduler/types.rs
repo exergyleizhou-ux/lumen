@@ -323,7 +323,6 @@ impl SchedulerRunReceipt {
         &self.run_id
     }
 
-    #[cfg(test)]
     pub(crate) fn status(&self) -> SchedulerRunStatus {
         self.status
     }

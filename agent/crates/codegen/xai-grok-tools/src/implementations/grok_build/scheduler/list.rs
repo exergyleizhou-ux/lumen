@@ -3,7 +3,7 @@ use crate::types::requirements::{Expr, ToolRequirement};
 use crate::types::tool::{ToolKind, ToolNamespace};
 
 use super::interval::interval_to_human;
-use super::types::{SchedulerCommand, SchedulerHandle};
+use super::types::{ScheduledTask, SchedulerCommand, SchedulerHandle, SchedulerRunStatus};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SchedulerListInput {}
@@ -17,6 +17,14 @@ pub struct ScheduledTaskSummary {
     pub next_fire_at: String,
     pub created_at: String,
     pub recurring: bool,
+    #[serde(default)]
+    pub consecutive_run_failures: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_not_before: Option<String>,
+    #[serde(default)]
+    pub dead_lettered: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_status: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -29,6 +37,36 @@ pub struct SchedulerListOutput {
 }
 
 impl xai_tool_runtime::ToolOutput for SchedulerListOutput {}
+
+fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
+    let next_fire = task.next_due_at().to_rfc3339();
+    let created = task.created_at.to_rfc3339();
+    let prompt = if task.prompt.len() > 80 {
+        let cut = crate::util::floor_char_boundary(&task.prompt, 80);
+        format!("{}...", &task.prompt[..cut])
+    } else {
+        task.prompt
+    };
+    ScheduledTaskSummary {
+        id: task.id,
+        prompt,
+        interval_human: interval_to_human(task.interval_secs),
+        next_fire_at: next_fire,
+        created_at: created,
+        recurring: task.recurring,
+        consecutive_run_failures: task.consecutive_run_failures,
+        retry_not_before: task.retry_not_before.map(|time| time.to_rfc3339()),
+        dead_lettered: task.dead_lettered,
+        last_run_status: task.last_run_receipt.as_ref().map(|receipt| {
+            match receipt.status() {
+                SchedulerRunStatus::Completed => "completed",
+                SchedulerRunStatus::Failed => "failed",
+                SchedulerRunStatus::Cancelled => "cancelled",
+            }
+            .to_owned()
+        }),
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct SchedulerListTool;
@@ -122,28 +160,7 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
             )
         })?;
 
-        let summaries = snapshot
-            .tasks
-            .into_iter()
-            .map(|t| {
-                let next_fire = t.next_due_at().to_rfc3339();
-                let created = t.created_at.to_rfc3339();
-                let prompt = if t.prompt.len() > 80 {
-                    let cut = crate::util::floor_char_boundary(&t.prompt, 80);
-                    format!("{}...", &t.prompt[..cut])
-                } else {
-                    t.prompt
-                };
-                ScheduledTaskSummary {
-                    id: t.id,
-                    prompt,
-                    interval_human: interval_to_human(t.interval_secs),
-                    next_fire_at: next_fire,
-                    created_at: created,
-                    recurring: t.recurring,
-                }
-            })
-            .collect();
+        let summaries = snapshot.tasks.into_iter().map(summary_from_task).collect();
 
         Ok(SchedulerListOutput {
             tasks: summaries,
@@ -156,6 +173,7 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::implementations::grok_build::scheduler::types::SchedulerRunReceipt;
 
     #[test]
     fn legacy_scheduler_list_response_defaults_recovery_health() {
@@ -164,5 +182,26 @@ mod tests {
                 .expect("old scheduler list response remains readable");
         assert!(!restored.recovery_required);
         assert_eq!(restored.quarantined_one_shot_count, 0);
+    }
+
+    #[test]
+    fn task_summary_surfaces_failure_health_without_output_text() {
+        let now = chrono::Utc::now();
+        let mut task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        task.last_fired_at = Some(now);
+        task.record_terminal_run_status(SchedulerRunStatus::Failed, now);
+        task.last_run_receipt = Some(SchedulerRunReceipt::new(
+            "run-1".into(),
+            SchedulerRunStatus::Failed,
+            now,
+            7,
+            11,
+        ));
+        let summary = summary_from_task(task);
+
+        assert_eq!(summary.consecutive_run_failures, 1);
+        assert!(summary.retry_not_before.is_some());
+        assert!(!summary.dead_lettered);
+        assert_eq!(summary.last_run_status.as_deref(), Some("failed"));
     }
 }
