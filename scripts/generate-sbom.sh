@@ -130,7 +130,7 @@ while offset < len(go_meta_text):
 
 for module in go_modules:
     path = module.get("Path") or "unknown-go-module"
-    version = module.get("Version") or (head[:7] if module.get("Main") else "0")
+    version = module.get("Version") or (source_head[:7] if module.get("Main") else "0")
     key = f"go:{path}@{version}"
     if key in seen:
         continue
