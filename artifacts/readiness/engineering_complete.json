@@ -1,21 +1,21 @@
 {
   "schema_version": 1,
   "check_id": "engineering_complete",
-  "version": "0.1.251",
-  "head_short": "0395e92d",
+  "version": "2.0.0-alpha.1",
+  "head_short": "9e719020",
   "pass": false,
   "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
     "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
     "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_tool_calls', 'status_check_not_pass:L2_min_",
-    "eval_live:SKIP",
+    "L2_min_e2e:SKIP",
     "L3_multi_tool:SKIP",
-    "L1_tool_calls:SKIP",
+    "eval_live:SKIP",
     "L0_connect:SKIP",
-    "L2_min_e2e:SKIP"
+    "L1_tool_calls:SKIP"
   ],
   "can_tool_call": false,
-  "source_lock_sha256": "7997e7f2ec5c0c807c7b6356e589a936322c27ea68201168c7608fac5f92d175",
-  "binary_sha256": "dc27c5a9f1a91a928c9f72a140d2acafa12d3a9f968cf9168eeaf64ce3e423f0",
-  "generated_at": "2026-08-01T18:24:51Z"
+  "source_lock_sha256": "dd1a31f524dd0d947aeab6eccba97f2c4fe65c4676a871296829e0fc1b998e84",
+  "binary_sha256": "16b97226cac3f1c6ea8addf7c2c893dfedb62930eb3e7e911d94a24b0b99ee6d",
+  "generated_at": "2026-08-01T18:55:20Z"
 }
