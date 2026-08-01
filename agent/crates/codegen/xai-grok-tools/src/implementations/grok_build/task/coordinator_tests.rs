@@ -4,7 +4,8 @@ use crate::implementations::grok_build::task::types::{
     SubagentCancelRequest, SubagentClearUsageNotAppliedRequest, SubagentCompletionsRequest,
     SubagentLineage, SubagentListActiveRequest, SubagentLoopUnitActiveRequest,
     SubagentMarkUsageNotAppliedRequest, SubagentOutstandingReply, SubagentOutstandingRequest,
-    SubagentOwner, SubagentRegistryCounts, SubagentRequest, SubagentSnapshotStatus,
+    SubagentOwner, SubagentRecoveredTerminalRequest, SubagentRegistryCounts, SubagentRequest,
+    SubagentSnapshot, SubagentSnapshotStatus,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -213,6 +214,64 @@ async fn direct_spawn_rejects_forged_task_tree_lineage() {
         );
     }
     assert!(harness.requests.try_recv().is_err());
+    harness.actor.abort();
+}
+
+#[tokio::test]
+async fn recovered_terminal_is_queryable_only_in_its_parent_session() {
+    let harness = harness(false, std::time::Duration::from_secs(60));
+    harness
+        .backend
+        .sender()
+        .send(SubagentEvent::RegisterRecoveredTerminal(
+            SubagentRecoveredTerminalRequest {
+                parent_session_id: "parent".to_owned(),
+                snapshot: SubagentSnapshot {
+                    subagent_id: "recovered-child".to_owned(),
+                    description: "recovered scheduler child".to_owned(),
+                    subagent_type: "general-purpose".to_owned(),
+                    status: SubagentSnapshotStatus::Cancelled {
+                        reason: Some("process resumed".to_owned()),
+                    },
+                    started_at_epoch_ms: 1,
+                    duration_ms: 2,
+                    persona: None,
+                },
+            },
+        ))
+        .unwrap();
+
+    let snapshot = harness
+        .backend
+        .query("recovered-child", false, None)
+        .await
+        .expect("recovered terminal is queryable by its parent");
+    assert!(matches!(
+        snapshot.status,
+        SubagentSnapshotStatus::Cancelled { .. }
+    ));
+    let foreign = ChannelBackend::for_session(harness.backend.sender(), "foreign-parent");
+    assert!(
+        foreign
+            .query("recovered-child", false, None)
+            .await
+            .is_none()
+    );
+    harness
+        .backend
+        .sender()
+        .send(SubagentEvent::TeardownSession {
+            parent_session_id: "parent".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        harness
+            .backend
+            .query("recovered-child", false, None)
+            .await
+            .is_none(),
+        "tearing down the parent must discard its recovered terminal bridge"
+    );
     harness.actor.abort();
 }
 

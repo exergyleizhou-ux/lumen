@@ -1439,6 +1439,51 @@ async fn reconcile_orphan_flips_running_meta_to_cancelled() {
             1
         );
 }
+
+#[tokio::test]
+async fn reconcile_orphan_registers_a_durable_terminal_with_the_coordinator() {
+    let session_dir = tempfile::TempDir::new().unwrap();
+    let id = "sa-recovery-bridge";
+    let sub_dir = session_dir.path().join("subagents").join(id);
+    write_subagent_meta(&sub_dir, &running_test_meta(id, "parent-x"));
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+    let backend = ChannelBackend::new(event_tx);
+    let gateway = test_gateway();
+    let reconcile = reconcile_orphaned_subagents_with_backend(
+        &[],
+        &backend,
+        session_dir.path(),
+        "parent-x",
+        &gateway,
+        None,
+    );
+    tokio::pin!(reconcile);
+
+    let inspect = tokio::select! {
+        _ = &mut reconcile => panic!("reconcile must inspect before reconstructing a terminal"),
+        event = event_rx.recv() => event.expect("coordinator event channel open"),
+    };
+    let SubagentEvent::Inspect(inspect) = inspect else {
+        panic!("expected inspection before orphan reconciliation");
+    };
+    inspect.respond_to.send(None).unwrap();
+
+    // The registration send precedes reconcile completion.  Either branch can
+    // win this poll; if completion won, the durable record is already queued.
+    let event = tokio::select! {
+        event = event_rx.recv() => event.expect("coordinator event channel open"),
+        _ = &mut reconcile => event_rx.recv().await.expect("terminal registration queued before completion"),
+    };
+    let SubagentEvent::RegisterRecoveredTerminal(request) = event else {
+        panic!("expected recovered terminal registration");
+    };
+    assert_eq!(request.parent_session_id, "parent-x");
+    assert_eq!(request.snapshot.subagent_id, id);
+    assert!(matches!(
+        request.snapshot.status,
+        SubagentSnapshotStatus::Cancelled { .. }
+    ));
+}
 #[tokio::test]
 async fn reconcile_orphan_skips_shared_actor_live_child() {
     let session_dir = tempfile::TempDir::new().unwrap();

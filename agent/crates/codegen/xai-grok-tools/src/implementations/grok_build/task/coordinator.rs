@@ -28,8 +28,8 @@ use super::coordinator_state::{
 use super::types::{
     SpawnedSubagentRef, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome,
     SubagentEvent, SubagentLineage, SubagentOutstandingReply, SubagentOwner,
-    SubagentRegistryCounts, SubagentRequest, SubagentResult, SubagentResumeLookup,
-    SubagentResumeSource, SubagentValidateTypeOutcome,
+    SubagentRecoveredTerminalRequest, SubagentRegistryCounts, SubagentRequest, SubagentResult,
+    SubagentResumeLookup, SubagentResumeSource, SubagentValidateTypeOutcome,
 };
 
 pub use super::coordinator_state::{
@@ -55,6 +55,9 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     active: HashMap<String, ActiveChild<R::Control>>,
     completed: HashMap<String, CompletedChild>,
     completed_order: VecDeque<String>,
+    /// Host-reconstructed terminal snapshots from a prior process. They are
+    /// queryable but never treated as live handles or completion deliveries.
+    recovered_terminals: HashMap<String, RecoveredTerminal>,
     waiters: HashMap<String, Vec<BlockingWaiter>>,
     workflow_cancel_waiters: HashMap<String, Vec<oneshot::Sender<SubagentCancelOutcome>>>,
     /// Parent sessions that received `ParentSession` cancel. Non-workflow spawns
@@ -85,6 +88,12 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     progress: FuturesUnordered<ProgressFuture<<R::Control as ChildControl>::ProgressFuture>>,
     list_requests: HashMap<u64, ListRequest>,
     next_list_request_id: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RecoveredTerminal {
+    parent_session_id: String,
+    snapshot: super::types::SubagentSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -119,6 +128,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             active: HashMap::new(),
             completed: HashMap::new(),
             completed_order: VecDeque::new(),
+            recovered_terminals: HashMap::new(),
             waiters: HashMap::new(),
             workflow_cancel_waiters: HashMap::new(),
             spawn_blocked_sessions: HashSet::new(),
@@ -456,6 +466,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     query.respond_to,
                 );
             }
+            SubagentEvent::RegisterRecoveredTerminal(request) => {
+                self.register_recovered_terminal(request);
+            }
             SubagentEvent::Cancel(request) => match request.target {
                 SubagentCancelTarget::SubagentId(id) => {
                     let outcome = self.cancel_one(&id, request.parent_session_id.as_deref(), true);
@@ -515,6 +528,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let _ = request.respond_to.send(completions);
             }
             SubagentEvent::TeardownSession { parent_session_id } => {
+                self.recovered_terminals
+                    .retain(|_, terminal| terminal.parent_session_id != parent_session_id);
                 self.tree_started_at.remove(&parent_session_id);
                 self.expired_tree_roots.remove(&parent_session_id);
                 self.tree_total_tokens_used.remove(&parent_session_id);
@@ -682,6 +697,28 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let _ = request.respond_to.send(is_active);
             }
         }
+    }
+
+    fn register_recovered_terminal(&mut self, request: SubagentRecoveredTerminalRequest) {
+        let subagent_id = request.snapshot.subagent_id.clone();
+        if request.snapshot.is_running() {
+            tracing::warn!(%subagent_id, "Ignoring non-terminal recovered subagent snapshot");
+            return;
+        }
+        if self.active.contains_key(&subagent_id)
+            || self.pending.contains_key(&subagent_id)
+            || self.completed.contains_key(&subagent_id)
+        {
+            tracing::warn!(%subagent_id, "Ignoring recovered terminal that conflicts with a live subagent");
+            return;
+        }
+        self.recovered_terminals.insert(
+            subagent_id,
+            RecoveredTerminal {
+                parent_session_id: request.parent_session_id,
+                snapshot: request.snapshot,
+            },
+        );
     }
 
     fn live_children_in_tree(&self, root_session_id: &str) -> usize {

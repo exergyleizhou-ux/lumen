@@ -535,6 +535,17 @@ pub struct SubagentQueryRequest {
     pub respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
 }
 
+/// A terminal snapshot reconstructed by the host while resuming a session.
+///
+/// This is intentionally a coordinator message rather than a scheduler file
+/// read: the host remains the only authority over durable child metadata, and
+/// every consumer observes recovery truth through the normal query boundary.
+#[derive(Debug, Clone)]
+pub struct SubagentRecoveredTerminalRequest {
+    pub parent_session_id: String,
+    pub snapshot: SubagentSnapshot,
+}
+
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentLoopUnitActiveRequest {
@@ -935,6 +946,7 @@ pub struct SubagentDescribeRequest {
 pub enum SubagentEvent {
     Spawn(SubagentSpawnRequest),
     Query(SubagentQueryRequest),
+    RegisterRecoveredTerminal(SubagentRecoveredTerminalRequest),
     Cancel(SubagentCancelRequest),
     ListActive(SubagentListActiveRequest),
     ListRunning(SubagentListRunningRequest),

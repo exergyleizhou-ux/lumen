@@ -2556,7 +2556,7 @@ fn finalize_orphaned_subagent(
     mut meta: SubagentMeta,
     gateway: &GatewaySender,
     parent_cmd_tx: Option<&mpsc::UnboundedSender<SessionCommand>>,
-) -> bool {
+) -> Option<SubagentMeta> {
     let completed_at = chrono::Utc::now();
     let duration_ms = (completed_at - meta.started_at).num_milliseconds().max(0) as u64;
     meta.status = "cancelled".to_string();
@@ -2566,15 +2566,77 @@ fn finalize_orphaned_subagent(
     meta.turns = Some(0);
     meta.error = Some(ORPHAN_RECONCILE_REASON.to_string());
     if !write_subagent_meta(subagent_meta_dir, &meta) {
-        return false;
+        return None;
     }
     emit_subagent_notification(
         gateway,
         &meta.parent_session_id,
-        cancelled_orphan_finish(meta.subagent_id, meta.child_session_id, duration_ms),
+        cancelled_orphan_finish(
+            meta.subagent_id.clone(),
+            meta.child_session_id.clone(),
+            duration_ms,
+        ),
         parent_cmd_tx,
     );
-    true
+    Some(meta)
+}
+
+/// Convert only a durably terminal child meta into the coordinator's normal
+/// query shape. Recovered terminal snapshots deliberately have no output:
+/// callers may use them as liveness proof, never as a replacement transcript.
+fn recovered_terminal_snapshot(meta: &SubagentMeta) -> Option<SubagentSnapshot> {
+    let status = match meta.status.as_str() {
+        "completed" => SubagentSnapshotStatus::Completed {
+            output: String::new(),
+            tool_calls: meta.tool_calls.unwrap_or(0),
+            turns: meta.turns.unwrap_or(0),
+            worktree_path: None,
+        },
+        "failed" => SubagentSnapshotStatus::Failed {
+            error: meta
+                .error
+                .clone()
+                .unwrap_or_else(|| "recovered failed subagent".to_owned()),
+        },
+        "cancelled" => SubagentSnapshotStatus::Cancelled {
+            reason: meta.error.clone(),
+        },
+        _ => return None,
+    };
+    Some(SubagentSnapshot {
+        subagent_id: meta.subagent_id.clone(),
+        description: meta.description.clone(),
+        subagent_type: meta.subagent_type.clone(),
+        status,
+        started_at_epoch_ms: meta.started_at.timestamp_millis().max(0) as u64,
+        duration_ms: meta.duration_ms.unwrap_or(0),
+        persona: meta.persona.clone(),
+    })
+}
+
+fn register_recovered_terminal(
+    backend: &xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend,
+    meta: &SubagentMeta,
+) {
+    let Some(snapshot) = recovered_terminal_snapshot(meta) else {
+        return;
+    };
+    if backend
+        .sender()
+        .send(SubagentEvent::RegisterRecoveredTerminal(
+            SubagentRecoveredTerminalRequest {
+                parent_session_id: meta.parent_session_id.clone(),
+                snapshot,
+            },
+        ))
+        .is_err()
+    {
+        tracing::warn!(
+            subagent_id = %meta.subagent_id,
+            parent_session_id = %meta.parent_session_id,
+            "Could not register recovered terminal subagent with coordinator"
+        );
+    }
 }
 /// Parse `meta_path` and return it only when it is a stale `running` orphan
 /// owned by `parent_session_id` and not tracked live. Malformed metas → `None`.
@@ -2673,7 +2735,11 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                         parent_session_id,
                         "Reconciling orphaned subagent left running by a previous process"
                     );
-                    finalize_orphaned_subagent(&subagent_dir, m, gateway, parent_cmd_tx);
+                    if let Some(recovered_meta) =
+                        finalize_orphaned_subagent(&subagent_dir, m, gateway, parent_cmd_tx)
+                    {
+                        register_recovered_terminal(backend, &recovered_meta);
+                    }
                 }
             }
             Some(m) => {
@@ -2683,6 +2749,7 @@ pub(crate) async fn reconcile_orphaned_subagents_with_backend(
                     status = %m.status,
                     "Re-emitting finish for rewound subagent (terminal meta survived)"
                 );
+                register_recovered_terminal(backend, &m);
                 emit_subagent_notification(
                     gateway,
                     parent_session_id,

@@ -30,6 +30,7 @@ const DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 const BACKGROUND_RUN_LEASE_TTL: chrono::Duration = chrono::Duration::minutes(10);
 const BACKGROUND_RUN_LEASE_HEARTBEAT: Duration = Duration::from_secs(30);
 
+#[derive(Debug)]
 enum LoopFireOutcome {
     Spawned(String),
     Foreground,
@@ -771,7 +772,12 @@ impl SchedulerActor {
             SubagentSnapshotStatus::Completed { output, .. } => Some(output.clone()),
             _ => None,
         });
-        let chain_due_for_restart = iterations_since_fresh >= LOOP_FRESH_CHAIN_EVERY;
+        // A terminal snapshot reconstructed after process recovery proves that
+        // replay is safe, but not that the old child session still has a
+        // resumable transcript. Start a fresh chain rather than passing a
+        // stale resume handle across that process boundary.
+        let chain_due_for_restart =
+            recovery_lease_requires_proof || iterations_since_fresh >= LOOP_FRESH_CHAIN_EVERY;
         let anchor_usable = prev_completed_output.is_some() && last_subagent_id.is_some();
         let (resume_from, prior_summary, next_iterations_since_fresh) = if chain_reset_pending {
             (None, None, 1)
@@ -1408,6 +1414,100 @@ mod tests {
                 .is_err(),
             "unknown child must not be restarted after a recovery lease"
         );
+    }
+
+    #[tokio::test]
+    async fn recovered_terminal_proof_restarts_a_fresh_scheduler_chain() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        task.id = "task-1".to_owned();
+        task.acquire_run_lease(
+            "scheduler:crashed-actor",
+            now - chrono::Duration::seconds(10),
+            chrono::Duration::seconds(1),
+        )
+        .unwrap();
+        let (actor, _notifications) = make_boundary_actor(vec![task], 0);
+        let (event_tx, mut event_rx) = mpsc::unbounded_channel();
+        let events = SubagentEventSender(event_tx);
+        let fire = actor.fire_as_loop_subagent(
+            &events,
+            "parent-session".into(),
+            "task-1",
+            "watch ci",
+            "every minute",
+            Some("recovered-child".into()),
+            4,
+            false,
+            true,
+        );
+        tokio::pin!(fire);
+
+        let query = tokio::select! {
+            _outcome = &mut fire => panic!("expected recovered-child query before scheduling"),
+            event = event_rx.recv() => event.expect("coordinator event channel open"),
+        };
+        let SubagentEvent::Query(query) = query else {
+            panic!("expected recovered-child query");
+        };
+        query
+            .respond_to
+            .send(Some(subagent_snapshot(
+                "recovered-child",
+                SubagentSnapshotStatus::Completed {
+                    output: "old output is not a resumable session".into(),
+                    tool_calls: 2,
+                    turns: 1,
+                    worktree_path: None,
+                },
+            )))
+            .unwrap();
+
+        let active = tokio::select! {
+            _outcome = &mut fire => panic!("expected loop activity query before scheduling"),
+            event = event_rx.recv() => event.expect("coordinator event channel open"),
+        };
+        let SubagentEvent::LoopUnitActive(active) = active else {
+            panic!("expected loop activity query");
+        };
+        active.respond_to.send(false).unwrap();
+
+        // Poll the lazy fire future and the event receiver together.  `Spawn`
+        // is sent before the future returns, so either winner is valid; if the
+        // return wins, the event is already queued for the follow-up receive.
+        let returned_id = tokio::select! {
+            event = event_rx.recv() => {
+                let spawn = event.expect("coordinator event channel open");
+                let SubagentEvent::Spawn(spawn) = spawn else {
+                    panic!("expected fresh scheduler spawn");
+                };
+                let spawned = spawn.request;
+                assert!(
+                    spawned.resume_from.is_none(),
+                    "a recovered terminal proves liveness only, never a resumable transcript"
+                );
+                assert!(matches!(fire.await, LoopFireOutcome::Spawned(id) if id == spawned.id));
+                return;
+            }
+            outcome = &mut fire => match outcome {
+                LoopFireOutcome::Spawned(id) => id,
+                other => panic!("expected fresh scheduler spawn after terminal proof, got {other:?}"),
+            },
+        };
+        let spawn = event_rx
+            .recv()
+            .await
+            .expect("coordinator event channel open");
+        let SubagentEvent::Spawn(spawn) = spawn else {
+            panic!("expected fresh scheduler spawn");
+        };
+        let spawned = spawn.request;
+
+        assert!(
+            spawned.resume_from.is_none(),
+            "a recovered terminal proves liveness only, never a resumable transcript"
+        );
+        assert_eq!(returned_id, spawned.id);
     }
 
     #[tokio::test]

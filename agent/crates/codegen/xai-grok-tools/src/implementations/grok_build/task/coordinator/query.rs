@@ -71,6 +71,14 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
             return;
         }
+        if let Some(recovered) = self.recovered_terminals.get(&id).filter(|recovered| {
+            parent_session_id
+                .as_deref()
+                .is_none_or(|parent| recovered.parent_session_id == parent)
+        }) {
+            let _ = respond_to.send(Some(recovered.snapshot.clone()));
+            return;
+        }
         let _ = respond_to.send(None);
     }
 
