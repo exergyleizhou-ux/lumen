@@ -74,6 +74,10 @@ pub enum AdvisorShadowDecision {
     /// Both configured models appear in the local, allowed model catalog.
     #[default]
     KeepConfigured,
+    /// The configured executor is unavailable, but the host-configured
+    /// fallback is in the local allowlist. Shadow mode records this proposal;
+    /// it never applies it.
+    RecommendFallbackExecutor,
     ExecutorUnavailable,
     ConsultantUnavailable,
     UserModelPinned,
@@ -129,6 +133,38 @@ pub fn advisor_shadow_advice(
     executor_provider_degraded: bool,
     consultant_provider_degraded: bool,
 ) -> AdvisorShadowAdvice {
+    advisor_shadow_advice_with_fallback(
+        task,
+        executor,
+        executor,
+        consultant,
+        catalog_model_ids,
+        user_model_pinned,
+        consult_budget_available,
+        executor_provider_domain,
+        consultant_provider_domain,
+        executor_provider_degraded,
+        consultant_provider_degraded,
+    )
+}
+
+/// Like [`advisor_shadow_advice`], but records an allowlisted fallback
+/// recommendation if the configured executor no longer exists locally.
+/// This is still a deterministic, no-network and no-switch decision.
+#[allow(clippy::too_many_arguments)]
+pub fn advisor_shadow_advice_with_fallback(
+    task: &str,
+    executor: &str,
+    fallback_executor: &str,
+    consultant: &str,
+    catalog_model_ids: impl IntoIterator<Item = String>,
+    user_model_pinned: bool,
+    consult_budget_available: bool,
+    executor_provider_domain: Option<&str>,
+    consultant_provider_domain: Option<&str>,
+    executor_provider_degraded: bool,
+    consultant_provider_degraded: bool,
+) -> AdvisorShadowAdvice {
     let task_lower = task.to_ascii_lowercase();
     let task_class = if ["review", "audit", "security", "verify", "test"]
         .iter()
@@ -151,6 +187,9 @@ pub fn advisor_shadow_advice(
     eligible_model_ids.dedup();
     eligible_model_ids.truncate(32);
     let executor_available = eligible_model_ids.iter().any(|model| model == executor);
+    let fallback_available = eligible_model_ids
+        .iter()
+        .any(|model| model == fallback_executor);
     let consultant_available = eligible_model_ids.iter().any(|model| model == consultant);
     let independent_provider_failure_domain =
         match (executor_provider_domain, consultant_provider_domain) {
@@ -161,6 +200,8 @@ pub fn advisor_shadow_advice(
         AdvisorShadowDecision::UserModelPinned
     } else if !consult_budget_available {
         AdvisorShadowDecision::ConsultBudgetUnavailable
+    } else if !executor_available && fallback_available && fallback_executor != executor {
+        AdvisorShadowDecision::RecommendFallbackExecutor
     } else if !executor_available {
         AdvisorShadowDecision::ExecutorUnavailable
     } else if !consultant_available {
@@ -180,6 +221,9 @@ pub fn advisor_shadow_advice(
     ];
     reason_codes.push(match decision {
         AdvisorShadowDecision::KeepConfigured => "configured_pair_available".to_owned(),
+        AdvisorShadowDecision::RecommendFallbackExecutor => {
+            "fallback_executor_allowlisted".to_owned()
+        }
         AdvisorShadowDecision::ExecutorUnavailable => "executor_not_in_catalog".to_owned(),
         AdvisorShadowDecision::ConsultantUnavailable => "consultant_not_in_catalog".to_owned(),
         AdvisorShadowDecision::UserModelPinned => "user_model_pinned".to_owned(),
@@ -192,11 +236,16 @@ pub fn advisor_shadow_advice(
     if executor != consultant {
         reason_codes.push("independent_consultant_configured".to_owned());
     }
+    let executor_candidate = if decision == AdvisorShadowDecision::RecommendFallbackExecutor {
+        fallback_executor
+    } else {
+        executor
+    };
     AdvisorShadowAdvice {
         algorithm: "advisor-shadow-v1".to_owned(),
         task_class,
         decision,
-        executor_candidate: executor.to_owned(),
+        executor_candidate: executor_candidate.to_owned(),
         consultant_candidate: consultant.to_owned(),
         eligible_model_ids,
         reason_codes,
@@ -515,6 +564,10 @@ pub struct ExpertModeState {
     pub task_hash: Option<String>,
     pub plan: Vec<String>,
     pub executor_requested: String,
+    /// Host-configured model-pool fallback used only for shadow advice until
+    /// a later SessionActor-approved routing phase is enabled.
+    #[serde(default = "default_fallback_executor_model")]
+    pub fallback_executor_requested: String,
     pub executor_resolved: Option<String>,
     pub consultant_requested: String,
     pub consultant_resolved: Option<String>,
@@ -622,6 +675,7 @@ impl Default for ExpertModeState {
             task_hash: None,
             plan: Vec::new(),
             executor_requested: DEFAULT_EXECUTOR_MODEL.to_owned(),
+            fallback_executor_requested: FLASH_EXECUTOR_MODEL.to_owned(),
             executor_resolved: None,
             consultant_requested: GROK_MODEL.to_owned(),
             consultant_resolved: None,
@@ -675,6 +729,10 @@ fn default_dual_rollout() -> String {
     "opt_in".to_owned()
 }
 
+fn default_fallback_executor_model() -> String {
+    FLASH_EXECUTOR_MODEL.to_owned()
+}
+
 fn default_consultant_tool_cap() -> u32 {
     5
 }
@@ -688,6 +746,7 @@ impl ExpertModeState {
         };
         state.enabled = config.enabled;
         state.executor_requested = config.executor_model.clone();
+        state.fallback_executor_requested = config.fallback_executor_model.clone();
         state.consultant_requested = config.consultant_model.clone();
         state.budget.attempt_cap = config.consult_cap_default;
         state.budget.token_cap = u64::from(config.consult_cap_default)
@@ -2165,6 +2224,54 @@ mod tests {
             AdvisorShadowDecision::ConsultantUnavailable
         );
         assert_eq!(advice.consultant_candidate, "missing-consultant");
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_recommends_allowlisted_fallback_without_switch_authority() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            Some("primary.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::RecommendFallbackExecutor
+        );
+        assert_eq!(advice.executor_candidate, "deepseek-v4-flash");
+        assert!(
+            advice
+                .reason_codes
+                .contains(&"fallback_executor_allowlisted".to_owned())
+        );
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_does_not_recommend_fallback_over_user_pin() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            true,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert_eq!(advice.decision, AdvisorShadowDecision::UserModelPinned);
+        assert_eq!(advice.executor_candidate, "missing-primary");
         assert!(!advice.automatic_switch_allowed);
     }
 

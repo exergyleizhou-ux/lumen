@@ -660,6 +660,7 @@ impl SessionActor {
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
             let executor = actor.expert.executor_requested.clone();
+            let fallback_executor = actor.expert.fallback_executor_requested.clone();
             if let Some(repair) = continuation {
                 actor.expert.start_continuation(repair, &executor)?;
             } else {
@@ -709,9 +710,10 @@ impl SessionActor {
                             )
                         })
                 };
-                let advice = crate::session::expert::advisor_shadow_advice(
+                let advice = crate::session::expert::advisor_shadow_advice_with_fallback(
                     task,
                     &executor,
+                    &fallback_executor,
                     &consultant,
                     advisor_catalog_model_ids.clone(),
                     advisor_user_model_pinned,
