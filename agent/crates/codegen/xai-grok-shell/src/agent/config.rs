@@ -217,6 +217,34 @@ impl Default for ExpertConfig {
     }
 }
 
+/// User-owned candidate pool for ordinary session turns. This is deliberately
+/// separate from `[expert]`: Expert may consult or temporarily anchor a model,
+/// while this policy governs only a later *new* ordinary sampler request after
+/// a passively observed provider failure.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelRoutingConfig {
+    /// Explicit opt-in. A configured pool alone must not change an existing
+    /// session's behavior until the no-replay execution gate is enabled.
+    pub enabled: bool,
+    /// User allowlist. Empty means ordinary sessions retain their current
+    /// model and cannot silently admit any catalog model.
+    pub model_pool: Vec<String>,
+    /// User's deterministic fallback order. Entries outside `model_pool` are
+    /// ignored; an empty list preserves the pool declaration order.
+    pub priority: Vec<String>,
+}
+
+impl Default for ModelRoutingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model_pool: Vec::new(),
+            priority: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ExpertGoalComposeConfig {
@@ -1762,6 +1790,9 @@ pub struct Config {
     /// `[expert]` section: bounded single-task Expert policy configuration.
     #[serde(default)]
     pub expert: ExpertConfig,
+    /// `[model_routing]` section: opt-in, no-replay ordinary-turn routing.
+    #[serde(default)]
+    pub model_routing: ModelRoutingConfig,
 }
 #[derive(Debug, Clone, Default)]
 pub struct CliAgentOverrides {
@@ -1920,6 +1951,7 @@ impl Default for Config {
             goal: GoalConfig::default(),
             workflows: WorkflowsConfig::default(),
             expert: ExpertConfig::default(),
+            model_routing: ModelRoutingConfig::default(),
             doom_loop_recovery: crate::util::config::DoomLoopRecoverySettings::default(),
             worktree: WorktreeConfigSection::default(),
             auto_mode: AutoModeConfig::default(),

@@ -504,6 +504,46 @@ impl ModelsManager {
         }
     }
 
+    /// Pick one healthy, catalog-backed model from an explicit user pool.
+    /// This is a pure local observation: it performs no credential probe and
+    /// never expands the allowlist. Callers decide whether their execution
+    /// point is safe to resubmit; this helper only makes selection auditable.
+    pub fn select_healthy_model_from_pool(
+        &self,
+        pool: &[String],
+        priority: &[String],
+        exclude_model: &str,
+    ) -> Option<String> {
+        if pool.is_empty() {
+            return None;
+        }
+        let catalog = self.models();
+        let mut candidates = Vec::with_capacity(pool.len());
+        for model in priority.iter().chain(pool.iter()) {
+            if model.trim().is_empty()
+                || model == exclude_model
+                || !pool.iter().any(|allowed| allowed == model)
+                || candidates
+                    .iter()
+                    .any(|candidate: &String| candidate == model)
+            {
+                continue;
+            }
+            let entry = catalog
+                .get(model)
+                .or_else(|| catalog.values().find(|entry| entry.info.model == *model));
+            if let Some(entry) = entry
+                && !matches!(
+                    self.provider_health(&entry.info.base_url),
+                    ProviderHealthSnapshot::Degraded { .. }
+                )
+            {
+                candidates.push(entry.info.model.clone());
+            }
+        }
+        candidates.into_iter().next()
+    }
+
     pub fn set_current_model_id(&self, id: acp::ModelId) {
         self.inner
             .user_selected_model

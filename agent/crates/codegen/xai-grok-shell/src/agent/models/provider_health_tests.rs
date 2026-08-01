@@ -37,6 +37,39 @@ fn provider_health_tracks_only_passive_routing_failures() {
 }
 
 #[test]
+fn explicit_pool_selects_healthy_priority_without_expanding_allowlist() {
+    let manager = ModelsManager::default();
+    let entry = |model: &str, base_url: &str| {
+        let mut info = crate::agent::config::ModelInfo::fallback(model);
+        info.base_url = base_url.to_owned();
+        crate::agent::config::ModelEntry {
+            info,
+            api_key: Some("test-key".to_owned()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: Some(base_url.to_owned()),
+        }
+    };
+    manager.insert_test_entry("flash", entry("flash", "https://flash.example.test/v1"));
+    manager.insert_test_entry("grok", entry("grok", "https://grok.example.test/v1"));
+    manager.record_provider_failure("https://flash.example.test/v1", "quota_exhausted");
+
+    assert_eq!(
+        manager.select_healthy_model_from_pool(
+            &["flash".to_owned(), "grok".to_owned()],
+            &["flash".to_owned(), "outside".to_owned(), "grok".to_owned()],
+            "flash",
+        ),
+        Some("grok".to_owned())
+    );
+    assert_eq!(
+        manager.select_healthy_model_from_pool(&["flash".to_owned()], &[], "flash"),
+        None,
+        "the pool is an allowlist, not a request to use another catalog model"
+    );
+}
+
+#[test]
 fn provider_failure_domain_includes_non_default_port() {
     assert_eq!(
         provider_failure_domain("https://provider.example.test:8443/v1"),
