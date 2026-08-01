@@ -25,6 +25,7 @@ fn task(id: &str, recurring: bool, durable: bool) -> ScheduledTask {
         chain_reset_pending: false,
         active_run_lease: None,
         last_run_lease_takeover: None,
+        last_run_receipt: None,
     }
 }
 

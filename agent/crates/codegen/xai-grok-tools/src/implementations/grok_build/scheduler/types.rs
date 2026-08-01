@@ -244,6 +244,10 @@ pub struct ScheduledTask {
     /// recovery tooling can surface an autonomous takeover for review.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_run_lease_takeover: Option<SchedulerRunLeaseTakeover>,
+    /// Idempotency-oriented terminal receipt for the most recent background
+    /// run. It deliberately excludes model output and error text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_run_receipt: Option<SchedulerRunReceipt>,
 }
 
 /// A bounded, persisted claim to execute one scheduler task.
@@ -266,6 +270,52 @@ pub(crate) struct SchedulerRunLeaseTakeover {
     previous_owner_id: String,
     previous_heartbeat_at: DateTime<Utc>,
     taken_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SchedulerRunReceipt {
+    run_id: String,
+    status: SchedulerRunStatus,
+    completed_at: DateTime<Utc>,
+    duration_ms: u64,
+    total_tokens_used: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SchedulerRunStatus {
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl SchedulerRunReceipt {
+    pub(crate) fn new(
+        run_id: String,
+        status: SchedulerRunStatus,
+        completed_at: DateTime<Utc>,
+        duration_ms: u64,
+        total_tokens_used: u64,
+    ) -> Self {
+        Self {
+            run_id,
+            status,
+            completed_at,
+            duration_ms,
+            total_tokens_used,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn run_id(&self) -> &str {
+        &self.run_id
+    }
+
+    #[cfg(test)]
+    pub(crate) fn status(&self) -> SchedulerRunStatus {
+        self.status
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -343,6 +393,7 @@ impl ScheduledTask {
             chain_reset_pending: false,
             active_run_lease: None,
             last_run_lease_takeover: None,
+            last_run_receipt: None,
         }
     }
 
@@ -564,6 +615,7 @@ mod tests {
         assert!(task.recurring && !task.durable);
         assert!(task.active_run_lease.is_none());
         assert!(task.last_run_lease_takeover.is_none());
+        assert!(task.last_run_receipt.is_none());
     }
 
     #[test]

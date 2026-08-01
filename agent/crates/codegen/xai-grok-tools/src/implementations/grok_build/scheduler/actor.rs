@@ -20,7 +20,8 @@ use crate::types::resources::{SharedResources, State};
 use super::interval::interval_to_human;
 use super::types::{
     LOOP_COMPLETION_OUTPUT_CAP, LOOP_FRESH_CHAIN_EVERY, ScheduledTask, SchedulerClock,
-    SchedulerCommand, SchedulerError, SchedulerSnapshot, SchedulerState, SchedulerVersion,
+    SchedulerCommand, SchedulerError, SchedulerRunReceipt, SchedulerRunStatus, SchedulerSnapshot,
+    SchedulerState, SchedulerVersion,
 };
 
 const MAX_SCHEDULED_TASKS: usize = 50;
@@ -798,6 +799,7 @@ impl SchedulerActor {
         }
 
         let resources = self.resources.clone();
+        let resources_persistence = self.resources_persistence.clone();
         let guard_task_id = task_id.to_string();
         let spawned_id = subagent_id.clone();
         let lease_owner_id_for_error = lease_owner_id;
@@ -805,25 +807,84 @@ impl SchedulerActor {
             let Ok(result) = result_rx.await else {
                 return;
             };
-            if result.error.is_none() {
+            if result.backgrounded {
+                // Native background scheduler runs must report terminal
+                // results. Treat a future non-terminal handoff as unsafe to
+                // receipt rather than declaring it complete.
+                tracing::warn!(
+                    task_id = %guard_task_id,
+                    subagent_id = %spawned_id,
+                    "Ignoring non-terminal backgrounded result for scheduler lease"
+                );
                 return;
             }
-            tracing::warn!(
-                task_id = %guard_task_id,
-                subagent_id = %spawned_id,
-                error = ?result.error,
-                "Loop iteration spawn failed; clearing chain anchor"
-            );
-            let mut res = resources.lock().await;
-            let state = res.get_or_default::<State<SchedulerState>>();
-            if let Some(task) = state
-                .tasks
-                .iter_mut()
-                .find(|t| t.last_subagent_id.as_deref() == Some(spawned_id.as_str()))
-            {
-                task.last_subagent_id = None;
-                task.iterations_since_fresh = 0;
+            let status = if result.cancelled {
+                SchedulerRunStatus::Cancelled
+            } else if result.success {
+                SchedulerRunStatus::Completed
+            } else {
+                SchedulerRunStatus::Failed
+            };
+            let serialized = {
+                let mut resources = resources.lock().await;
+                let state = resources.get_or_default::<State<SchedulerState>>();
+                let Some(task) = state
+                    .tasks
+                    .iter_mut()
+                    .find(|task| task.last_subagent_id.as_deref() == Some(spawned_id.as_str()))
+                else {
+                    return;
+                };
+                task.last_run_receipt = Some(SchedulerRunReceipt::new(
+                    spawned_id.clone(),
+                    status,
+                    Utc::now(),
+                    result.duration_ms,
+                    result.total_tokens_used,
+                ));
+                if !matches!(status, SchedulerRunStatus::Completed) {
+                    tracing::warn!(
+                        task_id = %guard_task_id,
+                        subagent_id = %spawned_id,
+                        ?status,
+                        "Loop iteration ended without completion; clearing chain anchor"
+                    );
+                    task.last_subagent_id = None;
+                    task.iterations_since_fresh = 0;
+                }
                 let _ = task.release_run_lease(&lease_owner_id_for_error);
+                resources.serialize()
+            };
+            let acknowledgement = match resources_persistence.enqueue_save_and_flush(serialized) {
+                Ok(acknowledgement) => acknowledgement,
+                Err(error) => {
+                    tracing::error!(
+                        task_id = %guard_task_id,
+                        subagent_id = %spawned_id,
+                        %error,
+                        "Failed to enqueue durable scheduler run receipt"
+                    );
+                    return;
+                }
+            };
+            match tokio::time::timeout(
+                DURABILITY_BARRIER_TIMEOUT,
+                crate::persistence::ResourcesPersistence::await_save_and_flush(acknowledgement),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => tracing::error!(
+                    task_id = %guard_task_id,
+                    subagent_id = %spawned_id,
+                    %error,
+                    "Failed to persist scheduler run receipt"
+                ),
+                Err(_) => tracing::error!(
+                    task_id = %guard_task_id,
+                    subagent_id = %spawned_id,
+                    "Timed out persisting scheduler run receipt"
+                ),
             }
         });
 
@@ -997,6 +1058,7 @@ mod tests {
     use crate::implementations::grok_build::scheduler::types::{
         ScheduledTask, SchedulerHandle, scheduler_tool_error,
     };
+    use crate::implementations::grok_build::task::types::SubagentResult;
     use crate::notification::{AcknowledgedToolNotification, ToolNotification};
     use crate::types::resources::{Resources, WebCitationCounter};
     use std::sync::Arc;
@@ -2053,6 +2115,66 @@ mod tests {
         assert!(task.active_run_lease.as_ref().is_some_and(|lease| {
             lease.owner_id().starts_with("scheduler:") && !lease.is_expired(Utc::now())
         }));
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn terminal_background_result_releases_lease_and_records_receipt() {
+        let (handle, cancel, _notif_rx, mut subagent_rx, resources) =
+            make_test_actor_with_subagents_at(0);
+        let task_id = create_due_task(&handle, "check deploy status", false).await;
+
+        let SubagentEvent::Spawn(spawn) = next_event(&mut subagent_rx).await else {
+            panic!("expected Spawn");
+        };
+        let run_id = spawn.id.clone();
+        spawn
+            .respond_with(|request| SubagentResult {
+                success: true,
+                subagent_id: request.id.clone(),
+                child_session_id: request.id.clone(),
+                duration_ms: 42,
+                total_tokens_used: 99,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let received = {
+                let resources = resources.lock().await;
+                let task = resources
+                    .get::<State<SchedulerState>>()
+                    .unwrap()
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == task_id)
+                    .unwrap();
+                task.last_run_receipt
+                    .as_ref()
+                    .map(|receipt| (receipt.run_id().to_owned(), receipt.status()))
+            };
+            if let Some((receipt_run_id, status)) = received {
+                assert_eq!(receipt_run_id, run_id);
+                assert_eq!(status, SchedulerRunStatus::Completed);
+                let resources = resources.lock().await;
+                let task = resources
+                    .get::<State<SchedulerState>>()
+                    .unwrap()
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == task_id)
+                    .unwrap();
+                assert!(task.active_run_lease.is_none());
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "terminal scheduler receipt was not recorded"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         cancel.cancel();
     }
