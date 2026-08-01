@@ -53,14 +53,14 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 
 | 项目 | 当前实测事实 | 本书处理 |
 |---|---|---|
-| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；本节复核时 HEAD 为 6bef1d019cd026450a24b4c0235be11a9fbb70a4 | 本地候选，不是发布基础；每次 R0 必须重新记录 SHA。 |
+| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；本节复核时 HEAD 为 393a779277152f1ee72aa4d13ce29f34cb5d1f1f | 已推送的候选分支，不是 GitHub main、发布或安装证明；每次 R0 必须重新记录 SHA。 |
 | GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
-| 分叉量 | origin/main...HEAD 为 0 / 102（本节复核时） | 本地领先 102 个提交；仍须 R0 分组审查、exact CI 与人工 merge。 |
+| 分叉量 | origin/main...HEAD 为 0 / 105（本节复核时） | 候选领先 105 个提交；仍须 R0 分组审查、exact CI 与人工 merge。 |
 | 工作树 | 有并行未提交源码修改；数量和归属会变 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | VERSION 为 0.1.251 | version、tag、release 与同步分门。 |
 | GitHub CI | 本书复核未重新跑 exact HEAD 的远端 CI | CI 状态为 NOT RUN；不得沿用旧 run 说全绿。 |
-| readiness | SOURCE_LOCK 当前仍锚定 3dd9613 | 旧 evidence 不证明 6bef1d01 或后续源码。 |
+| readiness | SOURCE_LOCK 当前仍锚定 3dd9613 | 旧 evidence 不证明 393a7792 或后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
 
 ### 1.2 来源锁的真实含义
@@ -77,12 +77,12 @@ SOURCE_LOCK 当前记录 e7afd15b 及关键文件 hash，但并不证明脏工�
 
 | 域 | 已有资产 | 不能误报为完成 |
 |---|---|---|
-| 子 Agent | TaskTool、depth 限制、coordinator、取消、完成事件 | 真实父子树、UI、恢复、树预算。 |
-| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification | AdvisorPolicy、自主模型路由。 |
-| memory | global/workspace、SQLite/FTS/vector、JSONL/summary | 跨 worktree 的共享事实账本。 |
-| 进程 | scheduler、workflow、leader、background terminal | 统一 activity、全树 budget、24h supervisor。 |
+| 子 Agent | 真实 lineage、三级硬拒、根取消、Pager 递归树、树级 token/tool/time 限额 | exact CI、跨进程恢复和完整产品 golden path。 |
+| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority | 普通 turn/background 的 no-replay 路由与 root-approved assignment。 |
+| memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger | 长期记忆 promotion、跨 worktree/recovery 的完整产品证明。 |
+| 进程 | scheduler、workflow、leader、background terminal、lease heartbeat、recovery proof、backoff/dead-letter | 统一 activity 原子聚合、24h daemon golden path。 |
 | 验证 | VerifyAfterEditOutcome；Some(Pass) 才算 edit delivery | 全任务或 release 成功。 |
-| provider | catalog、BYOK、role pin | health、failover、可解释 routing。 |
+| provider | catalog、BYOK、role pin、Expert pool health skip 与 routing evidence | 普通 turn/background 的 failover receipt、真实额度证明。 |
 
 ### 1.4 状态词典
 
@@ -312,7 +312,7 @@ R0 结束仅可称可消费 source baseline，不解除 M5/M6、soak、live eval
 
 ## 9. NG-01：TaskTreeLineage v1
 
-**状态：** Draft。
+**状态：** 核心已实现并在本次审计跑过 depth-4 硬拒与根取消级联；仍未完成 exact CI、release 和端到端 golden path。
 **目标：** 真正表现 Main→Code→Review/Test/Evidence 的每条边。
 
 ### 必读锚点
@@ -320,8 +320,8 @@ R0 结束仅可称可消费 source baseline，不解除 M5/M6、soak、live eval
 | 路径 | 事实 |
 |---|---|
 | agent/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/mod.rs:180-234 | 当前 depth check。 |
-| 同 crate task/coordinator.rs:172-210 | nested child 改写 parent_session_id=root_parent。 |
-| 同 crate coordinator_tests.rs:1287-1299 | 旧测试固定 root reparent。 |
+| 同 crate task/coordinator.rs:208-259 | nested child 保留 `parent_session_id` 的真实直接父节点，根责任另存 `lineage`。 |
+| 同 crate coordinator_tests.rs:250-314,1249-1289 | 覆盖 depth-4 硬拒、根取消级联和真实直接父节点。 |
 | xai-grok-shell/src/config/mod.rs:436-483 | max_depth 默认/优先级。 |
 | xai-grok-shell/src/agent/subagent/handle_request.rs:375-404 | child depth 与 leaf 去 Task。 |
 | xai-grok-pager/src/views/dashboard/state.rs:125-140,1254-1272 | 当前 parent/child DTO 投影。 |
@@ -372,7 +372,7 @@ cargo test -p xai-grok-pager --lib dashboard
 
 ## 10. NG-02：CapabilityCeiling v1
 
-**状态：** Draft；前置 NG-01。
+**状态：** depth-3 强制只读、禁止再 spawn、禁止继承 MCP 已有离线覆盖；通用 grant/TTL/revoke token 仍是 Draft，不能把现有收缩规则称为完整 capability grant 系统。
 **目标：** child effective capability 永远是 root policy ∩ parent ceiling ∩ role ∩ operation approval。
 
 ### 必读锚点
@@ -413,7 +413,7 @@ depth 1 仅 root grant 后 scoped-write；depth 2 默认只读；depth 3 无 spa
 
 ## 11. NG-03：TreeBudget 和受管进程 lifecycle
 
-**状态：** Draft；前置 NG-01/02。
+**状态：** 部分已实现：coordinator 有根树 live/token/tool/wall-time 限额，scheduler 有 owner lease、heartbeat、backoff 和死信；统一 SessionActivity 原子聚合、daily-cost/artifact 限额与 24h proof 仍是 Draft。
 **目标：** 并行 Agent、terminal、monitor、scheduler fire 有同一 tree owner、预算、deadline、回收语义。
 
 ### 必读锚点
@@ -460,7 +460,7 @@ pub struct TreeBudgetV1 {
 
 ## 12. NG-04：SharedWorkingLedger 与四层记忆
 
-**状态：** Draft；前置 NG-01/02。
+**状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn ledger 拒绝注入；长期记忆 promotion、完整 cross-worktree recovery/read-model gate 仍是 Draft。
 **非目标：** 不把 SessionMemory/summary/vector DB 改成权威。
 
 | 层 | 内容 | 权威/写权限 |
@@ -605,7 +605,7 @@ Stop：无法确定是否 emitted block 时按已输出处理，禁止 fallback�
 
 ## 14. NG-06：AdvisorPolicy shadow-only
 
-**状态：** P4a 已提供一个受限、可审计的 Expert 选择器；完整 shadow policy 仍为 Draft，前置 NG-04/05。
+**状态：** 已实现本地 deterministic shadow advice、pin/budget/health/failure-domain 拒绝和持久化 audit；它不切换普通 turn、不能批准 assignment。`ModelSelectionAdviceV1` 的 root-approved 跨 session 分配仍为 Draft。
 **目标：** 模型建议可审计、零执行影响；P4a 的实际选择不得被包装成 Advisor 有 acceptance 权。
 
 | 路径 | 事实 |
@@ -635,7 +635,7 @@ Rollback：关闭 auto apply，历史 advice 不改写。
 
 ## 16. NG-08：KairosSupervisor local proof
 
-**状态：** Draft；前置 NG-01/02/03/04。Advisor 不是前置。
+**状态：** scheduler 层已实现 lease heartbeat、foreign lease proof、terminal receipt、backoff/dead-letter；统一 KairosSupervisor 状态机、operator freeze surface、exact-binary 24h/local proof 仍为 Draft。Advisor 不是前置。
 **目标：** SessionActor 之下的长期运行治理，不是新 Agent 或 shell daemon。
 
 | 路径 | 事实 |
