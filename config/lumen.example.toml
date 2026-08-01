@@ -12,6 +12,23 @@
 [models]
 default = "deepseek-v4-pro"
 
+# ── Optional Expert model pool ──────────────────────────────────────────────
+# The normal `/model` choice always wins. This pool applies only to a *new*
+# `/expert` task. Uncomment after configuring credentials for every model in
+# the pool. Empty `advisor_model_priority` means deterministic task-aware
+# selection inside this allowlist; it never selects a model outside the pool.
+#
+# [expert]
+# advisor_model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+# advisor_model_priority = [] # auto: implementation→Flash, review/research→Grok
+#
+# To force an order instead, list only IDs from the same pool:
+# advisor_model_priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+#
+# A recognizable quota/credit-exhausted response marks only that endpoint
+# unavailable for the *next* Expert task. Lumen does not replay a task that
+# already produced output, and it never falls back outside this allowlist.
+
 # ── DeepSeek (preferred default) ────────────────────────────────────────────
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"

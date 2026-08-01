@@ -80,6 +80,36 @@ Flash 缓存命中输入 `$0.0028`、未命中输入 `$0.14`、输出 `$0.28`；
 `$0.003625`、`$0.435`、`$0.87`。价格可能调整，发布或成本核算时应重新核对
 [官方模型与价格](https://api-docs.deepseek.com/quick_start/pricing)，而不是读取嵌入目录。
 
+## Expert 模型池：优先级、自动选择与额度耗尽
+
+普通 `/model` 是最强的用户 pin，Lumen 不会越过它。对新建的 **Expert** 任务，可以限定一组
+允许的模型，并选择“固定顺序”或“自动”。这不会把普通会话或一个已经开始输出的任务重放到
+另一个模型。
+
+```text
+/expert pool=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+/expert priority=auto
+```
+
+`priority=auto` 只在这个 pool 内按任务种类选择：实现类优先 Flash，review/research 类优先
+Grok；无法分类时保留 pool 顺序。若希望自己决定顺序：
+
+```text
+/expert priority=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+```
+
+也可以将相同配置写到 `[expert]`，见 `config/lumen.example.toml`。pool 是严格 allowlist：
+
+- 选项中的每个模型都必须已经配置有效的 endpoint 与凭据；
+- 当前 `/model` pin 优先于 pool；后来显式设置 `/expert pool=` 则只取代旧的 Expert 单模型选择；
+- 可辨认的额度/信用耗尽仅把该 endpoint 标为“下一项 Expert 任务跳过”；当前任务绝不重放；
+- pool 内没有健康候选时，任务在发请求前失败，不会悄悄使用 pool 外模型或产生额外计费；
+- `401`、`403` 和普通 `400` 不会被误判为“额度耗尽”。
+
+用 `/expert status` 查看当前 pool、priority 和最近一次选择证据；用 `/expert pool=off` 清除它。
+这套 pool 路由当前只覆盖新建 Expert 任务。普通 turn/后台任务的同等 no-replay 接线仍在 Lumen 2
+路线中，不能把上述行为扩大宣称为全局自动切模型。
+
 自定义厂商或租户端点：
 
 ```toml
