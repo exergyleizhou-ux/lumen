@@ -986,6 +986,10 @@ pub(crate) async fn spawn_session_actor(
         subagent_depth: tool_context.subagent_depth,
         subagents_max_depth,
         session_id_str: session_info.id.0.to_string(),
+        task_tree_root_session_id: tool_context
+            .task_tree_root_session_id
+            .clone()
+            .unwrap_or_else(|| session_info.id.0.to_string()),
         blocking_wait_depth: tool_context.blocking_wait_depth.clone(),
         respect_gitignore,
         path_not_found_hints,

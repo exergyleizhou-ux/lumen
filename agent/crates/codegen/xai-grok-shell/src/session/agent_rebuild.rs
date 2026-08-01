@@ -123,6 +123,8 @@ pub(crate) struct AgentRebuildSpec {
     pub subagent_depth: u32,
     pub subagents_max_depth: u32,
     pub session_id_str: String,
+    /// Stable root session ID for the task tree, even in a nested child.
+    pub task_tree_root_session_id: String,
     pub blocking_wait_depth: Arc<crate::tools::tool_context::BlockingWaitState>,
     pub respect_gitignore: bool,
     pub path_not_found_hints: bool,
@@ -224,6 +226,7 @@ impl AgentRebuildSpec {
             subagent_depth,
             subagents_max_depth,
             session_id_str,
+            task_tree_root_session_id,
             blocking_wait_depth,
             respect_gitignore,
             path_not_found_hints,
@@ -332,6 +335,7 @@ impl AgentRebuildSpec {
             };
             use xai_grok_tools::implementations::grok_build::task::types::{
                 MaxSubagentDepth, SessionIdResource, SubagentDepthCounter, SubagentEventSender,
+                TaskTreeRootSessionId,
             };
             let backend = SubagentBackendResource(Arc::new(ChannelBackend::for_session(
                 event_tx.clone(),
@@ -349,6 +353,10 @@ impl AgentRebuildSpec {
             agent
                 .tool_bridge()
                 .update_resource(SessionIdResource(session_id_str.clone()))
+                .await;
+            agent
+                .tool_bridge()
+                .update_resource(TaskTreeRootSessionId(task_tree_root_session_id.clone()))
                 .await;
             agent
                 .tool_bridge()
@@ -450,6 +458,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         subagent_depth: 0,
         subagents_max_depth: xai_grok_tools::implementations::grok_build::task::MAX_SUBAGENT_DEPTH,
         session_id_str: "test-session".to_string(),
+        task_tree_root_session_id: "test-session".to_string(),
         blocking_wait_depth: Arc::new(crate::tools::tool_context::BlockingWaitState::new()),
         respect_gitignore: false,
         scheduler_background_loops: true,

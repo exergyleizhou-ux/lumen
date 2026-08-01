@@ -829,6 +829,7 @@ pub(crate) async fn run_shell_child(
     tool_ctx.sampler_retry_only_before_output = task_output_budget.is_some();
     tool_ctx.monitor_event_buffer = Some(MonitorEventBuffer::default());
     tool_ctx.subagent_depth = child_depth;
+    tool_ctx.task_tree_root_session_id = Some(request.lineage.root_session_id.clone());
     tool_ctx.lsp = ctx.lsp.clone();
     tool_ctx.process_scope = ctx.process_scope.clone();
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();

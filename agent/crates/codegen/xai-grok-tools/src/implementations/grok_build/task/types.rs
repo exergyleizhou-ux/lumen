@@ -1021,6 +1021,15 @@ pub struct SessionIdResource(pub String);
 
 register_resource!("grok_build", "SessionIdResource", SessionIdResource);
 
+/// Stable root identity for the current task tree. Unlike
+/// [`SessionIdResource`], this does not change as nested children are rebuilt.
+/// Future whole-tree budgets and working-memory review capabilities must use
+/// this value rather than trusting model-provided identifiers.
+#[derive(Debug, Clone)]
+pub struct TaskTreeRootSessionId(pub String);
+
+register_resource!("grok_build", "TaskTreeRootSessionId", TaskTreeRootSessionId);
+
 /// Host-owned RAII token for an interruptible foreground wait.
 pub trait ForegroundWaitGuard: Send {}
 
