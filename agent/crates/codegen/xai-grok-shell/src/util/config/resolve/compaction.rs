@@ -3,9 +3,13 @@ pub const DEFAULT_AUTO_COMPACT_THRESHOLD_PERCENT: u8 = 85;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CompactionToolChoice {
+    /// Lumen default: compact requests must not offer tool use (upstream's
+    /// default is `Auto`; the L5 fixture and the pre-merge wire contract both
+    /// key on `tool_choice: "none"`). Opt in via `GROK_COMPACTION_TOOL_CHOICE=auto`
+    /// or the per-model config key.
     #[default]
-    Auto,
     None,
+    Auto,
 }
 
 impl std::str::FromStr for CompactionToolChoice {
@@ -178,8 +182,8 @@ mod compaction_tool_choice_tests {
     use super::{CompactionToolChoice, resolve_compaction_tool_choice_from as resolve};
 
     #[test]
-    fn default_is_auto() {
-        assert_eq!(resolve(None, None, None), CompactionToolChoice::Auto);
+    fn default_is_none() {
+        assert_eq!(resolve(None, None, None), CompactionToolChoice::None);
     }
 
     #[test]
@@ -206,7 +210,7 @@ mod compaction_tool_choice_tests {
         );
         assert_eq!(
             resolve(Some("garbage"), Some("also-bad"), None),
-            CompactionToolChoice::Auto
+            CompactionToolChoice::None
         );
     }
 
