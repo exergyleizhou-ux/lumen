@@ -1139,7 +1139,7 @@ async fn test_copy_session_data_basic() {
 async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     use crate::session::expert::{
         DEFAULT_EXECUTOR_MODEL, ExpertFeatureState, ExpertMode, ExpertModeState, ExpertOutcome,
-        ExpertPhase, VisualBrief,
+        ExpertPhase, VisualBrief, advisor_shadow_advice_with_fallback,
     };
     let temp_dir = TempDir::new().unwrap();
     let adapter = JsonlStorageAdapter::with_root(temp_dir.path().to_path_buf());
@@ -1165,6 +1165,22 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
     });
     state.model_before_expert = Some("session-model-before-expert".to_owned());
     state.reasoning_effort_before_expert = Some("high".to_owned());
+    state.advisor_auto_switch_fallback_enabled = true;
+    let mut advice = advisor_shadow_advice_with_fallback(
+        "modify src/auth.rs",
+        "missing-primary",
+        "deepseek-v4-flash",
+        "consultant",
+        vec!["deepseek-v4-flash".to_owned(), "consultant".to_owned()],
+        false,
+        true,
+        Some("primary.example"),
+        Some("consultant.example"),
+        false,
+        false,
+    );
+    assert!(state.apply_advisor_fallback_before_output(&mut advice, true, false));
+    state.advisor_shadow_advice = Some(advice);
     adapter.write_expert_mode_state(&source, &state).await.unwrap();
     adapter
         .update_current_model_and_agent(
@@ -1187,6 +1203,16 @@ async fn expert_state_roundtrips_light_and_copy_never_replays_active_task() {
             .as_ref()
             .is_some_and(|s| s.post_consult_enabled && s.goal_composed_this_task)
     );
+    let persisted = light.expert_mode_state.as_ref().unwrap();
+    assert_eq!(persisted.executor_requested, "deepseek-v4-flash");
+    assert!(persisted.advisor_shadow_advice.as_ref().is_some_and(|advice| {
+        advice.automatic_switch_allowed
+            && advice.executor_candidate == "deepseek-v4-flash"
+    }));
+    assert!(persisted
+        .audit_events
+        .iter()
+        .any(|event| event.event == "advisor_fallback_applied_before_output"));
 
     let target = Info {
         id: acp::SessionId::new("expert-copy"),
