@@ -32,6 +32,15 @@ pub(super) const fn subagent_yolo_allowed() -> bool {
     false
 }
 
+/// The coordinator validates and rebuilds lineage before it starts a child.
+/// Runtime overrides are hints, not authority: capability and nesting policy
+/// must follow the durable task-tree position.
+pub(super) const fn authoritative_child_depth(
+    lineage: &xai_grok_tools::implementations::grok_build::task::types::SubagentLineage,
+) -> u32 {
+    lineage.depth
+}
+
 /// Add the private-memory file tools and immediately reapply the child's
 /// capability ceiling. Memory support is assembled after the main toolset has
 /// been filtered, so skipping this second filter would let a read-only leaf
@@ -525,10 +534,17 @@ pub(crate) async fn run_shell_child(
         effective_runtime.capability_mode,
         definition.capability_mode,
     );
-    let child_depth = request
-        .runtime_overrides
-        .spawn_depth
-        .unwrap_or(ctx.parent_depth + 1);
+    let child_depth = authoritative_child_depth(&request.lineage);
+    if let Some(reported_depth) = request.runtime_overrides.spawn_depth
+        && reported_depth != child_depth
+    {
+        tracing::warn!(
+            subagent_id = %request.id,
+            reported_depth,
+            lineage_depth = child_depth,
+            "Ignoring untrusted subagent runtime depth in favor of task-tree lineage"
+        );
+    }
     effective_runtime.capability_mode =
         capability_ceiling_at_depth(effective_runtime.capability_mode, child_depth);
     let tools_before_policy = definition.tool_config.tools.len();

@@ -218,6 +218,25 @@ async fn direct_spawn_rejects_forged_task_tree_lineage() {
 }
 
 #[tokio::test]
+async fn direct_spawn_canonicalizes_runtime_depth_from_validated_lineage() {
+    let mut harness = harness(false, std::time::Duration::from_secs(60));
+    let mut req = request("depth-canonical", false);
+    // This emulates the old scheduler request.  It is a runtime hint, never
+    // authority for a direct child that the coordinator has validated at depth 1.
+    req.runtime_overrides.spawn_depth = Some(0);
+    let spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(req).await }
+    });
+    let observed = harness.requests.recv().await.expect("spawned request");
+    assert_eq!(observed.lineage.depth, 1);
+    assert_eq!(observed.runtime_overrides.spawn_depth, Some(1));
+    let _ = harness.finish.send(());
+    assert!(spawn.await.unwrap().unwrap().success);
+    harness.actor.abort();
+}
+
+#[tokio::test]
 async fn recovered_terminal_is_queryable_only_in_its_parent_session() {
     let harness = harness(false, std::time::Duration::from_secs(60));
     harness

@@ -868,7 +868,10 @@ impl SchedulerActor {
             cwd: None,
             runtime_overrides: SubagentRuntimeOverrides {
                 completion_output_cap: Some(LOOP_COMPLETION_OUTPUT_CAP),
-                spawn_depth: Some(0),
+                // This is a direct child of the parent session.  Keep the
+                // scheduler's request truthful even though the coordinator
+                // independently canonicalizes it from lineage.
+                spawn_depth: Some(1),
                 loop_task_id: Some(task_id.to_string()),
                 ..Default::default()
             },
@@ -2383,7 +2386,7 @@ mod tests {
             request.runtime_overrides.completion_output_cap,
             Some(LOOP_COMPLETION_OUTPUT_CAP)
         );
-        assert_eq!(request.runtime_overrides.spawn_depth, Some(0));
+        assert_eq!(request.runtime_overrides.spawn_depth, Some(1));
         assert!(request.description.starts_with("loop: "));
 
         let mut fired_subagent_id = None;

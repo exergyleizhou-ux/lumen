@@ -269,6 +269,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     });
                     return;
                 }
+                // `lineage` is the coordinator-validated task-tree identity.
+                // Do not let a caller-provided runtime hint make a direct
+                // child look like depth zero and thereby bypass depth-based
+                // tool and capability ceilings in the shell runner.
+                request.runtime_overrides.spawn_depth = Some(request.lineage.depth);
                 // Tool-side depth checks are the normal admission path, but
                 // this coordinator owns the shared mailbox and must retain a
                 // final hard ceiling.  Otherwise a caller that can construct

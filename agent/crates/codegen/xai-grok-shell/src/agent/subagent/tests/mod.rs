@@ -1,9 +1,9 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
 use super::handle_request::{
-    add_agent_memory_tools_with_policy, capability_ceiling_at_depth, canonical_total_tokens,
-    mcp_inheritance_allowed_at_depth, record_subagent_usage, render_task_tree_working_memory,
-    subagent_yolo_allowed, usage_is_incomplete,
+    add_agent_memory_tools_with_policy, authoritative_child_depth, capability_ceiling_at_depth,
+    canonical_total_tokens, mcp_inheritance_allowed_at_depth, record_subagent_usage,
+    render_task_tree_working_memory, subagent_yolo_allowed, usage_is_incomplete,
 };
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, test_gateway_with_receiver,
@@ -59,6 +59,16 @@ fn third_generation_child_is_forced_read_only() {
 #[test]
 fn child_sessions_never_inherit_yolo() {
     assert!(!subagent_yolo_allowed());
+}
+
+#[test]
+fn task_tree_lineage_is_the_only_depth_authority() {
+    use xai_grok_tools::implementations::grok_build::task::types::SubagentLineage;
+
+    let root = SubagentLineage::direct("root");
+    let grandchild = SubagentLineage::child_of(&root, "child");
+    assert_eq!(authoritative_child_depth(&root), 1);
+    assert_eq!(authoritative_child_depth(&grandchild), 2);
 }
 
 #[test]
