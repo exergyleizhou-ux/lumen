@@ -20,12 +20,23 @@ packages=(
 )
 for package in "${packages[@]}"; do
   mkdir -p "$FIXTURE/agent/crates/codegen/$package"
-  printf '[package]\nname = "%s"\nversion = "1.2.3-alpha.4"\n' "$package" \
+  version='1.2.3-alpha.4'
+  # Upstream protocol/client identity is intentionally independent from the
+  # shipped Lumen release. Keep it different in the fixture so a future edit
+  # cannot silently put it back into the release-version authority set.
+  if [[ "$package" == 'xai-grok-version' ]]; then
+    version='9.9.9'
+  fi
+  printf '[package]\nname = "%s"\nversion = "%s"\n' "$package" "$version" \
     >"$FIXTURE/agent/crates/codegen/$package/Cargo.toml"
 done
 {
   for package in "${packages[@]}"; do
-    printf '[[package]]\nname = "%s"\nversion = "1.2.3-alpha.4"\n\n' "$package"
+    version='1.2.3-alpha.4'
+    if [[ "$package" == 'xai-grok-version' ]]; then
+      version='9.9.9'
+    fi
+    printf '[[package]]\nname = "%s"\nversion = "%s"\n\n' "$package" "$version"
   done
 } >"$FIXTURE/agent/Cargo.lock"
 cat >"$FIXTURE/CHANGELOG.md" <<'EOF'
@@ -50,8 +61,9 @@ git -C "$FIXTURE" commit --allow-empty -qm 'fix(release): keep versions synchron
 [[ "$(python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" next prerelease)" == 1.2.3-alpha.5 ]]
 python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" set 1.2.3 >/dev/null
 [[ "$(python3 "$FIXTURE/scripts/release_version.py" --root "$FIXTURE" check)" == 1.2.3 ]]
-[[ "$(grep -R 'version = "1.2.3"' "$FIXTURE/agent/crates/codegen" -l | wc -l | tr -d ' ')" == 8 ]]
-[[ "$(grep -c 'version = "1.2.3"' "$FIXTURE/agent/Cargo.lock")" == 8 ]]
+[[ "$(grep -R 'version = "1.2.3"' "$FIXTURE/agent/crates/codegen" -l | wc -l | tr -d ' ')" == 7 ]]
+[[ "$(grep -c 'version = "1.2.3"' "$FIXTURE/agent/Cargo.lock")" == 7 ]]
+grep -Fqx 'version = "9.9.9"' "$FIXTURE/agent/crates/codegen/xai-grok-version/Cargo.toml"
 
 mkdir -p "$FIXTURE/artifacts/readiness"
 printf '{"schema_version":1,"lumen_version":"1.2.3-alpha.4"}\n' >"$FIXTURE/SOURCE_LOCK.json"

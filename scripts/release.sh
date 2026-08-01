@@ -103,7 +103,6 @@ VERSION_PATHS=(
   artifacts/readiness/engineering_complete.json
   artifacts/readiness/status.json
   agent/Cargo.lock
-  agent/crates/codegen/xai-grok-version/Cargo.toml
   agent/crates/codegen/xai-grok-pager/Cargo.toml
   agent/crates/codegen/xai-grok-pager-bin/Cargo.toml
   agent/crates/codegen/xai-grok-shell/Cargo.toml
@@ -117,7 +116,6 @@ while IFS= read -r changed_path; do
     VERSION|CHANGELOG.md|SOURCE_LOCK.json|\
     artifacts/readiness/engineering_complete.json|\
     artifacts/readiness/status.json|agent/Cargo.lock|\
-    agent/crates/codegen/xai-grok-version/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
     agent/crates/codegen/xai-grok-shell/Cargo.toml|\

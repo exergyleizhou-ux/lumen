@@ -13466,7 +13466,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.2.116"
+version = "0.1.251"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13556,7 +13556,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.2.116"
+version = "0.1.251"
 dependencies = [
  "anyhow",
  "clap",
@@ -13841,7 +13841,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.2.116"
+version = "0.1.251"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
