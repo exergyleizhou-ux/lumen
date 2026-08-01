@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T08:42:20Z",
+  "generated_at": "2026-08-01T08:54:53Z",
   "monorepo": {
-    "git_head": "6ed25d0d492a653eadfed30e27ebeda56488efe5",
-    "git_short": "6ed25d0"
+    "git_head": "14baf624370bddd74b8502b7f948d563e9377550",
+    "git_short": "14baf62"
   },
   "lumen_version": "0.1.251",
   "upstream_pin": {
@@ -39,7 +39,7 @@
     "scripts/smoke-deepseek-l4.sh": "e699a66afd5623a37cf42c9ce95e933d2a89c71b1db55fe876ca4799846395cc",
     "scripts/smoke-deepseek-l5.sh": "dee6210cbbc2766ff5df349ee985e1621862800dca7bd60a6acdc26ccd7a27bb",
     "scripts/smoke-r0-min.sh": "bd4672bda32f8f5631da8df0c73e330f4f75f0674d5bcd98ba4cf3725b1057c9",
-    "scripts/smoke-r0.sh": "bd7a0b06b2748e185224c47e29f907a8e95cca971fefc73afd4e3ce0ded668b2",
+    "scripts/smoke-r0.sh": "36cfae9284538678ed598cd26302fc978768cef52964d27469e4691b9adff4b5",
     "scripts/smoke-verify.sh": "71b6cab94b5536e73cb9b0ac1d309d35285aae1a0e48ce461e79cfacdfdf379b",
     "scripts/test-readiness-contract.sh": "00590f11a7bffcb881341d1ee08486ce3d9592d9a3a58cdb3a7171ce96fec09b",
     "scripts/test-onboarding-gate.sh": "5c057d276a434eef4452d9728b0b2472ef80cd1e75c49cce9b1580acc9a252c8",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "545b6393c182af7c2f0253ae666eb9edea1eabcacb39122bb9d75066cc53e2b2"
+  "aggregate_critical_sha256": "99a6705bf39ce99388fc8340e7bfef712e9883dde2e6f3e83b627a567e87f138"
 }
