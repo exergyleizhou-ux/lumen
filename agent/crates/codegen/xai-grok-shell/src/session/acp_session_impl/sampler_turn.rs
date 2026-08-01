@@ -873,6 +873,7 @@ impl SessionActor {
     ) -> Option<String> {
         if self.tool_context.task_output_token_budget.is_some()
             || self.tool_context.sampler_retry_only_before_output
+            || self.tool_context.subagent_depth > 0
             || self.models_manager.user_selected_model()
         {
             return None;

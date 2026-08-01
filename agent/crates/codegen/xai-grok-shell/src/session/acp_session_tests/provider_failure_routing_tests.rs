@@ -258,6 +258,63 @@ async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn subagent_turn_never_inherits_ordinary_reroute_without_its_own_contract() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.tool_context.subagent_depth = 1;
+            let actor = std::sync::Arc::new(actor);
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec!["grok".to_owned()],
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+
+            assert!(
+                actor
+                    .handle_sampling_failure(sampling_error(
+                        xai_grok_sampler::SamplingErrorKind::Api,
+                        Some(402),
+                        "out of credits",
+                    ))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "flash"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn expert_pool_fails_closed_when_no_selected_candidate_is_routable() {
     let local = tokio::task::LocalSet::new();
     local
