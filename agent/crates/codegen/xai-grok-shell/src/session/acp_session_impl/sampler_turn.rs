@@ -907,6 +907,25 @@ impl SessionActor {
             }
         }
         let detailed_message = error.message.clone();
+        let (failed_model_id, failed_base_url) = self
+            .chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|c| (c.model, c.base_url))
+            .unwrap_or_default();
+        let provider_failure_kind = match error.kind {
+            SamplingErrorKind::RateLimited => Some("rate_limited"),
+            SamplingErrorKind::IdleTimeout => Some("timeout"),
+            SamplingErrorKind::Http => Some("upstream"),
+            SamplingErrorKind::Api if error.status_code.is_some_and(|status| status >= 500) => {
+                Some("upstream")
+            }
+            _ => None,
+        };
+        if let Some(kind) = provider_failure_kind {
+            self.models_manager
+                .record_provider_failure(&failed_base_url, kind);
+        }
         if matches!(error.kind, SamplingErrorKind::Api)
             && error.status_code == Some(400)
             && error.message.contains("encrypted_content")
@@ -943,12 +962,6 @@ impl SessionActor {
             .data(detailed_message);
             return Err(acp_err);
         }
-        let (failed_model_id, failed_base_url) = self
-            .chat_state_handle
-            .get_sampling_config()
-            .await
-            .map(|c| (c.model, c.base_url))
-            .unwrap_or_default();
         let auth_provider =
             if matches!(error.kind, SamplingErrorKind::Auth) || error.status_code == Some(401) {
                 self.model_auth_provider(&failed_model_id)

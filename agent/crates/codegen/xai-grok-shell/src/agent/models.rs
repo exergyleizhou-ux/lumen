@@ -1,5 +1,6 @@
 //! Model fetching, resolution, and management.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -17,6 +18,35 @@ use crate::remote::{FetchModelsResult, fetch_models_blocking};
 use crate::sampling::SamplerConfig as SamplingConfig;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
+
+/// Local, passive observation of an endpoint failure domain. This is never a
+/// probe: it is updated only by a completed sampler failure already observed
+/// by the owning SessionActor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderHealthSnapshot {
+    Unknown,
+    Degraded { failure_kind: String },
+}
+
+#[derive(Debug, Clone)]
+struct ProviderHealthRecord {
+    failure_kind: String,
+    observed_at: DateTime<Utc>,
+}
+
+const PROVIDER_HEALTH_TTL: ChronoDuration = ChronoDuration::minutes(5);
+
+/// Stable comparison key for an endpoint failure domain. Paths and query
+/// strings never participate, so per-model route suffixes on one provider do
+/// not look independent. The key is process-local and never persisted.
+fn provider_failure_domain(base_url: &str) -> Option<String> {
+    let url = url::Url::parse(base_url).ok()?;
+    let host = url.host_str()?.to_ascii_lowercase();
+    Some(match url.port() {
+        Some(port) => format!("{host}:{port}"),
+        None => host,
+    })
+}
 
 // ── Auth method for model fetching ──────────────────────────────────────────
 
@@ -130,6 +160,7 @@ struct Inner {
     /// Set once the user explicitly picks a model (`/model`); guards the
     /// first-catalog reselect from clobbering that choice.
     user_selected_model: AtomicBool,
+    provider_health: RwLock<HashMap<String, ProviderHealthRecord>>,
 }
 
 /// Clears an in-flight flag on drop so a panicking task can't wedge future refreshes.
@@ -225,6 +256,7 @@ impl ModelsManagerBuilder {
                 refresh_in_flight: AtomicBool::new(false),
                 model_switch_watch: tokio::sync::watch::channel(0u64).0,
                 user_selected_model: AtomicBool::new(false),
+                provider_health: RwLock::new(HashMap::new()),
             }),
         }
     }
@@ -426,6 +458,45 @@ impl ModelsManager {
     /// override the selection.
     pub fn user_selected_model(&self) -> bool {
         self.inner.user_selected_model.load(Ordering::Relaxed)
+    }
+
+    /// Record a passive endpoint-domain failure. Auth/configuration/content
+    /// failures are intentionally ignored: they do not establish provider
+    /// unavailability and must not influence later routing advice.
+    pub fn record_provider_failure(&self, base_url: &str, failure_kind: &str) {
+        if !matches!(failure_kind, "rate_limited" | "timeout" | "upstream") {
+            return;
+        }
+        let Some(domain) = provider_failure_domain(base_url) else {
+            return;
+        };
+        self.inner.provider_health.write().insert(
+            domain,
+            ProviderHealthRecord {
+                failure_kind: failure_kind.to_owned(),
+                observed_at: Utc::now(),
+            },
+        );
+    }
+
+    /// Read a passively observed health state. Stale failures deliberately
+    /// expire to Unknown; this method must never initiate I/O.
+    pub fn provider_health(&self, base_url: &str) -> ProviderHealthSnapshot {
+        let Some(domain) = provider_failure_domain(base_url) else {
+            return ProviderHealthSnapshot::Unknown;
+        };
+        let now = Utc::now();
+        let mut health = self.inner.provider_health.write();
+        let Some(record) = health.get(&domain) else {
+            return ProviderHealthSnapshot::Unknown;
+        };
+        if now.signed_duration_since(record.observed_at) > PROVIDER_HEALTH_TTL {
+            health.remove(&domain);
+            return ProviderHealthSnapshot::Unknown;
+        }
+        ProviderHealthSnapshot::Degraded {
+            failure_kind: record.failure_kind.clone(),
+        }
     }
 
     pub fn set_current_model_id(&self, id: acp::ModelId) {

@@ -79,6 +79,7 @@ pub enum AdvisorShadowDecision {
     UserModelPinned,
     ConsultBudgetUnavailable,
     SharedProviderFailureDomain,
+    ProviderHealthDegraded,
 }
 
 /// Persisted, secret-free output from the Advisor shadow policy.
@@ -105,6 +106,8 @@ pub struct AdvisorShadowAdvice {
     /// was available; it is not interpreted as independence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub independent_provider_failure_domain: Option<bool>,
+    #[serde(default)]
+    pub provider_health_degraded: bool,
     /// Must remain false until a separately approved, fail-safe routing phase.
     #[serde(default)]
     pub automatic_switch_allowed: bool,
@@ -123,6 +126,8 @@ pub fn advisor_shadow_advice(
     consult_budget_available: bool,
     executor_provider_domain: Option<&str>,
     consultant_provider_domain: Option<&str>,
+    executor_provider_degraded: bool,
+    consultant_provider_degraded: bool,
 ) -> AdvisorShadowAdvice {
     let task_lower = task.to_ascii_lowercase();
     let task_class = if ["review", "audit", "security", "verify", "test"]
@@ -160,6 +165,8 @@ pub fn advisor_shadow_advice(
         AdvisorShadowDecision::ExecutorUnavailable
     } else if !consultant_available {
         AdvisorShadowDecision::ConsultantUnavailable
+    } else if executor_provider_degraded || consultant_provider_degraded {
+        AdvisorShadowDecision::ProviderHealthDegraded
     } else if task_class == AdvisorTaskClass::Review
         && independent_provider_failure_domain == Some(false)
     {
@@ -180,6 +187,7 @@ pub fn advisor_shadow_advice(
         AdvisorShadowDecision::SharedProviderFailureDomain => {
             "shared_provider_failure_domain".to_owned()
         }
+        AdvisorShadowDecision::ProviderHealthDegraded => "provider_health_degraded".to_owned(),
     });
     if executor != consultant {
         reason_codes.push("independent_consultant_configured".to_owned());
@@ -195,6 +203,7 @@ pub fn advisor_shadow_advice(
         user_model_pinned,
         consult_budget_available,
         independent_provider_failure_domain,
+        provider_health_degraded: executor_provider_degraded || consultant_provider_degraded,
         automatic_switch_allowed: false,
         recorded_at: Utc::now(),
     }
@@ -2122,6 +2131,8 @@ mod tests {
             true,
             Some("executor.example"),
             Some("consultant.example"),
+            false,
+            false,
         );
         assert_eq!(advice.algorithm, "advisor-shadow-v1");
         assert_eq!(advice.task_class, AdvisorTaskClass::Review);
@@ -2145,6 +2156,8 @@ mod tests {
             true,
             None,
             None,
+            false,
+            false,
         );
         assert_eq!(advice.task_class, AdvisorTaskClass::Research);
         assert_eq!(
@@ -2166,6 +2179,8 @@ mod tests {
             true,
             Some("executor.example"),
             Some("consultant.example"),
+            false,
+            false,
         );
         assert_eq!(pinned.decision, AdvisorShadowDecision::UserModelPinned);
         assert!(pinned.user_model_pinned);
@@ -2180,6 +2195,8 @@ mod tests {
             false,
             Some("executor.example"),
             Some("consultant.example"),
+            false,
+            false,
         );
         assert_eq!(
             out_of_budget.decision,
@@ -2199,6 +2216,8 @@ mod tests {
             true,
             Some("shared.example"),
             Some("shared.example"),
+            false,
+            false,
         );
         assert_eq!(
             advice.decision,
@@ -2206,6 +2225,27 @@ mod tests {
         );
         assert_eq!(advice.independent_provider_failure_domain, Some(false));
         assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_blocks_degraded_provider_without_overriding_pin_or_budget() {
+        let advice = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            true,
+            Some("executor.example"),
+            Some("consultant.example"),
+            false,
+            true,
+        );
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::ProviderHealthDegraded
+        );
+        assert!(advice.provider_health_degraded);
     }
 
     #[test]

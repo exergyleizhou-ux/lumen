@@ -694,6 +694,21 @@ impl SessionActor {
                 };
                 let executor_provider_domain = provider_domain(&executor);
                 let consultant_provider_domain = provider_domain(&consultant);
+                let provider_degraded = |model_id: &str| {
+                    advisor_model_catalog
+                        .get(model_id)
+                        .or_else(|| {
+                            advisor_model_catalog
+                                .values()
+                                .find(|e| e.info.model == model_id)
+                        })
+                        .is_some_and(|entry| {
+                            matches!(
+                                self.models_manager.provider_health(&entry.info.base_url),
+                                crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+                            )
+                        })
+                };
                 let advice = crate::session::expert::advisor_shadow_advice(
                     task,
                     &executor,
@@ -706,6 +721,8 @@ impl SessionActor {
                         .can_reserve(u64::from(actor.expert.max_consult_output_tokens)),
                     executor_provider_domain.as_deref(),
                     consultant_provider_domain.as_deref(),
+                    provider_degraded(&executor),
+                    provider_degraded(&consultant),
                 );
                 actor.expert.audit(
                     "advisor_shadow_recorded",
