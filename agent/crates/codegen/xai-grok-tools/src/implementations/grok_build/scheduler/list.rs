@@ -26,6 +26,12 @@ pub struct ScheduledTaskSummary {
     #[serde(default)]
     pub usage_verification_required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_token_budget: Option<u64>,
+    #[serde(default)]
+    pub daily_tokens_used: u64,
+    #[serde(default)]
+    pub daily_token_budget_exhausted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_status: Option<String>,
     /// `false` means the last run's token total was incomplete and must not
     /// be used as a cost/budget proof.
@@ -54,7 +60,16 @@ pub struct SchedulerListOutput {
 impl xai_tool_runtime::ToolOutput for SchedulerListOutput {}
 
 fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
-    let next_fire = task.next_dispatch_at().to_rfc3339();
+    let now = chrono::Utc::now();
+    let daily_tokens_used = task.daily_token_usage_for(now);
+    let daily_token_budget_exhausted = task.daily_token_budget_exhausted(now);
+    let next_fire = task
+        .next_daily_budget_reset_at(now)
+        .map_or_else(
+            || task.next_dispatch_at(),
+            |reset| task.next_dispatch_at().max(reset),
+        )
+        .to_rfc3339();
     let created = task.created_at.to_rfc3339();
     let prompt = if task.prompt.len() > 80 {
         let cut = crate::util::floor_char_boundary(&task.prompt, 80);
@@ -73,6 +88,9 @@ fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
         retry_not_before: task.retry_not_before.map(|time| time.to_rfc3339()),
         dead_lettered: task.dead_lettered,
         usage_verification_required: task.usage_verification_required,
+        daily_token_budget: task.daily_token_budget,
+        daily_tokens_used,
+        daily_token_budget_exhausted,
         last_run_status: task.last_run_receipt.as_ref().map(|receipt| {
             match receipt.status() {
                 SchedulerRunStatus::Completed => "completed",
@@ -239,6 +257,19 @@ mod tests {
             summary.last_run_model_id.as_deref(),
             Some("deepseek-v4-flash")
         );
+    }
+
+    #[test]
+    fn task_summary_surfaces_current_daily_token_budget() {
+        let now = chrono::Utc::now();
+        let mut task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        task.set_daily_token_budget(Some(100)).unwrap();
+        task.record_verified_daily_token_usage(now, 100);
+
+        let summary = summary_from_task(task);
+        assert_eq!(summary.daily_token_budget, Some(100));
+        assert_eq!(summary.daily_tokens_used, 100);
+        assert!(summary.daily_token_budget_exhausted);
     }
 
     #[test]

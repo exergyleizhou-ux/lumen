@@ -372,6 +372,7 @@ impl SchedulerActor {
         let res = self.resources.lock().await;
         let scheduler_state = res.get::<State<SchedulerState>>();
         let owner_id = self.run_lease_owner_id();
+        let now = Utc::now();
         scheduler_state
             .map(|s| {
                 s.tasks
@@ -381,10 +382,9 @@ impl SchedulerActor {
                             && !task.dead_lettered
                             && !task.usage_verification_required
                     })
-                    .map(|task| task.next_dispatch_at_for_owner(&owner_id))
+                    .map(|task| task.next_dispatch_at_for_owner_at(&owner_id, now))
                     .min()
                     .map(|next| {
-                        let now = Utc::now();
                         if next <= now {
                             Duration::ZERO
                         } else {
@@ -957,6 +957,9 @@ impl SchedulerActor {
                     result.output_usage_incomplete,
                 ));
                 task.usage_verification_required = result.output_usage_incomplete;
+                if !result.output_usage_incomplete {
+                    task.record_verified_daily_token_usage(Utc::now(), result.total_tokens_used);
+                }
                 task.record_terminal_run_status(status, Utc::now());
                 if result.output_usage_incomplete
                     || !matches!(status, SchedulerRunStatus::Completed)
@@ -1052,6 +1055,12 @@ impl SchedulerActor {
                         reply.send(Err(SchedulerError::RemovalPending(pending.task_id.clone())));
                     return;
                 }
+                if task.foreground && task.daily_token_budget.is_some() {
+                    let _ = reply.send(Err(SchedulerError::InvalidTask(
+                        "daily_token_budget requires a background scheduler task".to_owned(),
+                    )));
+                    return;
+                }
                 let mut res = self.resources.lock().await;
                 let state = res.get_or_default::<State<SchedulerState>>();
                 if state.tasks.len() >= MAX_SCHEDULED_TASKS {
@@ -1111,6 +1120,43 @@ impl SchedulerActor {
 
                 let commit = reservation.commit_next(&mut self.clock);
                 log_rollover("update", Some(&id), commit.rollover);
+                self.notification_handle
+                    .send_scheduled_task_created(task_created_payload(&updated, commit.version));
+                let _ = reply.send(Ok(updated));
+            }
+            SchedulerCommand::UpdateDailyTokenBudget {
+                id,
+                daily_token_budget,
+                reply,
+            } => {
+                if let Some(pending) = &self.pending_removal {
+                    let _ =
+                        reply.send(Err(SchedulerError::RemovalPending(pending.task_id.clone())));
+                    return;
+                }
+                let mut res = self.resources.lock().await;
+                let state = res.get_or_default::<State<SchedulerState>>();
+                let Some(index) = state.tasks.iter().position(|task| task.id == id) else {
+                    let _ = reply.send(Err(SchedulerError::TaskNotFound(id)));
+                    return;
+                };
+                let task = &mut state.tasks[index];
+                if task.foreground && daily_token_budget.is_some() {
+                    let _ = reply.send(Err(SchedulerError::InvalidTask(
+                        "daily_token_budget requires a background scheduler task".to_owned(),
+                    )));
+                    return;
+                }
+                if let Err(error) = task.set_daily_token_budget(daily_token_budget) {
+                    let _ = reply.send(Err(error));
+                    return;
+                }
+                let updated = task.clone();
+                drop(res);
+
+                let mut reservation = self.clock.prepare_transition(1);
+                let commit = reservation.commit_next(&mut self.clock);
+                log_rollover("update_daily_token_budget", Some(&id), commit.rollover);
                 self.notification_handle
                     .send_scheduled_task_created(task_created_payload(&updated, commit.version));
                 let _ = reply.send(Ok(updated));
@@ -2570,6 +2616,66 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn complete_background_result_consumes_daily_token_budget() {
+        let (handle, cancel, _notif_rx, mut subagent_rx, resources) =
+            make_test_actor_with_subagents_at(0);
+        let task_id = create_due_task(&handle, "budgeted deploy check", false).await;
+        {
+            let mut resources = resources.lock().await;
+            let task = resources
+                .get_or_default::<State<SchedulerState>>()
+                .tasks
+                .iter_mut()
+                .find(|task| task.id == task_id)
+                .unwrap();
+            task.set_daily_token_budget(Some(99)).unwrap();
+        }
+
+        let SubagentEvent::Spawn(spawn) = next_event(&mut subagent_rx).await else {
+            panic!("expected Spawn");
+        };
+        spawn
+            .respond_with(|request| SubagentResult {
+                success: true,
+                subagent_id: request.id.clone(),
+                child_session_id: request.id.clone(),
+                total_tokens_used: 99,
+                ..Default::default()
+            })
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let accounted = {
+                let resources = resources.lock().await;
+                let task = resources
+                    .get::<State<SchedulerState>>()
+                    .unwrap()
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == task_id)
+                    .unwrap();
+                (
+                    task.daily_tokens_used,
+                    task.daily_token_budget_exhausted(Utc::now()),
+                    task.active_run_lease.is_none(),
+                )
+            };
+            if accounted.0 == 99 {
+                assert!(accounted.1, "daily budget must close recurrence");
+                assert!(accounted.2, "terminal result must release its lease");
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "completed scheduler run did not record daily token usage"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
         cancel.cancel();
     }
 

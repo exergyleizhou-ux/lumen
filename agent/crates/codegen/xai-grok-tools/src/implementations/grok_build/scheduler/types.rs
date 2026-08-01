@@ -169,6 +169,9 @@ pub enum SchedulerError {
     #[error("invalid interval: {0}")]
     InvalidInterval(String),
 
+    #[error("invalid scheduled task: {0}")]
+    InvalidTask(String),
+
     #[error("maximum of {0} scheduled tasks reached")]
     TaskLimitReached(usize),
 
@@ -197,6 +200,7 @@ pub enum SchedulerError {
 pub fn scheduler_tool_error(error: SchedulerError) -> xai_tool_runtime::ToolError {
     let code = match &error {
         SchedulerError::InvalidInterval(_)
+        | SchedulerError::InvalidTask(_)
         | SchedulerError::TaskLimitReached(_)
         | SchedulerError::TaskNotFound(_) => "scheduler_invalid_request",
         SchedulerError::Persistence(_) => "scheduler_persistence",
@@ -264,6 +268,17 @@ pub struct ScheduledTask {
     /// enforcement can no longer be proven.
     #[serde(default)]
     pub(crate) usage_verification_required: bool,
+    /// Optional UTC-day token ceiling for a background scheduler task. The
+    /// verified usage accumulator is persisted rather than inferred from a
+    /// lossy last-run receipt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) daily_token_budget: Option<u64>,
+    /// UTC day represented by `daily_tokens_used`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) daily_token_usage_day: Option<chrono::NaiveDate>,
+    /// Provider-reported, complete token usage for `daily_token_usage_day`.
+    #[serde(default)]
+    pub(crate) daily_tokens_used: u64,
 }
 
 /// A bounded, persisted claim to execute one scheduler task.
@@ -445,6 +460,9 @@ impl ScheduledTask {
             retry_not_before: None,
             dead_lettered: false,
             usage_verification_required: false,
+            daily_token_budget: None,
+            daily_token_usage_day: None,
+            daily_tokens_used: 0,
         }
     }
 
@@ -556,6 +574,50 @@ impl ScheduledTask {
         self.usage_verification_required = false;
     }
 
+    pub(crate) fn set_daily_token_budget(
+        &mut self,
+        daily_token_budget: Option<u64>,
+    ) -> Result<(), SchedulerError> {
+        if matches!(daily_token_budget, Some(0)) {
+            return Err(SchedulerError::InvalidTask(
+                "daily_token_budget must be greater than zero".to_owned(),
+            ));
+        }
+        self.daily_token_budget = daily_token_budget;
+        Ok(())
+    }
+
+    pub(crate) fn record_verified_daily_token_usage(&mut self, now: DateTime<Utc>, used: u64) {
+        let today = now.date_naive();
+        if self.daily_token_usage_day != Some(today) {
+            self.daily_token_usage_day = Some(today);
+            self.daily_tokens_used = 0;
+        }
+        self.daily_tokens_used = self.daily_tokens_used.saturating_add(used);
+    }
+
+    pub(crate) fn daily_token_usage_for(&self, now: DateTime<Utc>) -> u64 {
+        (self.daily_token_usage_day == Some(now.date_naive()))
+            .then_some(self.daily_tokens_used)
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn daily_token_budget_exhausted(&self, now: DateTime<Utc>) -> bool {
+        self.daily_token_budget
+            .is_some_and(|budget| self.daily_token_usage_for(now) >= budget)
+    }
+
+    pub(crate) fn next_daily_budget_reset_at(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        self.daily_token_budget_exhausted(now).then(|| {
+            now.date_naive()
+                .succ_opt()
+                .expect("UTC date has a next day")
+                .and_hms_opt(0, 0, 0)
+                .expect("midnight is valid")
+                .and_utc()
+        })
+    }
+
     /// Next fire time, computed from `last_fired_at` (or `created_at` if never fired).
     pub fn next_fire_at(&self) -> DateTime<Utc> {
         let anchor = self.last_fired_at.unwrap_or(self.created_at);
@@ -580,20 +642,34 @@ impl ScheduledTask {
     }
 
     pub(crate) fn next_dispatch_at_for_owner(&self, owner_id: &str) -> DateTime<Utc> {
-        match self.active_run_lease.as_ref() {
+        self.next_dispatch_at_for_owner_at(owner_id, Utc::now())
+    }
+
+    pub(crate) fn next_dispatch_at_for_owner_at(
+        &self,
+        owner_id: &str,
+        now: DateTime<Utc>,
+    ) -> DateTime<Utc> {
+        let base = match self.active_run_lease.as_ref() {
             Some(lease) if lease.owner_id() != owner_id => self.next_due_at().max(lease.expires_at),
             _ => self.next_due_at(),
-        }
+        };
+        self.next_daily_budget_reset_at(now)
+            .map_or(base, |reset| base.max(reset))
     }
 
     #[cfg(test)]
     pub(crate) fn is_dispatchable(&self, now: DateTime<Utc>) -> bool {
-        !self.dead_lettered && !self.usage_verification_required && self.next_dispatch_at() <= now
+        !self.dead_lettered
+            && !self.usage_verification_required
+            && !self.daily_token_budget_exhausted(now)
+            && self.next_dispatch_at() <= now
     }
 
     pub(crate) fn is_dispatchable_for_owner(&self, owner_id: &str, now: DateTime<Utc>) -> bool {
         !self.dead_lettered
             && !self.usage_verification_required
+            && !self.daily_token_budget_exhausted(now)
             && self.next_dispatch_at_for_owner(owner_id) <= now
     }
 
@@ -668,6 +744,11 @@ pub enum SchedulerCommand {
         interval_secs: Option<u64>,
         reply: oneshot::Sender<Result<ScheduledTask, SchedulerError>>,
     },
+    UpdateDailyTokenBudget {
+        id: String,
+        daily_token_budget: Option<u64>,
+        reply: oneshot::Sender<Result<ScheduledTask, SchedulerError>>,
+    },
     Delete {
         id: String,
         reply: oneshot::Sender<Result<bool, SchedulerError>>,
@@ -694,6 +775,40 @@ mod tests {
     fn new_one_shot_task_has_no_expiry() {
         let task = ScheduledTask::new(300, "check deploy".into(), false, false);
         assert!(task.expires_at.is_none());
+    }
+
+    #[test]
+    fn daily_token_budget_blocks_only_its_utc_day() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "budgeted".into(), true, true);
+        task.last_fired_at = Some(now - chrono::Duration::seconds(2));
+        task.set_daily_token_budget(Some(100)).unwrap();
+        task.record_verified_daily_token_usage(now, 100);
+
+        assert!(task.daily_token_budget_exhausted(now));
+        assert!(!task.is_dispatchable(now));
+        assert_eq!(
+            task.next_dispatch_at_for_owner_at("scheduler", now),
+            now.date_naive()
+                .succ_opt()
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+        );
+
+        let tomorrow = now + chrono::Duration::days(1);
+        assert_eq!(task.daily_token_usage_for(tomorrow), 0);
+        assert!(!task.daily_token_budget_exhausted(tomorrow));
+        assert!(task.is_dispatchable(tomorrow));
+    }
+
+    #[test]
+    fn zero_daily_token_budget_is_rejected() {
+        let mut task = ScheduledTask::new(1, "budgeted".into(), true, true);
+        let error = task.set_daily_token_budget(Some(0)).unwrap_err();
+        assert!(error.to_string().contains("greater than zero"));
+        assert!(task.daily_token_budget.is_none());
     }
 
     #[test]

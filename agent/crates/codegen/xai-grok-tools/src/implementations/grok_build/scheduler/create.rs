@@ -74,6 +74,24 @@ pub struct SchedulerCreateInput {
                        interval (false). Default: false. Create-only: ignored with task_id"
     )]
     pub fire_immediately: bool,
+
+    /// Maximum provider-reported tokens this background task may consume per
+    /// UTC day. Omit for no daily cap. Foreground runs do not produce the
+    /// durable receipt this control needs, so they cannot use this field.
+    #[serde(default)]
+    #[schemars(
+        description = "Optional UTC-day token ceiling for a background task. Must be greater than zero."
+    )]
+    pub daily_token_budget: Option<u64>,
+
+    /// Clear an existing daily token ceiling when updating a task. Cannot be
+    /// combined with `daily_token_budget`.
+    #[serde(
+        default,
+        deserialize_with = "crate::types::schema::deserialize_lenient_bool"
+    )]
+    #[schemars(description = "Clear the existing daily token ceiling when updating a task.")]
+    pub clear_daily_token_budget: bool,
 }
 
 fn default_true() -> bool {
@@ -114,6 +132,7 @@ Usage notes:
 - Interval format: "5m" (minutes), "2h" (hours), "1d" (days), "60s" (seconds, min 60)
 - Maximum 50 scheduled tasks at once
 - Tasks auto-expire after 7 days
+- Set daily_token_budget to cap verified background token use per UTC day
 - For one-time delayed work, run a background terminal command (e.g. `sleep 1800 && <command>`) instead; its completion notifies you"#
         // TODO: scheduler tools share ToolKind::Other so they can't be template-ized
         // via ${{ tools.by_kind.* }}. If tool name randomization is needed, add
@@ -204,22 +223,50 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
         };
 
         if let Some(task_id) = input.task_id {
-            if input.prompt.is_none() && interval_secs.is_none() {
+            if input.prompt.is_none()
+                && interval_secs.is_none()
+                && input.daily_token_budget.is_none()
+                && !input.clear_daily_token_budget
+            {
                 return Err(xai_tool_runtime::ToolError::invalid_arguments(
-                    "nothing to update: provide interval and/or prompt alongside task_id",
+                    "nothing to update: provide interval, prompt, daily_token_budget, and/or clear_daily_token_budget alongside task_id",
+                ));
+            }
+            if input.daily_token_budget.is_some() && input.clear_daily_token_budget {
+                return Err(xai_tool_runtime::ToolError::invalid_arguments(
+                    "daily_token_budget and clear_daily_token_budget cannot be combined",
+                ));
+            }
+            if (input.daily_token_budget.is_some() || input.clear_daily_token_budget)
+                && (input.prompt.is_some() || interval_secs.is_some())
+            {
+                return Err(xai_tool_runtime::ToolError::invalid_arguments(
+                    "daily token budget updates must be submitted separately from prompt or interval updates",
                 ));
             }
             let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
-            let updated = send_and_wait(
-                SchedulerCommand::Update {
-                    id: task_id,
-                    prompt: input.prompt,
-                    interval_secs,
-                    reply: reply_tx,
-                },
-                reply_rx,
-            )
-            .await?;
+            let updated = if input.daily_token_budget.is_some() || input.clear_daily_token_budget {
+                send_and_wait(
+                    SchedulerCommand::UpdateDailyTokenBudget {
+                        id: task_id,
+                        daily_token_budget: input.daily_token_budget,
+                        reply: reply_tx,
+                    },
+                    reply_rx,
+                )
+                .await?
+            } else {
+                send_and_wait(
+                    SchedulerCommand::Update {
+                        id: task_id,
+                        prompt: input.prompt,
+                        interval_secs,
+                        reply: reply_tx,
+                    },
+                    reply_rx,
+                )
+                .await?
+            };
 
             return Ok(SchedulerCreateOutput {
                 id: updated.id,
@@ -247,6 +294,12 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
         })?;
 
         let durable = input.durable.unwrap_or(false);
+        let foreground = input.foreground.unwrap_or(false);
+        if input.daily_token_budget.is_some() && foreground {
+            return Err(xai_tool_runtime::ToolError::invalid_arguments(
+                "daily_token_budget requires a background scheduler task (foreground must be false)",
+            ));
+        }
         let mut task = ScheduledTask::with_fire_immediately(
             interval_secs,
             prompt,
@@ -254,7 +307,9 @@ impl xai_tool_runtime::Tool for SchedulerCreateTool {
             durable,
             input.fire_immediately,
         );
-        task.foreground = input.foreground.unwrap_or(false);
+        task.foreground = foreground;
+        task.set_daily_token_budget(input.daily_token_budget)
+            .map_err(scheduler_tool_error)?;
 
         let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
         let created = send_and_wait(
@@ -317,6 +372,16 @@ mod tests {
         res.get::<State<super::super::types::SchedulerState>>()
             .map(|s| s.tasks.len())
             .unwrap_or(0)
+    }
+
+    async fn single_task(resources: &SharedResources) -> ScheduledTask {
+        let res = resources.lock().await;
+        res.get::<State<super::super::types::SchedulerState>>()
+            .expect("scheduler state")
+            .tasks
+            .first()
+            .expect("one task")
+            .clone()
     }
 
     #[tokio::test]
@@ -448,6 +513,60 @@ mod tests {
         assert_eq!(updated.id, created.id, "identity preserved");
         assert_eq!(updated.human_schedule, "every 10 minutes");
         assert_eq!(task_count(&resources).await, 1, "no second task");
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn daily_token_budget_is_persisted_and_can_be_cleared() {
+        let (resources, cancel) = scheduler_resources();
+        let created = SchedulerCreateTool
+            .run(
+                test_ctx(resources.clone()),
+                input(serde_json::json!({
+                    "interval": "5m",
+                    "prompt": "check deploy",
+                    "daily_token_budget": 1200
+                })),
+            )
+            .await
+            .expect("budgeted create succeeds");
+        assert_eq!(single_task(&resources).await.daily_token_budget, Some(1200));
+
+        SchedulerCreateTool
+            .run(
+                test_ctx(resources.clone()),
+                input(serde_json::json!({
+                    "task_id": created.id,
+                    "clear_daily_token_budget": true
+                })),
+            )
+            .await
+            .expect("budget clear succeeds");
+        assert_eq!(single_task(&resources).await.daily_token_budget, None);
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn daily_token_budget_rejects_foreground_or_zero_values() {
+        let (resources, cancel) = scheduler_resources();
+        for input_json in [
+            serde_json::json!({
+                "interval": "5m", "prompt": "check", "foreground": true, "daily_token_budget": 100
+            }),
+            serde_json::json!({
+                "interval": "5m", "prompt": "check", "daily_token_budget": 0
+            }),
+        ] {
+            let error = SchedulerCreateTool
+                .run(test_ctx(resources.clone()), input(input_json))
+                .await
+                .expect_err("invalid budget configuration must reject");
+            assert!(
+                error.to_string().contains("daily_token_budget"),
+                "unexpected error: {error}"
+            );
+        }
+        assert_eq!(task_count(&resources).await, 0);
         cancel.cancel();
     }
 

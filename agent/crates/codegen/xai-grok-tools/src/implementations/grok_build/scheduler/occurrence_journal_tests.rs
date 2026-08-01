@@ -30,6 +30,9 @@ fn task(id: &str, recurring: bool, durable: bool) -> ScheduledTask {
         retry_not_before: None,
         dead_lettered: false,
         usage_verification_required: false,
+        daily_token_budget: None,
+        daily_token_usage_day: None,
+        daily_tokens_used: 0,
     }
 }
 
