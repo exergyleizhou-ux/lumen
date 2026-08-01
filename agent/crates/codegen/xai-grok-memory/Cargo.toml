@@ -17,6 +17,7 @@ blake3 = { workspace = true }
 chrono = { workspace = true }
 dunce = { workspace = true }
 flate2 = { workspace = true }
+fs2 = { workspace = true }
 git2 = { version = "0.20", default-features = false, features = [
     "vendored-libgit2",
 ] }

@@ -9,10 +9,18 @@ use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::MemoryStorage;
+
+/// `flock` serializes cooperating processes, but is not enough on its own for
+/// two independently-opened descriptors in this process. Keep the check and
+/// append together here as well: concurrent child completions must never both
+/// observe the same next revision and silently append it.
+static APPEND_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,32 +248,14 @@ impl WorkingMemoryLedger {
         fact: WorkingMemoryFact,
         require_next_revision: bool,
     ) -> Result<(), WorkingMemoryLedgerError> {
+        let _process_lock = APPEND_LOCK.lock().map_err(|_| {
+            WorkingMemoryLedgerError::Invalid("working-memory append lock poisoned".to_owned())
+        })?;
         fact.validate()?;
         if fact.task_tree_id != self.root_session_id {
             return Err(WorkingMemoryLedgerError::Invalid(
                 "task_tree_id must equal this ledger's root session id".to_owned(),
             ));
-        }
-        let current_revision = self
-            .load_all()?
-            .into_iter()
-            .filter(|current| current.fact_id == fact.fact_id)
-            .map(|current| current.revision)
-            .max();
-        let expected = current_revision.map_or(1, |revision| revision.saturating_add(1));
-        if (require_next_revision || current_revision.is_some()) && fact.revision != expected {
-            return Err(WorkingMemoryLedgerError::RevisionConflict {
-                fact_id: fact.fact_id,
-                expected,
-                actual: fact.revision,
-            });
-        }
-        if !require_next_revision && current_revision.is_none() && fact.revision != 1 {
-            return Err(WorkingMemoryLedgerError::RevisionConflict {
-                fact_id: fact.fact_id,
-                expected: 1,
-                actual: fact.revision,
-            });
         }
         let parent = self.path.parent().ok_or_else(|| {
             WorkingMemoryLedgerError::Invalid("ledger path has no parent".to_owned())
@@ -274,12 +264,39 @@ impl WorkingMemoryLedger {
         let line = serde_json::to_string(&fact)?;
         let mut file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&self.path)?;
-        file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
-        file.sync_data()?;
-        Ok(())
+        file.lock_exclusive()?;
+        let result = (|| {
+            let current_revision = self
+                .load_all()?
+                .into_iter()
+                .filter(|current| current.fact_id == fact.fact_id)
+                .map(|current| current.revision)
+                .max();
+            let expected = current_revision.map_or(1, |revision| revision.saturating_add(1));
+            if (require_next_revision || current_revision.is_some()) && fact.revision != expected {
+                return Err(WorkingMemoryLedgerError::RevisionConflict {
+                    fact_id: fact.fact_id,
+                    expected,
+                    actual: fact.revision,
+                });
+            }
+            if !require_next_revision && current_revision.is_none() && fact.revision != 1 {
+                return Err(WorkingMemoryLedgerError::RevisionConflict {
+                    fact_id: fact.fact_id,
+                    expected: 1,
+                    actual: fact.revision,
+                });
+            }
+            file.write_all(line.as_bytes())?;
+            file.write_all(b"\n")?;
+            file.sync_data()?;
+            Ok(())
+        })();
+        file.unlock()?;
+        result
     }
 }
 
@@ -338,6 +355,38 @@ mod tests {
             error,
             WorkingMemoryLedgerError::UnauthorizedReview { .. }
         ));
+    }
+
+    #[test]
+    fn concurrent_same_revision_has_one_winner_not_two_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ledger.jsonl");
+        let first = WorkingMemoryLedger::with_path("root", &path);
+        let second = WorkingMemoryLedger::with_path("root", &path);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+
+        let first_barrier = barrier.clone();
+        let first_thread = std::thread::spawn(move || {
+            first_barrier.wait();
+            first.propose(fact("fact-a", 1, "child-a", "first"))
+        });
+        let second_thread = std::thread::spawn(move || {
+            barrier.wait();
+            second.propose(fact("fact-a", 1, "child-b", "second"))
+        });
+
+        let outcomes = [first_thread.join().unwrap(), second_thread.join().unwrap()];
+        assert_eq!(outcomes.iter().filter(|outcome| outcome.is_ok()).count(), 1);
+        assert!(outcomes.iter().any(|outcome| matches!(
+            outcome,
+            Err(WorkingMemoryLedgerError::RevisionConflict { .. })
+        )));
+
+        let facts = WorkingMemoryLedger::with_path("root", path)
+            .load_all()
+            .unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].revision, 1);
     }
 
     #[test]
