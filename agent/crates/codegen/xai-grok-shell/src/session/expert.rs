@@ -258,6 +258,29 @@ pub fn advisor_shadow_advice_with_fallback(
     }
 }
 
+/// The first P4 routing gate. It intentionally accepts only a preconfigured,
+/// catalog-allowlisted fallback for a *new* task whose primary executor is
+/// absent. It is not a general model chooser, cannot override a user pin, and
+/// cannot run after a task has started producing output.
+pub fn advisor_fallback_switch_allowed(
+    advice: &AdvisorShadowAdvice,
+    fallback_rollout_enabled: bool,
+    is_new_task: bool,
+    fallback_provider_degraded: bool,
+) -> bool {
+    fallback_rollout_enabled
+        && is_new_task
+        && !advice.user_model_pinned
+        && advice.consult_budget_available
+        && !advice.provider_health_degraded
+        && !fallback_provider_degraded
+        && advice.decision == AdvisorShadowDecision::RecommendFallbackExecutor
+        && advice
+            .eligible_model_ids
+            .iter()
+            .any(|model| model == &advice.executor_candidate)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExpertOutcome {
@@ -622,10 +645,14 @@ pub struct ExpertModeState {
     pub consultant_readonly_tools: bool,
     #[serde(default = "default_consultant_tool_cap")]
     pub consultant_tool_call_cap: u32,
-    /// Records deterministic advisor recommendations; it never applies a
-    /// model switch. Defaults on so evidence accumulates before P4 routing.
+    /// Records deterministic advisor recommendations. Shadow is on by default
+    /// so evidence accumulates even when the narrow P4 fallback gate is off.
     #[serde(default = "default_true")]
     pub advisor_shadow_enabled: bool,
+    /// Explicitly enables only the P4 missing-primary fallback gate. General
+    /// model-pool routing remains disabled.
+    #[serde(default)]
+    pub advisor_auto_switch_fallback_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub advisor_shadow_advice: Option<AdvisorShadowAdvice>,
     pub evidence_fields: Vec<String>,
@@ -705,6 +732,7 @@ impl Default for ExpertModeState {
             consultant_readonly_tools: false,
             consultant_tool_call_cap: default_consultant_tool_cap(),
             advisor_shadow_enabled: true,
+            advisor_auto_switch_fallback_enabled: false,
             advisor_shadow_advice: None,
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
@@ -762,6 +790,7 @@ impl ExpertModeState {
         state.consultant_readonly_tools = config.consultant_readonly_tools;
         state.consultant_tool_call_cap = config.consultant_tool_call_cap.max(1);
         state.advisor_shadow_enabled = config.advisor_shadow_enabled;
+        state.advisor_auto_switch_fallback_enabled = config.advisor_auto_switch_fallback_enabled;
         state
     }
 
@@ -2253,6 +2282,83 @@ mod tests {
                 .contains(&"fallback_executor_allowlisted".to_owned())
         );
         assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn fallback_gate_allows_only_a_new_unpinned_allowlisted_missing_primary() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            Some("primary.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert!(advisor_fallback_switch_allowed(&advice, true, true, false));
+        assert!(!advisor_fallback_switch_allowed(
+            &advice, false, true, false
+        ));
+        assert!(!advisor_fallback_switch_allowed(
+            &advice, true, false, false
+        ));
+        assert!(!advisor_fallback_switch_allowed(&advice, true, true, true));
+    }
+
+    #[test]
+    fn fallback_gate_refuses_pin_budget_and_degraded_provider() {
+        let pinned = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            true,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(&pinned, true, true, false));
+
+        let no_budget = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            false,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(
+            &no_budget, true, true, false
+        ));
+
+        let degraded = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            None,
+            None,
+            true,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(
+            &degraded, true, true, false
+        ));
     }
 
     #[test]

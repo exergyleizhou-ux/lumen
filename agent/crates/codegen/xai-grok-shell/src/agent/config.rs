@@ -172,6 +172,11 @@ pub struct ExpertConfig {
     /// recommendation for `/expert`; it never performs a model switch.
     #[serde(default = "default_true")]
     pub advisor_shadow_enabled: bool,
+    /// P4 narrow rollout: before a new Expert task produces any output, allow
+    /// only an allowlisted fallback when the configured executor is absent.
+    /// This never enables general model-pool routing or mid-turn replay.
+    #[serde(default)]
+    pub advisor_auto_switch_fallback_enabled: bool,
 }
 
 impl Default for ExpertConfig {
@@ -196,6 +201,7 @@ impl Default for ExpertConfig {
             consultant_readonly_tools: false,
             consultant_tool_call_cap: default_consultant_tool_call_cap(),
             advisor_shadow_enabled: true,
+            advisor_auto_switch_fallback_enabled: false,
         }
     }
 }

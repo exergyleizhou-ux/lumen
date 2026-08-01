@@ -659,7 +659,7 @@ impl SessionActor {
         let advisor_user_model_pinned = self.models_manager.user_selected_model();
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
-            let executor = actor.expert.executor_requested.clone();
+            let mut executor = actor.expert.executor_requested.clone();
             let fallback_executor = actor.expert.fallback_executor_requested.clone();
             if let Some(repair) = continuation {
                 actor.expert.start_continuation(repair, &executor)?;
@@ -710,7 +710,7 @@ impl SessionActor {
                             )
                         })
                 };
-                let advice = crate::session::expert::advisor_shadow_advice_with_fallback(
+                let mut advice = crate::session::expert::advisor_shadow_advice_with_fallback(
                     task,
                     &executor,
                     &fallback_executor,
@@ -726,6 +726,22 @@ impl SessionActor {
                     provider_degraded(&executor),
                     provider_degraded(&consultant),
                 );
+                if crate::session::expert::advisor_fallback_switch_allowed(
+                    &advice,
+                    actor.expert.advisor_auto_switch_fallback_enabled,
+                    continuation.is_none(),
+                    provider_degraded(&advice.executor_candidate),
+                ) {
+                    executor = advice.executor_candidate.clone();
+                    actor.expert.executor_requested = executor.clone();
+                    advice.automatic_switch_allowed = true;
+                    actor.expert.audit(
+                        "advisor_fallback_applied_before_output",
+                        None,
+                        None,
+                        Some(executor.clone()),
+                    );
+                }
                 actor.expert.audit(
                     "advisor_shadow_recorded",
                     None,
