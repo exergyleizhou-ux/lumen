@@ -25,6 +25,7 @@ use super::types::{
 
 const MAX_SCHEDULED_TASKS: usize = 50;
 const DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
+const BACKGROUND_RUN_LEASE_TTL: chrono::Duration = chrono::Duration::minutes(10);
 
 enum LoopFireOutcome {
     Spawned(String),
@@ -108,6 +109,10 @@ pub struct SchedulerActor {
 }
 
 impl SchedulerActor {
+    fn run_lease_owner_id(&self) -> String {
+        format!("scheduler:{}", self.clock.snapshot().generation())
+    }
+
     async fn await_bounded<T, E>(
         &self,
         future: impl std::future::Future<Output = Result<T, E>>,
@@ -635,6 +640,15 @@ impl SchedulerActor {
         };
 
         let subagent_id = uuid::Uuid::now_v7().to_string();
+        let lease_owner_id = self.run_lease_owner_id();
+        let previous_iteration_terminal = prev_snapshot.as_ref().is_some_and(|snapshot| {
+            matches!(
+                snapshot.status,
+                SubagentSnapshotStatus::Completed { .. }
+                    | SubagentSnapshotStatus::Failed { .. }
+                    | SubagentSnapshotStatus::Cancelled { .. }
+            )
+        });
         let framed_prompt =
             format_loop_iteration_prompt(prompt, task_id, human_schedule, prior_summary.as_deref());
         let description = format!(
@@ -642,16 +656,45 @@ impl SchedulerActor {
             truncate_chars(prompt.lines().next().unwrap_or(prompt), 60)
         );
 
-        {
+        let prior_lease = {
             let mut res = self.resources.lock().await;
             let state = res.get_or_default::<State<SchedulerState>>();
             let Some(task) = state.tasks.iter_mut().find(|t| t.id == task_id) else {
                 tracing::info!(task_id = %task_id, "Loop task deleted mid-fire; not spawning");
                 return LoopFireOutcome::Skipped;
             };
+            let prior_lease = task.active_run_lease.clone();
+            if previous_iteration_terminal
+                && prior_lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.owner_id() == lease_owner_id)
+            {
+                task.release_run_lease(&lease_owner_id)
+                    .expect("current scheduler owner owns its terminal iteration lease");
+            }
+            if let Err(error) =
+                task.acquire_run_lease(&lease_owner_id, Utc::now(), BACKGROUND_RUN_LEASE_TTL)
+            {
+                tracing::info!(task_id = %task_id, ?error, "Skipping loop fire: durable run lease is unavailable");
+                return LoopFireOutcome::Skipped;
+            }
             task.last_subagent_id = Some(subagent_id.clone());
             task.iterations_since_fresh = next_iterations_since_fresh;
             task.chain_reset_pending = false;
+            prior_lease
+        };
+
+        if let Err(error) = self.persist_resources().await {
+            tracing::warn!(task_id = %task_id, %error, "Skipping loop fire: run lease was not durably persisted");
+            let mut res = self.resources.lock().await;
+            let state = res.get_or_default::<State<SchedulerState>>();
+            if let Some(task) = state.tasks.iter_mut().find(|task| task.id == task_id) {
+                task.last_subagent_id = last_subagent_id;
+                task.iterations_since_fresh = iterations_since_fresh;
+                task.chain_reset_pending = chain_reset_pending;
+                task.active_run_lease = prior_lease;
+            }
+            return LoopFireOutcome::Skipped;
         }
 
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
@@ -697,6 +740,7 @@ impl SchedulerActor {
                 task.last_subagent_id = last_subagent_id;
                 task.iterations_since_fresh = iterations_since_fresh;
                 task.chain_reset_pending = chain_reset_pending;
+                task.active_run_lease = prior_lease;
             }
             return LoopFireOutcome::Foreground;
         }
@@ -704,6 +748,7 @@ impl SchedulerActor {
         let resources = self.resources.clone();
         let guard_task_id = task_id.to_string();
         let spawned_id = subagent_id.clone();
+        let lease_owner_id_for_error = lease_owner_id;
         tokio::spawn(async move {
             let Ok(result) = result_rx.await else {
                 return;
@@ -726,6 +771,7 @@ impl SchedulerActor {
             {
                 task.last_subagent_id = None;
                 task.iterations_since_fresh = 0;
+                let _ = task.release_run_lease(&lease_owner_id_for_error);
             }
         });
 
@@ -1891,6 +1937,9 @@ mod tests {
         let task = &list_rx.await.unwrap().tasks[0];
         assert_eq!(task.last_subagent_id.as_deref(), Some(request.id.as_str()));
         assert_eq!(task.iterations_since_fresh, 1);
+        assert!(task.active_run_lease.as_ref().is_some_and(|lease| {
+            lease.owner_id().starts_with("scheduler:") && !lease.is_expired(Utc::now())
+        }));
 
         cancel.cancel();
     }
