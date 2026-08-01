@@ -1288,6 +1288,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn restored_foreign_lease_defers_due_task_without_busy_loop() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "watch ci".into(), true, true);
+        task.last_fired_at = Some(now - chrono::Duration::seconds(10));
+        task.acquire_run_lease(
+            "scheduler:crashed-actor",
+            now,
+            chrono::Duration::seconds(60),
+        )
+        .unwrap();
+        let persisted = serde_json::to_value(SchedulerState {
+            tasks: vec![task],
+            ..Default::default()
+        })
+        .unwrap();
+        let restored: SchedulerState = serde_json::from_value(persisted).unwrap();
+        let (actor, _notifications) = make_boundary_actor(restored.tasks, 0);
+
+        let delay = actor.compute_next_fire_delay().await;
+        assert!(
+            delay >= Duration::from_secs(55),
+            "restored foreign lease must defer due dispatch instead of spinning: {delay:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn lease_heartbeat_renews_only_the_current_actor_owner() {
         let task = ScheduledTask::new(60, "watch ci".into(), true, true);
         let (actor, _notifications) = make_boundary_actor(vec![task], 1);
