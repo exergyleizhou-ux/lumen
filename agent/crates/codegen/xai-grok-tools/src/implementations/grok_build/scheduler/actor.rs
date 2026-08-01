@@ -26,6 +26,7 @@ use super::types::{
 const MAX_SCHEDULED_TASKS: usize = 50;
 const DURABILITY_BARRIER_TIMEOUT: Duration = Duration::from_secs(30);
 const BACKGROUND_RUN_LEASE_TTL: chrono::Duration = chrono::Duration::minutes(10);
+const BACKGROUND_RUN_LEASE_HEARTBEAT: Duration = Duration::from_secs(30);
 
 enum LoopFireOutcome {
     Spawned(String),
@@ -183,9 +184,49 @@ impl SchedulerActor {
         Ok(true)
     }
 
+    /// Renews only this actor's persisted background-work leases.  A newly
+    /// restored actor has a different owner identity, so it cannot keep an
+    /// abandoned process alive merely because it can read its task record.
+    async fn renew_active_run_leases(&self) {
+        let owner_id = self.run_lease_owner_id();
+        let now = Utc::now();
+        let renewed_count = {
+            let mut resources = self.resources.lock().await;
+            let state = resources.get_or_default::<State<SchedulerState>>();
+            state.tasks.iter_mut().fold(0usize, |count, task| {
+                let renewed = task
+                    .active_run_lease
+                    .as_ref()
+                    .is_some_and(|lease| lease.owner_id() == owner_id)
+                    && task
+                        .renew_run_lease(&owner_id, now, BACKGROUND_RUN_LEASE_TTL)
+                        .is_ok();
+                count + usize::from(renewed)
+            })
+        };
+        if renewed_count == 0 {
+            return;
+        }
+        if let Err(error) = self.persist_resources().await {
+            // The pre-existing persisted expiry remains a conservative fence:
+            // if this actor dies, a restarter waits for that older lease to
+            // expire instead of treating an in-memory renewal as durable.
+            tracing::warn!(
+                renewed_count,
+                %error,
+                "Scheduler run-lease heartbeat was not durably persisted"
+            );
+        }
+    }
+
     pub async fn run(mut self) {
         self.await_subagent_wiring_for_due_tasks().await;
         self.announce_existing_tasks().await;
+        let mut lease_heartbeat = tokio::time::interval(BACKGROUND_RUN_LEASE_HEARTBEAT);
+        lease_heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Consume the interval's immediate first tick. A new actor must not
+        // immediately renew a restored lease it does not own.
+        lease_heartbeat.tick().await;
 
         loop {
             let next_fire = self.compute_next_fire_delay().await;
@@ -200,6 +241,10 @@ impl SchedulerActor {
 
                 Some(cmd) = self.cmd_rx.recv() => {
                     self.handle_command(cmd).await;
+                }
+
+                _ = lease_heartbeat.tick() => {
+                    self.renew_active_run_leases().await;
                 }
 
                 _ = tokio::time::sleep(next_fire), if self.pending_removal.is_none() => {
@@ -1099,6 +1144,67 @@ mod tests {
         tokio::spawn(actor.run());
 
         (SchedulerHandle(cmd_tx), cancel_token, notif_rx)
+    }
+
+    #[tokio::test]
+    async fn lease_heartbeat_renews_only_the_current_actor_owner() {
+        let task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        let (actor, _notifications) = make_boundary_actor(vec![task], 1);
+        let owner_id = actor.run_lease_owner_id();
+        let now = Utc::now();
+        {
+            let mut resources = actor.resources.lock().await;
+            let task = &mut resources.get_or_default::<State<SchedulerState>>().tasks[0];
+            task.acquire_run_lease(
+                &owner_id,
+                now - chrono::Duration::minutes(9),
+                BACKGROUND_RUN_LEASE_TTL,
+            )
+            .unwrap();
+        }
+
+        actor.renew_active_run_leases().await;
+
+        let resources = actor.resources.lock().await;
+        let lease = resources.get::<State<SchedulerState>>().unwrap().tasks[0]
+            .active_run_lease
+            .as_ref()
+            .unwrap();
+        assert_eq!(lease.owner_id(), owner_id);
+        assert!(
+            !lease.is_expired(now + chrono::Duration::minutes(2)),
+            "heartbeat must extend a near-expiry lease"
+        );
+    }
+
+    #[tokio::test]
+    async fn lease_heartbeat_does_not_renew_a_restored_foreign_owner() {
+        let task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        let (actor, _notifications) = make_boundary_actor(vec![task], 1);
+        let now = Utc::now();
+        {
+            let mut resources = actor.resources.lock().await;
+            let task = &mut resources.get_or_default::<State<SchedulerState>>().tasks[0];
+            task.acquire_run_lease(
+                "scheduler:previous-actor",
+                now - chrono::Duration::minutes(9),
+                BACKGROUND_RUN_LEASE_TTL,
+            )
+            .unwrap();
+        }
+
+        actor.renew_active_run_leases().await;
+
+        let resources = actor.resources.lock().await;
+        let lease = resources.get::<State<SchedulerState>>().unwrap().tasks[0]
+            .active_run_lease
+            .as_ref()
+            .unwrap();
+        assert_eq!(lease.owner_id(), "scheduler:previous-actor");
+        assert!(
+            lease.is_expired(now + chrono::Duration::minutes(2)),
+            "a recovered actor must not extend a foreign lease"
+        );
     }
 
     #[tokio::test]
