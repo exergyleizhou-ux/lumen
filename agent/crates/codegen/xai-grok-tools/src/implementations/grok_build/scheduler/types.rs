@@ -532,8 +532,30 @@ impl ScheduledTask {
             .unwrap_or_else(|| self.next_fire_at())
     }
 
+    /// The next time a scheduler actor may attempt dispatch. An active lease
+    /// is a fence even when the task's cadence is already overdue; otherwise
+    /// a recovered actor would spin on an unexpired foreign lease.
+    pub fn next_dispatch_at(&self) -> DateTime<Utc> {
+        self.active_run_lease
+            .as_ref()
+            .map(|lease| self.next_due_at().max(lease.expires_at))
+            .unwrap_or_else(|| self.next_due_at())
+    }
+
+    pub(crate) fn next_dispatch_at_for_owner(&self, owner_id: &str) -> DateTime<Utc> {
+        match self.active_run_lease.as_ref() {
+            Some(lease) if lease.owner_id() != owner_id => self.next_due_at().max(lease.expires_at),
+            _ => self.next_due_at(),
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) fn is_dispatchable(&self, now: DateTime<Utc>) -> bool {
-        !self.dead_lettered && self.next_due_at() <= now
+        !self.dead_lettered && self.next_dispatch_at() <= now
+    }
+
+    pub(crate) fn is_dispatchable_for_owner(&self, owner_id: &str, now: DateTime<Utc>) -> bool {
+        !self.dead_lettered && self.next_dispatch_at_for_owner(owner_id) <= now
     }
 
     /// Whether this task has expired (recurring tasks only).
@@ -807,6 +829,32 @@ mod tests {
 
         assert!(task.retry_not_before.is_none());
         assert_eq!(task.consecutive_run_failures, 0);
+    }
+
+    #[test]
+    fn active_lease_defers_overdue_dispatch_until_expiry_or_release() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "test".into(), true, true);
+        task.last_fired_at = Some(now - chrono::Duration::seconds(10));
+        task.acquire_run_lease("scheduler:foreign", now, chrono::Duration::seconds(30))
+            .unwrap();
+
+        assert_eq!(task.next_dispatch_at(), now + chrono::Duration::seconds(30));
+        assert!(!task.is_dispatchable(now));
+        task.release_run_lease("scheduler:foreign").unwrap();
+        assert!(task.is_dispatchable(now));
+    }
+
+    #[test]
+    fn current_owner_keeps_cadence_while_foreign_owner_is_deferred() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "test".into(), true, true);
+        task.last_fired_at = Some(now - chrono::Duration::seconds(10));
+        task.acquire_run_lease("scheduler:owner-a", now, chrono::Duration::seconds(30))
+            .unwrap();
+
+        assert!(task.is_dispatchable_for_owner("scheduler:owner-a", now));
+        assert!(!task.is_dispatchable_for_owner("scheduler:owner-b", now));
     }
 
     #[test]

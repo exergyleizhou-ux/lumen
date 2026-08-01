@@ -39,7 +39,7 @@ pub struct SchedulerListOutput {
 impl xai_tool_runtime::ToolOutput for SchedulerListOutput {}
 
 fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
-    let next_fire = task.next_due_at().to_rfc3339();
+    let next_fire = task.next_dispatch_at().to_rfc3339();
     let created = task.created_at.to_rfc3339();
     let prompt = if task.prompt.len() > 80 {
         let cut = crate::util::floor_char_boundary(&task.prompt, 80);

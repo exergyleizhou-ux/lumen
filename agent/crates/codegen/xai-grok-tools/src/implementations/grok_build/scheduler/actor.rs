@@ -60,7 +60,7 @@ fn task_created_payload(task: &ScheduledTask, version: SchedulerVersion) -> Sche
         task_id: task.id.clone(),
         prompt: task.prompt.clone(),
         human_schedule: interval_to_human(task.interval_secs),
-        next_fire_at: Some(task.next_due_at().to_rfc3339()),
+        next_fire_at: Some(task.next_dispatch_at().to_rfc3339()),
         generation: version.generation(),
         revision: version.revision(),
     }
@@ -344,11 +344,14 @@ impl SchedulerActor {
                     .get::<crate::types::resources::SchedulerBackgroundLoops>()
                     .is_none_or(|v| v.0);
                 let soon = Utc::now() + chrono::Duration::seconds(2);
+                let owner_id = self.run_lease_owner_id();
                 let needs_wiring = enabled
                     && res.get::<State<SchedulerState>>().is_some_and(|s| {
-                        s.tasks
-                            .iter()
-                            .any(|t| t.recurring && !t.foreground && t.is_dispatchable(soon))
+                        s.tasks.iter().any(|t| {
+                            t.recurring
+                                && !t.foreground
+                                && t.is_dispatchable_for_owner(&owner_id, soon)
+                        })
                     });
                 let wired = res.get::<SubagentEventSender>().is_some()
                     && res.get::<SessionIdResource>().is_some();
@@ -367,12 +370,13 @@ impl SchedulerActor {
     async fn compute_next_fire_delay(&self) -> Duration {
         let res = self.resources.lock().await;
         let scheduler_state = res.get::<State<SchedulerState>>();
+        let owner_id = self.run_lease_owner_id();
         scheduler_state
             .map(|s| {
                 s.tasks
                     .iter()
                     .filter(|task| !self.blocked_expiries.contains(&task.id) && !task.dead_lettered)
-                    .map(ScheduledTask::next_due_at)
+                    .map(|task| task.next_dispatch_at_for_owner(&owner_id))
                     .min()
                     .map(|next| {
                         let now = Utc::now();
@@ -390,10 +394,12 @@ impl SchedulerActor {
     async fn fire_next_task(&mut self) {
         debug_assert!(self.pending_removal.is_none());
         let now = Utc::now();
+        let owner_id = self.run_lease_owner_id();
         let mut res = self.resources.lock().await;
         let state = res.get_or_default::<State<SchedulerState>>();
         let idx = state.tasks.iter().position(|task| {
-            task.is_dispatchable(now) && !self.blocked_expiries.contains(&task.id)
+            task.is_dispatchable_for_owner(&owner_id, now)
+                && !self.blocked_expiries.contains(&task.id)
         });
 
         let Some(idx) = idx else {
@@ -518,7 +524,7 @@ impl SchedulerActor {
         // Advance the cadence before releasing actor state to avoid immediate reselection.
         let task = &mut state.tasks[idx];
         task.last_fired_at = Some(now);
-        let next_fire_at = task.recurring.then(|| task.next_due_at().to_rfc3339());
+        let next_fire_at = task.recurring.then(|| task.next_dispatch_at().to_rfc3339());
         if should_remove {
             state.tasks.remove(idx);
         }
@@ -972,7 +978,7 @@ impl SchedulerActor {
             state
                 .tasks
                 .iter()
-                .filter(|task| task.recurring || task.next_due_at() > now)
+                .filter(|task| task.recurring || task.next_dispatch_at() > now)
                 .map(|task| task_created_payload(task, version))
                 .collect()
         };
