@@ -72,8 +72,8 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     tree_started_at: HashMap<String, tokio::time::Instant>,
     /// Provider-reported aggregate completed-child usage, by root task tree.
     tree_total_tokens_used: HashMap<String, u64>,
-    /// A configured token budget fails closed after an incomplete usage
-    /// report, because accepting another child would make the ceiling a lie.
+    /// Incomplete usage closes a task tree because accepting another child
+    /// would make its accounting and any configured ceiling untrustworthy.
     tree_usage_incomplete_roots: HashSet<String>,
     exhausted_tree_token_budgets: HashSet<String>,
     tree_tool_calls_used: HashMap<String, u64>,
@@ -340,9 +340,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     });
                     return;
                 }
-                if self.config.tree_total_token_budget.is_some()
-                    && self.tree_usage_incomplete_roots.contains(&root_session_id)
-                {
+                if self.tree_usage_incomplete_roots.contains(&root_session_id) {
                     let id = request.id.clone();
                     let _ = command.result_tx.send(SubagentResult {
                         success: false,
@@ -1235,9 +1233,6 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     fn record_tree_token_usage(&mut self, root_session_id: &str, result: &SubagentResult) {
-        let Some(limit) = self.config.tree_total_token_budget else {
-            return;
-        };
         if result.output_usage_incomplete {
             self.tree_usage_incomplete_roots
                 .insert(root_session_id.to_owned());
@@ -1248,6 +1243,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             );
             return;
         }
+        let Some(limit) = self.config.tree_total_token_budget else {
+            return;
+        };
         let used = {
             let used = self
                 .tree_total_tokens_used

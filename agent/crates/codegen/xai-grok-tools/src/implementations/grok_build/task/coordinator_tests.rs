@@ -37,6 +37,7 @@ impl ChildControl for TestControl {
 struct TestRunner {
     wait_before_start: bool,
     wait_after_cancel: bool,
+    output_usage_incomplete: bool,
     start: tokio::sync::broadcast::Sender<()>,
     finish: tokio::sync::broadcast::Sender<()>,
     completions: mpsc::UnboundedSender<CompletionDisposition>,
@@ -54,6 +55,7 @@ impl ChildRunner for TestRunner {
     fn run(&self, run: ChildRunRequest<Self::Control>) -> Self::RunFuture {
         let wait_before_start = self.wait_before_start;
         let wait_after_cancel = self.wait_after_cancel;
+        let output_usage_incomplete = self.output_usage_incomplete;
         let mut start = self.start.subscribe();
         let mut finish = self.finish.subscribe();
         let requests = self.requests.clone();
@@ -118,6 +120,7 @@ impl ChildRunner for TestRunner {
                     tool_calls: 3,
                     turns: 2,
                     total_tokens_used: 100,
+                    output_usage_incomplete,
                     ..Default::default()
                 },
             };
@@ -363,12 +366,21 @@ fn harness(wait_before_start: bool, foreground_budget: std::time::Duration) -> H
 }
 
 fn harness_with_config(wait_before_start: bool, config: CoordinatorConfig) -> Harness {
-    harness_with_options(wait_before_start, false, config)
+    harness_with_options_and_usage(wait_before_start, false, false, config)
 }
 
 fn harness_with_options(
     wait_before_start: bool,
     wait_after_cancel: bool,
+    config: CoordinatorConfig,
+) -> Harness {
+    harness_with_options_and_usage(wait_before_start, wait_after_cancel, false, config)
+}
+
+fn harness_with_options_and_usage(
+    wait_before_start: bool,
+    wait_after_cancel: bool,
+    output_usage_incomplete: bool,
     config: CoordinatorConfig,
 ) -> Harness {
     let (command_tx, command_rx) = mpsc::unbounded_channel();
@@ -383,6 +395,7 @@ fn harness_with_options(
             TestRunner {
                 wait_before_start,
                 wait_after_cancel,
+                output_usage_incomplete,
                 start: start.clone(),
                 finish: finish.clone(),
                 completions: completion_tx,
@@ -2023,6 +2036,45 @@ async fn tree_total_token_budget_rejects_later_spawn_after_reported_usage() {
             .error
             .as_deref()
             .is_some_and(|message| message.contains("total-token budget exhausted"))
+    );
+    harness.actor.abort();
+}
+
+#[tokio::test]
+async fn incomplete_tree_usage_closes_admission_without_token_limit() {
+    let mut harness =
+        harness_with_options_and_usage(false, false, true, CoordinatorConfig::default());
+    let first = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move {
+            backend
+                .spawn(request("tree-usage-unknown-first", false))
+                .await
+        }
+    });
+    assert_eq!(
+        harness.requests.recv().await.expect("initial request").id,
+        "tree-usage-unknown-first"
+    );
+    assert_eq!(
+        harness.started.recv().await.expect("started child"),
+        "tree-usage-unknown-first"
+    );
+    let _ = harness.finish.send(());
+    assert!(first.await.expect("join").expect("completion").success);
+
+    let rejected = harness
+        .backend
+        .spawn(request("tree-usage-unknown-later", false))
+        .await
+        .expect("incomplete usage rejection reply");
+    assert!(!rejected.success);
+    assert!(rejected.cancelled);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("token usage is incomplete"))
     );
     harness.actor.abort();
 }
