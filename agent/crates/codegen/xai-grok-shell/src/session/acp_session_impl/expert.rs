@@ -650,6 +650,12 @@ impl SessionActor {
         } else {
             Vec::new()
         };
+        let advisor_catalog_model_ids: Vec<_> = self
+            .models_manager
+            .models()
+            .into_iter()
+            .flat_map(|(key, entry)| [key, entry.info.model])
+            .collect();
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
             let executor = actor.expert.executor_requested.clone();
@@ -667,6 +673,21 @@ impl SessionActor {
                 actor.expert.budget.attempt_cap = attempt_cap;
             }
             let consultant = actor.expert.consultant_requested.clone();
+            if actor.expert.advisor_shadow_enabled {
+                let advice = crate::session::expert::advisor_shadow_advice(
+                    task,
+                    &executor,
+                    &consultant,
+                    advisor_catalog_model_ids.clone(),
+                );
+                actor.expert.audit(
+                    "advisor_shadow_recorded",
+                    None,
+                    None,
+                    Some(advice.algorithm.clone()),
+                );
+                actor.expert.advisor_shadow_advice = Some(advice);
+            }
             // Dual owns its own two-leg reservation path (not single consult).
             let consult = !dual
                 && (vision

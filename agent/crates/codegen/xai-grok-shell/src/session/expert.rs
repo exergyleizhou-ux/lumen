@@ -56,6 +56,113 @@ pub enum ExpertMode {
     Dual,
 }
 
+/// Coarse task class used by the local, deterministic Advisor shadow policy.
+/// It is intentionally not a model verdict: it only makes the later routing
+/// decision explainable and testable before automatic switching is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorTaskClass {
+    #[default]
+    Implementation,
+    Review,
+    Research,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorShadowDecision {
+    /// Both configured models appear in the local, allowed model catalog.
+    #[default]
+    KeepConfigured,
+    ExecutorUnavailable,
+    ConsultantUnavailable,
+}
+
+/// Persisted, secret-free output from the Advisor shadow policy.
+///
+/// Shadow mode never changes a model.  It records the choice it would submit
+/// for SessionActor approval once the policy has enough observed evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AdvisorShadowAdvice {
+    pub algorithm: String,
+    pub task_class: AdvisorTaskClass,
+    pub decision: AdvisorShadowDecision,
+    pub executor_candidate: String,
+    pub consultant_candidate: String,
+    #[serde(default)]
+    pub eligible_model_ids: Vec<String>,
+    #[serde(default)]
+    pub reason_codes: Vec<String>,
+    /// Must remain false until a separately approved, fail-safe routing phase.
+    #[serde(default)]
+    pub automatic_switch_allowed: bool,
+    pub recorded_at: DateTime<Utc>,
+}
+
+/// Deterministic, no-network advisor preflight.  The candidate list comes
+/// from the host's already allowed catalog; credentials, endpoints and spend
+/// are deliberately not inspected or emitted here.
+pub fn advisor_shadow_advice(
+    task: &str,
+    executor: &str,
+    consultant: &str,
+    catalog_model_ids: impl IntoIterator<Item = String>,
+) -> AdvisorShadowAdvice {
+    let task_lower = task.to_ascii_lowercase();
+    let task_class = if ["review", "audit", "security", "verify", "test"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Review
+    } else if ["research", "design", "architecture", "investigate"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Research
+    } else {
+        AdvisorTaskClass::Implementation
+    };
+    let mut eligible_model_ids: Vec<_> = catalog_model_ids
+        .into_iter()
+        .filter(|model| !model.trim().is_empty())
+        .collect();
+    eligible_model_ids.sort();
+    eligible_model_ids.dedup();
+    eligible_model_ids.truncate(32);
+    let executor_available = eligible_model_ids.iter().any(|model| model == executor);
+    let consultant_available = eligible_model_ids.iter().any(|model| model == consultant);
+    let decision = if !executor_available {
+        AdvisorShadowDecision::ExecutorUnavailable
+    } else if !consultant_available {
+        AdvisorShadowDecision::ConsultantUnavailable
+    } else {
+        AdvisorShadowDecision::KeepConfigured
+    };
+    let mut reason_codes = vec![
+        "shadow_only".to_owned(),
+        "catalog_allowlist_checked".to_owned(),
+    ];
+    reason_codes.push(match decision {
+        AdvisorShadowDecision::KeepConfigured => "configured_pair_available".to_owned(),
+        AdvisorShadowDecision::ExecutorUnavailable => "executor_not_in_catalog".to_owned(),
+        AdvisorShadowDecision::ConsultantUnavailable => "consultant_not_in_catalog".to_owned(),
+    });
+    if executor != consultant {
+        reason_codes.push("independent_consultant_configured".to_owned());
+    }
+    AdvisorShadowAdvice {
+        algorithm: "advisor-shadow-v1".to_owned(),
+        task_class,
+        decision,
+        executor_candidate: executor.to_owned(),
+        consultant_candidate: consultant.to_owned(),
+        eligible_model_ids,
+        reason_codes,
+        automatic_switch_allowed: false,
+        recorded_at: Utc::now(),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExpertOutcome {
@@ -416,6 +523,12 @@ pub struct ExpertModeState {
     pub consultant_readonly_tools: bool,
     #[serde(default = "default_consultant_tool_cap")]
     pub consultant_tool_call_cap: u32,
+    /// Records deterministic advisor recommendations; it never applies a
+    /// model switch. Defaults on so evidence accumulates before P4 routing.
+    #[serde(default = "default_true")]
+    pub advisor_shadow_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor_shadow_advice: Option<AdvisorShadowAdvice>,
     pub evidence_fields: Vec<String>,
     #[serde(default)]
     pub evidence_bundle_hash: Option<String>,
@@ -491,6 +604,8 @@ impl Default for ExpertModeState {
             dual_rollout: default_dual_rollout(),
             consultant_readonly_tools: false,
             consultant_tool_call_cap: default_consultant_tool_cap(),
+            advisor_shadow_enabled: true,
+            advisor_shadow_advice: None,
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
             audit_events: Vec::new(),
@@ -541,6 +656,7 @@ impl ExpertModeState {
         state.dual_rollout = config.dual_rollout.clone();
         state.consultant_readonly_tools = config.consultant_readonly_tools;
         state.consultant_tool_call_cap = config.consultant_tool_call_cap.max(1);
+        state.advisor_shadow_enabled = config.advisor_shadow_enabled;
         state
     }
 
@@ -1554,7 +1670,8 @@ pub fn merge_dual_proposals(
         return DualMergeResult {
             merged_plan: a.steps.iter().take(8).cloned().collect(),
             disagreements: Vec::new(),
-            selection_reason: "source B unavailable; using executor-side proposal A only".to_owned(),
+            selection_reason: "source B unavailable; using executor-side proposal A only"
+                .to_owned(),
             degraded: true,
         };
     }
@@ -1958,6 +2075,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn advisor_shadow_classifies_review_and_never_grants_switch_authority() {
+        let advice = advisor_shadow_advice(
+            "Audit the security-sensitive migration and verify its tests",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+        );
+        assert_eq!(advice.algorithm, "advisor-shadow-v1");
+        assert_eq!(advice.task_class, AdvisorTaskClass::Review);
+        assert_eq!(advice.decision, AdvisorShadowDecision::KeepConfigured);
+        assert!(!advice.automatic_switch_allowed);
+        assert!(
+            advice
+                .reason_codes
+                .contains(&"independent_consultant_configured".to_owned())
+        );
+    }
+
+    #[test]
+    fn advisor_shadow_reports_missing_configured_candidate_without_fallback() {
+        let advice = advisor_shadow_advice(
+            "Design a resilient orchestration architecture",
+            "executor",
+            "missing-consultant",
+            ["executor".to_owned(), "alternate".to_owned()],
+        );
+        assert_eq!(advice.task_class, AdvisorTaskClass::Research);
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::ConsultantUnavailable
+        );
+        assert_eq!(advice.consultant_candidate, "missing-consultant");
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
     fn simple_and_fast_never_consult() {
         assert!(!should_consult(
             "fix typo in src/lib.rs",
@@ -2321,13 +2474,17 @@ mod tests {
         let degraded = merge_dual_proposals(&a, &DualProposal::default(), true, false);
         assert!(degraded.degraded);
         assert_eq!(degraded.merged_plan, a.steps);
-        let both_fail = merge_dual_proposals(&DualProposal::default(), &DualProposal::default(), false, false);
+        let both_fail = merge_dual_proposals(
+            &DualProposal::default(),
+            &DualProposal::default(),
+            false,
+            false,
+        );
         assert!(both_fail.degraded);
         assert!(both_fail.merged_plan.is_empty());
-        assert!(parse_dual_proposal(
-            r#"{"summary":"s","steps":["a"],"risks":[],"extra":1}"#
-        )
-        .is_err());
+        assert!(
+            parse_dual_proposal(r#"{"summary":"s","steps":["a"],"risks":[],"extra":1}"#).is_err()
+        );
         assert!(parse_dual_proposal(r#"{"summary":"s","steps":["step one"],"risks":[]}"#).is_ok());
     }
 
@@ -2335,7 +2492,11 @@ mod tests {
     fn dual_request_ids_differ_and_status_labels_are_honest() {
         let mut state = ExpertModeState::configured();
         state
-            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "production dual plan",
+                ExpertMode::Dual,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         state
             .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
@@ -2383,7 +2544,11 @@ mod tests {
     fn dual_both_sources_fail_clears_plan() {
         let mut state = ExpertModeState::configured();
         state
-            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "production dual plan",
+                ExpertMode::Dual,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         state
             .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
@@ -2399,12 +2564,7 @@ mod tests {
             .unwrap();
         let gb = state.reserve_consult(10, 32).unwrap();
         state
-            .finish_dual_source_b(
-                &gb,
-                (0, 0),
-                Err(ExpertErrorCode::Timeout),
-                None,
-            )
+            .finish_dual_source_b(&gb, (0, 0), Err(ExpertErrorCode::Timeout), None)
             .unwrap();
         let dual = state.dual_result.as_ref().unwrap();
         assert_eq!(dual.status_label(), "failed");
@@ -2443,10 +2603,7 @@ mod tests {
             generation: Some(state.task_generation),
             executor_pass: Some("initial".into()),
         };
-        state.restored(
-            Ok(()),
-            ExpertOutcome::Partial,
-        );
+        state.restored(Ok(()), ExpertOutcome::Partial);
         state.resumable_task = true;
         state.last_outcome = Some(ExpertOutcome::Partial);
         state
@@ -2477,7 +2634,11 @@ mod tests {
         state.phase = ExpertPhase::Restoring;
         state.restored(Ok(()), ExpertOutcome::Partial);
         state
-            .start("next independent expert", ExpertMode::Fast, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "next independent expert",
+                ExpertMode::Fast,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         assert!(!state.goal_composed_this_task);
     }

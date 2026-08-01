@@ -168,6 +168,10 @@ pub struct ExpertConfig {
     pub consultant_readonly_tools: bool,
     #[serde(default = "default_consultant_tool_call_cap")]
     pub consultant_tool_call_cap: u32,
+    /// P3 advisory-only rollout. Records a deterministic model-pool
+    /// recommendation for `/expert`; it never performs a model switch.
+    #[serde(default = "default_true")]
+    pub advisor_shadow_enabled: bool,
 }
 
 impl Default for ExpertConfig {
@@ -191,6 +195,7 @@ impl Default for ExpertConfig {
             dual_rollout: default_expert_dual_rollout(),
             consultant_readonly_tools: false,
             consultant_tool_call_cap: default_consultant_tool_call_cap(),
+            advisor_shadow_enabled: true,
         }
     }
 }
