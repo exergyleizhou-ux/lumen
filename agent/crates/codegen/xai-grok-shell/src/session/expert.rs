@@ -76,6 +76,8 @@ pub enum AdvisorShadowDecision {
     KeepConfigured,
     ExecutorUnavailable,
     ConsultantUnavailable,
+    UserModelPinned,
+    ConsultBudgetUnavailable,
 }
 
 /// Persisted, secret-free output from the Advisor shadow policy.
@@ -93,6 +95,10 @@ pub struct AdvisorShadowAdvice {
     pub eligible_model_ids: Vec<String>,
     #[serde(default)]
     pub reason_codes: Vec<String>,
+    #[serde(default)]
+    pub user_model_pinned: bool,
+    #[serde(default)]
+    pub consult_budget_available: bool,
     /// Must remain false until a separately approved, fail-safe routing phase.
     #[serde(default)]
     pub automatic_switch_allowed: bool,
@@ -107,6 +113,8 @@ pub fn advisor_shadow_advice(
     executor: &str,
     consultant: &str,
     catalog_model_ids: impl IntoIterator<Item = String>,
+    user_model_pinned: bool,
+    consult_budget_available: bool,
 ) -> AdvisorShadowAdvice {
     let task_lower = task.to_ascii_lowercase();
     let task_class = if ["review", "audit", "security", "verify", "test"]
@@ -131,7 +139,11 @@ pub fn advisor_shadow_advice(
     eligible_model_ids.truncate(32);
     let executor_available = eligible_model_ids.iter().any(|model| model == executor);
     let consultant_available = eligible_model_ids.iter().any(|model| model == consultant);
-    let decision = if !executor_available {
+    let decision = if user_model_pinned {
+        AdvisorShadowDecision::UserModelPinned
+    } else if !consult_budget_available {
+        AdvisorShadowDecision::ConsultBudgetUnavailable
+    } else if !executor_available {
         AdvisorShadowDecision::ExecutorUnavailable
     } else if !consultant_available {
         AdvisorShadowDecision::ConsultantUnavailable
@@ -146,6 +158,8 @@ pub fn advisor_shadow_advice(
         AdvisorShadowDecision::KeepConfigured => "configured_pair_available".to_owned(),
         AdvisorShadowDecision::ExecutorUnavailable => "executor_not_in_catalog".to_owned(),
         AdvisorShadowDecision::ConsultantUnavailable => "consultant_not_in_catalog".to_owned(),
+        AdvisorShadowDecision::UserModelPinned => "user_model_pinned".to_owned(),
+        AdvisorShadowDecision::ConsultBudgetUnavailable => "consult_budget_unavailable".to_owned(),
     });
     if executor != consultant {
         reason_codes.push("independent_consultant_configured".to_owned());
@@ -158,6 +172,8 @@ pub fn advisor_shadow_advice(
         consultant_candidate: consultant.to_owned(),
         eligible_model_ids,
         reason_codes,
+        user_model_pinned,
+        consult_budget_available,
         automatic_switch_allowed: false,
         recorded_at: Utc::now(),
     }
@@ -2081,6 +2097,8 @@ mod tests {
             "executor",
             "consultant",
             ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            true,
         );
         assert_eq!(advice.algorithm, "advisor-shadow-v1");
         assert_eq!(advice.task_class, AdvisorTaskClass::Review);
@@ -2100,6 +2118,8 @@ mod tests {
             "executor",
             "missing-consultant",
             ["executor".to_owned(), "alternate".to_owned()],
+            false,
+            true,
         );
         assert_eq!(advice.task_class, AdvisorTaskClass::Research);
         assert_eq!(
@@ -2108,6 +2128,35 @@ mod tests {
         );
         assert_eq!(advice.consultant_candidate, "missing-consultant");
         assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_never_routes_away_from_user_pin_or_spends_unavailable_budget() {
+        let pinned = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            true,
+            true,
+        );
+        assert_eq!(pinned.decision, AdvisorShadowDecision::UserModelPinned);
+        assert!(pinned.user_model_pinned);
+        assert!(!pinned.automatic_switch_allowed);
+
+        let out_of_budget = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            false,
+        );
+        assert_eq!(
+            out_of_budget.decision,
+            AdvisorShadowDecision::ConsultBudgetUnavailable
+        );
+        assert!(!out_of_budget.consult_budget_available);
     }
 
     #[test]

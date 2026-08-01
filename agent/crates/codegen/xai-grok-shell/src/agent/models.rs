@@ -421,6 +421,13 @@ impl ModelsManager {
         self.inner.current_model_id.read().clone()
     }
 
+    /// Whether the current model originates from an explicit user selection.
+    /// Routing policy may observe this but must never treat it as permission to
+    /// override the selection.
+    pub fn user_selected_model(&self) -> bool {
+        self.inner.user_selected_model.load(Ordering::Relaxed)
+    }
+
     pub fn set_current_model_id(&self, id: acp::ModelId) {
         self.inner
             .user_selected_model

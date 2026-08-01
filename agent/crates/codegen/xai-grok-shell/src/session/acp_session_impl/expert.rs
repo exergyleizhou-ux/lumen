@@ -656,6 +656,7 @@ impl SessionActor {
             .into_iter()
             .flat_map(|(key, entry)| [key, entry.info.model])
             .collect();
+        let advisor_user_model_pinned = self.models_manager.user_selected_model();
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
             let executor = actor.expert.executor_requested.clone();
@@ -679,6 +680,11 @@ impl SessionActor {
                     &executor,
                     &consultant,
                     advisor_catalog_model_ids.clone(),
+                    advisor_user_model_pinned,
+                    actor
+                        .expert
+                        .budget
+                        .can_reserve(u64::from(actor.expert.max_consult_output_tokens)),
                 );
                 actor.expert.audit(
                     "advisor_shadow_recorded",
