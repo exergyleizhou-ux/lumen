@@ -259,6 +259,11 @@ pub struct ScheduledTask {
     /// inspection but is no longer eligible for autonomous dispatch.
     #[serde(default)]
     pub(crate) dead_lettered: bool,
+    /// A completed background run reported incomplete token usage. Autonomous
+    /// recurrence stops until a user updates the task, because cost/budget
+    /// enforcement can no longer be proven.
+    #[serde(default)]
+    pub(crate) usage_verification_required: bool,
 }
 
 /// A bounded, persisted claim to execute one scheduler task.
@@ -428,6 +433,7 @@ impl ScheduledTask {
             consecutive_run_failures: 0,
             retry_not_before: None,
             dead_lettered: false,
+            usage_verification_required: false,
         }
     }
 
@@ -536,6 +542,7 @@ impl ScheduledTask {
         self.consecutive_run_failures = 0;
         self.retry_not_before = None;
         self.dead_lettered = false;
+        self.usage_verification_required = false;
     }
 
     /// Next fire time, computed from `last_fired_at` (or `created_at` if never fired).
@@ -570,11 +577,13 @@ impl ScheduledTask {
 
     #[cfg(test)]
     pub(crate) fn is_dispatchable(&self, now: DateTime<Utc>) -> bool {
-        !self.dead_lettered && self.next_dispatch_at() <= now
+        !self.dead_lettered && !self.usage_verification_required && self.next_dispatch_at() <= now
     }
 
     pub(crate) fn is_dispatchable_for_owner(&self, owner_id: &str, now: DateTime<Utc>) -> bool {
-        !self.dead_lettered && self.next_dispatch_at_for_owner(owner_id) <= now
+        !self.dead_lettered
+            && !self.usage_verification_required
+            && self.next_dispatch_at_for_owner(owner_id) <= now
     }
 
     /// Whether this task has expired (recurring tasks only).

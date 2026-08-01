@@ -376,7 +376,11 @@ impl SchedulerActor {
             .map(|s| {
                 s.tasks
                     .iter()
-                    .filter(|task| !self.blocked_expiries.contains(&task.id) && !task.dead_lettered)
+                    .filter(|task| {
+                        !self.blocked_expiries.contains(&task.id)
+                            && !task.dead_lettered
+                            && !task.usage_verification_required
+                    })
                     .map(|task| task.next_dispatch_at_for_owner(&owner_id))
                     .min()
                     .map(|next| {
@@ -951,13 +955,16 @@ impl SchedulerActor {
                     result.total_tokens_used,
                     result.output_usage_incomplete,
                 ));
+                task.usage_verification_required = result.output_usage_incomplete;
                 task.record_terminal_run_status(status, Utc::now());
-                if !matches!(status, SchedulerRunStatus::Completed) {
+                if result.output_usage_incomplete
+                    || !matches!(status, SchedulerRunStatus::Completed)
+                {
                     tracing::warn!(
                         task_id = %guard_task_id,
                         subagent_id = %spawned_id,
                         ?status,
-                        "Loop iteration ended without completion; clearing chain anchor"
+                        "Loop iteration cannot continue autonomously; clearing chain anchor"
                     );
                     task.last_subagent_id = None;
                     task.iterations_since_fresh = 0;
@@ -2542,6 +2549,14 @@ mod tests {
                     .find(|task| task.id == task_id)
                     .unwrap();
                 assert!(task.active_run_lease.is_none());
+                assert!(
+                    task.usage_verification_required,
+                    "incomplete usage must pause autonomous recurrence"
+                );
+                assert!(
+                    !task.is_dispatchable(Utc::now() + chrono::Duration::days(1)),
+                    "an unverifiable run must not schedule another autonomous attempt"
+                );
                 break;
             }
             assert!(

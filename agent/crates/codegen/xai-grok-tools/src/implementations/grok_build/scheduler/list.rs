@@ -23,6 +23,8 @@ pub struct ScheduledTaskSummary {
     pub retry_not_before: Option<String>,
     #[serde(default)]
     pub dead_lettered: bool,
+    #[serde(default)]
+    pub usage_verification_required: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_status: Option<String>,
     /// `false` means the last run's token total was incomplete and must not
@@ -65,6 +67,7 @@ fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
         consecutive_run_failures: task.consecutive_run_failures,
         retry_not_before: task.retry_not_before.map(|time| time.to_rfc3339()),
         dead_lettered: task.dead_lettered,
+        usage_verification_required: task.usage_verification_required,
         last_run_status: task.last_run_receipt.as_ref().map(|receipt| {
             match receipt.status() {
                 SchedulerRunStatus::Completed => "completed",
@@ -219,6 +222,7 @@ mod tests {
         assert_eq!(summary.consecutive_run_failures, 1);
         assert!(summary.retry_not_before.is_some());
         assert!(!summary.dead_lettered);
+        assert!(!summary.usage_verification_required);
         assert_eq!(summary.last_run_status.as_deref(), Some("failed"));
         assert_eq!(summary.last_run_usage_complete, Some(false));
     }

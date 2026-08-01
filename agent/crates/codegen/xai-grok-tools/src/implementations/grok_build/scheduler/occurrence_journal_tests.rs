@@ -29,6 +29,7 @@ fn task(id: &str, recurring: bool, durable: bool) -> ScheduledTask {
         consecutive_run_failures: 0,
         retry_not_before: None,
         dead_lettered: false,
+        usage_verification_required: false,
     }
 }
 
