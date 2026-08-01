@@ -53,14 +53,14 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 
 | 项目 | 当前实测事实 | 本书处理 |
 |---|---|---|
-| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；HEAD e7afd15b1656108598c6f78966e69fea36ea7bde | 本地候选，不是发布基础。 |
-| GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 与本地候选互非祖先；禁止覆盖同步。 |
-| 分叉量 | origin/main...HEAD 为 2 / 21 | 本地落后远端 2、领先 21；必须建 integration candidate。 |
-| 工作树 | 本书更新前 36 个已跟踪修改、2 个未跟踪文件 | R0 manifest 必须逐路径归属。 |
+| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；本节复核时 HEAD 为 6bef1d019cd026450a24b4c0235be11a9fbb70a4 | 本地候选，不是发布基础；每次 R0 必须重新记录 SHA。 |
+| GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
+| 分叉量 | origin/main...HEAD 为 0 / 102（本节复核时） | 本地领先 102 个提交；仍须 R0 分组审查、exact CI 与人工 merge。 |
+| 工作树 | 有并行未提交源码修改；数量和归属会变 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | VERSION 为 0.1.251 | version、tag、release 与同步分门。 |
-| GitHub CI | main 的 d29f0316：auto-checks 成功，CI 30610926547 失败 | GitHub main 不可称全绿；R0 必查失败原因。 |
-| readiness | 已提交产物对应 b09b929f，状态 BLOCKED | 旧 evidence 不证明后续源码。 |
+| GitHub CI | 本书复核未重新跑 exact HEAD 的远端 CI | CI 状态为 NOT RUN；不得沿用旧 run 说全绿。 |
+| readiness | SOURCE_LOCK 当前仍锚定 3dd9613 | 旧 evidence 不证明 6bef1d01 或后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
 
 ### 1.2 来源锁的真实含义
@@ -514,8 +514,59 @@ pub struct MemoryClaimV1 {
 
 ## 13. NG-05：ProviderHealth 与 no-replay failover
 
-**状态：** Draft；近期设计明确未实施；前置 R0。
-**非目标：** cheapest/fastest router、默认跨 provider、绕 user pin、改 modelpool。
+**状态：** Implementing；已完成 Expert 新任务的受限候选选择，普通 turn/background task 的自动重试仍是 NOT RUN。
+**非目标：** cheapest/fastest router、默认跨 provider、绕 user pin、在已输出或有工具副作用后重放。
+
+### 13.1 已落地的 P4a：用户模型池与额度耗尽处理
+
+`22917e37`、`a2c5c642`、`6bef1d01` 已将第一片安全能力接入 **Expert 新任务开始前**：
+
+~~~text
+/expert pool=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+/expert priority=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+/expert priority=auto
+/expert pool=off
+~~~
+
+这不是全局默认切换器，也不是一次失败后重放当前对话。它的固定语义如下：
+
+| 情形 | 必须发生的行为 |
+|---|---|
+| 用户给定 priority | 只在 pool 内按 priority 顺序选择健康、可路由候选。 |
+| 用户给定 pool、priority=auto | 仅在 pool 内按任务类别选择；实现类优先 Flash，review/research 类优先 Grok，剩余候选按 pool 顺序。 |
+| 标准 `/model` 是更新、更明确的用户 pin | 它优先；pool 不得绕过。 |
+| 本 session 新设 `/expert pool=` | 它是较新的、明确的 Expert 选择，可取代旧的单模型 Expert 选择，但只影响后续 Expert 任务。 |
+| provider 返回可辨识的余额/额度耗尽 | 标记 endpoint 为 `quota_exhausted`，在**下一项** Expert 任务选择时跳过；当前请求绝不重放。 |
+| pool 内所有候选不可用 | 请求开始前 `ModelMissing`；绝不退回 pool 外默认模型或悄悄花费未选模型。 |
+| 401/403/普通 400 | 不是“没额度”；不作为 pool 自动跨模型理由。 |
+
+每次选择持久化 `AdvisorPoolRoutingEvidence { from_model, to_model, source, skipped, had_output=false }`；`/expert status` 必须显示 pool、priority、来源和最新选择。现有离线测试覆盖 priority、任务策略、quota skip、用户 pin、显式 session pool、pool 全不可路由；这不替代真实 provider/额度证明。
+
+**用户推荐起始设置：**
+
+~~~text
+/expert pool=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+/expert priority=auto
+~~~
+
+这把 Flash 放在执行默认位、Grok 放在 review/research 默认位、Pro 留作池内可选深度候选；用户可随时重排 priority。Lumen 不根据“谁更聪明”的主观断言越过你的 pool。
+
+### 13.2 P4b：普通 turn 与后台任务的唯一允许路线
+
+普通任务和 Kairos/background task 目前**不能**因一次 provider 失败自动改模型重试。先完成下列 contract 才能实施：
+
+~~~text
+ProviderAttemptReceiptV1 {
+  task_tree_id, node_id, turn_id, attempt_id,
+  model_id, provider_endpoint_fingerprint,
+  output_state = NoOutput | OutputStarted | Unknown,
+  tool_state = NoToolCall | ToolCallStarted | Unknown,
+  external_effect_state = None | Possible | Confirmed,
+  failure_kind, usage_state, started_at, finished_at
+}
+~~~
+
+唯一可切换条件是 `NoOutput + NoToolCall + None`，且是 allowlisted 新候选、无 user pin、预算 reservation 未消费、同一 attempt id 只一次。任一 `Unknown`、已发文字块、tool call、shell/network/write effect、usage 不可判断，都按 partial failure：展示原错误，保留 receipt，等待 root/user，不重放。
 
 | 来源 | 必读事实 |
 |---|---|
@@ -528,8 +579,8 @@ pub struct MemoryClaimV1 {
 
 ~~~text
 breaker key = provider + base_url
-failure = connection | timeout | 5xx
-not breaker failure = 400 | 401 | 403
+failure = connection | timeout | 5xx | recognizable quota exhausted
+not automatic-route failure = 400 | 401 | 403
 fallback = only before any output block
 emitted block = partial failure; never replay
 visibility = actual from/to/reason/state in log/UI/turn-tail
@@ -538,14 +589,14 @@ accounting = actual executor; missing usage stays unavailable
 
 实现：sampler request 前 check、response 后 record；explicit fallback chain；每次产出 ProviderAttemptReceipt。Advisor 不得直接 retry provider。
 
-离线矩阵：N×503 open/half-open/close、base URL isolation、401/403/400、first-block fallback、post-block disconnect、quota exhausted、catalog alias swap、missing usage。
+离线矩阵：N×503 open/half-open/close、base URL isolation、401/403/400、first-block fallback、post-block disconnect、quota exhausted、catalog alias swap、missing usage、pool-all-unroutable fail-closed、unknown output/tool state。
 Exit：mock transport 覆盖每一状态，无真实 provider；UI/provenance 与 actual executor 一致。
 Stop：无法确定是否 emitted block 时按已输出处理，禁止 fallback。
 
 ## 14. NG-06：AdvisorPolicy shadow-only
 
-**状态：** Draft；前置 NG-04/05。
-**目标：** 模型建议可审计、零执行影响。
+**状态：** P4a 已提供一个受限、可审计的 Expert 选择器；完整 shadow policy 仍为 Draft，前置 NG-04/05。
+**目标：** 模型建议可审计、零执行影响；P4a 的实际选择不得被包装成 Advisor 有 acceptance 权。
 
 | 路径 | 事实 |
 |---|---|
@@ -556,7 +607,7 @@ Stop：无法确定是否 emitted block 时按已输出处理，禁止 fallback�
 
 【拟建】ModelSelectionAdviceV1 含 task tree、target node、task class、catalog/policy/health snapshot hash、candidate/rejection list、recommended assignment、independence、budget impact、reason codes、Shadow/Recommend/Approved/Rejected/Applied。
 
-固定过滤：user pin/harness → allowlist/BYOK/endpoint/privacy/tool → health/context/usage budget → task class → failure-domain independence → quality/latency/cost。
+固定过滤：user pin/harness → allowlist/BYOK/endpoint/privacy/tool → health/context/usage budget → task class → failure-domain independence → quality/latency/cost。用户 model pool 是 allowlist，不是软偏好。
 
 Shadow 不 switch、不 spawn、不调工具、不写文件、不改 terminal、不写 Accepted。
 Exit：离线 replay corpus policy violation=0、stream switch=0、pin override=0、audit missing=0。
