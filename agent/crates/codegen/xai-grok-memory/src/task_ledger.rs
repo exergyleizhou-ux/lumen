@@ -323,24 +323,28 @@ impl WorkingMemoryLedger {
         self.append_checked(fact, true)
     }
 
-    /// Latest accepted fact for each id, ordered by fact id. Proposed, rejected
-    /// and superseded revisions never enter another agent's shared fact view.
+    /// Latest root-accepted fact for each id, ordered by fact id.
+    ///
+    /// A child may append a newer proposal while the root is reviewing it. That
+    /// proposal must not erase the last accepted fact from sibling prompts: an
+    /// unreviewed branch would otherwise be able to retract shared truth just
+    /// by claiming a revision number. Rejected reviews likewise preserve the
+    /// last accepted fact. Only a root-owned `Superseded` revision explicitly
+    /// withdraws it from the shared view.
     pub fn accepted_facts(&self) -> Result<Vec<WorkingMemoryFact>, WorkingMemoryLedgerError> {
-        let mut latest = BTreeMap::<String, WorkingMemoryFact>::new();
+        let mut accepted = BTreeMap::<String, WorkingMemoryFact>::new();
         for fact in self.load_all()? {
-            latest
-                .entry(fact.fact_id.clone())
-                .and_modify(|current| {
-                    if fact.revision > current.revision {
-                        *current = fact.clone();
-                    }
-                })
-                .or_insert(fact);
+            match fact.state {
+                WorkingMemoryState::Accepted => {
+                    accepted.insert(fact.fact_id.clone(), fact);
+                }
+                WorkingMemoryState::Superseded => {
+                    accepted.remove(&fact.fact_id);
+                }
+                WorkingMemoryState::Proposed | WorkingMemoryState::Rejected => {}
+            }
         }
-        Ok(latest
-            .into_values()
-            .filter(|fact| fact.state == WorkingMemoryState::Accepted)
-            .collect())
+        Ok(accepted.into_values().collect())
     }
 
     pub fn load_all(&self) -> Result<Vec<WorkingMemoryFact>, WorkingMemoryLedgerError> {
@@ -492,6 +496,59 @@ mod tests {
         assert_eq!(accepted.len(), 1);
         assert_eq!(accepted[0].text, "reviewed");
         assert_eq!(accepted[0].author_session_id, "root");
+    }
+
+    #[test]
+    fn unreviewed_or_rejected_revision_cannot_erase_prior_accepted_fact() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fact-a", 1, "child", "proposal one"))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 2, "root", "accepted truth"),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        ledger
+            .propose(fact("fact-a", 3, "child", "unreviewed replacement"))
+            .unwrap();
+        assert_eq!(ledger.accepted_facts().unwrap()[0].text, "accepted truth");
+
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 4, "root", "rejected replacement"),
+                WorkingMemoryState::Rejected,
+            )
+            .unwrap();
+        assert_eq!(ledger.accepted_facts().unwrap()[0].text, "accepted truth");
+    }
+
+    #[test]
+    fn root_supersession_explicitly_withdraws_prior_accepted_fact() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fact-a", 1, "child", "proposal one"))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 2, "root", "accepted truth"),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 3, "root", "withdrawn"),
+                WorkingMemoryState::Superseded,
+            )
+            .unwrap();
+        assert!(ledger.accepted_facts().unwrap().is_empty());
     }
 
     #[test]
