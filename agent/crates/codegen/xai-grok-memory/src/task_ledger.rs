@@ -357,7 +357,23 @@ impl WorkingMemoryLedger {
                 continue;
             }
             match serde_json::from_str::<WorkingMemoryFact>(line) {
-                Ok(fact) => facts.push(fact),
+                Ok(fact) => {
+                    // A ledger is durable input to descendant prompts, not
+                    // merely an append target. Revalidate every record on
+                    // read so a misplaced or manually-corrupted JSONL entry
+                    // cannot cross task-tree boundaries or masquerade as a
+                    // reviewed fact.
+                    fact.validate()?;
+                    if fact.task_tree_id != self.root_session_id {
+                        return Err(WorkingMemoryLedgerError::Invalid(format!(
+                            "ledger record at line {} belongs to task tree {:?}, not {:?}",
+                            index + 1,
+                            fact.task_tree_id,
+                            self.root_session_id
+                        )));
+                    }
+                    facts.push(fact);
+                }
                 // A power loss can tear only the final append.  Earlier code
                 // silently skipped it, then allowed the next writer to append
                 // after the torn bytes; that turns recoverable tail damage into
@@ -511,6 +527,25 @@ mod tests {
             matches!(error, WorkingMemoryLedgerError::Invalid(message) if message.contains("evidence_ref"))
         );
         assert!(ledger.accepted_facts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn foreign_task_tree_record_fails_closed_before_prompt_injection() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let mut foreign = fact("fact-a", 1, "child", "must not cross trees");
+        foreign.task_tree_id = "different-root".to_owned();
+        std::fs::write(
+            ledger.path(),
+            format!("{}\n", serde_json::to_string(&foreign).unwrap()),
+        )
+        .unwrap();
+
+        let error = ledger.accepted_facts().unwrap_err();
+        assert!(matches!(
+            error,
+            WorkingMemoryLedgerError::Invalid(message) if message.contains("belongs to task tree")
+        ));
     }
 
     #[test]
