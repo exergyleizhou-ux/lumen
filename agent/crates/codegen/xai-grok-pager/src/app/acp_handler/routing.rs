@@ -130,6 +130,27 @@ pub(super) fn find_descendant_view_mut<'a>(
     None
 }
 
+/// Borrow the immediate parent that owns `session_id` as a child view.
+///
+/// Child-session lifecycle events (compaction, activity and completion) must
+/// update both the target child view and the [`SubagentInfo`] row held by its
+/// *direct* parent.  Returning the root for a nested child would flatten that
+/// bookkeeping and make L2/L3 task rows stale.
+pub(super) fn find_parent_view_mut<'a>(
+    view: &'a mut AgentView,
+    session_id: &str,
+) -> Option<&'a mut AgentView> {
+    if view.subagent_views.contains_key(session_id) {
+        return Some(view);
+    }
+    for child in view.subagent_views.values_mut() {
+        if let Some(parent) = find_parent_view_mut(child, session_id) {
+            return Some(parent);
+        }
+    }
+    None
+}
+
 /// Locate the agent (or subagent view) a notification's `session_id` belongs to.
 ///
 /// Search order:

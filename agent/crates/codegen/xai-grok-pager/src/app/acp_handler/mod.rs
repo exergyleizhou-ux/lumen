@@ -56,8 +56,8 @@ use permissions::{apply_recap_block, handle_permission_request, should_drop_late
 
 // Hub + child modules (via `use super::*`) need sibling symbols in this scope.
 use routing::{
-    SessionMatch, find_session_match, interaction_target_agent, is_matched_agent_active,
-    mcp_target_agent, resolve_notif_agent, resolve_target_view,
+    SessionMatch, find_parent_view_mut, find_session_match, interaction_target_agent,
+    is_matched_agent_active, mcp_target_agent, resolve_notif_agent, resolve_target_view,
 };
 
 use prompt_origin::{finish_wake_turn, viewer_turn_anchor};
@@ -697,10 +697,12 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                     let child_key: &str = notif.request.session_id.0.as_ref();
 
                     let activity_label = {
-                        let child_view = parent
+                        let immediate_parent = find_parent_view_mut(parent, child_key)
+                            .expect("find_session_match returned an existing nested subagent view");
+                        let child_view = immediate_parent
                             .subagent_views
                             .get_mut(child_key)
-                            .expect("find_session_match returned an existing subagent_views key");
+                            .expect("nested subagent parent must own the matched child key");
                         if let Some(tokens) = meta.total_tokens {
                             confirm_context_used(child_view, tokens);
                         }
@@ -729,7 +731,9 @@ pub(crate) fn handle(msg: AcpClientMessage, app: &mut AppView) -> bool {
                         subagent_activity_label(child_view)
                     };
 
-                    sync_subagent_activity(parent, child_key, activity_label);
+                    let immediate_parent = find_parent_view_mut(parent, child_key)
+                        .expect("nested subagent parent must remain present after update");
+                    sync_subagent_activity(immediate_parent, child_key, activity_label);
 
                     is_active
                 }

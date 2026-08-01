@@ -1,3 +1,4 @@
+use super::routing::{find_descendant_view_mut, find_parent_view_mut};
 use super::*;
 use xai_grok_shell::sampling::error::format_rate_limited_user_message;
 /// Stash a live stop/stop_failure batch under `stash_pid` for the turn marker
@@ -1101,6 +1102,12 @@ pub(super) fn handle_child_session_notification(
     is_api_key_auth: bool,
 ) -> bool {
     match update {
+        update @ XaiSessionUpdate::SubagentSpawned { .. } => {
+            let Some(parent_view) = find_descendant_view_mut(agent, child_sid) else {
+                return false;
+            };
+            register_nested_subagent_spawned(parent_view, update)
+        }
         XaiSessionUpdate::AutoCompactStarted { .. }
         | XaiSessionUpdate::AutoCompactCompleted { .. }
         | XaiSessionUpdate::AutoCompactFailed { .. }
@@ -1111,20 +1118,35 @@ pub(super) fn handle_child_session_notification(
                 _ => None,
             };
             let mut changed = false;
-            if let Some(child_view) = agent.subagent_views.get_mut(child_sid) {
-                changed = apply_session_event(
-                    &update,
-                    &mut child_view.session,
-                    &mut child_view.scrollback,
-                    is_api_key_auth,
-                );
-                if let Some(tokens_after) = compact_tokens {
-                    refresh_context_used(child_view, tokens_after);
+            if let Some(parent) = find_parent_view_mut(agent, child_sid) {
+                if let Some(child_view) = parent.subagent_views.get_mut(child_sid) {
+                    changed = apply_session_event(
+                        &update,
+                        &mut child_view.session,
+                        &mut child_view.scrollback,
+                        is_api_key_auth,
+                    );
+                    if let Some(tokens_after) = compact_tokens {
+                        refresh_context_used(child_view, tokens_after);
+                    }
                 }
-            }
-            if let Some(tokens_after) = compact_tokens
+                if let Some(tokens_after) = compact_tokens
+                    && let Some(info) = parent.subagent_sessions.get_mut(child_sid)
+                {
+                    info.tokens_used = Some(tokens_after);
+                    if let Some(cw) = info.context_window_tokens.filter(|&cw| cw > 0) {
+                        info.context_usage_pct =
+                            Some(xai_token_estimation::usage_percentage_u8(tokens_after, cw));
+                    }
+                }
+            } else if let Some(tokens_after) = compact_tokens
                 && let Some(info) = agent.subagent_sessions.get_mut(child_sid)
             {
+                // Preserve the direct-child race behavior: metadata can
+                // arrive one event before its view, and is still useful when
+                // the spawn/view is replayed later. A nested row is only
+                // reachable through its parent view, so it deliberately does
+                // not fall back to root bookkeeping.
                 info.tokens_used = Some(tokens_after);
                 if let Some(cw) = info.context_window_tokens.filter(|&cw| cw > 0) {
                     info.context_usage_pct =
@@ -1136,7 +1158,9 @@ pub(super) fn handle_child_session_notification(
         ref update @ (XaiSessionUpdate::MemoryFlushCompleted { .. }
         | XaiSessionUpdate::MemoryDreamCompleted { .. }
         | XaiSessionUpdate::MemorySessionSaved { .. }) => {
-            if let Some(child_view) = agent.subagent_views.get_mut(child_sid) {
+            if let Some(parent) = find_parent_view_mut(agent, child_sid)
+                && let Some(child_view) = parent.subagent_views.get_mut(child_sid)
+            {
                 apply_session_event(
                     update,
                     &mut child_view.session,
@@ -1147,8 +1171,396 @@ pub(super) fn handle_child_session_notification(
                 false
             }
         }
+        XaiSessionUpdate::SubagentProgress {
+            child_session_id,
+            duration_ms,
+            turn_count,
+            tool_call_count,
+            tokens_used,
+            context_window_tokens,
+            context_usage_pct,
+            tools_used,
+            error_count,
+            ..
+        } => {
+            let Some(parent) = find_descendant_view_mut(agent, child_sid) else {
+                return false;
+            };
+            apply_subagent_progress(
+                parent,
+                child_session_id,
+                duration_ms,
+                turn_count,
+                tool_call_count,
+                tokens_used,
+                context_window_tokens,
+                context_usage_pct,
+                tools_used,
+                error_count,
+            )
+        }
+        XaiSessionUpdate::SubagentFinished {
+            child_session_id,
+            status,
+            error,
+            tool_calls,
+            turns,
+            duration_ms,
+            tokens_used,
+            ..
+        } => {
+            let Some(parent) = find_descendant_view_mut(agent, child_sid) else {
+                return false;
+            };
+            apply_subagent_finished(
+                parent,
+                child_session_id,
+                status,
+                error,
+                tool_calls,
+                turns,
+                duration_ms,
+                tokens_used,
+            )
+        }
         _ => false,
     }
+}
+
+/// Apply a nested child progress report to the immediate parent that owns its
+/// task row. The outer notification is emitted by that parent session.
+fn apply_subagent_progress(
+    parent: &mut AgentView,
+    child_session_id: String,
+    duration_ms: u64,
+    turn_count: u32,
+    tool_call_count: u32,
+    tokens_used: u64,
+    context_window_tokens: u64,
+    context_usage_pct: u8,
+    tools_used: Vec<String>,
+    error_count: u32,
+) -> bool {
+    if let Some(info) = parent.subagent_sessions.get_mut(&child_session_id) {
+        info.duration_ms = Some(duration_ms);
+        info.turn_count = Some(turn_count);
+        info.tool_call_count = Some(tool_call_count);
+        info.tokens_used = Some(tokens_used);
+        info.context_window_tokens = Some(context_window_tokens);
+        info.context_usage_pct = Some(context_usage_pct);
+        info.tools_used = tools_used.into_iter().map(Arc::from).collect();
+        info.error_count = Some(error_count);
+        info.last_progress_at = std::time::Instant::now();
+    }
+    if let Some(child_view) = parent.subagent_views.get_mut(&child_session_id)
+        && context_window_tokens > 0
+    {
+        child_view
+            .session
+            .models
+            .override_context_window(context_window_tokens);
+    }
+    let activity_label = parent
+        .subagent_views
+        .get(&child_session_id)
+        .and_then(|cv| subagent_activity_label(cv));
+    sync_subagent_activity(parent, &child_session_id, activity_label);
+    true
+}
+
+/// Apply a nested child terminal event to its direct parent. Completion is
+/// intentionally local to that branch: a grandchild must not finish a root
+/// row or make unrelated siblings appear idle.
+fn apply_subagent_finished(
+    parent: &mut AgentView,
+    child_session_id: String,
+    status: String,
+    error: Option<String>,
+    tool_calls: u32,
+    turns: u32,
+    duration_ms: u64,
+    tokens_used: u64,
+) -> bool {
+    tracing::info!(
+        child_session_id = %child_session_id,
+        status = %status,
+        tool_calls,
+        turns,
+        duration_ms,
+        "Nested subagent finished"
+    );
+    let elapsed_dur = std::time::Duration::from_millis(duration_ms);
+    let info_ref = parent.subagent_sessions.get(&child_session_id);
+    let entry_id = info_ref.and_then(|s| s.scrollback_entry_id);
+    let is_background = info_ref.is_some_and(|s| s.is_background);
+    let description = info_ref.map(|s| s.description.clone()).unwrap_or_default();
+    if let Some(eid) = entry_id {
+        parent.scrollback.finish_running(eid);
+    }
+    sync_subagent_activity(parent, &child_session_id, None);
+    if is_background {
+        let block = match status.as_str() {
+            "completed" => {
+                RenderBlock::Subagent(crate::scrollback::blocks::SubagentBlock::completed(
+                    description.as_ref(),
+                    child_session_id.as_str(),
+                    elapsed_dur,
+                ))
+            }
+            "cancelled" => {
+                RenderBlock::Subagent(crate::scrollback::blocks::SubagentBlock::cancelled(
+                    description.as_ref(),
+                    child_session_id.as_str(),
+                    elapsed_dur,
+                ))
+            }
+            _ => RenderBlock::Subagent(crate::scrollback::blocks::SubagentBlock::failed(
+                description.as_ref(),
+                child_session_id.as_str(),
+                elapsed_dur,
+                error.clone(),
+            )),
+        };
+        parent.scrollback.push_block(block);
+    } else if let Some(eid) = entry_id
+        && let Some(entry) = parent.scrollback.get_by_id_mut(eid)
+    {
+        if let RenderBlock::Subagent(ref mut sb) = entry.block {
+            sb.kind = match status.as_str() {
+                "completed" => crate::scrollback::blocks::SubagentBlockKind::Completed {
+                    elapsed: elapsed_dur,
+                },
+                "cancelled" => crate::scrollback::blocks::SubagentBlockKind::Cancelled {
+                    elapsed: elapsed_dur,
+                },
+                _ => crate::scrollback::blocks::SubagentBlockKind::Failed {
+                    elapsed: elapsed_dur,
+                    error: error.clone(),
+                },
+            };
+        }
+        entry.invalidate_cache();
+    }
+    if let Some(info) = parent.subagent_sessions.get_mut(&child_session_id) {
+        info.finished = true;
+        info.status = Some(Arc::from(status));
+        info.error = error.map(Arc::from);
+        info.duration_ms = Some(duration_ms);
+        info.tool_calls = Some(tool_calls);
+        info.turns = Some(turns);
+        if tokens_used > 0 {
+            info.tokens_used = Some(tokens_used);
+        }
+        info.pending_kill = false;
+        info.kill_requested_at = None;
+        info.last_progress_at = std::time::Instant::now();
+    }
+    let resuming = parent.session.loading_replay;
+    if let Some(child_view) = parent.subagent_views.get_mut(&child_session_id) {
+        child_view.session.state = AgentState::Idle;
+        if !resuming {
+            crate::app::subagent::finalize_finished_child_view(child_view, elapsed_dur);
+        }
+    }
+    true
+}
+
+/// Register a subagent beneath a child view. The shell emits a spawned event
+/// on the immediate parent's session, so this must mutate that parent view —
+/// never the root registry — or an L2/L3 task tree becomes flattened.
+fn register_nested_subagent_spawned(parent: &mut AgentView, update: XaiSessionUpdate) -> bool {
+    let XaiSessionUpdate::SubagentSpawned {
+        subagent_id,
+        child_session_id,
+        subagent_type,
+        description,
+        persona,
+        role,
+        model,
+        effective_context_source,
+        resumed_from,
+        capability_mode,
+        context_normalized,
+        parent_prompt_id,
+        workflow_run_id,
+        root_session_id,
+        depth,
+        lineage_path,
+        ..
+    } = update
+    else {
+        return false;
+    };
+
+    let is_background = parent
+        .session
+        .tracker
+        .task_tool_background
+        .remove(&subagent_id)
+        .unwrap_or(false);
+    let persona_display = persona.clone();
+    let role_display = role.clone();
+    let model_display = model.clone();
+    parent.subagent_sessions.insert(
+        child_session_id.clone(),
+        SubagentInfo {
+            subagent_id: Arc::from(subagent_id),
+            child_session_id: Arc::from(child_session_id.clone()),
+            description: Arc::from(description.clone()),
+            subagent_type: Arc::from(subagent_type.clone()),
+            persona: persona.map(Arc::from),
+            role: role.map(Arc::from),
+            model: model.map(Arc::from),
+            context_source: effective_context_source.map(Arc::from),
+            resumed_from: resumed_from.map(Arc::from),
+            capability_mode: capability_mode.map(Arc::from),
+            workflow_run_id: workflow_run_id.clone().map(Arc::from),
+            root_session_id: root_session_id.map(Arc::from),
+            depth,
+            lineage_path: lineage_path.map(|path| path.into_iter().map(Arc::from).collect()),
+            context_normalized,
+            parent_prompt_id: parent_prompt_id.map(Arc::from),
+            started_at: std::time::Instant::now(),
+            last_progress_at: std::time::Instant::now(),
+            finished: false,
+            status: None,
+            error: None,
+            duration_ms: None,
+            tool_calls: None,
+            turns: None,
+            turn_count: None,
+            tool_call_count: None,
+            tokens_used: None,
+            context_window_tokens: None,
+            context_usage_pct: None,
+            tools_used: Vec::new(),
+            error_count: None,
+            activity_label: None,
+            is_background,
+            pending_kill: false,
+            kill_requested_at: None,
+            scrollback_entry_id: None,
+            prompt: None,
+            child_cwd: None,
+            worktree_path: None,
+            child_updates_replayed: false,
+        },
+    );
+    if let Some(ref sid) = parent.session.session_id
+        && let Some(info) = parent.subagent_sessions.get_mut(&child_session_id)
+    {
+        crate::app::subagent::enrich_from_meta(info, &parent.session.cwd, sid.0.as_ref());
+    }
+    let (effective_child_cwd, effective_is_worktree) = derive_child_cwd(
+        &parent.session.cwd,
+        parent.subagent_sessions.get(&child_session_id),
+    );
+    let child_session = AgentSession {
+        id: AgentId(0),
+        acp_tx: parent.session.acp_tx.clone(),
+        session_id: Some(acp::SessionId::new(child_session_id.clone())),
+        models: parent.session.models.clone(),
+        state: AgentState::TurnRunning,
+        tracker: AcpUpdateTracker::new(),
+        cwd: effective_child_cwd,
+        is_worktree: effective_is_worktree,
+        forked_from: None,
+        pending_prompts: std::collections::VecDeque::new(),
+        next_queue_id: 0,
+        yolo_mode: true,
+        auto_mode: false,
+        prompt_history: Vec::new(),
+        prompt_history_loading: false,
+        loading_replay: false,
+        restore_degree: None,
+        rate_limited: false,
+        model_incompatible: false,
+        credit_limit_blocked: false,
+        free_usage_blocked: false,
+        bg_tasks: std::collections::BTreeMap::new(),
+        bg_tool_call_to_task: std::collections::HashMap::new(),
+        scheduled_tasks: std::collections::HashMap::new(),
+        available_commands: Vec::new(),
+        available_commands_generation: 0,
+        available_tools: None,
+        model_switch_pending: false,
+        user_model_preference: None,
+        deferred_model_switch: None,
+        in_flight_prompt: None,
+        compact_held_prompt: None,
+        current_prompt_id: None,
+        created_via_new: false,
+    };
+    let mut child_scrollback = crate::scrollback::state::ScrollbackState::new();
+    child_scrollback.set_appearance(parent.scrollback.appearance().clone());
+    let mut child_view = AgentView::new(child_session, child_scrollback);
+    child_view.set_input_mode(InputMode::Vim);
+    child_view.active_pane = crate::views::agent::ActivePane::Scrollback;
+    child_view.set_sharing_enabled(parent.sharing_enabled);
+    child_view.set_billing_surface_visible(parent.billing_surface_visible);
+    child_view.set_usage_command_visible(parent.usage_command_visible);
+    child_view.set_dashboard_visible(
+        parent
+            .prompt
+            .slash_controller
+            .registry()
+            .get("dashboard")
+            .is_some(),
+    );
+    child_view
+        .set_has_session_announcements(parent.prompt.slash_controller.has_session_announcements());
+    child_view
+        .prompt
+        .set_screen_mode(parent.prompt.slash_controller.screen_mode());
+    child_view.app_chat_mode = parent.app_chat_mode;
+    child_view.set_session_recap_available(
+        parent
+            .prompt
+            .slash_controller
+            .registry()
+            .get("recap")
+            .is_some(),
+    );
+    child_view.set_voice_mode_available(
+        parent
+            .prompt
+            .slash_controller
+            .registry()
+            .get("voice")
+            .is_some(),
+    );
+    let restricted = parent
+        .prompt
+        .slash_controller
+        .registry()
+        .restricted_commands();
+    child_view.set_restricted_commands(&restricted);
+    parent.insert_subagent_view(child_session_id.clone(), Box::new(child_view));
+    if !parent.session.loading_replay {
+        if let Some(child_view) = parent.subagent_views.get_mut(&child_session_id) {
+            crate::app::subagent::replay_inherited_updates(child_view, &child_session_id);
+        }
+        if let Some(info) = parent.subagent_sessions.get_mut(&child_session_id) {
+            info.child_updates_replayed = true;
+        }
+    }
+    if workflow_run_id.is_none() {
+        let block = crate::scrollback::blocks::SubagentBlock::started(
+            &description,
+            &child_session_id,
+            &subagent_type,
+            persona_display,
+            role_display,
+            model_display,
+            is_background,
+        );
+        let entry_id = parent.scrollback.push_block(RenderBlock::Subagent(block));
+        parent.scrollback.set_last_running(true);
+        if let Some(info) = parent.subagent_sessions.get_mut(&child_session_id) {
+            info.scrollback_entry_id = Some(entry_id);
+        }
+    }
+    true
 }
 /// Apply a compaction or retry event to a session's activity state and scrollback.
 ///
