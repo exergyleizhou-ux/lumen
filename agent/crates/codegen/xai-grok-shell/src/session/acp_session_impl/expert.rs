@@ -650,9 +650,9 @@ impl SessionActor {
         } else {
             Vec::new()
         };
-        let advisor_catalog_model_ids: Vec<_> = self
-            .models_manager
-            .models()
+        let advisor_model_catalog = self.models_manager.models();
+        let advisor_catalog_model_ids: Vec<_> = advisor_model_catalog
+            .clone()
             .into_iter()
             .flat_map(|(key, entry)| [key, entry.info.model])
             .collect();
@@ -675,6 +675,25 @@ impl SessionActor {
             }
             let consultant = actor.expert.consultant_requested.clone();
             if actor.expert.advisor_shadow_enabled {
+                let provider_domain = |model_id: &str| {
+                    advisor_model_catalog
+                        .get(model_id)
+                        .or_else(|| {
+                            advisor_model_catalog
+                                .values()
+                                .find(|entry| entry.info.model == model_id)
+                        })
+                        .and_then(|entry| {
+                            let url = url::Url::parse(&entry.info.base_url).ok()?;
+                            let host = url.host_str()?;
+                            Some(match url.port() {
+                                Some(port) => format!("{host}:{port}"),
+                                None => host.to_owned(),
+                            })
+                        })
+                };
+                let executor_provider_domain = provider_domain(&executor);
+                let consultant_provider_domain = provider_domain(&consultant);
                 let advice = crate::session::expert::advisor_shadow_advice(
                     task,
                     &executor,
@@ -685,6 +704,8 @@ impl SessionActor {
                         .expert
                         .budget
                         .can_reserve(u64::from(actor.expert.max_consult_output_tokens)),
+                    executor_provider_domain.as_deref(),
+                    consultant_provider_domain.as_deref(),
                 );
                 actor.expert.audit(
                     "advisor_shadow_recorded",
