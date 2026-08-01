@@ -66,6 +66,12 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     /// First admitted child time for every root tree. Sequential fan-out
     /// therefore shares one wall-clock budget.
     tree_started_at: HashMap<String, tokio::time::Instant>,
+    /// Provider-reported aggregate completed-child usage, by root task tree.
+    tree_total_tokens_used: HashMap<String, u64>,
+    /// A configured token budget fails closed after an incomplete usage
+    /// report, because accepting another child would make the ceiling a lie.
+    tree_usage_incomplete_roots: HashSet<String>,
+    exhausted_tree_token_budgets: HashSet<String>,
     usage_not_applied_prompts: HashSet<PromptScope>,
     pending_completions: Vec<BufferedCompletion>,
     runs: FuturesUnordered<
@@ -115,6 +121,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             spawn_blocked_sessions: HashSet::new(),
             expired_tree_roots: HashSet::new(),
             tree_started_at: HashMap::new(),
+            tree_total_tokens_used: HashMap::new(),
+            tree_usage_incomplete_roots: HashSet::new(),
+            exhausted_tree_token_budgets: HashSet::new(),
             usage_not_applied_prompts: HashSet::new(),
             pending_completions: Vec::new(),
             runs: FuturesUnordered::new(),
@@ -253,6 +262,34 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     return;
                 }
                 let root_session_id = request.lineage.root_session_id.clone();
+                if self.exhausted_tree_token_budgets.contains(&root_session_id) {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        cancelled: true,
+                        error: Some("subagent tree total-token budget exhausted".to_owned()),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                if self.config.tree_total_token_budget.is_some()
+                    && self.tree_usage_incomplete_roots.contains(&root_session_id)
+                {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        cancelled: true,
+                        error: Some(
+                            "subagent tree token usage is incomplete; admission closed".to_owned(),
+                        ),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
                 if self.expired_tree_roots.contains(&root_session_id) {
                     let id = request.id.clone();
                     let _ = command.result_tx.send(SubagentResult {
@@ -414,6 +451,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             SubagentEvent::TeardownSession { parent_session_id } => {
                 self.tree_started_at.remove(&parent_session_id);
                 self.expired_tree_roots.remove(&parent_session_id);
+                self.tree_total_tokens_used.remove(&parent_session_id);
+                self.tree_usage_incomplete_roots.remove(&parent_session_id);
+                self.exhausted_tree_token_budgets.remove(&parent_session_id);
                 self.pending_completions.retain(|completion| {
                     completion.parent_session_id != parent_session_id
                         && completion.root_session_id != parent_session_id
@@ -670,6 +710,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         };
 
         let request = record.request().clone();
+        self.record_tree_token_usage(&request.lineage.root_session_id, &output.result);
         let explicitly_killed = record.explicitly_killed();
         let (
             started_at,
@@ -1067,6 +1108,55 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             root_session_id,
             "subagent tree wall-time budget exhausted; cancelled tree"
         );
+    }
+
+    fn record_tree_token_usage(&mut self, root_session_id: &str, result: &SubagentResult) {
+        let Some(limit) = self.config.tree_total_token_budget else {
+            return;
+        };
+        if result.output_usage_incomplete {
+            self.tree_usage_incomplete_roots
+                .insert(root_session_id.to_owned());
+            self.cancel_tree(root_session_id);
+            tracing::warn!(
+                root_session_id,
+                "subagent tree token usage incomplete; closed further admission"
+            );
+            return;
+        }
+        let used = {
+            let used = self
+                .tree_total_tokens_used
+                .entry(root_session_id.to_owned())
+                .or_default();
+            *used = used.saturating_add(result.total_tokens_used);
+            *used
+        };
+        if used >= limit {
+            self.exhausted_tree_token_budgets
+                .insert(root_session_id.to_owned());
+            self.cancel_tree(root_session_id);
+            tracing::warn!(
+                root_session_id,
+                used,
+                limit,
+                "subagent tree token budget exhausted"
+            );
+        }
+    }
+
+    fn cancel_tree(&self, root_session_id: &str) {
+        for child in self.active.values() {
+            if child.request.lineage.root_session_id == root_session_id {
+                child.cancellation.cancel();
+                child.control.cancel();
+            }
+        }
+        for child in self.pending.values() {
+            if child.request.lineage.root_session_id == root_session_id {
+                child.cancellation.cancel();
+            }
+        }
     }
 }
 

@@ -116,6 +116,7 @@ impl ChildRunner for TestRunner {
                     child_session_id: request.id.clone(),
                     tool_calls: 3,
                     turns: 2,
+                    total_tokens_used: 100,
                     ..Default::default()
                 },
             };
@@ -1745,6 +1746,46 @@ async fn tree_wall_time_budget_cancels_children_and_rejects_later_spawn() {
         completed.status,
         SubagentSnapshotStatus::Cancelled { .. }
     ));
+    harness.actor.abort();
+}
+
+#[tokio::test]
+async fn tree_total_token_budget_rejects_later_spawn_after_reported_usage() {
+    let mut harness = harness_with_config(
+        false,
+        CoordinatorConfig {
+            tree_total_token_budget: Some(100),
+            ..CoordinatorConfig::default()
+        },
+    );
+    let first = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("tree-token-first", false)).await }
+    });
+    assert_eq!(
+        harness.requests.recv().await.expect("initial request").id,
+        "tree-token-first"
+    );
+    assert_eq!(
+        harness.started.recv().await.expect("started child"),
+        "tree-token-first"
+    );
+    let _ = harness.finish.send(());
+    assert!(first.await.expect("join").expect("completion").success);
+
+    let rejected = harness
+        .backend
+        .spawn(request("tree-token-later", false))
+        .await
+        .expect("token budget rejection reply");
+    assert!(!rejected.success);
+    assert!(rejected.cancelled);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("total-token budget exhausted"))
+    );
     harness.actor.abort();
 }
 

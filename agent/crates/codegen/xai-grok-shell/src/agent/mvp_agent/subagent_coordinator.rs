@@ -176,6 +176,9 @@ impl MvpAgent {
                         "GROK_SUBAGENT_TREE_WALL_TIME_BUDGET_MS",
                         std::time::Duration::from_secs(2 * 60 * 60),
                     ),
+                tree_total_token_budget: std::env::var("GROK_SUBAGENT_TREE_TOTAL_TOKEN_BUDGET")
+                    .ok()
+                    .and_then(|value| value.parse().ok()),
                 buffer_completions: true,
                 buffered_completion_output_cap: None,
             };

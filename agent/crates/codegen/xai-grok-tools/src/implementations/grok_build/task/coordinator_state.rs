@@ -135,6 +135,10 @@ pub struct CoordinatorConfig {
     /// Maximum wall-clock lifetime of one root task tree. This is independent
     /// of foreground waiting: a backgrounded child must not run forever.
     pub tree_wall_time_budget: std::time::Duration,
+    /// Optional aggregate token ceiling for one root task tree. The
+    /// coordinator accounts only provider-reported completed-child usage; an
+    /// incomplete usage report closes further admission rather than guessing.
+    pub tree_total_token_budget: Option<u64>,
     /// Whether the host drains completion summaries between turns.
     pub buffer_completions: bool,
     /// Extra cap applied to BUFFERED summary outputs only (the request's own
@@ -152,6 +156,7 @@ impl Default for CoordinatorConfig {
         Self {
             foreground_budget: std::time::Duration::from_secs(45),
             tree_wall_time_budget: std::time::Duration::from_secs(2 * 60 * 60),
+            tree_total_token_budget: None,
             buffer_completions: false,
             buffered_completion_output_cap: None,
         }
