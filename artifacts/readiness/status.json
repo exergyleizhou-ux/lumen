@@ -1,29 +1,38 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T05:28:22Z",
+  "generated_at": "2026-08-01T15:57:38Z",
   "version": "0.1.251",
-  "head_short": "b09b929f",
+  "head_short": "4a4fdf45",
   "ready": false,
   "state": "BLOCKED",
-  "can_tool_call": true,
-  "l0_pass": true,
+  "can_tool_call": false,
+  "l0_pass": false,
   "engineering_complete": false,
-  "source_lock_sha256": "72b3cca04948ed31dc155327de6929ec5d7ce0664a38a5dbf160a3ae9e1a71b7",
-  "binary_sha256": "7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809c",
+  "source_lock_sha256": "9e879114dadef3792e92730e118a991d8677385c7b5a6d28e8c7fda9185124d6",
+  "binary_sha256": "114d6c602155d91f05fec97fcd5623a4b00609021a633a6623204692a5b7627a",
   "blockers": [
-    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
-    "binary_tuple_post:exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809",
+    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_source_mismatch:expected=3442138', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_c",
+    "L0_connect:SKIP",
+    "L1_tool_calls:SKIP",
+    "L2_min_e2e:SKIP",
+    "L3_multi_tool:SKIP",
+    "L4_fault_cancel:SKIP",
+    "L5_long_session:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "R0_full:SKIP",
+    "R0_min:SKIP",
     "eval_live:SKIP"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=07548fd4cd6e"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) "
     },
     {
       "id": "gitleaks",
@@ -75,57 +84,57 @@
     },
     {
       "id": "L0_connect",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L1_tool_calls",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L2_min_e2e",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L3_multi_tool",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L4_fault_cancel",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_long_session",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_one_hour_soak",
       "pass": false,
-      "result": "FAIL",
-      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_full",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_min",
-      "pass": true,
-      "result": "PASS",
-      "detail": "via R0_full"
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "sbom",
@@ -149,13 +158,13 @@
       "id": "binary_tuple_post",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809"
+      "detail": "exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) "
     },
     {
       "id": "source_lock",
       "pass": true,
       "result": "PASS",
-      "detail": "head=b09b929 files=32"
+      "detail": "source=3442138 head=4a4fdf4 suffix=evidence-only+1 files=32"
     },
     {
       "id": "M5_10_min_stranger",
@@ -173,10 +182,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa"
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_source_mismatch:expected=3442138', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_c"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-08-01T05:28:22Z",
+  "reconciled_at": "2026-08-01T15:57:37Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

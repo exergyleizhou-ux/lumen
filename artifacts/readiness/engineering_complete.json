@@ -2,17 +2,26 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.251",
-  "head_short": "b09b929f",
+  "head_short": "4a4fdf45",
   "pass": false,
-  "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+  "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
-    "binary_tuple_post:exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa",
-    "eval_live:SKIP"
+    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
+    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_source_mismatch:expected=3442138', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_c",
+    "L2_min_e2e:SKIP",
+    "R0_min:SKIP",
+    "eval_live:SKIP",
+    "L4_fault_cancel:SKIP",
+    "L1_tool_calls:SKIP",
+    "L3_multi_tool:SKIP",
+    "L5_long_session:SKIP",
+    "R0_full:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "L0_connect:SKIP"
   ],
-  "can_tool_call": true,
-  "source_lock_sha256": "72b3cca04948ed31dc155327de6929ec5d7ce0664a38a5dbf160a3ae9e1a71b7",
-  "binary_sha256": "7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809c",
-  "generated_at": "2026-08-01T05:28:22Z"
+  "can_tool_call": false,
+  "source_lock_sha256": "9e879114dadef3792e92730e118a991d8677385c7b5a6d28e8c7fda9185124d6",
+  "binary_sha256": "114d6c602155d91f05fec97fcd5623a4b00609021a633a6623204692a5b7627a",
+  "generated_at": "2026-08-01T15:57:38Z"
 }
