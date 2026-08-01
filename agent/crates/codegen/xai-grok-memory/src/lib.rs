@@ -34,12 +34,16 @@ pub mod query_expansion;
 pub mod schema;
 pub mod search;
 pub mod storage;
+pub mod task_ledger;
 pub mod text_utils;
 pub mod watcher;
 
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
 pub use index::{MemoryIndex, init_sqlite_vec};
 pub use storage::{MemoryScope, MemoryStorage};
+pub use task_ledger::{
+    WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryLedgerError, WorkingMemoryState,
+};
 
 /// Embed all chunks that don't have embeddings yet.
 ///
