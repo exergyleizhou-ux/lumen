@@ -1,6 +1,14 @@
 use super::*;
 use xai_grok_sampling_types::ReasoningEffort;
 use xai_grok_tools::implementations::{grok_build, opencode};
+
+/// Third-generation children are review/evidence leaves.  MCP tools do not
+/// carry enough uniform capability metadata to prove safe inheritance, so the
+/// capability ceiling denies MCP at this depth and below.
+pub(super) const fn mcp_inheritance_allowed_at_depth(child_depth: u32) -> bool {
+    child_depth < 3
+}
+
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
     totals.total_tokens()
 }
@@ -865,7 +873,21 @@ pub(crate) async fn run_shell_child(
             }
         }
     }
-    let agent_mcp_servers: Vec<_> = if !agent_owned_mcp_servers_allowed(is_plugin_agent) {
+    // A third-generation child is an evidence/review leaf.  It cannot safely
+    // inherit arbitrary MCP capabilities because MCP tool declarations do not
+    // all carry a ToolKind for capability filtering.  Keep this independent
+    // of a role's requested permissions so depth can only shrink authority.
+    let allow_mcp_inheritance = mcp_inheritance_allowed_at_depth(child_depth);
+    let agent_mcp_servers: Vec<_> = if !allow_mcp_inheritance {
+        if !definition.mcp_servers.is_empty() {
+            tracing::info!(
+                subagent_id = %request.id,
+                child_depth,
+                "third-generation subagent: suppressing agent-owned MCP servers"
+            );
+        }
+        vec![]
+    } else if !agent_owned_mcp_servers_allowed(is_plugin_agent) {
         if !definition.mcp_servers.is_empty() {
             tracing::warn!(
                 agent = %definition.name,
@@ -925,8 +947,11 @@ pub(crate) async fn run_shell_child(
                 })
                 .collect()
     };
-    let parent_mcp_pool =
-        resolve_inherited_mcp_pool(ctx.parent_mcp_pool.take(), &definition.mcp_inheritance);
+    let parent_mcp_pool = allow_mcp_inheritance
+        .then(|| {
+            resolve_inherited_mcp_pool(ctx.parent_mcp_pool.take(), &definition.mcp_inheritance)
+        })
+        .flatten();
     let mcp_inherited_count = parent_mcp_pool
         .as_ref()
         .map(|p| p.len() as u32)

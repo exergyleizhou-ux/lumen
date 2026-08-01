@@ -1,7 +1,8 @@
 #![cfg_attr(rustfmt, rustfmt::skip)]
 use super::*;
 use super::handle_request::{
-    canonical_total_tokens, record_subagent_usage, usage_is_incomplete,
+    canonical_total_tokens, mcp_inheritance_allowed_at_depth, record_subagent_usage,
+    usage_is_incomplete,
 };
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, test_gateway_with_receiver,
@@ -26,6 +27,14 @@ fn cancellation_makes_an_otherwise_complete_usage_snapshot_incomplete() {
     assert!(usage_is_incomplete(false, true, 10, false));
     assert!(!usage_is_incomplete(false, false, 0, false));
     assert!(usage_is_incomplete(true, false, 0, false));
+}
+
+#[test]
+fn third_generation_child_cannot_inherit_mcp() {
+    assert!(mcp_inheritance_allowed_at_depth(1));
+    assert!(mcp_inheritance_allowed_at_depth(2));
+    assert!(!mcp_inheritance_allowed_at_depth(3));
+    assert!(!mcp_inheritance_allowed_at_depth(4));
 }
 #[tokio::test]
 async fn usage_ack_precedes_terminal_presentation() {

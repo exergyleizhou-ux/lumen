@@ -1586,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn filter_preserves_tools_without_kind() {
+    fn filter_denies_unclassified_tools_in_restricted_mode() {
         use crate::registry::types::ToolServerConfig;
         use crate::types::tool::ToolKind;
         let mut config = ToolServerConfig {
@@ -1600,8 +1600,8 @@ mod tests {
         let ids: Vec<&str> = config.tools.iter().map(|t| t.id.as_str()).collect();
         assert!(ids.contains(&"read_file"));
         assert!(
-            ids.contains(&"mcp_custom_tool"),
-            "tools without kind preserved"
+            !ids.contains(&"mcp_custom_tool"),
+            "unclassified custom/MCP tool must not bypass a restricted capability mode"
         );
     }
 

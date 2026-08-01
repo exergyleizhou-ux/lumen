@@ -261,8 +261,10 @@ pub trait SubagentCapabilityModeExt {
     ///
     /// Uses the `kind` field on each `ToolConfig`, populated automatically
     /// by `for_tool::<T>()` / `From<&T: Tool>` at toolset construction time.
-    /// Tools without a `kind` (e.g. MCP/custom tools via
-    /// `ToolConfig::from_id()`) are preserved unconditionally.
+    /// A restricted child treats tools without a `kind` (including MCP/custom
+    /// tools created via `ToolConfig::from_id()`) as deny-by-default: without
+    /// a capability classification, the coordinator cannot prove that the
+    /// tool is read-only or otherwise within the child's ceiling.
     fn filter_tool_config(self, config: &mut crate::registry::types::ToolServerConfig);
 
     /// Return the set of `ToolKind`s allowed under this capability mode.
@@ -312,7 +314,7 @@ impl SubagentCapabilityModeExt for SubagentCapabilityMode {
         let allowed = self.allowed_tool_kinds();
         config.tools.retain(|tc| match tc.kind {
             Some(k) => allowed.contains(&k),
-            None => true,
+            None => false,
         });
         prune_orphaned_background_task_tools(config);
     }
