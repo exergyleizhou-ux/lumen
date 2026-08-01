@@ -1,7 +1,7 @@
 # Lumen example config — multi-provider BYOK catalog.
 # Copy to ~/.grok/config.toml (or the product config path after home migration).
 #
-# DeepSeek V4 Pro is the default coding executor. Stable long-session prefixes
+# DeepSeek V4 Flash is the default coding executor. Stable long-session prefixes
 # also produce high prompt-cache hit rates. Switch per invocation with `lumen -m <id>` or inside
 # the TUI with `/model <id>` (Ctrl+M opens the picker).
 #
@@ -10,7 +10,7 @@
 # agent loop.
 
 [models]
-default = "deepseek-v4-pro"
+default = "deepseek-v4-flash"
 
 # ── Optional Expert model pool ──────────────────────────────────────────────
 # The normal `/model` choice always wins. This pool applies only to a *new*
@@ -45,7 +45,7 @@ default = "deepseek-v4-pro"
 # review = ["grok-4.5", "deepseek-v4-pro"]
 # research = ["grok-4.5", "deepseek-v4-pro"]
 
-# ── DeepSeek (preferred default) ────────────────────────────────────────────
+# ── DeepSeek (Flash is the preferred default; Pro is escalation) ────────────
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"

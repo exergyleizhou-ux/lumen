@@ -94,7 +94,7 @@ pub(crate) fn resolve_default_model(
 
     match &model_pref {
         None => {
-            // Product default (embedded default_models.json → deepseek-v4-pro) beats
+            // Product default (embedded default_models.json → deepseek-v4-flash) beats
             // "first visible catalog key", which is often the only remote/session
             // entry (e.g. grok-4.5) when OIDC models_cache polluted the catalog.
             let product_default = crate::models::default_model();

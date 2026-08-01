@@ -1,8 +1,8 @@
 # 多模型适配（Multi-provider）
 
 Lumen 的内置目录是多厂商 BYOK，不是 DeepSeek 单厂商产品。默认执行模型为正式
-API ID `deepseek-v4-pro`；`deepseek-v4-flash` 是快速备选，`grok-4.5` 是可选的
-高能力/多模态模型。长会话保持稳定前缀时，DeepSeek 的 **automatic prefix cache**
+API ID `deepseek-v4-flash`；`grok-4.5` 和 `deepseek-v4-pro` 是用户允许池内的
+高能力候选与升级路径。长会话保持稳定前缀时，DeepSeek 的 **automatic prefix cache**
 仍可降低成本。用户可以随时用 `-m`、`/model` 或 Ctrl+M 切换。
 
 ### Prompt cache 是否「全模型同等」？

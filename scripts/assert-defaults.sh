@@ -11,7 +11,7 @@ EXAMPLE="$ROOT/config/lumen.example.toml"
 DOC="$ROOT/docs/user/multi-provider.md"
 
 test -f "$MODELS" || fail "missing $MODELS"
-grep -q '"default": "deepseek-v4-pro"' "$MODELS" || fail "default_models.json default is not deepseek-v4-pro"
+grep -q '"default": "deepseek-v4-flash"' "$MODELS" || fail "default_models.json default is not deepseek-v4-flash"
 grep -q '"model": "deepseek-v4-pro"' "$MODELS" || fail "default_models.json missing deepseek-v4-pro"
 # BYOK must be embedded so isolated GROK_HOME works without xAI login.
 grep -q '"base_url": "https://api.deepseek.com/v1"' "$MODELS" || fail "default_models.json missing DeepSeek base_url"
@@ -46,7 +46,7 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as f:
     root = json.load(f)
 
-assert root["default"] == "deepseek-v4-pro"
+assert root["default"] == "deepseek-v4-flash"
 assert root["web_search"] == "deepseek-v4-pro"
 assert root["image_description"] == "deepseek-v4-flash"
 assert root["session_summary"] == "deepseek-v4-flash"
@@ -93,7 +93,7 @@ grep -q 'default-run = "lumen"' "$BIN_TOML" || fail "default-run is not lumen"
 
 test -f "$EXAMPLE" || fail "missing config/lumen.example.toml"
 grep -q 'base_url = "https://api.deepseek.com/v1"' "$EXAMPLE" || fail "example missing DeepSeek base_url"
-grep -q 'default = "deepseek-v4-pro"' "$EXAMPLE" || fail "example missing default deepseek-v4-pro"
+grep -q 'default = "deepseek-v4-flash"' "$EXAMPLE" || fail "example missing default deepseek-v4-flash"
 grep -q 'auto_update = false' "$EXAMPLE" || fail "example missing auto_update = false"
 for id in openai-gpt4o claude-sonnet kimi-k2 moonshot-v1 qwen-plus glm-4 mimo-chat minimax-m3 lmstudio ollama vllm exo; do
   grep -Fq "[model.$id]" "$EXAMPLE" || fail "example missing [model.$id]"
@@ -112,7 +112,7 @@ except ModuleNotFoundError:  # macOS system Python < 3.11
 
 with open(sys.argv[1], "rb") as f:
     cfg = tomllib.load(f)
-assert cfg["models"]["default"] == "deepseek-v4-pro"
+assert cfg["models"]["default"] == "deepseek-v4-flash"
 models = cfg["model"]
 for model_id in [
     "deepseek-v4-pro", "deepseek-v4-flash", "grok-4.5", "deepseek-chat",
