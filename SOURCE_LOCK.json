@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T17:59:48Z",
+  "generated_at": "2026-08-01T18:07:52Z",
   "monorepo": {
-    "git_head": "91f8c8d6e79a945a9d273f42aea2ca24b65e57ad",
-    "git_short": "91f8c8d"
+    "git_head": "e624042188b28d76e749639661e5ff66662d65c7",
+    "git_short": "e624042"
   },
   "lumen_version": "0.1.251",
   "upstream_pin": {
@@ -26,7 +26,7 @@
     "scripts/check-binary-tuple.sh": "68e3187ba27bb70d3579cac487cf3d700f0d93ca47427835f3b60f08f2eb864c",
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
     "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
-    "scripts/generate-sbom.sh": "ab3b044a65b9a266e261bb0e5153120e7d2079c537e45da42bf11428a4381702",
+    "scripts/generate-sbom.sh": "5f2aec7ed2dd5a6d633599f619d8900eca37c6da9555d2cfd919e583b08ae331",
     "scripts/install-local.sh": "fd2f208b657b7f81d6c283dbdfeb9da4c61b820ed7b4085ab29074660e898ba0",
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
     "scripts/productivity-gate.sh": "f814b2ce106bd1f4234a901e2e9f85510998ad8dd5e377ae36ff85a0c38a922c",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "98a4138b5968a0fba34591cbd148e21a77fd7edfed923eac7ac5cf254763088e"
+  "aggregate_critical_sha256": "19721736268cbbb11d5c06d4882ed30b2fafce251a95697b58f0168fccb4c891"
 }
