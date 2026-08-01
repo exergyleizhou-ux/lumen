@@ -283,6 +283,14 @@ pub(crate) struct SchedulerRunLeaseTakeover {
     taken_at: DateTime<Utc>,
 }
 
+impl SchedulerRunLeaseTakeover {
+    /// The only takeover detail safe to expose in the task read model.  The
+    /// previous owner identifier remains an internal fencing detail.
+    pub(crate) fn taken_at(&self) -> DateTime<Utc> {
+        self.taken_at
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SchedulerRunReceipt {

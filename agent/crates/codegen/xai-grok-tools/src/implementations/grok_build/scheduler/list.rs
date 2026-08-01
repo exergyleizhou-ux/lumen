@@ -25,6 +25,10 @@ pub struct ScheduledTaskSummary {
     pub dead_lettered: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_status: Option<String>,
+    /// Timestamp of the last safe recovery takeover. This intentionally does
+    /// not expose the prior scheduler owner identity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_lease_takeover_at: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -65,6 +69,10 @@ fn summary_from_task(task: ScheduledTask) -> ScheduledTaskSummary {
             }
             .to_owned()
         }),
+        last_lease_takeover_at: task
+            .last_run_lease_takeover
+            .as_ref()
+            .map(|takeover| takeover.taken_at().to_rfc3339()),
     }
 }
 
@@ -203,5 +211,27 @@ mod tests {
         assert!(summary.retry_not_before.is_some());
         assert!(!summary.dead_lettered);
         assert_eq!(summary.last_run_status.as_deref(), Some("failed"));
+    }
+
+    #[test]
+    fn task_summary_surfaces_takeover_time_without_owner_identity() {
+        let now = chrono::Utc::now();
+        let mut task = ScheduledTask::new(60, "watch ci".into(), true, true);
+        task.acquire_run_lease("scheduler:crashed", now, chrono::Duration::seconds(1))
+            .unwrap();
+        let taken_at = now + chrono::Duration::seconds(2);
+        task.acquire_run_lease(
+            "scheduler:restored",
+            taken_at,
+            chrono::Duration::seconds(60),
+        )
+        .unwrap();
+
+        let encoded = serde_json::to_value(summary_from_task(task)).unwrap();
+        assert_eq!(
+            encoded["lastLeaseTakeoverAt"],
+            serde_json::Value::String(taken_at.to_rfc3339())
+        );
+        assert!(!encoded.to_string().contains("scheduler:crashed"));
     }
 }
