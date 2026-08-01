@@ -198,6 +198,57 @@ async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn ordinary_root_turn_preselects_a_healthy_pool_model_for_its_task() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = std::sync::Arc::new(
+                create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await,
+            );
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec![],
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+
+            actor
+                .maybe_select_ordinary_model_for_task("review the security boundary")
+                .await;
+
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "grok"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
     let local = tokio::task::LocalSet::new();
     local
@@ -301,6 +352,57 @@ async fn subagent_turn_never_inherits_ordinary_reroute_without_its_own_contract(
                     .await
                     .is_err()
             );
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "flash"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn subagent_turn_never_preselects_an_ordinary_pool_model() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.tool_context.subagent_depth = 1;
+            let actor = std::sync::Arc::new(actor);
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec![],
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+
+            actor
+                .maybe_select_ordinary_model_for_task("review the security boundary")
+                .await;
+
             assert_eq!(
                 actor
                     .chat_state_handle

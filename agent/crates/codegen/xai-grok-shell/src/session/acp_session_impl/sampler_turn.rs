@@ -865,7 +865,7 @@ impl SessionActor {
     /// Unlike failure recovery this may select the current healthy model; only
     /// an actual different choice mutates session state. Explicit user pins and
     /// all child sessions remain outside the policy boundary.
-    async fn maybe_select_ordinary_model_for_task(&self, task: &str) {
+    pub(crate) async fn maybe_select_ordinary_model_for_task(&self, task: &str) {
         if self.tool_context.subagent_depth > 0 || self.models_manager.user_selected_model() {
             return;
         }
