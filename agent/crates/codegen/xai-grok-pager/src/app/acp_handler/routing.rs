@@ -97,11 +97,37 @@ pub(super) fn resolve_target_view<'a>(
     &'a mut crate::scrollback::state::ScrollbackState,
 )> {
     if matches!(matched, SessionMatch::Child(_)) {
-        let child_view = agent.subagent_views.get_mut(child_sid)?;
+        let child_view = find_descendant_view_mut(agent, child_sid)?;
         Some((&mut child_view.session, &mut child_view.scrollback))
     } else {
         Some((&mut agent.session, &mut agent.scrollback))
     }
+}
+
+/// Whether `view` owns `session_id` at any descendant depth. The task
+/// coordinator caps the real tree at depth three, so this bounded walk is
+/// deliberately small and avoids flattening a child back onto the root.
+pub(super) fn contains_descendant_view(view: &AgentView, session_id: &str) -> bool {
+    view.subagent_views.iter().any(|(child_id, child)| {
+        child_id == session_id || contains_descendant_view(child, session_id)
+    })
+}
+
+/// Borrow the descendant view that owns `session_id`, preserving its direct
+/// parent relationship rather than returning the root-owned registry row.
+pub(super) fn find_descendant_view_mut<'a>(
+    view: &'a mut AgentView,
+    session_id: &str,
+) -> Option<&'a mut AgentView> {
+    for (child_id, child) in &mut view.subagent_views {
+        if child_id == session_id {
+            return Some(child);
+        }
+        if let Some(found) = find_descendant_view_mut(child, session_id) {
+            return Some(found);
+        }
+    }
+    None
 }
 
 /// Locate the agent (or subagent view) a notification's `session_id` belongs to.
@@ -142,7 +168,7 @@ pub(super) fn find_session_match(
         if agent.session.session_id.as_ref() == Some(session_id) {
             return Some(SessionMatch::Root(*id));
         }
-        if child_match.is_none() && agent.subagent_views.contains_key(child_key) {
+        if child_match.is_none() && contains_descendant_view(agent, child_key) {
             child_match = Some(*id);
         }
     }
@@ -185,5 +211,30 @@ pub(super) fn interaction_target_agent(app: &AppView, session_id: &str) -> Optio
     match find_session_match(app, &sid) {
         Some(SessionMatch::Root(id) | SessionMatch::Child(id)) => Some(id),
         None => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descendant_lookup_reaches_a_grandchild_without_flattening() {
+        let mut root = crate::app::agent_view::test_fixtures::make_agent();
+        let mut child = crate::app::agent_view::test_fixtures::make_agent();
+        let mut grandchild = crate::app::agent_view::test_fixtures::make_agent();
+        grandchild.session.session_id = Some(acp::SessionId::new("grandchild"));
+        child
+            .subagent_views
+            .insert("grandchild".into(), Box::new(grandchild));
+        root.subagent_views.insert("parent".into(), Box::new(child));
+
+        assert!(contains_descendant_view(&root, "grandchild"));
+        let found = find_descendant_view_mut(&mut root, "grandchild")
+            .expect("the grandchild remains owned by its immediate parent");
+        assert_eq!(
+            found.session.session_id,
+            Some(acp::SessionId::new("grandchild"))
+        );
     }
 }
