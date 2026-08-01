@@ -122,7 +122,7 @@ Python 科研/脚本               →    外围工具，不当 agent runtime
 
 | 项 | 原因 |
 |----|------|
-| 旧 `~/lumen` 整仓当 runtime | FINAL-2.0：Grok 唯一身体 |
+| 旧 `~/lumen` 整仓当 runtime | 当前路线：Grok 是唯一 runtime 身体 |
 | Go TUI 再维护一版 | 双 TUI 禁止 |
 | 完整 Gemini 原生协议 | 新引擎无对等 kind；要则 OpenAI 兼容或后置 |
 | modelpool 智能路由 | v1 非刚需 |

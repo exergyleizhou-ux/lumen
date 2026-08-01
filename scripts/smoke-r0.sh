@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full R0 contract smoke: drive shipped Grok code for R1–R7 (FINAL-2.0).
+# Full R0 contract smoke: drive shipped Grok code for R1–R7.
 # Uses unit tests that compile + ignored binary e2e (GROK_BINARY=lumen).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

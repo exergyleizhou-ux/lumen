@@ -2,7 +2,7 @@
 
 终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
 
-- 方案：`docs/masterplan/`（权威：桌面 FINAL-2.0）
+- 当前执行书：[docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md](docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md)
 - 运行时：`agent/`（Grok pin，~135 万行 Rust）
 - 二进制：`lumen`（UI/交互仍是 Grok TUI，产品名 Lumen）
 

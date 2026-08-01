@@ -5,7 +5,7 @@
 # and ~/.grok/config.toml (grok-build upstream config).
 #
 # Lumen uses TWO config files:
-#   ~/.lumen/config.toml  — Lumen product config (FINAL-5UX). Primary home.
+#   ~/.lumen/config.toml  — current Lumen product config. Primary home.
 #   ~/.grok/config.toml   — grok-build upstream config. Override layer.
 #
 # Rules:

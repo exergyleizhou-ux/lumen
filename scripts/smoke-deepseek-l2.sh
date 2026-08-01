@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# L2 min agent E2E: read → write/edit → bash on isolated workspace (FINAL-2.0).
+# R0 L2 min agent E2E: read → write/edit → bash on isolated workspace.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="/opt/homebrew/bin:$HOME/.cargo/bin:$HOME/.local/bin:$PATH"

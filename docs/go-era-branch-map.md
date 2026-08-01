@@ -22,7 +22,7 @@
 
 | Go 分支 | 内容 | Rust 现状 |
 |---|---|---|
-| fix/tui-chat-scroll-and-statusbar-overflow | autoscroll 清空聊天区 + 状态栏换行溢出 | ✅ Grok pager 无此实现层；对应关注点=FINAL-5UX Gate E 的 PTY 矩阵验收（doc 11 §910-924，仍未跑全） |
+| fix/tui-chat-scroll-and-statusbar-overflow | autoscroll 清空聊天区 + 状态栏换行溢出 | ✅ Grok pager 无此实现层；对应关注点=当前 NextGen 执行书的 PTY 矩阵验收，仍须独立跑全 |
 | fix/tui-tool-row-coalesce-and-verify-skip | 工具 dispatch/result 合并成单行 + verify 超时→skip | ✅ pager 已有等价 UX；verify-skip 语义在 lumen-verify runner（missing tool=SKIP） |
 | fix/render-{markdown,highlight,underscore-italic}-correctness | 渲染正确性（标题样式、apostrophe 吞字、下划线斜体） | ⏸ pager 的渲染栈完全不同（ratatui + xai-grok-markdown），bug 不可迁移 |
 | fix/lineedit-wrapped-cursor | 折行光标数学（真 PTY 验证） | ⏸ pager 自有编辑器；概念保留：光标数学必须真 PTY 验收 |

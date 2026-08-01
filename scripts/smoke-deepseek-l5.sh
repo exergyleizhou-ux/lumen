@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FINAL-2.0 L5 full contract.
+# R0 L5 full contract.
 #
 # Default mode is a CI-safe deterministic short run. Explicit soak mode keeps
 # resuming the same real Lumen session for at least one hour by default:
@@ -164,7 +164,7 @@ inference_idle_timeout_secs = 5
 
 [model.l5-fixture]
 model = "lumen-final20-fixture"
-name = "FINAL-2.0 L5 localhost fixture"
+name = "R0 L5 localhost fixture"
 base_url = "http://127.0.0.1:$PORT/v1"
 api_backend = "chat_completions"
 env_key = "LUMEN_FIXTURE_API_KEY"

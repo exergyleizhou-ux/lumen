@@ -1,8 +1,10 @@
-# Legal — Lumen 终检（FINAL-2.0 M6）
+# Legal — Lumen 终检
 
-**Status:** SIGNED for engineering publish package  
-**Date:** 2026-07-16  
-**Authority:** `docs/masterplan/` + desktop FINAL-2.0
+**Status:** HISTORICAL engineering legal-package review — not a current release approval
+**Reviewed:** 2026-07-16
+**Current execution authority:** `docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md`
+**Release authority:** exact-source CI, binary, provenance, and manual gates required by the
+current execution book.
 
 ## 1. Product statement
 
@@ -55,7 +57,7 @@ official xAI, SpaceXAI, Anthropic, OpenAI, or DeepSeek product.
 
 | Role | Result | Notes |
 |------|--------|-------|
-| Engineering legal package | **PASS** | Files above present; SBOM generated; no secret leakage in tracked tree |
+| Engineering legal package (2026-07-16 snapshot) | **HISTORICAL PASS** | Files were present; this is not approval for the current candidate |
 | Human productivity M6 | **OPEN** | Not a legal item; tracked by `productivity-gate.sh` |
 | External counsel | N/A private beta | Required before public marketplace if applicable |
 

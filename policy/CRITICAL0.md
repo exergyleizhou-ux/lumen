@@ -1,4 +1,4 @@
-# Critical-0 — 一票否决集（FINAL-2.0）
+# Critical-0 — 一票否决集
 
 > 任一项失败 → **BLOCKED**，不得用其余 parity 百分比稀释。  
 > 目标：连续 3 次跑绿无 flake。
