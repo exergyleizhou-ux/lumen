@@ -48,10 +48,34 @@ if ! run_r6; then
   echo "R6 core retry…"
   run_r6
 fi
-# Optional outage delivery (best-effort; does not fail R0 if flaky)
+# Optional outage delivery (best-effort; does not fail R0 if flaky). It used
+# to have no deadline, so an orphan leader could hold the entire readiness
+# aggregate forever despite this case being explicitly non-gating.
+OPTIONAL_OUTAGE_TIMEOUT_SECONDS="${LUMEN_R0_OPTIONAL_OUTAGE_TIMEOUT_SECONDS:-90}"
+[[ "$OPTIONAL_OUTAGE_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] || {
+  echo "FAIL: LUMEN_R0_OPTIONAL_OUTAGE_TIMEOUT_SECONDS must be a positive integer" >&2
+  exit 2
+}
+run_optional_outage() {
+  cargo test -p xai-grok-shell --test test_leader_death_repro \
+    test_prompt_sent_during_outage -- --ignored --nocapture &
+  local pid=$! ticks=$((OPTIONAL_OUTAGE_TIMEOUT_SECONDS * 10)) i
+  for ((i = 0; i < ticks; i++)); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid"
+      return $?
+    fi
+    sleep 0.1
+  done
+  echo "WARN: outage-prompt test exceeded ${OPTIONAL_OUTAGE_TIMEOUT_SECONDS}s; terminating optional test" >&2
+  kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.5
+  kill -KILL "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  return 124
+}
 set +e
-cargo test -p xai-grok-shell --test test_leader_death_repro \
-  test_prompt_sent_during_outage -- --ignored --nocapture
+run_optional_outage
 outage_ec=$?
 set -e
 if [[ $outage_ec -ne 0 ]]; then
