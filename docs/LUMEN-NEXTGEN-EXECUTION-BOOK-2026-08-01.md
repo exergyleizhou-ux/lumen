@@ -64,14 +64,14 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 
 | 项目 | 当前实测事实 | 本书处理 |
 |---|---|---|
-| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；本节复核时 HEAD 为 393a779277152f1ee72aa4d13ce29f34cb5d1f1f | 已推送的候选分支，不是 GitHub main、发布或安装证明；每次 R0 必须重新记录 SHA。 |
+| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；候选源码身份由 `SOURCE_LOCK.json.monorepo.git_head` 决定 | 已推送的候选分支，不是 GitHub main、发布或安装证明；R0 不在本书硬编码会漂移的 HEAD。 |
 | GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
-| 分叉量 | origin/main...HEAD 为 0 / 105（本节复核时） | 候选领先 105 个提交；仍须 R0 分组审查、exact CI 与人工 merge。 |
+| 分叉量 | 每次 R0 前重新计算 `origin/main...HEAD` | 提交数不是验收证据；仍须 R0 分组审查、exact CI 与人工 merge。 |
 | 工作树 | 有并行未提交源码修改；数量和归属会变 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | 当前兼容 VERSION 为 0.1.251；Lumen 2 首候选目标为 2.0.0-rc.1 | version、tag、release 与同步分门，未过 R0 不得提前 bump/tag。 |
-| GitHub CI | 本书复核未重新跑 exact HEAD 的远端 CI | CI 状态为 NOT RUN；不得沿用旧 run 说全绿。 |
-| readiness | SOURCE_LOCK 当前仍锚定 3dd9613 | 旧 evidence 不证明 393a7792 或后续源码。 |
+| GitHub CI | 只承认 PR 上与 source candidate 对应的 exact-SHA run | 未完成、失败或其他 SHA 的 run 都不能被说成当前全绿。 |
+| readiness | 只承认与 source candidate 同源的 lock、SBOM、binary 与 readiness | 旧 evidence 不证明后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
 
 ### 1.2 来源锁的真实含义
