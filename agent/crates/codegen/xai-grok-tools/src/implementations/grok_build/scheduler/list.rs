@@ -22,6 +22,8 @@ pub struct ScheduledTaskSummary {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct SchedulerListOutput {
     pub tasks: Vec<ScheduledTaskSummary>,
+    pub recovery_required: bool,
+    pub quarantined_one_shot_count: usize,
 }
 
 impl xai_tool_runtime::ToolOutput for SchedulerListOutput {}
@@ -141,6 +143,10 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
             })
             .collect();
 
-        Ok(SchedulerListOutput { tasks: summaries })
+        Ok(SchedulerListOutput {
+            tasks: summaries,
+            recovery_required: snapshot.recovery_required,
+            quarantined_one_shot_count: snapshot.quarantined_one_shot_count,
+        })
     }
 }

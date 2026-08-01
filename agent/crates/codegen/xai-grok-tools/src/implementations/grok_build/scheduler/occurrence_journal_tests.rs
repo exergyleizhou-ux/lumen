@@ -237,6 +237,19 @@ fn malformed_missing_task_identity_blocks_all_one_shots_across_reload() {
 }
 
 #[test]
+fn recovery_status_is_read_model_safe_and_does_not_expose_task_ids() {
+    let state = state(
+        Vec::new(),
+        serde_json::json!({
+            "entries": [{ "task": { "id": "quarantined-secret-id" } }]
+        }),
+    );
+    let (recovery_required, quarantined_count) = state.recovery_status();
+    assert!(recovery_required);
+    assert_eq!(quarantined_count, 1);
+}
+
+#[test]
 fn inconsistent_current_overflow_metadata_normalizes_and_round_trips() {
     let current = serde_json::json!({
         "entries": [],

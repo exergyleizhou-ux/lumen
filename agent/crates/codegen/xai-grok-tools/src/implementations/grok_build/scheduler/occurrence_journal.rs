@@ -163,6 +163,20 @@ impl OccurrenceJournal {
             self.overflowed,
         )
     }
+
+    /// Read-model safe summary for callers that need to decide whether timer
+    /// automation is currently admissible.  It deliberately exposes counts
+    /// rather than task ids: detailed ids remain a local recovery concern and
+    /// must not leak into a generic scheduler list response.
+    pub(super) fn recovery_status(&self) -> (bool, usize) {
+        (
+            self.block_all_one_shots
+                || self.overflowed
+                || !self.quarantined_task_ids.is_empty()
+                || has_conflict(&self.entries),
+            self.quarantined_task_ids.len(),
+        )
+    }
 }
 
 /// JSON-only because Resources persistence stores this state as `serde_json::Value`.

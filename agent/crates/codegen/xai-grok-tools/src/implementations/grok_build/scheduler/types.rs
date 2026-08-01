@@ -310,6 +310,19 @@ pub struct SchedulerSnapshot {
     #[allow(dead_code)]
     pub(crate) version: SchedulerVersion,
     pub tasks: Vec<ScheduledTask>,
+    /// Durable one-shots are blocked pending root recovery. Recurring tasks
+    /// can still be listed, but an automation host must not treat the
+    /// scheduler as healthy for autonomous one-shot dispatch.
+    pub recovery_required: bool,
+    /// Number of quarantined durable one-shot task ids. IDs are intentionally
+    /// not surfaced through the generic read-model.
+    pub quarantined_one_shot_count: usize,
+}
+
+impl SchedulerState {
+    pub(crate) fn recovery_status(&self) -> (bool, usize) {
+        self.occurrence_journal.recovery_status()
+    }
 }
 
 /// Handle for tools to communicate with the SchedulerActor.

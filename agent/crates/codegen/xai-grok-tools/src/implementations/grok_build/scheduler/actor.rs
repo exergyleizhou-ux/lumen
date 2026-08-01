@@ -870,13 +870,23 @@ impl SchedulerActor {
             }
             SchedulerCommand::List { reply } => {
                 let res = self.resources.lock().await;
-                let tasks = res
+                let (tasks, recovery_required, quarantined_one_shot_count) = res
                     .get::<State<SchedulerState>>()
-                    .map(|state| state.tasks.clone())
+                    .map(|state| {
+                        let (recovery_required, quarantined_one_shot_count) =
+                            state.recovery_status();
+                        (
+                            state.tasks.clone(),
+                            recovery_required,
+                            quarantined_one_shot_count,
+                        )
+                    })
                     .unwrap_or_default();
                 let _ = reply.send(SchedulerSnapshot {
                     version: self.clock.snapshot(),
                     tasks,
+                    recovery_required,
+                    quarantined_one_shot_count,
                 });
             }
         }
