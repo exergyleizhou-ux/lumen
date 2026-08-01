@@ -64,6 +64,9 @@ pub struct TaskTreeMemoryInput {
     pub action: TaskTreeMemoryAction,
     pub fact_id: String,
     pub revision: u64,
+    /// Compatibility field for clients that describe a logical branch. The
+    /// production ledger binds durable branch provenance to the host-injected
+    /// caller session identity and does not trust this value for attribution.
     pub branch_id: String,
     /// Preserved after review and rendered to sibling agents. Old callers
     /// default to `fact` for wire compatibility.

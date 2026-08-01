@@ -178,7 +178,10 @@ impl WorkingMemoryLedgerBackend {
     ) -> WorkingMemoryFact {
         WorkingMemoryFact {
             task_tree_id: self.ledger.root_session_id.clone(),
-            branch_id: fact.branch_id,
+            // Branch attribution is host-owned just like the author session.
+            // A model may describe an observation but must not be able to
+            // forge another branch's provenance in the shared ledger.
+            branch_id: author_session_id.to_owned(),
             fact_id: fact.fact_id,
             revision: fact.revision,
             kind: fact.kind,
@@ -583,6 +586,33 @@ mod tests {
             ledger.accepted_facts().unwrap()[0].text,
             "root reviewed observation"
         );
+    }
+
+    #[tokio::test]
+    async fn backend_binds_branch_provenance_to_the_actual_author_session() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let backend = WorkingMemoryLedgerBackend::new(ledger.clone());
+        backend
+            .propose(
+                "child-session",
+                BackendFact {
+                    branch_id: "forged-sibling-branch".to_owned(),
+                    fact_id: "fact-a".to_owned(),
+                    revision: 1,
+                    kind: TaskTreeMemoryFactKind::Evidence,
+                    evidence_ref: Some("test://evidence".to_owned()),
+                    confidence: 90,
+                    text: "observed evidence".to_owned(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let stored = ledger.load_all().unwrap();
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].author_session_id, "child-session");
+        assert_eq!(stored[0].branch_id, "child-session");
     }
 
     #[test]
