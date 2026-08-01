@@ -1049,6 +1049,9 @@ impl SessionActor {
                         actor.expert.feature_state =
                             crate::session::expert::ExpertFeatureState::IdleConfigured;
                         actor.expert.executor_requested = model.clone();
+                        actor.expert.advisor_model_pool.clear();
+                        actor.expert.advisor_model_priority.clear();
+                        actor.expert.advisor_model_pool_user_override = false;
                         let snapshot = actor.expert.clone();
                         let _ = self
                             .notifications
@@ -1058,15 +1061,95 @@ impl SessionActor {
                     }
                 };
                 let msg = match result {
-                    Ok(()) => format!("Expert executor configured for this session: {model}."),
+                    Ok(()) => format!(
+                        "Expert executor configured for this session: {model}. Model-pool routing is cleared."
+                    ),
                     Err(code) => format!("Expert executor unchanged: {}.", code.as_str()),
+                };
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertModelPool { models } => {
+                let unavailable = models.iter().find_map(|model| {
+                    self.models_manager
+                        .task_model_error(model)
+                        .map(|reason| (model, reason))
+                });
+                let result = if let Some((model, reason)) = unavailable {
+                    Err(format!("{model}: {reason}"))
+                } else {
+                    let mut actor = self.state.lock().await;
+                    if actor.expert.is_active() {
+                        Err(crate::session::expert::ExpertErrorCode::TaskInProgress
+                            .as_str()
+                            .to_owned())
+                    } else {
+                        actor.expert.feature_state =
+                            crate::session::expert::ExpertFeatureState::IdleConfigured;
+                        actor.expert.advisor_model_pool = models.clone();
+                        actor.expert.advisor_model_priority.clear();
+                        actor.expert.advisor_model_pool_user_override = !models.is_empty();
+                        let snapshot = actor.expert.clone();
+                        let _ = self
+                            .notifications
+                            .persistence_tx
+                            .send(PersistenceMsg::ExpertModeState(snapshot));
+                        Ok(())
+                    }
+                };
+                let msg = match result {
+                    Ok(()) if models.is_empty() => {
+                        "Expert model-pool routing cleared for this session.".to_owned()
+                    }
+                    Ok(()) => format!(
+                        "Expert model pool configured for this session: [{}]. Set /expert priority=<model,...> or /expert priority=auto.",
+                        models.join(", ")
+                    ),
+                    Err(reason) => format!("Expert model pool unchanged: {reason}."),
+                };
+                self.send_slash_command_output(&msg).await;
+                ok_end_turn(0, None)
+            }
+            BuiltinAction::ExpertModelPriority { models } => {
+                let result = {
+                    let mut actor = self.state.lock().await;
+                    if actor.expert.is_active() {
+                        Err(crate::session::expert::ExpertErrorCode::TaskInProgress
+                            .as_str()
+                            .to_owned())
+                    } else if actor.expert.advisor_model_pool.is_empty() {
+                        Err("configure /expert pool=<model,...> first".to_owned())
+                    } else if let Some(model) = models
+                        .iter()
+                        .find(|model| !actor.expert.advisor_model_pool.contains(model))
+                    {
+                        Err(format!("{model} is not in the configured pool"))
+                    } else {
+                        actor.expert.feature_state =
+                            crate::session::expert::ExpertFeatureState::IdleConfigured;
+                        actor.expert.advisor_model_priority = models.clone();
+                        let snapshot = actor.expert.clone();
+                        let _ = self
+                            .notifications
+                            .persistence_tx
+                            .send(PersistenceMsg::ExpertModeState(snapshot));
+                        Ok(())
+                    }
+                };
+                let msg = match result {
+                    Ok(()) if models.is_empty() => {
+                        "Expert priority cleared; the selected pool will use task policy."
+                            .to_owned()
+                    }
+                    Ok(()) => format!("Expert model priority configured: {}.", models.join(" > ")),
+                    Err(reason) => format!("Expert model priority unchanged: {reason}."),
                 };
                 self.send_slash_command_output(&msg).await;
                 ok_end_turn(0, None)
             }
             BuiltinAction::ExpertBadArgs => {
                 self.send_slash_command_output(
-                    "Usage: /expert <task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
+                    "Usage: /expert <task> | fast|vision|deep <task> | revise | go | status | show | budget | off | exec=pro|flash|grok | pool=<model,...>|off | priority=<model,...>|auto",
                 )
                 .await;
                 ok_end_turn(0, None)

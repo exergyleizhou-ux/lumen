@@ -706,6 +706,11 @@ pub struct ExpertModeState {
     /// no priority was supplied; it is not silently replaced by one.
     #[serde(default)]
     pub advisor_model_priority: Vec<String>,
+    /// Set only by an explicit `/expert pool=...` action in this session.
+    /// It outranks an older single-model pin, because it is the user's newer,
+    /// more specific execution choice. Config-file pools leave this false.
+    #[serde(default)]
+    pub advisor_model_pool_user_override: bool,
     pub executor_resolved: Option<String>,
     pub consultant_requested: String,
     pub consultant_resolved: Option<String>,
@@ -824,6 +829,7 @@ impl Default for ExpertModeState {
             fallback_executor_requested: PRO_EXECUTOR_MODEL.to_owned(),
             advisor_model_pool: Vec::new(),
             advisor_model_priority: Vec::new(),
+            advisor_model_pool_user_override: false,
             executor_resolved: None,
             consultant_requested: GROK_MODEL.to_owned(),
             consultant_resolved: None,
@@ -899,6 +905,7 @@ impl ExpertModeState {
         state.fallback_executor_requested = config.fallback_executor_model.clone();
         state.advisor_model_pool = config.advisor_model_pool.clone();
         state.advisor_model_priority = config.advisor_model_priority.clone();
+        state.advisor_model_pool_user_override = false;
         state.consultant_requested = config.consultant_model.clone();
         state.budget.attempt_cap = config.consult_cap_default;
         state.budget.token_cap = u64::from(config.consult_cap_default)
@@ -1756,8 +1763,13 @@ impl ExpertModeState {
                 self.advisor_model_priority.join(" > ")
             };
             out.push_str(&format!(
-                "\nAdvisor pool: [{}] | priority={priority}",
-                self.advisor_model_pool.join(", ")
+                "\nAdvisor pool: [{}] | priority={priority} | source={}",
+                self.advisor_model_pool.join(", "),
+                if self.advisor_model_pool_user_override {
+                    "this-session"
+                } else {
+                    "config"
+                },
             ));
             if let Some(last) = self.advisor_pool_routing_evidence.last() {
                 let skipped = if last.skipped_unavailable_candidates.is_empty() {

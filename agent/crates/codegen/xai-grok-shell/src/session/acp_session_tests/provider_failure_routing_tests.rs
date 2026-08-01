@@ -192,3 +192,64 @@ async fn explicit_user_model_pin_blocks_expert_pool_override() {
         })
         .await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_session_pool_is_newer_than_an_older_single_model_pin() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            actor.models_manager.insert_test_entry(
+                crate::session::expert::PRO_EXECUTOR_MODEL,
+                test_model_entry(
+                    crate::session::expert::PRO_EXECUTOR_MODEL,
+                    "https://pro.example.test/v1",
+                ),
+            );
+            actor.models_manager.insert_test_entry(
+                crate::session::expert::FLASH_EXECUTOR_MODEL,
+                test_model_entry(
+                    crate::session::expert::FLASH_EXECUTOR_MODEL,
+                    "https://flash.example.test/v1",
+                ),
+            );
+            actor.models_manager.set_current_model_id(acp::ModelId::new(
+                crate::session::expert::PRO_EXECUTOR_MODEL,
+            ));
+            let mut expert = crate::session::expert::ExpertModeState::configured();
+            expert.require_consult_on_medium = false;
+            expert.executor_requested = crate::session::expert::PRO_EXECUTOR_MODEL.to_owned();
+            expert.advisor_model_pool =
+                vec![crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned()];
+            expert.advisor_model_priority = expert.advisor_model_pool.clone();
+            expert.advisor_model_pool_user_override = true;
+            actor.state.lock().await.expert = expert;
+
+            let (guard, _) = actor
+                .begin_expert_turn(
+                    "implement a deterministic routing rule",
+                    crate::session::expert::ExpertMode::Fast,
+                    Vec::new(),
+                )
+                .await
+                .expect("a newer explicit pool must select its candidate");
+            let expert = actor.state.lock().await.expert.clone();
+            assert_eq!(
+                expert.executor_requested,
+                crate::session::expert::FLASH_EXECUTOR_MODEL
+            );
+            assert!(expert.advisor_model_pool_user_override);
+            actor
+                .finish_expert_turn(
+                    guard,
+                    &Ok(TurnOutcome::Cancelled {
+                        category: None,
+                        context: None,
+                    }),
+                )
+                .await;
+        })
+        .await;
+}

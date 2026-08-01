@@ -48,13 +48,24 @@ pub(crate) enum BuiltinGate {
 /// All built-in slash commands. Order here = display order in autocomplete.
 fn resolve_expert(args: &str) -> BuiltinAction {
     let trimmed = args.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
+    let lowered = trimmed.to_ascii_lowercase();
+    if let Some(models) = trimmed.strip_prefix("pool=") {
+        return parse_expert_model_list(models, true)
+            .map(|models| BuiltinAction::ExpertModelPool { models })
+            .unwrap_or(BuiltinAction::ExpertBadArgs);
+    }
+    if let Some(models) = trimmed.strip_prefix("priority=") {
+        return parse_expert_model_list(models, false)
+            .map(|models| BuiltinAction::ExpertModelPriority { models })
+            .unwrap_or(BuiltinAction::ExpertBadArgs);
+    }
+    match lowered.as_str() {
         "" | "status" => BuiltinAction::ExpertStatus { verbose: false },
         "show" => BuiltinAction::ExpertStatus { verbose: true },
         "budget" => BuiltinAction::ExpertBudget,
         "off" => BuiltinAction::ExpertOff,
         "exec=pro" => BuiltinAction::ExpertExecutor {
-            model: crate::session::expert::DEFAULT_EXECUTOR_MODEL.to_owned(),
+            model: crate::session::expert::PRO_EXECUTOR_MODEL.to_owned(),
         },
         "exec=flash" => BuiltinAction::ExpertExecutor {
             model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
@@ -93,6 +104,32 @@ fn resolve_expert(args: &str) -> BuiltinAction {
             images: Vec::new(),
         },
     }
+}
+
+/// Parse a comma-delimited, user-authored Expert policy list. A pool may be
+/// explicitly disabled with `pool=off`; priority can return to task policy
+/// with `priority=auto`. Empty elements and duplicates fail closed so the
+/// displayed priority is exactly the persisted priority.
+fn parse_expert_model_list(input: &str, pool: bool) -> Option<Vec<String>> {
+    let normalized = input.trim();
+    if (pool && normalized.eq_ignore_ascii_case("off"))
+        || (!pool
+            && (normalized.eq_ignore_ascii_case("auto") || normalized.eq_ignore_ascii_case("off")))
+    {
+        return Some(Vec::new());
+    }
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut models = Vec::new();
+    for model in normalized.split(',') {
+        let model = model.trim();
+        if model.is_empty() || models.iter().any(|known| known == model) {
+            return None;
+        }
+        models.push(model.to_owned());
+    }
+    Some(models)
 }
 
 pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
@@ -385,7 +422,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         name: "expert",
         description: "Run a bounded expert-assisted task",
         argument_hint: Some(
-            "<task> | fast|vision|deep|dual <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
+            "<task> | fast|vision|deep|dual <task> | revise | go | status | show | budget | off | exec=pro|flash|grok | pool=<model,...>|off | priority=<model,...>|auto",
         ),
         aliases: &[],
         gate: BuiltinGate::Expert,
@@ -1312,6 +1349,12 @@ pub(super) enum BuiltinAction {
     ExpertExecutor {
         model: String,
     },
+    ExpertModelPool {
+        models: Vec<String>,
+    },
+    ExpertModelPriority {
+        models: Vec<String>,
+    },
     ExpertBadArgs,
 }
 impl BuiltinAction {
@@ -1354,6 +1397,8 @@ impl BuiltinAction {
             | BuiltinAction::ExpertBudget
             | BuiltinAction::ExpertOff
             | BuiltinAction::ExpertExecutor { .. }
+            | BuiltinAction::ExpertModelPool { .. }
+            | BuiltinAction::ExpertModelPriority { .. }
             | BuiltinAction::ExpertBadArgs => "expert",
         }
     }
@@ -1396,6 +1441,8 @@ impl BuiltinAction {
             BuiltinAction::ExpertBudget => false,
             BuiltinAction::ExpertOff => false,
             BuiltinAction::ExpertExecutor { .. } => true,
+            BuiltinAction::ExpertModelPool { .. } => true,
+            BuiltinAction::ExpertModelPriority { .. } => true,
             BuiltinAction::ExpertBadArgs => false,
         }
     }
@@ -3048,6 +3095,24 @@ mod tests {
             matches!(resolve_expert_for_test("exec=grok"), BuiltinAction::ExpertExecutor { model } if model == "grok-4.5")
         );
         assert!(matches!(
+            resolve_expert_for_test("pool=deepseek-v4-flash, grok-4.5, deepseek-v4-pro"),
+            BuiltinAction::ExpertModelPool { models }
+                if models == ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("priority=grok-4.5,deepseek-v4-flash"),
+            BuiltinAction::ExpertModelPriority { models }
+                if models == ["grok-4.5", "deepseek-v4-flash"]
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("pool=off"),
+            BuiltinAction::ExpertModelPool { models } if models.is_empty()
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("priority=auto"),
+            BuiltinAction::ExpertModelPriority { models } if models.is_empty()
+        ));
+        assert!(matches!(
             resolve_expert_for_test("fast fix auth"),
             BuiltinAction::ExpertStart {
                 mode: crate::session::expert::ExpertMode::Fast,
@@ -3087,7 +3152,15 @@ mod tests {
 
     #[test]
     fn expert_future_surface_is_fail_closed() {
-        for arg in ["deep", "vision", "dual", "exec=other"] {
+        for arg in [
+            "deep",
+            "vision",
+            "dual",
+            "exec=other",
+            "pool=",
+            "pool=flash,,grok",
+            "priority=grok,grok",
+        ] {
             assert!(
                 matches!(resolve_expert_for_test(arg), BuiltinAction::ExpertBadArgs),
                 "{arg}"

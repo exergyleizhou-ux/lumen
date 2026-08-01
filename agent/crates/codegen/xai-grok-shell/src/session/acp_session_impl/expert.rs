@@ -674,7 +674,9 @@ impl SessionActor {
             let mut actor = self.state.lock().await;
             let mut executor = actor.expert.executor_requested.clone();
             let fallback_executor = actor.expert.fallback_executor_requested.clone();
-            let pool_selection = if continuation.is_none() && !advisor_user_model_pinned {
+            let pool_selection = if continuation.is_none()
+                && (!advisor_user_model_pinned || actor.expert.advisor_model_pool_user_override)
+            {
                 crate::session::expert::advisor_pool_executor_selection(
                     task,
                     &actor.expert.advisor_model_pool,
