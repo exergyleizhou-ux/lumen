@@ -233,6 +233,19 @@ pub struct ModelRoutingConfig {
     /// User's deterministic fallback order. Entries outside `model_pool` are
     /// ignored; an empty list preserves the pool declaration order.
     pub priority: Vec<String>,
+    /// Optional per-task preference lists used only when `priority` is empty.
+    /// Every entry remains constrained by `model_pool`; this lets users give
+    /// custom model aliases a deterministic task role without exposing a
+    /// provider/model outside their allowlist.
+    pub task_preferences: ModelRoutingTaskPreferences,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelRoutingTaskPreferences {
+    pub implementation: Vec<String>,
+    pub review: Vec<String>,
+    pub research: Vec<String>,
 }
 
 impl Default for ModelRoutingConfig {
@@ -241,6 +254,7 @@ impl Default for ModelRoutingConfig {
             enabled: false,
             model_pool: Vec::new(),
             priority: Vec::new(),
+            task_preferences: ModelRoutingTaskPreferences::default(),
         }
     }
 }

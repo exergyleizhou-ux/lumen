@@ -91,7 +91,7 @@ pub struct AdvisorPoolSelection {
     pub skipped_unavailable_candidates: Vec<String>,
 }
 
-fn classify_advisor_task(task: &str) -> AdvisorTaskClass {
+pub fn classify_advisor_task(task: &str) -> AdvisorTaskClass {
     let task_lower = task.to_ascii_lowercase();
     if ["review", "audit", "security", "verify", "test"]
         .iter()

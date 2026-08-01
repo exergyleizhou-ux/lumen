@@ -563,6 +563,7 @@ impl ModelsManager {
         &self,
         pool: &[String],
         priority: &[String],
+        task_preferences: &config::ModelRoutingTaskPreferences,
         task: &str,
     ) -> Option<String> {
         let catalog = self.models();
@@ -576,8 +577,24 @@ impl ModelsManager {
             })
             .flat_map(|(key, entry)| [key.clone(), entry.info.model.clone()])
             .collect::<Vec<_>>();
-        crate::session::expert::advisor_pool_executor_selection(task, pool, priority, routable_ids)
-            .map(|selection| selection.model_id)
+        let task_priority = if priority.is_empty() {
+            match crate::session::expert::classify_advisor_task(task) {
+                crate::session::expert::AdvisorTaskClass::Implementation => {
+                    &task_preferences.implementation
+                }
+                crate::session::expert::AdvisorTaskClass::Review => &task_preferences.review,
+                crate::session::expert::AdvisorTaskClass::Research => &task_preferences.research,
+            }
+        } else {
+            priority
+        };
+        crate::session::expert::advisor_pool_executor_selection(
+            task,
+            pool,
+            task_priority,
+            routable_ids,
+        )
+        .map(|selection| selection.model_id)
     }
 
     pub fn set_current_model_id(&self, id: acp::ModelId) {

@@ -158,6 +158,7 @@ async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
                     enabled: true,
                     model_pool: vec!["flash".to_owned(), "grok".to_owned()],
                     priority: vec!["flash".to_owned(), "grok".to_owned()],
+                    task_preferences: Default::default(),
                 },
             );
             let initial = actor
@@ -220,6 +221,7 @@ async fn ordinary_root_turn_preselects_a_healthy_pool_model_for_its_task() {
                     enabled: true,
                     model_pool: vec!["flash".to_owned(), "grok".to_owned()],
                     priority: vec![],
+                    task_preferences: Default::default(),
                 },
             );
             let initial = actor
@@ -271,6 +273,7 @@ async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
                     enabled: true,
                     model_pool: vec!["flash".to_owned(), "grok".to_owned()],
                     priority: vec!["grok".to_owned()],
+                    task_preferences: Default::default(),
                 },
             );
             let initial = actor
@@ -331,6 +334,7 @@ async fn subagent_turn_never_inherits_ordinary_reroute_without_its_own_contract(
                     enabled: true,
                     model_pool: vec!["flash".to_owned(), "grok".to_owned()],
                     priority: vec!["grok".to_owned()],
+                    task_preferences: Default::default(),
                 },
             );
             let initial = actor
@@ -388,6 +392,7 @@ async fn subagent_turn_never_preselects_an_ordinary_pool_model() {
                     enabled: true,
                     model_pool: vec!["flash".to_owned(), "grok".to_owned()],
                     priority: vec![],
+                    task_preferences: Default::default(),
                 },
             );
             let initial = actor

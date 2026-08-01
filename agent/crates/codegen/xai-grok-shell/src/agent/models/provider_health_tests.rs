@@ -90,6 +90,7 @@ fn empty_priority_uses_task_policy_only_inside_the_user_pool() {
         manager.select_healthy_model_for_task(
             &["flash".to_owned(), "grok".to_owned()],
             &[],
+            &Default::default(),
             "review the security boundary",
         ),
         Some("grok".to_owned())
@@ -98,9 +99,48 @@ fn empty_priority_uses_task_policy_only_inside_the_user_pool() {
         manager.select_healthy_model_for_task(
             &["flash".to_owned(), "grok".to_owned()],
             &[],
+            &Default::default(),
             "implement the parser",
         ),
         Some("flash".to_owned())
+    );
+}
+
+#[test]
+fn task_preferences_route_custom_model_aliases_without_expanding_pool() {
+    let manager = ModelsManager::default();
+    let entry = |model: &str, base_url: &str| {
+        let mut info = crate::agent::config::ModelInfo::fallback(model);
+        info.base_url = base_url.to_owned();
+        crate::agent::config::ModelEntry {
+            info,
+            api_key: Some("test-key".to_owned()),
+            env_key: None,
+            auth_provider: None,
+            api_base_url: Some(base_url.to_owned()),
+        }
+    };
+    manager.insert_test_entry(
+        "fast-alias",
+        entry("fast-alias", "https://fast.example.test/v1"),
+    );
+    manager.insert_test_entry(
+        "review-alias",
+        entry("review-alias", "https://review.example.test/v1"),
+    );
+    let preferences = crate::agent::config::ModelRoutingTaskPreferences {
+        implementation: vec!["fast-alias".to_owned()],
+        review: vec!["review-alias".to_owned(), "outside".to_owned()],
+        research: vec![],
+    };
+    assert_eq!(
+        manager.select_healthy_model_for_task(
+            &["fast-alias".to_owned(), "review-alias".to_owned()],
+            &[],
+            &preferences,
+            "review the security boundary",
+        ),
+        Some("review-alias".to_owned())
     );
 }
 

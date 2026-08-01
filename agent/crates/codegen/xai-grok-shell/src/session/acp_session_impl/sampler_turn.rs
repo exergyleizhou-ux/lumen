@@ -876,6 +876,7 @@ impl SessionActor {
         let Some(next_model) = self.models_manager.select_healthy_model_for_task(
             &policy.model_pool,
             &policy.priority,
+            &policy.task_preferences,
             task,
         ) else {
             return;

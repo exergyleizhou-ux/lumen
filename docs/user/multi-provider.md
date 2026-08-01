@@ -129,6 +129,7 @@ priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
 - `/model` 的显式用户 pin 禁止自动切换；任何 subagent（前台或后台）和已进入输出约束的路径也禁止该重放；
 - 所有候选降级、未配置或安装切换失败时，保留原始错误，不回退到池外模型；
 - `priority` 为空时在 pool 内按任务选择：implementation 优先 Flash，review/research 优先 Grok；没有匹配候选时才保留 pool 顺序。priority 中不在 pool 的 ID 被忽略。
+- 自定义模型别名可用 `[model_routing.task_preferences]` 为 `implementation`、`review`、`research` 分别列出候选顺序；它仅在全局 `priority` 为空时生效，且仍严格受 `model_pool` allowlist 限制。
 
 当前这一能力覆盖普通前台 sampler turn。后台 workflow/subagent 的独立预算、幂等任务键和恢复语义仍由 Kairos 阶段接线，不能把本节扩大为“所有后台任务已自动切模型”。
 
