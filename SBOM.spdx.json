@@ -2,10 +2,10 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "lumen-69730d3",
-  "documentNamespace": "https://lumen.local/spdx/69730d32fa246245bca0ee17441e629d681c6e52",
+  "name": "lumen-5ab977d",
+  "documentNamespace": "https://lumen.local/spdx/5ab977d54a1942c331aea1879f05c3d0186ff734",
   "creationInfo": {
-    "created": "2026-08-01T09:47:30Z",
+    "created": "2026-08-01T09:50:50Z",
     "creators": [
       "Tool: scripts/generate-sbom.sh",
       "Organization: Lumen"
@@ -27,7 +27,7 @@
         {
           "referenceCategory": "OTHER",
           "referenceType": "gitCommit",
-          "referenceLocator": "69730d32fa246245bca0ee17441e629d681c6e52"
+          "referenceLocator": "5ab977d54a1942c331aea1879f05c3d0186ff734"
         }
       ]
     },
@@ -14112,9 +14112,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-69730d3",
+      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-5ab977d",
       "name": "github.com/lumen-ai/lumen-science",
-      "versionInfo": "69730d3",
+      "versionInfo": "5ab977d",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -14125,7 +14125,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@69730d3"
+          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@5ab977d"
         }
       ]
     }
@@ -20539,15 +20539,15 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-69730d3"
+      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-5ab977d"
     }
   ],
   "annotations": [
     {
       "annotationType": "OTHER",
       "annotator": "Tool: scripts/generate-sbom.sh",
-      "annotationDate": "2026-08-01T09:47:30Z",
-      "comment": "{\"monorepo_git_head\": \"69730d32fa246245bca0ee17441e629d681c6e52\", \"package_count\": 1282, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"63b85ec091fea1a9817967b9ced55d90132573d200d42827a0802b6225bb9b21\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"2379118080ae7846227699369baee3ebb774ac4569d8c9592516b19d39a34114\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
+      "annotationDate": "2026-08-01T09:50:50Z",
+      "comment": "{\"monorepo_git_head\": \"5ab977d54a1942c331aea1879f05c3d0186ff734\", \"package_count\": 1282, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"63b85ec091fea1a9817967b9ced55d90132573d200d42827a0802b6225bb9b21\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"49acbee004cc7e2b666a0cfbf16cb751dbb4c0a92c4e26d5410cb6242d71a414\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
     }
   ]
 }
