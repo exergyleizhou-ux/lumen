@@ -2,26 +2,20 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.251",
-  "head_short": "4a4fdf45",
+  "head_short": "5393a961",
   "pass": false,
   "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "binary_tuple_pre:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
-    "binary_tuple_post:exit 1 FAIL: binary is not built from current HEAD 4a4fdf45: grok 0.2.116 (c4f86ec4) ",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=False blockers=['binary_source_mismatch:expected=3442138', 'm5_onboarding_semantics_invalid', 'r0_full_binary_sha256_mismatch', 'status_check_not_pass:L0_c",
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_tool_calls', 'status_check_not_pass:L2_min_",
     "L2_min_e2e:SKIP",
-    "R0_min:SKIP",
-    "eval_live:SKIP",
-    "L4_fault_cancel:SKIP",
     "L1_tool_calls:SKIP",
+    "L0_connect:SKIP",
     "L3_multi_tool:SKIP",
-    "L5_long_session:SKIP",
-    "R0_full:SKIP",
-    "L5_one_hour_soak:SKIP",
-    "L0_connect:SKIP"
+    "eval_live:SKIP"
   ],
   "can_tool_call": false,
-  "source_lock_sha256": "9e879114dadef3792e92730e118a991d8677385c7b5a6d28e8c7fda9185124d6",
-  "binary_sha256": "114d6c602155d91f05fec97fcd5623a4b00609021a633a6623204692a5b7627a",
-  "generated_at": "2026-08-01T15:57:38Z"
+  "source_lock_sha256": "bbda50d929cb98052bc2a40aefaf18813cfa0a29d4363de06e9439a55cf3351d",
+  "binary_sha256": "3321e3cfe4aadfaa61d1354eb3160ba1d18f034ed5c6432521765d6e945caba6",
+  "generated_at": "2026-08-01T16:26:04Z"
 }
