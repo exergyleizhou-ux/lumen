@@ -107,8 +107,8 @@ Grok；无法分类时保留 pool 顺序。若希望自己决定顺序：
 - `401`、`403` 和普通 `400` 不会被误判为“额度耗尽”。
 
 用 `/expert status` 查看当前 pool、priority 和最近一次选择证据；用 `/expert pool=off` 清除它。
-这套 pool 路由当前只覆盖新建 Expert 任务。普通 turn/后台任务的同等 no-replay 接线仍在 Lumen 2
-路线中，不能把上述行为扩大宣称为全局自动切模型。
+这套 Expert pool 路由只覆盖新建 Expert 任务。普通 turn 和 scheduler 有各自受限的
+no-replay 路径，不能把上述行为扩大宣称为全局自动切模型。
 
 ## 普通 turn：显式池、前台预选与零输出重路由
 
@@ -131,7 +131,11 @@ priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
 - `priority` 为空时在 pool 内按任务选择：implementation 优先 Flash，review/research 优先 Grok；没有匹配候选时才保留 pool 顺序。priority 中不在 pool 的 ID 被忽略。
 - 自定义模型别名可用 `[model_routing.task_preferences]` 为 `implementation`、`review`、`research` 分别列出候选顺序；它仅在全局 `priority` 为空时生效，且仍严格受 `model_pool` allowlist 限制。
 
-当前这一能力覆盖普通前台 sampler turn。后台 workflow/subagent 的独立预算、幂等任务键和恢复语义仍由 Kairos 阶段接线，不能把本节扩大为“所有后台任务已自动切模型”。
+当前这一能力覆盖普通前台 sampler turn，以及 **全新、根会话拥有的 scheduler loop
+iteration** 的请求前选择。后者只在尚未 spawn child 时选择健康候选；resume chain、嵌套
+child、显式 runtime model 和任何用户 `/model` pin 都不会被自动改写。后台 workflow 与
+一般 subagent 的完整预算、幂等恢复和自动 routing 仍属于 Kairos 后续阶段，不能把本节扩大为
+“所有后台任务已自动切模型”。
 
 自定义厂商或租户端点：
 

@@ -2,11 +2,11 @@
 
 ## NextGen 最终可执行总纲
 
-**日期：** 2026-08-01（北京时间）
+**日期：** 2026-08-02（北京时间）
 **性质：** Lumen 后续实施的唯一排序、依赖、验收与交接总纲；不是功能完成、CI 通过、发布、安装或 live/provider 证明。
 **范围：** Rust Lumen coding agent；macOS-first；不做 Windows 专项、未授权 provider/billable 调用、deploy 或 release。
 **方法参考：** 同日 Lumen Science 执行书只提供阶段与证据结构；它不是 Lumen Core 的 API、代码或发布依赖。
-**证据窗口：** 2026-07-27 至 2026-08-01 的 Lumen 提交、当前源码、当前 GitHub 和当前工作树。窗口外旧规划仅是历史，不是需求、优先级或完成依据。
+**证据窗口：** 2026-07-27 至 2026-08-02 的 Lumen 提交、当前源码、当前 GitHub 和当前工作树。窗口外旧规划仅是历史，不是需求、优先级或完成依据。
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
 
@@ -67,7 +67,7 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 | 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；候选源码身份由 `SOURCE_LOCK.json.monorepo.git_head` 决定 | 已推送的候选分支，不是 GitHub main、发布或安装证明；R0 不在本书硬编码会漂移的 HEAD。 |
 | GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
 | 分叉量 | 每次 R0 前重新计算 `origin/main...HEAD` | 提交数不是验收证据；仍须 R0 分组审查、exact CI 与人工 merge。 |
-| 工作树 | 有并行未提交源码修改；数量和归属会变 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
+| 工作树 | 每次 R0 source candidate 前必须重新实测 clean/dirty；任何未分类路径都不进入候选 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | 当前兼容 VERSION 为 0.1.251；Lumen 2 首候选目标为 2.0.0-rc.1 | version、tag、release 与同步分门，未过 R0 不得提前 bump/tag。 |
 | GitHub CI | 只承认 PR 上与 source candidate 对应的 exact-SHA run | 未完成、失败或其他 SHA 的 run 都不能被说成当前全绿。 |
@@ -76,7 +76,7 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 
 ### 1.2 来源锁的真实含义
 
-SOURCE_LOCK 当前记录 e7afd15b 及关键文件 hash，但并不证明脏工作树属于 e7。R0 的强制顺序：
+SOURCE_LOCK 的 source SHA 与关键文件 hash 必须每次从当前候选实测读取；历史 SHA 不证明后续工作树。R0 的强制顺序：
 
 1. 所有源码和文档合同先形成 clean source candidate commit；
 2. 从该 commit 构建并记录 binary hash；
@@ -89,11 +89,11 @@ SOURCE_LOCK 当前记录 e7afd15b 及关键文件 hash，但并不证明脏工�
 | 域 | 已有资产 | 不能误报为完成 |
 |---|---|---|
 | 子 Agent | 真实 lineage、三级硬拒、根取消、Pager 递归树、树级 token/tool/time 限额 | exact CI、跨进程恢复和完整产品 golden path。 |
-| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority | 普通 turn/background 的 no-replay 路由与 root-approved assignment。 |
+| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority；普通 turn no-replay；全新 root scheduler iteration 的请求前 pool 选择 | root-approved assignment、一般后台 workflow/subagent 的完整 no-replay 路由与 provider 额度证据。 |
 | memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger | 长期记忆 promotion、跨 worktree/recovery 的完整产品证明。 |
 | 进程 | scheduler、workflow、leader、background terminal、lease heartbeat、recovery proof、backoff/dead-letter | 统一 activity 原子聚合、24h daemon golden path。 |
 | 验证 | VerifyAfterEditOutcome；Some(Pass) 才算 edit delivery | 全任务或 release 成功。 |
-| provider | catalog、BYOK、role pin、Expert pool health skip 与 routing evidence | 普通 turn/background 的 failover receipt、真实额度证明。 |
+| provider | catalog、BYOK、role pin、Expert pool health skip、普通 turn 与全新 root scheduler preflight routing evidence | 可复核的 provider failover receipt、真实额度证明。 |
 
 ### 1.4 状态词典
 
