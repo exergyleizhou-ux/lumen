@@ -26,6 +26,9 @@ fn task(id: &str, recurring: bool, durable: bool) -> ScheduledTask {
         active_run_lease: None,
         last_run_lease_takeover: None,
         last_run_receipt: None,
+        consecutive_run_failures: 0,
+        retry_not_before: None,
+        dead_lettered: false,
     }
 }
 

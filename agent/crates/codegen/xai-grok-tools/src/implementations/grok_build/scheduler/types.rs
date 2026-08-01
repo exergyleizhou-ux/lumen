@@ -248,6 +248,17 @@ pub struct ScheduledTask {
     /// run. It deliberately excludes model output and error text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) last_run_receipt: Option<SchedulerRunReceipt>,
+    /// Consecutive terminal failures of background iterations. A successful
+    /// run resets this counter; cancellation is not retried automatically.
+    #[serde(default)]
+    pub(crate) consecutive_run_failures: u32,
+    /// Do not dispatch before this wall-clock time after a retryable failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) retry_not_before: Option<DateTime<Utc>>,
+    /// A bounded failure budget has been exhausted. The task stays visible for
+    /// inspection but is no longer eligible for autonomous dispatch.
+    #[serde(default)]
+    pub(crate) dead_lettered: bool,
 }
 
 /// A bounded, persisted claim to execute one scheduler task.
@@ -348,6 +359,8 @@ pub const LOOP_FRESH_CHAIN_EVERY: u32 = 10;
 
 pub const LOOP_COMPLETION_OUTPUT_CAP: usize = 4_000;
 
+pub const MAX_SCHEDULER_RUN_FAILURES: u32 = 5;
+
 const MAX_SCHEDULER_TRANSITIONS: usize = 50;
 
 fn default_recurring() -> bool {
@@ -394,6 +407,9 @@ impl ScheduledTask {
             active_run_lease: None,
             last_run_lease_takeover: None,
             last_run_receipt: None,
+            consecutive_run_failures: 0,
+            retry_not_before: None,
+            dead_lettered: false,
         }
     }
 
@@ -466,10 +482,59 @@ impl ScheduledTask {
         Ok(())
     }
 
+    pub(crate) fn record_terminal_run_status(
+        &mut self,
+        status: SchedulerRunStatus,
+        now: DateTime<Utc>,
+    ) {
+        match status {
+            SchedulerRunStatus::Completed => {
+                self.consecutive_run_failures = 0;
+                self.retry_not_before = None;
+                self.dead_lettered = false;
+            }
+            SchedulerRunStatus::Cancelled => {
+                // A cancellation is an intentional stop signal, not an
+                // autonomous retry request.
+                self.retry_not_before = None;
+            }
+            SchedulerRunStatus::Failed => {
+                self.consecutive_run_failures = self.consecutive_run_failures.saturating_add(1);
+                if self.consecutive_run_failures >= MAX_SCHEDULER_RUN_FAILURES {
+                    self.dead_lettered = true;
+                    self.retry_not_before = None;
+                    return;
+                }
+                let exponent = self.consecutive_run_failures.saturating_sub(1).min(6);
+                let delay_secs = 5_u64.saturating_mul(1_u64 << exponent).min(300);
+                self.retry_not_before = now.checked_add_signed(chrono::Duration::seconds(
+                    i64::try_from(delay_secs).expect("bounded retry delay fits i64"),
+                ));
+            }
+        }
+    }
+
+    pub(crate) fn clear_failure_backoff(&mut self) {
+        self.consecutive_run_failures = 0;
+        self.retry_not_before = None;
+        self.dead_lettered = false;
+    }
+
     /// Next fire time, computed from `last_fired_at` (or `created_at` if never fired).
     pub fn next_fire_at(&self) -> DateTime<Utc> {
         let anchor = self.last_fired_at.unwrap_or(self.created_at);
         anchor + chrono::Duration::seconds(self.interval_secs as i64)
+    }
+
+    /// The actual autonomous dispatch deadline, including retry backoff.
+    pub fn next_due_at(&self) -> DateTime<Utc> {
+        self.retry_not_before
+            .map(|retry| self.next_fire_at().max(retry))
+            .unwrap_or_else(|| self.next_fire_at())
+    }
+
+    pub(crate) fn is_dispatchable(&self, now: DateTime<Utc>) -> bool {
+        !self.dead_lettered && self.next_due_at() <= now
     }
 
     /// Whether this task has expired (recurring tasks only).
@@ -616,6 +681,9 @@ mod tests {
         assert!(task.active_run_lease.is_none());
         assert!(task.last_run_lease_takeover.is_none());
         assert!(task.last_run_receipt.is_none());
+        assert_eq!(task.consecutive_run_failures, 0);
+        assert!(task.retry_not_before.is_none());
+        assert!(!task.dead_lettered);
     }
 
     #[test]
@@ -692,6 +760,54 @@ mod tests {
             task.acquire_run_lease("scheduler-a", now, chrono::Duration::zero()),
             Err(SchedulerLeaseError::InvalidTtl)
         );
+    }
+
+    #[test]
+    fn failed_runs_back_off_then_dead_letter_and_success_resets_state() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "test".into(), true, true);
+        task.last_fired_at = Some(now);
+
+        task.record_terminal_run_status(SchedulerRunStatus::Failed, now);
+        assert_eq!(task.consecutive_run_failures, 1);
+        assert_eq!(
+            task.retry_not_before,
+            Some(now + chrono::Duration::seconds(5))
+        );
+        assert_eq!(task.next_due_at(), now + chrono::Duration::seconds(5));
+        assert!(!task.is_dispatchable(now + chrono::Duration::seconds(4)));
+        assert!(task.is_dispatchable(now + chrono::Duration::seconds(5)));
+
+        for _ in 1..MAX_SCHEDULER_RUN_FAILURES {
+            task.record_terminal_run_status(SchedulerRunStatus::Failed, now);
+        }
+        assert_eq!(task.consecutive_run_failures, MAX_SCHEDULER_RUN_FAILURES);
+        assert!(task.dead_lettered);
+        assert!(task.retry_not_before.is_none());
+        assert!(!task.is_dispatchable(now + chrono::Duration::hours(1)));
+
+        task.record_terminal_run_status(SchedulerRunStatus::Completed, now);
+        assert_eq!(task.consecutive_run_failures, 0);
+        assert!(!task.dead_lettered);
+        assert!(task.retry_not_before.is_none());
+
+        task.record_terminal_run_status(SchedulerRunStatus::Failed, now);
+        task.clear_failure_backoff();
+        assert_eq!(task.consecutive_run_failures, 0);
+        assert!(!task.dead_lettered);
+        assert!(task.retry_not_before.is_none());
+    }
+
+    #[test]
+    fn cancelled_run_does_not_schedule_automatic_retry() {
+        let now = Utc::now();
+        let mut task = ScheduledTask::new(1, "test".into(), true, true);
+        task.retry_not_before = Some(now + chrono::Duration::minutes(1));
+
+        task.record_terminal_run_status(SchedulerRunStatus::Cancelled, now);
+
+        assert!(task.retry_not_before.is_none());
+        assert_eq!(task.consecutive_run_failures, 0);
     }
 
     #[test]

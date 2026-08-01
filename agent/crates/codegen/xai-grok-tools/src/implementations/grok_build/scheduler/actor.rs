@@ -59,7 +59,7 @@ fn task_created_payload(task: &ScheduledTask, version: SchedulerVersion) -> Sche
         task_id: task.id.clone(),
         prompt: task.prompt.clone(),
         human_schedule: interval_to_human(task.interval_secs),
-        next_fire_at: Some(task.next_fire_at().to_rfc3339()),
+        next_fire_at: Some(task.next_due_at().to_rfc3339()),
         generation: version.generation(),
         revision: version.revision(),
     }
@@ -287,7 +287,7 @@ impl SchedulerActor {
                     && res.get::<State<SchedulerState>>().is_some_and(|s| {
                         s.tasks
                             .iter()
-                            .any(|t| t.recurring && !t.foreground && t.next_fire_at() <= soon)
+                            .any(|t| t.recurring && !t.foreground && t.is_dispatchable(soon))
                     });
                 let wired = res.get::<SubagentEventSender>().is_some()
                     && res.get::<SessionIdResource>().is_some();
@@ -310,8 +310,8 @@ impl SchedulerActor {
             .map(|s| {
                 s.tasks
                     .iter()
-                    .filter(|task| !self.blocked_expiries.contains(&task.id))
-                    .map(ScheduledTask::next_fire_at)
+                    .filter(|task| !self.blocked_expiries.contains(&task.id) && !task.dead_lettered)
+                    .map(ScheduledTask::next_due_at)
                     .min()
                     .map(|next| {
                         let now = Utc::now();
@@ -332,7 +332,7 @@ impl SchedulerActor {
         let mut res = self.resources.lock().await;
         let state = res.get_or_default::<State<SchedulerState>>();
         let idx = state.tasks.iter().position(|task| {
-            task.next_fire_at() <= now && !self.blocked_expiries.contains(&task.id)
+            task.is_dispatchable(now) && !self.blocked_expiries.contains(&task.id)
         });
 
         let Some(idx) = idx else {
@@ -457,7 +457,7 @@ impl SchedulerActor {
         // Advance the cadence before releasing actor state to avoid immediate reselection.
         let task = &mut state.tasks[idx];
         task.last_fired_at = Some(now);
-        let next_fire_at = task.recurring.then(|| task.next_fire_at().to_rfc3339());
+        let next_fire_at = task.recurring.then(|| task.next_due_at().to_rfc3339());
         if should_remove {
             state.tasks.remove(idx);
         }
@@ -842,6 +842,7 @@ impl SchedulerActor {
                     result.duration_ms,
                     result.total_tokens_used,
                 ));
+                task.record_terminal_run_status(status, Utc::now());
                 if !matches!(status, SchedulerRunStatus::Completed) {
                     tracing::warn!(
                         task_id = %guard_task_id,
@@ -910,7 +911,7 @@ impl SchedulerActor {
             state
                 .tasks
                 .iter()
-                .filter(|task| task.recurring || task.next_fire_at() > now)
+                .filter(|task| task.recurring || task.next_due_at() > now)
                 .map(|task| task_created_payload(task, version))
                 .collect()
         };
@@ -975,6 +976,10 @@ impl SchedulerActor {
                     if prompt != task.prompt {
                         task.chain_reset_pending = true;
                         task.iterations_since_fresh = 0;
+                        // Editing the job is an explicit human repair action.
+                        // It clears autonomous failure suppression, while the
+                        // in-flight anchor remains in place for safety.
+                        task.clear_failure_backoff();
                     }
                     task.prompt = prompt;
                 }
@@ -1056,7 +1061,7 @@ impl SchedulerActor {
 mod tests {
     use super::*;
     use crate::implementations::grok_build::scheduler::types::{
-        ScheduledTask, SchedulerHandle, scheduler_tool_error,
+        MAX_SCHEDULER_RUN_FAILURES, ScheduledTask, SchedulerHandle, scheduler_tool_error,
     };
     use crate::implementations::grok_build::task::types::SubagentResult;
     use crate::notification::{AcknowledgedToolNotification, ToolNotification};
@@ -2180,6 +2185,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_background_result_records_backoff_before_another_dispatch() {
+        let (handle, cancel, _notif_rx, mut subagent_rx, resources) =
+            make_test_actor_with_subagents_at(0);
+        let task_id = create_due_task(&handle, "check deploy status", false).await;
+
+        let SubagentEvent::Spawn(spawn) = next_event(&mut subagent_rx).await else {
+            panic!("expected Spawn");
+        };
+        spawn
+            .respond_with(|request| SubagentResult {
+                success: false,
+                error: Some("controlled failure".to_owned()),
+                subagent_id: request.id.clone(),
+                child_session_id: request.id.clone(),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let failure_state = {
+                let resources = resources.lock().await;
+                let task = resources
+                    .get::<State<SchedulerState>>()
+                    .unwrap()
+                    .tasks
+                    .iter()
+                    .find(|task| task.id == task_id)
+                    .unwrap();
+                (
+                    task.consecutive_run_failures,
+                    task.retry_not_before,
+                    task.last_subagent_id.clone(),
+                    task.active_run_lease.is_some(),
+                )
+            };
+            if failure_state.0 == 1 {
+                assert!(failure_state.1.is_some());
+                assert!(failure_state.2.is_none());
+                assert!(!failure_state.3);
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "failed scheduler run did not record backoff"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(150), subagent_rx.recv())
+                .await
+                .is_err(),
+            "retry backoff must prevent immediate redispatch"
+        );
+        cancel.cancel();
+    }
+
+    #[tokio::test]
     async fn in_flight_iteration_skips_fire_then_resumes_chain() {
         let (handle, cancel, mut notif_rx, mut subagent_rx, resources) =
             make_test_actor_with_subagents_at(u64::MAX - 2);
@@ -2292,6 +2356,53 @@ mod tests {
         assert_eq!(updated.last_subagent_id.as_deref(), Some(first.id.as_str()));
         assert!(updated.chain_reset_pending);
         assert_eq!(updated.iterations_since_fresh, 0);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn prompt_update_revives_a_dead_lettered_task() {
+        let (handle, cancel, _notif_rx, _subagent_rx, resources) =
+            make_test_actor_with_subagents_at(0);
+        let task = ScheduledTask::new(3600, "watch ci".into(), true, false);
+        let task_id = task.id.clone();
+        let (create_tx, create_rx) = tokio::sync::oneshot::channel();
+        handle
+            .0
+            .send(SchedulerCommand::Create {
+                task,
+                reply: create_tx,
+            })
+            .unwrap();
+        create_rx.await.unwrap().unwrap();
+        {
+            let mut resources = resources.lock().await;
+            let task = resources
+                .get_or_default::<State<SchedulerState>>()
+                .tasks
+                .iter_mut()
+                .find(|task| task.id == task_id)
+                .unwrap();
+            for _ in 0..MAX_SCHEDULER_RUN_FAILURES {
+                task.record_terminal_run_status(SchedulerRunStatus::Failed, Utc::now());
+            }
+            assert!(task.dead_lettered);
+        }
+
+        let (update_tx, update_rx) = tokio::sync::oneshot::channel();
+        handle
+            .0
+            .send(SchedulerCommand::Update {
+                id: task_id,
+                prompt: Some("watch ci after repair".into()),
+                interval_secs: None,
+                reply: update_tx,
+            })
+            .unwrap();
+        let updated = update_rx.await.unwrap().unwrap();
+        assert_eq!(updated.consecutive_run_failures, 0);
+        assert!(updated.retry_not_before.is_none());
+        assert!(!updated.dead_lettered);
 
         cancel.cancel();
     }

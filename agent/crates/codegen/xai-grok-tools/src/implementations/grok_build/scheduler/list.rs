@@ -126,7 +126,7 @@ impl xai_tool_runtime::Tool for SchedulerListTool {
             .tasks
             .into_iter()
             .map(|t| {
-                let next_fire = t.next_fire_at().to_rfc3339();
+                let next_fire = t.next_due_at().to_rfc3339();
                 let created = t.created_at.to_rfc3339();
                 let prompt = if t.prompt.len() > 80 {
                     let cut = crate::util::floor_char_boundary(&t.prompt, 80);
