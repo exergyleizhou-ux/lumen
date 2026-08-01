@@ -2,10 +2,10 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "lumen-beede2d",
-  "documentNamespace": "https://lumen.local/spdx/beede2ddd92a77635d9120fb0be9f4863e1be9b6",
+  "name": "lumen-b09b929",
+  "documentNamespace": "https://lumen.local/spdx/b09b929f887e925035f548960e304b6439a81654",
   "creationInfo": {
-    "created": "2026-07-26T20:11:43Z",
+    "created": "2026-08-01T05:28:21Z",
     "creators": [
       "Tool: scripts/generate-sbom.sh",
       "Organization: Lumen"
@@ -27,7 +27,7 @@
         {
           "referenceCategory": "OTHER",
           "referenceType": "gitCommit",
-          "referenceLocator": "beede2ddd92a77635d9120fb0be9f4863e1be9b6"
+          "referenceLocator": "b09b929f887e925035f548960e304b6439a81654"
         }
       ]
     },
@@ -530,7 +530,7 @@
       "SPDXID": "SPDXRef-Package-async-openai-0-33-1",
       "name": "async-openai",
       "versionInfo": "0.33.1",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "downloadLocation": "git+https://github.com/our-forks/async-openai.git?rev=95b52ebdedf42143083cf3d6f0e0be7c84e9c808#95b52ebdedf42143083cf3d6f0e0be7c84e9c808",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -541,7 +541,7 @@
       "SPDXID": "SPDXRef-Package-async-openai-macros-0-1-1",
       "name": "async-openai-macros",
       "versionInfo": "0.1.1",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "downloadLocation": "git+https://github.com/our-forks/async-openai.git?rev=95b52ebdedf42143083cf3d6f0e0be7c84e9c808#95b52ebdedf42143083cf3d6f0e0be7c84e9c808",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
@@ -1865,6 +1865,28 @@
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0 OR MIT",
       "licenseDeclared": "Apache-2.0 OR MIT",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-const-random-0-1-18",
+      "name": "const-random",
+      "versionInfo": "0.1.18",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-const-random-macro-0-1-16",
+      "name": "const-random-macro",
+      "versionInfo": "0.1.16",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
       "copyrightText": "NOASSERTION",
       "supplier": "NOASSERTION"
     },
@@ -5092,9 +5114,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-image-0-25-9",
+      "SPDXID": "SPDXRef-Package-image-0-25-10",
       "name": "image",
-      "versionInfo": "0.25.9",
+      "versionInfo": "0.25.10",
       "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT OR Apache-2.0",
@@ -5308,6 +5330,17 @@
       "filesAnalyzed": false,
       "licenseConcluded": "MIT/Apache-2.0",
       "licenseDeclared": "MIT/Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-itertools-0-12-1",
+      "name": "itertools",
+      "versionInfo": "0.12.1",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
       "copyrightText": "NOASSERTION",
       "supplier": "NOASSERTION"
     },
@@ -6214,9 +6247,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-moxcms-0-7-8",
+      "SPDXID": "SPDXRef-Package-moxcms-0-8-1",
       "name": "moxcms",
-      "versionInfo": "0.7.8",
+      "versionInfo": "0.8.1",
       "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
       "filesAnalyzed": false,
       "licenseConcluded": "BSD-3-Clause OR Apache-2.0",
@@ -7864,6 +7897,17 @@
       "supplier": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-Package-prometheus-parse-0-2-5",
+      "name": "prometheus-parse",
+      "versionInfo": "0.2.5",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-Package-proptest-1-10-0",
       "name": "proptest",
       "versionInfo": "1.10.0",
@@ -8487,6 +8531,28 @@
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
       "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rhai-1-25-1",
+      "name": "rhai",
+      "versionInfo": "1.25.1",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-rhai-codegen-3-2-0",
+      "name": "rhai_codegen",
+      "versionInfo": "3.2.0",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
       "copyrightText": "NOASSERTION",
       "supplier": "NOASSERTION"
     },
@@ -9613,6 +9679,17 @@
       "supplier": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-Package-smartstring-1-0-1",
+      "name": "smartstring",
+      "versionInfo": "1.0.1",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MPL-2.0+",
+      "licenseDeclared": "MPL-2.0+",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-Package-smawk-0-3-2",
       "name": "smawk",
       "versionInfo": "0.3.2",
@@ -10141,6 +10218,17 @@
       "supplier": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-Package-thin-vec-0-2-18",
+      "name": "thin-vec",
+      "versionInfo": "0.2.18",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT OR Apache-2.0",
+      "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-Package-thiserror-1-0-69",
       "name": "thiserror",
       "versionInfo": "1.0.69",
@@ -10196,9 +10284,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-tiff-0-10-3",
+      "SPDXID": "SPDXRef-Package-tiff-0-11-3",
       "name": "tiff",
-      "versionInfo": "0.10.3",
+      "versionInfo": "0.11.3",
       "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT",
@@ -10269,6 +10357,17 @@
       "filesAnalyzed": false,
       "licenseConcluded": "MIT OR Apache-2.0",
       "licenseDeclared": "MIT OR Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-tiny-keccak-2-0-2",
+      "name": "tiny-keccak",
+      "versionInfo": "2.0.2",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "CC0-1.0",
+      "licenseDeclared": "CC0-1.0",
       "copyrightText": "NOASSERTION",
       "supplier": "NOASSERTION"
     },
@@ -11879,6 +11978,17 @@
       "supplier": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-Package-wildmatch-2-6-0",
+      "name": "wildmatch",
+      "versionInfo": "2.6.0",
+      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-Package-winapi-0-3-9",
       "name": "winapi",
       "versionInfo": "0.3.9",
@@ -13045,6 +13155,17 @@
       "supplier": "NOASSERTION"
     },
     {
+      "SPDXID": "SPDXRef-Package-xai-grok-extra-ca-0-1-0",
+      "name": "xai-grok-extra-ca",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
       "SPDXID": "SPDXRef-Package-xai-grok-hooks-0-1-0",
       "name": "xai-grok-hooks",
       "versionInfo": "0.1.0",
@@ -13133,9 +13254,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-pager-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-pager-0-2-116",
       "name": "xai-grok-pager",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.2.116",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13144,9 +13265,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-pager-bin-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-pager-bin-0-2-116",
       "name": "xai-grok-pager-bin",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.2.116",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13276,9 +13397,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-shell-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-shell-0-2-116",
       "name": "xai-grok-shell",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.2.116",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13342,9 +13463,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-tools-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-tools-0-1-251",
       "name": "xai-grok-tools",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.1.251",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13353,9 +13474,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-tools-api-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-tools-api-0-1-251",
       "name": "xai-grok-tools-api",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.1.251",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13364,9 +13485,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-update-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-update-0-1-251",
       "name": "xai-grok-update",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.1.251",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13375,9 +13496,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-version-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-version-0-2-116",
       "name": "xai-grok-version",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.2.116",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13397,9 +13518,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-workspace-0-1-250",
+      "SPDXID": "SPDXRef-Package-xai-grok-workspace-0-1-251",
       "name": "xai-grok-workspace",
-      "versionInfo": "0.1.250",
+      "versionInfo": "0.1.251",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13619,6 +13740,17 @@
     {
       "SPDXID": "SPDXRef-Package-xai-tty-utils-0-1-0",
       "name": "xai-tty-utils",
+      "versionInfo": "0.1.0",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Apache-2.0",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "supplier": "NOASSERTION"
+    },
+    {
+      "SPDXID": "SPDXRef-Package-xai-workflow-0-1-0",
+      "name": "xai-workflow",
       "versionInfo": "0.1.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
@@ -13925,31 +14057,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-zune-core-0-4-12",
-      "name": "zune-core",
-      "versionInfo": "0.4.12",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MIT OR Apache-2.0 OR Zlib",
-      "licenseDeclared": "MIT OR Apache-2.0 OR Zlib",
-      "copyrightText": "NOASSERTION",
-      "supplier": "NOASSERTION"
-    },
-    {
       "SPDXID": "SPDXRef-Package-zune-core-0-5-1",
       "name": "zune-core",
       "versionInfo": "0.5.1",
-      "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
-      "filesAnalyzed": false,
-      "licenseConcluded": "MIT OR Apache-2.0 OR Zlib",
-      "licenseDeclared": "MIT OR Apache-2.0 OR Zlib",
-      "copyrightText": "NOASSERTION",
-      "supplier": "NOASSERTION"
-    },
-    {
-      "SPDXID": "SPDXRef-Package-zune-jpeg-0-4-21",
-      "name": "zune-jpeg",
-      "versionInfo": "0.4.21",
       "downloadLocation": "registry+https://github.com/rust-lang/crates.io-index",
       "filesAnalyzed": false,
       "licenseConcluded": "MIT OR Apache-2.0 OR Zlib",
@@ -14002,9 +14112,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-beede2d",
+      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-b09b929",
       "name": "github.com/lumen-ai/lumen-science",
-      "versionInfo": "beede2d",
+      "versionInfo": "b09b929",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -14015,7 +14125,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@beede2d"
+          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@b09b929"
         }
       ]
     }
@@ -14860,6 +14970,16 @@
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-const-oid-0-10-2"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-const-random-0-1-18"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-const-random-macro-0-1-16"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -16329,7 +16449,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-image-0-25-9"
+      "relatedSpdxElement": "SPDXRef-Package-image-0-25-10"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -16425,6 +16545,11 @@
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-itertools-0-10-5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-itertools-0-12-1"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -16839,7 +16964,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-moxcms-0-7-8"
+      "relatedSpdxElement": "SPDXRef-Package-moxcms-0-8-1"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -17589,6 +17714,11 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-prometheus-parse-0-2-5"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-proptest-1-10-0"
     },
     {
@@ -17870,6 +18000,16 @@
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-rgb-0-8-52"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-rhai-1-25-1"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-rhai-codegen-3-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -18384,6 +18524,11 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-smartstring-1-0-1"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-smawk-0-3-2"
     },
     {
@@ -18624,6 +18769,11 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-thin-vec-0-2-18"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-thiserror-1-0-69"
     },
     {
@@ -18649,7 +18799,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-tiff-0-10-3"
+      "relatedSpdxElement": "SPDXRef-Package-tiff-0-11-3"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -18680,6 +18830,11 @@
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-time-macros-0-2-27"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-tiny-keccak-2-0-2"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -19414,6 +19569,11 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-wildmatch-2-6-0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-winapi-0-3-9"
     },
     {
@@ -19944,6 +20104,11 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-extra-ca-0-1-0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-xai-grok-hooks-0-1-0"
     },
     {
@@ -19984,12 +20149,12 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-0-2-116"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-bin-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-bin-0-2-116"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20049,7 +20214,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-shell-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-shell-0-2-116"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20079,22 +20244,22 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-0-1-251"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-api-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-api-0-1-251"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-update-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-update-0-1-251"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-version-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-version-0-2-116"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20104,7 +20269,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-workspace-0-1-250"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-workspace-0-1-251"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20205,6 +20370,11 @@
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-xai-tty-utils-0-1-0"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-xai-workflow-0-1-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20344,17 +20514,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-zune-core-0-4-12"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
-      "relationshipType": "DEPENDS_ON",
       "relatedSpdxElement": "SPDXRef-Package-zune-core-0-5-1"
-    },
-    {
-      "spdxElementId": "SPDXRef-Package-lumen-monorepo",
-      "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-zune-jpeg-0-4-21"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20379,15 +20539,15 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-beede2d"
+      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-b09b929"
     }
   ],
   "annotations": [
     {
       "annotationType": "OTHER",
       "annotator": "Tool: scripts/generate-sbom.sh",
-      "annotationDate": "2026-07-26T20:11:43Z",
-      "comment": "{\"monorepo_git_head\": \"beede2ddd92a77635d9120fb0be9f4863e1be9b6\", \"package_count\": 1272, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"a4b4f6534802b678b14366f36466017b1ae64d1987e473b62879bcf24940de09\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"dd152c3ec1ee9faee9b1dcf2fd3f1cfca674a88f440bd0497c7059ae9c30fcb1\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
+      "annotationDate": "2026-08-01T05:28:21Z",
+      "comment": "{\"monorepo_git_head\": \"b09b929f887e925035f548960e304b6439a81654\", \"package_count\": 1282, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"a4b4f6534802b678b14366f36466017b1ae64d1987e473b62879bcf24940de09\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"72b3cca04948ed31dc155327de6929ec5d7ce0664a38a5dbf160a3ae9e1a71b7\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
     }
   ]
 }

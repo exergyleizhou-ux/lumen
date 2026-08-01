@@ -1,20 +1,182 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-27T09:01:32Z",
+  "generated_at": "2026-08-01T05:28:22Z",
   "version": "0.1.251",
-  "head_short": "2ba98105",
+  "head_short": "b09b929f",
   "ready": false,
   "state": "BLOCKED",
-  "can_tool_call": false,
-  "l0_pass": false,
+  "can_tool_call": true,
+  "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "2efc6b847284bbe5efdea2a88aaa3c1e5d41973fc804aea0400b93d4eb27d72a",
-  "binary_sha256": null,
+  "source_lock_sha256": "72b3cca04948ed31dc155327de6929ec5d7ce0664a38a5dbf160a3ae9e1a71b7",
+  "binary_sha256": "7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809c",
   "blockers": [
-    "release_version_changed:rerun scripts/verify-readiness.sh for 0.1.251 at 2ba981053d509c32bc6ab7a603f4a371bb10b822"
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "binary_tuple_post:exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809",
+    "M5_10_min_stranger:human_gate missing_or_invalid",
+    "M6_15_day_self_use:human_gate count_lt_15",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa",
+    "eval_live:SKIP"
   ],
-  "checks": [],
+  "checks": [
+    {
+      "id": "binary_tuple_pre",
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=07548fd4cd6e"
+    },
+    {
+      "id": "gitleaks",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "defaults",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "security",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "m2",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "parity",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_harness",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verify_cli",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verticals",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L0_connect",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L1_tool_calls",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L2_min_e2e",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L3_multi_tool",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L4_fault_cancel",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L5_long_session",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L5_one_hour_soak",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
+    },
+    {
+      "id": "R0_full",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "R0_min",
+      "pass": true,
+      "result": "PASS",
+      "detail": "via R0_full"
+    },
+    {
+      "id": "sbom",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "legal",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_live",
+      "pass": false,
+      "result": "SKIP",
+      "detail": "set EVAL_LIVE=1 to run live coding eval (\u226518/20)"
+    },
+    {
+      "id": "binary_tuple_post",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809"
+    },
+    {
+      "id": "source_lock",
+      "pass": true,
+      "result": "PASS",
+      "detail": "head=b09b929 files=32"
+    },
+    {
+      "id": "M5_10_min_stranger",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate missing_or_invalid"
+    },
+    {
+      "id": "M6_15_day_self_use",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate count_lt_15"
+    },
+    {
+      "id": "reconcile",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa"
+    }
+  ],
   "reconcile_pass": false,
-  "reconciled_at": null,
-  "note": "A release version change invalidates prior readiness evidence. Run scripts/verify-readiness.sh to produce evidence for this version."
+  "reconciled_at": "2026-08-01T05:28:22Z",
+  "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

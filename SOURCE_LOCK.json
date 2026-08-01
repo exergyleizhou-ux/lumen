@@ -1,15 +1,15 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-07-31T08:00:00Z",
+  "generated_at": "2026-08-01T05:21:00Z",
   "monorepo": {
-    "git_head": "2ba981053d509c32bc6ab7a603f4a371bb10b822",
-    "git_short": "2ba9810"
+    "git_head": "b09b929f887e925035f548960e304b6439a81654",
+    "git_short": "b09b929"
   },
   "lumen_version": "0.1.251",
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
-    "source": "xai-org/grok-build (public repo, upstream remote)",
-    "policy": "MILESTONE-SYNCED; lumen-first on BYOK (absorbed dd04f397 on 2026-07-31 via sync/absorb-upstream-20260731; sync mechanism: scripts/sync-upstream.sh + mirror/upstream-main branch)"
+    "source": "xai-org/grok-build (local Desktop pin)",
+    "policy": "PINNED; security-only cherry-picks"
   },
   "masterplan_authority": {
     "desktop": "Lumen Masterplan FINAL-2.0 - \u751f\u4ea7\u7ea7\u6267\u884c\u65b9\u6848.docx",

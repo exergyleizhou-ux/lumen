@@ -2,14 +2,17 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "0.1.251",
-  "head_short": "2ba98105",
+  "head_short": "b09b929f",
   "pass": false,
-  "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
+  "meaning": "All automatable FINAL-2.0 gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "release_version_changed:rerun scripts/verify-readiness.sh for 0.1.251 at 2ba981053d509c32bc6ab7a603f4a371bb10b822"
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "binary_tuple_post:exit 1 FAIL: binary changed during readiness run expected_sha256=07548fd4cd6e38cd19e4ba675e4c06da368ee9f1559edd938b1b2a6a2f9bf73a actual_sha256=7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L5_one_hour_soak', 'status_check_not_pass:binary_tuple_post', 'status_check_not_pa",
+    "eval_live:SKIP"
   ],
-  "can_tool_call": false,
-  "source_lock_sha256": "2efc6b847284bbe5efdea2a88aaa3c1e5d41973fc804aea0400b93d4eb27d72a",
-  "binary_sha256": null,
-  "generated_at": "2026-07-27T09:01:32Z"
+  "can_tool_call": true,
+  "source_lock_sha256": "72b3cca04948ed31dc155327de6929ec5d7ce0664a38a5dbf160a3ae9e1a71b7",
+  "binary_sha256": "7d8c9be84489aaabb8b0b8c9c352aca29af3eb7ddd928b920149323a40b8809c",
+  "generated_at": "2026-08-01T05:28:22Z"
 }
