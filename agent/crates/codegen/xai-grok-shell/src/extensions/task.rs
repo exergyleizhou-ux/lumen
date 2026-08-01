@@ -126,6 +126,9 @@ struct ListRunningSubagentsResponse {
 struct SubagentLiveSnapshotDto {
     subagent_id: String,
     parent_session_id: String,
+    root_session_id: String,
+    depth: u32,
+    lineage_path: Vec<String>,
     child_session_id: String,
     subagent_type: String,
     description: String,
@@ -145,6 +148,9 @@ impl From<SubagentInspection> for SubagentLiveSnapshotDto {
         let SubagentInspection {
             snapshot,
             parent_session_id,
+            root_session_id,
+            depth,
+            lineage_path,
             child_session_id,
             ..
         } = inspection;
@@ -163,6 +169,9 @@ impl From<SubagentInspection> for SubagentLiveSnapshotDto {
         Self {
             subagent_id: snapshot.subagent_id,
             parent_session_id,
+            root_session_id,
+            depth,
+            lineage_path,
             child_session_id,
             subagent_type: snapshot.subagent_type,
             description: snapshot.description,
@@ -206,6 +215,9 @@ struct GetSubagentResponse {
 struct SubagentSnapshotDto {
     subagent_id: String,
     parent_session_id: String,
+    root_session_id: String,
+    depth: u32,
+    lineage_path: Vec<String>,
     child_session_id: String,
     subagent_type: String,
     description: String,
@@ -261,6 +273,9 @@ impl SubagentSnapshotDto {
         let mut dto = SubagentSnapshotDto {
             subagent_id: snap.subagent_id,
             parent_session_id,
+            root_session_id: provenance.root_session_id,
+            depth: provenance.depth,
+            lineage_path: provenance.lineage_path,
             child_session_id,
             subagent_type: snap.subagent_type,
             description: snap.description,
@@ -433,6 +448,9 @@ pub async fn handle_subagent(agent: &MvpAgent, args: &acp::ExtRequest) -> ExtRes
                         inspection.parent_session_id,
                         inspection.child_session_id,
                         SubagentProvenance {
+                            root_session_id: inspection.root_session_id,
+                            depth: inspection.depth,
+                            lineage_path: inspection.lineage_path,
                             fork_parent_prompt_id: inspection.fork_parent_prompt_id,
                             resumed_from: inspection.resumed_from,
                         },
@@ -492,6 +510,9 @@ mod tests {
         let dto = SubagentLiveSnapshotDto {
             subagent_id: "sub-1".into(),
             parent_session_id: "parent-1".into(),
+            root_session_id: "root-1".into(),
+            depth: 2,
+            lineage_path: vec!["root-1".into(), "parent-1".into()],
             child_session_id: "child-1".into(),
             subagent_type: "explore".into(),
             description: "find files".into(),
@@ -508,6 +529,12 @@ mod tests {
         let json = serde_json::to_value(&dto).expect("should serialize");
         assert_eq!(json["subagentId"], "sub-1");
         assert_eq!(json["parentSessionId"], "parent-1");
+        assert_eq!(json["rootSessionId"], "root-1");
+        assert_eq!(json["depth"], 2);
+        assert_eq!(
+            json["lineagePath"],
+            serde_json::json!(["root-1", "parent-1"])
+        );
         assert_eq!(json["childSessionId"], "child-1");
         assert_eq!(json["subagentType"], "explore");
         assert_eq!(json["startedAtEpochMs"], 1_700_000_000_000_u64);
@@ -542,6 +569,9 @@ mod tests {
                 },
             },
             parent_session_id: "p".into(),
+            root_session_id: "p".into(),
+            depth: 1,
+            lineage_path: vec!["p".into()],
             child_session_id: "c".into(),
             fork_parent_prompt_id: None,
             resumed_from: None,
@@ -815,6 +845,9 @@ mod tests {
             },
         };
         let provenance = SubagentProvenance {
+            root_session_id: "root".into(),
+            depth: 2,
+            lineage_path: vec!["root".into(), "parent".into()],
             fork_parent_prompt_id: Some("prompt-5".into()),
             resumed_from: Some("source-agent-id".into()),
         };
@@ -827,6 +860,8 @@ mod tests {
         let json = serde_json::to_value(&dto).expect("should serialize");
         assert_eq!(json["resumedFrom"], "source-agent-id");
         assert_eq!(json["forkParentPromptId"], "prompt-5");
+        assert_eq!(json["rootSessionId"], "root");
+        assert_eq!(json["depth"], 2);
     }
 
     // ── x.ai/subagent/cancel outcome wire DTO ──────────────────────────

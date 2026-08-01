@@ -411,13 +411,16 @@ impl HostService {
         };
         let cancel_token = CancellationToken::new();
 
-        let spawn_once =
-            |child_id: String, prompt: String, resume_from: Option<String>, fork_context: bool| {
-                SubagentRequest {
+        let spawn_once = |child_id: String,
+                          prompt: String,
+                          resume_from: Option<String>,
+                          fork_context: bool| {
+            SubagentRequest {
                     id: child_id,
                     prompt,
                     description: description.clone(),
                     subagent_type: subagent_type.clone(),
+                    lineage: xai_grok_tools::implementations::grok_build::task::types::SubagentLineage::direct(self.params.parent_session_id.clone()),
                     parent_session_id: self.params.parent_session_id.clone(),
                     parent_prompt_id: None,
                     resume_from,
@@ -438,7 +441,7 @@ impl HostService {
                     owner: SubagentOwner::workflow(&self.params.run_id),
                     cancel_token: cancel_token.clone(),
                 }
-            };
+        };
 
         let mut attempts: u32 = 0;
         let mut total_tokens: u64 = 0;

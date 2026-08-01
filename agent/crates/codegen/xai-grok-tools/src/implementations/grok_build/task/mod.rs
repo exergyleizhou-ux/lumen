@@ -379,6 +379,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             prompt: input.prompt.clone(),
             description: input.description.clone(),
             subagent_type: input.subagent_type.clone(),
+            lineage: SubagentLineage::direct(parent_session_id.clone()),
             parent_session_id,
             parent_prompt_id,
             resume_from,

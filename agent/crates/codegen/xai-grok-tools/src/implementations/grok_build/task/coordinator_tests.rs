@@ -2,9 +2,9 @@ use super::*;
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::types::{
     SubagentCancelRequest, SubagentClearUsageNotAppliedRequest, SubagentCompletionsRequest,
-    SubagentListActiveRequest, SubagentLoopUnitActiveRequest, SubagentMarkUsageNotAppliedRequest,
-    SubagentOutstandingReply, SubagentOutstandingRequest, SubagentOwner, SubagentRegistryCounts,
-    SubagentRequest, SubagentSnapshotStatus,
+    SubagentLineage, SubagentListActiveRequest, SubagentLoopUnitActiveRequest,
+    SubagentMarkUsageNotAppliedRequest, SubagentOutstandingReply, SubagentOutstandingRequest,
+    SubagentOwner, SubagentRegistryCounts, SubagentRequest, SubagentSnapshotStatus,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -166,6 +166,7 @@ fn request(id: &str, background: bool) -> SubagentRequest {
         prompt: "work".to_owned(),
         description: "test child".to_owned(),
         subagent_type: "explore".to_owned(),
+        lineage: SubagentLineage::direct("parent"),
         parent_session_id: "parent".to_owned(),
         parent_prompt_id: Some("prompt".to_owned()),
         resume_from: None,
@@ -1057,6 +1058,49 @@ async fn cancel_parent_session_kills_prior_turn_background() {
     harness.actor.abort();
 }
 
+/// Root cancellation remains whole-tree even though nested children retain
+/// their true immediate parent for lineage/UI purposes.
+#[tokio::test]
+async fn cancel_root_session_cascades_to_nested_task_child() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+
+    let outer = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("outer", true)).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .as_ref()
+            .map(|r| r.id.as_str()),
+        Some("outer")
+    );
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("outer"));
+
+    let mut nested_request = request("nested", true);
+    nested_request.parent_session_id = "outer".to_owned();
+    let nested = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(nested_request).await }
+    });
+    let observed = harness.requests.recv().await.expect("nested request");
+    assert_eq!(observed.parent_session_id, "outer");
+    assert_eq!(observed.lineage.root_session_id, "parent");
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("nested"));
+
+    assert!(matches!(
+        parent_backend(&harness).cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled
+    ));
+    assert!(outer.await.unwrap().unwrap().cancelled);
+    assert!(nested.await.unwrap().unwrap().cancelled);
+    harness.actor.abort();
+}
+
 /// A foreign session's children must not die when this session Stop fires.
 #[tokio::test]
 async fn cancel_parent_session_does_not_touch_foreign_session() {
@@ -1167,8 +1211,8 @@ async fn cancel_parent_session_rejects_late_spawn_until_admission_reopens() {
     harness.actor.abort();
 }
 
-/// Nested children of a workflow subagent keep workflow ownership after reparent
-/// and survive ParentSession cancel (active + pending).
+/// Nested children of a workflow subagent keep workflow ownership and their
+/// direct parent while still surviving root ParentSession cancel.
 #[tokio::test]
 async fn cancel_parent_session_spares_nested_workflow_children() {
     // wait_before_start only: keep one child in pending through ParentSession.
@@ -1198,7 +1242,8 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
     // (production binds ChannelBackend::for_session to the child session).
     let child_backend = ChannelBackend::for_session(harness.backend.sender(), "wf-child");
 
-    // Nested Task-owned spawn from the workflow child (reparented to root parent).
+    // Nested Task-owned spawn from the workflow child. Its direct parent must
+    // remain the workflow child; root ownership is separate lineage data.
     let nested_active = request("nested-active", true);
     let nested_active_spawn = tokio::spawn({
         let backend = child_backend.clone();
@@ -1209,7 +1254,10 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
         .recv()
         .await
         .expect("nested active observed");
-    assert_eq!(observed.parent_session_id, "parent");
+    assert_eq!(observed.parent_session_id, "wf-child");
+    assert_eq!(observed.lineage.root_session_id, "parent");
+    assert_eq!(observed.lineage.depth, 2);
+    assert_eq!(observed.lineage.lineage_path, ["parent", "wf-child"]);
     assert_eq!(
         observed.owner.workflow_run_id(),
         Some("run-1"),
@@ -1263,7 +1311,7 @@ async fn cancel_parent_session_spares_nested_workflow_children() {
 }
 
 #[tokio::test]
-async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
+async fn loop_tracking_preserves_pending_active_and_nested_lineage() {
     let mut harness = harness(true, std::time::Duration::from_secs(60));
     let mut outer_request = request("outer", true);
     outer_request.runtime_overrides.loop_task_id = Some("loop-task".to_owned());
@@ -1291,7 +1339,10 @@ async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
         async move { backend.spawn(nested_request).await }
     });
     let observed_nested = harness.requests.recv().await.unwrap();
-    assert_eq!(observed_nested.parent_session_id, "parent");
+    assert_eq!(observed_nested.parent_session_id, "outer");
+    assert_eq!(observed_nested.lineage.root_session_id, "parent");
+    assert_eq!(observed_nested.lineage.depth, 2);
+    assert_eq!(observed_nested.lineage.lineage_path, ["parent", "outer"]);
     assert!(!observed_nested.surface_completion);
     assert_eq!(
         observed_nested.runtime_overrides.loop_task_id.as_deref(),

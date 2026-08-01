@@ -65,7 +65,15 @@ pub struct SubagentRequest {
     pub prompt: String,
     pub description: String,
     pub subagent_type: String,
+    /// The session that directly launched this child.  This is deliberately
+    /// not rewritten when the launcher is itself a subagent: tree rendering,
+    /// working-memory attribution, and child-local cancellation all need the
+    /// real immediate parent.
     pub parent_session_id: String,
+    /// Stable task-tree identity carried independently from the immediate
+    /// parent.  The coordinator uses it for root-owned cancellation and (in a
+    /// later phase) whole-tree budgets, without flattening the tree.
+    pub lineage: SubagentLineage,
     /// Parent turn/prompt ID that launched this subagent.
     ///
     /// Used to cancel only the subagents spawned by the currently-cancelled turn,
@@ -98,6 +106,48 @@ pub struct SubagentRequest {
     pub fork_context: bool,
     pub owner: SubagentOwner,
     pub cancel_token: CancellationToken,
+}
+
+/// Auditable placement of a child in a task tree.
+///
+/// `lineage_path` contains session ids from the root session through the
+/// immediate parent, never the child itself.  Thus a direct child of `root`
+/// has `depth == 1` and `lineage_path == ["root"]`; a grandchild launched by
+/// that child has `depth == 2` and `lineage_path == ["root", "child"]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubagentLineage {
+    pub root_session_id: String,
+    pub immediate_parent_session_id: String,
+    pub depth: u32,
+    pub lineage_path: Vec<String>,
+}
+
+impl SubagentLineage {
+    /// Initial lineage for a request emitted directly by a session.
+    pub fn direct(parent_session_id: impl Into<String>) -> Self {
+        let parent_session_id = parent_session_id.into();
+        Self {
+            root_session_id: parent_session_id.clone(),
+            immediate_parent_session_id: parent_session_id.clone(),
+            depth: 1,
+            lineage_path: vec![parent_session_id],
+        }
+    }
+
+    /// Build the lineage for a child launched by an already-running child.
+    pub fn child_of(parent: &Self, immediate_parent_session_id: impl Into<String>) -> Self {
+        let immediate_parent_session_id = immediate_parent_session_id.into();
+        let mut lineage_path = parent.lineage_path.clone();
+        if lineage_path.last() != Some(&immediate_parent_session_id) {
+            lineage_path.push(immediate_parent_session_id.clone());
+        }
+        Self {
+            root_session_id: parent.root_session_id.clone(),
+            immediate_parent_session_id,
+            depth: parent.depth.saturating_add(1),
+            lineage_path,
+        }
+    }
 }
 
 /// Spawn command envelope owned by the coordinator mailbox.
@@ -486,7 +536,15 @@ pub struct SubagentSnapshot {
 #[derive(Debug, Clone)]
 pub struct SubagentInspection {
     pub snapshot: SubagentSnapshot,
+    /// Direct parent session; retained for a faithful task tree.
     pub parent_session_id: String,
+    /// Root session that owns whole-tree cancellation and budget authority.
+    pub root_session_id: String,
+    /// The child's depth below the root session (direct child = 1).
+    pub depth: u32,
+    /// Root-to-immediate-parent session ids for UI, provenance, and memory
+    /// routing. Never includes the child itself.
+    pub lineage_path: Vec<String>,
     pub child_session_id: String,
     pub fork_parent_prompt_id: Option<String>,
     pub resumed_from: Option<String>,
@@ -697,6 +755,9 @@ pub struct SubagentListRunningRequest {
 /// Fork/resume provenance retained by the shared coordinator.
 #[derive(Debug, Clone, Default)]
 pub struct SubagentProvenance {
+    pub root_session_id: String,
+    pub depth: u32,
+    pub lineage_path: Vec<String>,
     pub fork_parent_prompt_id: Option<String>,
     pub resumed_from: Option<String>,
 }

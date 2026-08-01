@@ -26,9 +26,9 @@ use super::coordinator_state::{
 };
 use super::types::{
     SpawnedSubagentRef, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome,
-    SubagentEvent, SubagentOutstandingReply, SubagentOwner, SubagentRegistryCounts,
-    SubagentRequest, SubagentResult, SubagentResumeLookup, SubagentResumeSource,
-    SubagentValidateTypeOutcome,
+    SubagentEvent, SubagentLineage, SubagentOutstandingReply, SubagentOwner,
+    SubagentRegistryCounts, SubagentRequest, SubagentResult, SubagentResumeLookup,
+    SubagentResumeSource, SubagentValidateTypeOutcome,
 };
 
 pub use super::coordinator_state::{
@@ -169,13 +169,13 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         match command {
             SubagentEvent::Spawn(command) => {
                 let mut request = *command.request;
-                if let Some((root_parent, loop_task_id, spawner_cancelled, spawner_owner)) = self
+                if let Some((parent_lineage, loop_task_id, spawner_cancelled, spawner_owner)) = self
                     .active
                     .values()
                     .find(|child| child.child_session_id == request.parent_session_id)
                     .map(|child| {
                         (
-                            child.request.parent_session_id.clone(),
+                            child.request.lineage.clone(),
                             child.request.runtime_overrides.loop_task_id.clone(),
                             child.cancellation.is_cancelled(),
                             child.request.owner.clone(),
@@ -196,10 +196,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         });
                         return;
                     }
-                    request.parent_session_id = root_parent;
+                    // Preserve the direct parent (the child's actual session)
+                    // and carry root responsibility separately.  The old
+                    // behaviour rewrote parent_session_id to the root here,
+                    // flattening every nested tree and making both UI and
+                    // shared working-memory attribution ambiguous.
+                    request.lineage = SubagentLineage::child_of(
+                        &parent_lineage,
+                        request.parent_session_id.clone(),
+                    );
+                    request.runtime_overrides.spawn_depth = Some(request.lineage.depth);
                     request.surface_completion = false;
-                    // Nested children keep workflow lineage after reparent so
-                    // ParentSession Stop does not kill in-flight workflow work.
+                    // Nested children keep workflow lineage without losing
+                    // their immediate-parent relationship.
                     if !request.owner.is_workflow()
                         && let Some(run_id) = spawner_owner.workflow_run_id()
                     {
@@ -213,7 +222,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 if !request.owner.is_workflow()
                     && self
                         .spawn_blocked_sessions
-                        .contains(&request.parent_session_id)
+                        .contains(&request.lineage.root_session_id)
                 {
                     let id = request.id.clone();
                     let _ = command.result_tx.send(SubagentResult {
@@ -813,7 +822,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         self.spawn_blocked_sessions
             .insert(parent_session_id.to_owned());
         for child in self.active.values() {
-            if child.request.parent_session_id == parent_session_id
+            if child.request.lineage.root_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
             {
                 child.cancellation.cancel();
@@ -821,7 +830,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             }
         }
         for child in self.pending.values() {
-            if child.request.parent_session_id == parent_session_id
+            if child.request.lineage.root_session_id == parent_session_id
                 && !child.request.owner.is_workflow()
             {
                 child.cancellation.cancel();
@@ -937,7 +946,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
 }
 
 fn belongs_to_session(request: &SubagentRequest, parent_session_id: Option<&str>) -> bool {
-    parent_session_id.is_none_or(|id| request.parent_session_id == id)
+    parent_session_id
+        .is_none_or(|id| request.parent_session_id == id || request.lineage.root_session_id == id)
 }
 
 impl<R: ChildRunner> Drop for SubagentCoordinator<R> {

@@ -606,6 +606,10 @@ impl ChannelSpawner {
             prompt,
             description: GOAL_CLASSIFIER_SUBAGENT_DESCRIPTION.to_string(),
             subagent_type: GOAL_CLASSIFIER_SUBAGENT_TYPE.to_string(),
+            lineage:
+                xai_grok_tools::implementations::grok_build::task::types::SubagentLineage::direct(
+                    self.parent_session_id.clone(),
+                ),
             parent_session_id: self.parent_session_id.clone(),
             parent_prompt_id: self.parent_prompt_id.clone(),
             resume_from: resume_from.map(str::to_string),

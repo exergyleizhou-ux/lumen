@@ -6,9 +6,9 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::implementations::grok_build::task::types::{
-    SessionIdResource, SubagentEvent, SubagentEventSender, SubagentLoopUnitActiveRequest,
-    SubagentOwner, SubagentQueryRequest, SubagentRequest, SubagentRuntimeOverrides,
-    SubagentSnapshotStatus, SubagentSpawnRequest,
+    SessionIdResource, SubagentEvent, SubagentEventSender, SubagentLineage,
+    SubagentLoopUnitActiveRequest, SubagentOwner, SubagentQueryRequest, SubagentRequest,
+    SubagentRuntimeOverrides, SubagentSnapshotStatus, SubagentSpawnRequest,
 };
 use crate::notification::types::ToolNotificationHandle;
 use crate::notification::{
@@ -660,6 +660,7 @@ impl SchedulerActor {
             prompt: framed_prompt,
             description,
             subagent_type: "general-purpose".to_string(),
+            lineage: SubagentLineage::direct(parent_session_id.clone()),
             parent_session_id,
             parent_prompt_id: None,
             resume_from,

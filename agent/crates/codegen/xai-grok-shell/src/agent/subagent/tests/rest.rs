@@ -1369,6 +1369,9 @@ fn inspection(id: &str, status: SubagentSnapshotStatus) -> SubagentInspection {
             persona: None,
         },
         parent_session_id: "parent-x".to_string(),
+        root_session_id: "parent-x".to_string(),
+        depth: 1,
+        lineage_path: vec!["parent-x".to_string()],
         child_session_id: format!("child-{id}"),
         fork_parent_prompt_id: None,
         resumed_from: None,
@@ -1674,6 +1677,9 @@ fn resume_window_safety_rejects_instead_of_swapping() {
 #[test]
 fn provenance_carries_resumed_from() {
     let prov = SubagentProvenance {
+        root_session_id: "root".into(),
+        depth: 2,
+        lineage_path: vec!["root".into(), "parent".into()],
         fork_parent_prompt_id: Some("prompt-1".into()),
         resumed_from: Some("prev-agent-id".into()),
     };

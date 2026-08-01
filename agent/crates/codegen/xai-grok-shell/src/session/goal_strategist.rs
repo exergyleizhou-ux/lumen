@@ -192,6 +192,10 @@ impl ChannelSpawner {
             prompt,
             description: GOAL_STRATEGIST_SUBAGENT_DESCRIPTION.to_string(),
             subagent_type: GOAL_STRATEGIST_SUBAGENT_TYPE.to_string(),
+            lineage:
+                xai_grok_tools::implementations::grok_build::task::types::SubagentLineage::direct(
+                    self.parent_session_id.clone(),
+                ),
             parent_session_id: self.parent_session_id.clone(),
             parent_prompt_id: self.parent_prompt_id.clone(),
             resume_from: None,
