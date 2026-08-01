@@ -13466,7 +13466,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "agent-client-protocol",
  "ansi-to-tui",
@@ -13556,7 +13556,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-pager-bin"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -13841,7 +13841,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-shell"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -14130,7 +14130,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-tools"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -14216,7 +14216,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-tools-api"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "prost",
  "serde",
@@ -14229,7 +14229,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-update"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "anyhow",
  "dunce",
@@ -14280,7 +14280,7 @@ dependencies = [
 
 [[package]]
 name = "xai-grok-workspace"
-version = "0.1.251"
+version = "2.0.0-alpha.1"
 dependencies = [
  "agent-client-protocol",
  "anyhow",

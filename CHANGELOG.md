@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.0.0-alpha.1] - 2026-08-02
+
+### Changed
+
+- establish the Lumen 2 development release line; the CLI identifies itself as `lumen`, while this alpha remains explicitly non-release until the R0 evidence and human gates close
+
 ## [0.1.251] - 2026-07-27
 
 ### Added

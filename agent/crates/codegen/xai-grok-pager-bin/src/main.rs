@@ -90,7 +90,7 @@ fn resolve_agent_profile_path(path: &std::path::Path) -> std::path::PathBuf {
 /// Print startup information for the serve command.
 fn print_serve_startup_info(bind_addr: SocketAddr, secret: &str) {
     eprintln!();
-    eprintln!("   Grok agent server starting...");
+    eprintln!("   Lumen agent server starting...");
     eprintln!();
     eprintln!("   Address:  {}:{}", bind_addr.ip(), bind_addr.port());
     eprintln!("   Secret:   {}", secret);
@@ -164,7 +164,7 @@ async fn run_setup_command(json: bool) {
         } else {
             eprintln!("  $env:GROK_DEPLOYMENT_KEY=\"<your-key>\"");
         }
-        eprintln!("  grok setup");
+        eprintln!("  lumen setup");
         eprintln!();
         eprintln!("Or add the key to ~/.grok/config.toml:");
         eprintln!();
@@ -1017,7 +1017,7 @@ async fn forward_stdio_line_to_leader(
 }
 /// Emitted by both leader guards (server mode and leader-connect) so the two sites
 /// can't drift.
-const PLUGIN_DIR_LEADER_WARNING: &str = "grok: --plugin-dir is ignored in leader mode; run with --no-leader to \
+const PLUGIN_DIR_LEADER_WARNING: &str = "lumen: --plugin-dir is ignored in leader mode; run with --no-leader to \
      load per-process plugins";
 /// Run the `agent` subcommand, dispatching to the appropriate mode.
 async fn run_agent_command(
@@ -1102,7 +1102,7 @@ async fn run_agent_command(
         None,
     );
     if let Some(warning) = launch_yolo.blocked_warning {
-        eprintln!("grok: {warning}");
+        eprintln!("lumen: {warning}");
     }
     agent_config.default_yolo_mode = launch_yolo.yolo;
     agent_config.default_auto_mode = xai_grok_shell::util::config::effective_auto_for_launch(
@@ -1567,10 +1567,10 @@ impl WorkerCount {
                 used,
                 cores,
             } => Some(format!(
-                "grok: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
+                "lumen: clamped {GROK_WORKER_THREADS_ENV}={requested} to {used} (valid range is 1..={cores})"
             )),
             Self::Ignored { value, .. } => Some(format!(
-                "grok: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
+                "lumen: ignoring {GROK_WORKER_THREADS_ENV}={value:?} (not a valid integer)"
             )),
         }
     }
@@ -1753,7 +1753,7 @@ fn install_heap_profile_hooks() {
 }
 fn version_text(channel_label: &str) -> String {
     format!(
-        "grok {}\n",
+        "lumen {}\n",
         xai_grok_version::display_version_with_commit(env!("VERSION_WITH_COMMIT"), channel_label,)
     )
 }
@@ -1857,7 +1857,7 @@ fn main() {
         .enable_all()
         .build()
         .unwrap_or_else(|e| {
-            eprintln!("grok: failed to start tokio runtime with {workers} workers: {e}");
+            eprintln!("lumen: failed to start tokio runtime with {workers} workers: {e}");
             shutdown_and_flush_telemetry(1);
         });
     let result = run_and_shutdown(runtime, async_main(args), RUNTIME_SHUTDOWN_GRACE);
@@ -2147,7 +2147,7 @@ async fn async_main(args: PagerArgs) -> Result<()> {
             None,
         );
         if let Some(warning) = launch_yolo.blocked_warning {
-            eprintln!("grok: {warning}");
+            eprintln!("lumen: {warning}");
         }
         let json_schema = args
             .json_schema
@@ -2533,7 +2533,7 @@ mod tests {
         );
         assert_eq!(
             resolve_worker_override("100000", cores).notice().unwrap(),
-            "grok: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
+            "lumen: clamped GROK_WORKER_THREADS=100000 to 360 (valid range is 1..=360)"
         );
     }
     #[test]
@@ -2546,7 +2546,7 @@ mod tests {
         }
         assert_eq!(
             resolve_worker_override("abc", cores).notice().unwrap(),
-            "grok: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
+            "lumen: ignoring GROK_WORKER_THREADS=\"abc\" (not a valid integer)"
         );
     }
     #[test]
@@ -2559,20 +2559,20 @@ mod tests {
             let mut output = Vec::new();
             write_version(&mut output, label).unwrap();
             let output = String::from_utf8(output).unwrap();
-            assert!(output.starts_with("grok "));
+            assert!(output.starts_with("lumen "));
             assert!(output.contains(env!("VERSION_WITH_COMMIT")));
             assert!(output.ends_with(expected_suffix), "{output:?}");
         }
     }
     #[test]
     fn version_flags_and_doctor_are_distinct_early_intents() {
-        let version = PagerArgs::try_parse_from(["grok", "--version"]).unwrap();
+        let version = PagerArgs::try_parse_from(["lumen", "--version"]).unwrap();
         assert!(version.version);
         assert!(version.command.is_none());
-        let short = PagerArgs::try_parse_from(["grok", "-v"]).unwrap();
+        let short = PagerArgs::try_parse_from(["lumen", "-v"]).unwrap();
         assert!(short.version);
         assert!(short.command.is_none());
-        let subcommand = PagerArgs::try_parse_from(["grok", "version"]).unwrap();
+        let subcommand = PagerArgs::try_parse_from(["lumen", "version"]).unwrap();
         assert!(!subcommand.version);
         assert!(matches!(
             subcommand.command,

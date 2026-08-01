@@ -13,11 +13,11 @@
 ### 发布身份与版本边界
 
 - **产品代际名：** `Lumen 2 — Governed Agent Runtime`；`Lumen NextGen` 是实施代号。
+- **当前开发版本：** `2.0.0-alpha.1`。它清晰标识 Lumen 2 的进行中实现；它不是已验收、已合并或可发布的宣称。
 - **首个候选标签：** `v2.0.0-rc.1`，只有 clean source candidate、exact-SHA CI、source lock、SBOM、readiness 和人工门全部闭合后才能创建。
-- **当前兼容版本：** 根 `VERSION=0.1.251` 只描述当前旧发布线；它不是 NextGen 已发布或已验收的宣称。
 - **上游身份：** `xai-grok-version` 是 Grok Build 协议/客户端身份，可独立为 `0.2.116`；它绝不能决定 Lumen 的产品 version、tag 或 release。
 
-因此，在 R0 完成以前任何 `0.1.251` 或 `0.2.116` 输出只能表示当前源码/上游组件，不代表我们放弃换代，也不能提前伪装为 Lumen 2。
+因此，在 R0 完成以前，`2.0.0-alpha.1` 只表示进行中的 Lumen 2 源码；`0.2.116` 仍只是上游组件身份。二者都不能提前伪装为 RC、正式发布或验收完成。
 
 ---
 
@@ -69,7 +69,7 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 | 分叉量 | 每次 R0 前重新计算 `origin/main...HEAD` | 提交数不是验收证据；仍须 R0 分组审查、exact CI 与人工 merge。 |
 | 工作树 | 每次 R0 source candidate 前必须重新实测 clean/dirty；任何未分类路径都不进入候选 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
-| 版本 | 当前兼容 VERSION 为 0.1.251；Lumen 2 首候选目标为 2.0.0-rc.1 | version、tag、release 与同步分门，未过 R0 不得提前 bump/tag。 |
+| 版本 | 当前开发 VERSION 为 2.0.0-alpha.1；Lumen 2 首候选目标为 2.0.0-rc.1 | alpha、RC、tag、release 与同步分门；未过 R0 不得创建 RC/tag。 |
 | GitHub CI | 只承认 PR 上与 source candidate 对应的 exact-SHA run | 未完成、失败或其他 SHA 的 run 都不能被说成当前全绿。 |
 | readiness | 只承认与 source candidate 同源的 lock、SBOM、binary 与 readiness | 旧 evidence 不证明后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
