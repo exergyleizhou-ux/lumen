@@ -1611,6 +1611,47 @@ async fn session_backend_cannot_query_or_cancel_foreign_child() {
 }
 
 #[tokio::test]
+async fn root_tree_concurrency_cap_rejects_ninth_pending_child() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let mut admitted = Vec::new();
+    for index in 0..MAX_LIVE_SUBAGENTS_PER_TREE {
+        let id = format!("tree-live-{index}");
+        admitted.push(tokio::spawn({
+            let backend = harness.backend.clone();
+            async move { backend.spawn(request(&id, true)).await }
+        }));
+        assert_eq!(
+            harness.requests.recv().await.expect("admitted child").id,
+            format!("tree-live-{index}")
+        );
+    }
+
+    let rejected = harness
+        .backend
+        .spawn(request("tree-live-overflow", true))
+        .await
+        .expect("overflow reply");
+    assert!(!rejected.success);
+    assert!(
+        rejected
+            .error
+            .as_deref()
+            .is_some_and(|message| message.contains("concurrency limit"))
+    );
+
+    for index in 0..MAX_LIVE_SUBAGENTS_PER_TREE {
+        assert!(matches!(
+            harness.backend.cancel(&format!("tree-live-{index}")).await,
+            SubagentCancelOutcome::Cancelled
+        ));
+    }
+    for child in admitted {
+        assert!(child.await.expect("join").expect("reply").cancelled);
+    }
+    harness.actor.abort();
+}
+
+#[tokio::test]
 async fn completed_cache_evicts_oldest_entry_at_cap() {
     let mut harness = harness(false, std::time::Duration::from_secs(60));
     for index in 0..=MAX_COMPLETED_ENTRIES {

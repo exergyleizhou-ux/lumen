@@ -37,6 +37,12 @@ pub use super::coordinator_state::{
     StartedChild, SubagentProgress,
 };
 
+/// A single root task tree may have at most this many pending or active
+/// children.  The limit intentionally counts startup work too: otherwise a
+/// fast fan-out could queue an unbounded number of runtimes before they report
+/// `Started`.  Depth limits control shape; this limit controls width.
+pub const MAX_LIVE_SUBAGENTS_PER_TREE: usize = 8;
+
 /// Channel-owned subagent lifecycle actor.
 pub struct SubagentCoordinator<R: ChildRunner> {
     commands: mpsc::UnboundedReceiver<SubagentEvent>,
@@ -229,6 +235,20 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         success: false,
                         cancelled: true,
                         error: Some("parent session is stopped".to_owned()),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
+                let live_in_tree = self.live_children_in_tree(&request.lineage.root_session_id);
+                if live_in_tree >= MAX_LIVE_SUBAGENTS_PER_TREE {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(format!(
+                            "subagent tree concurrency limit reached (max: {MAX_LIVE_SUBAGENTS_PER_TREE})"
+                        )),
                         subagent_id: id.clone(),
                         child_session_id: id,
                         ..Default::default()
@@ -504,6 +524,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let _ = request.respond_to.send(is_active);
             }
         }
+    }
+
+    fn live_children_in_tree(&self, root_session_id: &str) -> usize {
+        self.pending
+            .values()
+            .filter(|child| child.request.lineage.root_session_id == root_session_id)
+            .count()
+            + self
+                .active
+                .values()
+                .filter(|child| child.request.lineage.root_session_id == root_session_id)
+                .count()
     }
 
     fn handle_internal(&mut self, event: InternalEvent<R::Control>) {
