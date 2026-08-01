@@ -460,6 +460,17 @@ impl ModelsManager {
         self.inner.user_selected_model.load(Ordering::Relaxed)
     }
 
+    /// Snapshot the ordinary-turn routing policy loaded for this catalog.
+    /// Reading it is local and does not validate credentials or endpoints.
+    pub fn model_routing_config(&self) -> config::ModelRoutingConfig {
+        self.inner.cfg.read().model_routing.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_model_routing_config(&self, routing: config::ModelRoutingConfig) {
+        self.inner.cfg.write().model_routing = routing;
+    }
+
     /// Record a passive endpoint-domain failure. Auth/configuration/content
     /// failures are intentionally ignored: they do not establish provider
     /// unavailability and must not influence later routing advice. A 402 or
@@ -548,6 +559,13 @@ impl ModelsManager {
         self.inner
             .user_selected_model
             .store(true, Ordering::Relaxed);
+        self.set_current_model_id_internal(id);
+    }
+
+    /// Commit an actor-approved automatic reroute without turning it into a
+    /// user `/model` pin. The SessionActor calls this only after its own
+    /// sampling configuration and durable model state were updated.
+    pub(crate) fn set_current_model_id_for_routing(&self, id: acp::ModelId) {
         self.set_current_model_id_internal(id);
     }
 

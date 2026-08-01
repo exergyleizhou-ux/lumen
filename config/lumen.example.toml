@@ -29,6 +29,17 @@ default = "deepseek-v4-pro"
 # unavailable for the *next* Expert task. Lumen does not replay a task that
 # already produced output, and it never falls back outside this allowlist.
 
+# ── Optional ordinary-turn no-replay routing ────────────────────────────────
+# This is separate from Expert. It is off by default. When an ordinary request
+# fails before it produces any response or tool side effect, Lumen may retry it
+# on the next healthy model in this strict allowlist. An explicit `/model` pin
+# always disables this automatic path for that session.
+#
+# [model_routing]
+# enabled = true
+# model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+# priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+
 # ── DeepSeek (preferred default) ────────────────────────────────────────────
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"

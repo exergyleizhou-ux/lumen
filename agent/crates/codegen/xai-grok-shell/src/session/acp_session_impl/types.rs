@@ -23,6 +23,11 @@ pub(crate) enum SamplerFailureRecovery {
     /// provider re-mint). The turn loop should resubmit once with the
     /// fresh token.
     RefreshAuthAndResubmit,
+    /// A provider failed before producing a response or tool side effect, and
+    /// the actor atomically moved to a user-allowlisted healthy model. The
+    /// outer loop may rebuild and resubmit the same request once it observes
+    /// this result.
+    RerouteAndResubmit,
 }
 
 /// Outcome of a single turn attempt via the sampler-based path.
@@ -38,6 +43,7 @@ pub(crate) enum SamplerTurnOutcome {
     CompactAndResubmit,
     /// Auth recovery succeeded; the outer loop should retry once.
     RefreshAuthAndResubmit,
+    RerouteAndResubmit,
 }
 
 /// Outcome of `process_conversation_turn`, distinguishing normal completion from cancellation.

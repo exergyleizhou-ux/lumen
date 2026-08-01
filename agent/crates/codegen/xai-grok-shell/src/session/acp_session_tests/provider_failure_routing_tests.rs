@@ -69,7 +69,9 @@ async fn expert_pool_skips_quota_exhausted_priority_before_a_new_task() {
         .run_until(async {
             let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
             let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
-            let actor = create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await;
+            let actor = std::sync::Arc::new(
+                create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await,
+            );
             actor.models_manager.insert_test_entry(
                 crate::session::expert::FLASH_EXECUTOR_MODEL,
                 test_model_entry(
@@ -129,6 +131,128 @@ async fn expert_pool_skips_quota_exhausted_priority_before_a_new_task() {
                     }),
                 )
                 .await;
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = std::sync::Arc::new(
+                create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await,
+            );
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec!["flash".to_owned(), "grok".to_owned()],
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+
+            assert!(matches!(
+                actor
+                    .handle_sampling_failure(sampling_error(
+                        xai_grok_sampler::SamplingErrorKind::Api,
+                        Some(402),
+                        "out of credits",
+                    ))
+                    .await,
+                Ok(SamplerFailureRecovery::RerouteAndResubmit)
+            ));
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "grok"
+            );
+            assert_eq!(actor.models_manager.current_model_id().0.as_ref(), "grok");
+            assert!(
+                !actor.models_manager.user_selected_model(),
+                "automatic reroute must not turn into a user model pin"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = std::sync::Arc::new(
+                create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await,
+            );
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec!["grok".to_owned()],
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+            actor
+                .models_manager
+                .set_current_model_id(acp::ModelId::new("flash"));
+
+            assert!(
+                actor
+                    .handle_sampling_failure(sampling_error(
+                        xai_grok_sampler::SamplingErrorKind::Api,
+                        Some(402),
+                        "out of credits",
+                    ))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "flash"
+            );
         })
         .await;
 }

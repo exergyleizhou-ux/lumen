@@ -860,6 +860,73 @@ impl SessionActor {
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
         self.sampler_handle.update_config(sampler_config);
     }
+
+    /// Move an ordinary session to a healthy user-allowlisted model after a
+    /// sampler request failed before returning a response. This is deliberately
+    /// unavailable to task-output children (their caller owns the retry
+    /// contract), explicit `/model` pins, and disabled/empty pools. A failed
+    /// switch falls through to the original terminal error rather than hiding
+    /// it behind a second failure.
+    async fn maybe_reroute_ordinary_turn_after_failure(
+        &self,
+        failed_model: &str,
+    ) -> Option<String> {
+        if self.tool_context.task_output_token_budget.is_some()
+            || self.tool_context.sampler_retry_only_before_output
+            || self.models_manager.user_selected_model()
+        {
+            return None;
+        }
+        let policy = self.models_manager.model_routing_config();
+        if !policy.enabled || policy.model_pool.is_empty() {
+            return None;
+        }
+        let next_model = self.models_manager.select_healthy_model_from_pool(
+            &policy.model_pool,
+            &policy.priority,
+            failed_model,
+        )?;
+        let active = self.reconstruct_full_config().await;
+        let mut config = self.resolve_aux_sampler_config(&next_model).await?;
+        crate::agent::config::stamp_session_local_sampler_fields(
+            &mut config,
+            &active,
+            self.client_identifier.clone(),
+            Some(self.max_retries),
+        );
+        if self
+            .handle_set_session_model(
+                config,
+                false,
+                false,
+                true,
+                self.compaction.threshold_percent.get(),
+            )
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                failed_model,
+                next_model,
+                "model routing: approved candidate could not be installed; surfacing original failure"
+            );
+            return None;
+        }
+        self.models_manager
+            .set_current_model_id_for_routing(acp::ModelId::new(next_model.clone()));
+        xai_grok_telemetry::unified_log::warn(
+            "model routing: zero-output provider failure rerouted ordinary turn",
+            Some(self.session_info.id.0.as_ref()),
+            Some(serde_json::json!({
+                "from_model": failed_model,
+                "to_model": &next_model,
+                "reason": "passive_provider_failure",
+                "user_pool_size": policy.model_pool.len(),
+            })),
+        );
+        Some(next_model)
+    }
     fn log_terminal_failure(&self, error_type: &str, status_code: Option<u16>, message: &str) {
         let auth = self
             .auth_manager
@@ -953,6 +1020,19 @@ impl SessionActor {
         if let Some(kind) = provider_failure_kind {
             self.models_manager
                 .record_provider_failure(&failed_base_url, kind);
+            if let Some(next_model) = self
+                .maybe_reroute_ordinary_turn_after_failure(&failed_model_id)
+                .await
+            {
+                tracing::info!(
+                    session_id = %self.session_info.id.0,
+                    failed_model = %failed_model_id,
+                    next_model,
+                    failure_kind = kind,
+                    "model routing: resubmitting zero-output ordinary turn"
+                );
+                return Ok(SamplerFailureRecovery::RerouteAndResubmit);
+            }
         }
         if matches!(error.kind, SamplingErrorKind::Api)
             && error.status_code == Some(400)
@@ -1325,6 +1405,9 @@ impl SessionActor {
                     }
                     SamplerFailureRecovery::RefreshAuthAndResubmit => {
                         Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)
+                    }
+                    SamplerFailureRecovery::RerouteAndResubmit => {
+                        Ok(SamplerTurnOutcome::RerouteAndResubmit)
                     }
                 }
             }

@@ -2242,6 +2242,13 @@ impl SessionActor {
                         crate::sampling::error::error_data_with_status(msg, Some(401)),
                     ));
                 }
+                Ok(SamplerTurnOutcome::RerouteAndResubmit) => {
+                    // The failed sampler call yielded no response or tool
+                    // result. Rebuild from unchanged chat state so the new
+                    // model sees the same turn exactly once.
+                    auth_retry_schedule.reset();
+                    continue;
+                }
             };
             auth_retry_schedule.reset();
             let model_elapsed_ms = model_timer.elapsed().as_millis() as u64;
