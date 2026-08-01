@@ -297,6 +297,11 @@ impl SubagentBackend for ChannelBackend {
     async fn spawn(&self, mut request: SubagentRequest) -> Result<SubagentResult, ToolError> {
         if let Some(parent_session_id) = self.parent_session_id.as_deref() {
             request.parent_session_id = parent_session_id.to_owned();
+            // Binding a backend is an authority boundary, not merely a
+            // presentation override.  Reset the direct lineage here; when
+            // this is a nested live child the coordinator immediately derives
+            // the real root/path from that active parent.
+            request.lineage = super::types::SubagentLineage::direct(parent_session_id);
         }
         let (respond_to, response_rx) = oneshot::channel();
         let cancel_on_receiver_drop = request.owner.is_workflow();

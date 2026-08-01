@@ -104,6 +104,41 @@ async fn channel_backend_spawn_closed_channel() {
 }
 
 #[tokio::test]
+async fn bound_backend_resets_direct_lineage_with_parent_binding() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session(tx, "bound-parent");
+    let request = SubagentRequest {
+        id: "bound-child".to_string(),
+        prompt: "do something".to_string(),
+        description: "test".to_string(),
+        subagent_type: "general-purpose".to_string(),
+        lineage: super::super::types::SubagentLineage::direct("stale-parent"),
+        parent_session_id: "stale-parent".to_string(),
+        parent_prompt_id: None,
+        resume_from: None,
+        cwd: None,
+        runtime_overrides: Default::default(),
+        run_in_background: false,
+        surface_completion: true,
+        await_to_completion: false,
+        fork_context: false,
+        owner: super::super::types::SubagentOwner::Task,
+        cancel_token: tokio_util::sync::CancellationToken::new(),
+    };
+    let spawn = tokio::spawn(async move { backend.spawn(request).await });
+    let SubagentEvent::Spawn(request) = rx.recv().await.expect("spawn event") else {
+        panic!("expected spawn event");
+    };
+    assert_eq!(request.parent_session_id, "bound-parent");
+    assert_eq!(request.lineage.root_session_id, "bound-parent");
+    assert_eq!(request.lineage.immediate_parent_session_id, "bound-parent");
+    assert_eq!(request.lineage.depth, 1);
+    assert_eq!(request.lineage.lineage_path, ["bound-parent"]);
+    drop(request.result_tx);
+    assert!(spawn.await.unwrap().is_err());
+}
+
+#[tokio::test]
 async fn channel_backend_query_found() {
     let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
     let backend = ChannelBackend::new(tx);
