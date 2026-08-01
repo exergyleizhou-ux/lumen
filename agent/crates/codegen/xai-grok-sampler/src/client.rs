@@ -52,7 +52,6 @@ struct GrokRequestHeaders<'a> {
     deployment_id: Option<&'a str>,
     user_id: Option<&'a str>,
 }
-
 impl GrokRequestHeaders<'_> {
     fn apply(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let mut b = builder
@@ -3470,4 +3469,3 @@ mod tests {
         ));
     }
 }
-

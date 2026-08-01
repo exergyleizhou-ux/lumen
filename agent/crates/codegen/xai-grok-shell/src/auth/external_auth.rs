@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_output_issuer_claim_enables_xai_auth() {
+    fn parse_output_issuer_claim_does_not_grant_xai_auth() {
         let ok = |stdout: &str| std::process::Output {
             status: std::process::Command::new("true").status().unwrap(),
             stdout: stdout.as_bytes().to_vec(),

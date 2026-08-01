@@ -3027,7 +3027,6 @@ mod structured_output_validation_tests {
         assert_eq!(err, "invalid output schema: boom");
     }
 }
-
 /// (`off` | `soft` | `strict`, default `soft`). Read once per process — the
 /// gate sits on the turn hot path.
 fn delivery_strictness_from_env() -> lumen_discipline::DeliveryStrictness {
@@ -3045,4 +3044,3 @@ fn delivery_strictness_from_env() -> lumen_discipline::DeliveryStrictness {
         }
     })
 }
-

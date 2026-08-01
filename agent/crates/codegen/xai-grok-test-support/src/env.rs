@@ -20,7 +20,6 @@ pub fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
         }
     }
 }
-
 /// RAII guard for a single environment variable in `#[serial]` tests: snapshots
 /// the prior value on construction, applies the change, then restores the prior
 /// value (or unsets it) on drop — even if an assertion panics. Restoring rather
@@ -172,4 +171,3 @@ pub fn test_env_cmd_tokio(
         // update check that hits the network and can add latency under Rosetta.
         .env("GROK_DISABLE_AUTOUPDATER", "1");
 }
-

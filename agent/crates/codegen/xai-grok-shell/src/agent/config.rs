@@ -1740,7 +1740,6 @@ pub struct Config {
     /// `[expert]` section: bounded single-task Expert policy configuration.
     #[serde(default)]
     pub expert: ExpertConfig,
-
 }
 #[derive(Debug, Clone, Default)]
 pub struct CliAgentOverrides {
@@ -2565,7 +2564,7 @@ impl Config {
     /// remote settings `doom_loop_recovery` object (a partial remote object only
     /// overrides the fields it sets). Gate precedence: env
     /// `GROK_DOOM_LOOP_RECOVERY` > TOML `enabled` > remote `enabled` >
-    /// default ON — each layer's `false` is an independent kill switch, and
+    /// default OFF — each layer's `false` is an independent kill switch, and
     /// `None` IS the off state, so disabled has exactly one spelling.
     /// Tunables have no env layer (TOML > remote > default) and are clamped
     /// to their documented ranges. Returns the composite runtime policy
@@ -4985,7 +4984,7 @@ pub fn resolve_credentials(model: &ModelEntry, session_key: Option<&str>) -> Res
             info.base_url.clone(),
             xai_chat_state::AuthType::ApiKey,
         )
-        } else if let Some(ref env_keys) = model.env_key
+    } else if let Some(ref env_keys) = model.env_key
         && !env_keys.is_empty()
     {
         tracing::warn!(
@@ -5566,18 +5565,19 @@ pub fn to_acp_model_info(
                 // client can bind truth without leaking credentials. Credentials
                 // in the raw URL (user:pass, query token, fragment) are stripped;
                 // the URL is trimmed of a trailing slash before comparison.
-                let mut endpoint_ids = [Some(info.base_url.as_str()), model.api_base_url.as_deref()]
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|raw| {
-                        let mut url = url::Url::parse(raw).ok()?;
-                        let _ = url.set_username("");
-                        let _ = url.set_password(None);
-                        url.set_query(None);
-                        url.set_fragment(None);
-                        Some(url.to_string().trim_end_matches('/').to_owned())
-                    })
-                    .collect::<Vec<_>>();
+                let mut endpoint_ids =
+                    [Some(info.base_url.as_str()), model.api_base_url.as_deref()]
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|raw| {
+                            let mut url = url::Url::parse(raw).ok()?;
+                            let _ = url.set_username("");
+                            let _ = url.set_password(None);
+                            url.set_query(None);
+                            url.set_fragment(None);
+                            Some(url.to_string().trim_end_matches('/').to_owned())
+                        })
+                        .collect::<Vec<_>>();
                 endpoint_ids.sort();
                 endpoint_ids.dedup();
                 let mut provider_ids = endpoint_ids
