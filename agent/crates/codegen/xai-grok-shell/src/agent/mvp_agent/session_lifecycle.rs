@@ -408,10 +408,11 @@ impl MvpAgent {
     /// `IsBusy` → `Shutdown` check-then-act race.
     ///
     /// A parked approval is not represented in the actor's `State`, so it is
-    /// conservatively checked before asking the actor. The remaining known
-    /// gap is broader activity aggregation: monitor events, scheduler fires,
-    /// background terminal tasks, subagent sessions, and leases must join the
-    /// actor's future `SessionActivitySnapshot` before they may be unloaded.
+    /// conservatively checked before asking the actor. The actor then builds a
+    /// bounded `SessionActivitySnapshot` covering its owned terminal/monitor
+    /// work, direct children, scheduler run leases, and pending interactions.
+    /// This preserves the mailbox check-and-act seam; it is deliberately not a
+    /// claim of a cross-adapter transaction or crash-recovery protocol.
     pub(super) async fn unload_session_if_idle(&self, id: &acp::SessionId) -> bool {
         let dispatch_lock = self.dispatch_lock(id);
         let _dispatch_guard = dispatch_lock.lock().await;

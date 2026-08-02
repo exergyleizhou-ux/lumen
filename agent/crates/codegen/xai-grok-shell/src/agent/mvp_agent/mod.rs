@@ -645,11 +645,11 @@ pub enum CodeNavEligibility {
 const SESSION_SUPERVISOR_TICK: std::time::Duration = std::time::Duration::from_millis(
     200,
 );
-/// Upper bound on the `SessionHandle::is_busy` round-trip used by the
-/// idle-unload decision (PR-2). Only consulted when no turn is running (so the
-/// actor is between turns and responsive); on timeout we conservatively treat
-/// the session as busy and keep it resident.
-const IDLE_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+/// Upper bound on the actor-owned idle-unload round-trip. Only consulted when
+/// no turn is running (so the actor is between turns and responsive); it must
+/// include the bounded activity-adapter probe as well as mailbox scheduling.
+/// On timeout we conservatively treat the session as busy and keep it resident.
+const IDLE_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 /// Per-session state freed on removal or idle-unload (but kept across a reload
 /// rebuild); retained state instead survives an unload and is freed only at
 /// removal.

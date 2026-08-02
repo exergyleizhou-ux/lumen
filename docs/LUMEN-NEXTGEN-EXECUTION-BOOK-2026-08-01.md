@@ -625,7 +625,7 @@ depth 1 仅 root grant 后 scoped-write；depth 2 默认只读；depth 3 无 spa
 
 ## 11. NG-03：TreeBudget 和受管进程 lifecycle
 
-**状态：** 部分已实现：coordinator 有根树 live/token/tool/wall-time 限额，scheduler 有 owner lease、heartbeat、backoff 和死信；统一 SessionActivity 原子聚合、daily-cost/artifact 限额与 24h proof 仍是 Draft。
+**状态：** 部分已实现：coordinator 有根树 live/token/tool/wall-time 限额，scheduler 有 owner lease、heartbeat、backoff 和死信。NG-03A 已在 shell actor 落地有限的 activity snapshot：foreground/queued、pending interaction、按 owner 筛选的 terminal/monitor、direct child 和 scheduler active-run lease 都会拒绝 idle unload；探测超时 fail-closed。它不是跨 adapter 原子事务，也尚未实现 generic operation lease、daily-cost/artifact 限额、event journal/outbox/reconcile 或 24h proof。
 **目标：** 并行 Agent、terminal、monitor、scheduler fire 有同一 tree owner、预算、deadline、回收语义。
 
 ### 必读锚点
@@ -635,13 +635,15 @@ depth 1 仅 root grant 后 scoped-write；depth 2 默认只读；depth 3 无 spa
 | tools task/coordinator.rs:165 | coordinator 已有 child cancel。 |
 | tools scheduler/actor.rs:511-617 | 已防前一轮 descendants 未结束时重复 fire。 |
 | tools workflow/mod.rs:171-176 | 有 workflow agent budget，不等于 tree budget。 |
-| shell agent/mvp_agent/session_lifecycle.rs:401-434 | idle unload 对活动聚合仍有 TODO/race。 |
-| shell agent/activity.rs:51-221 | 存在 activity 部件，尚非完整 actor aggregate。 |
+| shell session/acp_session_impl/activity_snapshot.rs | actor-owned bounded activity read model，timeout fail-closed；不是 durable lifecycle journal。 |
+| shell agent/mvp_agent/session_lifecycle.rs | dispatch lock + actor `UnloadIfIdle` 的 check-and-act seam。 |
 | tools computer/local/terminal.rs | 背景 terminal owner/reap 模式。 |
 
 ### NG-03A activity aggregation
 
-【拟建】SessionActivitySnapshot 由 actor 内 UnloadIfIdle 单命令原子读取：foreground、background terminal、monitor、scheduler fire、background subagent、lease、pending approval。
+【部分实现】SessionActivitySnapshot 由 actor 内 `UnloadIfIdle` 单命令读取：foreground/queued、background terminal、monitor、scheduler active-run lease、direct subagent、pending approval。terminal/monitor 以 session owner 筛选；owner-less 旧快照保守视为本 session；adapter read 超时会拒绝 unload。
+
+该切片只保证 actor mailbox 上的 check-and-act 顺序与“未知即保留”。它**不**声称同时读取 terminal、coordinator、scheduler 即获得分布式原子快照；在 NG-03C event journal、operation lease 和 reconciliation 到位前，late event、崩溃恢复与外部副作用仍不能结案。
 
 反例：check/unload 间注入 prompt；monitor/scheduler/background child 活着却 unload；late completion 复活 disposed session。
 Exit：所有活动存在时 unload 拒绝；actor check-and-act 无丢 prompt。

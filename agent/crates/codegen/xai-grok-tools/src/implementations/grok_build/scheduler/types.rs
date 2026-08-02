@@ -677,6 +677,16 @@ impl ScheduledTask {
     pub fn is_expired(&self, now: DateTime<Utc>) -> bool {
         self.expires_at.is_some_and(|exp| now >= exp)
     }
+
+    /// Whether this task currently fences an in-flight scheduler run.
+    ///
+    /// The lease details stay scheduler-internal, but lifecycle authorities
+    /// need this boolean to avoid unloading the owning session while a fire is
+    /// still active. A future scheduled fire without a lease is deliberately
+    /// not treated as live work.
+    pub fn has_active_run_lease(&self) -> bool {
+        self.active_run_lease.is_some()
+    }
 }
 
 fn validate_lease_request(
@@ -880,6 +890,7 @@ mod tests {
             task.acquire_run_lease("scheduler-a", now, ttl).unwrap(),
             SchedulerLeaseAcquisition::Fresh
         );
+        assert!(task.has_active_run_lease());
         assert_eq!(
             task.acquire_run_lease("scheduler-b", now, ttl),
             Err(SchedulerLeaseError::HeldByActiveOwner)

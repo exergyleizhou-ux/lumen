@@ -1526,12 +1526,19 @@ pub(super) async fn run_session(
                             // the MvpAgent holds its dispatch lock until it has
                             // removed an accepted session, so a later Prompt
                             // cannot be admitted between this decision and
-                            // detach.
-                            let idle = {
-                                let state = session.state.lock().await;
-                                !state_is_busy(&state)
-                            };
-                            if !idle {
+                            // detach.  A quiet turn is not enough: owned
+                            // terminal/monitor work, direct children,
+                            // scheduler run leases, and parked interactions
+                            // keep the SessionActor resident.  External probe
+                            // timeout is deliberately fail-closed.
+                            let snapshot = tokio::time::timeout(
+                                IDLE_ACTIVITY_PROBE_TIMEOUT,
+                                session.idle_unload_activity_snapshot(),
+                            )
+                            .await
+                            .unwrap_or_else(|_| SessionActivitySnapshot::timed_out());
+                            if snapshot.blocks_idle_unload() {
+                                tracing::debug!(?snapshot, "idle unload retained active session");
                                 let _ = respond_to.send(false);
                                 continue;
                             }

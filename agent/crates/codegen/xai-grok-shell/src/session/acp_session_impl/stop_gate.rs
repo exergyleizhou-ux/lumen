@@ -174,11 +174,7 @@ impl SessionActor {
             .await
             .iter()
             .filter(|t| t.is_outstanding())
-            .filter(|t| {
-                t.owner_session_id
-                    .as_deref()
-                    .is_none_or(|owner| owner == my_session)
-            })
+            .filter(|t| task_is_owned_by_session(t, &my_session))
             .map(stop_entry_from_task)
             .collect();
         tasks.extend(

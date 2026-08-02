@@ -168,6 +168,8 @@ use hook_dispatch::*;
 #[path = "acp_session_impl/stop_gate.rs"]
 mod stop_gate;
 pub use stop_gate::MAX_STOP_HOOK_CONTINUATIONS_PER_TURN;
+#[path = "acp_session_impl/activity_snapshot.rs"]
+mod activity_snapshot;
 #[path = "acp_session_impl/recap.rs"]
 mod recap;
 #[path = "acp_session_impl/rewind.rs"]
@@ -182,6 +184,7 @@ mod session_setup;
 mod turn_end;
 #[path = "acp_session_impl/updates.rs"]
 mod updates;
+use activity_snapshot::*;
 use run_loop::*;
 #[path = "acp_session_impl/spawn.rs"]
 mod spawn;

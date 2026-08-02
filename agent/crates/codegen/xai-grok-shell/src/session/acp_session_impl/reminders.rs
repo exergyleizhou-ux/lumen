@@ -720,19 +720,8 @@ impl SessionActor {
             .tool_bridge()
             .list_background_tasks()
             .await;
-        let entries: Vec<crate::terminal::BackgroundTaskManifestEntry> = tasks
-            .into_iter()
-            .filter(|t| !t.completed)
-            .map(|t| crate::terminal::BackgroundTaskManifestEntry {
-                task_id: t.task_id,
-                command: t.command,
-                display_command: t.display_command,
-                output_file: t.output_file,
-                start_time: t.start_time,
-                cwd: t.cwd,
-                kind: t.kind,
-            })
-            .collect();
+        let session_id = self.session_id_string();
+        let entries = background_task_manifest_entries_for_session(&session_id, tasks);
         if !entries.is_empty() {
             tracing::info!(
                 count = entries.len(),
@@ -824,10 +813,75 @@ impl SessionActor {
         }
     }
 }
+
+/// Convert live terminal snapshots into the recovery obligation owned by one
+/// session. The terminal backend is shared with children, so a parent must
+/// never persist a child's task as its own resume obligation.
+pub(super) fn background_task_manifest_entries_for_session(
+    session_id: &str,
+    tasks: Vec<xai_grok_tools::computer::types::TaskSnapshot>,
+) -> Vec<crate::terminal::BackgroundTaskManifestEntry> {
+    tasks
+        .into_iter()
+        .filter(|task| !task.completed && task_is_owned_by_session(task, session_id))
+        .map(|task| crate::terminal::BackgroundTaskManifestEntry {
+            task_id: task.task_id,
+            command: task.command,
+            display_command: task.display_command,
+            output_file: task.output_file,
+            start_time: task.start_time,
+            cwd: task.cwd,
+            kind: task.kind,
+        })
+        .collect()
+}
 #[cfg(test)]
 mod workflow_reminder_tests {
     use super::*;
     use crate::session::workflow::tracker::{WorkflowRunState, WorkflowRunStatus};
+    use xai_grok_tools::computer::types::{TaskKind, TaskSnapshot};
+
+    fn background_task(owner: Option<&str>, task_id: &str, completed: bool) -> TaskSnapshot {
+        TaskSnapshot {
+            task_id: task_id.to_owned(),
+            command: "sleep 60".to_owned(),
+            display_command: None,
+            cwd: "/tmp".to_owned(),
+            start_time: std::time::SystemTime::now(),
+            end_time: completed.then(std::time::SystemTime::now),
+            output: String::new(),
+            output_file: std::path::PathBuf::new(),
+            truncated: false,
+            exit_code: completed.then_some(0),
+            signal: None,
+            completed,
+            kind: TaskKind::Bash,
+            block_waited: false,
+            explicitly_killed: false,
+            owner_session_id: owner.map(str::to_owned),
+            description: None,
+            is_backgrounded: true,
+        }
+    }
+
+    #[test]
+    fn background_manifest_keeps_only_owned_live_tasks() {
+        let entries = background_task_manifest_entries_for_session(
+            "parent",
+            vec![
+                background_task(Some("parent"), "owned", false),
+                background_task(Some("child"), "foreign", false),
+                background_task(Some("parent"), "completed", true),
+                // Owner-less legacy snapshots remain conservatively local.
+                background_task(None, "legacy", false),
+            ],
+        );
+
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].task_id, "owned");
+        assert_eq!(entries[1].task_id, "legacy");
+    }
+
     fn failed_run(detail: String) -> WorkflowRunState {
         WorkflowRunState {
             run_id: "wf_1".to_owned(),
