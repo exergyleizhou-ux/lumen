@@ -3,7 +3,8 @@ use super::*;
 use super::handle_request::{
     add_agent_memory_tools_with_policy, authoritative_child_depth, capability_ceiling_at_depth,
     canonical_total_tokens, mcp_inheritance_allowed_at_depth, record_subagent_usage,
-    render_task_tree_working_memory, subagent_yolo_allowed, usage_is_incomplete,
+    render_task_tree_contract, render_task_tree_working_memory, subagent_yolo_allowed,
+    usage_is_incomplete,
 };
 use crate::test_support::lsp_runtime::{
     DummyLspDispatch, ctx_with_toggle, test_gateway_with_receiver,
@@ -69,6 +70,29 @@ fn task_tree_lineage_is_the_only_depth_authority() {
     let grandchild = SubagentLineage::child_of(&root, "child");
     assert_eq!(authoritative_child_depth(&root), 1);
     assert_eq!(authoritative_child_depth(&grandchild), 2);
+}
+
+#[test]
+fn task_tree_contract_exposes_coordinator_owned_identity_and_leaf_boundary() {
+    use xai_grok_tools::implementations::grok_build::task::types::SubagentLineage;
+    use xai_tool_types::SubagentCapabilityMode;
+
+    let root_child = SubagentLineage::direct("root");
+    let grandchild = SubagentLineage::child_of(&root_child, "code-agent");
+    let leaf = SubagentLineage::child_of(&grandchild, "review-agent");
+    let contract = render_task_tree_contract(
+        &leaf,
+        Some(SubagentCapabilityMode::ReadOnly),
+        false,
+    );
+
+    assert!(contract.contains("root_session_id=root"));
+    assert!(contract.contains("immediate_parent_session_id=review-agent"));
+    assert!(contract.contains("depth=3"));
+    assert!(contract.contains("[\"root\", \"code-agent\", \"review-agent\"]"));
+    assert!(contract.contains("capability_ceiling=ReadOnly"));
+    assert!(contract.contains("You are a leaf"));
+    assert!(contract.contains("Only the root session can accept shared facts"));
 }
 
 #[test]
