@@ -413,10 +413,12 @@ impl WorkingMemoryLedger {
         let mut content = String::from("## Root-reviewed task-tree knowledge\n\n");
         let mut promoted = Vec::with_capacity(facts.len());
         for fact in facts {
-            let evidence = fact
-                .evidence_ref
-                .as_deref()
-                .expect("accepted facts require evidence_ref");
+            let evidence = fact.evidence_ref.as_deref().ok_or_else(|| {
+                WorkingMemoryLedgerError::Invalid(format!(
+                    "accepted ledger fact {:?} revision {} lacks a non-empty evidence_ref",
+                    fact.fact_id, fact.revision
+                ))
+            })?;
             content.push_str(&format!(
                 "<!-- {} -->\n- **{} `{}` r{}**: {}\n  Evidence: `{}`\n",
                 promotion_marker(&fact),
@@ -453,6 +455,17 @@ impl WorkingMemoryLedger {
                     // cannot cross task-tree boundaries or masquerade as a
                     // reviewed fact.
                     fact.validate()?;
+                    if fact.state == WorkingMemoryState::Accepted
+                        && fact
+                            .evidence_ref
+                            .as_deref()
+                            .is_none_or(|reference| reference.trim().is_empty())
+                    {
+                        return Err(WorkingMemoryLedgerError::Invalid(format!(
+                            "accepted ledger record at line {} lacks a non-empty evidence_ref",
+                            index + 1
+                        )));
+                    }
                     if fact.task_tree_id != self.root_session_id {
                         return Err(WorkingMemoryLedgerError::Invalid(format!(
                             "ledger record at line {} belongs to task tree {:?}, not {:?}",
@@ -683,6 +696,27 @@ mod tests {
             matches!(error, WorkingMemoryLedgerError::Invalid(message) if message.contains("evidence_ref"))
         );
         assert!(ledger.accepted_facts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn malformed_accepted_record_without_evidence_fails_closed_on_reload() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let mut malformed = fact("fact-a", 1, "root", "unproven durable claim");
+        malformed.state = WorkingMemoryState::Accepted;
+        malformed.evidence_ref = None;
+        std::fs::write(
+            ledger.path(),
+            format!("{}\n", serde_json::to_string(&malformed).unwrap()),
+        )
+        .unwrap();
+
+        let error = ledger.accepted_facts().unwrap_err();
+        assert!(matches!(
+            error,
+            WorkingMemoryLedgerError::Invalid(message)
+                if message.contains("accepted ledger record") && message.contains("evidence_ref")
+        ));
     }
 
     #[test]
