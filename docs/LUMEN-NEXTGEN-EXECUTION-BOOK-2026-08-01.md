@@ -192,6 +192,72 @@ remaining budget / grant expiry / blocker or uncertainty
 
 输入缺失、与 Accepted facts 冲突、下一步扩大 scope、重复无新证据、tool result 无法支持结论时，child 必须 Blocked 或 NeedParentDecision。
 
+### 3.3 外部材料的批判性校准（2026-08-02）
+
+本节只把三份用户提供的中文二手解读和公开 `claw-code` 仓库当作**问题清单**，不把它们描述的
+Claude Code 内部目录、功能旗标、模型行为、数量或“泄露源码”当成 Lumen 的事实、API 或可复制实现。
+不得获取、导入、反编译或分发未获授权的专有源码。每一条可采用结论都必须由 Lumen 自己的测试和证据包
+证明。
+
+| 外部观察 | Lumen 的可迁移结论 | 明确不采用 |
+|---|---|---|
+| 记忆提取与主工作分离，且持久记忆可能被注入污染 | `SharedWorkingLedger` 是当前树事实的唯一来源；child 只写 Proposed，root 以 evidence 接受；长期记忆只能显式提升 | 将 child 对话摘要、网页摘要或模型自评直接写入 `MEMORY.md`；把历史代码位置当作长期记忆 |
+| maker/checker 应独立，完成不是作者自己宣布 | `VerifyAfterEditOutcome=Some(Pass)`、host receipt 和 root acceptance 分别处理交付、证据和任务完成 | 用另一个模型的“看起来没问题”替代可复跑验证；让 Advisor 接受 claim 或宣布完成 |
+| 提示词/项目说明会在压缩中丢失，机器不变量需在生命周期边界执行 | 将不可绕过的约束实现为 actor/tool policy/typed state；在 compact/recovery 后从 immutable contract 与 Accepted snapshot 重建输入 | 用更长 system prompt、child reminder 或 session summary 承担权限、预算、完成门 |
+| 并行需要 worktree/隔离，调度需要状态和下一轮入口 | 任务节点必须有 lineage、owner、scope、lease、budget reservation、artifact/evidence 和 terminal receipt；仅独立写任务才分 worktree | 同一工作树多 child 自由写入、日志抓取作为唯一状态、以 tmux PID 代替 durable owner |
+| 公共 agent harness 的 roadmap 强调 boot/ready/prompt-accepted/running/blocked/terminal 事件与 outbox | Kairos 采用事件优先的 typed lifecycle 与 outbox/reconciliation；TUI/CLI 是 projection，不是事实源 | 把“agent 已启动”、终端输出、或内存 registry 当作任务已接受/已完成；把本仓库自称的 parity 表当作质量证明 |
+
+**Lumen 专属的硬结论：** child 幻觉不能靠 Advisor 解决；Advisor 只能提高发现问题的概率。
+真正的反跑偏设施是不可变 assignment、versioned Accepted snapshot、窄输出 schema、evidence hash、
+root acceptance、process/budget ownership，以及在每一层失败时 fail-closed。以上结论与 NG-01 至
+NG-04 的 authority 设计一致，不创建第二个控制面。
+
+#### 3.3.1 【拟建】统一生命周期事件合同
+
+NG-03/NG-08 不再允许多个模块以自由文本或日志推断进程状态。任何可托管的 child、terminal、monitor、
+scheduler fire 或 workflow 都必须由其 owner 发出下列最小事件；事件 journal 是事实，UI/日志是投影。
+
+~~~rust
+pub struct GovernedLifecycleEventV1 {
+    pub event_id: EventId,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub owner_session_id: SessionId,
+    pub sequence: u64,
+    pub causal_parent: Option<EventId>,
+    pub kind: Booting | Ready | PromptAccepted | Running | Blocked
+            | Checkpointed | TerminalSucceeded | TerminalFailed
+            | Cancelled | Reconciled | Frozen,
+    pub source: Actor | Scheduler | TerminalAdapter | WorkflowAdapter,
+    pub lease_id: Option<LeaseId>,
+    pub contract_hash: Sha256,
+    pub policy_revision: PolicyRevision,
+    pub evidence_refs: Vec<ArtifactRef>,
+    pub occurred_at: Timestamp,
+}
+~~~
+
+规则：`PromptAccepted` 只能由 SessionActor 在 immutable contract、ceiling、budget reservation 和
+lease（如适用）都存在后发出；`TerminalSucceeded` 必须携带 verify/evidence receipt；任何 sequence
+gap、owner/lease 不匹配、未知 terminal reason 都归入 `RecoveryRequired` 或 `Frozen`，不能合成成功。
+`Blocked` 是一等终态候选，必须带 reason code（budget、grant、evidence、provider、operator、recovery）。
+
+**首个实现切片（NG-03A-1）：** 不新增平行 daemon。先在现有 shell actor 中建立
+`SessionCommand::UnloadIfIdle` 的原子 check-and-act seam，并使 activity 的 read model 覆盖 foreground、
+background terminal、monitor、scheduler fire、background subagent、active lease、pending approval。只有
+这个 seam 的 race/late-event 反例通过，才将 lifecycle event journal 接入 Kairos。
+
+**NG-03A-1 必测反例：**
+
+1. actor 收到 `UnloadIfIdle` 前后插入 prompt，不能丢 prompt 或错误 shutdown；
+2. 任一 background terminal、monitor、scheduler fire、subagent、lease 或 approval 存在，必须拒绝 unload；
+3. shutdown 后的 late completion 只记录为 stale/reconciled，不能复活 session 或发布完成；
+4. 两个 unload 请求竞争时，至多一个获得 shutdown ownership；
+5. 事件 sequence 缺口、重复 terminal event、foreign owner、expired lease 均 fail-closed。
+
+**可观测性而非日志猜测：** operator/status API 必须显示 tree/node、phase、owner、lease、last evidence、
+budget、blocked reason 和下一次可安全动作。它不能展示模型思维链，也不能因一段 stdout 包含 “done” 显示完成。
+
 ---
 
 ## 4. 依赖图与并行纪律
