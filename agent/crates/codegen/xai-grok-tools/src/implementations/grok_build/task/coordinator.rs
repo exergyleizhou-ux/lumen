@@ -12,7 +12,8 @@
 mod query;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use futures::FutureExt;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -25,6 +26,7 @@ use super::coordinator_state::{
     active_summary, background_at_deadline, background_if_caller_gone, completed_snapshot,
     completion_summary, sleep_until, workflow_outstanding,
 };
+use super::governed_operation::GovernedOperationStore;
 use super::types::{
     SpawnedSubagentRef, SubagentCancelOutcome, SubagentCancelTarget, SubagentDescribeOutcome,
     SubagentEvent, SubagentLineage, SubagentOutstandingReply, SubagentOwner,
@@ -44,11 +46,31 @@ pub use super::coordinator_state::{
 /// `Started`.  Depth limits control shape; this limit controls width.
 pub const MAX_LIVE_SUBAGENTS_PER_TREE: usize = 8;
 
+/// Runner-to-coordinator lifecycle traffic is bounded separately from the
+/// host command ingress. A child must wait for the single writer to observe
+/// its `Started`/resume lookup rather than being able to allocate an unbounded
+/// in-memory backlog while the coordinator is busy handling commands.
+pub const MAX_INTERNAL_LIFECYCLE_EVENTS: usize = 64;
+
+/// Durable interpretation of a child terminal receipt's attempted handoff.
+/// `Undelivered` is normal for background work whose buffered completion has
+/// not yet been consumed. `Uncertain` is narrower: a foreground receiver was
+/// expected but was closed, so the coordinator must not imply a handoff.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpawnDeliveryObservation {
+    Delivered,
+    Undelivered,
+    Uncertain,
+}
+
 /// Channel-owned subagent lifecycle actor.
 pub struct SubagentCoordinator<R: ChildRunner> {
     commands: mpsc::UnboundedReceiver<SubagentEvent>,
-    internal_tx: mpsc::UnboundedSender<InternalEvent<R::Control>>,
-    internal_rx: mpsc::UnboundedReceiver<InternalEvent<R::Control>>,
+    /// Independent host control lane. `Cancel`, `TeardownSession`, and
+    /// admission reopening must not be stuck behind model-generated work.
+    control_commands: Option<mpsc::UnboundedReceiver<SubagentEvent>>,
+    internal_tx: mpsc::Sender<InternalEvent<R::Control>>,
+    internal_rx: mpsc::Receiver<InternalEvent<R::Control>>,
     runner: R,
     config: CoordinatorConfig,
     pending: HashMap<String, PendingChild>,
@@ -88,6 +110,14 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     progress: FuturesUnordered<ProgressFuture<<R::Control as ChildControl>::ProgressFuture>>,
     list_requests: HashMap<u64, ListRequest>,
     next_list_request_id: u64,
+    /// SessionActor-owned durable operation stores, keyed by root task tree id.
+    /// Not a second runtime: the coordinator is the host-side durable owner
+    /// for create/claim/cancel-cascade of child work under each root.
+    /// `Arc` so tests can share a probe handle without a second writer path.
+    tree_operations: Arc<Mutex<HashMap<String, GovernedOperationStore>>>,
+    /// Optional host-owned durable location.  Test-only and legacy callers
+    /// leave this unset; the shell host supplies its task-tree memory root.
+    operation_store_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,9 +147,41 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         runner: R,
         config: CoordinatorConfig,
     ) -> Self {
-        let (internal_tx, internal_rx) = mpsc::unbounded_channel();
+        Self::new_with_control(commands, None, runner, config)
+    }
+
+    /// Construct with a physically separate host control ingress. The legacy
+    /// constructor intentionally has no control receiver so focused callers
+    /// retain their one-channel behavior without a permanently-ready closed
+    /// select branch.
+    pub fn new_with_control(
+        commands: mpsc::UnboundedReceiver<SubagentEvent>,
+        control_commands: Option<mpsc::UnboundedReceiver<SubagentEvent>>,
+        runner: R,
+        config: CoordinatorConfig,
+    ) -> Self {
+        Self::with_tree_operations(
+            commands,
+            control_commands,
+            runner,
+            config,
+            Arc::new(Mutex::new(HashMap::new())),
+        )
+    }
+
+    /// Construct with a shared tree-operations map (production uses an empty
+    /// private map; tests inject a probe handle).
+    pub fn with_tree_operations(
+        commands: mpsc::UnboundedReceiver<SubagentEvent>,
+        control_commands: Option<mpsc::UnboundedReceiver<SubagentEvent>>,
+        runner: R,
+        config: CoordinatorConfig,
+        tree_operations: Arc<Mutex<HashMap<String, GovernedOperationStore>>>,
+    ) -> Self {
+        let (internal_tx, internal_rx) = mpsc::channel(MAX_INTERNAL_LIFECYCLE_EVENTS);
         Self {
             commands,
+            control_commands,
             internal_tx,
             internal_rx,
             runner,
@@ -147,6 +209,209 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             progress: FuturesUnordered::new(),
             list_requests: HashMap::new(),
             next_list_request_id: 0,
+            tree_operations,
+            operation_store_dir: None,
+        }
+    }
+
+    /// Construct a coordinator whose per-tree operation journals survive a
+    /// SessionActor process restart.  The host owns the directory; the child
+    /// never chooses it from model-controlled input.
+    pub fn with_operation_store_dir(
+        commands: mpsc::UnboundedReceiver<SubagentEvent>,
+        runner: R,
+        config: CoordinatorConfig,
+        operation_store_dir: PathBuf,
+    ) -> Self {
+        let mut coordinator = Self::new(commands, runner, config);
+        coordinator.operation_store_dir = Some(operation_store_dir);
+        coordinator
+    }
+
+    /// Equivalent to [`Self::with_operation_store_dir`] with an independent
+    /// control ingress supplied by the SessionActor host.
+    pub fn with_operation_store_dir_and_control(
+        commands: mpsc::UnboundedReceiver<SubagentEvent>,
+        control_commands: mpsc::UnboundedReceiver<SubagentEvent>,
+        runner: R,
+        config: CoordinatorConfig,
+        operation_store_dir: PathBuf,
+    ) -> Self {
+        let mut coordinator =
+            Self::new_with_control(commands, Some(control_commands), runner, config);
+        coordinator.operation_store_dir = Some(operation_store_dir);
+        coordinator
+    }
+
+    /// Record a governed child spawn as a durable operation (create + claim).
+    /// Fail-closed: spawn must not proceed without a durable op lease.
+    fn record_spawn_operation(&self, request: &SubagentRequest) -> Result<(), String> {
+        let root = request.lineage.root_session_id.clone();
+        let parent_op = if request.lineage.depth > 1 {
+            Some(format!(
+                "spawn:{}",
+                request.lineage.immediate_parent_session_id
+            ))
+        } else {
+            None
+        };
+        let op_id = format!("spawn:{}", request.id);
+        let reservation = format!("budget:{}", request.id);
+        let mut map = self
+            .tree_operations
+            .lock()
+            .map_err(|_| "tree operation store lock poisoned".to_owned())?;
+        let operation_store_dir = self.operation_store_dir.clone();
+        let store = map.entry(root.clone()).or_insert_with(|| {
+            let Some(dir) = operation_store_dir else {
+                return GovernedOperationStore::for_tree(root.clone());
+            };
+            // Hex preserves every byte of the root id and cannot escape the
+            // host-selected directory, unlike using a session id as a path.
+            let encoded_root: String = root
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            GovernedOperationStore::with_path(
+                root.clone(),
+                dir.join("task-tree-operations")
+                    .join(format!("{encoded_root}.json")),
+            )
+        });
+        store
+            .create(
+                op_id.clone(),
+                request.lineage.immediate_parent_session_id.clone(),
+                "child_spawn",
+                format!("idem:spawn:{}", request.id),
+                Some(reservation),
+                parent_op,
+                300,
+            )
+            .map_err(|e| format!("durable spawn create failed: {e}"))?;
+        let lease = format!("lease:{}", request.id);
+        store
+            .claim(
+                &op_id,
+                &request.lineage.immediate_parent_session_id,
+                lease,
+                300,
+            )
+            .map_err(|e| format!("durable spawn claim failed: {e}"))?;
+        Ok(())
+    }
+
+    /// Terminal-settle the durable op for one child (exactly-once budget release).
+    /// Fail-closed: missing store/lock or complete/fail Err is returned so the
+    /// coordinator can mark the child result failed rather than presenting
+    /// success with an unsettled lease/budget.
+    fn settle_spawn_operation(
+        &self,
+        request: &SubagentRequest,
+        result: &SubagentResult,
+    ) -> Result<(), String> {
+        let root = request.lineage.root_session_id.as_str();
+        let op_id = format!("spawn:{}", request.id);
+        let lease = format!("lease:{}", request.id);
+        let owner = request.lineage.immediate_parent_session_id.as_str();
+        let map = self
+            .tree_operations
+            .lock()
+            .map_err(|_| "tree operation store lock poisoned during settle".to_owned())?;
+        let store = map.get(root).ok_or_else(|| {
+            format!("durable settle missing store for root {root} (op {op_id}); fail-closed")
+        })?;
+        // Cascade cancel may already have terminalized the op. Treat Cancelled
+        // as an expected settle for a cancelled child; other terminal states on
+        // a successful child are a durable authority failure.
+        if result.success && !result.cancelled {
+            match store.complete(
+                &op_id,
+                owner,
+                &lease,
+                format!("receipt://child_complete:{}", request.id),
+            ) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    // Already cancelled by cascade while child reported success:
+                    // still fail-closed so host does not treat work as durable-ok.
+                    Err(format!("durable complete failed for {op_id}: {e}"))
+                }
+            }
+        } else {
+            match store.fail(
+                &op_id,
+                owner,
+                &lease,
+                format!(
+                    "receipt://child_terminal:{}:cancelled={}",
+                    request.id, result.cancelled
+                ),
+            ) {
+                Ok(_) => Ok(()),
+                Err(e)
+                    if e.code() == "op.cancelled" || e.code() == "op.late_event_after_terminal" =>
+                {
+                    // Cascade already terminalized; budget released once there.
+                    tracing::info!(
+                        op_id = %op_id,
+                        reason = %e,
+                        "durable fail settle observed post-cascade terminal; ok"
+                    );
+                    Ok(())
+                }
+                Err(e) => Err(format!("durable fail settle failed for {op_id}: {e}")),
+            }
+        }
+    }
+
+    /// Record delivery only after a real foreground reply or waiter reply was
+    /// accepted by its channel. A buffered completion is intentionally not a
+    /// delivery receipt: it still has to be consumed by the parent later.
+    fn observe_spawn_delivery(
+        &self,
+        request: &SubagentRequest,
+        observation: SpawnDeliveryObservation,
+    ) {
+        if matches!(observation, SpawnDeliveryObservation::Undelivered) {
+            return;
+        }
+        let root = request.lineage.root_session_id.as_str();
+        let operation_id = format!("spawn:{}", request.id);
+        let result = self
+            .tree_operations
+            .lock()
+            .map_err(|_| {
+                "tree operation store lock poisoned during delivery observation".to_owned()
+            })
+            .and_then(|stores| {
+                let store = stores.get(root).ok_or_else(|| {
+                    format!("durable delivery missing store for root {root} (op {operation_id})")
+                })?;
+                (match observation {
+                    SpawnDeliveryObservation::Delivered => {
+                        store.mark_outbox_delivered(&operation_id)
+                    }
+                    SpawnDeliveryObservation::Uncertain => {
+                        store.mark_outbox_uncertain(&operation_id)
+                    }
+                    SpawnDeliveryObservation::Undelivered => unreachable!("handled above"),
+                })
+                .map(|_| ())
+                .map_err(|error| {
+                    format!("durable delivery observation failed for {operation_id}: {error}")
+                })
+            });
+        if let Err(error) = result {
+            // The caller already received the child result. Do not rewrite
+            // history as a failed child; leave a durable, operator-visible
+            // error rather than inventing a delivery receipt.
+            tracing::error!(
+                subagent_id = %request.id,
+                %error,
+                "child result delivery observation could not be persisted"
+            );
         }
     }
 
@@ -165,6 +430,24 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             let deadline = self.next_deadline();
             tokio::select! {
                 biased;
+                command = async {
+                    match self.control_commands.as_mut() {
+                        Some(receiver) => receiver.recv().await,
+                        // The legacy constructor has no physical control
+                        // lane. Its branch must be genuinely pending, not a
+                        // closed receiver that spins or an `expect` evaluated
+                        // before `select!` applies its guard.
+                        None => std::future::pending::<Option<SubagentEvent>>().await,
+                    }
+                } => {
+                    match command {
+                        Some(command) => {
+                            self.reap_abandoned_callers();
+                            self.handle_command(command);
+                        }
+                        None => self.control_commands = None,
+                    }
+                }
                 Some(event) = self.internal_rx.recv() => self.handle_internal(event),
                 Some((id, output)) = self.runs.next(), if !self.runs.is_empty() => {
                     match output {
@@ -320,6 +603,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     });
                     return;
                 }
+                if let Some(conflicting_child_id) = self.governed_write_scope_conflict(&request) {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(format!(
+                            "governed write scope conflicts with live child '{conflicting_child_id}'"
+                        )),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
                 // Late Task spawn after user Stop (detached TaskTool background).
                 if !request.owner.is_workflow()
                     && self
@@ -459,6 +755,17 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 let foreground_deadline = (!request.run_in_background
                     && !request.await_to_completion)
                     .then(|| tokio::time::Instant::now() + self.config.foreground_budget);
+                // Durable op first: never run a child without a lease record.
+                if let Err(err) = self.record_spawn_operation(&request) {
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(err),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
                 self.pending.insert(
                     id.clone(),
                     PendingChild {
@@ -468,6 +775,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         spawn_reply: Some(command.result_tx),
                         foreground_deadline,
                         handle_only,
+                        foreground_delivery_uncertain: false,
                         explicitly_killed: false,
                     },
                 );
@@ -776,6 +1084,44 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 .count()
     }
 
+    /// A host-issued non-empty write scope is exclusive while its child is
+    /// pending or active.  We use lexical path containment here deliberately:
+    /// receipt validation rejects parent-directory escapes, and resolving
+    /// symlinks at this layer would make the admission result depend on a
+    /// mutable filesystem after the host signed it.
+    ///
+    /// Legacy children and governed receipts with an empty scope retain their
+    /// existing workspace policy; only a host that explicitly narrows both
+    /// children opts into this conflict gate.
+    fn governed_write_scope_conflict(&self, request: &SubagentRequest) -> Option<String> {
+        let candidate = request.runtime_overrides.governed_admission.as_ref()?;
+        if candidate.write_scope_roots.is_empty() {
+            return None;
+        }
+
+        self.pending
+            .values()
+            .map(|child| &child.request)
+            .chain(self.active.values().map(|child| &child.request))
+            .find(|existing| {
+                existing.lineage.root_session_id == request.lineage.root_session_id
+                    && existing
+                        .runtime_overrides
+                        .governed_admission
+                        .as_ref()
+                        .is_some_and(|admission| {
+                            !admission.write_scope_roots.is_empty()
+                                && candidate.write_scope_roots.iter().any(|candidate_root| {
+                                    admission.write_scope_roots.iter().any(|existing_root| {
+                                        candidate_root.starts_with(existing_root)
+                                            || existing_root.starts_with(candidate_root)
+                                    })
+                                })
+                        })
+            })
+            .map(|existing| existing.id.clone())
+    }
+
     fn handle_internal(&mut self, event: InternalEvent<R::Control>) {
         match event {
             InternalEvent::Started {
@@ -801,6 +1147,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         spawn_reply: pending.spawn_reply,
                         foreground_deadline: pending.foreground_deadline,
                         handle_only: pending.handle_only,
+                        foreground_delivery_uncertain: pending.foreground_delivery_uncertain,
                         definition_background: child.definition_background,
                         explicitly_killed: pending.explicitly_killed,
                         child_session_id: child.child_session_id,
@@ -864,6 +1211,25 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         };
 
         let request = record.request().clone();
+        // Settle durable lease/budget before host presentation so cancel
+        // cascade and terminal completion share one authority boundary.
+        let mut result = output.result;
+        if let Err(err) = self.settle_spawn_operation(&request, &result) {
+            tracing::error!(
+                subagent_id = %request.id,
+                error = %err,
+                "durable operation settle failed; failing child result"
+            );
+            // Fail-closed: never present success when durable settle did not hold.
+            result.success = false;
+            result.error = Some(err);
+        }
+        // Rebuild output shell around the (possibly failed) settled result.
+        let output = ChildRunOutput {
+            result: result.clone(),
+            completion_data: output.completion_data,
+            snapshot_ref: output.snapshot_ref,
+        };
         self.record_tree_token_usage(&request.lineage.root_session_id, &output.result);
         self.record_tree_tool_call_usage(&request.lineage.root_session_id, &output.result);
         let explicitly_killed = record.explicitly_killed();
@@ -877,6 +1243,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             effective_model_id,
             mut spawn_reply,
             mut handle_only,
+            foreground_delivery_uncertain,
         ) = match record {
             ChildRecord::Pending(child) => (
                 child.started_at,
@@ -888,6 +1255,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 String::new(),
                 child.spawn_reply,
                 child.handle_only,
+                child.foreground_delivery_uncertain,
             ),
             ChildRecord::Active(child) => (
                 child.started_at,
@@ -899,6 +1267,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 child.effective_model_id,
                 child.spawn_reply,
                 child.handle_only,
+                child.foreground_delivery_uncertain,
             ),
         };
 
@@ -924,8 +1293,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
 
         let mut foreground_delivered = false;
+        let mut direct_reply_delivered = false;
+        let mut direct_reply_receiver_closed = false;
         if let Some(respond_to) = spawn_reply.take() {
             let sent = respond_to.send(output.result.clone()).is_ok();
+            direct_reply_delivered = sent;
+            direct_reply_receiver_closed = !sent;
             if !handle_only {
                 foreground_delivered = sent;
                 handle_only = !sent;
@@ -972,6 +1345,18 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             explicitly_killed,
             should_surface,
         };
+        let delivery_observation =
+            if direct_reply_delivered || foreground_delivered || waiter_delivered {
+                SpawnDeliveryObservation::Delivered
+            } else if direct_reply_receiver_closed || foreground_delivery_uncertain {
+                // The foreground operation completed, but its only direct receipt
+                // channel was closed. A later UI surface may show a summary, but
+                // that is not evidence that this terminal result was delivered.
+                SpawnDeliveryObservation::Uncertain
+            } else {
+                SpawnDeliveryObservation::Undelivered
+            };
+        self.observe_spawn_delivery(&request, delivery_observation);
         self.completed.insert(id.to_owned(), completed);
         self.completed_order.push_back(id.to_owned());
         self.running_count_changed();
@@ -1300,7 +1685,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
     }
 
-    fn cancel_tree(&self, root_session_id: &str) {
+    fn cancel_tree(&mut self, root_session_id: &str) {
         for child in self.active.values() {
             if child.request.lineage.root_session_id == root_session_id {
                 child.cancellation.cancel();
@@ -1310,6 +1695,56 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         for child in self.pending.values() {
             if child.request.lineage.root_session_id == root_session_id {
                 child.cancellation.cancel();
+            }
+        }
+        // Cascade durable operation cancel: revoke leases and release budgets
+        // exactly once for every recorded spawn under this root.
+        let map = match self.tree_operations.lock() {
+            Ok(map) => map,
+            Err(e) => {
+                tracing::error!(
+                    root_session_id,
+                    error = %e,
+                    "tree operation store lock poisoned during cancel_tree cascade"
+                );
+                return;
+            }
+        };
+        let root_ops: Vec<String> = map
+            .get(root_session_id)
+            .map(|store| {
+                store
+                    .list()
+                    .into_iter()
+                    .filter(|op| op.parent_operation_id.is_none())
+                    .map(|op| op.operation_id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if let Some(store) = map.get(root_session_id) {
+            let targets = if root_ops.is_empty() {
+                store
+                    .list()
+                    .into_iter()
+                    .map(|op| op.operation_id)
+                    .collect::<Vec<_>>()
+            } else {
+                root_ops
+            };
+            for op_id in targets {
+                match store.cancel_cascade_from_root(root_session_id, &op_id) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        // Do not hide authority failures: operator/host must see
+                        // lease/budget cascade denials in logs.
+                        tracing::error!(
+                            root_session_id,
+                            op_id = %op_id,
+                            error = %e,
+                            "durable cancel_cascade_from_root failed"
+                        );
+                    }
+                }
             }
         }
     }

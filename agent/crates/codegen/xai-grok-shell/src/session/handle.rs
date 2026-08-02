@@ -180,6 +180,31 @@ pub struct SessionHandle {
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
 }
 impl SessionHandle {
+    /// Ask the root SessionActor to persist an immutable governed-child
+    /// assignment and return its derived spawn admission.  This method never
+    /// writes the journal itself, so adapter callers cannot bypass actor
+    /// authority or choose a child-controlled storage path.
+    pub async fn issue_governed_assignment(
+        &self,
+        assignment: xai_grok_memory::RootGovernedAssignmentV1,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
+        String,
+    > {
+        let (respond_to, response) = tokio::sync::oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::IssueGovernedAssignment(Box::new(
+                crate::session::commands::IssueGovernedAssignment {
+                    assignment,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| "root SessionActor is unavailable for governed assignment".to_owned())?;
+        response
+            .await
+            .map_err(|_| "root SessionActor dropped governed assignment response".to_owned())?
+    }
+
     /// S4 product path for the deterministic offline Science micro-loop.
     /// Approval is requested from the existing session-scoped Lumen permission
     /// manager before the command can reach `SessionActor`; a rejection never

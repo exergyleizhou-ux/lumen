@@ -337,6 +337,37 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
             Err(msg) => return Ok(ApplyPatchOutput::ApplicationError(msg)),
         };
 
+        // Validate the complete mutation set before the first filesystem
+        // operation.  A multi-file patch must not partially apply because a
+        // later destination lies outside a child agent's host-issued grant.
+        {
+            let res = resources.lock().await;
+            for change in &changes {
+                let paths: Vec<&std::path::Path> = match change {
+                    FileChange::Add { path, .. }
+                    | FileChange::Delete { path, .. }
+                    | FileChange::Update { path, .. } => vec![path.as_path()],
+                    FileChange::Move {
+                        source_path,
+                        dest_path,
+                        ..
+                    } => vec![source_path.as_path(), dest_path.as_path()],
+                };
+                for path in &paths {
+                    if let Err(error) =
+                        crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                            &res, path, &cwd,
+                        )
+                    {
+                        return Ok(ApplyPatchOutput::ApplicationError(format!(
+                            "{error}: patch target is outside this child agent's write scope ({})",
+                            path.display()
+                        )));
+                    }
+                }
+            }
+        }
+
         // ── Phase 3: Apply all changes (write to filesystem) ─────
         let mut file_results = Vec::new();
 
@@ -543,6 +574,38 @@ mod tests {
             }
             other => panic!("Expected Success, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn write_scope_rejects_entire_multi_file_patch_before_any_write() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed.clone()], 60)
+                .unwrap(),
+        });
+        let patch = wrap_patch(
+            "*** Add File: allowed/ok.txt\n+allowed\n*** Add File: denied.txt\n+must-not-write",
+        );
+        let result = xai_tool_runtime::Tool::run(
+            &ApplyPatchTool,
+            test_ctx(resources.into_shared()),
+            make_input(&patch),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(result, ApplyPatchOutput::ApplicationError(message) if message.contains("write_scope"))
+        );
+        assert!(
+            !allowed.join("ok.txt").exists(),
+            "allowed first file must not be written when a later target is denied"
+        );
+        assert!(!tmp.path().join("denied.txt").exists());
     }
 
     // ── Delete file ──────────────────────────────────────────────

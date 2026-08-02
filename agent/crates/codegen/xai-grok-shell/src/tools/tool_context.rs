@@ -165,10 +165,20 @@ pub struct ToolContext {
     pub task_tree_memory_workspace_dir: Option<std::path::PathBuf>,
     /// Host-issued manifest provenance for governed task-tree children.
     pub task_tree_manifest_hash: Option<String>,
+    /// Root-approved write roots carried by a governed admission receipt.
+    /// `None` means the legacy workspace-wide child policy remains in effect.
+    pub task_tree_write_scope_roots: Option<Vec<std::path::PathBuf>>,
     /// Unified subagent event sender — carries spawn, query, cancel,
     /// list-active, completions, and outstanding messages to the coordinator.
     /// `None` if subagent support is not enabled.
     pub subagent_event_tx: Option<
+        tokio::sync::mpsc::UnboundedSender<
+            xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+        >,
+    >,
+    /// Independent host control ingress for cancellation and teardown. Kept
+    /// separate from model-facing task traffic when the session is live.
+    pub subagent_control_tx: Option<
         tokio::sync::mpsc::UnboundedSender<
             xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
         >,
@@ -280,7 +290,9 @@ impl ToolContext {
             task_tree_root_session_id: None,
             task_tree_memory_workspace_dir: None,
             task_tree_manifest_hash: None,
+            task_tree_write_scope_roots: None,
             subagent_event_tx: None,
+            subagent_control_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
             is_turn_active: None,
@@ -324,7 +336,9 @@ impl ToolContext {
             task_tree_root_session_id: None,
             task_tree_memory_workspace_dir: None,
             task_tree_manifest_hash: None,
+            task_tree_write_scope_roots: None,
             subagent_event_tx: None,
+            subagent_control_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
             is_turn_active: None,
@@ -421,7 +435,9 @@ mod tests {
                 task_tree_root_session_id: None,
                 task_tree_memory_workspace_dir: None,
                 task_tree_manifest_hash: None,
+                task_tree_write_scope_roots: None,
                 subagent_event_tx: None,
+                subagent_control_tx: None,
                 lsp: None,
                 lsp_server_names: Vec::new(),
                 is_turn_active: None,

@@ -18,7 +18,17 @@ pub mod backend;
 pub mod coordinator;
 mod coordinator_state;
 pub use coordinator_state::{cap_completion_output, completion_summary};
+pub mod governed_operation;
 pub mod types;
+pub mod write_scope;
+
+pub use governed_operation::{
+    ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
+    OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,
+};
+pub use write_scope::{
+    WriteScopeDenyReason, WriteScopeLease, WriteScopeLeaseResource, enforce_write_scope_if_present,
+};
 
 use self::backend::SubagentBackendResource;
 use self::types::CurrentPromptIdResource;
@@ -46,6 +56,12 @@ pub fn effective_max_subagent_depth(resources: &crate::types::resources::Resourc
         .unwrap_or(MAX_SUBAGENT_DEPTH)
 }
 
+/// Whether a node at `depth` may spawn another child (leaf depth == HARD_MAX
+/// is hard-denied). This is the shipped ceiling used by the coordinator.
+pub const fn child_may_spawn_at_depth(depth: u32) -> bool {
+    depth < HARD_MAX_SUBAGENT_DEPTH
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // Tool implementation
 // ───────────────────────────────────────────────────────────────────────────
@@ -71,6 +87,13 @@ mod depth_tests {
             effective_max_subagent_depth(&resources),
             HARD_MAX_SUBAGENT_DEPTH
         );
+    }
+
+    #[test]
+    fn leaf_at_hard_max_cannot_spawn() {
+        assert!(super::child_may_spawn_at_depth(0));
+        assert!(super::child_may_spawn_at_depth(2));
+        assert!(!super::child_may_spawn_at_depth(HARD_MAX_SUBAGENT_DEPTH));
     }
 }
 

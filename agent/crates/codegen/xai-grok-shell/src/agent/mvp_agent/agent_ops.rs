@@ -6,6 +6,51 @@ use super::*;
 use crate::auth::PreferredAuthMethod;
 use xai_grok_tools::implementations::grok_build::task::backend::SubagentBackend;
 use xai_tty_utils::ProcessScope;
+
+/// Host-only request for an already-approved governed child.  This is not a
+/// model tool input: the caller must supply a root assignment and cannot pass
+/// an admission or write scope separately.
+pub struct GovernedChildSpawnRequest {
+    pub assignment: xai_grok_memory::RootGovernedAssignmentV1,
+    pub parent_session_id: String,
+    pub parent_prompt_id: Option<String>,
+    pub prompt: String,
+    pub description: String,
+    pub subagent_type: String,
+    pub run_in_background: bool,
+}
+
+/// Derive a spawn lineage exclusively from the root-owned assignment.
+///
+/// A nested governed child cannot use [`SubagentLineage::direct`]: doing so
+/// would make its immediate parent look like a new root and either fail the
+/// admission check or (worse, if a future check regressed) lose the task-tree
+/// identity.  The assignment is immutable and root-issued, so it is the one
+/// authority that may supply the complete lineage here.
+fn governed_lineage_from_assignment(
+    assignment: &xai_grok_memory::RootGovernedAssignmentV1,
+    parent_session_id: &str,
+) -> Result<xai_grok_tools::implementations::grok_build::task::types::SubagentLineage, String> {
+    assignment.validate().map_err(|error| error.to_string())?;
+    if assignment.immediate_parent_id.as_deref() != Some(parent_session_id) {
+        return Err("governed child parent does not match root assignment".to_owned());
+    }
+    let mut lineage_path = assignment.lineage_path.clone();
+    let child_id = lineage_path
+        .pop()
+        .ok_or_else(|| "governed child assignment has no child lineage entry".to_owned())?;
+    if child_id != assignment.node_id || lineage_path.last().map(String::as_str) != Some(parent_session_id) {
+        return Err("governed child assignment has an invalid direct parent lineage".to_owned());
+    }
+    Ok(
+        xai_grok_tools::implementations::grok_build::task::types::SubagentLineage {
+            root_session_id: assignment.root_session_id.clone(),
+            immediate_parent_session_id: parent_session_id.to_owned(),
+            depth: lineage_path.len() as u32,
+            lineage_path,
+        },
+    )
+}
 /// `preferred` model, else catalog `current`, else first with own credentials.
 fn byok_from_models(
     models: &indexmap::IndexMap<String, ModelEntry>,
@@ -36,6 +81,71 @@ fn should_warn_missing_session(ctx: MissingSessionCtx) -> bool {
     }
 }
 impl MvpAgent {
+    /// Issue a root-owned assignment then submit the resulting governed child
+    /// request through the existing coordinator.  No caller can bypass the
+    /// actor to hand-craft an admission, and the shell runner will independently
+    /// re-read the same durable assignment before provider work begins.
+    pub async fn spawn_governed_child(
+        &self,
+        request: GovernedChildSpawnRequest,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::types::SubagentResult,
+        String,
+    > {
+        let GovernedChildSpawnRequest {
+            assignment,
+            parent_session_id,
+            parent_prompt_id,
+            prompt,
+            description,
+            subagent_type,
+            run_in_background,
+        } = request;
+        let expected_parent = assignment.immediate_parent_id.clone().ok_or_else(|| {
+            "governed child assignment must name its immediate parent".to_owned()
+        })?;
+        if expected_parent != parent_session_id {
+            return Err("governed child parent does not match root assignment".to_owned());
+        }
+        let lineage = governed_lineage_from_assignment(&assignment, &parent_session_id)?;
+        let root_session_id = assignment.root_session_id.clone();
+        let root_handle = self
+            .get_session_handle(&acp::SessionId::new(root_session_id.clone()))
+            .ok_or_else(|| "root session is unavailable for governed child spawn".to_owned())?;
+        let admission = root_handle.issue_governed_assignment(assignment).await?;
+        let child_id = admission.node_id.clone();
+        let subagent_request = xai_grok_tools::implementations::grok_build::task::types::SubagentRequest {
+            id: child_id,
+            prompt,
+            description,
+            subagent_type,
+            lineage,
+            parent_session_id,
+            parent_prompt_id,
+            resume_from: None,
+            cwd: None,
+            runtime_overrides: xai_grok_tools::implementations::grok_build::task::types::SubagentRuntimeOverrides {
+                harness_agent_type: Some("governed_tree".to_owned()),
+                context_manifest_hash: Some(admission.manifest_hash.clone()),
+                governed_admission: Some(admission),
+                ..Default::default()
+            },
+            run_in_background,
+            surface_completion: true,
+            await_to_completion: false,
+            fork_context: false,
+            owner: xai_grok_tools::implementations::grok_build::task::types::SubagentOwner::Task,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+        };
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
+            self.subagent_event_tx.clone(),
+            self.subagent_control_tx.clone(),
+        )
+        .spawn(subagent_request)
+        .await
+        .map_err(|error| format!("governed child coordinator unavailable: {error}"))
+    }
+
     /// Announce a session's new title over ACP. ACP scopes `session/update` to
     /// sessions the client established, and a rename can name a history row it
     /// never loaded, so the liveness check belongs here rather than at each
@@ -1887,6 +1997,7 @@ impl MvpAgent {
             );
         }
         let (subagent_event_tx, subagent_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (subagent_control_tx, subagent_control_rx) = tokio::sync::mpsc::unbounded_channel();
         let activity = crate::agent::activity::AgentActivity::default();
         let instance = Self {
             sessions: RefCell::new(HashMap::new()),
@@ -1955,7 +2066,9 @@ impl MvpAgent {
             ),
             model_unavailable_sessions: RefCell::new(std::collections::HashMap::new()),
             subagent_event_tx,
+            subagent_control_tx,
             subagent_event_rx: RefCell::new(Some(subagent_event_rx)),
+            subagent_control_rx: RefCell::new(Some(subagent_control_rx)),
             subagent_presentation: RefCell::new(
                 crate::agent::subagent::SubagentPresentation::new(),
             ),
@@ -2252,8 +2365,9 @@ impl MvpAgent {
         &self,
         subagent_id: &str,
     ) -> xai_grok_tools::implementations::grok_build::task::types::SubagentCancelOutcome {
-        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .cancel(subagent_id)
             .await
@@ -2264,8 +2378,9 @@ impl MvpAgent {
     ) -> Vec<
         xai_grok_tools::implementations::grok_build::task::types::SubagentInspection,
     > {
-        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .list_running(parent_session_id)
             .await
@@ -2276,8 +2391,9 @@ impl MvpAgent {
     ) -> Option<
         xai_grok_tools::implementations::grok_build::task::types::SubagentInspection,
     > {
-        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .inspect(subagent_id)
             .await
@@ -2290,8 +2406,9 @@ impl MvpAgent {
     ) -> Option<
         xai_grok_tools::implementations::grok_build::task::types::SubagentSnapshot,
     > {
-        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .query(subagent_id, block, timeout_ms)
             .await
@@ -2301,8 +2418,9 @@ impl MvpAgent {
         parent_session_id: &str,
         prompt_id: &str,
     ) -> Vec<crate::upload::trace::SubagentSpawnedRef> {
-        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+        xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .spawned_refs_for_prompt(parent_session_id, prompt_id)
             .await
@@ -3702,6 +3820,7 @@ impl MvpAgent {
                     )
             })?;
         tool_ctx.subagent_event_tx = Some(self.subagent_event_tx.clone());
+        tool_ctx.subagent_control_tx = Some(self.subagent_control_tx.clone());
         tool_ctx.synthetic_trace_tx = self
             .subagent_presentation
             .borrow()
@@ -4369,5 +4488,83 @@ impl MvpAgent {
             }
         }
         events
+    }
+}
+
+#[cfg(test)]
+mod governed_assignment_lineage_tests {
+    use super::governed_lineage_from_assignment;
+    use std::path::PathBuf;
+    use xai_grok_memory::RootGovernedAssignmentV1;
+
+    fn assignment(
+        node_id: &str,
+        parent_id: &str,
+        lineage_path: &[&str],
+    ) -> RootGovernedAssignmentV1 {
+        RootGovernedAssignmentV1 {
+            schema_version: 1,
+            task_tree_id: "root".into(),
+            root_session_id: "root".into(),
+            node_id: node_id.into(),
+            immediate_parent_id: Some(parent_id.into()),
+            lineage_path: lineage_path.iter().map(|node| (*node).into()).collect(),
+            assignment_ref: format!("artifact://assignment/{node_id}"),
+            user_objective_ref: "artifact://objective/root".into(),
+            task_contract_hash: "sha256:contract".into(),
+            accepted_snapshot_ref: "ledger://root/1".into(),
+            accepted_snapshot_hash: "sha256:accepted".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            permitted_tool_contract_hashes: vec!["sha256:read".into()],
+            capability_grant_id: format!("grant-{node_id}"),
+            policy_revision: 1,
+            budget_reservation_id: format!("budget-{node_id}"),
+            deadline_unix: 2_000_000_000,
+            permitted_artifact_refs: Vec::new(),
+            write_scope_roots: if lineage_path.len() == 4 {
+                Vec::new()
+            } else {
+                vec![PathBuf::from("src")]
+            },
+            model_selection_ref: None,
+            parent_compaction_hash: None,
+            producer_version: "test".into(),
+            created_at_unix: 1,
+        }
+    }
+
+    #[test]
+    fn governed_assignment_preserves_three_layer_root_lineage() {
+        for (assignment, parent, expected_depth, expected_path) in [
+            (assignment("code", "root", &["root", "code"]), "root", 1, vec!["root"]),
+            (
+                assignment("review", "code", &["root", "code", "review"]),
+                "code",
+                2,
+                vec!["root", "code"],
+            ),
+            (
+                assignment(
+                    "evidence",
+                    "review",
+                    &["root", "code", "review", "evidence"],
+                ),
+                "review",
+                3,
+                vec!["root", "code", "review"],
+            ),
+        ] {
+            let lineage = governed_lineage_from_assignment(&assignment, parent).unwrap();
+            assert_eq!(lineage.root_session_id, "root");
+            assert_eq!(lineage.immediate_parent_session_id, parent);
+            assert_eq!(lineage.depth, expected_depth);
+            assert_eq!(lineage.lineage_path, expected_path);
+        }
+    }
+
+    #[test]
+    fn governed_assignment_rejects_a_forged_direct_parent() {
+        let assignment = assignment("review", "code", &["root", "code", "review"]);
+        assert!(governed_lineage_from_assignment(&assignment, "root").is_err());
     }
 }

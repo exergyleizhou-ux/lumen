@@ -32,9 +32,10 @@ fn cancellation_makes_an_otherwise_complete_usage_snapshot_incomplete() {
 }
 
 #[test]
-fn third_generation_child_cannot_inherit_mcp() {
-    assert!(mcp_inheritance_allowed_at_depth(1));
-    assert!(mcp_inheritance_allowed_at_depth(2));
+fn child_sessions_default_deny_mcp_inheritance() {
+    assert!(mcp_inheritance_allowed_at_depth(0));
+    assert!(!mcp_inheritance_allowed_at_depth(1));
+    assert!(!mcp_inheritance_allowed_at_depth(2));
     assert!(!mcp_inheritance_allowed_at_depth(3));
     assert!(!mcp_inheritance_allowed_at_depth(4));
 }

@@ -2,11 +2,13 @@ use super::*;
 use xai_grok_sampling_types::ReasoningEffort;
 use xai_grok_tools::implementations::{grok_build, opencode};
 
-/// Third-generation children are review/evidence leaves.  MCP tools do not
-/// carry enough uniform capability metadata to prove safe inheritance, so the
-/// capability ceiling denies MCP at this depth and below.
+/// MCP tools do not carry enough uniform capability metadata to prove a
+/// read-only or write-scoped contract.  Child sessions therefore default-deny
+/// inherited and agent-owned MCP servers at every child depth.  Root sessions
+/// retain their configured MCP surface; a future explicit capability manifest
+/// may re-admit a declared read-only MCP tool per child.
 pub(super) const fn mcp_inheritance_allowed_at_depth(child_depth: u32) -> bool {
-    child_depth < 3
+    child_depth == 0
 }
 
 /// Third-generation children are terminal review/evidence leaves.  Their
@@ -202,18 +204,50 @@ fn inject_task_tree_working_memory(
     }
 }
 
+/// Governed resume identity gate: the NEW admission hash must equal the
+/// ORIGINAL child's recorded manifest identity. Legacy resumes (expected
+/// hash absent) are handled by callers outside this function.
+pub(super) fn validate_resume_manifest_identity(
+    recorded: Option<&str>,
+    expected: &str,
+) -> Result<(), &'static str> {
+    if expected.trim().is_empty() {
+        return Err("governed resume requires a non-empty expected context manifest hash");
+    }
+    match recorded.map(str::trim) {
+        Some(actual) if !actual.is_empty() && actual == expected => Ok(()),
+        Some("") | None => Err("resume source is missing context manifest identity"),
+        Some(_) => Err("resume source context manifest hash mismatch"),
+    }
+}
+
 fn validate_governed_snapshot(
     request: &SubagentRequest,
     ctx: &SubagentSpawnContext,
 ) -> Result<(), String> {
     if request.runtime_overrides.harness_agent_type.as_deref() != Some("governed_tree") {
+        // LegacyNoManifest: non-governed spawns must not auto-enter governed
+        // admission. Callers that need governed identity set harness_agent_type.
         return Ok(());
     }
     let admission = request
         .runtime_overrides
         .governed_admission
         .as_ref()
-        .ok_or_else(|| "governed child has no admission receipt".to_owned())?;
+        .ok_or_else(|| {
+            "manifest.legacy_no_manifest_cannot_admit: governed child has no admission receipt"
+                .to_owned()
+        })?;
+    admission
+        .validate_for(&request.lineage, &request.id)
+        .map_err(|reason| format!("manifest.invalid: {reason}"))?;
+    let assignment_workspace_dir =
+        ctx.task_tree_memory_workspace_dir
+            .as_deref()
+            .ok_or_else(|| {
+                "governed child has no root-selected assignment storage directory".to_owned()
+            })?;
+    validate_root_assignment_record(admission, request, assignment_workspace_dir)?;
     let storage = ctx
         .memory_config
         .as_ref()
@@ -238,20 +272,99 @@ fn validate_governed_snapshot(
     let snapshot = ledger
         .accepted_snapshot()
         .map_err(|error| format!("governed child snapshot unavailable: {error}"))?;
+    // Production path: full spawn-receipt admission against live snapshot.
+    let mut lineage_path = request.lineage.lineage_path.clone();
+    if lineage_path.last().map(String::as_str) != Some(request.id.as_str()) {
+        lineage_path.push(request.id.clone());
+    }
+    xai_grok_memory::admit_spawn_receipt(
+        &admission.task_tree_id,
+        &admission.root_session_id,
+        &admission.node_id,
+        &admission.manifest_hash,
+        &admission.accepted_snapshot_hash,
+        &snapshot,
+        Some(&request.lineage.immediate_parent_session_id),
+        &lineage_path,
+    )
+    .map_err(|reason| format!("{reason}: governed spawn admission denied"))?;
+    // Also require optional runtime hash identity when the host set one.
+    if let Some(expected) = request.runtime_overrides.context_manifest_hash.as_deref() {
+        let source =
+            xai_grok_tools::implementations::grok_build::task::types::SubagentResumeSource {
+                subagent_id: request.id.clone(),
+                child_session_id: request.id.clone(),
+                child_cwd: ctx.parent_cwd.display().to_string(),
+                worktree_path: None,
+                snapshot_ref: None,
+                subagent_type: request.subagent_type.clone(),
+                persona: None,
+                model_id: None,
+                context_manifest_hash: Some(admission.manifest_hash.clone()),
+            };
+        source
+            .validate_governed_context_manifest(expected)
+            .map_err(|reason| format!("manifest.forged_hash: {reason}"))?;
+    }
     validate_governed_snapshot_hash(admission, &snapshot)
+}
+
+/// A syntactically valid admission is not enough: the root actor must have
+/// durably issued the immutable assignment for this exact node.  This blocks
+/// a model-controlled or replayed request from manufacturing a self-consistent
+/// set of hashes and gaining a scope that is absent from root authority.
+fn validate_root_assignment_record(
+    admission: &xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
+    request: &SubagentRequest,
+    workspace_dir: &std::path::Path,
+) -> Result<(), String> {
+    let encoded_root: String = request
+        .lineage
+        .root_session_id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let store = xai_grok_memory::RootGovernedAssignmentStore::with_path(
+        &request.lineage.root_session_id,
+        workspace_dir
+            .join("task-tree-assignments")
+            .join(format!("{encoded_root}.json")),
+    );
+    let expected = store
+        .get(&request.id)
+        .map_err(|error| format!("governed assignment unavailable: {error}"))?
+        .spawn_admission()
+        .map_err(|error| format!("governed assignment invalid: {error}"))?;
+    if &expected != admission {
+        return Err("governed assignment admission does not match root record".to_owned());
+    }
+    Ok(())
 }
 
 fn validate_governed_snapshot_hash(
     admission: &xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
     snapshot: &xai_grok_memory::AcceptedLedgerSnapshot,
 ) -> Result<(), String> {
+    if admission.task_tree_id.trim().is_empty()
+        || admission.accepted_snapshot_hash.trim().is_empty()
+        || admission.manifest_hash.trim().is_empty()
+    {
+        return Err("manifest.empty_hash: governed admission identity is empty".to_owned());
+    }
     if admission.task_tree_id != snapshot.task_tree_id {
-        return Err("governed child admission snapshot belongs to a foreign task tree".to_owned());
+        return Err(
+            "manifest.foreign_task_tree: governed child admission snapshot belongs to a foreign task tree"
+                .to_owned(),
+        );
     }
     if admission.accepted_snapshot_hash != snapshot.accepted_set_hash
         && admission.accepted_snapshot_hash != snapshot.journal_hash
     {
-        return Err("governed child admission snapshot hash is stale or foreign".to_owned());
+        return Err(
+            "manifest.snapshot_mismatch: governed child admission snapshot hash is stale or foreign"
+                .to_owned(),
+        );
     }
     Ok(())
 }
@@ -259,8 +372,16 @@ fn validate_governed_snapshot_hash(
 #[cfg(test)]
 mod governed_snapshot_tests {
     use super::validate_governed_snapshot_hash;
-    use xai_grok_memory::AcceptedLedgerSnapshot;
-    use xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission;
+    use super::validate_resume_manifest_identity;
+    use super::validate_root_assignment_record;
+    use std::path::PathBuf;
+    use tokio_util::sync::CancellationToken;
+    use xai_grok_memory::{
+        AcceptedLedgerSnapshot, RootGovernedAssignmentStore, RootGovernedAssignmentV1,
+    };
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        GovernedSpawnAdmission, SubagentLineage, SubagentOwner, SubagentRequest,
+    };
 
     fn admission() -> GovernedSpawnAdmission {
         GovernedSpawnAdmission {
@@ -273,6 +394,7 @@ mod governed_snapshot_tests {
             tool_catalog_hash: "sha256:tools".into(),
             policy_revision: 1,
             budget_reservation_id: "budget".into(),
+            write_scope_roots: Vec::new(),
         }
     }
 
@@ -283,6 +405,158 @@ mod governed_snapshot_tests {
             accepted_count: 1,
             accepted_set_hash: "sha256:accepted".into(),
             journal_hash: "sha256:journal".into(),
+        }
+    }
+
+    fn root_assignment() -> RootGovernedAssignmentV1 {
+        RootGovernedAssignmentV1 {
+            schema_version: 1,
+            task_tree_id: "root".into(),
+            root_session_id: "root".into(),
+            node_id: "child".into(),
+            immediate_parent_id: Some("root".into()),
+            lineage_path: vec!["root".into(), "child".into()],
+            assignment_ref: "artifact://assignment/child".into(),
+            user_objective_ref: "artifact://objective/root".into(),
+            task_contract_hash: "sha256:contract".into(),
+            accepted_snapshot_ref: "ledger://root/1".into(),
+            accepted_snapshot_hash: "sha256:accepted".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            permitted_tool_contract_hashes: vec!["sha256:read".into()],
+            capability_grant_id: "grant-child".into(),
+            policy_revision: 1,
+            budget_reservation_id: "budget-child".into(),
+            deadline_unix: 2_000_000_000,
+            permitted_artifact_refs: Vec::new(),
+            write_scope_roots: vec![PathBuf::from("src")],
+            model_selection_ref: None,
+            parent_compaction_hash: None,
+            producer_version: "test".into(),
+            created_at_unix: 1,
+        }
+    }
+
+    fn governed_request(admission: GovernedSpawnAdmission) -> SubagentRequest {
+        SubagentRequest {
+            id: "child".into(),
+            prompt: "work".into(),
+            description: "child".into(),
+            subagent_type: "general-purpose".into(),
+            parent_session_id: "root".into(),
+            lineage: SubagentLineage::direct("root"),
+            parent_prompt_id: None,
+            resume_from: None,
+            cwd: None,
+            runtime_overrides:
+                xai_grok_tools::implementations::grok_build::task::types::SubagentRuntimeOverrides {
+                    harness_agent_type: Some("governed_tree".into()),
+                    governed_admission: Some(admission),
+                    ..Default::default()
+                },
+            run_in_background: false,
+            surface_completion: false,
+            await_to_completion: false,
+            fork_context: false,
+            owner: SubagentOwner::Task,
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    #[test]
+    fn governed_spawn_requires_exact_root_assignment_record() {
+        let temp = tempfile::tempdir().unwrap();
+        let assignment = root_assignment();
+        let encoded_root = "root"
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let store = RootGovernedAssignmentStore::with_path(
+            "root",
+            temp.path()
+                .join("task-tree-assignments")
+                .join(format!("{encoded_root}.json")),
+        );
+        store.issue(assignment.clone()).unwrap();
+        let admission = assignment.spawn_admission().unwrap();
+        let request = governed_request(admission.clone());
+        assert!(validate_root_assignment_record(&admission, &request, temp.path()).is_ok());
+
+        let mut forged = admission;
+        forged.write_scope_roots = vec![PathBuf::from("tests")];
+        forged.manifest_hash = forged.canonical_manifest_hash();
+        let request = governed_request(forged.clone());
+        assert!(validate_root_assignment_record(&forged, &request, temp.path()).is_err());
+    }
+
+    #[test]
+    fn restarted_consumer_validates_each_assignment_in_a_three_layer_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let encoded_root = "root"
+            .as_bytes()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let journal_path = temp
+            .path()
+            .join("task-tree-assignments")
+            .join(format!("{encoded_root}.json"));
+        let store = RootGovernedAssignmentStore::with_path("root", &journal_path);
+
+        let code = root_assignment();
+        let mut review = root_assignment();
+        review.node_id = "review".into();
+        review.immediate_parent_id = Some("child".into());
+        review.lineage_path = vec!["root".into(), "child".into(), "review".into()];
+        review.assignment_ref = "artifact://assignment/review".into();
+        review.capability_grant_id = "grant-review".into();
+        review.budget_reservation_id = "budget-review".into();
+        review.write_scope_roots = vec![PathBuf::from("tests")];
+        let mut evidence = root_assignment();
+        evidence.node_id = "evidence".into();
+        evidence.immediate_parent_id = Some("review".into());
+        evidence.lineage_path = vec![
+            "root".into(),
+            "child".into(),
+            "review".into(),
+            "evidence".into(),
+        ];
+        evidence.assignment_ref = "artifact://assignment/evidence".into();
+        evidence.capability_grant_id = "grant-evidence".into();
+        evidence.budget_reservation_id = "budget-evidence".into();
+        evidence.write_scope_roots = Vec::new();
+
+        for assignment in [&code, &review, &evidence] {
+            store.issue(assignment.clone()).unwrap();
+        }
+        drop(store);
+
+        for (assignment, parent, depth, lineage_path) in [
+            (&code, "root", 1, vec!["root".to_owned()]),
+            (
+                &review,
+                "child",
+                2,
+                vec!["root".to_owned(), "child".to_owned()],
+            ),
+            (
+                &evidence,
+                "review",
+                3,
+                vec!["root".to_owned(), "child".to_owned(), "review".to_owned()],
+            ),
+        ] {
+            let admission = assignment.spawn_admission().unwrap();
+            let mut request = governed_request(admission.clone());
+            request.id = assignment.node_id.clone();
+            request.parent_session_id = parent.to_owned();
+            request.lineage = SubagentLineage {
+                root_session_id: "root".into(),
+                immediate_parent_session_id: parent.to_owned(),
+                depth,
+                lineage_path,
+            };
+            assert!(validate_root_assignment_record(&admission, &request, temp.path()).is_ok());
         }
     }
 
@@ -297,6 +571,92 @@ mod governed_snapshot_tests {
         let mut foreign = snapshot();
         foreign.task_tree_id = "other-tree".into();
         assert!(validate_governed_snapshot_hash(&receipt, &foreign).is_err());
+    }
+
+    #[test]
+    fn production_admit_spawn_receipt_denies_empty_stale_and_forged_lineage() {
+        use xai_grok_memory::admit_spawn_receipt;
+        let snap = snapshot();
+        let lineage = vec!["root".into(), "child".into()];
+        let a = admission();
+        assert!(
+            admit_spawn_receipt(
+                &a.task_tree_id,
+                &a.root_session_id,
+                &a.node_id,
+                &a.manifest_hash,
+                &a.accepted_snapshot_hash,
+                &snap,
+                Some("root"),
+                &lineage,
+            )
+            .is_ok()
+        );
+        assert!(
+            admit_spawn_receipt(
+                &a.task_tree_id,
+                &a.root_session_id,
+                &a.node_id,
+                "",
+                &a.accepted_snapshot_hash,
+                &snap,
+                Some("root"),
+                &lineage,
+            )
+            .is_err()
+        );
+        assert!(
+            admit_spawn_receipt(
+                &a.task_tree_id,
+                &a.root_session_id,
+                &a.node_id,
+                &a.manifest_hash,
+                "sha256:wrong",
+                &snap,
+                Some("root"),
+                &lineage,
+            )
+            .is_err()
+        );
+        assert!(
+            admit_spawn_receipt(
+                &a.task_tree_id,
+                &a.root_session_id,
+                &a.node_id,
+                &a.manifest_hash,
+                &a.accepted_snapshot_hash,
+                &snap,
+                Some("forged-parent"),
+                &lineage,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn resume_manifest_identity_must_match_the_recorded_original() {
+        // Matching recorded identity admits.
+        assert!(validate_resume_manifest_identity(Some("sha256:one"), "sha256:one").is_ok());
+        // Missing recorded identity on a governed resume fails closed.
+        assert_eq!(
+            validate_resume_manifest_identity(None, "sha256:one").unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
+        // Empty recorded identity fails closed.
+        assert_eq!(
+            validate_resume_manifest_identity(Some(" "), "sha256:one").unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
+        // Forged / drifted identity fails closed.
+        assert_eq!(
+            validate_resume_manifest_identity(Some("sha256:two"), "sha256:one").unwrap_err(),
+            "resume source context manifest hash mismatch"
+        );
+        // Empty expected hash never admits a governed resume.
+        assert_eq!(
+            validate_resume_manifest_identity(Some("sha256:one"), "").unwrap_err(),
+            "governed resume requires a non-empty expected context manifest hash"
+        );
     }
 }
 
@@ -448,6 +808,10 @@ pub(crate) async fn run_shell_child(
             "Role prompt_file degraded, continuing without role prompt"
         );
     }
+    // Original child's recorded manifest identity, captured from the durable
+    // resume source BEFORE conversion so governed resume compares the new
+    // admission hash against the original identity, never against itself.
+    let mut recorded_manifest_hash: Option<String> = None;
     let resume_source = if let Some(resume_id) = request
         .resume_from
         .as_deref()
@@ -464,16 +828,23 @@ pub(crate) async fn run_shell_child(
                 );
                 return child_run_output(failure_result(&request, &msg), completion_data, None);
             }
-            SubagentResumeLookup::Completed(info) => Some(ResumeSourceData {
-                subagent_id: info.subagent_id,
-                child_session_id: info.child_session_id,
-                child_cwd: info.child_cwd,
-                worktree_path: info.worktree_path.map(PathBuf::from),
-                snapshot_ref: info.snapshot_ref,
-                subagent_type: info.subagent_type,
-                persona: info.persona,
-                model_id: info.model_id,
-            }),
+            SubagentResumeLookup::Completed(info) => {
+                // Recorded manifest identity travels with the durable resume
+                // source. It is captured BEFORE conversion so the governed
+                // gate below compares the NEW request's admission hash against
+                // the ORIGINAL child's recorded identity, never against itself.
+                recorded_manifest_hash = info.context_manifest_hash.clone();
+                Some(ResumeSourceData {
+                    subagent_id: info.subagent_id,
+                    child_session_id: info.child_session_id,
+                    child_cwd: info.child_cwd,
+                    worktree_path: info.worktree_path.map(PathBuf::from),
+                    snapshot_ref: info.snapshot_ref,
+                    subagent_type: info.subagent_type,
+                    persona: info.persona,
+                    model_id: info.model_id,
+                })
+            }
             SubagentResumeLookup::Missing => {
                 match durable_resume_source_for(resume_id, &ctx.parent_session_id, &ctx.parent_cwd)
                 {
@@ -513,6 +884,39 @@ pub(crate) async fn run_shell_child(
                 completion_data,
                 None,
             );
+        }
+        // Governed resume: fail closed on missing/forged ContextManifest identity.
+        // The NEW request's admission hash must equal the ORIGINAL child's
+        // recorded manifest identity; a self-comparison would prove nothing.
+        // Legacy resumes leave expected hash as None and remain compatible.
+        if request.runtime_overrides.harness_agent_type.as_deref() == Some("governed_tree")
+            || request.runtime_overrides.context_manifest_hash.is_some()
+            || request.runtime_overrides.governed_admission.is_some()
+        {
+            let expected = request
+                .runtime_overrides
+                .context_manifest_hash
+                .as_deref()
+                .or_else(|| {
+                    request
+                        .runtime_overrides
+                        .governed_admission
+                        .as_ref()
+                        .map(|a| a.manifest_hash.as_str())
+                })
+                .unwrap_or("");
+            if let Err(reason) =
+                validate_resume_manifest_identity(recorded_manifest_hash.as_deref(), expected)
+            {
+                return child_run_output(
+                    failure_result(
+                        &request,
+                        &format!("manifest admission denied on resume: {reason}"),
+                    ),
+                    completion_data,
+                    None,
+                );
+            }
         }
     }
     if let Some(error) = task_model_override_error(
@@ -1025,6 +1429,7 @@ pub(crate) async fn run_shell_child(
     )
     .with_hunk_tracking_enabled(ctx.hunk_tracking_enabled);
     tool_ctx.subagent_event_tx = Some(ctx.subagent_event_tx.clone());
+    tool_ctx.subagent_control_tx = Some(ctx.subagent_control_tx.clone());
     let task_output_budget = request
         .runtime_overrides
         .output_token_budget
@@ -1040,6 +1445,12 @@ pub(crate) async fn run_shell_child(
         .governed_admission
         .as_ref()
         .map(|admission| admission.manifest_hash.clone());
+    tool_ctx.task_tree_write_scope_roots = request
+        .runtime_overrides
+        .governed_admission
+        .as_ref()
+        .filter(|admission| !admission.write_scope_roots.is_empty())
+        .map(|admission| admission.write_scope_roots.clone());
     tool_ctx.lsp = ctx.lsp.clone();
     tool_ctx.process_scope = ctx.process_scope.clone();
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();
@@ -1189,17 +1600,16 @@ pub(crate) async fn run_shell_child(
             }
         }
     }
-    // A third-generation child is an evidence/review leaf.  It cannot safely
-    // inherit arbitrary MCP capabilities because MCP tool declarations do not
-    // all carry a ToolKind for capability filtering.  Keep this independent
-    // of a role's requested permissions so depth can only shrink authority.
+    // Child MCP is default-denied because arbitrary MCP declarations do not
+    // prove a uniform ToolKind/capability contract.  Keep this independent of
+    // role permissions: no nested child can gain authority by configuration.
     let allow_mcp_inheritance = mcp_inheritance_allowed_at_depth(child_depth);
     let agent_mcp_servers: Vec<_> = if !allow_mcp_inheritance {
         if !definition.mcp_servers.is_empty() {
             tracing::info!(
                 subagent_id = %request.id,
                 child_depth,
-                "third-generation subagent: suppressing agent-owned MCP servers"
+                "child subagent: suppressing MCP servers without an explicit capability manifest"
             );
         }
         vec![]

@@ -49,6 +49,7 @@ fn task_tree_memory_backend_for_session(
     storage: Option<&xai_grok_memory::MemoryStorage>,
     workspace_dir: Option<&std::path::Path>,
     root_session_id: &str,
+    is_root_session: bool,
 ) -> Option<std::sync::Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>> {
     let storage = storage?;
     let ledger = match workspace_dir {
@@ -57,9 +58,13 @@ fn task_tree_memory_backend_for_session(
         }
         None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(storage, root_session_id),
     };
-    Some(std::sync::Arc::new(
-        xai_grok_memory::WorkingMemoryLedgerBackend::new(ledger),
-    ))
+    // Host stamps authority at inject time: children never receive RootSessionActor.
+    let backend = if is_root_session {
+        xai_grok_memory::WorkingMemoryLedgerBackend::new(ledger)
+    } else {
+        xai_grok_memory::WorkingMemoryLedgerBackend::for_child(ledger)
+    };
+    Some(std::sync::Arc::new(backend))
 }
 
 #[cfg(test)]
@@ -90,7 +95,7 @@ mod task_tree_memory_backend_tests {
             MemoryStorage::with_paths(temp.path().join("global"), temp.path().join("workspace"));
         // A root session does not have a subagent event sender. It must still
         // receive this backend or no actor can accept a child's proposal.
-        let backend = task_tree_memory_backend_for_session(Some(&storage), None, "root")
+        let backend = task_tree_memory_backend_for_session(Some(&storage), None, "root", true)
             .expect("memory-enabled root gets a working-memory backend");
 
         backend
@@ -996,10 +1001,12 @@ pub(crate) async fn spawn_session_actor(
         .task_tree_root_session_id
         .clone()
         .unwrap_or_else(|| session_info.id.0.to_string());
+    let is_root_session = session_info.id.0.as_ref() == task_tree_root_session_id.as_str();
     let task_tree_memory_backend_for_spec = task_tree_memory_backend_for_session(
         memory_storage_for_session.as_ref(),
         tool_context.task_tree_memory_workspace_dir.as_deref(),
         &task_tree_root_session_id,
+        is_root_session,
     );
     let context_window_tokens = context_window_override
         .map(|c| c.get())
@@ -1061,6 +1068,7 @@ pub(crate) async fn spawn_session_actor(
         memory_backend: memory_backend_for_spec,
         task_tree_memory_backend: task_tree_memory_backend_for_spec,
         task_tree_manifest_hash: tool_context.task_tree_manifest_hash.clone(),
+        task_tree_write_scope_roots: tool_context.task_tree_write_scope_roots.clone(),
         web_search_config: web_search_config.clone(),
         backend_search: backend_tools_enabled,
         web_fetch_config: web_fetch_config.clone(),
@@ -1086,6 +1094,7 @@ pub(crate) async fn spawn_session_actor(
         attribution_callback: attribution_callback_for_spec,
         tool_params_json: tool_params_json.clone(),
         subagent_event_tx: tool_context.subagent_event_tx.clone(),
+        subagent_control_tx: tool_context.subagent_control_tx.clone(),
         monitor_event_buffer: tool_context.monitor_event_buffer.clone(),
         user_question_tx: user_question_tx.clone(),
         subagent_depth: tool_context.subagent_depth,

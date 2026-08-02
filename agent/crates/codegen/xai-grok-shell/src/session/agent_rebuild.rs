@@ -94,6 +94,7 @@ pub(crate) struct AgentRebuildSpec {
     pub task_tree_memory_backend:
         Option<Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>>,
     pub task_tree_manifest_hash: Option<String>,
+    pub task_tree_write_scope_roots: Option<Vec<PathBuf>>,
     pub web_search_config: WebSearchConfig,
     pub backend_search: bool,
     pub web_fetch_config: WebFetchConfig,
@@ -121,6 +122,7 @@ pub(crate) struct AgentRebuildSpec {
     pub attribution_callback: Option<xai_grok_tools::SharedAttributionCallback>,
     pub tool_params_json: ResolvedToolParamsJson,
     pub subagent_event_tx: Option<UnboundedSender<SubagentEvent>>,
+    pub subagent_control_tx: Option<UnboundedSender<SubagentEvent>>,
     pub monitor_event_buffer: Option<MonitorEventBuffer>,
     pub user_question_tx: UnboundedSender<UserQuestionRequest>,
     pub subagent_depth: u32,
@@ -143,6 +145,16 @@ pub(crate) struct AgentRebuildSpec {
     pub owner_session_id: Option<String>,
     pub parent_scheduler_handle:
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
+}
+
+fn child_write_scope_roots(
+    receipt_roots: Option<&[PathBuf]>,
+    working_directory: &std::path::Path,
+) -> Vec<PathBuf> {
+    receipt_roots
+        .filter(|roots| !roots.is_empty())
+        .map(<[PathBuf]>::to_vec)
+        .unwrap_or_else(|| vec![working_directory.to_path_buf()])
 }
 impl AgentRebuildSpec {
     /// Build a fresh [`Agent`] from this spec and an [`AgentDefinition`].
@@ -201,6 +213,7 @@ impl AgentRebuildSpec {
             memory_backend,
             task_tree_memory_backend,
             task_tree_manifest_hash,
+            task_tree_write_scope_roots,
             web_search_config,
             backend_search,
             web_fetch_config,
@@ -226,6 +239,7 @@ impl AgentRebuildSpec {
             attribution_callback,
             tool_params_json,
             subagent_event_tx,
+            subagent_control_tx,
             monitor_event_buffer,
             user_question_tx,
             subagent_depth,
@@ -343,10 +357,18 @@ impl AgentRebuildSpec {
                 MaxSubagentDepth, SessionIdResource, SubagentDepthCounter, SubagentEventSender,
                 TaskTreeRootSessionId,
             };
-            let backend = SubagentBackendResource(Arc::new(ChannelBackend::for_session(
-                event_tx.clone(),
-                session_id_str.clone(),
-            )));
+            // A live SessionActor supplies this independent control lane.
+            // Old reconstructed/test sessions intentionally fall back to the
+            // normal lane rather than losing cancellation completely.
+            let control_tx = subagent_control_tx
+                .clone()
+                .unwrap_or_else(|| event_tx.clone());
+            let backend =
+                SubagentBackendResource(Arc::new(ChannelBackend::for_session_with_control(
+                    event_tx.clone(),
+                    control_tx,
+                    session_id_str.clone(),
+                )));
             agent.tool_bridge().update_resource(backend).await;
             agent
                 .tool_bridge()
@@ -404,6 +426,7 @@ impl AgentRebuildSpec {
                 )
                 .await;
         }
+        let governed_child = task_tree_manifest_hash.is_some();
         if let Some(manifest_hash) = task_tree_manifest_hash {
             agent
                 .tool_bridge()
@@ -412,6 +435,57 @@ impl AgentRebuildSpec {
                         manifest_hash.clone(),
                     ),
                 )
+                .await;
+        }
+        // Nested task-tree sessions receive a path-scoped write grant. Root
+        // SessionActor omits it and is not constrained by this gate. A
+        // governed child without an explicit root-approved scope receives a
+        // deny-all lease: it must not silently regain legacy workspace-wide
+        // write authority just because a host forgot to assign a scope.
+        if session_id_str != task_tree_root_session_id {
+            use xai_grok_tools::implementations::grok_build::task::{
+                WriteScopeLease, WriteScopeLeaseResource,
+            };
+            let child_workspace = working_directory.clone();
+            let grant_id = format!("write-grant:{session_id_str}");
+            let lease = if governed_child
+                && task_tree_write_scope_roots
+                    .as_ref()
+                    .is_none_or(|roots| roots.is_empty())
+            {
+                WriteScopeLease::deny_all(
+                    grant_id,
+                    task_tree_root_session_id.clone(),
+                    session_id_str.clone(),
+                    24 * 60 * 60,
+                )
+            } else {
+                let allowed_roots = child_write_scope_roots(
+                    task_tree_write_scope_roots.as_deref(),
+                    &child_workspace,
+                );
+                match WriteScopeLease::issue(
+                    grant_id,
+                    task_tree_root_session_id.clone(),
+                    session_id_str.clone(),
+                    allowed_roots,
+                    24 * 60 * 60,
+                ) {
+                    Ok(lease) => lease,
+                    // `child_write_scope_roots` always yields one legacy
+                    // workspace root; keep an explicit fallback rather than
+                    // omitting the resource if that invariant ever changes.
+                    Err(_) => WriteScopeLease::deny_all(
+                        format!("write-grant:{session_id_str}"),
+                        task_tree_root_session_id.clone(),
+                        session_id_str.clone(),
+                        24 * 60 * 60,
+                    ),
+                }
+            };
+            agent
+                .tool_bridge()
+                .update_resource(WriteScopeLeaseResource { lease })
                 .await;
         }
         agent
@@ -471,6 +545,8 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         memory_workspace_path: None,
         memory_backend: None,
         task_tree_memory_backend: None,
+        task_tree_manifest_hash: None,
+        task_tree_write_scope_roots: None,
         web_search_config: WebSearchConfig::default(),
         backend_search: false,
         web_fetch_config: WebFetchConfig::Disabled,
@@ -496,13 +572,13 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         attribution_callback: None,
         tool_params_json: ResolvedToolParamsJson::default(),
         subagent_event_tx: None,
+        subagent_control_tx: None,
         monitor_event_buffer: None,
         user_question_tx: uq_tx,
         subagent_depth: 0,
         subagents_max_depth: xai_grok_tools::implementations::grok_build::task::MAX_SUBAGENT_DEPTH,
         session_id_str: "test-session".to_string(),
         task_tree_root_session_id: "test-session".to_string(),
-        task_tree_manifest_hash: None,
         blocking_wait_depth: Arc::new(crate::tools::tool_context::BlockingWaitState::new()),
         respect_gitignore: false,
         scheduler_background_loops: true,
@@ -521,6 +597,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
 mod tests {
     use super::*;
     use crate::agent::config::{EndpointsConfig, ModelEntry};
+    use xai_grok_tools::implementations::grok_build::task::WriteScopeLeaseResource;
     use xai_grok_tools::implementations::grok_build::task::types::{
         SessionIdResource, TaskTreeRootSessionId,
     };
@@ -574,6 +651,56 @@ mod tests {
             .and_then(|definition| definition.function.description)
             .expect("GrokBuild Task description should be present")
     }
+
+    #[test]
+    fn child_write_scope_roots_prefer_signed_receipt_and_fail_closed_to_workspace() {
+        let receipt_roots = vec![PathBuf::from("src"), PathBuf::from("tests")];
+
+        assert_eq!(
+            child_write_scope_roots(Some(&receipt_roots), std::path::Path::new("workspace")),
+            receipt_roots
+        );
+        assert_eq!(
+            child_write_scope_roots(Some(&[]), std::path::Path::new("workspace")),
+            vec![PathBuf::from("workspace")]
+        );
+        assert_eq!(
+            child_write_scope_roots(None, std::path::Path::new("workspace")),
+            vec![PathBuf::from("workspace")]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn governed_child_without_signed_write_roots_gets_deny_all_lease() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut spec = test_rebuild_spec_default();
+                {
+                    let spec = Arc::get_mut(&mut spec).expect("test spec should be uniquely owned");
+                    spec.session_id_str = "child".to_owned();
+                    spec.task_tree_root_session_id = "root".to_owned();
+                    spec.task_tree_manifest_hash = Some("sha256:governed".to_owned());
+                    spec.task_tree_write_scope_roots = None;
+                }
+                let agent = spec
+                    .build_agent(AgentDefinition::default_grok_build())
+                    .await
+                    .expect("governed child should still build as read-only");
+                let scope = agent
+                    .tool_bridge()
+                    .toolset()
+                    .get_resource_cloned::<WriteScopeLeaseResource>()
+                    .await
+                    .expect("governed child must carry a deny-all scope resource");
+                assert!(
+                    scope
+                        .authorize(std::path::Path::new("src/lib.rs"), u64::MAX - 1)
+                        .is_err()
+                );
+            })
+            .await;
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn rebuild_projects_fresh_public_model_keys_into_task_description() {
         tokio::task::LocalSet::new()

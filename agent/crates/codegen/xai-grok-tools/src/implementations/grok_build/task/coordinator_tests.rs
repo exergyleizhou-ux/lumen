@@ -1,12 +1,14 @@
 use super::*;
 use crate::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
 use crate::implementations::grok_build::task::types::{
-    SubagentCancelRequest, SubagentClearUsageNotAppliedRequest, SubagentCompletionsRequest,
-    SubagentLineage, SubagentListActiveRequest, SubagentLoopUnitActiveRequest,
-    SubagentMarkUsageNotAppliedRequest, SubagentOutstandingReply, SubagentOutstandingRequest,
-    SubagentOwner, SubagentRecoveredTerminalRequest, SubagentRegistryCounts, SubagentRequest,
-    SubagentSnapshot, SubagentSnapshotStatus,
+    GovernedSpawnAdmission, SubagentCancelRequest, SubagentCancelTarget,
+    SubagentClearUsageNotAppliedRequest, SubagentCompletionsRequest, SubagentLineage,
+    SubagentListActiveRequest, SubagentLoopUnitActiveRequest, SubagentMarkUsageNotAppliedRequest,
+    SubagentOutstandingReply, SubagentOutstandingRequest, SubagentOwner,
+    SubagentRecoveredTerminalRequest, SubagentRegistryCounts, SubagentRequest, SubagentSnapshot,
+    SubagentSnapshotStatus, SubagentSpawnRequest,
 };
+use std::path::PathBuf;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -186,6 +188,26 @@ fn request(id: &str, background: bool) -> SubagentRequest {
     }
 }
 
+fn governed_request(id: &str, write_scope_roots: Vec<PathBuf>) -> SubagentRequest {
+    let mut request = request(id, true);
+    request.runtime_overrides.harness_agent_type = Some("governed_tree".to_owned());
+    let mut admission = GovernedSpawnAdmission {
+        task_tree_id: "parent".to_owned(),
+        root_session_id: "parent".to_owned(),
+        node_id: id.to_owned(),
+        accepted_snapshot_hash: "sha256:accepted".to_owned(),
+        immutable_assignment_hash: format!("sha256:assignment-{id}"),
+        manifest_hash: String::new(),
+        tool_catalog_hash: "sha256:tools".to_owned(),
+        policy_revision: 1,
+        budget_reservation_id: format!("budget-{id}"),
+        write_scope_roots,
+    };
+    admission.manifest_hash = admission.canonical_manifest_hash();
+    request.runtime_overrides.governed_admission = Some(admission);
+    request
+}
+
 #[tokio::test]
 async fn direct_spawn_rejects_forged_task_tree_lineage() {
     let mut harness = harness(true, std::time::Duration::from_secs(60));
@@ -253,6 +275,51 @@ async fn governed_tree_spawn_requires_host_manifest_identity() {
     );
     assert!(harness.requests.try_recv().is_err());
     harness.actor.abort();
+}
+
+#[tokio::test]
+async fn governed_write_scopes_reject_overlap_but_allow_disjoint_live_children() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let first = governed_request("governed-src", vec![PathBuf::from("src")]);
+    let first_spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(first).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .expect("first governed child should reach runner")
+            .id,
+        "governed-src"
+    );
+
+    let overlapping = governed_request("governed-src-lib", vec![PathBuf::from("src/lib")]);
+    let rejected = harness.backend.spawn(overlapping).await.unwrap();
+    assert!(!rejected.success);
+    assert!(rejected.error.as_deref().is_some_and(|error| {
+        error.contains("governed write scope conflicts with live child 'governed-src'")
+    }));
+
+    let disjoint = governed_request("governed-tests", vec![PathBuf::from("tests")]);
+    let second_spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(disjoint).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .expect("disjoint governed child should reach runner")
+            .id,
+        "governed-tests"
+    );
+
+    harness.actor.abort();
+    first_spawn.abort();
+    second_spawn.abort();
 }
 
 #[tokio::test]
@@ -369,6 +436,12 @@ struct Harness {
     requests: mpsc::UnboundedReceiver<SubagentRequest>,
     started: mpsc::UnboundedReceiver<String>,
     actor: tokio::task::JoinHandle<()>,
+    /// Shared durable-op map observed by coordinator tests.
+    tree_operations: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<String, crate::implementations::grok_build::task::governed_operation::GovernedOperationStore>,
+        >,
+    >,
 }
 
 fn harness(wait_before_start: bool, foreground_budget: std::time::Duration) -> Harness {
@@ -405,9 +478,12 @@ fn harness_with_options_and_usage(
     let (completion_tx, completions) = mpsc::unbounded_channel();
     let (request_tx, requests) = mpsc::unbounded_channel();
     let (started_tx, started) = mpsc::unbounded_channel();
+    let tree_operations =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let actor = tokio::spawn(
-        SubagentCoordinator::new(
+        SubagentCoordinator::with_tree_operations(
             command_rx,
+            None,
             TestRunner {
                 wait_before_start,
                 wait_after_cancel,
@@ -419,6 +495,7 @@ fn harness_with_options_and_usage(
                 started: started_tx,
             },
             config,
+            tree_operations.clone(),
         )
         .run(),
     );
@@ -433,7 +510,74 @@ fn harness_with_options_and_usage(
         requests,
         started,
         actor,
+        tree_operations,
     }
+}
+
+#[tokio::test]
+async fn control_stop_precedes_already_queued_model_spawn() {
+    let (normal_tx, normal_rx) = mpsc::unbounded_channel();
+    let (control_tx, control_rx) = mpsc::unbounded_channel();
+    let (start, _) = tokio::sync::broadcast::channel(1);
+    let (finish, _) = tokio::sync::broadcast::channel(1);
+    let (completion_tx, _completions) = mpsc::unbounded_channel();
+    let (request_tx, mut requests) = mpsc::unbounded_channel();
+    let (started_tx, _started) = mpsc::unbounded_channel();
+    let tree_operations =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let (result_tx, result_rx) = oneshot::channel();
+
+    // Queue the ordinary model command first. A real control lane must still
+    // run Stop first once the coordinator starts draining both lanes.
+    normal_tx
+        .send(SubagentEvent::Spawn(SubagentSpawnRequest {
+            request: Box::new(request("after-stop", false)),
+            result_tx,
+        }))
+        .expect("normal queue open");
+    let (stop_reply, stop_result) = oneshot::channel();
+    control_tx
+        .send(SubagentEvent::Cancel(SubagentCancelRequest {
+            parent_session_id: Some("parent".to_owned()),
+            target: SubagentCancelTarget::ParentSession,
+            respond_to: stop_reply,
+        }))
+        .expect("control queue open");
+
+    let actor = tokio::spawn(
+        SubagentCoordinator::with_tree_operations(
+            normal_rx,
+            Some(control_rx),
+            TestRunner {
+                wait_before_start: true,
+                wait_after_cancel: false,
+                output_usage_incomplete: false,
+                start,
+                finish,
+                completions: completion_tx,
+                requests: request_tx,
+                started: started_tx,
+            },
+            CoordinatorConfig::default(),
+            tree_operations,
+        )
+        .run(),
+    );
+
+    let _ = stop_result.await.expect("stop receives outcome");
+    let result = result_rx.await.expect("stop-rejected spawn replies");
+    assert!(!result.success);
+    assert!(
+        result.error.unwrap_or_default().contains("stopped"),
+        "queued normal spawn must observe control Stop first"
+    );
+    assert!(
+        requests.try_recv().is_err(),
+        "runner must never start child"
+    );
+    drop(normal_tx);
+    drop(control_tx);
+    actor.await.expect("coordinator exits");
 }
 
 /// Session-bound backend for ParentSession cancel / admission on the default
@@ -691,6 +835,19 @@ async fn caller_drop_during_initialization_does_not_drop_owned_run() {
     );
     let terminal = harness.backend.query("owned", false, None).await.unwrap();
     assert!(terminal.status.is_terminal());
+    let operation = {
+        let stores = harness.tree_operations.lock().unwrap();
+        stores
+            .get("parent")
+            .unwrap()
+            .get("spawn:owned")
+            .expect("durable operation remains queryable")
+    };
+    assert_eq!(
+        operation.outbox_state,
+        crate::implementations::grok_build::task::governed_operation::OutboxDeliveryState::Uncertain,
+        "a dropped foreground receiver is a lost terminal receipt, not ordinary background buffering"
+    );
     harness.actor.abort();
 }
 
@@ -2170,6 +2327,210 @@ async fn completed_cache_evicts_oldest_entry_at_cap() {
             .query(&format!("cache-{MAX_COMPLETED_ENTRIES:04}"), false, None,)
             .await
             .is_some()
+    );
+    harness.actor.abort();
+}
+
+/// Durable create/claim conflict must abort spawn before the runner starts.
+#[tokio::test]
+async fn coordinator_spawn_fails_closed_when_durable_create_conflicts() {
+    use crate::implementations::grok_build::task::governed_operation::GovernedOperationStore;
+
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    // Pre-seed an op with the same idempotency key but a foreign owner so the
+    // next create for id "conflict-child" fails closed.
+    {
+        let mut map = harness.tree_operations.lock().unwrap();
+        let store = map
+            .entry("parent".to_owned())
+            .or_insert_with(|| GovernedOperationStore::for_tree("parent"));
+        store
+            .create(
+                "spawn:conflict-child",
+                "foreign-owner",
+                "child_spawn",
+                "idem:spawn:conflict-child",
+                Some("budget:conflict-child".into()),
+                None,
+                300,
+            )
+            .expect("seed foreign idempotency claim");
+    }
+
+    let result = harness
+        .backend
+        .spawn(request("conflict-child", false))
+        .await
+        .unwrap();
+    assert!(
+        !result.success,
+        "spawn must fail on durable create conflict"
+    );
+    assert!(
+        result
+            .error
+            .as_deref()
+            .is_some_and(|e| e.contains("durable spawn") || e.contains("idempotency")),
+        "error was {:?}",
+        result.error
+    );
+    // Runner must never start for a fail-closed durable admission.
+    assert!(
+        harness.requests.try_recv().is_err(),
+        "child runner must not observe a failed durable spawn"
+    );
+    harness.actor.abort();
+}
+
+/// Coordinator spawn must create+claim a durable op; finish settles it terminal.
+#[tokio::test]
+async fn coordinator_spawn_records_and_completes_durable_operation() {
+    use crate::implementations::grok_build::task::governed_operation::{
+        GovernedOperationState, OutboxDeliveryState,
+    };
+
+    let mut harness = harness(false, std::time::Duration::from_secs(60));
+    let spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("op-child", false)).await }
+    });
+    let observed = harness.requests.recv().await.expect("spawn reached runner");
+    assert_eq!(observed.id, "op-child");
+    // Durable op must exist before the child finishes.
+    let op = {
+        let map = harness.tree_operations.lock().unwrap();
+        let store = map
+            .get("parent")
+            .expect("root tree op store created on spawn");
+        store.get("spawn:op-child").expect("spawn op recorded")
+    };
+    assert!(
+        matches!(
+            op.state,
+            GovernedOperationState::Claimed | GovernedOperationState::Running
+        ),
+        "expected claimed lease, got {:?}",
+        op.state
+    );
+    assert_eq!(op.owner_node_id, "parent");
+    assert!(op.lease_id.is_some());
+    assert!(!op.budget_released);
+
+    let _ = harness.finish.send(());
+    let result = spawn.await.unwrap().unwrap();
+    assert!(result.success);
+
+    // Allow finish_child to settle.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let settled = {
+        let map = harness.tree_operations.lock().unwrap();
+        map.get("parent")
+            .unwrap()
+            .get("spawn:op-child")
+            .expect("op still present")
+    };
+    assert_eq!(settled.state, GovernedOperationState::Completed);
+    assert!(settled.budget_released);
+    assert!(settled.lease_id.is_none());
+    assert_eq!(
+        settled.outbox_state,
+        OutboxDeliveryState::Delivered,
+        "only the foreground reply makes the operation delivery-observed"
+    );
+
+    // Late duplicate complete via the same store fails closed.
+    let store = {
+        let map = harness.tree_operations.lock().unwrap();
+        map.get("parent").unwrap().clone()
+    };
+    assert_eq!(
+        store
+            .complete("spawn:op-child", "parent", "lease:op-child", "again")
+            .unwrap_err()
+            .code(),
+        "op.duplicate_complete"
+    );
+    harness.actor.abort();
+}
+
+/// Root cancel cascades durable ops (leases revoked, budgets released once).
+#[tokio::test]
+async fn coordinator_cancel_tree_cascades_durable_operations() {
+    use crate::implementations::grok_build::task::governed_operation::GovernedOperationState;
+
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let outer = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("outer-op", true)).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .as_ref()
+            .map(|r| r.id.as_str()),
+        Some("outer-op")
+    );
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("outer-op"));
+
+    let mut nested = request("nested-op", true);
+    nested.parent_session_id = "outer-op".to_owned();
+    nested.lineage = SubagentLineage::child_of(&SubagentLineage::direct("parent"), "outer-op");
+    let nested_spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(nested).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .as_ref()
+            .map(|r| r.id.as_str()),
+        Some("nested-op")
+    );
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("nested-op"));
+
+    // Both ops claimed before cancel.
+    {
+        let map = harness.tree_operations.lock().unwrap();
+        let store = map.get("parent").expect("ops store");
+        assert!(store.get("spawn:outer-op").is_ok());
+        assert!(store.get("spawn:nested-op").is_ok());
+    }
+
+    assert!(matches!(
+        parent_backend(&harness).cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled
+    ));
+    assert!(outer.await.unwrap().unwrap().cancelled);
+    assert!(nested_spawn.await.unwrap().unwrap().cancelled);
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let map = harness.tree_operations.lock().unwrap();
+    let store = map.get("parent").expect("ops store after cancel");
+    for id in ["spawn:outer-op", "spawn:nested-op"] {
+        let op = store.get(id).expect(id);
+        // Cascade cancel marks Cancelled; late finish may also Fail after cancel.
+        assert!(
+            matches!(
+                op.state,
+                GovernedOperationState::Cancelled | GovernedOperationState::Failed
+            ),
+            "{id} state {:?}",
+            op.state
+        );
+        assert!(op.budget_released, "{id} must release budget once");
+        assert!(op.lease_id.is_none(), "{id} lease revoked");
+    }
+    // Foreign takeover of a terminal op fails closed.
+    assert!(
+        store
+            .takeover("spawn:outer-op", "stranger", "lease-x", 0, 30, false)
+            .is_err()
     );
     harness.actor.abort();
 }

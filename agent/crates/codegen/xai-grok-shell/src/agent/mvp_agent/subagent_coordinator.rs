@@ -205,6 +205,12 @@ impl MvpAgent {
         let Some(rx) = self.subagent_event_rx.borrow_mut().take() else {
             return;
         };
+        let Some(control_rx) = self.subagent_control_rx.borrow_mut().take() else {
+            // Do not start a coordinator that would silently downgrade Stop
+            // and teardown to the data plane.
+            tracing::error!("subagent coordinator control ingress missing; refusing to start");
+            return;
+        };
         let agent_ref = LocalRef::new(self);
         let runner = ShellChildRunner {
             agent_ref: agent_ref.clone(),
@@ -235,13 +241,23 @@ impl MvpAgent {
                 buffer_completions: true,
                 buffered_completion_output_cap: None,
             };
+        // The same host-owned workspace-memory root used by the shared ledger
+        // also anchors operation journals.  Do not derive this from a child
+        // request: task ids and paths are model-controlled input.
+        let operation_store_dir = self
+            .sessions
+            .borrow()
+            .values()
+            .find_map(|session| session.tool_context.task_tree_memory_workspace_dir.clone());
         tokio::task::spawn_local(
-            xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCoordinator::new(
-                    rx,
-                    runner,
-                    config,
-                )
-                .run(),
+            match operation_store_dir {
+                Some(dir) => xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCoordinator::with_operation_store_dir_and_control(
+                    rx, control_rx, runner, config, dir,
+                ).run(),
+                None => xai_grok_tools::implementations::grok_build::task::coordinator::SubagentCoordinator::new_with_control(
+                    rx, Some(control_rx), runner, config,
+                ).run(),
+            },
         );
         let (trace_tx, mut trace_rx) = tokio::sync::mpsc::unbounded_channel::<
             crate::upload::turn::SyntheticTurnTraceRequest,
@@ -491,6 +507,7 @@ impl MvpAgent {
             inherited_tool_overrides,
             yolo_mode,
             subagent_event_tx: self.subagent_event_tx.clone(),
+            subagent_control_tx: self.subagent_control_tx.clone(),
             parent_depth,
             subagents_max_depth: self.cfg.borrow().subagents_max_depth,
             inference_idle_timeout_secs,

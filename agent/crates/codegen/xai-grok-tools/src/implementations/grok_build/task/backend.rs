@@ -8,7 +8,7 @@
 //! The receiver is owned by the shared single-writer coordinator actor; only
 //! the child runner plugged into that actor differs by host.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use tokio::sync::{mpsc, oneshot};
 
@@ -22,6 +22,27 @@ use super::types::{
 };
 use crate::register_resource;
 use xai_tool_runtime::ToolError;
+
+/// Process-wide cap on spawn requests admitted into the legacy coordinator
+/// ingress at once. The coordinator still enforces per-tree limits; this cap
+/// closes the earlier window where a model could allocate an unbounded number
+/// of `Spawn` envelopes before that single writer got CPU time.
+pub const DEFAULT_MAX_SPAWN_INGRESS: usize = 32;
+pub const MAX_SPAWN_INGRESS_ENV_VAR: &str = "XAI_SUBAGENT_SPAWN_INGRESS_MAX";
+const MAX_SPAWN_INGRESS_HARD_CAP: usize = 1_024;
+
+static SPAWN_INGRESS_PERMITS: LazyLock<Arc<tokio::sync::Semaphore>> =
+    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(spawn_ingress_capacity())));
+
+/// Resolve the process-wide ingress admission cap. Invalid, zero, or
+/// excessively large environment values fail closed to the safe default.
+pub fn spawn_ingress_capacity() -> usize {
+    std::env::var(MAX_SPAWN_INGRESS_ENV_VAR)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| (1..=MAX_SPAWN_INGRESS_HARD_CAP).contains(value))
+        .unwrap_or(DEFAULT_MAX_SPAWN_INGRESS)
+}
 
 /// Abstraction over the mechanism used to spawn, query, and cancel subagents.
 ///
@@ -112,15 +133,36 @@ register_resource!(
 /// `spawn` is created inside the backend so callers never manage it.
 #[derive(Clone)]
 pub struct ChannelBackend {
+    /// Ordinary model/data-plane coordinator ingress.
     tx: mpsc::UnboundedSender<SubagentEvent>,
+    /// Host control-plane ingress. Kept physically separate so Stop and
+    /// teardown do not wait behind ordinary task traffic.
+    control_tx: mpsc::UnboundedSender<SubagentEvent>,
     parent_session_id: Option<Arc<str>>,
+    /// Held from enqueue through the coordinator's first result/handoff. This
+    /// intentionally applies before the legacy unbounded channel so producers
+    /// cannot build an unbounded ingress backlog.
+    spawn_ingress: Arc<tokio::sync::Semaphore>,
 }
 
 impl ChannelBackend {
     pub fn new(tx: mpsc::UnboundedSender<SubagentEvent>) -> Self {
+        Self::new_with_control(tx.clone(), tx)
+    }
+
+    /// Construct with an independent host-owned control plane. Legacy and
+    /// isolated test callers may use [`Self::new`], which deliberately maps
+    /// both lanes to one channel; production session construction uses this
+    /// constructor with distinct channels.
+    pub fn new_with_control(
+        tx: mpsc::UnboundedSender<SubagentEvent>,
+        control_tx: mpsc::UnboundedSender<SubagentEvent>,
+    ) -> Self {
         Self {
             tx,
+            control_tx,
             parent_session_id: None,
+            spawn_ingress: Arc::clone(&SPAWN_INGRESS_PERMITS),
         }
     }
 
@@ -129,9 +171,36 @@ impl ChannelBackend {
         tx: mpsc::UnboundedSender<SubagentEvent>,
         parent_session_id: impl Into<Arc<str>>,
     ) -> Self {
+        Self::for_session_with_control(tx.clone(), tx, parent_session_id)
+    }
+
+    /// Bind a session backend to separate ordinary and control lanes.
+    pub fn for_session_with_control(
+        tx: mpsc::UnboundedSender<SubagentEvent>,
+        control_tx: mpsc::UnboundedSender<SubagentEvent>,
+        parent_session_id: impl Into<Arc<str>>,
+    ) -> Self {
         Self {
             tx,
+            control_tx,
             parent_session_id: Some(parent_session_id.into()),
+            spawn_ingress: Arc::clone(&SPAWN_INGRESS_PERMITS),
+        }
+    }
+
+    /// Test/host constructor for an explicitly scoped spawn ingress budget.
+    /// Production callers use the shared process-wide gate above so separate
+    /// session backends cannot evade pressure by constructing a new backend.
+    pub fn with_spawn_ingress(
+        tx: mpsc::UnboundedSender<SubagentEvent>,
+        parent_session_id: Option<Arc<str>>,
+        spawn_ingress: Arc<tokio::sync::Semaphore>,
+    ) -> Self {
+        Self {
+            control_tx: tx.clone(),
+            tx,
+            parent_session_id,
+            spawn_ingress,
         }
     }
 
@@ -150,7 +219,7 @@ impl ChannelBackend {
     pub async fn cancel_parent_prompt(&self, parent_prompt_id: &str) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
         if self
-            .tx
+            .control_tx
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: self.parent_session_id(),
                 target: SubagentCancelTarget::ParentPromptId(parent_prompt_id.to_owned()),
@@ -184,7 +253,7 @@ impl ChannelBackend {
         let Some(parent_session_id) = self.parent_session_id() else {
             return false;
         };
-        self.tx
+        self.control_tx
             .send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: Some(parent_session_id),
                 target: SubagentCancelTarget::ParentSession,
@@ -198,7 +267,7 @@ impl ChannelBackend {
         let Some(parent_session_id) = self.parent_session_id() else {
             return false;
         };
-        self.tx
+        self.control_tx
             .send(SubagentEvent::OpenSpawnAdmission { parent_session_id })
             .is_ok()
     }
@@ -303,6 +372,17 @@ impl SubagentBackend for ChannelBackend {
             // the real root/path from that active parent.
             request.lineage = super::types::SubagentLineage::direct(parent_session_id);
         }
+        let _ingress_permit = self
+            .spawn_ingress
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| {
+                ToolError::custom(
+                    "coordinator_unavailable",
+                    "Subagent spawn ingress is closed — cannot spawn subagent",
+                )
+            })?;
         let (respond_to, response_rx) = oneshot::channel();
         let cancel_on_receiver_drop = request.owner.is_workflow();
         let cancel_token = request.cancel_token.clone();
@@ -360,11 +440,13 @@ impl SubagentBackend for ChannelBackend {
 
     async fn cancel(&self, id: &str) -> SubagentCancelOutcome {
         let (respond_to, response_rx) = oneshot::channel();
-        let sent = self.tx.send(SubagentEvent::Cancel(SubagentCancelRequest {
-            parent_session_id: self.parent_session_id(),
-            target: SubagentCancelTarget::SubagentId(id.to_string()),
-            respond_to,
-        }));
+        let sent = self
+            .control_tx
+            .send(SubagentEvent::Cancel(SubagentCancelRequest {
+                parent_session_id: self.parent_session_id(),
+                target: SubagentCancelTarget::SubagentId(id.to_string()),
+                respond_to,
+            }));
         if sent.is_err() {
             return SubagentCancelOutcome::NotFound;
         }

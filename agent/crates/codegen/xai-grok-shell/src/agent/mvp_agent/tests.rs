@@ -1277,14 +1277,19 @@ async fn acp_model_switch_apply_propagates_actor_rejection_without_mutating_hand
             let mut entry = ModelEntry::fallback("guarded-target", &EndpointsConfig::default());
             entry.info.agent_type = "grok-build".to_owned();
             entry.api_key = Some("fixture-key".to_owned());
-            agent.models_manager.insert_test_entry("guarded-target", entry);
+            agent
+                .models_manager
+                .insert_test_entry("guarded-target", entry);
 
             let session_id = acp::SessionId::new("guarded-apply");
             let mut handle = make_test_handle("session-anchor-model", false, None);
             handle.info.id = session_id.clone();
             let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::unbounded_channel();
             handle.cmd_tx = cmd_tx;
-            agent.sessions.borrow_mut().insert(session_id.clone(), handle);
+            agent
+                .sessions
+                .borrow_mut()
+                .insert(session_id.clone(), handle);
             tokio::task::spawn_local(async move {
                 while let Some(command) = cmd_rx.recv().await {
                     match command {
@@ -1293,7 +1298,7 @@ async fn acp_model_switch_apply_propagates_actor_rejection_without_mutating_hand
                         }
                         SessionCommand::SetSessionModel { responds_to, .. } => {
                             let _ = responds_to.send(Err(
-                                acp::Error::invalid_params().data("expert_active: guarded"),
+                                acp::Error::invalid_params().data("expert_active: guarded")
                             ));
                             break;
                         }
@@ -1367,8 +1372,8 @@ async fn model_state_prefers_session_reasoning_effort_over_global() {
 async fn copied_active_expert_snapshot_spawns_actor_with_anchor_model_and_effort() {
     use crate::agent::config::{EndpointsConfig, ModelEntry};
     use crate::session::expert::{ExpertMode, ExpertModeState, ExpertPhase};
-    use crate::session::storage::{CopySessionOptions, StorageAdapter as _};
     use crate::session::storage::jsonl::JsonlStorageAdapter;
+    use crate::session::storage::{CopySessionOptions, StorageAdapter as _};
     use xai_grok_sampling_types::ReasoningEffort;
 
     let local = tokio::task::LocalSet::new();
@@ -1396,7 +1401,10 @@ async fn copied_active_expert_snapshot_spawns_actor_with_anchor_model_and_effort
             active.phase = ExpertPhase::Executing;
             active.model_before_expert = Some("session-anchor-model".to_owned());
             active.reasoning_effort_before_expert = Some("high".to_owned());
-            storage.write_expert_mode_state(&source, &active).await.unwrap();
+            storage
+                .write_expert_mode_state(&source, &active)
+                .await
+                .unwrap();
             storage
                 .update_current_model_and_agent(
                     &source,
@@ -1411,26 +1419,33 @@ async fn copied_active_expert_snapshot_spawns_actor_with_anchor_model_and_effort
                 .await
                 .unwrap();
             let copied = storage.load_session(&target).await.unwrap();
-            assert_eq!(copied.summary.current_model_id.0.as_ref(), "session-anchor-model");
+            assert_eq!(
+                copied.summary.current_model_id.0.as_ref(),
+                "session-anchor-model"
+            );
             assert_eq!(copied.summary.reasoning_effort, Some(ReasoningEffort::High));
 
             let agent = build_minimal_agent_for_tests();
             agent.set_auth_method(acp::AuthMethodId::new(
                 crate::agent::auth_method::OIDC_METHOD_ID,
             ));
-            agent.auth_manager.hot_swap(crate::auth::GrokAuth::test_default());
-            let mut entry = ModelEntry::fallback("session-anchor-model", &EndpointsConfig::default());
+            agent
+                .auth_manager
+                .hot_swap(crate::auth::GrokAuth::test_default());
+            let mut entry =
+                ModelEntry::fallback("session-anchor-model", &EndpointsConfig::default());
             entry.info.supports_reasoning_effort = true;
             entry.info.reasoning_effort = Some(ReasoningEffort::Low);
             entry.api_key = Some("fixture-key".to_owned());
-            agent.models_manager.insert_test_entry("session-anchor-model", entry);
+            agent
+                .models_manager
+                .insert_test_entry("session-anchor-model", entry);
 
-            let init = acp::InitializeRequest::new(acp::ProtocolVersion::V1)
-                .client_capabilities(
-                    acp::ClientCapabilities::new()
-                        .fs(acp::FileSystemCapabilities::new())
-                        .terminal(false),
-                );
+            let init = acp::InitializeRequest::new(acp::ProtocolVersion::V1).client_capabilities(
+                acp::ClientCapabilities::new()
+                    .fs(acp::FileSystemCapabilities::new())
+                    .terminal(false),
+            );
             let cwd = AbsPathBuf::new(root.path().to_path_buf()).unwrap();
             let mut options = chat_session_spawn_options(
                 target.clone(),
@@ -1443,7 +1458,10 @@ async fn copied_active_expert_snapshot_spawns_actor_with_anchor_model_and_effort
             options.chat_history = copied.chat_history;
             options.persisted_expert_mode = copied.expert_mode_state;
             options.session_reasoning_effort = copied.summary.reasoning_effort;
-            agent.spawn_and_register_session(&init, options).await.unwrap();
+            agent
+                .spawn_and_register_session(&init, options)
+                .await
+                .unwrap();
 
             let handle = agent
                 .sessions

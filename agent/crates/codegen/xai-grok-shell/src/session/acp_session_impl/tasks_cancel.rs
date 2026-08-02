@@ -189,7 +189,16 @@ impl SessionActor {
     pub(super) fn cancel_all_session_subagents(&self) {
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
             use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
-            let backend = ChannelBackend::for_session(event_tx, self.session_id_string());
+            let control_tx = self
+                .tool_context
+                .subagent_control_tx
+                .clone()
+                .unwrap_or_else(|| event_tx.clone());
+            let backend = ChannelBackend::for_session_with_control(
+                event_tx,
+                control_tx,
+                self.session_id_string(),
+            );
             let _ = backend.request_cancel_parent_session(tokio::sync::oneshot::channel().0);
         }
     }
@@ -198,7 +207,16 @@ impl SessionActor {
     pub(super) fn open_subagent_spawn_admission(&self) {
         if let Some(event_tx) = self.tool_context.subagent_event_tx.clone() {
             use xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend;
-            let backend = ChannelBackend::for_session(event_tx, self.session_id_string());
+            let control_tx = self
+                .tool_context
+                .subagent_control_tx
+                .clone()
+                .unwrap_or_else(|| event_tx.clone());
+            let backend = ChannelBackend::for_session_with_control(
+                event_tx,
+                control_tx,
+                self.session_id_string(),
+            );
             let _ = backend.open_spawn_admission();
         }
     }
@@ -208,7 +226,12 @@ impl SessionActor {
             use xai_grok_tools::implementations::grok_build::task::types::{
                 SubagentCancelRequest, SubagentCancelTarget, SubagentEvent,
             };
-            let _ = event_tx.send(SubagentEvent::Cancel(SubagentCancelRequest {
+            let control_tx = self
+                .tool_context
+                .subagent_control_tx
+                .clone()
+                .unwrap_or(event_tx);
+            let _ = control_tx.send(SubagentEvent::Cancel(SubagentCancelRequest {
                 parent_session_id: Some(self.session_id_string()),
                 target: SubagentCancelTarget::ParentPromptId(parent_prompt_id.to_string()),
                 respond_to: tokio::sync::oneshot::channel().0,

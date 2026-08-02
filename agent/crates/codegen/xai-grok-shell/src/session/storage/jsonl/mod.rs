@@ -1844,7 +1844,8 @@ impl StorageAdapter for JsonlStorageAdapter {
         // Lenient: rewind points are appended non-atomically; a torn trailing
         // line (crash/ENOSPC) must be skipped, not brick session resume. The
         // strict reader is reserved for the merge/truncate rewrite paths.
-        let rewind_points = self.read_jsonl_lenient::<RewindPoint>(self.rewind_points_file(info))?;
+        let rewind_points =
+            self.read_jsonl_lenient::<RewindPoint>(self.rewind_points_file(info))?;
         let result = PersistedData {
             summary,
             chat_history,

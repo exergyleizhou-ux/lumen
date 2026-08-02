@@ -15,6 +15,9 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::claim_authority::{
+    ClaimAuthority, ClaimAuthorityActor, ClaimDenyReason, ClaimTransitionRequest,
+};
 use crate::{MemoryScope, MemoryStorage};
 use xai_grok_tools::types::task_tree_memory::{
     TaskTreeMemoryBackend, TaskTreeMemoryFact as BackendFact, TaskTreeMemoryFactKind,
@@ -30,10 +33,34 @@ static APPEND_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkingMemoryState {
+    /// Ephemeral only — never written to the durable JSONL ledger.
+    Draft,
     Proposed,
+    /// Root SessionActor marked host verification; still not shared truth.
+    HostVerified,
     Accepted,
     Rejected,
     Superseded,
+    /// Root-owned hard withdrawal after acceptance (stronger than Superseded).
+    Revoked,
+}
+
+impl WorkingMemoryState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Draft => "draft",
+            Self::Proposed => "proposed",
+            Self::HostVerified => "host_verified",
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+            Self::Superseded => "superseded",
+            Self::Revoked => "revoked",
+        }
+    }
+
+    pub const fn is_shared_truth(self) -> bool {
+        matches!(self, Self::Accepted)
+    }
 }
 
 /// One revision of a fact in a task tree. Revisions are append-only so every
@@ -86,6 +113,10 @@ pub enum WorkingMemoryLedgerError {
         reviewer: String,
         root: String,
     },
+    /// ClaimAuthority rejected the transition with a machine-readable code.
+    ClaimDenied {
+        reason: ClaimDenyReason,
+    },
     RevisionConflict {
         fact_id: String,
         expected: u64,
@@ -114,6 +145,9 @@ impl std::fmt::Display for WorkingMemoryLedgerError {
                 f,
                 "only root session {root:?} may review working-memory facts (got {reviewer:?})"
             ),
+            Self::ClaimDenied { reason } => {
+                write!(f, "claim authority denied transition: {reason}")
+            }
             Self::RevisionConflict {
                 fact_id,
                 expected,
@@ -164,6 +198,11 @@ pub struct WorkingMemoryLedger {
 #[derive(Debug, Clone)]
 pub struct WorkingMemoryLedgerBackend {
     ledger: WorkingMemoryLedger,
+    /// Host-stamped authority role for review. Session-id alone never grants
+    /// RootSessionActor acceptance — the host must inject the correct role
+    /// when building the backend (root tool path → RootSessionActor, child →
+    /// Child, advisor/TUI → their non-root role).
+    review_actor: ClaimAuthorityActor,
 }
 
 /// Result of a user-authorized promotion of reviewed working-memory facts into
@@ -208,8 +247,29 @@ pub struct WorkingMemoryLedgerRepair {
 }
 
 impl WorkingMemoryLedgerBackend {
+    /// Root SessionActor tool path: may HostVerify/Accept/Reject/Supersede.
     pub fn new(ledger: WorkingMemoryLedger) -> Self {
-        Self { ledger }
+        Self::with_review_actor(ledger, ClaimAuthorityActor::RootSessionActor)
+    }
+
+    /// Child agent tool path: may propose only.
+    pub fn for_child(ledger: WorkingMemoryLedger) -> Self {
+        Self::with_review_actor(ledger, ClaimAuthorityActor::Child)
+    }
+
+    /// Explicit host-stamped role (Advisor/TUI/daemon/Kairos never accept).
+    pub fn with_review_actor(
+        ledger: WorkingMemoryLedger,
+        review_actor: ClaimAuthorityActor,
+    ) -> Self {
+        Self {
+            ledger,
+            review_actor,
+        }
+    }
+
+    pub fn review_actor(&self) -> ClaimAuthorityActor {
+        self.review_actor
     }
 
     fn into_fact(
@@ -270,15 +330,12 @@ impl TaskTreeMemoryBackend for WorkingMemoryLedgerBackend {
         let receipt = TaskTreeMemoryWriteReceipt {
             fact_id: fact.fact_id.clone(),
             revision: fact.revision,
-            state: match state {
-                WorkingMemoryState::Accepted => "accepted",
-                WorkingMemoryState::Rejected => "rejected",
-                WorkingMemoryState::Superseded => "superseded",
-                WorkingMemoryState::Proposed => unreachable!("review cannot be proposed"),
-            },
+            state: state.as_str(),
         };
+        // Use the host-stamped review_actor, not session-id equality. A
+        // non-root role that presents the root session id cannot launder Accept.
         self.ledger
-            .review(reviewer_session_id, fact, state)
+            .review_with_authority(self.review_actor, reviewer_session_id, fact, state)
             .map_err(|error| error.to_string())?;
         Ok(receipt)
     }
@@ -319,50 +376,166 @@ impl WorkingMemoryLedger {
         &self.path
     }
 
+    pub fn root_session_id(&self) -> &str {
+        &self.root_session_id
+    }
+
     pub fn propose(&self, mut fact: WorkingMemoryFact) -> Result<(), WorkingMemoryLedgerError> {
         fact.state = WorkingMemoryState::Proposed;
+        let actor = if fact.author_session_id == self.root_session_id {
+            ClaimAuthorityActor::RootSessionActor
+        } else {
+            ClaimAuthorityActor::Child
+        };
+        self.propose_with_authority(actor, fact)
+    }
+
+    /// Propose a claim with an explicit authority role. Advisor/daemon/UI
+    /// roles are rejected — only child and root SessionActor may propose.
+    pub fn propose_with_authority(
+        &self,
+        actor: ClaimAuthorityActor,
+        mut fact: WorkingMemoryFact,
+    ) -> Result<(), WorkingMemoryLedgerError> {
+        fact.state = WorkingMemoryState::Proposed;
+        let expected = self.next_revision_for(&fact.fact_id)?;
+        self.authorize_transition(ClaimTransitionRequest {
+            actor,
+            actor_session_id: fact.author_session_id.as_str(),
+            root_session_id: self.root_session_id.as_str(),
+            ledger_task_tree_id: self.root_session_id.as_str(),
+            fact_task_tree_id: fact.task_tree_id.as_str(),
+            from: self.latest_state_for(&fact.fact_id)?,
+            to: WorkingMemoryState::Proposed,
+            evidence_ref: fact.evidence_ref.as_deref(),
+            expected_revision: expected,
+            actual_revision: fact.revision,
+            grant_cancelled: false,
+        })?;
         self.append_checked(fact, false)
     }
 
     /// Append a reviewed revision. Only the root session may change a fact out
     /// of `Proposed`, and the revision must directly follow the last one for
-    /// that fact.
+    /// that fact. Prefer [`Self::review_with_authority`] when the caller role
+    /// is not the root SessionActor (Advisor/TUI/MCP must fail closed).
     pub fn review(
         &self,
+        reviewer_session_id: &str,
+        fact: WorkingMemoryFact,
+        state: WorkingMemoryState,
+    ) -> Result<(), WorkingMemoryLedgerError> {
+        let actor = if reviewer_session_id == self.root_session_id {
+            ClaimAuthorityActor::RootSessionActor
+        } else {
+            ClaimAuthorityActor::Child
+        };
+        self.review_with_authority(actor, reviewer_session_id, fact, state)
+    }
+
+    /// Review with an explicit authority role. Only
+    /// [`ClaimAuthorityActor::RootSessionActor`] may HostVerify / Accept /
+    /// Reject / Supersede / Revoke.
+    pub fn review_with_authority(
+        &self,
+        actor: ClaimAuthorityActor,
         reviewer_session_id: &str,
         mut fact: WorkingMemoryFact,
         state: WorkingMemoryState,
     ) -> Result<(), WorkingMemoryLedgerError> {
+        if state == WorkingMemoryState::Proposed || state == WorkingMemoryState::Draft {
+            return Err(WorkingMemoryLedgerError::Invalid(
+                "review state must not be proposed or draft".to_owned(),
+            ));
+        }
+        // Non-root session ids never review — keep the historical error shape
+        // so shell/tool callers continue to match UnauthorizedReview.
         if reviewer_session_id != self.root_session_id {
             return Err(WorkingMemoryLedgerError::UnauthorizedReview {
                 reviewer: reviewer_session_id.to_owned(),
                 root: self.root_session_id.clone(),
             });
         }
-        if state == WorkingMemoryState::Proposed {
-            return Err(WorkingMemoryLedgerError::Invalid(
-                "review state must not be proposed".to_owned(),
-            ));
+        // Root session id with a non-root *role* is still fail-closed: Advisor /
+        // TUI / daemon / MCP must not launder acceptance by borrowing root id.
+        if !actor.is_root_session_actor() {
+            return Err(WorkingMemoryLedgerError::ClaimDenied {
+                reason: match actor {
+                    ClaimAuthorityActor::Advisor => ClaimDenyReason::AdvisorCannotAccept,
+                    ClaimAuthorityActor::Kairos => ClaimDenyReason::KairosCannotAccept,
+                    ClaimAuthorityActor::Tui => ClaimDenyReason::TuiCannotAccept,
+                    ClaimAuthorityActor::Mcp => ClaimDenyReason::McpCannotAccept,
+                    ClaimAuthorityActor::ToolOutput => ClaimDenyReason::ToolOutputCannotAccept,
+                    ClaimAuthorityActor::Daemon => ClaimDenyReason::DaemonCannotAccept,
+                    ClaimAuthorityActor::Child => ClaimDenyReason::ChildCannotAccept,
+                    ClaimAuthorityActor::Unknown => ClaimDenyReason::UnknownActorCannotAccept,
+                    ClaimAuthorityActor::RootSessionActor => ClaimDenyReason::NonRootCannotReview,
+                },
+            });
         }
+        let expected = self.next_revision_for(&fact.fact_id)?;
+        let from = self.latest_state_for(&fact.fact_id)?;
+        ClaimAuthority::validate(&ClaimTransitionRequest {
+            actor,
+            actor_session_id: reviewer_session_id,
+            root_session_id: self.root_session_id.as_str(),
+            ledger_task_tree_id: self.root_session_id.as_str(),
+            fact_task_tree_id: fact.task_tree_id.as_str(),
+            from,
+            to: state,
+            evidence_ref: fact.evidence_ref.as_deref(),
+            expected_revision: expected,
+            actual_revision: fact.revision,
+            grant_cancelled: false,
+        })
+        .map_err(|reason| WorkingMemoryLedgerError::ClaimDenied { reason })?;
         // Accepted facts are injected into descendant prompts as shared task
-        // truth.  A root review is necessary but not sufficient: without a
-        // durable evidence reference a plausible-looking assertion can still
-        // become a cross-agent hallucination amplifier.  Rejections and
-        // supersessions remain evidence-optional because they never enter the
-        // shared fact view.
+        // truth. ClaimAuthority already requires evidence; keep the durable
+        // append guard identical so a future validator bug cannot leak unproven
+        // claims into the journal.
         if state == WorkingMemoryState::Accepted
             && fact
                 .evidence_ref
                 .as_deref()
                 .is_none_or(|reference| reference.trim().is_empty())
         {
-            return Err(WorkingMemoryLedgerError::Invalid(
-                "accepted working-memory facts require a non-empty evidence_ref".to_owned(),
-            ));
+            return Err(WorkingMemoryLedgerError::ClaimDenied {
+                reason: ClaimDenyReason::MissingEvidence,
+            });
         }
         fact.author_session_id = reviewer_session_id.to_owned();
         fact.state = state;
         self.append_checked(fact, true)
+    }
+
+    fn authorize_transition(
+        &self,
+        request: ClaimTransitionRequest<'_>,
+    ) -> Result<(), WorkingMemoryLedgerError> {
+        ClaimAuthority::validate(&request)
+            .map_err(|reason| WorkingMemoryLedgerError::ClaimDenied { reason })
+    }
+
+    fn latest_state_for(
+        &self,
+        fact_id: &str,
+    ) -> Result<Option<WorkingMemoryState>, WorkingMemoryLedgerError> {
+        Ok(self
+            .load_all()?
+            .into_iter()
+            .filter(|current| current.fact_id == fact_id)
+            .max_by_key(|current| current.revision)
+            .map(|current| current.state))
+    }
+
+    fn next_revision_for(&self, fact_id: &str) -> Result<u64, WorkingMemoryLedgerError> {
+        let current = self
+            .load_all()?
+            .into_iter()
+            .filter(|current| current.fact_id == fact_id)
+            .map(|current| current.revision)
+            .max();
+        Ok(current.map_or(1, |revision| revision.saturating_add(1)))
     }
 
     /// Latest root-accepted fact for each id, ordered by fact id.
@@ -380,10 +553,13 @@ impl WorkingMemoryLedger {
                 WorkingMemoryState::Accepted => {
                     accepted.insert(fact.fact_id.clone(), fact);
                 }
-                WorkingMemoryState::Superseded => {
+                WorkingMemoryState::Superseded | WorkingMemoryState::Revoked => {
                     accepted.remove(&fact.fact_id);
                 }
-                WorkingMemoryState::Proposed | WorkingMemoryState::Rejected => {}
+                WorkingMemoryState::Proposed
+                | WorkingMemoryState::Rejected
+                | WorkingMemoryState::HostVerified
+                | WorkingMemoryState::Draft => {}
             }
         }
         Ok(accepted.into_values().collect())
@@ -602,6 +778,11 @@ impl WorkingMemoryLedger {
         // manually-corrupted JSONL entry cannot cross task-tree boundaries or
         // masquerade as a reviewed fact.
         fact.validate()?;
+        if fact.state == WorkingMemoryState::Draft {
+            return Err(WorkingMemoryLedgerError::Invalid(format!(
+                "ledger record at line {line} is draft; drafts are not durable"
+            )));
+        }
         if fact.state == WorkingMemoryState::Accepted
             && fact
                 .evidence_ref
@@ -666,6 +847,11 @@ impl WorkingMemoryLedger {
             WorkingMemoryLedgerError::Invalid("working-memory append lock poisoned".to_owned())
         })?;
         fact.validate()?;
+        if fact.state == WorkingMemoryState::Draft {
+            return Err(WorkingMemoryLedgerError::ClaimDenied {
+                reason: ClaimDenyReason::DraftNotPersistable,
+            });
+        }
         if fact.task_tree_id != self.root_session_id {
             return Err(WorkingMemoryLedgerError::Invalid(
                 "task_tree_id must equal this ledger's root session id".to_owned(),
@@ -917,10 +1103,114 @@ mod tests {
         let error = ledger
             .review("root", reviewed, WorkingMemoryState::Accepted)
             .unwrap_err();
-        assert!(
-            matches!(error, WorkingMemoryLedgerError::Invalid(message) if message.contains("evidence_ref"))
-        );
+        assert!(matches!(
+            error,
+            WorkingMemoryLedgerError::ClaimDenied {
+                reason: ClaimDenyReason::MissingEvidence
+            }
+        ));
         assert!(ledger.accepted_facts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn advisor_tui_daemon_cannot_accept_even_with_root_session_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fact-a", 1, "child", "unreviewed"))
+            .unwrap();
+        for actor in [
+            ClaimAuthorityActor::Advisor,
+            ClaimAuthorityActor::Tui,
+            ClaimAuthorityActor::Daemon,
+            ClaimAuthorityActor::Kairos,
+            ClaimAuthorityActor::Mcp,
+        ] {
+            let error = ledger
+                .review_with_authority(
+                    actor,
+                    "root",
+                    fact("fact-a", 2, "root", "spoofed"),
+                    WorkingMemoryState::Accepted,
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error, WorkingMemoryLedgerError::ClaimDenied { reason } if reason.code().contains("cannot_accept")),
+                "actor {actor:?} error {error}"
+            );
+        }
+        assert!(ledger.accepted_facts().unwrap().is_empty());
+    }
+
+    #[test]
+    fn happy_path_proposal_host_verified_accepted_snapshot_manifest() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fact-a", 1, "child", "observed"))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 2, "root", "observed"),
+                WorkingMemoryState::HostVerified,
+            )
+            .unwrap();
+        assert!(ledger.accepted_facts().unwrap().is_empty());
+        ledger
+            .review(
+                "root",
+                fact("fact-a", 3, "root", "observed"),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        let snapshot = ledger.accepted_snapshot().unwrap();
+        assert_eq!(snapshot.accepted_count, 1);
+        let mut manifest = crate::context_manifest::ContextManifestV1 {
+            schema_version: 1,
+            task_tree_id: "root".into(),
+            node_id: "child".into(),
+            root_session_id: "root".into(),
+            immediate_parent_id: Some("root".into()),
+            lineage_path: vec!["root".into(), "child".into()],
+            immutable_assignment_ref: "artifact://assignment".into(),
+            immutable_assignment_hash: "sha256:assignment".into(),
+            user_objective_ref: "artifact://objective".into(),
+            task_contract_hash: "sha256:contract".into(),
+            accepted_snapshot_ref: String::new(),
+            accepted_snapshot_hash: String::new(),
+            tool_catalog_hash: "sha256:tools".into(),
+            permitted_tool_contract_hashes: vec!["sha256:a".into()],
+            capability_grant_id: "grant-1".into(),
+            policy_revision: 1,
+            admission_profile: "governed_tree_development".into(),
+            budget_reservation_id: "budget-1".into(),
+            deadline_unix: 2_000_000_000,
+            permitted_artifact_refs: vec![],
+            model_selection_ref: None,
+            parent_compaction_hash: None,
+            producer_version: "2.0.0-alpha.1".into(),
+            created_at_unix: 1_000_000_000,
+        };
+        manifest
+            .bind_accepted_snapshot(&snapshot, "ledger://accepted")
+            .unwrap();
+        let hash = manifest.manifest_hash().unwrap();
+        let admitted = crate::context_manifest::admit_context_manifest(
+            &crate::context_manifest::ManifestAdmissionRequest {
+                mode: crate::context_manifest::ManifestAdmissionMode::GovernedSpawn,
+                manifest: Some(&manifest),
+                live_snapshot: Some(&snapshot),
+                expected_manifest_hash: Some(&hash),
+                expected_root_session_id: Some("root"),
+                expected_node_id: Some("child"),
+                expected_parent_id: Some("root"),
+            },
+        )
+        .unwrap();
+        assert_eq!(admitted, hash);
+        // Same hash must remain stable for resume.
+        assert_eq!(manifest.manifest_hash().unwrap(), hash);
     }
 
     #[test]
@@ -998,7 +1288,8 @@ mod tests {
     async fn backend_allows_child_proposal_but_only_root_review() {
         let temp = tempfile::tempdir().unwrap();
         let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
-        let backend = WorkingMemoryLedgerBackend::new(ledger.clone());
+        let root_backend = WorkingMemoryLedgerBackend::new(ledger.clone());
+        let child_backend = WorkingMemoryLedgerBackend::for_child(ledger.clone());
         let proposed = BackendFact {
             branch_id: "branch-a".to_owned(),
             fact_id: "fact-a".to_owned(),
@@ -1008,7 +1299,7 @@ mod tests {
             confidence: 80,
             text: "child observation".to_owned(),
         };
-        let receipt = backend.propose("child", proposed).await.unwrap();
+        let receipt = child_backend.propose("child", proposed).await.unwrap();
         assert_eq!(receipt.state, "proposed");
         assert!(ledger.accepted_facts().unwrap().is_empty());
 
@@ -1021,13 +1312,17 @@ mod tests {
             confidence: 95,
             text: "root reviewed observation".to_owned(),
         };
-        let error = backend
-            .review("child", review.clone(), TaskTreeMemoryReviewState::Accepted)
+        // Child-stamped backend cannot accept even with root session id string.
+        let error = child_backend
+            .review("root", review.clone(), TaskTreeMemoryReviewState::Accepted)
             .await
             .unwrap_err();
-        assert!(error.contains("only root session"));
+        assert!(
+            error.contains("claim.") || error.contains("child") || error.contains("only root"),
+            "unexpected: {error}"
+        );
 
-        let receipt = backend
+        let receipt = root_backend
             .review("root", review, TaskTreeMemoryReviewState::Accepted)
             .await
             .unwrap();
@@ -1036,6 +1331,38 @@ mod tests {
             ledger.accepted_facts().unwrap()[0].text,
             "root reviewed observation"
         );
+    }
+
+    #[tokio::test]
+    async fn advisor_stamped_backend_cannot_accept_with_root_session_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger.propose(fact("fact-a", 1, "child", "obs")).unwrap();
+        let advisor = WorkingMemoryLedgerBackend::with_review_actor(
+            ledger.clone(),
+            ClaimAuthorityActor::Advisor,
+        );
+        let error = advisor
+            .review(
+                "root",
+                BackendFact {
+                    branch_id: "root".into(),
+                    fact_id: "fact-a".into(),
+                    revision: 2,
+                    kind: TaskTreeMemoryFactKind::Fact,
+                    evidence_ref: Some("test://e".into()),
+                    confidence: 90,
+                    text: "spoof".into(),
+                },
+                TaskTreeMemoryReviewState::Accepted,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.contains("advisor") || error.contains("claim."),
+            "{error}"
+        );
+        assert!(ledger.accepted_facts().unwrap().is_empty());
     }
 
     #[tokio::test]

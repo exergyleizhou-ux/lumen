@@ -73,7 +73,7 @@ impl MvpAgent {
     /// Remove a session without finalizing; it stays resumable on disk.
     pub(crate) fn remove_session(&self, id: &acp::SessionId) {
         let _ = self
-            .subagent_event_tx
+            .subagent_control_tx
             .send(xai_grok_tools::implementations::grok_build::task::types::SubagentEvent::TeardownSession {
                 parent_session_id: id.0.to_string(),
             });
@@ -466,8 +466,9 @@ impl MvpAgent {
     /// plus workspace bindings and shared coordinator state.
     pub(crate) async fn registry_snapshot(&self) -> RegistrySnapshot {
         let subagents =
-            xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+            xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                 self.subagent_event_tx.clone(),
+                self.subagent_control_tx.clone(),
             )
             .registry_counts()
             .await;

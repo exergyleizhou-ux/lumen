@@ -85,8 +85,8 @@ fn suppresses_zero_cache_truth_from_hit_metadata() {
         reasoning_tokens: 0,
         cached_prompt_tokens: 0,
         cache_creation_prompt_tokens: 0,
-            provider_cache_hit_tokens: None,
-            cache_miss_prompt_tokens: None,
+        provider_cache_hit_tokens: None,
+        cache_miss_prompt_tokens: None,
     };
     let meta = build_prompt_response_meta(PromptResponseMetaArgs {
         last_turn_usage: Some(&usage),

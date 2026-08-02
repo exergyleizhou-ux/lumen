@@ -834,9 +834,22 @@ pub struct MvpAgent {
     subagent_event_tx: tokio::sync::mpsc::UnboundedSender<
         xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
     >,
+    /// Independent host control plane for stop, teardown, and admission
+    /// changes. Model work remains on `subagent_event_tx`.
+    subagent_control_tx: tokio::sync::mpsc::UnboundedSender<
+        xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+    >,
     /// Receiver for subagent events. Taken once by `start_subagent_coordinator()`.
     /// `None` after the coordinator drain task has been spawned.
     subagent_event_rx: RefCell<
+        Option<
+            tokio::sync::mpsc::UnboundedReceiver<
+                xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+            >,
+        >,
+    >,
+    /// Taken with `subagent_event_rx` by the single coordinator actor.
+    subagent_control_rx: RefCell<
         Option<
             tokio::sync::mpsc::UnboundedReceiver<
                 xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,

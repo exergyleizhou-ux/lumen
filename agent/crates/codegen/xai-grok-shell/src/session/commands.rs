@@ -259,6 +259,19 @@ pub struct TaskWakeAdmission {
     pub respond_to: oneshot::Sender<bool>,
     pub fallback: TaskWakeFallback,
 }
+
+/// Root SessionActor request to issue one immutable governed-child assignment.
+/// The actor owns the durable journal location and returns only the derived
+/// admission receipt; callers cannot supply a journal path or self-sign one.
+pub struct IssueGovernedAssignment {
+    pub assignment: xai_grok_memory::RootGovernedAssignmentV1,
+    pub respond_to: oneshot::Sender<
+        Result<
+            xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
+            String,
+        >,
+    >,
+}
 pub enum SessionCommand {
     /// S4 phase one: create the durable run and pending approval before the
     /// caller awaits this session's production permission manager.
@@ -281,6 +294,7 @@ pub enum SessionCommand {
     Initialize {
         system_prompt: String,
     },
+    IssueGovernedAssignment(Box<IssueGovernedAssignment>),
     /// Non-destructive system-prompt sync on session attach: swaps only the
     /// leading `System` message, keeping user/assistant turns. Backed by the
     /// atomic `ChatStateCommand::ReplaceSystemHead` (see its doc for the

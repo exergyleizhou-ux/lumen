@@ -192,6 +192,21 @@ pub(crate) async fn run_search_replace(
             "File path is a directory".to_owned(),
         ));
     }
+    // Host-stamped write grant (task-tree child). Root sessions omit the
+    // resource and remain unconstrained by this gate.
+    {
+        let res = resources.lock().await;
+        if let Err(err) =
+            crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                &res, &path, &cwd,
+            )
+        {
+            return Ok(SearchReplaceOutput::InvalidInput(format!(
+                "Error: {err} (file: {})",
+                input.file_path
+            )));
+        }
+    }
     let is_legacy = SearchReplaceVersion::from_contract(contract_version.as_deref()).is_legacy();
     if !is_legacy {
         let res = resources.lock().await;

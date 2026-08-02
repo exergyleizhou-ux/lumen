@@ -111,6 +111,21 @@ impl xai_tool_runtime::Tool for WriteTool {
 
         // Resolve the model-provided path.
         let path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.file_path);
+        // Child sessions carry a host-issued write lease.  Check it before
+        // reading, creating parents, or mutating the filesystem so OpenCode's
+        // direct writer cannot bypass the grok_build search/replace gate.
+        {
+            let res = resources.lock().await;
+            crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                &res, &path, &cwd,
+            )
+            .map_err(|error| {
+                xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("write").expect("valid"),
+                    error,
+                )
+            })?;
+        }
 
         // ── Check if file exists and read old content ────────────
         let (existed, old_content) = match fs.read_file(&path).await {
@@ -242,6 +257,31 @@ mod tests {
         }
         let content = std::fs::read_to_string(tmp.path().join("new.txt")).unwrap();
         assert_eq!(content, "hello\nworld\n");
+    }
+
+    #[tokio::test]
+    async fn write_scope_denies_outside_child_grant_before_creating_file() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let mut resources = test_resources(tmp.path());
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed], 60).unwrap(),
+        });
+        let denied = tmp.path().join("outside.txt");
+        let result = xai_tool_runtime::Tool::run(
+            &WriteTool,
+            test_ctx(resources.into_shared()),
+            WriteInput {
+                file_path: denied.to_string_lossy().into_owned(),
+                content: "must not exist".into(),
+            },
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!denied.exists(), "denied writer must not create a file");
     }
 
     // ── Overwrite existing file ─────────────────────────────────

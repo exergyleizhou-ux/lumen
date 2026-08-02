@@ -25,12 +25,16 @@
 pub mod archive;
 pub mod backend;
 pub mod chunker;
+pub mod claim_authority;
 pub mod context_manifest;
 pub mod dream;
 pub mod dream_lock;
 pub mod embedding;
+pub mod governed_assignment;
+pub mod governed_operation;
 pub mod index;
 pub mod mmr;
+pub mod offline_golden;
 pub mod query_expansion;
 pub mod schema;
 pub mod search;
@@ -40,6 +44,20 @@ pub mod text_utils;
 pub mod watcher;
 
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
+pub use claim_authority::{
+    ClaimAuthority, ClaimAuthorityActor, ClaimDenyReason, ClaimTransitionRequest,
+};
+pub use context_manifest::{
+    ContextManifestError, ContextManifestV1, ManifestAdmissionDenyReason, ManifestAdmissionMode,
+    ManifestAdmissionRequest, admit_context_manifest, admit_spawn_receipt,
+};
+pub use governed_assignment::{
+    RootGovernedAssignmentError, RootGovernedAssignmentStore, RootGovernedAssignmentV1,
+};
+pub use governed_operation::{
+    ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
+    OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,
+};
 pub use index::{MemoryIndex, init_sqlite_vec};
 pub use storage::{MemoryScope, MemoryStorage};
 pub use task_ledger::{

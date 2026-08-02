@@ -1,6 +1,6 @@
 use super::*;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{Semaphore, mpsc};
 
 /// Helper: receive the next event, match the expected variant, or panic.
 macro_rules! recv_event {
@@ -71,6 +71,82 @@ async fn channel_backend_spawn_success() {
     assert_eq!(result.tool_calls, 3);
 
     handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn cancel_uses_independent_control_ingress() {
+    let (normal_tx, mut normal_rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let backend = ChannelBackend::for_session_with_control(normal_tx, control_tx, "parent");
+
+    let cancel = tokio::spawn(async move { backend.cancel("child").await });
+    let event = control_rx.recv().await.expect("control event is sent");
+    match event {
+        SubagentEvent::Cancel(request) => {
+            assert_eq!(request.parent_session_id.as_deref(), Some("parent"));
+            assert!(
+                matches!(request.target, SubagentCancelTarget::SubagentId(ref id) if id == "child")
+            );
+            request
+                .respond_to
+                .send(SubagentCancelOutcome::Cancelled)
+                .expect("caller still waits");
+        }
+        _ => panic!("cancel must use control ingress"),
+    }
+    assert!(
+        matches!(normal_rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+        "cancel must not enter the normal model queue"
+    );
+    assert!(matches!(
+        cancel.await.expect("cancel task joins"),
+        SubagentCancelOutcome::Cancelled
+    ));
+}
+
+#[tokio::test]
+async fn spawn_ingress_gate_backpressures_before_legacy_channel_enqueue() {
+    let (tx, mut rx) = mpsc::unbounded_channel::<SubagentEvent>();
+    let permits = Arc::new(Semaphore::new(1));
+    let held = permits.clone().acquire_owned().await.unwrap();
+    let backend = ChannelBackend::with_spawn_ingress(tx, None, permits);
+    let request = SubagentRequest {
+        id: "pressure-test".to_string(),
+        prompt: "do something".to_string(),
+        description: "test".to_string(),
+        subagent_type: "general-purpose".to_string(),
+        lineage: super::super::types::SubagentLineage::direct("parent"),
+        parent_session_id: "parent".to_string(),
+        parent_prompt_id: None,
+        resume_from: None,
+        cwd: None,
+        runtime_overrides: Default::default(),
+        run_in_background: false,
+        surface_completion: true,
+        await_to_completion: false,
+        fork_context: false,
+        owner: super::super::types::SubagentOwner::Task,
+        cancel_token: tokio_util::sync::CancellationToken::new(),
+    };
+    let pending = tokio::spawn(async move { backend.spawn(request).await });
+    tokio::task::yield_now().await;
+    assert!(
+        matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+        "a saturated ingress gate must prevent a spawn envelope entering the channel"
+    );
+
+    drop(held);
+    let request = recv_event!(rx, Spawn);
+    request
+        .result_tx
+        .send(SubagentResult {
+            success: true,
+            subagent_id: "pressure-test".to_string(),
+            child_session_id: "pressure-test".to_string(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(pending.await.unwrap().unwrap().success);
 }
 
 #[tokio::test]

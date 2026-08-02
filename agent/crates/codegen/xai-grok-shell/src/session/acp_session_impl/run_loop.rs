@@ -709,6 +709,16 @@ pub(super) async fn run_session(
                             });
                             session.deferred_prefix.arm(handle);
                         }
+                        SessionCommand::IssueGovernedAssignment(command) => {
+                            let command = *command;
+                            let result = issue_governed_assignment(
+                                &session.session_info.id.to_string(),
+                                session.tool_context.subagent_depth,
+                                session.tool_context.task_tree_memory_workspace_dir.as_deref(),
+                                command.assignment,
+                            );
+                            let _ = command.respond_to.send(result);
+                        }
                         SessionCommand::ReplaceSystemPrompt { system_prompt } => {
                             session.handle_replace_system_prompt(system_prompt).await;
                         }
@@ -2393,6 +2403,116 @@ pub(super) async fn run_session(
                     }
             }
         }
+    }
+}
+
+fn issue_governed_assignment(
+    issuing_session_id: &str,
+    issuing_depth: u32,
+    workspace_dir: Option<&std::path::Path>,
+    assignment: xai_grok_memory::RootGovernedAssignmentV1,
+) -> Result<xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission, String>
+{
+    if issuing_depth != 0 {
+        return Err("only a root SessionActor may issue governed assignments".to_owned());
+    }
+    if assignment.root_session_id != issuing_session_id {
+        return Err("assignment root does not match issuing SessionActor".to_owned());
+    }
+    let workspace_dir = workspace_dir.ok_or_else(|| {
+        "root SessionActor has no governed assignment storage directory".to_owned()
+    })?;
+    let encoded_root: String = assignment
+        .root_session_id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let store = xai_grok_memory::RootGovernedAssignmentStore::with_path(
+        assignment.root_session_id.clone(),
+        workspace_dir
+            .join("task-tree-assignments")
+            .join(format!("{encoded_root}.json")),
+    );
+    store
+        .issue(assignment)
+        .and_then(|assignment| assignment.spawn_admission())
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod governed_assignment_tests {
+    use super::issue_governed_assignment;
+    use std::path::PathBuf;
+    use xai_grok_memory::RootGovernedAssignmentV1;
+
+    fn assignment() -> RootGovernedAssignmentV1 {
+        RootGovernedAssignmentV1 {
+            schema_version: 1,
+            task_tree_id: "root".into(),
+            root_session_id: "root".into(),
+            node_id: "child".into(),
+            immediate_parent_id: Some("root".into()),
+            lineage_path: vec!["root".into(), "child".into()],
+            assignment_ref: "artifact://assignment/child".into(),
+            user_objective_ref: "artifact://objective/root".into(),
+            task_contract_hash: "sha256:contract".into(),
+            accepted_snapshot_ref: "ledger://root/1".into(),
+            accepted_snapshot_hash: "sha256:accepted".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            permitted_tool_contract_hashes: vec!["sha256:read".into()],
+            capability_grant_id: "grant-child".into(),
+            policy_revision: 1,
+            budget_reservation_id: "budget-child".into(),
+            deadline_unix: 2_000_000_000,
+            permitted_artifact_refs: Vec::new(),
+            write_scope_roots: vec![PathBuf::from("src")],
+            model_selection_ref: None,
+            parent_compaction_hash: None,
+            producer_version: "test".into(),
+            created_at_unix: 1,
+        }
+    }
+
+    #[test]
+    fn root_only_assignment_issuer_persists_and_rejects_non_root_or_foreign_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let admission = issue_governed_assignment("root", 0, Some(temp.path()), assignment())
+            .expect("root actor should issue its assignment");
+        assert_eq!(admission.node_id, "child");
+
+        let mut review = assignment();
+        review.node_id = "review".into();
+        review.immediate_parent_id = Some("child".into());
+        review.lineage_path = vec!["root".into(), "child".into(), "review".into()];
+        review.assignment_ref = "artifact://assignment/review".into();
+        review.capability_grant_id = "grant-review".into();
+        review.budget_reservation_id = "budget-review".into();
+        review.write_scope_roots = vec![PathBuf::from("tests")];
+        let review_admission = issue_governed_assignment("root", 0, Some(temp.path()), review)
+            .expect("root actor should issue a distinct nested child assignment");
+        assert_eq!(review_admission.node_id, "review");
+
+        let mut evidence = assignment();
+        evidence.node_id = "evidence".into();
+        evidence.immediate_parent_id = Some("review".into());
+        evidence.lineage_path = vec![
+            "root".into(),
+            "child".into(),
+            "review".into(),
+            "evidence".into(),
+        ];
+        evidence.assignment_ref = "artifact://assignment/evidence".into();
+        evidence.capability_grant_id = "grant-evidence".into();
+        evidence.budget_reservation_id = "budget-evidence".into();
+        evidence.write_scope_roots = Vec::new();
+        let evidence_admission = issue_governed_assignment("root", 0, Some(temp.path()), evidence)
+            .expect("root actor should issue the depth-three evidence leaf assignment");
+        assert_eq!(evidence_admission.node_id, "evidence");
+
+        assert!(issue_governed_assignment("root", 1, Some(temp.path()), assignment()).is_err());
+        assert!(issue_governed_assignment("other", 0, Some(temp.path()), assignment()).is_err());
+        assert!(issue_governed_assignment("root", 0, None, assignment()).is_err());
     }
 }
 /// Extract the user query text and assistant response text for the

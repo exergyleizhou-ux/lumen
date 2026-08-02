@@ -1963,8 +1963,9 @@ impl acp::Agent for MvpAgent {
             );
             crate::agent::subagent::reconcile_orphaned_subagents_with_backend(
                     &unfinished_subagents,
-                    &xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new(
+                    &xai_grok_tools::implementations::grok_build::task::backend::ChannelBackend::new_with_control(
                         self.subagent_event_tx.clone(),
+                        self.subagent_control_tx.clone(),
                     ),
                     &session_dir,
                     session_id.0.as_ref(),

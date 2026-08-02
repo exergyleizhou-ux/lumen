@@ -199,6 +199,21 @@ impl xai_tool_runtime::Tool for EditTool {
         // Resolve the model-provided path.
         let path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.file_path);
 
+        // The edit tool has independent create and replacement paths, so the
+        // lease must be checked here once, before either path reaches a write.
+        {
+            let res = resources.lock().await;
+            crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                &res, &path, &cwd,
+            )
+            .map_err(|error| {
+                xai_tool_runtime::ToolError::execution(
+                    xai_tool_protocol::ToolId::new("edit").expect("valid"),
+                    error,
+                )
+            })?;
+        }
+
         // ── Validate input ──────────────────────────────────────────
         if path.is_dir() {
             return Ok(SearchReplaceOutput::InvalidInput(
@@ -611,6 +626,28 @@ mod tests {
             }
             other => panic!("Expected InvalidInput, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn write_scope_denies_edit_creation_outside_child_grant() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let mut resources = test_resources(tmp.path());
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed], 60).unwrap(),
+        });
+        let denied = tmp.path().join("outside.txt");
+        let result = xai_tool_runtime::Tool::run(
+            &EditTool,
+            test_ctx(resources.into_shared()),
+            make_input(denied.to_string_lossy().as_ref(), "", "must not exist"),
+        )
+        .await;
+        assert!(result.is_err());
+        assert!(!denied.exists(), "denied editor must not create a file");
     }
 
     #[tokio::test]

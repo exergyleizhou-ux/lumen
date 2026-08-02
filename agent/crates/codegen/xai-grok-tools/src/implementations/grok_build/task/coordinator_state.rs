@@ -175,7 +175,7 @@ impl Default for CoordinatorConfig {
 /// Runner-side channel back into the actor.
 pub struct ChildReporter<C> {
     pub(super) subagent_id: String,
-    pub(super) tx: mpsc::UnboundedSender<InternalEvent<C>>,
+    pub(super) tx: mpsc::Sender<InternalEvent<C>>,
 }
 
 impl<C> Clone for ChildReporter<C> {
@@ -200,6 +200,7 @@ impl<C: 'static> ChildReporter<C> {
                 child,
                 respond_to,
             })
+            .await
             .is_err()
         {
             return false;
@@ -221,6 +222,7 @@ impl<C: 'static> ChildReporter<C> {
                 parent_session_id: parent_session_id.to_owned(),
                 respond_to,
             })
+            .await
             .is_err()
         {
             return SubagentResumeLookup::Missing;
@@ -249,6 +251,9 @@ pub(super) struct PendingChild {
     pub(super) spawn_reply: Option<oneshot::Sender<SubagentResult>>,
     pub(super) foreground_deadline: Option<tokio::time::Instant>,
     pub(super) handle_only: bool,
+    /// The foreground result receiver disappeared before the child reached a
+    /// terminal state. This is distinct from an intentional background run.
+    pub(super) foreground_delivery_uncertain: bool,
     pub(super) explicitly_killed: bool,
 }
 
@@ -259,6 +264,8 @@ pub(super) struct ActiveChild<C> {
     pub(super) spawn_reply: Option<oneshot::Sender<SubagentResult>>,
     pub(super) foreground_deadline: Option<tokio::time::Instant>,
     pub(super) handle_only: bool,
+    /// Preserved from [`PendingChild`] when the runner reports `Started`.
+    pub(super) foreground_delivery_uncertain: bool,
     /// Definition-declared background (see [`StartedChild`]): background for
     /// `Outstanding` accounting even while the spawn caller block-awaits.
     pub(super) definition_background: bool,
@@ -428,6 +435,7 @@ pub(super) trait ForegroundChild {
     fn is_workflow(&self) -> bool;
     fn take_reply(&mut self) -> Option<oneshot::Sender<SubagentResult>>;
     fn mark_backgrounded(&mut self);
+    fn mark_foreground_delivery_uncertain(&mut self);
     /// Cancel the child's execution (token + active control where present).
     fn cancel(&mut self);
 }
@@ -460,6 +468,10 @@ impl ForegroundChild for PendingChild {
     fn mark_backgrounded(&mut self) {
         self.handle_only = true;
         self.foreground_deadline = None;
+    }
+
+    fn mark_foreground_delivery_uncertain(&mut self) {
+        self.foreground_delivery_uncertain = true;
     }
 
     fn cancel(&mut self) {
@@ -495,6 +507,10 @@ impl<C: ChildControl> ForegroundChild for ActiveChild<C> {
     fn mark_backgrounded(&mut self) {
         self.handle_only = true;
         self.foreground_deadline = None;
+    }
+
+    fn mark_foreground_delivery_uncertain(&mut self) {
+        self.foreground_delivery_uncertain = true;
     }
 
     fn cancel(&mut self) {
@@ -540,6 +556,7 @@ pub(super) fn background_if_caller_gone(child: &mut impl ForegroundChild) {
     if !child.caller_gone() {
         return;
     }
+    child.mark_foreground_delivery_uncertain();
     let _ = child.take_reply();
     if child.is_workflow() {
         tracing::debug!(
@@ -767,4 +784,57 @@ pub(super) fn workflow_outstanding<C>(
             .values()
             .filter(|child| child.request.owner.workflow_run_id() == Some(run_id))
             .count()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChildReporter, InternalEvent};
+    use crate::implementations::grok_build::task::types::SubagentResumeLookup;
+    use tokio::sync::{mpsc, oneshot};
+
+    #[tokio::test]
+    async fn lifecycle_reporter_applies_backpressure_until_actor_drains() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let (first_reply, _first_response) = oneshot::channel();
+        tx.send(InternalEvent::<()>::ResumeSource {
+            source_id: "already-queued".into(),
+            parent_session_id: "root".into(),
+            respond_to: first_reply,
+        })
+        .await
+        .unwrap();
+
+        let reporter = ChildReporter {
+            subagent_id: "child".into(),
+            tx,
+        };
+        let pending = tokio::spawn(async move { reporter.resume_source("wanted", "root").await });
+        tokio::task::yield_now().await;
+        assert!(
+            !pending.is_finished(),
+            "a full lifecycle queue must backpressure the runner"
+        );
+
+        let _ = rx.recv().await.expect("first event is queued");
+        let event = rx
+            .recv()
+            .await
+            .expect("backpressured event is eventually sent");
+        match event {
+            InternalEvent::ResumeSource {
+                source_id,
+                parent_session_id,
+                respond_to,
+            } => {
+                assert_eq!(source_id, "wanted");
+                assert_eq!(parent_session_id, "root");
+                respond_to.send(SubagentResumeLookup::Missing).unwrap();
+            }
+            InternalEvent::Started { .. } => panic!("expected resume lookup"),
+        }
+        assert!(matches!(
+            pending.await.unwrap(),
+            SubagentResumeLookup::Missing
+        ));
+    }
 }

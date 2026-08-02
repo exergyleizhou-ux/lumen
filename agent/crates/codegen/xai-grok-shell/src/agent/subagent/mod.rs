@@ -129,6 +129,7 @@ pub(crate) struct SubagentSpawnContext {
     pub inherited_tool_overrides: Option<xai_grok_sampling_types::ToolOverrides>,
     pub yolo_mode: bool,
     pub subagent_event_tx: mpsc::UnboundedSender<SubagentEvent>,
+    pub subagent_control_tx: mpsc::UnboundedSender<SubagentEvent>,
     pub parent_depth: u32,
     pub subagents_max_depth: u32,
     /// Inference idle timeout (secs), resolved from the parent's model config at spawn-context creation time.

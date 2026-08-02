@@ -317,6 +317,23 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
 
         let display_dcwd = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
         let joined_path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.file_path);
+        // Enforce before canonicalization so a new-file Write cannot create a
+        // parent outside the child lease.  Existing files are checked again
+        // after canonicalization below to catch symlink resolution.
+        {
+            let res = resources.lock().await;
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                    &res,
+                    &joined_path,
+                    &cwd,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+        }
         // Error-preserving variant: the Err arm drives new-file creation.
         let path = match crate::util::fs::try_canonicalize(&joined_path).await {
             Ok(p) => p,
@@ -373,6 +390,19 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
                 }
             }
         };
+
+        {
+            let res = resources.lock().await;
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                    &res, &path, &cwd,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+        }
 
         // Read current file content.
         let file_bytes = match fs.read_file(&path).await {
@@ -527,6 +557,36 @@ mod tests {
             }
             other => panic!("Expected FileNotFound, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn write_scope_denies_new_hashline_write_outside_child_grant() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed], 60).unwrap(),
+        });
+        let denied = tmp.path().join("outside.txt");
+        let result = xai_tool_runtime::Tool::run(
+            &HashlineEditTool,
+            test_ctx(resources.into_shared()),
+            HashlineEditInput {
+                file_path: denied.to_string_lossy().into_owned(),
+                edits: vec![HashlineOp::Write {
+                    content: "must not exist".into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(result, SearchReplaceOutput::InvalidInput(message) if message.contains("write_scope"))
+        );
+        assert!(!denied.exists());
     }
 
     /// Integration: same-anchor insertions preserve request order on disk.

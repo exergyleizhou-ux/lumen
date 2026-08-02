@@ -18,6 +18,7 @@
 //! All coordinator messages are funnelled through a single
 //! `SubagentEventSender` / `SubagentEvent` enum channel.
 
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 use educe::Educe;
@@ -267,12 +268,23 @@ pub struct GovernedSpawnAdmission {
     pub tool_catalog_hash: String,
     pub policy_revision: u64,
     pub budget_reservation_id: String,
+    /// Root-approved write roots for this child. They are part of the receipt
+    /// hash so a resumed or intercepted child cannot widen its own scope.
+    /// Empty is the explicit legacy/no-narrowing form; hosts that issue a
+    /// non-empty scope must use canonical, non-escaping roots.
+    pub write_scope_roots: Vec<PathBuf>,
 }
 
 impl GovernedSpawnAdmission {
     pub fn canonical_manifest_hash(&self) -> String {
+        let roots = self
+            .write_scope_roots
+            .iter()
+            .map(|root| root.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
         let canonical = format!(
-            "v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            "v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
             self.task_tree_id,
             self.root_session_id,
             self.node_id,
@@ -281,7 +293,8 @@ impl GovernedSpawnAdmission {
             self.tool_catalog_hash,
             self.policy_revision,
             self.budget_reservation_id,
-            "governed_tree"
+            "governed_tree",
+            roots,
         );
         use sha2::{Digest, Sha256};
         format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()))
@@ -315,6 +328,21 @@ impl GovernedSpawnAdmission {
         if self.manifest_hash != self.canonical_manifest_hash() {
             return Err("governed admission manifest hash does not match canonical identity");
         }
+        if self
+            .write_scope_roots
+            .windows(2)
+            .any(|roots| roots[0] > roots[1])
+        {
+            return Err("governed admission write roots are not canonically sorted");
+        }
+        if self.write_scope_roots.iter().any(|root| {
+            root.as_os_str().is_empty()
+                || root
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir))
+        }) {
+            return Err("governed admission write root is empty or escapes its workspace");
+        }
         Ok(())
     }
 }
@@ -334,6 +362,7 @@ mod governed_admission_tests {
             tool_catalog_hash: "sha256:tools".into(),
             policy_revision: 7,
             budget_reservation_id: "budget-1".into(),
+            write_scope_roots: vec![PathBuf::from("src"), PathBuf::from("tests")],
         }
     }
 
@@ -347,6 +376,10 @@ mod governed_admission_tests {
         receipt.tool_catalog_hash = "sha256:changed".into();
         assert!(receipt.validate_for(&lineage, "child").is_err());
         assert_ne!(original, receipt.canonical_manifest_hash());
+        receipt.tool_catalog_hash = "sha256:tools".into();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        receipt.write_scope_roots = vec![PathBuf::from("tests"), PathBuf::from("src")];
+        assert!(receipt.validate_for(&lineage, "child").is_err());
     }
 
     #[test]
@@ -358,6 +391,10 @@ mod governed_admission_tests {
         assert!(receipt.validate_for(&lineage, "child").is_err());
         receipt.node_id = "child".into();
         receipt.budget_reservation_id.clear();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        receipt.budget_reservation_id = "budget-1".into();
+        receipt.write_scope_roots = vec![PathBuf::from("../escape")];
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
         assert!(receipt.validate_for(&lineage, "child").is_err());
     }
 }
@@ -972,16 +1009,30 @@ impl SubagentResumeSource {
         expected_hash: Option<&str>,
     ) -> Result<(), &'static str> {
         let Some(expected_hash) = expected_hash else {
+            // LegacyNoManifest: caller did not require a governed identity.
+            // Automatic governed re-admission must pass Some(hash) instead.
             return Ok(());
         };
-        if expected_hash.is_empty() {
+        if expected_hash.trim().is_empty() {
             return Err("expected context manifest hash is empty");
         }
-        match self.context_manifest_hash.as_deref() {
-            Some(actual) if actual == expected_hash => Ok(()),
+        match self.context_manifest_hash.as_deref().map(str::trim) {
+            Some(actual) if !actual.is_empty() && actual == expected_hash => Ok(()),
+            Some("") | None => Err("resume source is missing context manifest identity"),
             Some(_) => Err("resume source context manifest hash mismatch"),
-            None => Err("resume source is missing context manifest identity"),
         }
+    }
+
+    /// Governed resume must never treat a missing expected hash as admission.
+    /// Legacy sessions call [`Self::validate_context_manifest`] with `None`.
+    pub fn validate_governed_context_manifest(
+        &self,
+        expected_hash: &str,
+    ) -> Result<(), &'static str> {
+        if expected_hash.trim().is_empty() {
+            return Err("governed resume requires a non-empty context manifest hash");
+        }
+        self.validate_context_manifest(Some(expected_hash))
     }
 }
 
@@ -1121,6 +1172,41 @@ pub enum SubagentEvent {
     ValidateType(SubagentValidateTypeRequest),
     DescribeType(SubagentDescribeRequest),
     LoopUnitActive(SubagentLoopUnitActiveRequest),
+}
+
+/// Scheduling class for coordinator ingress. Control-plane messages must not
+/// share a future bounded data-plane queue with untrusted model fan-out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentIngressClass {
+    DataPlane,
+    ControlPlane,
+}
+
+impl SubagentEvent {
+    /// Exhaustive classification is deliberately adjacent to the event enum:
+    /// adding a new event requires choosing its pressure and priority contract.
+    pub const fn ingress_class(&self) -> SubagentIngressClass {
+        match self {
+            Self::Cancel(_) | Self::TeardownSession { .. } | Self::OpenSpawnAdmission { .. } => {
+                SubagentIngressClass::ControlPlane
+            }
+            Self::Spawn(_)
+            | Self::Query(_)
+            | Self::RegisterRecoveredTerminal(_)
+            | Self::ListActive(_)
+            | Self::ListRunning(_)
+            | Self::Completions(_)
+            | Self::Outstanding(_)
+            | Self::ClearUsageNotApplied(_)
+            | Self::MarkUsageNotApplied(_)
+            | Self::RegistryCounts(_)
+            | Self::Inspect(_)
+            | Self::SpawnedRefs(_)
+            | Self::ValidateType(_)
+            | Self::DescribeType(_)
+            | Self::LoopUnitActive(_) => SubagentIngressClass::DataPlane,
+        }
+    }
 }
 
 // Resource types
@@ -1355,8 +1441,8 @@ mod tests {
 
     use super::SubagentCapabilityMode;
     use super::SubagentCapabilityModeExt;
-    use super::is_valid_resume_id;
     use super::SubagentResumeSource;
+    use super::is_valid_resume_id;
 
     fn resume_source(hash: Option<&str>) -> SubagentResumeSource {
         SubagentResumeSource {
@@ -1374,9 +1460,11 @@ mod tests {
 
     #[test]
     fn governed_resume_requires_matching_manifest_identity() {
-        assert!(resume_source(Some("sha256:one"))
-            .validate_context_manifest(Some("sha256:one"))
-            .is_ok());
+        assert!(
+            resume_source(Some("sha256:one"))
+                .validate_context_manifest(Some("sha256:one"))
+                .is_ok()
+        );
         assert_eq!(
             resume_source(None)
                 .validate_context_manifest(Some("sha256:one"))
@@ -1394,6 +1482,27 @@ mod tests {
     #[test]
     fn legacy_resume_without_expected_manifest_remains_compatible() {
         assert!(resume_source(None).validate_context_manifest(None).is_ok());
+    }
+
+    #[test]
+    fn governed_resume_rejects_empty_or_missing_expected_hash() {
+        assert!(
+            resume_source(Some("sha256:one"))
+                .validate_governed_context_manifest("sha256:one")
+                .is_ok()
+        );
+        assert_eq!(
+            resume_source(Some("sha256:one"))
+                .validate_governed_context_manifest("")
+                .unwrap_err(),
+            "governed resume requires a non-empty context manifest hash"
+        );
+        assert_eq!(
+            resume_source(None)
+                .validate_governed_context_manifest("sha256:one")
+                .unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
     }
 
     /// Create a `ToolConfig` with the given id and kind set.
