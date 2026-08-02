@@ -2,11 +2,11 @@
 
 ## NextGen 最终可执行总纲
 
-**日期：** 2026-08-02（北京时间）
+**日期：** 2026-08-03（北京时间；本次为增量修订，不使用旧 `FINAL-*` 规划）
 **性质：** Lumen 后续实施的唯一排序、依赖、验收与交接总纲；不是功能完成、CI 通过、发布、安装或 live/provider 证明。
 **范围：** Rust Lumen coding agent；macOS-first；不做 Windows 专项、未授权 provider/billable 调用、deploy 或 release。
 **方法参考：** 同日 Lumen Science 执行书只提供阶段与证据结构；它不是 Lumen Core 的 API、代码或发布依赖。
-**证据窗口：** 当前源码、当前 GitHub、当前工作树与 2026-08-01 起的 NextGen 决策。窗口外的旧 Lumen 规划、恢复资料和旧聊天不读取、不参与需求、优先级或完成判断。
+**证据窗口：** 当前源码、当前 GitHub、当前工作树与 2026-08-01 起的 NextGen 决策。窗口外的旧 Lumen 规划、恢复资料和旧聊天不读取、不参与需求、优先级或完成判断；本轮用户提供的 Claude Advisor 截图仅作为问题清单，绝不作为其服务端 API 或 Lumen 源码事实。
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
 
@@ -18,14 +18,16 @@
 
 任何实施者先读 P0，再读 P1；P2 与 P0/P1 冲突时直接弃用。不得为了“沿用计划”覆盖当前代码、把历史测试计数挪作新 HEAD 的绿，或从旧文件恢复已被否决的设计。
 
-### 本轮实施校准（2026-08-02 的审计快照；R0 前必须重新实测）
+### 本轮实施校准（2026-08-03 的审计快照；R0 前必须重新实测）
 
 本书不是以旧规划或 implementer 口述来“报绿”。下列值是本次**编辑前的审计锚点**，不是会随本书
 提交自动更新的 source candidate：本地及 GitHub `sync/absorb-upstream-20260731` 均为
-`b76c1f2b901c730132571c38bda9f786895890c5`，`origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4`，
-候选相对 main 为 ahead 166 / behind 0，PR #134 仍 open。本次 GitHub 读取中两个 CI job 正在运行，
-`Offline gates (defaults / shellcheck / vacuous-e2e / versions)` 已失败；在失败日志和 exact source SHA
-重新核对前，不能把该 run、旧 CI 或本书中的任何数字称为绿。
+`8b74b3618fde1a235b37c2b5bb4a2472aac9b1e9`，`origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4`，
+候选相对 main 为 ahead 194 / behind 0，PR #134 open、merge state `UNSTABLE`。本次 GitHub 读取中
+`Expert v2 gate` 与 `Offline gates` 已成功，`Lumen crates (guard/discipline/verify tests + clippy)` 仍在运行。
+这不是 exact-SHA 全绿，更不是 merge、release 或产品完成。工作树另有 5 个刻意隔离、未跟踪本候选的旧
+`SBOM.spdx.json`/`artifacts/readiness/*.json` 修改；它们与当前 source tuple 不同源，禁止混入任何 NextGen
+提交或作为 readiness 证据。
 
 任何 phase 的输入事实只允许由下列命令重新产生，并写入该 phase receipt；本节的 SHA、PR 或计数若与
 实测不同立即作废，不为维护文档而改写 runtime：
@@ -39,10 +41,10 @@ git ls-remote --heads origin main sync/absorb-upstream-20260731
 gh pr view 134 --repo exergyleizhou-ux/lumen --json headRefOid,state,statusCheckRollup,url
 ~~~
 
-最近的 runtime checkpoint 是 `637b5825086303034082ea51baabd97b916883cf`；后续 `972201b9` 与
-`b76c1f2` 是执行书文档提交。`2a3a9913` 只是 activity snapshot 的父 checkpoint，不能再被写成最新
-runtime HEAD；`637b5825` 在其上追加了 root-only、backup-first 的 ledger torn-tail repair。最近 runtime
-事实增量为：
+`637b5825` 及其前的 runtime checkpoint 仍是历史锚点；本书之后的当前 runtime baseline 是 `8b74b361`。
+它已引入 ContextManifest、ClaimAuthority、governed assignment/operation、write scope、离线 golden
+fixture、真实 nested lineage、spawn ingress 全局上限与独立 control ingress。下列历史增量仍有效，但不能再被
+写成“当前唯一 runtime HEAD”：
 
 1. 根 Session 也获得同一 task-tree ledger 的受控 review port；child 仍无 promotion
    authority（`85e1a4c8`）。
@@ -65,13 +67,11 @@ runtime HEAD；`637b5825` 在其上追加了 root-only、backup-first 的 ledger
    一条 torn record；child、non-root 和 middle corruption 一律 fail-closed（`637b5825`）。这只是
    ledger file repair，不是完整 recovery journal、read-model rebuild 或 task recovery。
 
-本轮本地证据仅包括上述 memory/contract 的定向 unit tests、activity snapshot 2-test group、background
-manifest 1-test group、scheduler lease 1-test group、`cargo check -p xai-grok-shell`、idle-unload 断连
-13-test group、queue-state unit test、explicit-close unit test 和 `git diff --check`。
-没有以此声称完整 suite、GitHub exact-SHA CI、24h daemon、release 或 provider live proof 已完成。
-本次状态读取中**编辑本书前**工作树为 clean；`SOURCE_LOCK` 仍锁 `0fae4c7b`、readiness 仍对应
-`9e719020` 且为 `BLOCKED`。它们与 `b76c1f2` 不同源，故既不证明当前候选、也不允许被“刷新文档”
-掩盖。每次源码改变后，R0 receipt 必须更新；本节快照不替代 receipt，旧 CI 不可挪用。
+本轮 `8b74b361` 本地核心证据包括 memory/tools/shell 的 targeted check、task coordinator 197 passed、
+governed-assignment shell 3 passed、memory 333 passed、rustfmt 与 `git diff --check`；它们都是局部 raw exit，
+不等于完整 suite、GitHub exact-SHA CI、24h daemon、release 或 provider live proof。`SOURCE_LOCK` 仍锁
+`0fae4c7b`、readiness 仍对应旧 source 且为 `BLOCKED`；它们与当前候选不同源，既不证明当前候选、也不允许
+被“刷新文档”掩盖。每次源码改变后，R0 receipt 必须更新；本节快照不替代 receipt，旧 CI 不可挪用。
 
 ### 发布身份与版本边界
 
@@ -97,8 +97,10 @@ SessionActor — 唯一 execution / permission / evidence / completion authority
  ├─ TreeBudget — 并行节点、工具、时间、token、成本的原子账本
  ├─ SharedWorkingLedger — 当前任务树的已验证事实
  ├─ LongTermMemory — 从 Accepted facts 受控提升的长期知识
+ ├─ AgentSandbox — 每节点的上下文、记忆、工具、进程与资源隔离合同
+ ├─ GovernedEvidenceLoop — 检查点、证据、停止与升级的受控闭环
  ├─ ExpertConsultation v1 — 已有独立第二意见
- ├─ AdvisorPolicy — 先影子，后受限分配
+ ├─ ClientAdvisor — 本地虚拟工具、先影子，后受限咨询/分配建议
  └─ KairosSupervisor — lease/recovery 的长期任务治理
         ↓
 受控 tool / process / provider / filesystem adapters
@@ -126,8 +128,9 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 | Main → Code → Research/Review/Test → Evidence leaf | NG-01 lineage、NG-02 ceiling、NG-03 reservation、NG-09A exact-binary path | 配置 `max_depth=3` 就等于产品完成 | 每层 parent/path、scope、budget、取消与 UI 投影一致；leaf 无法 spawn。 |
 | 并行是嵌套 Agent 的执行底座 | 一个 root-owned process/lease/budget/evidence 合同覆盖 child、terminal、monitor、scheduler | 同一 worktree 自由并发写入；tmux/PID 充当恢复状态 | 并发 reservation、late event、orphan、cancel、lease takeover 都有反例。 |
 | 子 Agent 会跑偏/幻觉 | NG-04 ledger + NG-04C ContextManifest + root acceptance；Advisor 只做第八道审阅 | 用 Advisor、长 prompt、summary 或 sibling 投票代替事实门 | child 只能 Proposed；只有 evidence + host/root review 才成为 Accepted。 |
-| 双模记忆 | Session/Scratch 与 SharedWorkingLedger/LongTermMemory 分层；current facts 与 reusable knowledge 分离 | 让 child 共写 MEMORY.md 或把 chat summary 当权威 | foreign/stale/unproven fact 不进入 child；promotion 可追溯且幂等。 |
+| 双模记忆与 Agent 沙箱 | Session/Scratch 与 SharedWorkingLedger/LongTermMemory 分层；每节点只能读 Accepted snapshot、写自己 branch 的 Proposed | 让 child 共写 MEMORY.md、看 sibling 草稿，或把 chat summary 当权威 | foreign/stale/unproven fact 不进入 child；proposal 不能跨 branch；promotion 可追溯且幂等。 |
 | Expert/Advisor 与用户模型池 | NG-05/06/07：pin、pool、priority、privacy、health、budget、independence、root approval | Advisor 直接改正在输出的模型、接受事实或宣布完成 | every selection/advice/applied assignment 有 receipt；已输出绝不重放。 |
+| Claude 类 Advisor 产品体验 | NG-06A ClientAdvisor virtual tool：按检查点咨询独立模型、结构化 report、独立 usage receipt | 复制 server tool type、供应商私有 header/flag，或把 prompt 当安全控制 | 主模型可请求咨询；SessionActor 生成最小 capsule、执行本地 policy、审计/限额/可取消。 |
 | DeepSeek Flash / Grok / DeepSeek Pro 的可选主力组合 | 用户 allowlist + 可改 priority；`auto` 仅在用户池内、仅对新任务推荐 | 根据“谁更聪明”绕过用户 pool、BYOK 或隐私边界 | pin、quota exhausted、pool exhausted、failure-domain 与 no-replay 负例。 |
 | Kairos/daemon/24h 自动化 | NG-03C/NG-08：operation identity、lease、outbox、reconcile、freeze | 多开一个 daemon Agent、靠日志/PID 断言可恢复 | crash/takeover/duplicate/outbox/external-effect Frozen 演练。 |
 | Claude 类 harness、CrewAI、公开文章/PDF 的经验 | 仅作为风险清单：authority、tool boundary、context rebuild、maker/checker、events | 导入专有实现/flag，或把外部描述当 API 与完成证据 | 每项只以 Lumen source、tests 与 receipts 定案。 |
@@ -341,13 +344,13 @@ auto assignment 或 24h 的恢复依据。
 
 | 项目 | 当前实测事实 | 本书处理 |
 |---|---|---|
-| 本地工作树 | 本次编辑前直接复核：`/Users/lei/code/lumen`；分支 `sync/absorb-upstream-20260731`；HEAD=`b76c1f2b901c730132571c38bda9f786895890c5`；clean。本文档的未提交审阅改动不属于 runtime 证据 | 每个 phase 开始都必须重读 HEAD/status；HEAD 才是待审完整 source candidate，`SOURCE_LOCK` 只是 R0-04 以后生成的其一证据。 |
+| 本地工作树 | 本次编辑前直接复核：`/Users/lei/code/lumen`；分支 `sync/absorb-upstream-20260731`；HEAD=`8b74b3618fde1a235b37c2b5bb4a2472aac9b1e9`；仅有本执行书与 5 个旧 SBOM/readiness 证据文件未提交。后者不属于 runtime candidate。 | 每个 phase 开始都必须重读 HEAD/status；HEAD 才是待审完整 source candidate，`SOURCE_LOCK` 只是 R0-04 以后生成的其一证据。 |
 | GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
-| 分叉量 | 本次 `origin/main...HEAD = ahead 166 / behind 0`；PR #134 的 head 是 `b76c1f2`；一个 Offline gates check 已失败、两个 CI checks 当时 in progress | 提交数或 in-progress CI 不是验收证据；先取得失败日志/修复，再做 R0 分组审查、exact CI 与人工 merge。 |
+| 分叉量 | 本次 `origin/main...HEAD = ahead 194 / behind 0`；PR #134 head 是 `8b74b361`；Expert v2 与 Offline gates 成功，Lumen crates 仍 in progress，merge=`UNSTABLE` | 提交数、部分成功或 in-progress CI 不是验收证据；待 exact SHA 全部完成后再做 R0 分组审查与人工 merge。 |
 | 工作树 | 每次 R0 source candidate 前必须重新实测 clean/dirty；任何未分类路径都不进入候选 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | 当前开发 VERSION 为 2.0.0-alpha.1；Lumen 2 首候选目标为 2.0.0-rc.1 | alpha、RC、tag、release 与同步分门；未过 R0 不得创建 RC/tag。 |
-| 当前证据错位 | review anchor=b76c1f2；runtime checkpoint=637b5825；SOURCE_LOCK source=0fae4c7b；readiness head=9e719020 且 state=BLOCKED | 三者不是同一 candidate。旧 lock/SBOM/readiness、旧 binary 或旧 CI 全部不得证明当前 HEAD。 |
+| 当前证据错位 | current runtime=8b74b361；历史 checkpoint=637b5825；SOURCE_LOCK source=0fae4c7b；readiness head=9e719020 且 state=BLOCKED | 四者不是同一 candidate。旧 lock/SBOM/readiness、旧 binary 或旧 CI 全部不得证明当前 HEAD。 |
 | GitHub CI | 只承认 PR 上与 source candidate 对应的 exact-SHA run | 未完成、失败或其他 SHA 的 run 都不能被说成当前全绿。 |
 | readiness | 只承认与 source candidate 同源的 lock、SBOM、binary 与 readiness | 旧 evidence 不证明后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
@@ -573,6 +576,194 @@ budget、blocked reason 和下一次可安全动作。它不能展示模型思�
 
 ---
 
+### 3.4 2026-08-03 增补：半透 Agent 沙箱、客户端 Advisor 与 Governed Evidence Loop
+
+本节取代“共享更多上下文即可协作”的误解。多 Agent 的正确目标是：**共享已验证事实，隔离未验证
+推理和执行能力；每轮可停止、可验证、可恢复，而不是更快地空转。** `AgentSandbox`、`ClientAdvisor` 和
+`GovernedEvidenceLoop` 都是 SessionActor 的 consumer；它们绝不形成第二个 execution authority。
+
+#### 3.4.1 AgentSandboxV1：不是只有 worktree 的沙箱
+
+worktree/容器只能限制文件系统，不能限制模型看到什么、把什么写入记忆、调用什么工具、耗尽多少预算，
+也不能给取消/恢复留下可信状态。因此每一个 root/child/advisor/kairos 节点都必须持有 actor-issued、
+可撤销的沙箱合同。child 不持有 raw root handle、PermissionHandle、bypass token 或 sibling capability。
+
+~~~rust
+pub struct AgentSandboxV1 {
+    pub sandbox_id: SandboxId,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub immediate_parent_id: Option<TaskNodeId>,
+    pub depth: u8,
+    pub context_manifest_hash: ManifestHash,
+    pub accepted_snapshot: AcceptedSnapshotRef,
+    pub branch_id: BranchId,
+    pub memory_capability: ReadAcceptedSnapshot | ProposeOwnBranch | RootResolve,
+    pub capability_grant_id: GrantId,
+    pub tool_contract_hashes: Vec<Sha256>,
+    pub filesystem_scope: ReadOnlyRoots | WriteScopeLeaseRef,
+    pub process_scope: ProcessScopeRef,
+    pub network_class: NetworkDeny | ExplicitAdapterAllowlist,
+    pub budget_slice: BudgetReservationId,
+    pub inbox_policy: InboxPolicyRef,
+    pub issued_at: Timestamp,
+    pub expires_at: Timestamp,
+    pub state: Active | Revoked | Expired | Frozen,
+}
+~~~
+
+**信息流硬规则：**
+
+1. 每个 child 读取的当前任务记忆仅为 `TaskContract + ContextManifest + AcceptedSnapshot`；可有自己的
+   `BranchScratchpad`，但它永不自动外流、永不 promotion。
+2. sibling 不读取彼此 scratch、chat、未接受 proposal、裸路径、secret 或“下一步命令”。他们只读取同一
+   版本的 Accepted snapshot；任何新 snapshot 在下一次明确 `rebase`/admission 时才可见。
+3. child 只可 append 自己 branch 的 `Proposed`/`EvidenceAttached` claim 和有界 `HandoffPacket`；直接
+   向 sibling 发自由文本控制消息、修改 Accepted、修改长记忆、修改其他 branch 一律 deny。
+4. root 或 direct parent 可看 child 的 handoff，但查看不等于接受；root actor 仍是唯一能 transition
+   `HostVerified/Accepted/Rejected/Conflicted` 的 authority。
+5. 外部网页、tool output、Advisor 文本和模型自评均以 `UntrustedEvidence` 进入 artifact，不能作为
+   instruction 或可执行配置进入 manifest。
+6. scope/grant/budget/manifest 被撤销或版本不再匹配时，sandbox 立即 `Frozen`；late tool/terminal 只可
+   reconciliation，不能复活 sandbox。
+
+`HandoffPacketV1` 的内容固定为 `from_node / snapshot_hash / proposed_claim_refs / evidence_refs /
+uncertainties / next_bounded_step / terminal_or_blocked_reason`。不得携带完整 chain-of-thought、自由 shell
+命令、secret、raw chat 或“请无条件相信我”的 prose。每包有大小上限、schema version、content hash 和
+delivery receipt；已过期 snapshot 的包只可提示 rebase，不能合并。
+
+**实施切片 `NG-04D Sandbox + Handoff`：** 先在 memory/tools 侧实现纯 DTO、canonical serializer、deny
+reasons 和 property tests；随后在 child admission、tool dispatch、branch claim append 三处接入；最后才为
+受隔离写任务映射现有 `WriteScopeLease`/worktree。不得先引入容器、第二 daemon 或新的 agent runtime。
+
+**负例：** sibling scratch read、child cross-branch append、expired sandbox dispatch、proposal-as-instruction、
+secret in handoff、same worktree dual writer、manifest/snapshot mismatch、cancel 后 late terminal、unclassified
+MCP tool、depth-3 spawn。`SANDBOX_ISOLATION_GATE=PASS` 需要上述反例、正向 Accepted sharing、rebase、
+cancel/revoke 与 exact-binary tree projection；它不证明 OS/container escape 防护或跨机隔离。
+
+#### 3.4.2 GovernedEvidenceLoopV1：Loop 是状态机，不是无限提示词
+
+Lumen 的 loop 分三层，且每层都有唯一状态、预算和停止条件：
+
+| 层 | 驱动者 | 单轮输入/输出 | 允许继续 | 必须停止或升级 |
+|---|---|---|---|---|
+| node loop | 该 node 的 AgentSandbox | accepted snapshot、assignment → receipt/proposal/evidence/checkpoint | 出现新证据且未超 scope/budget | 无新证据、scope 扩大、验证失败不收敛、需要 parent 决定 |
+| tree loop | root SessionActor | branch checkpoints/claims → accept/reject/rebase/cancel | 无冲突且 reservation 有余量 | conflict、snapshot stale、write overlap、root cancel、tree budget exhausted |
+| supervisor loop | Kairos/operation consumer | lease/heartbeat/outbox → reconcile/freeze/operator action | receipt 可判定且 retry class 安全 | delivery/effect/owner unknown、lease gap、deadline 或 policy revoke |
+
+~~~rust
+pub struct LoopContractV1 {
+    pub loop_id: LoopId,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub sandbox_id: SandboxId,
+    pub context_manifest_hash: ManifestHash,
+    pub accepted_snapshot_hash: Sha256,
+    pub allowed_actions: Vec<LoopActionClass>,
+    pub checkpoint_policy: CheckpointPolicyV1,
+    pub verification_policy: VerificationPolicyRef,
+    pub stop_conditions: Vec<StopCondition>,
+    pub budget_reservation_id: ReservationId,
+    pub deadline: Timestamp,
+}
+
+pub struct LoopCheckpointV1 {
+    pub loop_id: LoopId,
+    pub iteration: u32,
+    pub input_snapshot_hash: Sha256,
+    pub action_receipts: Vec<ReceiptRef>,
+    pub evidence_refs: Vec<ArtifactRef>,
+    pub proposed_claim_refs: Vec<ClaimId>,
+    pub state: Progressed | NeedsEvidence | NeedsParentDecision | Blocked
+             | BudgetExhausted | Cancelled | Frozen | CompletionCandidate,
+    pub reason_codes: Vec<LoopReasonCode>,
+}
+~~~
+
+`CompletionCandidate` 永远不是 success；它只允许进入 typed verification、HostVerification 和 root
+acceptance。相反，`NeedsEvidence`、`NeedsParentDecision`、`Blocked`、`Frozen` 都是可见的正常结果，禁止
+模型用“再试一次”绕过。repair 只能创建新 iteration，必须引用上一轮失败 receipt，并受 repair count、
+deadline、token/tool/artifact 预算限制。
+
+**检查点触发：** 首次副作用前；每次 tool/evidence 后；连续两次无新 evidence；scope/预算/模型变更前；
+验证失败；终端候选；cancel/revoke/queue uncertainty。只有 deterministic policy 能判定 transition；模型、
+Advisor 和 UI 只能提供输入。这样 harness 管一次受治理运行，loop 管可观测的多轮闭环，但二者共用同一
+SessionActor authority。
+
+**实施切片 `NG-04E Governed Evidence Loop`：** 先做无 provider 的 pure state reducer + fake clock +
+bounded iteration property tests；再将 checkpoint 写入 operation journal/ledger；最后映射现有 Expert repair、
+workflow 以及 tree UI。禁止以 cron、tmux、stdout、普通 retry 或“模型自评完成”替代 checkpoint。
+`LOOP_CONVERGENCE_GATE=PASS` 需：progress、no-progress、repair limit、stale snapshot、cancel/late event、
+verification failed、queue unknown、budget expiry 的完整状态矩阵；同时要求 exact-binary offline trace。
+
+#### 3.4.3 ClientAdvisorV1：复现功能体验，不复制供应商服务端
+
+Claude 类产品的可取经验是“在重要节点让独立审查模型介入、让用户可见开关/模型/用量、结果回到当前
+任务”。Lumen 的实现不能依赖 provider 的私有 `server_tool_use`、schema type、header 或模型名；应当把
+它实现为注册在本地 ToolRegistry、由 SessionActor dispatch 的虚拟工具 `lumen_advisor_consult`。
+
+~~~text
+primary model invokes virtual tool (or root checkpoint requires it)
+  → SessionActor validates mode / user pool / pin / privacy / budget / deadline
+  → build redacted AdvisorContextCapsuleV1 from manifest + AcceptedSnapshot + allowed artifacts
+  → call one independently configured, user-allowed provider/model
+  → persist AdviceReportV1 + AdvisorUsageReceiptV1 as artifacts
+  → return bounded structured tool result to primary/root
+  → root policy decides Continue | NeedEvidence | NeedParentDecision | Freeze
+~~~
+
+**模式与触发：**
+
+| mode | 行为 | 默认 | 不允许的越权 |
+|---|---|---|---|
+| `off` | 不注册虚拟工具、不发 provider request | 是 | 不得有隐式咨询 |
+| `shadow` | 只记录按策略本应咨询/会选哪个模型 | 可用于评估 | 不调用 provider、不改变模型 |
+| `on_demand` | root 或主模型明确请求一种受限 review | 用户显式开启 | 任意 prompt 泄漏/无限咨询 |
+| `checkpoint` | 仅在 plan、failure convergence、scope/budget escalation、completion candidate 触发 | 经 shadow corpus 后 | advisor 自行创建检查点或阻塞执行 |
+
+`AdvisorRequestV1` 只能选择 `PlanReview | EvidenceGapReview | FailureConvergenceReview |
+ScopeOrBudgetEscalationReview | CompletionCandidateReview`，不能塞任意自由 prompt。`AdviceReportV1` 必须包含
+`risk_findings / counterevidence / missing_evidence / suggested_verification / escalation_recommendation /
+confidence / report_hash`，且明确标记为 advisory。`AdvisorUsageReceiptV1` 必须有 user pool、实际 model/provider
+reference、manifest/snapshot/input/output hash、token/cost 若 provider 可报、deadline、cancel/timeout/deny
+reason、是否被 root 采纳；unknown usage 记 unknown，不能记零。
+
+**绝对边界：** Advisor 无 filesystem/shell/MCP/write scope、无 claim acceptance、无 bypass、无 model switch、
+无 terminal success、无 direct child spawn。它可建议一个新任务候选模型，但 Applied assignment 仍只可在
+`NG-07` 的 new admission/no output/no effect/root approval 条件下发生。Advisor 不可用或超时返回
+`Unavailable`；除非 deterministic policy 已把该 checkpoint 定义为 mandatory，否则不重放主任务、不偷偷换
+模型；mandatory 也只会得到 `Blocked(AdvisorUnavailable)`，不会自动放宽。
+
+**缓存与提示词：** 可把虚拟工具 descriptor 作为稳定 ToolCatalog 的尾部 feature segment，降低开关对静态
+前缀的扰动；但所有 provider 的 cache 行为都必须由实际 provider receipt 证明。开关、模型、schema 或
+redaction policy 改变必须产生新的 tool catalog/manifest hash，禁止声称“绝不影响缓存”。system prompt 可
+提醒何时咨询，但实际 admission、次数、数据最小化、权限和完成门只在 actor/tool policy 强制。
+
+**实施切片 `NG-06A ClientAdvisor`：**
+
+1. `AdvisorContextCapsuleV1` pure builder：redaction、artifact allowlist、stable hash、size cap、foreign/
+   proposed/secret/path denial；零 network。
+2. `AdviceRequest/Report/UsageReceipt` schema、tool registry descriptor、`off/shadow` status/UI projection；
+   默认 `off`，不改现有 Expert 行为。
+3. mock provider adapter：timeout/cancel/receiver closed/usage unavailable/invalid schema/independent failure
+   domain 的 negative matrix；只在 fixture 使用，禁止 billable call。
+4. `on_demand` local virtual tool：root/SessionActor policy、budget reservation、bounded result artifact、
+   explicit cancellation；结果仍不能改变 claim/assignment。
+5. `checkpoint` shadow corpus，证明每一次自动触发都有 receipt、bounded rate、停止条件和 privacy decision；
+   通过独立审阅后才可 gated rollout。
+
+`CLIENT_ADVISOR_GATE=PASS` 必须证明 off 无 provider attempt、shadow 无 provider attempt、on-demand 的
+capsule 最小化、Advisor 不能接受 claim/执行 tool/切换已输出 stream、cancel/timeout/unknown usage 真实可见、
+cache/manifest drift fail-closed。它不证明任何供应商实际质量、实时价格或 live availability。
+
+#### 3.4.4 产品 UX 与开发态轻量路径
+
+默认短任务维持 `interactive_single_turn`：不显示空树、不调用 Advisor、不创建长期记忆或 daemon。用户明确
+请求并行、子 Agent、恢复、定时任务或 checkpoint Advisor 时，UI 先展示即将升级的 profile、sandbox scope、
+模型池/pin、权限、预算、snapshot revision 和可取消性。运行中至少投影：树节点、当前 loop checkpoint、
+Accepted snapshot revision、proposal/verification 状态、queue pressure、Advisor 状态和花费真相、Blocked/Frozen
+reason。所有 UI 是 actor/journal projection，不可编辑状态、不可隐藏 delivery uncertainty。
+
 ## 4. 依赖图与并行纪律
 
 ~~~mermaid
@@ -589,14 +780,21 @@ flowchart LR
   C2 --> L4["NG-04 WorkingLedger"]
   L4 --> X4C
   TC --> X4C
+  X4C --> S4D["NG-04D AgentSandbox + Handoff"]
+  C2 --> S4D
+  O3C --> S4D
+  S4D --> E4E["NG-04E Governed Evidence Loop"]
+  F3E --> E4E
   R0 --> F5["NG-05 receipt + provider health"]
-  F5 --> A6["NG-06 Advisor shadow"]
-  L4 --> A6
+  F5 --> A6["NG-06 Advisor policy shadow"]
+  X4C --> A6
+  A6 --> CA6A["NG-06A ClientAdvisor virtual tool"]
+  S4D --> CA6A
+  E4E --> CA6A
   W3D --> G9A["NG-09A shadow-only offline golden path"]
   F3E --> G9A
-  L4 --> G9A
-  X4C --> G9A
-  A6 --> G9A
+  E4E --> G9A
+  CA6A --> G9A
   G9A --> A7["NG-07 bounded assignment"]
   A7 --> G9B["NG-09B assignment golden-path extension"]
   O3C --> K8["NG-08 Kairos local"]
@@ -609,15 +807,16 @@ flowchart LR
 
 **本轮最短开工纪律：** 在 `P0-NR-A=PASS` 与 `R0_SOURCE_GATE=PASS` 前，只允许只读 inventory、RFC、
 fixture/test 设计和当前 P0 修复；不得并行实施 NG-01/02/03/04/04C/05/06/07/08/09 的 runtime consumer。
-这避免在 ahead 166（开工时必须再实测）、source lock/readiness 失配的候选上同时叠加多个不可拆分的架构改变。
+这避免在 ahead 194（开工时必须再实测）、source lock/readiness 失配的候选上同时叠加多个不可拆分的架构改变。
 
 R0 之后才允许并行的**无重叠设计/测试准备**：NG-01 DTO/UI inventory、NG-04 claim schema RFC、NG-04C
 ContextManifest fixture RFC、NG-05 mock transport matrix、Kairos fake-clock harness。每个 runtime contract 仍
 一次只允许一个 writer；同一 coordinator/schema/permission/source-lock 路径绝不并行写。
 
-绝不提前：没有 Tree/Ceiling/Budget 不开三层；没有 accepted snapshot/manifest 不把压缩摘要当 child contract；
-没有 sealed receipt/no-replay 不做自动 routing；没有 ledger scope 不共写记忆；没有 lease/crash proof 不称
-24h；没有 R0 exact SHA/CI 不把本地当正式基础。
+绝不提前：没有 Tree/Ceiling/Budget/Sandbox 不开三层；没有 accepted snapshot/manifest 不把压缩摘要当 child
+contract；没有 sealed receipt/no-replay 不做自动 routing；没有 ledger scope 不共写记忆；没有 Loop checkpoint
+不让模型无限 repair；没有 ClientAdvisor gate 不发“自动咨询”；没有 lease/crash proof 不称 24h；没有 R0 exact
+SHA/CI 不把本地当正式基础。
 
 ---
 
@@ -1180,11 +1379,11 @@ evidence 和 exact-binary status projection。通过后才允许把多个 child/
 
 ## 12. NG-04：SharedWorkingLedger 与四层记忆
 
-**状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn/unproven-accepted
-ledger 拒绝注入；root 的显式、evidence-preserving、idempotent workspace promotion 已实现。root 用户的
-`/memory repair-ledger` 现可仅修复最后一条 torn record：裁剪前先 fsync 保存原始 tail，child/非-root
-无权调用，middle corruption 保持 fail-closed。完整 cross-worktree recovery/read-model gate、claim 状态机、
-durable recovery-event journal 与 index rebuild proof 仍是 Draft。
+**状态：** `8b74b361` 已有核心 ledger、`ClaimAuthority`、`ContextManifestV1`、governed assignment 和
+离线 golden fixture：child 只能 Proposed、root 才能 review/accept、Advisor/Kairos/TUI/MCP 无 acceptance 权；
+foreign/torn/unproven accepted ledger 拒绝注入。root 的显式、evidence-preserving、idempotent workspace
+promotion 与 root-only torn-tail repair 仍有效。它们是 crate-level foundation，不等于完整 cross-worktree
+recovery/read-model、完整 claim migration、sandbox/handoff、compact-resume product proof 或 `LEDGER_REPLAY_GATE`。
 **非目标：** 不把 SessionMemory/summary/vector DB 改成权威。
 
 | 层 | 内容 | 权威/写权限 |
@@ -1269,9 +1468,11 @@ claim 状态机 consumer；`NG-04C-1` 是唯一可注入事实的 selection poin
 
 ### NG-04C：ContextManifest 与压缩/恢复重建
 
-**状态：** Not started；这不是把现有 summary 改个名字。当前 child 已有 task-tree prompt，且可使用
-`CompactionMode::Summary`，但仓库尚无 `ContextManifest`、`immutable_assignment_hash` 或
-`accepted_snapshot_hash` 的实现。故现有压缩不能作为 child anti-drift contract 或 resume proof。
+**状态：** `8b74b361` 已实现 `xai-grok-memory::ContextManifestV1`、canonical hash/admission 及其与
+governed assignment/child tool result 的基础接线；这纠正了此前“尚无 ContextManifest”的旧事实。它尚未证明
+所有 root/child prompt、compact、resume、reconnect、ACP/Pager 都只通过同一 immutable manifest 重建；因此
+现有实现仍是 foundation，`CONTEXT_MANIFEST_GATE=PASS` 仍为 Draft，不能把已有 hash 当完整 anti-drift product
+contract。
 
 **目标：** 每个将被模型消费的 root/child turn 都从一个不可变、可 hash、可重建的 manifest 生成
 受控输入；压缩、resume、retry、pager/ACP 都读同一 identity，而不是重用原始 chat、sibling scratch
@@ -1377,6 +1578,54 @@ cargo check -p xai-grok-shell
 
 **停止条件：** 若为兼容旧 summary 而让 hash mismatch/unknown schema/foreign snapshot 继续执行，或为
 “上下文更完整”而把 raw chat/secret/sibling scratch 塞回 child，则立即停止并回退 consumer。
+
+### NG-04D：AgentSandbox 与 bounded branch handoff
+
+**状态：** Draft。`8b74b361` 已有 lineage、grant/manifest/operation/write-scope 的局部 building blocks，
+但它们尚未作为一个统一、可撤销的 per-agent sandbox 被签发和在所有 consumer 强制。当前不同 child 的
+context、scratch、handoff、tool/process ingress 和 rebase 语义仍不能被宣称完整闭合。
+
+**唯一 owner：** SessionActor。coordinator 可验证/投影；ToolRegistry、shell、worktree、workflow 和
+Kairos 只能消费 sandbox ref，不能自己构造或扩大它。
+
+| 子卡 | 交付 | 允许路径 | 必须拒绝 | Gate |
+|---|---|---|---|---|
+| `NG-04D-1` | `AgentSandboxV1` DTO、canonical hash、expiry/revoke reason | memory + tools DTO/tests | caller-provided parent/depth/permission/bypass | `SANDBOX_SCHEMA_GATE` |
+| `NG-04D-2` | accepted-only read / own-branch propose capability | ledger + child admission | sibling/private scratch/cross-tree/cross-branch write | `SANDBOX_MEMORY_GATE` |
+| `NG-04D-3` | `HandoffPacketV1` bounded artifact + delivery receipt | coordinator/ACP projection | free-form control message, raw chat, secret, proposal auto-accept | `HANDOFF_GATE` |
+| `NG-04D-4` | grant/tool/process/worktree consumer enforcement | tool dispatch + write scope | expired/revoked sandbox dispatch, child bypass, unknown MCP | `SANDBOX_ENFORCEMENT_GATE` |
+
+**迁移/回退：** legacy session 没有 sandbox 时只能 `interactive_single_turn`、人工 inspect/close；不能自动
+spawn、resume governed tree、promotion、Kairos 或 advisor checkpoint。feature flag 关闭时拒绝新的 governed
+admission，已签发 sandbox 以 root cancel/revoke 有界回收；journal/artifacts 留存，不通过删 scratch 隐藏证据。
+
+**必测：** two sibling same accepted snapshot but distinct scratch；root accepts fact 后 child rebase 才能看见；
+handoff foreign/stale/malformed/oversize/secret reject；revoke vs in-flight tool；cancel vs late terminal；depth-3
+leaf cannot spawn/write/network/bypass；read-only sandbox cannot obtain write lease。每条测试保存 raw counts；
+`SANDBOX_ISOLATION_GATE=PASS` 不等于 OS/container security certification。
+
+### NG-04E：Governed Evidence Loop 与收敛合同
+
+**状态：** Draft。现有 Expert repair、workflow、verification 与 operation state 各自能循环/重试，但没有一份
+跨 agent/tree/supervisor 的 checkpoint/stop contract；因此不能把“有 retry”称为可靠 loop engineering。
+
+**目标：** 限制每个 node 的迭代，防止重复无新证据的工作；把“下一步”从模型 prose 变成 actor-owned
+checkpoint transition，并保证树级冲突、取消、预算和 delivery uncertainty 能中止而非隐式继续。
+
+| 规则 | 强制语义 |
+|---|---|
+| progress | 一轮只能在新增 artifact/receipt、accepted snapshot rebase、或明确 parent decision 后继续。 |
+| repair | 必须引用上轮 failure receipt；新 iteration 独立计数，不能保留上一轮 PASS。 |
+| completion | 仅 `CompletionCandidate`；须 verify/host/root 三层后才 terminal success。 |
+| escalation | scope、budget、model、write lease、snapshot stale、连续 no-progress 进入 `NeedsParentDecision`。 |
+| uncertainty | queue/effect/lease/manifest/owner 任一 unknown 进入 `Frozen`，不可自动 retry。 |
+| fairness | actor 按 tree/node 限制 active iterations、tool calls、artifact bytes、queue share，避免一个分支饿死同树其它分支。 |
+
+**实现顺序：** (1) pure reducer + schema/fake-clock；(2) node checkpoint 绑定 operation/ledger receipts；
+(3) root tree reducer 与 deterministic stop/escalate；(4) workflow/Expert repair adapter；(5) ACP/Pager truthful
+projection；(6) offline corpus/fault injection。任何步骤发现需要 provider 或外部 effect 才能证明，停止并换为
+fixture。`LOOP_CONVERGENCE_GATE=PASS` 需要 progress/no-progress、repair limit、budget/deadline、rebase,
+conflict、cancel/late event、verification failure、closed channel/unknown delivery 的 positive+negative matrix。
 
 ## 13. NG-05：ProviderHealth 与 no-replay failover
 
@@ -1645,6 +1894,88 @@ Shadow 不 switch、不 spawn、不调工具、不写文件、不改 terminal、
 Exit：离线 replay corpus policy violation=0、stream switch=0、pin override=0、audit missing=0。
 Rollback：关闭 consumer，不删除 advice log。
 
+### NG-06A：ClientAdvisor virtual tool（功能复现切片）
+
+**状态：** Draft。它在产品体验上复现“用户可选 Advisor 模型、主 Agent 可在关键点咨询、系统显示咨询过程与
+用量、建议回到当前任务”的能力；它**不**复用或模拟任何供应商 server-side tool type、beta header、内部
+feature flag 或模型白名单。现有 Expert consultant 与 AdvisorPolicy 都是可复用前置，不自动等于此功能。
+
+**最小公开 UX：**
+
+~~~text
+/advisor                         # 查看模式、候选池、预算、最近 receipt
+/advisor off                     # 注销本地虚拟工具；不影响现有 Expert
+/advisor shadow                  # 不调用 provider，只记录应触发的咨询
+/advisor on-demand <model?>      # 仅允许用户池内模型；模型可省略
+/advisor checkpoint <model?>     # 受 rollout gate 的固定检查点咨询
+~~~
+
+命令是 SessionActor command，不直接改 provider config；它要校验 model catalog、用户 pool/pin、endpoint/
+privacy class、预算、failure domain、schema 兼容和当前 task profile。`checkpoint` 不是“每个 tool call 都请
+顾问”，只在 Plan、连续失败、scope/budget escalation、CompletionCandidate 触发，并由每 tree 的次数/输入输出
+token/等待时间上限约束。
+
+**本地 virtual-tool contract：**
+
+~~~rust
+pub struct AdvisorContextCapsuleV1 {
+    pub request_kind: AdvisorRequestKind,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub context_manifest_hash: ManifestHash,
+    pub accepted_snapshot_hash: Sha256,
+    pub allowed_artifact_refs: Vec<ArtifactRef>,
+    pub redaction_policy_hash: Sha256,
+    pub input_hash: Sha256,
+}
+
+pub struct AdviceReportV1 {
+    pub request_id: RequestId,
+    pub findings: Vec<AdviceFinding>,
+    pub counterevidence_refs: Vec<ArtifactRef>,
+    pub missing_evidence: Vec<EvidenceRequirement>,
+    pub suggested_verification: Vec<VerificationSuggestion>,
+    pub recommendation: Continue | NeedEvidence | NeedParentDecision | Freeze,
+    pub confidence: Confidence,
+    pub report_hash: Sha256,
+}
+
+pub struct AdvisorUsageReceiptV1 {
+    pub request_id: RequestId,
+    pub mode: AdvisorMode,
+    pub model_assignment_ref: ModelSelectionReceipt,
+    pub capsule_hash: Sha256,
+    pub report_hash: Option<Sha256>,
+    pub usage: Known(ProviderUsage) | Unknown | Denied | Cancelled | TimedOut,
+    pub delivery_state: DeliveryState,
+}
+~~~
+
+Actor 从 manifest/Accepted snapshot/allowlisted evidence 构造 capsule；primary model 只能选择 request kind，
+不能传完整自由 prompt。Consultation 的最大权限是 read-only provider call。report 作为有界、redacted tool result
+返回，不能被当作 claim evidence 或 tool directive；root 采纳与否也必须形成独立 decision receipt。
+
+**缓存、流式、取消：** tool descriptor 必须进入 `ToolCatalogSnapshot` 的 versioned feature segment；开关/模型/
+schema/redaction 改变会改变 catalog + manifest hash。可以优化稳定前缀，但不为任何 provider 承诺 cache hit。
+咨询 lifecycle 用独立控制 lane 支持 cancel/timeout；UI 只显示 actor receipt 状态，normal output 受 bounded
+delivery policy。channel closed、report schema invalid、usage unavailable、provider denied 都保留真因，不能变成
+“Advisor 已完成”或偷偷切换主任务模型。
+
+**实施与 gates：**
+
+1. Pure capsule builder/redaction + golden hash fixtures；先测试 raw chat/sibling Proposed/secret/path/foreign tree
+   绝不进入 capsule。
+2. Advice DTO/receipt、`off/shadow` command/status、ToolCatalog/manifest feature hash；证明两模式零 provider
+   attempt。
+3. mock-only virtual tool adapter，覆盖 invalid report、timeout、cancel、closed receiver、unknown usage、budget
+   exhausted、same failure domain、pin/privacy deny。
+4. gated `on-demand`；只以 test transport 验证 request/report/receipt，不能作 billable call。
+5. `checkpoint` shadow corpus 和 rate-limit/fairness tests；通过后仍先保持 feature disabled until human rollout。
+
+`CLIENT_ADVISOR_GATE=PASS` 的反例必须包括 Advisor direct claim acceptance、tool dispatch、bypass、spawn、
+mid-stream switch、report-as-success、capsule secret leak、off/shadow provider attempt、unknown usage=zero 和
+cancel delivery loss。它不替代 `NO_REPLAY_GATE`、provider live proof 或模型质量评估。
+
 ## 15. NG-07：recommend 与 bounded assignment
 
 **状态：** Not started；前置 NG-01 至 NG-06 与 `NG-09A`。
@@ -1717,8 +2048,8 @@ Stop：外部副作用无 idempotency receipt 时永远 Frozen。
 
 ## 17. NG-09A：三层 shadow-only offline golden path
 
-**状态：** Not started；前置 NG-01、NG-02、NG-02A、NG-03、NG-03C/03D/03E、NG-04、NG-04C、NG-05、NG-06；**刻意不等待
-NG-07**。先证明没有自动模型分配时的树、权限、记忆、上下文、预算与 evidence 边界，再让系统获得
+**状态：** Not started；前置 NG-01、NG-02、NG-02A、NG-03、NG-03C/03D/03E、NG-04、NG-04C、NG-04D、NG-04E、NG-05、NG-06、NG-06A；**刻意不等待
+NG-07**。先证明没有自动模型分配时的树、权限、记忆、上下文、沙箱、loop、预算与 evidence 边界，再让系统获得
 任何 Applied assignment 权力。
 **目标：** 用零 provider、零外部副作用的 rebuilt binary 证明 shadow-only 边界一起工作。
 
@@ -1728,13 +2059,15 @@ root creates immutable contract and fixture workspace
   → Code creates depth-2 Research/Review/Test
   → optional depth-3 leaf returns typed Proposal
   → branches append Proposed with fixture evidence
-  → root deterministically verifies/conflict-resolves
-  → Advisor advice is recorded but cannot accept/switch
+  → root deterministically verifies/conflict-resolves and publishes the next AcceptedSnapshot
+  → child rebase sees only that snapshot; private scratch remains isolated
+  → Advisor shadow or mock virtual-tool report is recorded but cannot accept/switch
+  → loop checkpoint reaches completion candidate only after typed verification
   → root cancels one branch, preserves siblings, replays ledger
   → exact binary renders truthful tree/status/terminal result
 ~~~
 
-必须证明：lineage/fanout；grant TTL/unknown MCP denial；reserve/cancel/late completion；
+必须证明：lineage/fanout；grant TTL/unknown MCP denial；sandbox scratch/handoff isolation；reserve/cancel/late completion；
 proposal-only/evidence requirement；conflict no-auto-merge；Advisor non-authority；ContextManifest artifact tamper、
 stale accepted snapshot、owner/session/workspace mismatch；crash read-model rebuild；UI/ACP 与 coordinator/ledger 一致。
 
@@ -1905,9 +2238,12 @@ live/provider proof 或 long soak。
 | NG-03E | queue flow/delivery/liveness | NG-03C | Codex（actor/sampler single writer） |
 | NG-04A/B | claim journal + authority state machine | NG-01/02 | Codex（schema 单 writer） |
 | NG-04C-1/2 | AcceptedSnapshot + ContextManifest/compact-resume rebuild | NG-01/04A/B | Codex（schema/prompt 单 writer） |
+| NG-04D | AgentSandbox + bounded handoff | NG-02/03C/04C | Codex（authority single writer） |
+| NG-04E | Governed Evidence Loop/checkpoint reducer | NG-03E/04D/04C | Codex（actor/operation single writer） |
 | NG-05 | health/no replay | R0 | Codex |
 | NG-06 | Advisor shadow | NG-04/04C/05 | Codex |
-| NG-09A | shadow-only offline golden path | NG-01..06, no NG-07 | Codex + independent reviewer |
+| NG-06A | ClientAdvisor virtual tool | NG-04C/04D/04E/05/06 | Codex（tool/actor single writer） |
+| NG-09A | shadow-only offline golden path | NG-01..06A, no NG-07 | Codex + independent reviewer |
 | NG-07 | bounded assignment | NG-09A | Codex |
 | NG-09B | bounded-assignment golden extension | NG-07/09A | Codex + independent reviewer |
 | NG-08 | Kairos local | NG-01..04 | Codex |
@@ -2001,23 +2337,29 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
 4. 每个 tool 有 versioned capability/scope/result/idempotency contract；tool output 以 redacted artifact/有界
    preview 进入 context，catalog drift fail-closed；
 5. 并行/process/budget 由 root actor 原子治理，usage unknown 如实展示；
-6. SessionMemory、scratchpad、WorkingLedger、LongTermMemory 分离；
+6. SessionMemory、每 branch private scratch、Accepted WorkingLedger、LongTermMemory 分离；sibling 只读相同版本
+   Accepted snapshot，proposal/handoff 不能成为控制指令；
 7. 每次 spawn/compact/resume 都由不可变 ContextManifest + Accepted snapshot 重建，mismatch fail-closed；
 8. child proposal 只有 evidence/verification/root acceptance 后才为事实；
-9. Expert 是第二意见；Advisor 受 pin/privacy/health/budget/independence 限制；
-10. provider 仅在 sealed NoOutput/NoToolCall/NoEffect receipt 下 visible fallback，绝不重放；
-11. Kairos 经 lease/crash/idempotency/takeover/no-replay 演练，external effect 缺 receipt 永远 Frozen；
-12. 并行 writer 只持有 root-signed、path-scoped、可撤销的 `WriteScopeLease`；worktree handoff 有冲突、
+9. 每 node 有 actor-issued、可撤销 `AgentSandboxV1`，其 context/memory/tool/process/filesystem/network/budget
+   边界都可审计；
+10. 每一 loop 由 `LoopContractV1`/checkpoint/stop condition 约束；无新 evidence、stale snapshot、repair limit、
+    queue/effect uncertainty 必须 Blocked/Frozen，不可无限自评重试；
+11. Expert 是第二意见；ClientAdvisor 是本地 virtual tool，受 pin/privacy/health/budget/independence/capsule
+    redaction 限制，不能 acceptance、execution 或 mid-stream switch；
+12. provider 仅在 sealed NoOutput/NoToolCall/NoEffect receipt 下 visible fallback，绝不重放；
+13. Kairos 经 lease/crash/idempotency/takeover/no-replay 演练，external effect 缺 receipt 永远 Frozen；
+14. 并行 writer 只持有 root-signed、path-scoped、可撤销的 `WriteScopeLease`；worktree handoff 有冲突、
     stale-base、dirty-target、verification 与 root-decision receipt，绝不 child auto-commit/merge/push；
-13. 每一 authority event 的 queue/closed-channel/sequence-gap 有 delivery observation；UI 可明确 coalesce，
+15. 每一 authority event 的 queue/closed-channel/sequence-gap 有 delivery observation；UI 可明确 coalesce，
     但 tool/grant/terminal/evidence 不可静默丢失，未知状态 Frozen；
-14. secret、credential、protected path 和受限 artifact 不进入 manifest/ledger/UI；retention、tombstone 和
+16. secret、credential、protected path 和受限 artifact 不进入 manifest/ledger/UI；retention、tombstone 和
     deletion receipt 可复核，unknown schema/partial migration fail-closed；
-15. Source/Unit/Actor/Product/CI/Package/Live/Release 证据分别完整，NOT RUN/BLOCKED 不隐藏。
+17. Source/Unit/Actor/Product/CI/Package/Live/Release 证据分别完整，NOT RUN/BLOCKED 不隐藏。
 
 ### 最短开工序列（当前唯一允许的实施顺序）
 
-1. **P0-NR-A（现在）**：以开工时重新读取的 HEAD（本书只保留 `b76c1f2` 审计锚点）关闭 compact/auth/
+1. **P0-NR-A（现在）**：以开工时重新读取的 HEAD（当前审计锚点 `8b74b361`）关闭 compact/auth/
    ordinary reroute 的所有 shell 同轮 `*AndResubmit`，以及 sampler 内 retry/backoff/image-strip/HTTP1/doom
    resample；ordinary pool preselection 只允许 root 的第一次 sampler submission。定向 negative tests、
    transport counting fixture、check、diff check 成为 `P0_NR_SAFETY_GATE`。这是安全回退，不做 receipt 大设计，
@@ -2031,20 +2373,25 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
    注入，再将 depth/tool ceiling 升级为 grant/TTL/revoke/policy receipt 与 unknown-MCP deny；随后冻结可调用
    tool contract、result artifact/redaction/context budget，禁止把任意 MCP 输出塞入后续上下文。
 5. **NG-03B → NG-03C → NG-03D/03E**：先 atomic budget reservation/settlement，再 operation
-   lease/event/outbox/reconcile；接着补 write-scope/worktree handoff 和 queue/delivery/liveness。不要先开
-   24h daemon，不把 PID、worktree 目录或无界队列当状态。
-6. **NG-04A → NG-04B → NG-04C-1 → NG-04C-2**：先 claim journal，再 root-only transition state machine，
-   再 AcceptedSnapshot，最后 ContextManifest/compact-resume admission。它们是 child anti-drift 的关键路径；
-   summary、长期记忆和 Advisor 都不能插队替代。
-7. **NG-05 → NG-06**：实现 sealed receipt 后，每次只重开一种 resubmit reason；同时完成 provider health 的
-   mock matrix 与 Advisor shadow corpus。Advisor 始终无 acceptance/execution 权。
-8. **NG-09A**：用 exact binary 跑三层 shadow-only golden path，独立验收树、grant、claim、manifest、预算、
-   no-replay 与 UI 真相；不调用 provider。
-9. **NG-07 → NG-09B**：只在 NG-09A 后做 root-approved bounded assignment 和其 golden extension；任何
+   lease/event/outbox/reconcile；接着补 write-scope/worktree handoff 和 queue/delivery/liveness。`8b74b361`
+   的 ingress/control-lane 只是开始，普通 authority data plane 仍须 delivery observation。不要先开 24h daemon，
+   不把 PID、worktree 目录或无界队列当状态。
+6. **NG-04A → NG-04B → NG-04C-1 → NG-04C-2**：已有 core DTO/authority/manifest foundation 仍须按该次序
+   做 migration、snapshot/read-model、完整 admission 与 compact/resume product gate；禁止把已存在的 hash
+   误称已闭环。summary、长期记忆和 Advisor 都不能插队替代。
+7. **NG-04D → NG-04E**：先由 actor 签发 AgentSandbox、隔离 scratch、限制 handoff，再把 node/tree/supervisor
+   的 checkpoint、evidence、repair limit、stop/escalation 接入同一 operation/ledger。没有该两项，不开真实
+   多层并行，也不把“反复尝试”称为 loop engineering。
+8. **NG-05 → NG-06 → NG-06A**：实现 sealed receipt 后，每次只重开一种 resubmit reason；完成 provider health
+   mock matrix 与 Advisor shadow corpus；随后以 `off → shadow → mock on-demand → gated checkpoint` 顺序实现
+   ClientAdvisor。Advisor 始终无 acceptance/execution 权。
+9. **NG-09A**：用 exact binary 跑三层 shadow-only golden path，独立验收树、sandbox、grant、claim、manifest、
+   loop、预算、no-replay、mock Advisor 与 UI 真相；不调用 provider。
+10. **NG-07 → NG-09B**：只在 NG-09A 后做 root-approved bounded assignment 和其 golden extension；任何
    user pin、已输出、effect/usage/receipt unknown 都 fail-closed。
-10. **NG-08**：以 operation API 做 Kairos local crash/reconcile/freeze proof；随后才评估 long soak 与
+11. **NG-08**：以 operation API 做 Kairos local crash/reconcile/freeze proof；随后才评估 long soak 与
     24h autonomy。
-11. **NG-10**：先修复并证明 S→E release transaction，再做 clean install/upgrade/rollback receipt；每个新
+12. **NG-10**：先修复并证明 S→E release transaction，再做 clean install/upgrade/rollback receipt；每个新
     源码 candidate 都重走 source/evidence/CI gate。所有这些完成且获得人类 release authority 后，才讨论
     RC/tag/release。
 
