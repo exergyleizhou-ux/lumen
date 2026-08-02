@@ -238,12 +238,66 @@ fn validate_governed_snapshot(
     let snapshot = ledger
         .accepted_snapshot()
         .map_err(|error| format!("governed child snapshot unavailable: {error}"))?;
+    validate_governed_snapshot_hash(admission, &snapshot)
+}
+
+fn validate_governed_snapshot_hash(
+    admission: &xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
+    snapshot: &xai_grok_memory::AcceptedLedgerSnapshot,
+) -> Result<(), String> {
+    if admission.task_tree_id != snapshot.task_tree_id {
+        return Err("governed child admission snapshot belongs to a foreign task tree".to_owned());
+    }
     if admission.accepted_snapshot_hash != snapshot.accepted_set_hash
         && admission.accepted_snapshot_hash != snapshot.journal_hash
     {
         return Err("governed child admission snapshot hash is stale or foreign".to_owned());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod governed_snapshot_tests {
+    use super::validate_governed_snapshot_hash;
+    use xai_grok_memory::AcceptedLedgerSnapshot;
+    use xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission;
+
+    fn admission() -> GovernedSpawnAdmission {
+        GovernedSpawnAdmission {
+            task_tree_id: "tree".into(),
+            root_session_id: "root".into(),
+            node_id: "child".into(),
+            manifest_hash: "sha256:manifest".into(),
+            accepted_snapshot_hash: "sha256:accepted".into(),
+            immutable_assignment_hash: "sha256:assignment".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            policy_revision: 1,
+            budget_reservation_id: "budget".into(),
+        }
+    }
+
+    fn snapshot() -> AcceptedLedgerSnapshot {
+        AcceptedLedgerSnapshot {
+            task_tree_id: "tree".into(),
+            record_count: 1,
+            accepted_count: 1,
+            accepted_set_hash: "sha256:accepted".into(),
+            journal_hash: "sha256:journal".into(),
+        }
+    }
+
+    #[test]
+    fn accepts_matching_snapshot_and_rejects_stale_or_foreign() {
+        let receipt = admission();
+        assert!(validate_governed_snapshot_hash(&receipt, &snapshot()).is_ok());
+        let mut stale = snapshot();
+        stale.accepted_set_hash = "sha256:newer".into();
+        stale.journal_hash = "sha256:newer-journal".into();
+        assert!(validate_governed_snapshot_hash(&receipt, &stale).is_err());
+        let mut foreign = snapshot();
+        foreign.task_tree_id = "other-tree".into();
+        assert!(validate_governed_snapshot_hash(&receipt, &foreign).is_err());
+    }
 }
 
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
