@@ -807,6 +807,25 @@ impl SessionActor {
                 self.send_host_turn_slash_command_output(&message).await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::RepairTaskTreeMemoryLedger => {
+                let message = match self.repair_task_tree_memory_ledger() {
+                    Ok(repair) => format!(
+                        "Recovered torn task-tree ledger line {}; retained {} valid record(s). \
+                         Preserved {} discarded byte(s) for review at {} (blake3 {}).",
+                        repair.repaired_line,
+                        repair.retained_records,
+                        repair.discarded_bytes,
+                        repair.backup_path.display(),
+                        repair.discarded_tail_hash,
+                    ),
+                    Err(error) => format!(
+                        "Task-tree ledger repair was not performed: {error}. \
+                         Only a torn final record is repairable; middle corruption remains blocked."
+                    ),
+                };
+                self.send_host_turn_slash_command_output(&message).await;
+                ok_end_turn(0, None)
+            }
             // GoalSet is handled directly in handle_prompt (before this
             // function is called) so the turn flows through to model inference
             // instead of ending immediately.

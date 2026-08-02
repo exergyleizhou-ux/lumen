@@ -6,15 +6,23 @@
 **性质：** Lumen 后续实施的唯一排序、依赖、验收与交接总纲；不是功能完成、CI 通过、发布、安装或 live/provider 证明。
 **范围：** Rust Lumen coding agent；macOS-first；不做 Windows 专项、未授权 provider/billable 调用、deploy 或 release。
 **方法参考：** 同日 Lumen Science 执行书只提供阶段与证据结构；它不是 Lumen Core 的 API、代码或发布依赖。
-**证据窗口：** 2026-07-27 至 2026-08-02 的 Lumen 提交、当前源码、当前 GitHub 和当前工作树。窗口外旧规划仅是历史，不是需求、优先级或完成依据。
+**证据窗口：** 当前源码、当前 GitHub、当前工作树与 2026-08-01 起的 NextGen 决策。2026-07-27 至 07-31 的恢复资料只能解释现有代码；窗口外旧规划仅是历史，不是需求、优先级或完成依据。
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
 
+### 计划新鲜度与证据优先级
+
+1. **P0 当前事实：** 当前 worktree/HEAD、`git ls-remote` 的 GitHub branch head、原始 command exit、当前源码测试；它们可推翻本文任何旧数字或路径。
+2. **P1 当前设计：** 2026-08-01 起由本书和已提交 NextGen contract 定义的产品目标；变更必须有 issue/slice、negative test、commit 和本节校准更新。
+3. **P2 历史材料：** 早期 `FINAL-*`、旧聊天、恢复包、外部架构文章/PDF 只能提供风险清单或模式灵感，不能证明当前 API、版本、CI、GitHub 状态或完成度。
+
+任何实施者先读 P0，再读 P1；P2 与 P0/P1 冲突时直接弃用。不得为了“沿用计划”覆盖当前代码、把历史测试计数挪作新 HEAD 的绿，或从旧文件恢复已被否决的设计。
+
 ### 本轮实施校准（2026-08-02，必须在 R0 前重新实测）
 
-本书不是以旧规划或 implementer 口述来“报绿”。最近一次 runtime 代码 checkpoint 是
-`16ddc314f289a0c56e0ad370798791679126b50d`（分支
-`sync/absorb-upstream-20260731`；是否已推送、CI 或发布必须每次另测），它在本书的事实增量是：
+本书不是以旧规划或 implementer 口述来“报绿”。最近一次已推送 runtime 代码 checkpoint 是
+`2a3a9913e5e687c71dbd27cef44cdb122dba9813`（分支
+`sync/absorb-upstream-20260731`；GitHub `main` 是否已合并、CI 或发布必须每次另测），它在本书的事实增量是：
 
 1. 根 Session 也获得同一 task-tree ledger 的受控 review port；child 仍无 promotion
    authority（`85e1a4c8`）。
@@ -28,10 +36,15 @@
 5. client disconnect 的 idle unload 改为 actor mailbox 内的 `UnloadIfIdle`，并由与 prompt intake
    相同的 dispatch lock 覆盖决策至 resident-map detach；不再是 `IsBusy` 后另发 `Shutdown` 的
    check-then-act race（`16ddc314f`）。这只关闭 foreground/queued-prompt/parked-plan-approval 的
-   竞态；background terminal、monitor、scheduler、subagent、lease 的统一 activity snapshot 仍是 Draft。
+   竞态。
+6. actor 的 bounded activity snapshot 现在还会保留 owner-scoped background terminal/monitor、direct
+   child、scheduler active-run lease 与 pending interaction；adapter probe timeout fail-closed，恢复清单
+   也不会把 child terminal 误记到 root（`2a3a9913`）。它不等于跨 adapter transaction、event journal 或
+   24h recovery。
 
-本轮本地证据仅包括上述 memory/contract 的定向 unit tests、`cargo check -p xai-grok-shell`、
-idle-unload 断连 13-test group、queue-state unit test、explicit-close unit test 和 `git diff --check`。
+本轮本地证据仅包括上述 memory/contract 的定向 unit tests、activity snapshot 2-test group、background
+manifest 1-test group、scheduler lease 1-test group、`cargo check -p xai-grok-shell`、idle-unload 断连
+13-test group、queue-state unit test、explicit-close unit test 和 `git diff --check`。
 没有以此声称完整 suite、GitHub exact-SHA CI、24h daemon、release 或 provider live proof 已完成。
 每次源码改变后，R0 与本节 SHA 都必须更新，旧 CI 不可挪用。
 
@@ -675,8 +688,10 @@ pub struct TreeBudgetV1 {
 ## 12. NG-04：SharedWorkingLedger 与四层记忆
 
 **状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn/unproven-accepted
-ledger 拒绝注入；root 的显式、evidence-preserving、idempotent workspace promotion 已实现。完整
-cross-worktree recovery/read-model gate 与 claim 状态机仍是 Draft。
+ledger 拒绝注入；root 的显式、evidence-preserving、idempotent workspace promotion 已实现。root 用户的
+`/memory repair-ledger` 现可仅修复最后一条 torn record：裁剪前先 fsync 保存原始 tail，child/非-root
+无权调用，middle corruption 保持 fail-closed。完整 cross-worktree recovery/read-model gate、claim 状态机、
+durable recovery-event journal 与 index rebuild proof 仍是 Draft。
 **非目标：** 不把 SessionMemory/summary/vector DB 改成权威。
 
 | 层 | 内容 | 权威/写权限 |
@@ -692,6 +707,8 @@ cross-worktree recovery/read-model gate 与 claim 状态机仍是 Draft。
 |---|---|
 | xai-grok-memory/src/storage.rs:1-36,600-650 | global/workspace identity。 |
 | 同 storage.rs:195-264 | Markdown append/overwrite，无 claim/CAS/conflict。 |
+| xai-grok-memory/src/task_ledger.rs | append-only fact ledger、root-only tail repair、tail backup；不是完整 recovery journal。 |
+| shell session/slash_commands.rs, memory_dream.rs | `/memory repair-ledger` 仅 user slash + root interactive session。 |
 | shell subagent/handle_request.rs:783-817 | child memory injection limit。 |
 | shell session/storage/jsonl/mod.rs:494-525,1847,1982 | strict write 与 lenient recovery。 |
 

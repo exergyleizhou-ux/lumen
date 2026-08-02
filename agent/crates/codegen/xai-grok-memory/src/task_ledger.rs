@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 
@@ -178,6 +178,21 @@ impl WorkingMemoryPromotion {
     pub fn promoted_count(&self) -> usize {
         self.promoted.len()
     }
+}
+
+/// Receipt for an explicit root-owned repair of a torn final ledger record.
+///
+/// The discarded bytes are retained verbatim in `backup_path` before the
+/// ledger is truncated. This is intentionally a recovery receipt, not an
+/// accepted working-memory fact: repair restores the journal's readability but
+/// does not certify or promote any claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkingMemoryLedgerRepair {
+    pub repaired_line: usize,
+    pub retained_records: usize,
+    pub discarded_bytes: usize,
+    pub discarded_tail_hash: String,
+    pub backup_path: PathBuf,
 }
 
 impl WorkingMemoryLedgerBackend {
@@ -435,55 +450,105 @@ impl WorkingMemoryLedger {
     }
 
     pub fn load_all(&self) -> Result<Vec<WorkingMemoryFact>, WorkingMemoryLedgerError> {
-        let file = match std::fs::File::open(&self.path) {
+        let mut file = match std::fs::File::open(&self.path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error.into()),
         };
-        let lines: Vec<_> = BufReader::new(file).lines().collect::<Result<_, _>>()?;
-        let last_nonempty = lines.iter().rposition(|line| !line.trim().is_empty());
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        match self.inspect_bytes(&bytes)? {
+            LedgerInspection::Valid { facts } => Ok(facts),
+            LedgerInspection::TornFinalRecord { line, message, .. } => {
+                Err(WorkingMemoryLedgerError::TornFinalRecord { line, message })
+            }
+        }
+    }
+
+    /// Remove only a torn final record after the actual root session has
+    /// explicitly authorized recovery.
+    ///
+    /// This never repairs a malformed middle record, never guesses at valid
+    /// JSON, and never silently discards bytes: the exact tail is fsynced into
+    /// a sibling recovery artifact before the ledger is truncated. The caller
+    /// receives that artifact path for operator review.
+    pub fn repair_torn_final_record(
+        &self,
+        reviewer_session_id: &str,
+    ) -> Result<WorkingMemoryLedgerRepair, WorkingMemoryLedgerError> {
+        if reviewer_session_id != self.root_session_id {
+            return Err(WorkingMemoryLedgerError::UnauthorizedReview {
+                reviewer: reviewer_session_id.to_owned(),
+                root: self.root_session_id.clone(),
+            });
+        }
+        let _process_lock = APPEND_LOCK.lock().map_err(|_| {
+            WorkingMemoryLedgerError::Invalid("working-memory append lock poisoned".to_owned())
+        })?;
+        let mut file = OpenOptions::new().read(true).write(true).open(&self.path)?;
+        file.lock_exclusive()?;
+        let result = (|| {
+            file.seek(SeekFrom::Start(0))?;
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)?;
+            let LedgerInspection::TornFinalRecord {
+                line,
+                retained_records,
+                discarded_start,
+                ..
+            } = self.inspect_bytes(&bytes)?
+            else {
+                return Err(WorkingMemoryLedgerError::Invalid(
+                    "working-memory ledger has no torn final record to repair".to_owned(),
+                ));
+            };
+            let discarded_tail = &bytes[discarded_start..];
+            let discarded_tail_hash = blake3::hash(discarded_tail).to_hex().to_string();
+            let backup_path =
+                self.write_repair_backup(line, discarded_tail, &discarded_tail_hash)?;
+
+            file.set_len(discarded_start as u64)?;
+            file.seek(SeekFrom::End(0))?;
+            file.sync_all()?;
+
+            Ok(WorkingMemoryLedgerRepair {
+                repaired_line: line,
+                retained_records,
+                discarded_bytes: discarded_tail.len(),
+                discarded_tail_hash,
+                backup_path,
+            })
+        })();
+        file.unlock()?;
+        result
+    }
+
+    fn inspect_bytes(&self, bytes: &[u8]) -> Result<LedgerInspection, WorkingMemoryLedgerError> {
+        let lines = physical_lines(bytes);
+        let last_nonempty = lines
+            .iter()
+            .rposition(|(start, end)| !trim_ascii_whitespace(&bytes[*start..*end]).is_empty());
         let mut facts = Vec::new();
-        for (index, line) in lines.iter().enumerate() {
-            if line.trim().is_empty() {
+        for (index, (start, end)) in lines.iter().copied().enumerate() {
+            let record = trim_ascii_whitespace(&bytes[start..end]);
+            if record.is_empty() {
                 continue;
             }
-            match serde_json::from_str::<WorkingMemoryFact>(line) {
+            match serde_json::from_slice::<WorkingMemoryFact>(record) {
                 Ok(fact) => {
-                    // A ledger is durable input to descendant prompts, not
-                    // merely an append target. Revalidate every record on
-                    // read so a misplaced or manually-corrupted JSONL entry
-                    // cannot cross task-tree boundaries or masquerade as a
-                    // reviewed fact.
-                    fact.validate()?;
-                    if fact.state == WorkingMemoryState::Accepted
-                        && fact
-                            .evidence_ref
-                            .as_deref()
-                            .is_none_or(|reference| reference.trim().is_empty())
-                    {
-                        return Err(WorkingMemoryLedgerError::Invalid(format!(
-                            "accepted ledger record at line {} lacks a non-empty evidence_ref",
-                            index + 1
-                        )));
-                    }
-                    if fact.task_tree_id != self.root_session_id {
-                        return Err(WorkingMemoryLedgerError::Invalid(format!(
-                            "ledger record at line {} belongs to task tree {:?}, not {:?}",
-                            index + 1,
-                            fact.task_tree_id,
-                            self.root_session_id
-                        )));
-                    }
+                    self.validate_loaded_fact(&fact, index + 1)?;
                     facts.push(fact);
                 }
-                // A power loss can tear only the final append.  Earlier code
+                // A power loss can tear only the final append. Earlier code
                 // silently skipped it, then allowed the next writer to append
-                // after the torn bytes; that turns recoverable tail damage into
-                // middle-of-journal corruption.  Fail closed until the root
-                // explicitly repairs and reviews the ledger.
+                // after the torn bytes; that turns recoverable tail damage
+                // into middle-of-journal corruption. Keep the exact bytes for
+                // an explicit root-owned repair instead.
                 Err(error) if Some(index) == last_nonempty => {
-                    return Err(WorkingMemoryLedgerError::TornFinalRecord {
+                    return Ok(LedgerInspection::TornFinalRecord {
                         line: index + 1,
+                        retained_records: facts.len(),
+                        discarded_start: start,
                         message: error.to_string(),
                     });
                 }
@@ -495,7 +560,72 @@ impl WorkingMemoryLedger {
                 }
             }
         }
-        Ok(facts)
+        Ok(LedgerInspection::Valid { facts })
+    }
+
+    fn validate_loaded_fact(
+        &self,
+        fact: &WorkingMemoryFact,
+        line: usize,
+    ) -> Result<(), WorkingMemoryLedgerError> {
+        // A ledger is durable input to descendant prompts, not merely an
+        // append target. Revalidate every record on read so a misplaced or
+        // manually-corrupted JSONL entry cannot cross task-tree boundaries or
+        // masquerade as a reviewed fact.
+        fact.validate()?;
+        if fact.state == WorkingMemoryState::Accepted
+            && fact
+                .evidence_ref
+                .as_deref()
+                .is_none_or(|reference| reference.trim().is_empty())
+        {
+            return Err(WorkingMemoryLedgerError::Invalid(format!(
+                "accepted ledger record at line {line} lacks a non-empty evidence_ref"
+            )));
+        }
+        if fact.task_tree_id != self.root_session_id {
+            return Err(WorkingMemoryLedgerError::Invalid(format!(
+                "ledger record at line {line} belongs to task tree {:?}, not {:?}",
+                fact.task_tree_id, self.root_session_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn write_repair_backup(
+        &self,
+        line: usize,
+        discarded_tail: &[u8],
+        discarded_tail_hash: &str,
+    ) -> Result<PathBuf, WorkingMemoryLedgerError> {
+        let parent = self.path.parent().ok_or_else(|| {
+            WorkingMemoryLedgerError::Invalid("ledger path has no parent".to_owned())
+        })?;
+        let backup_dir = parent.join("task-ledger-repairs");
+        std::fs::create_dir_all(&backup_dir)?;
+        let hash_prefix = &discarded_tail_hash[..16];
+        let backup_path = backup_dir.join(format!("torn-line-{line}-{hash_prefix}.tail"));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&backup_path)
+        {
+            Ok(mut backup) => {
+                backup.write_all(discarded_tail)?;
+                backup.sync_all()?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let existing = std::fs::read(&backup_path)?;
+                if existing != discarded_tail {
+                    return Err(WorkingMemoryLedgerError::Invalid(format!(
+                        "refusing repair: existing backup {:?} does not match torn tail",
+                        backup_path
+                    )));
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
+        Ok(backup_path)
     }
 
     fn append_checked(
@@ -553,6 +683,45 @@ impl WorkingMemoryLedger {
         file.unlock()?;
         result
     }
+}
+
+enum LedgerInspection {
+    Valid {
+        facts: Vec<WorkingMemoryFact>,
+    },
+    TornFinalRecord {
+        line: usize,
+        retained_records: usize,
+        discarded_start: usize,
+        message: String,
+    },
+}
+
+fn physical_lines(bytes: &[u8]) -> Vec<(usize, usize)> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if byte == b'\n' {
+            lines.push((start, index));
+            start = index + 1;
+        }
+    }
+    if start < bytes.len() {
+        lines.push((start, bytes.len()));
+    }
+    lines
+}
+
+fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
+    let start = bytes
+        .iter()
+        .position(|byte| !byte.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|byte| !byte.is_ascii_whitespace())
+        .map_or(start, |index| index + 1);
+    &bytes[start..end]
 }
 
 /// Stable, delimiter-safe identity for one promoted revision.  Fact IDs and
@@ -948,6 +1117,105 @@ mod tests {
         std::fs::write(&path, b"{bad}\n{also-bad}\n").unwrap();
         assert!(matches!(
             ledger.load_all(),
+            Err(WorkingMemoryLedgerError::CorruptRecord { line: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn root_repair_preserves_torn_tail_before_restoring_appendability() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ledger.jsonl");
+        let ledger = WorkingMemoryLedger::with_path("root", &path);
+        ledger.propose(fact("fact-a", 1, "child", "valid")).unwrap();
+        let torn_tail = b"{torn\n\n";
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(torn_tail)
+            .unwrap();
+
+        let repair = ledger.repair_torn_final_record("root").unwrap();
+        assert_eq!(repair.repaired_line, 2);
+        assert_eq!(repair.retained_records, 1);
+        assert_eq!(repair.discarded_bytes, torn_tail.len());
+        assert_eq!(
+            repair.discarded_tail_hash,
+            blake3::hash(torn_tail).to_hex().to_string()
+        );
+        assert_eq!(std::fs::read(&repair.backup_path).unwrap(), torn_tail);
+
+        let facts = ledger.load_all().unwrap();
+        assert_eq!(facts.len(), 1);
+        ledger
+            .propose(fact("fact-b", 1, "child", "append after repair"))
+            .unwrap();
+        assert_eq!(ledger.load_all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn non_root_cannot_repair_or_discard_a_torn_tail() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ledger.jsonl");
+        let ledger = WorkingMemoryLedger::with_path("root", &path);
+        ledger.propose(fact("fact-a", 1, "child", "valid")).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{torn")
+            .unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        assert!(matches!(
+            ledger.repair_torn_final_record("child"),
+            Err(WorkingMemoryLedgerError::UnauthorizedReview { .. })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(matches!(
+            ledger.load_all(),
+            Err(WorkingMemoryLedgerError::TornFinalRecord { .. })
+        ));
+    }
+
+    #[test]
+    fn repair_refuses_middle_corruption_without_truncating() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ledger.jsonl");
+        let ledger = WorkingMemoryLedger::with_path("root", &path);
+        let valid_after = serde_json::to_string(&fact("fact-b", 1, "child", "later")).unwrap();
+        let bytes = format!("{{bad}}\n{valid_after}\n").into_bytes();
+        std::fs::write(&path, &bytes).unwrap();
+
+        assert!(matches!(
+            ledger.repair_torn_final_record("root"),
+            Err(WorkingMemoryLedgerError::CorruptRecord { line: 1, .. })
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+
+    #[test]
+    fn final_non_utf8_tail_is_recoverable_but_middle_non_utf8_is_not() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("ledger.jsonl");
+        let ledger = WorkingMemoryLedger::with_path("root", &path);
+        ledger.propose(fact("fact-a", 1, "child", "valid")).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(b"{\xff")
+            .unwrap();
+        assert!(matches!(
+            ledger.load_all(),
+            Err(WorkingMemoryLedgerError::TornFinalRecord { line: 2, .. })
+        ));
+        ledger.repair_torn_final_record("root").unwrap();
+        assert_eq!(ledger.load_all().unwrap().len(), 1);
+
+        std::fs::write(&path, b"{\xff\n{also-bad}").unwrap();
+        assert!(matches!(
+            ledger.repair_torn_final_record("root"),
             Err(WorkingMemoryLedgerError::CorruptRecord { line: 1, .. })
         ));
     }

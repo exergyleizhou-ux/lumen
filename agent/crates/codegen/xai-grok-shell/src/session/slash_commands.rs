@@ -179,7 +179,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         name: "memory",
         description: "Browse, view, and manage your memories",
-        argument_hint: Some("on|off|promote"),
+        argument_hint: Some("on|off|promote|repair-ledger"),
         aliases: &["mem"],
         gate: BuiltinGate::MemoryConfigured,
         resolve: |args| {
@@ -188,6 +188,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
                 "on" | "enable" => BuiltinAction::MemoryToggle { enabled: true },
                 "off" | "disable" => BuiltinAction::MemoryToggle { enabled: false },
                 "promote" => BuiltinAction::PromoteTaskTreeMemory,
+                "repair-ledger" => BuiltinAction::RepairTaskTreeMemoryLedger,
                 _ => BuiltinAction::MemoryBrowse,
             }
         },
@@ -1316,6 +1317,9 @@ pub(super) enum BuiltinAction {
     /// User-authorized promotion of root-reviewed facts from one task tree
     /// into workspace long-term memory. Never model-invocable.
     PromoteTaskTreeMemory,
+    /// User-authorized recovery for only a torn final task-tree ledger record.
+    /// Never model-invocable; malformed middle records stay fail-closed.
+    RepairTaskTreeMemoryLedger,
     GoalSet {
         objective: String,
         token_budget: Option<i64>,
@@ -1387,6 +1391,7 @@ impl BuiltinAction {
             BuiltinAction::MemoryBrowse => "memory",
             BuiltinAction::MemoryToggle { .. } => "memory",
             BuiltinAction::PromoteTaskTreeMemory => "memory",
+            BuiltinAction::RepairTaskTreeMemoryLedger => "memory",
             BuiltinAction::GoalSet { .. }
             | BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
@@ -1432,6 +1437,7 @@ impl BuiltinAction {
             BuiltinAction::MemoryBrowse => false,
             BuiltinAction::MemoryToggle { .. } => true,
             BuiltinAction::PromoteTaskTreeMemory => true,
+            BuiltinAction::RepairTaskTreeMemoryLedger => true,
             BuiltinAction::GoalSet { .. } => true,
             BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
@@ -2913,6 +2919,25 @@ mod tests {
         assert!(matches!(
             outcome,
             SlashCommandOutcome::Builtin(BuiltinAction::PromoteTaskTreeMemory)
+        ));
+    }
+    #[test]
+    fn task_tree_memory_repair_ledger_resolves_to_user_authorized_recovery_action() {
+        assert!(matches!(
+            resolve_builtin("memory", "repair-ledger"),
+            Some(BuiltinAction::RepairTaskTreeMemoryLedger)
+        ));
+        let outcome = resolve(
+            vec![text_block("/memory repair-ledger")],
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            outcome,
+            SlashCommandOutcome::Builtin(BuiltinAction::RepairTaskTreeMemoryLedger)
         ));
     }
     #[test]
