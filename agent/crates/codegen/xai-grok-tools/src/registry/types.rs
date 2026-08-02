@@ -4895,6 +4895,28 @@ mod tests {
             .expect("finalize succeeds");
         (Arc::new(toolset), tmp)
     }
+
+    #[tokio::test]
+    async fn governed_manifest_resource_reaches_terminal_tool_result() {
+        let (toolset, tmp) = toolset_with_viewer_ctx(None);
+        std::fs::write(tmp.path().join("provenance.txt"), "ok\n").unwrap();
+        toolset.resources.lock().await.insert(
+            crate::types::task_tree_memory::ContextManifestHashResource("sha256:governed".into()),
+        );
+        let result = toolset
+            .call(
+                "read_file",
+                serde_json::json!({"target_file":"provenance.txt"}),
+                "manifest-provenance-test",
+                Some(tmp.path().to_path_buf()),
+            )
+            .await
+            .expect("read_file terminal result");
+        assert_eq!(
+            result.context_manifest_hash.as_deref(),
+            Some("sha256:governed")
+        );
+    }
     #[tokio::test]
     async fn prepare_dispatch_stamps_workspace_viewer_ctx_when_present() {
         let (toolset, _tmp) =
