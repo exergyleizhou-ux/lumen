@@ -962,6 +962,29 @@ pub struct SubagentResumeSource {
     pub context_manifest_hash: Option<String>,
 }
 
+impl SubagentResumeSource {
+    /// Validate the source identity before a governed resume is admitted.
+    /// Legacy callers pass `None` and retain compatibility; governed callers
+    /// must provide the exact host-issued hash and fail closed on absence or
+    /// mismatch.
+    pub fn validate_context_manifest(
+        &self,
+        expected_hash: Option<&str>,
+    ) -> Result<(), &'static str> {
+        let Some(expected_hash) = expected_hash else {
+            return Ok(());
+        };
+        if expected_hash.is_empty() {
+            return Err("expected context manifest hash is empty");
+        }
+        match self.context_manifest_hash.as_deref() {
+            Some(actual) if actual == expected_hash => Ok(()),
+            Some(_) => Err("resume source context manifest hash mismatch"),
+            None => Err("resume source is missing context manifest identity"),
+        }
+    }
+}
+
 /// Result of a resume-source lookup.
 #[derive(Debug, Clone)]
 pub enum SubagentResumeLookup {
@@ -1333,6 +1356,45 @@ mod tests {
     use super::SubagentCapabilityMode;
     use super::SubagentCapabilityModeExt;
     use super::is_valid_resume_id;
+    use super::SubagentResumeSource;
+
+    fn resume_source(hash: Option<&str>) -> SubagentResumeSource {
+        SubagentResumeSource {
+            subagent_id: "child".into(),
+            child_session_id: "session".into(),
+            child_cwd: "/tmp".into(),
+            worktree_path: None,
+            snapshot_ref: None,
+            subagent_type: "general-purpose".into(),
+            persona: None,
+            model_id: Some("model".into()),
+            context_manifest_hash: hash.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn governed_resume_requires_matching_manifest_identity() {
+        assert!(resume_source(Some("sha256:one"))
+            .validate_context_manifest(Some("sha256:one"))
+            .is_ok());
+        assert_eq!(
+            resume_source(None)
+                .validate_context_manifest(Some("sha256:one"))
+                .unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
+        assert_eq!(
+            resume_source(Some("sha256:one"))
+                .validate_context_manifest(Some("sha256:two"))
+                .unwrap_err(),
+            "resume source context manifest hash mismatch"
+        );
+    }
+
+    #[test]
+    fn legacy_resume_without_expected_manifest_remains_compatible() {
+        assert!(resume_source(None).validate_context_manifest(None).is_ok());
+    }
 
     /// Create a `ToolConfig` with the given id and kind set.
     fn tc(id: &str, kind: ToolKind) -> ToolConfig {
