@@ -263,16 +263,24 @@ pub struct GovernedSpawnAdmission {
     pub node_id: String,
     pub manifest_hash: String,
     pub accepted_snapshot_hash: String,
+    pub immutable_assignment_hash: String,
+    pub tool_catalog_hash: String,
+    pub policy_revision: u64,
+    pub budget_reservation_id: String,
 }
 
 impl GovernedSpawnAdmission {
     pub fn canonical_manifest_hash(&self) -> String {
         let canonical = format!(
-            "v1\n{}\n{}\n{}\n{}\n{}\n",
+            "v1\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
             self.task_tree_id,
             self.root_session_id,
             self.node_id,
             self.accepted_snapshot_hash,
+            self.immutable_assignment_hash,
+            self.tool_catalog_hash,
+            self.policy_revision,
+            self.budget_reservation_id,
             "governed_tree"
         );
         use sha2::{Digest, Sha256};
@@ -289,6 +297,9 @@ impl GovernedSpawnAdmission {
             || self.node_id.trim().is_empty()
             || self.manifest_hash.trim().is_empty()
             || self.accepted_snapshot_hash.trim().is_empty()
+            || self.immutable_assignment_hash.trim().is_empty()
+            || self.tool_catalog_hash.trim().is_empty()
+            || self.budget_reservation_id.trim().is_empty()
         {
             return Err("governed admission contains an empty identity or hash");
         }
