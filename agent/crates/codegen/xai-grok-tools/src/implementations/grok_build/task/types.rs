@@ -115,12 +115,26 @@ pub struct SubagentRequest {
 /// immediate parent, never the child itself.  Thus a direct child of `root`
 /// has `depth == 1` and `lineage_path == ["root"]`; a grandchild launched by
 /// that child has `depth == 2` and `lineage_path == ["root", "child"]`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialization is lossless for records written by this version and
+/// root-only for legacy records: a record carrying only `root_session_id`
+/// and `immediate_parent_session_id` decodes to `depth == 1` with an empty
+/// `lineage_path` (no ancestor information survived).  Consumers that need a
+/// full lineage must re-validate before trusting `depth` or `lineage_path`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SubagentLineage {
     pub root_session_id: String,
     pub immediate_parent_session_id: String,
+    #[serde(default = "legacy_lineage_depth")]
     pub depth: u32,
+    #[serde(default)]
     pub lineage_path: Vec<String>,
+}
+
+/// Legacy records predate the depth field; a root-only projection has depth 1
+/// (the record's owner is a direct child of the root it names).
+fn legacy_lineage_depth() -> u32 {
+    1
 }
 
 impl SubagentLineage {

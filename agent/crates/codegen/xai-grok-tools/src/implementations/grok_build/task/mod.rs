@@ -74,6 +74,9 @@ pub struct TaskTool;
 // ───────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
+mod lineage_tests;
+
+#[cfg(test)]
 mod depth_tests {
     use super::{HARD_MAX_SUBAGENT_DEPTH, effective_max_subagent_depth};
     use crate::implementations::grok_build::task::types::MaxSubagentDepth;

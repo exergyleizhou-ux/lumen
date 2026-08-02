@@ -2534,3 +2534,185 @@ async fn coordinator_cancel_tree_cascades_durable_operations() {
     );
     harness.actor.abort();
 }
+
+/// NG-01: loop tracking must report a loop unit active while any child that
+/// carries its task id is pending or active — including a nested child whose
+/// direct parent has already completed ("nested reparenting" must not flatten
+/// the lineage or drop the grandchild from the loop's live set).
+#[tokio::test]
+async fn loop_tracking_covers_pending_active_and_nested_reparenting() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let backend = parent_backend(&harness);
+
+    // 1. A pending child carrying the loop task id keeps the loop active.
+    let mut loop_child = request("loop-child", false);
+    loop_child.await_to_completion = true;
+    loop_child.runtime_overrides.loop_task_id = Some("loop-1".to_owned());
+    let loop_child_spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(loop_child).await }
+    });
+    assert_eq!(
+        harness
+            .requests
+            .recv()
+            .await
+            .as_ref()
+            .map(|r| r.id.as_str()),
+        Some("loop-child")
+    );
+    assert!(
+        loop_unit_active(&backend, "loop-1").await,
+        "pending child keeps the loop active"
+    );
+    assert!(
+        !loop_unit_active(&backend, "loop-other").await,
+        "a different loop id is not reported active"
+    );
+
+    // 2. An active child keeps the loop active.
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("loop-child"));
+    assert!(
+        loop_unit_active(&backend, "loop-1").await,
+        "active child keeps the loop active"
+    );
+
+    // 3. A nested child spawned by the active loop child: the coordinator
+    //    rebuilds lineage from the registered parent and inherits the loop id.
+    let mut nested = request("nested", false);
+    nested.await_to_completion = true;
+    nested.parent_session_id = "loop-child".to_owned();
+    let nested_spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(nested).await }
+    });
+    let observed = harness.requests.recv().await.expect("nested request");
+    assert_eq!(observed.parent_session_id, "loop-child");
+    assert_eq!(observed.lineage.root_session_id, "parent");
+    assert_eq!(observed.lineage.immediate_parent_session_id, "loop-child");
+    assert_eq!(observed.lineage.depth, 2);
+    assert_eq!(observed.lineage.lineage_path, vec!["parent", "loop-child"]);
+    assert_eq!(
+        observed.runtime_overrides.loop_task_id.as_deref(),
+        Some("loop-1"),
+        "nested child inherits the loop task id"
+    );
+    assert!(
+        loop_unit_active(&backend, "loop-1").await,
+        "nested pending child keeps the loop active"
+    );
+
+    // 4. The direct loop child completes while the nested child is still
+    //    pending: the nested child is not rewritten to the root, and the loop
+    //    stays active because the nested child still carries the loop id.
+    let _ = harness.finish.send(());
+    assert!(loop_child_spawn.await.unwrap().unwrap().success);
+    let _ = harness.completions.recv().await;
+    assert!(
+        loop_unit_active(&backend, "loop-1").await,
+        "nested child keeps the loop active after its direct parent completed"
+    );
+
+    // 5. Once the nested child settles too, the loop reports inactive.
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("nested"));
+    let _ = harness.finish.send(());
+    assert!(nested_spawn.await.unwrap().unwrap().success);
+    assert!(
+        !loop_unit_active(&backend, "loop-1").await,
+        "loop goes idle only after every tracked child settles"
+    );
+
+    harness.actor.abort();
+}
+
+/// NG-01: per-child cancel (SubagentId) must kill only the targeted child;
+/// its sibling branch under the same root survives.
+#[tokio::test]
+async fn cancel_one_subagent_spares_sibling_branch() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let backend = parent_backend(&harness);
+
+    let left = spawn_session_child(&mut harness, "left", "parent").await;
+    let right = spawn_session_child(&mut harness, "right", "parent").await;
+    let _ = harness.start.send(());
+    let mut started = std::collections::HashSet::new();
+    started.insert(harness.started.recv().await.unwrap());
+    started.insert(harness.started.recv().await.unwrap());
+    assert!(started.contains("left") && started.contains("right"));
+
+    let (respond_to, response_rx) = oneshot::channel();
+    backend
+        .sender()
+        .send(SubagentEvent::Cancel(SubagentCancelRequest {
+            parent_session_id: Some("parent".to_owned()),
+            target: SubagentCancelTarget::SubagentId("left".to_owned()),
+            respond_to,
+        }))
+        .expect("cancel channel open");
+    assert!(matches!(
+        response_rx.await.unwrap(),
+        SubagentCancelOutcome::Cancelled
+    ));
+
+    assert!(left.await.unwrap().unwrap().cancelled);
+    assert!(
+        !right.is_finished(),
+        "sibling must survive a per-child cancel"
+    );
+    let _ = harness.finish.send(());
+    assert!(right.await.unwrap().unwrap().success);
+    harness.actor.abort();
+}
+
+/// NG-01: session teardown targets the session's lineage descendants (by
+/// parent id, root id, or lineage_path membership) without touching a sibling
+/// branch that is not on the torn-down path.
+#[tokio::test]
+async fn teardown_targets_lineage_descendants_and_spares_sibling() {
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+
+    // root ("parent") -> A -> A1 (nested), plus root -> B (sibling of A).
+    let a = spawn_session_child(&mut harness, "A", "parent").await;
+    let b = spawn_session_child(&mut harness, "B", "parent").await;
+    let _ = harness.start.send(());
+    assert_eq!(harness.started.recv().await.as_deref(), Some("A"));
+    assert_eq!(harness.started.recv().await.as_deref(), Some("B"));
+
+    let mut nested = request("A1", true);
+    nested.parent_session_id = "A".to_owned();
+    let a1 = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(nested).await }
+    });
+    let observed = harness.requests.recv().await.expect("nested A1 request");
+    assert_eq!(observed.lineage.lineage_path, vec!["parent", "A"]);
+    assert_eq!(observed.lineage.immediate_parent_session_id, "A");
+
+    // Tear down only session A: its lineage descendant A1 must be cancelled
+    // (parent id "A" and path membership both match); sibling B (path
+    // ["parent"]) must survive; A itself is not a descendant of its own
+    // teardown and keeps running until its own scope is torn down.
+    harness
+        .backend
+        .sender()
+        .send(SubagentEvent::TeardownSession {
+            parent_session_id: "A".to_owned(),
+        })
+        .expect("actor command channel open");
+
+    assert!(a1.await.unwrap().unwrap().cancelled);
+    assert!(
+        !a.is_finished(),
+        "a session is not a descendant of its own teardown; it is reaped by its parent scope"
+    );
+    assert!(
+        !b.is_finished(),
+        "sibling of the torn-down session must survive"
+    );
+    let _ = harness.finish.send(());
+    assert!(a.await.unwrap().unwrap().success);
+    assert!(b.await.unwrap().unwrap().success);
+    harness.actor.abort();
+}
