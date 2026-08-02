@@ -13,8 +13,8 @@
 ### 本轮实施校准（2026-08-02，必须在 R0 前重新实测）
 
 本书不是以旧规划或 implementer 口述来“报绿”。最近一次 runtime 代码 checkpoint 是
-`ecefdc7b17b162660a8d2586ef00b119c8731f82`（分支
-`sync/absorb-upstream-20260731`，远端同 SHA），它在本书的事实增量是：
+`16ddc314f289a0c56e0ad370798791679126b50d`（分支
+`sync/absorb-upstream-20260731`；是否已推送、CI 或发布必须每次另测），它在本书的事实增量是：
 
 1. 根 Session 也获得同一 task-tree ledger 的受控 review port；child 仍无 promotion
    authority（`85e1a4c8`）。
@@ -25,10 +25,15 @@
 4. 每个 child prompt 现在都有协调器生成的 task-tree contract：root/direct-parent/depth/path、
    有效能力上限、是否 leaf；它强调 Proposal/evidence/root acceptance，而执行权限仍由
    coordinator 和 tool filter 强制（`ecefdc7b1`）。
+5. client disconnect 的 idle unload 改为 actor mailbox 内的 `UnloadIfIdle`，并由与 prompt intake
+   相同的 dispatch lock 覆盖决策至 resident-map detach；不再是 `IsBusy` 后另发 `Shutdown` 的
+   check-then-act race（`16ddc314f`）。这只关闭 foreground/queued-prompt/parked-plan-approval 的
+   竞态；background terminal、monitor、scheduler、subagent、lease 的统一 activity snapshot 仍是 Draft。
 
-本轮本地证据仅包括上述 memory/contract 的定向 unit tests、`cargo check -p xai-grok-shell`
-和 `git diff --check`。没有以此声称完整 suite、GitHub exact-SHA CI、24h daemon、release 或
-provider live proof 已完成。每次源码改变后，R0 与本节 SHA 都必须更新，旧 CI 不可挪用。
+本轮本地证据仅包括上述 memory/contract 的定向 unit tests、`cargo check -p xai-grok-shell`、
+idle-unload 断连 13-test group、queue-state unit test、explicit-close unit test 和 `git diff --check`。
+没有以此声称完整 suite、GitHub exact-SHA CI、24h daemon、release 或 provider live proof 已完成。
+每次源码改变后，R0 与本节 SHA 都必须更新，旧 CI 不可挪用。
 
 ### 发布身份与版本边界
 
@@ -75,6 +80,116 @@ Main Agent               depth 0，唯一 authority
 ~~~
 
 max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深度 3 必须硬拒下一次 spawn。它不表示默认开启三层，也不表示 child 继承 root 权力。
+
+---
+
+## 0.1 Lumen Harness Kernel v1：不是功能清单，而是统一运行时
+
+**核心判断：** 模型决定“能提出什么”，Harness 决定“提出的东西能否安全、持续、可验证地变成真实结果”。
+因此 Lumen 2 不以“又接入一个模型、又多一个 Agent、又多一个命令”为架构单位；它以每一次受治理运行
+(`GovernedRun`) 为单位。任何新功能若无法进入这个合同，只能是实验 adapter，不能成为产品 authority。
+
+这比历史材料中描述的 Claude Code harness 更进一步的地方，不是工具数量，而是把多模型、三层任务树、
+共享事实、长期任务和证据链放进一个 Rust authority boundary。它保留 Claude 类 harness 的正确经验：
+专用工具优先、权限是硬门、压缩不能替代状态、记忆不是当前事实、验证者独立；但不复制其专有实现、
+内部 flag 或产品专属协议。
+
+### 0.1.1 十个平面必须共同闭环
+
+| 平面 | 回答的问题 | Lumen authority / 当前资产 | 尚未完成的硬门 |
+|---|---|---|---|
+| 1. Identity & authority | 这次运行归谁、谁有最终权力？ | SessionActor、root/session/node identity、TaskTree lineage | 所有 background/workflow 同样进入统一 owner/operation identity。 |
+| 2. Capability & policy | 允许什么、资源范围多大、何时撤销？ | permission、Capability Ceiling、restricted child、unknown MCP deny | RootBypass TTL/revoke/audit 与全 adapter 的同一 policy revision。 |
+| 3. Execution & tools | 模型如何作用于文件、shell、MCP、process？ | typed tools、tool dispatch、process scope、ACP | 每一个副作用都有 operation receipt 与 idempotency class。 |
+| 4. Context | 此刻模型能看见什么，压缩后如何不跑偏？ | system prompt、summary/JSONL、task contract、tool result shaping | ContextManifest、immutable user objective 引用、compact/recovery rebuild proof。 |
+| 5. Memory | 什么可跨节点/跨会话记住，什么只能暂存？ | task-tree Proposed/Accepted ledger、root-only promotion、workspace memory | versioned read model、cross-worktree recovery/CAS/conflict proof。 |
+| 6. Verification & evidence | 谁能说“完成”，凭什么？ | VerifyAfterEditOutcome、HostVerification、artifacts/provenance | 所有 terminal success 都引用 evidence/verify receipt；offline golden path。 |
+| 7. Parallel & resource | 哪些能并行、如何隔离、花多少、谁取消？ | lineage、depth=3、tree token/tool/time limit、worktree capability | atomic budget reservation/release、daily cost/artifact cap、conflict/merge contract。 |
+| 8. Model & provider | 用谁、何时可换、没额度怎么办？ | user pool/priority、role pin、Expert shadow、no-replay rules | normal turn/background `ProviderAttemptReceipt` 与 root-approved assignment。 |
+| 9. Lifecycle & Kairos | 长任务如何 start/stop/retry/recover，进程何时可回收？ | scheduler lease/heartbeat/backoff/dead-letter、workflow/leader、atomic unload seam | generic operation lease、event journal/outbox/reconcile、24h no-side-effect proof。 |
+| 10. Operator UX & audit | 人如何看到真相、冻结、接管、复盘？ | ACP/TUI/Pager tree、logs、status、artifact paths | truth-preserving status projection、freeze/approve/replay surface、exact-source evidence packet。 |
+
+**禁止替代：** prompt 不能替代 policy；session summary 不能替代 task ledger；Advisor 不能替代
+acceptance；terminal stdout 不能替代 evidence；tmux/PID 不能替代 lease；“模型说完成了”不能替代
+terminal receipt。任何功能少一个平面都只能标 `Draft/Experimental`，不能标自治完成。
+
+### 0.1.2 唯一受治理运行信封【拟建】
+
+后续 NG-01 至 NG-09 的 DTO 不能各自携带半套身份。它们都投影自下列版本化合同；字段可拆分为
+crate-local 类型，但语义不得分叉：
+
+~~~rust
+pub struct GovernedRunEnvelopeV1 {
+    pub run_id: RunId,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub root_session_id: SessionId,
+    pub immediate_parent_id: Option<TaskNodeId>,
+    pub lineage_path: Vec<TaskNodeId>,
+    pub immutable_assignment_hash: Sha256,
+    pub accepted_snapshot_hash: Sha256,
+    pub context_manifest_hash: Sha256,
+    pub capability_grant_id: GrantId,
+    pub policy_revision: PolicyRevision,
+    pub budget_reservation_id: ReservationId,
+    pub model_selection_receipt: ModelSelectionReceipt,
+    pub lease_id: Option<LeaseId>,
+    pub operation_class: ReadOnly | ReversibleWrite | ExternalEffect,
+    pub idempotency_key: Option<IdempotencyKey>,
+    pub evidence_sink: ArtifactSink,
+    pub created_at: Timestamp,
+    pub deadline: Timestamp,
+}
+~~~
+
+**硬语义：**
+
+1. `PromptAccepted` 之前必须存在 immutable assignment、grant、policy、budget 和 context snapshot；
+   任何缺项是 `Blocked`，不以 best effort 继续。
+2. child 可读取的是 `AcceptedSnapshot`，可写的是 bounded `Proposed`；不能把 sibling scratch、原始 root chat、
+   secret 或自由文本控制指令带入信封。
+3. `ExternalEffect` 没有 idempotency receipt 时，崩溃后只能 `Frozen`，不可自动 replay；首个模型文字块、
+   tool call 或未知观察也禁止 provider 重放。
+4. terminal success 只在 evidence hash、verify receipt、scope/provenance、root acceptance 都可重算时成立。
+   `Some(Pass)` 证明 edit delivery，不单独证明整个 task success。
+5. TUI、CLI、Pager、daemon log 都只读这个合同和事件 journal；它们不能创造 `Running`、`Succeeded` 或
+   `Accepted` 状态。
+
+### 0.1.3 Lumen、PDF 中的 Claude harness 与早期 Lumen 2 计划的差异
+
+| 维度 | PDF 描述的历史 Claude Code | Lumen 原有基础 | Lumen Harness Kernel v1 的加强 |
+|---|---|---|---|
+| 中心 | 单一产品 harness：prompt/tool/permission/context/memory | Rust SessionActor + ACP + Grok Build tool runtime | 把 SessionActor 固化为多模型、多节点、证据/完成的唯一 authority。 |
+| 多 Agent | team/leader/worktree/permission bubbling 的产品形态 | child/session、lineage、depth、取消与 pager tree | parent identity、capability monotonicity、tree budget、ledger snapshot、leaf hard deny 一起成立。 |
+| 记忆 | 偏好/引用为主，提醒旧事实需重验 | JSONL/summary/workspace/global memory | 将当前任务事实升级为 append-only ledger；长记忆只能 root evidence promotion。 |
+| 验证 | 提醒“实际验证”、独立 checker 的设计经验 | typed `VerifyAfterEditOutcome`、Expert/HostVerification | 将自评、checker 文本、host evidence、root acceptance 分成不可混淆的四层。 |
+| 自动化 | hooks、flags、background/Kairos 方向 | scheduler lease/retry、workflow、leader | 事件 journal + owner/lease/outbox/reconcile + freeze；不新增第二执行 runtime。 |
+| 模型 | 产品绑定的模型/权限/上下文策略 | BYOK、catalog、Expert pool/priority | 用户池和 pin 优先；Advisor 仅推荐；no-output/no-effect 才可切换。 |
+| 完成定义 | 依赖具体产品行为与当时实现 | 多个成熟部件，但跨域验收不完整 | exact-source binary + offline golden path + CI/release 分门；本地 check 绝不等于产品完成。 |
+
+**因此这是加强且换代，不是推倒重写：** 保留 Lumen 已经成熟的 Rust tool/runtime、SessionActor、
+Grok Build、Expert、Goal、ACP、scheduler、typed verification；补上它们之间原来缺少的共同身份、
+状态、证据、资源和恢复合同。模型越强，这一层越重要，因为并行数、工具权限、成本和副作用都会同步放大。
+
+### 0.1.4 终局验收：Harness 不是“看起来齐”，而是一次完整受控运行
+
+只有下列零 provider、零外部副作用的 exact-binary 场景全过，才可称 Harness Kernel v1 已就绪：
+
+~~~text
+root creates envelope + immutable objective + accepted snapshot
+  → depth-1 code node receives a strictly smaller grant and budget slice
+  → depth-2 research/review/test nodes run in isolated scopes
+  → depth-3 evidence leaf cannot spawn, write, network, or bypass
+  → children append proposed facts with fixture artifact hashes
+  → root rejects one stale/conflicting/unproven claim and accepts one verified claim
+  → verifier emits typed PASS/FAILED/SKIPPED/ERROR without false delivery
+  → one branch is cancelled; late terminal event is reconciled, not revived
+  → crash/restart replays journal/read model; external-effect node stays Frozen
+  → status UI reports real owner/phase/budget/evidence; rebuilt binary has no provider call
+~~~
+
+这个场景通过后只是 **Harness Kernel local-ready**；仍不等于 GitHub exact-SHA CI、Windows、release、
+真实 provider、24 小时 soak 或无人值守自动 commit 已完成。
 
 ---
 
