@@ -247,11 +247,49 @@ pub struct SubagentRuntimeOverrides {
     /// selects the governed-tree harness profile; model task calls cannot set
     /// that profile or forge this value.
     pub context_manifest_hash: Option<String>,
+    /// Host-issued, immutable identity bundle for governed-tree admission.
+    pub governed_admission: Option<GovernedSpawnAdmission>,
     pub completion_output_cap: Option<usize>,
     pub spawn_depth: Option<u32>,
     pub output_token_budget: Option<u64>,
     pub output_schema: Option<serde_json::Value>,
     pub loop_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernedSpawnAdmission {
+    pub task_tree_id: String,
+    pub root_session_id: String,
+    pub node_id: String,
+    pub manifest_hash: String,
+    pub accepted_snapshot_hash: String,
+}
+
+impl GovernedSpawnAdmission {
+    pub fn validate_for(
+        &self,
+        lineage: &SubagentLineage,
+        child_id: &str,
+    ) -> Result<(), &'static str> {
+        if self.task_tree_id.trim().is_empty()
+            || self.root_session_id.trim().is_empty()
+            || self.node_id.trim().is_empty()
+            || self.manifest_hash.trim().is_empty()
+            || self.accepted_snapshot_hash.trim().is_empty()
+        {
+            return Err("governed admission contains an empty identity or hash");
+        }
+        if self.root_session_id != lineage.root_session_id {
+            return Err("governed admission root does not match task lineage");
+        }
+        if self.node_id != child_id {
+            return Err("governed admission node does not match child id");
+        }
+        if self.task_tree_id != lineage.root_session_id {
+            return Err("governed admission task tree does not match root lineage");
+        }
+        Ok(())
+    }
 }
 
 /// Re-export of [`xai_tool_types::is_not_sentinel`] for existing call sites.

@@ -248,7 +248,7 @@ async fn governed_tree_spawn_requires_host_manifest_identity() {
     assert!(!result.success);
     assert!(
         result.error.as_deref().is_some_and(|error| {
-            error.contains("requires a host-issued context manifest hash")
+            error.contains("requires a valid host-issued admission receipt")
         })
     );
     assert!(harness.requests.try_recv().is_err());

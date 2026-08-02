@@ -281,15 +281,19 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 if request.runtime_overrides.harness_agent_type.as_deref() == Some("governed_tree")
                     && request
                         .runtime_overrides
-                        .context_manifest_hash
-                        .as_deref()
-                        .is_none_or(|hash| hash.trim().is_empty())
+                        .governed_admission
+                        .as_ref()
+                        .is_none_or(|admission| {
+                            admission
+                                .validate_for(&request.lineage, &request.id)
+                                .is_err()
+                        })
                 {
                     let id = request.id.clone();
                     let _ = command.result_tx.send(SubagentResult {
                         success: false,
                         error: Some(
-                            "governed-tree spawn requires a host-issued context manifest hash"
+                            "governed-tree spawn requires a valid host-issued admission receipt"
                                 .to_owned(),
                         ),
                         subagent_id: id.clone(),

@@ -417,6 +417,7 @@ impl xai_tool_runtime::Tool for TaskTool {
                 // is set only by the harness-internal role spawners).
                 harness_agent_type: None,
                 context_manifest_hash: None,
+                governed_admission: None,
                 completion_output_cap: None,
                 spawn_depth: None,
                 output_token_budget: None,
