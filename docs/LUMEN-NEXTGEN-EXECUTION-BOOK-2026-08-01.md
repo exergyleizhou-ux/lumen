@@ -10,6 +10,26 @@
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
 
+### 本轮实施校准（2026-08-02，必须在 R0 前重新实测）
+
+本书不是以旧规划或 implementer 口述来“报绿”。最近一次 runtime 代码 checkpoint 是
+`ecefdc7b17b162660a8d2586ef00b119c8731f82`（分支
+`sync/absorb-upstream-20260731`，远端同 SHA），它在本书的事实增量是：
+
+1. 根 Session 也获得同一 task-tree ledger 的受控 review port；child 仍无 promotion
+   authority（`85e1a4c8`）。
+2. 只有 root 的显式 `/memory promote` 才能把已接受的 Fact/Decision 提升到 workspace
+   长期记忆；提升带稳定 marker、保留 evidence、可重复执行不重复写入（`ab01c47d3`）。
+3. 已接受但没有非空 `evidence_ref` 的手工/旧损坏 JSONL 会在 reload 时 fail-closed，不能
+   注入 child prompt、不能 promotion、也不会触发 panic（`d844e7505`）。
+4. 每个 child prompt 现在都有协调器生成的 task-tree contract：root/direct-parent/depth/path、
+   有效能力上限、是否 leaf；它强调 Proposal/evidence/root acceptance，而执行权限仍由
+   coordinator 和 tool filter 强制（`ecefdc7b1`）。
+
+本轮本地证据仅包括上述 memory/contract 的定向 unit tests、`cargo check -p xai-grok-shell`
+和 `git diff --check`。没有以此声称完整 suite、GitHub exact-SHA CI、24h daemon、release 或
+provider live proof 已完成。每次源码改变后，R0 与本节 SHA 都必须更新，旧 CI 不可挪用。
+
 ### 发布身份与版本边界
 
 - **产品代际名：** `Lumen 2 — Governed Agent Runtime`；`Lumen NextGen` 是实施代号。
@@ -64,7 +84,7 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 
 | 项目 | 当前实测事实 | 本书处理 |
 |---|---|---|
-| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；候选源码身份由 `SOURCE_LOCK.json.monorepo.git_head` 决定 | 已推送的候选分支，不是 GitHub main、发布或安装证明；R0 不在本书硬编码会漂移的 HEAD。 |
+| 本地工作树 | /Users/lei/code/lumen；分支 sync/absorb-upstream-20260731；候选源码身份由 `SOURCE_LOCK.json.monorepo.git_head` 决定 | 最近核对的远端同步 SHA 见“本轮实施校准”；它仍不是 GitHub main、发布或安装证明，R0 必须重新测 HEAD。 |
 | GitHub main | origin/main=2f47a9ad84e94b20291a1ad3d6b005ccbd3885f4 | 是本地候选祖先；禁止直接把本地分支叫作已合并 main。 |
 | 分叉量 | 每次 R0 前重新计算 `origin/main...HEAD` | 提交数不是验收证据；仍须 R0 分组审查、exact CI 与人工 merge。 |
 | 工作树 | 每次 R0 source candidate 前必须重新实测 clean/dirty；任何未分类路径都不进入候选 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
@@ -90,8 +110,8 @@ SOURCE_LOCK 的 source SHA 与关键文件 hash 必须每次从当前候选实�
 |---|---|---|
 | 子 Agent | 真实 lineage、三级硬拒、根取消、Pager 递归树、树级 token/tool/time 限额 | exact CI、跨进程恢复和完整产品 golden path。 |
 | Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority；普通 turn no-replay；全新 root scheduler iteration 的请求前 pool 选择 | root-approved assignment、一般后台 workflow/subagent 的完整 no-replay 路由与 provider 额度证据。 |
-| memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger | 长期记忆 promotion、跨 worktree/recovery 的完整产品证明。 |
-| 进程 | scheduler、workflow、leader、background terminal、lease heartbeat、recovery proof、backoff/dead-letter | 统一 activity 原子聚合、24h daemon golden path。 |
+| memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger、root-only `/memory promote` | 跨 worktree/recovery 的完整产品证明、claim 状态机/read-model gate。 |
+| 进程 | scheduler、workflow、leader、background terminal、子任务 heartbeat/孤儿收口、workflow budget/recovery | 跨进程 operation lease/takeover、统一 activity 原子聚合、24h daemon golden path。 |
 | 验证 | VerifyAfterEditOutcome；Some(Pass) 才算 edit delivery | 全任务或 release 成功。 |
 | provider | catalog、BYOK、role pin、Expert pool health skip、普通 turn 与全新 root scheduler preflight routing evidence | 可复核的 provider failover receipt、真实额度证明。 |
 
@@ -471,7 +491,9 @@ pub struct TreeBudgetV1 {
 
 ## 12. NG-04：SharedWorkingLedger 与四层记忆
 
-**状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn ledger 拒绝注入；长期记忆 promotion、完整 cross-worktree recovery/read-model gate 仍是 Draft。
+**状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn/unproven-accepted
+ledger 拒绝注入；root 的显式、evidence-preserving、idempotent workspace promotion 已实现。完整
+cross-worktree recovery/read-model gate 与 claim 状态机仍是 Draft。
 **非目标：** 不把 SessionMemory/summary/vector DB 改成权威。
 
 | 层 | 内容 | 权威/写权限 |
