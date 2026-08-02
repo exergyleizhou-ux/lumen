@@ -111,7 +111,7 @@ SOURCE_LOCK 的 source SHA 与关键文件 hash 必须每次从当前候选实�
 | 子 Agent | 真实 lineage、三级硬拒、根取消、Pager 递归树、树级 token/tool/time 限额 | exact CI、跨进程恢复和完整产品 golden path。 |
 | Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority；普通 turn no-replay；全新 root scheduler iteration 的请求前 pool 选择 | root-approved assignment、一般后台 workflow/subagent 的完整 no-replay 路由与 provider 额度证据。 |
 | memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger、root-only `/memory promote` | 跨 worktree/recovery 的完整产品证明、claim 状态机/read-model gate。 |
-| 进程 | scheduler、workflow、leader、background terminal、子任务 heartbeat/孤儿收口、workflow budget/recovery | 跨进程 operation lease/takeover、统一 activity 原子聚合、24h daemon golden path。 |
+| 进程 | scheduler 已有 task-scoped durable run lease/takeover、workflow、leader、background terminal、子任务 heartbeat/孤儿收口、workflow budget/recovery | workflow/general process 的跨进程 operation lease/takeover、统一 activity 原子聚合、24h daemon golden path。 |
 | 验证 | VerifyAfterEditOutcome；Some(Pass) 才算 edit delivery | 全任务或 release 成功。 |
 | provider | catalog、BYOK、role pin、Expert pool health skip、普通 turn 与全新 root scheduler preflight routing evidence | 可复核的 provider failover receipt、真实额度证明。 |
 
