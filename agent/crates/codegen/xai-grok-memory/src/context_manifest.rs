@@ -134,6 +134,29 @@ impl ContextManifestV1 {
         let digest = Sha256::digest(self.canonical_bytes()?);
         Ok(format!("sha256:{digest:x}"))
     }
+
+    /// Bind admission to the exact root-owned ledger snapshot. A manifest may
+    /// reference a snapshot, but it cannot invent the tree or hash that the
+    /// ledger actually produced.
+    pub fn validate_against_snapshot(
+        &self,
+        snapshot: &crate::task_ledger::AcceptedLedgerSnapshot,
+    ) -> Result<(), ContextManifestError> {
+        self.validate()?;
+        if self.task_tree_id != snapshot.task_tree_id {
+            return Err(ContextManifestError::Invalid(
+                "manifest task tree does not match accepted snapshot".to_owned(),
+            ));
+        }
+        if self.accepted_snapshot_hash != snapshot.accepted_set_hash
+            && self.accepted_snapshot_hash != snapshot.journal_hash
+        {
+            return Err(ContextManifestError::Invalid(
+                "manifest accepted snapshot hash does not match ledger".to_owned(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -197,5 +220,25 @@ mod tests {
         let mut manifest = fixture();
         manifest.capability_grant_id.clear();
         assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn snapshot_binding_rejects_foreign_tree_or_hash() {
+        let manifest = fixture();
+        let snapshot = crate::task_ledger::AcceptedLedgerSnapshot {
+            task_tree_id: "tree-1".into(),
+            record_count: 1,
+            accepted_count: 1,
+            accepted_set_hash: "sha256:snapshot".into(),
+            journal_hash: "sha256:journal".into(),
+        };
+        assert!(manifest.validate_against_snapshot(&snapshot).is_ok());
+        let mut foreign = snapshot.clone();
+        foreign.task_tree_id = "tree-foreign".into();
+        assert!(manifest.validate_against_snapshot(&foreign).is_err());
+        foreign.task_tree_id = "tree-1".into();
+        foreign.accepted_set_hash = "sha256:wrong".into();
+        foreign.journal_hash = "sha256:wrong".into();
+        assert!(manifest.validate_against_snapshot(&foreign).is_err());
     }
 }
