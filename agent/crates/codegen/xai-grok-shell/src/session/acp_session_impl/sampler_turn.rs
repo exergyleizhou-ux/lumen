@@ -608,7 +608,10 @@ impl SessionActor {
             client_version: creds.client_version,
             reasoning_effort: cfg.reasoning_effort,
             force_http1: false,
-            max_retries: Some(self.max_retries),
+            // P0: a turn without a durable provider-attempt receipt is never
+            // safe to replay automatically. The actor policy is the second
+            // ceiling; keep this per-turn config explicit as well.
+            max_retries: Some(NO_RECEIPT_MAX_RETRIES),
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
             idle_timeout_secs: None,
             client_identifier: self.client_identifier.clone(),
@@ -852,6 +855,8 @@ impl SessionActor {
     pub(crate) async fn prepare_sampler_for_turn(&self) {
         self.refresh_token_if_expired().await;
         let mut sampler_config = self.reconstruct_full_config().await;
+        sampler_config.max_retries = Some(NO_RECEIPT_MAX_RETRIES);
+        sampler_config.doom_loop_recovery = None;
         if self.tool_context.task_output_token_budget.is_some()
             || self.tool_context.sampler_retry_only_before_output
         {
@@ -861,12 +866,18 @@ impl SessionActor {
         self.sampler_handle.update_config(sampler_config);
     }
 
-    /// Apply the user-selected ordinary model pool before sampling starts.
-    /// Unlike failure recovery this may select the current healthy model; only
-    /// an actual different choice mutates session state. Explicit user pins and
-    /// all child sessions remain outside the policy boundary.
-    pub(crate) async fn maybe_select_ordinary_model_for_task(&self, task: &str) {
-        if self.tool_context.subagent_depth > 0 || self.models_manager.user_selected_model() {
+    /// Apply the user-selected ordinary model pool once, before the first
+    /// sampler submission of a root turn. A tool-loop continuation is not a
+    /// new admission and must not silently change its model mid-turn.
+    pub(crate) async fn maybe_select_ordinary_model_for_task(
+        &self,
+        task: &str,
+        is_initial_root_sampling_attempt: bool,
+    ) {
+        if !is_initial_root_sampling_attempt
+            || self.tool_context.subagent_depth > 0
+            || self.models_manager.user_selected_model()
+        {
             return;
         }
         let policy = self.models_manager.model_routing_config();
@@ -892,7 +903,7 @@ impl SessionActor {
             &mut config,
             &active,
             self.client_identifier.clone(),
-            Some(self.max_retries),
+            Some(NO_RECEIPT_MAX_RETRIES),
         );
         if self
             .handle_set_session_model(
@@ -918,73 +929,6 @@ impl SessionActor {
         }
     }
 
-    /// Move an ordinary session to a healthy user-allowlisted model after a
-    /// sampler request failed before returning a response. This is deliberately
-    /// unavailable to task-output children (their caller owns the retry
-    /// contract), explicit `/model` pins, and disabled/empty pools. A failed
-    /// switch falls through to the original terminal error rather than hiding
-    /// it behind a second failure.
-    async fn maybe_reroute_ordinary_turn_after_failure(
-        &self,
-        failed_model: &str,
-    ) -> Option<String> {
-        if self.tool_context.task_output_token_budget.is_some()
-            || self.tool_context.sampler_retry_only_before_output
-            || self.tool_context.subagent_depth > 0
-            || self.models_manager.user_selected_model()
-        {
-            return None;
-        }
-        let policy = self.models_manager.model_routing_config();
-        if !policy.enabled || policy.model_pool.is_empty() {
-            return None;
-        }
-        let next_model = self.models_manager.select_healthy_model_from_pool(
-            &policy.model_pool,
-            &policy.priority,
-            failed_model,
-        )?;
-        let active = self.reconstruct_full_config().await;
-        let mut config = self.resolve_aux_sampler_config(&next_model).await?;
-        crate::agent::config::stamp_session_local_sampler_fields(
-            &mut config,
-            &active,
-            self.client_identifier.clone(),
-            Some(self.max_retries),
-        );
-        if self
-            .handle_set_session_model(
-                config,
-                false,
-                false,
-                true,
-                self.compaction.threshold_percent.get(),
-            )
-            .await
-            .is_err()
-        {
-            tracing::warn!(
-                session_id = %self.session_info.id.0,
-                failed_model,
-                next_model,
-                "model routing: approved candidate could not be installed; surfacing original failure"
-            );
-            return None;
-        }
-        self.models_manager
-            .set_current_model_id_for_routing(acp::ModelId::new(next_model.clone()));
-        xai_grok_telemetry::unified_log::warn(
-            "model routing: zero-output provider failure rerouted ordinary turn",
-            Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!({
-                "from_model": failed_model,
-                "to_model": &next_model,
-                "reason": "passive_provider_failure",
-                "user_pool_size": policy.model_pool.len(),
-            })),
-        );
-        Some(next_model)
-    }
     fn log_terminal_failure(&self, error_type: &str, status_code: Option<u16>, message: &str) {
         let auth = self
             .auth_manager
@@ -1010,7 +954,7 @@ impl SessionActor {
     pub(crate) async fn handle_sampling_failure(
         self: &Arc<Self>,
         error: xai_grok_sampler::SamplingErrorInfo,
-    ) -> Result<SamplerFailureRecovery, acp::Error> {
+    ) -> Result<std::convert::Infallible, acp::Error> {
         use xai_grok_sampler::SamplingErrorKind;
         if self.tool_context.task_output_token_budget.is_some() {
             self.tool_context.fail_task_output_usage_closed();
@@ -1037,37 +981,23 @@ impl SessionActor {
             );
             return Err(acp::Error::internal_error().data(message));
         }
-        if self.should_compact_on_error(&error).await {
-            let cw = error
+        let compact_would_be_required = self.should_compact_on_error(&error).await;
+        let mut detailed_message = error.message.clone();
+        if compact_would_be_required {
+            let context_window = error
                 .model_metadata
                 .as_ref()
-                .and_then(|m| m.context_window)
+                .and_then(|metadata| metadata.context_window)
                 .expect("should_compact_on_error guarantees context_window");
-            {
-                let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
-                let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);
-                if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await
-                    && let Some(new_cw) = std::num::NonZeroU64::new(cw)
-                    && self.compaction.context_window_override.is_none()
-                {
-                    cfg.context_window = new_cw;
-                    self.chat_state_handle.update_sampling_config(cfg);
-                }
-                let trigger_info = compaction::AutoCompactTriggerInfo {
-                    tokens_used: total_tokens,
-                    context_window: cw,
-                    percentage,
-                };
-                if let Err(e) = self.run_compact_only(trigger_info).await {
-                    if Self::is_auth_compact_error(&e) {
-                        return Err(self.surface_compact_auth_failure(e).await);
-                    }
-                    return Err(e);
-                }
-                return Ok(SamplerFailureRecovery::CompactAndResubmit);
-            }
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                context_window,
+                "context overflow is terminal until a new task; refusing error-triggered compaction and replay without a provider-attempt receipt"
+            );
+            detailed_message.push_str(
+                "\n\nThe request was not automatically compacted or resubmitted. Start a new task to retry after reviewing the context." ,
+            );
         }
-        let detailed_message = error.message.clone();
         let (failed_model_id, failed_base_url) = self
             .chat_state_handle
             .get_sampling_config()
@@ -1078,19 +1008,12 @@ impl SessionActor {
         if let Some(kind) = provider_failure_kind {
             self.models_manager
                 .record_provider_failure(&failed_base_url, kind);
-            if let Some(next_model) = self
-                .maybe_reroute_ordinary_turn_after_failure(&failed_model_id)
-                .await
-            {
-                tracing::info!(
-                    session_id = %self.session_info.id.0,
-                    failed_model = %failed_model_id,
-                    next_model,
-                    failure_kind = kind,
-                    "model routing: resubmitting zero-output ordinary turn"
-                );
-                return Ok(SamplerFailureRecovery::RerouteAndResubmit);
-            }
+            tracing::info!(
+                session_id = %self.session_info.id.0,
+                failed_model = %failed_model_id,
+                failure_kind = kind,
+                "model routing: recorded provider failure for a later root admission; refusing same-turn reroute"
+            );
         }
         if matches!(error.kind, SamplingErrorKind::Api)
             && error.status_code == Some(400)
@@ -1177,6 +1100,7 @@ impl SessionActor {
                 })),
             );
         }
+        let mut credentials_refreshed_for_next_task = false;
         if auth_recovery_eligible
             && crate::auth::devbox_login::is_devbox_environment()
             && let Some(ref am) = self.auth_manager
@@ -1186,10 +1110,9 @@ impl SessionActor {
                     tracing::info!(
                         session_id = %self.session_info.id.0,
                         user_id = %auth.user_id,
-                        "auth recovery: sampler 401, devbox re-mint, retrying"
+                        "auth recovery: sampler 401, devbox re-mint succeeded for a later task; refusing same-turn replay"
                     );
-                    self.prepare_sampler_for_turn().await;
-                    return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                    credentials_refreshed_for_next_task = true;
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1205,19 +1128,21 @@ impl SessionActor {
                 }
             }
         }
-        if auth_recovery_eligible && let Some(ref am) = self.auth_manager {
+        if !credentials_refreshed_for_next_task
+            && auth_recovery_eligible
+            && let Some(ref am) = self.auth_manager
+        {
             if am
                 .try_recover_unauthorized(crate::auth::recovery::RecoverySource::Turn)
                 .await
             {
-                tracing::info!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, recovered, retrying");
+                tracing::info!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, recovered for a later task; refusing same-turn replay");
                 xai_grok_telemetry::unified_log::info(
-                    "auth recovery: sampler 401, recovered, retrying",
+                    "auth recovery: sampler 401, recovered for a later task; refusing same-turn replay",
                     Some(self.session_info.id.0.as_ref()),
                     None,
                 );
-                self.prepare_sampler_for_turn().await;
-                return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                credentials_refreshed_for_next_task = true;
             }
             tracing::warn!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, refresh failed");
             xai_grok_telemetry::unified_log::warn(
@@ -1226,11 +1151,16 @@ impl SessionActor {
                 None,
             );
         }
-        if let Some(ref provider) = auth_provider
+        if !credentials_refreshed_for_next_task
+            && let Some(ref provider) = auth_provider
             && self.try_provider_401_recovery(provider).await
         {
-            self.prepare_sampler_for_turn().await;
-            return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+            tracing::info!(
+                session_id = %self.session_info.id.0,
+                provider = %provider.name,
+                "auth recovery: provider credential refreshed for a later task; refusing same-turn replay"
+            );
+            credentials_refreshed_for_next_task = true;
         }
         if matches!(error.kind, SamplingErrorKind::IdleTimeout) {
             self.signals_handle().record_idle_timeout();
@@ -1353,12 +1283,21 @@ impl SessionActor {
                 format!(
                     "{detailed_message}\n\nAuthentication is temporarily unavailable \
                      (often a network blip right after wake). Your session is still \
-                     signed in and will recover automatically — retry in a few seconds; \
-                     no need to run /login."
+                     signed in. This failed request was not automatically resubmitted; \
+                     submit a new task to retry."
                 ),
             )
         } else {
             (error_type, detailed_message)
+        };
+        let detailed_message = if credentials_refreshed_for_next_task {
+            format!(
+                "{detailed_message}\n\nCredentials were refreshed for a new task, but this request was not automatically resubmitted."
+            )
+        } else {
+            format!(
+                "{detailed_message}\n\nThis request was not automatically resubmitted because no provider-attempt receipt can prove replay is safe. Submit a new task to retry."
+            )
         };
         self.log_terminal_failure(error_type, error.status_code, &detailed_message);
         self.send_xai_notification(XaiSessionUpdate::RetryState(
@@ -1380,18 +1319,20 @@ impl SessionActor {
     ///
     /// Calls `prepare_sampler_for_turn` first (auth refresh + config
     /// push), then submits via `SamplerHandle::submit_and_collect` and
-    /// returns:
-    /// * `Ok(SamplerTurnOutcome::Response(_))` - model responded.
-    /// * `Ok(SamplerTurnOutcome::CompactAndResubmit)` - compaction
-    ///    ran, the outer turn loop should `continue`.
-    /// * `Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)` - auth 401
-    ///    recovery succeeded, credentials refreshed, retry once.
-    /// * `Err(acp::Error)` - terminal failure already reported via
-    ///    `send_xai_notification(RetryState::Failed)`.
+    /// returns a model response or a terminal failure already reported via
+    /// `send_xai_notification(RetryState::Failed)`. This function never
+    /// returns an instruction to replay the failed request.
     pub(crate) async fn run_turn_via_sampler(
         self: &Arc<Self>,
         request: ConversationRequest,
-    ) -> Result<SamplerTurnOutcome, acp::Error> {
+        is_initial_root_sampling_attempt: bool,
+    ) -> Result<
+        (
+            Box<ConversationResponse>,
+            Box<xai_grok_sampler::InferenceLatencyStats>,
+        ),
+        acp::Error,
+    > {
         let task_hint = request
             .items
             .iter()
@@ -1401,7 +1342,8 @@ impl SessionActor {
                 _ => None,
             })
             .unwrap_or_default();
-        self.maybe_select_ordinary_model_for_task(&task_hint).await;
+        self.maybe_select_ordinary_model_for_task(&task_hint, is_initial_root_sampling_attempt)
+            .await;
         self.prepare_sampler_for_turn().await;
         let stream_drained_rx = {
             let (tx, rx) = tokio::sync::oneshot::channel();
@@ -1459,25 +1401,13 @@ impl SessionActor {
                          calls (eventId ordering may be imperfect this turn)"
                     );
                 }
-                Ok(SamplerTurnOutcome::Response(
-                    Box::new(response),
-                    Box::new(metrics),
-                ))
+                Ok((Box::new(response), Box::new(metrics)))
             }
             Err(rich_err) => {
                 self.turn_stream_drained.lock().take();
                 let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
-                match self.handle_sampling_failure(info).await? {
-                    SamplerFailureRecovery::CompactAndResubmit => {
-                        Ok(SamplerTurnOutcome::CompactAndResubmit)
-                    }
-                    SamplerFailureRecovery::RefreshAuthAndResubmit => {
-                        Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)
-                    }
-                    SamplerFailureRecovery::RerouteAndResubmit => {
-                        Ok(SamplerTurnOutcome::RerouteAndResubmit)
-                    }
-                }
+                let never = self.handle_sampling_failure(info).await?;
+                match never {}
             }
         }
     }

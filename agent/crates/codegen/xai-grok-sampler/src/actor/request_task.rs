@@ -94,7 +94,15 @@ pub(crate) async fn run_request_task(
             .idle_timeout_secs
             .unwrap_or(DEFAULT_IDLE_TIMEOUT_SECS),
     );
-    let configured_max_retries = config.max_retries.or(Some(retry_policy.max_retries));
+    // An actor-owned no-replay policy is a ceiling, not a default that an
+    // individual request config may accidentally reopen. This is used by the
+    // shell until it can attach a durable provider-attempt receipt proving a
+    // request was safe to replay.
+    let configured_max_retries = if retry_policy.max_retries == 0 {
+        Some(0)
+    } else {
+        config.max_retries.or(Some(retry_policy.max_retries))
+    };
     let max_retries = if configured_max_retries == Some(0) {
         0
     } else {
@@ -249,6 +257,11 @@ pub(crate) async fn run_request_task(
                 // consult the transport classifier, so no classifier change
                 // can silently debit the transport budget for a doom failure.
                 if let SamplingError::DoomLoopDetected { .. } = &error {
+                    if doom_max_retries == 0 || doom_retry_count >= doom_max_retries {
+                        emit_failed(&event_tx, &request_id, &error);
+                        send_completion(&mut completion_tx, Err(clone_error(&error)));
+                        return request_id;
+                    }
                     if retry_policy.retry_only_before_output
                         && output_observed.load(Ordering::Relaxed)
                     {

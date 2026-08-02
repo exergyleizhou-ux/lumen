@@ -181,9 +181,10 @@ async fn no_recovery_without_auth_manager() {
         .await;
 }
 
-/// Session-based auth + working refresher → RefreshAuthAndResubmit.
+/// Session-based auth can refresh credentials for a later task, but the failed
+/// sampler request remains terminal until it has a provider-attempt receipt.
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_401_recovery_returns_refresh_and_retry() {
+async fn sampler_401_recovery_refreshes_for_next_task_but_surfaces_terminal_failure() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -196,8 +197,8 @@ async fn sampler_401_recovery_returns_refresh_and_retry() {
             let (actor, _rx) = make_actor_with_auth_manager(Some(am)).await;
             let result = actor.handle_sampling_failure(auth_error()).await;
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "session-based auth with a working refresher must return RefreshAuthAndResubmit"
+                result.is_err(),
+                "session-based auth may refresh credentials but must not replay the failed request"
             );
             assert!(called.load(Ordering::SeqCst), "refresher must be invoked");
         })
@@ -753,7 +754,7 @@ fn session_token_auth_gate_truth_table() {
 /// Pre-fix, the gate read `auth_type` and skipped recovery here, 401'ing every
 /// turn until restart.
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_401_session_method_with_stale_api_key_auth_type_still_recovers() {
+async fn sampler_401_session_method_with_stale_api_key_auth_type_refreshes_for_next_task() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -774,8 +775,8 @@ async fn sampler_401_session_method_with_stale_api_key_auth_type_still_recovers(
             let result = actor.handle_sampling_failure(auth_error()).await;
 
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "session-based method must recover even when auth_type transiently reads ApiKey"
+                result.is_err(),
+                "session-based method may refresh even when auth_type transiently reads ApiKey, but must surface the failed request"
             );
             assert!(
                 called.load(Ordering::SeqCst),
@@ -787,7 +788,7 @@ async fn sampler_401_session_method_with_stale_api_key_auth_type_still_recovers(
 
 /// Same regression via the `oidc` method id (the other session-based variant).
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_401_oidc_method_with_stale_api_key_auth_type_still_recovers() {
+async fn sampler_401_oidc_method_with_stale_api_key_auth_type_refreshes_for_next_task() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -808,8 +809,8 @@ async fn sampler_401_oidc_method_with_stale_api_key_auth_type_still_recovers() {
             let result = actor.handle_sampling_failure(auth_error()).await;
 
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "oidc method must recover even when auth_type transiently reads ApiKey"
+                result.is_err(),
+                "oidc method may refresh even when auth_type transiently reads ApiKey, but must surface the failed request"
             );
             assert!(
                 called.load(Ordering::SeqCst),
@@ -1233,9 +1234,10 @@ async fn switch_to_first_party_model_drops_minted_provider_token() {
         .await;
 }
 
-/// Arm 4c: a 401 on a provider-backed model re-mints once and resubmits.
+/// Arm 4c: a 401 on a provider-backed model re-mints for a later task while
+/// preserving terminal semantics for the failed request.
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_401_on_provider_model_remints_and_resubmits() {
+async fn sampler_401_on_provider_model_remints_for_next_task_but_is_terminal() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -1255,8 +1257,8 @@ async fn sampler_401_on_provider_model_remints_and_resubmits() {
 
             let result = actor.handle_sampling_failure(auth_error()).await;
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "provider 401 must re-mint and resubmit"
+                result.is_err(),
+                "provider 401 may re-mint, but must not resubmit the failed request"
             );
             let creds = actor.chat_state_handle.get_credentials().await;
             assert_eq!(
@@ -1270,7 +1272,7 @@ async fn sampler_401_on_provider_model_remints_and_resubmits() {
 
 /// Arm 4c also fires for a bare 401 that did not classify as `Auth`-kind.
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_non_auth_kind_401_on_provider_model_still_recovers() {
+async fn sampler_non_auth_kind_401_on_provider_model_refreshes_for_next_task() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -1291,8 +1293,8 @@ async fn sampler_non_auth_kind_401_on_provider_model_still_recovers() {
             error.kind = xai_grok_sampler::SamplingErrorKind::Api;
             let result = actor.handle_sampling_failure(error).await;
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "a non-Auth-kind 401 on a provider model must still recover via 4c"
+                result.is_err(),
+                "a non-Auth-kind 401 on a provider model may recover credentials via 4c, but must surface the failed request"
             );
             let creds = actor.chat_state_handle.get_credentials().await;
             assert_eq!(creds.api_key.as_deref(), Some("tok-2"));
@@ -1303,7 +1305,7 @@ async fn sampler_non_auth_kind_401_on_provider_model_still_recovers() {
 /// A 401 on a request that went out with no key mints instead of
 /// recovering.
 #[tokio::test(flavor = "multi_thread")]
-async fn sampler_401_with_no_key_on_provider_model_mints_and_resubmits() {
+async fn sampler_401_with_no_key_on_provider_model_mints_for_next_task_but_is_terminal() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -1323,8 +1325,8 @@ async fn sampler_401_with_no_key_on_provider_model_mints_and_resubmits() {
 
             let result = actor.handle_sampling_failure(auth_error()).await;
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "an unauthenticated 401 on a provider model must mint and resubmit"
+                result.is_err(),
+                "an unauthenticated 401 on a provider model may mint, but must not resubmit the failed request"
             );
             let creds = actor.chat_state_handle.get_credentials().await;
             assert_eq!(creds.api_key.as_deref(), Some("tok-1"));
@@ -1366,8 +1368,8 @@ async fn sampler_401_on_provider_model_never_refreshes_session() {
 
             let result = actor.handle_sampling_failure(auth_error()).await;
             assert!(
-                matches!(result, Ok(SamplerFailureRecovery::RefreshAuthAndResubmit)),
-                "the provider arm must recover"
+                result.is_err(),
+                "the provider arm may recover credentials but must surface the failed request"
             );
             assert!(
                 !called.load(Ordering::SeqCst),

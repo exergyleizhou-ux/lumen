@@ -1184,6 +1184,58 @@ async fn test_compact_on_error_triggers_when_tokens_exceed_new_window() {
         })
         .await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn context_overflow_failure_is_terminal_without_error_triggered_compaction() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _) = mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
+            let (persistence_tx, _) = mpsc::unbounded_channel::<PersistenceMsg>();
+            let actor = Arc::new(
+                create_test_actor(214_000, 1_000_000, 85, gateway_tx, persistence_tx).await,
+            );
+            let err = api_error_with_context_window(200_000);
+            let compactions_before = actor
+                .compaction
+                .count
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let context_before = actor
+                .chat_state_handle
+                .get_sampling_config()
+                .await
+                .expect("sampling config")
+                .context_window
+                .get();
+
+            assert!(actor.should_compact_on_error(&err).await);
+            assert!(
+                actor.handle_sampling_failure(err).await.is_err(),
+                "the failed request must be terminal without a provider-attempt receipt"
+            );
+            assert_eq!(
+                actor
+                    .compaction
+                    .count
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                compactions_before,
+                "failure handling must not compact then replay"
+            );
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .context_window
+                    .get(),
+                context_before,
+                "failure handling must not rewrite the context window before a new task"
+            );
+        })
+        .await;
+}
+
 /// When tracked tokens are within the new limit, the error was not a context
 /// overflow — do not compact.
 #[tokio::test(flavor = "multi_thread")]

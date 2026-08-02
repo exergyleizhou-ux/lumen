@@ -842,6 +842,11 @@ impl SessionActor {
         let turn_model_id = self.current_model_id().await;
         let doom_event_model = turn_model_id.clone();
         let turn_timer = std::time::Instant::now();
+        // A root prompt may run several tool, stop-gate, goal, or completion
+        // rounds. Model-pool selection is an admission decision, so consume
+        // it only at the first actual sampler submission across the whole
+        // prompt rather than once per internal round.
+        let root_model_admission = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
         let result = {
             let mut round_trace = trace_gcs_config;
             let mut round_artifact = artifact_tracker;
@@ -858,6 +863,7 @@ impl SessionActor {
                         round_trace.take(),
                         round_artifact.take(),
                         json_schema.clone(),
+                        root_model_admission.clone(),
                     )
                     .await;
                 if !matches!(round, Ok(TurnOutcome::Completed { .. })) {
@@ -1502,9 +1508,10 @@ impl SessionActor {
     /// Wraps `process_conversation_turn` with auto-recovery for agents that opt in.
     ///
     /// Agents with a `completion_requirement` in their definition require the model
-    /// to call a specific tool before finishing. If a prompt turn ends without that
-    /// tool having been called, this method injects the recovery prompt and re-runs
-    /// the turn with exponential backoff.
+    /// to call a specific tool before finishing. If a *completed* prompt turn ends
+    /// without that tool, this method injects the recovery prompt and re-runs the
+    /// turn with exponential backoff. Sampling errors are terminal: without a
+    /// provider-attempt receipt we cannot prove a replay is safe.
     ///
     /// Agents without `completion_requirement` bypass this entirely.
     #[tracing::instrument(
@@ -1519,6 +1526,7 @@ impl SessionActor {
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
         artifact_tracker: Option<crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
+        root_model_admission: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Result<TurnOutcome, acp::Error> {
         let _ = self.compaction.auto_compact_suppressed.compare_exchange(
             crate::session::compaction_config::SUPPRESS_TURN,
@@ -1536,6 +1544,7 @@ impl SessionActor {
                         trace_gcs_config,
                         artifact_tracker.as_ref(),
                         json_schema,
+                        &root_model_admission,
                     )
                     .await;
             }
@@ -1549,6 +1558,7 @@ impl SessionActor {
                         trace_gcs_config,
                         artifact_tracker.as_ref(),
                         json_schema,
+                        &root_model_admission,
                     )
                     .await;
             }
@@ -1561,24 +1571,21 @@ impl SessionActor {
                 trace_gcs_config.clone(),
                 artifact_tracker.as_ref(),
                 json_schema.clone(),
+                &root_model_admission,
             )
             .await;
-        if matches!(
-            result,
-            Ok(TurnOutcome::MaxTurnsReached { .. }) | Ok(TurnOutcome::StationarityEnded { .. })
-        ) {
-            return result;
-        }
-        if let Ok(TurnOutcome::Completed {
-            ref tools_called, ..
-        }) = result
-            && tools_called.iter().any(|name| name == &required_tool)
-        {
-            tracing::info!(
-                "Completion requirement satisfied (tool '{}' called) for session {}",
-                required_tool,
-                self.session_info.id.0,
-            );
+        if !Self::completion_recovery_needed(&result, &required_tool) {
+            if let Ok(TurnOutcome::Completed {
+                ref tools_called, ..
+            }) = result
+                && tools_called.iter().any(|name| name == &required_tool)
+            {
+                tracing::info!(
+                    "Completion requirement satisfied (tool '{}' called) for session {}",
+                    required_tool,
+                    self.session_info.id.0,
+                );
+            }
             return result;
         }
         let mut attempt = 0u32;
@@ -1628,29 +1635,42 @@ impl SessionActor {
                     trace_gcs_config.clone(),
                     artifact_tracker.as_ref(),
                     None,
+                    &root_model_admission,
                 )
                 .await;
-            if matches!(
-                result,
-                Ok(TurnOutcome::MaxTurnsReached { .. }) | Ok(TurnOutcome::StationarityEnded { .. })
-            ) {
-                return result;
-            }
-            if let Ok(TurnOutcome::Completed {
-                ref tools_called, ..
-            }) = result
-                && tools_called.iter().any(|name| name == &required_tool)
-            {
-                tracing::info!(
-                    "Completion requirement satisfied after {} recovery attempt(s) \
-                     (tool '{}' called) for session {}",
-                    attempt,
-                    required_tool,
-                    self.session_info.id.0,
-                );
+            if !Self::completion_recovery_needed(&result, &required_tool) {
+                if let Ok(TurnOutcome::Completed {
+                    ref tools_called, ..
+                }) = result
+                    && tools_called.iter().any(|name| name == &required_tool)
+                {
+                    tracing::info!(
+                        "Completion requirement satisfied after {} recovery attempt(s) \
+                         (tool '{}' called) for session {}",
+                        attempt,
+                        required_tool,
+                        self.session_info.id.0,
+                    );
+                }
                 return result;
             }
         }
+    }
+
+    /// Only a normally completed turn that omitted the required tool can be retried.
+    ///
+    /// In particular, a sampling error has no provider-attempt receipt, so automatic
+    /// recovery must never replay it. Cancellation and hard turn limits are terminal
+    /// for the same reason: none establishes a safe replacement request.
+    fn completion_recovery_needed(
+        result: &Result<TurnOutcome, acp::Error>,
+        required_tool: &str,
+    ) -> bool {
+        matches!(
+            result,
+            Ok(TurnOutcome::Completed { tools_called, .. })
+                if !tools_called.iter().any(|name| name == required_tool)
+        )
     }
     /// Compute the first-turn memory reminder, if one should be injected.
     ///
@@ -1892,6 +1912,7 @@ impl SessionActor {
         trace_gcs_config: Option<crate::session::repo_changes::TraceExportConfig>,
         artifact_tracker: Option<&crate::upload::manifest::ArtifactTracker>,
         json_schema: Option<serde_json::Value>,
+        root_model_admission: &std::sync::atomic::AtomicBool,
     ) -> Result<TurnOutcome, acp::Error> {
         let conv_turn_start = std::time::Instant::now();
         self.maybe_refresh_model_metadata_on_resume().await;
@@ -1964,7 +1985,6 @@ impl SessionActor {
         let mut loop_index: u32 = 0;
         let mut identical_tool_calls = IdenticalToolCallRun::default();
         let mut todo_gate_fires: u32 = 0;
-        let mut auth_retry_schedule = AuthRetrySchedule::new();
         let mut turn_span_totals = TurnSpanTotals::default();
         let mut model_fingerprint: Option<String> = None;
         let mut structured_output_retries: u32 = 0;
@@ -2193,64 +2213,25 @@ impl SessionActor {
                 })),
             );
             let model_timer = std::time::Instant::now();
-            let (response, latency) = match self.run_turn_via_sampler(request.clone()).await {
-                Ok(SamplerTurnOutcome::Response(r, latency)) => (r, latency),
+            let is_initial_root_sampling_attempt = loop_index == 1
+                && root_model_admission
+                    .compare_exchange(
+                        true,
+                        false,
+                        std::sync::atomic::Ordering::AcqRel,
+                        std::sync::atomic::Ordering::Acquire,
+                    )
+                    .is_ok();
+            let (response, latency) = match self
+                .run_turn_via_sampler(request.clone(), is_initial_root_sampling_attempt)
+                .await
+            {
+                Ok(response) => response,
                 Err(error) => {
                     self.tool_context.fail_task_output_usage_closed();
                     return Err(error);
                 }
-                Ok(SamplerTurnOutcome::CompactAndResubmit) => {
-                    auth_retry_schedule.reset();
-                    continue;
-                }
-                Ok(SamplerTurnOutcome::RefreshAuthAndResubmit) => {
-                    if let Some((attempt, delay)) = auth_retry_schedule.next_delay() {
-                        let delay_ms = delay.as_millis() as u64;
-                        tracing::warn!(
-                            attempt,
-                            delay_ms,
-                            "auth 401 retry: backing off before resubmit"
-                        );
-                        xai_grok_telemetry::unified_log::warn(
-                            "shell.turn.auth_retry_backoff",
-                            Some(self.session_info.id.0.as_ref()),
-                            Some(serde_json::json!({
-                                "loop_index": loop_index,
-                                "attempt": attempt,
-                                "max_retries": AuthRetrySchedule::MAX_RETRIES,
-                                "delay_ms": delay_ms,
-                            })),
-                        );
-                        self.send_xai_notification(XaiSessionUpdate::RetryState(
-                            crate::extensions::notification::RetryState::Retrying {
-                                attempt,
-                                max_retries: AuthRetrySchedule::MAX_RETRIES,
-                                reason: "Re-authenticated after 401; retrying request".to_string(),
-                            },
-                        ))
-                        .await;
-                        sleep(delay).await;
-                        continue;
-                    }
-                    let msg = format!(
-                        "Auth recovery succeeded but inference request was \
-                         still rejected (401) after {} retries",
-                        AuthRetrySchedule::MAX_RETRIES
-                    );
-                    tracing::error!(msg);
-                    return Err(acp::Error::internal_error().data(
-                        crate::sampling::error::error_data_with_status(msg, Some(401)),
-                    ));
-                }
-                Ok(SamplerTurnOutcome::RerouteAndResubmit) => {
-                    // The failed sampler call yielded no response or tool
-                    // result. Rebuild from unchanged chat state so the new
-                    // model sees the same turn exactly once.
-                    auth_retry_schedule.reset();
-                    continue;
-                }
             };
-            auth_retry_schedule.reset();
             let model_elapsed_ms = model_timer.elapsed().as_millis() as u64;
             let usage = response.usage.as_ref();
             let prompt_tokens = usage.map(|u| u.prompt_tokens);
@@ -2810,6 +2791,55 @@ impl IdenticalToolCallRun {
     }
 }
 #[cfg(test)]
+mod completion_recovery_tests {
+    use crate::session::acp_session::acp;
+
+    use super::{SessionActor, TurnOutcome};
+
+    fn completed(tools_called: &[&str]) -> Result<TurnOutcome, acp::Error> {
+        Ok(TurnOutcome::Completed {
+            snapshot: Box::new(None),
+            tools_called: tools_called.iter().map(|tool| (*tool).to_owned()).collect(),
+            structured_output: None,
+            refusal: None,
+        })
+    }
+
+    #[test]
+    fn recovery_is_limited_to_successful_incomplete_completion() {
+        let sampling_error: Result<TurnOutcome, acp::Error> = Err(acp::Error::internal_error());
+        assert!(!SessionActor::completion_recovery_needed(
+            &sampling_error,
+            "deliver_result"
+        ));
+
+        let cancelled = Ok(TurnOutcome::Cancelled {
+            category: None,
+            context: None,
+        });
+        assert!(!SessionActor::completion_recovery_needed(
+            &cancelled,
+            "deliver_result"
+        ));
+
+        let turn_limit = Ok(TurnOutcome::MaxTurnsReached { limit: 1 });
+        assert!(!SessionActor::completion_recovery_needed(
+            &turn_limit,
+            "deliver_result"
+        ));
+
+        assert!(SessionActor::completion_recovery_needed(
+            &completed(&[]),
+            "deliver_result"
+        ));
+        assert!(!SessionActor::completion_recovery_needed(
+            &completed(&["deliver_result"]),
+            "deliver_result"
+        ));
+    }
+}
+
+#[cfg(test)]
 mod identical_tool_call_run_tests {
     use super::{
         IdenticalToolCallRun, MAX_CONSECUTIVE_IDENTICAL_TOOL_CALLS, MAX_CONSECUTIVE_TRUE_NOOPS,
@@ -2873,87 +2903,6 @@ mod identical_tool_call_run_tests {
         assert_eq!(run.observe("other", "bash", false), 1);
         assert!(!run.nudged);
         assert!(!run.take_nudge());
-    }
-}
-/// Backoff schedule for resubmits after a *successful* 401 auth recovery
-/// (fresh token minted, request to be re-sent).
-///
-/// Two hard-won invariants, both regressions from the silent-hang incident
-/// where a turn froze 16m40s and then 11.6 days (user-cancelled at 27min):
-///
-/// - **Delays must be 1s/2s/4s.** `tokio_retry::ExponentialBackoff::
-///   from_millis(base)` raises `base` to the attempt number, so the base must
-///   stay small: `from_millis(1000)` yields 1000ⁿ ms = 1s → 16m40s → 11.57
-///   days. `from_millis(2).factor(500)` yields 2ⁿ × 500ms = 1s, 2s, 4s.
-/// - **The schedule is per-incident, not per-turn.** A long turn can span
-///   several hourly gateway token rotations; each rotation is an independent
-///   401→refresh→retry event. Without `reset()` after a successful response,
-///   the third rotation of one turn would land on the last (largest) delay
-///   and the fourth would fail the turn outright.
-struct AuthRetrySchedule {
-    delays: std::iter::Take<ExponentialBackoff>,
-    attempt: u32,
-}
-impl AuthRetrySchedule {
-    /// Consecutive post-recovery 401s tolerated before the turn fails.
-    const MAX_RETRIES: u32 = 3;
-    fn new() -> Self {
-        Self {
-            delays: ExponentialBackoff::from_millis(2)
-                .factor(500)
-                .max_delay(std::time::Duration::from_secs(10))
-                .take(Self::MAX_RETRIES as usize),
-            attempt: 0,
-        }
-    }
-    /// Next `(attempt_number, delay)` (1-indexed), or `None` once exhausted.
-    fn next_delay(&mut self) -> Option<(u32, std::time::Duration)> {
-        let delay = self.delays.next()?;
-        self.attempt += 1;
-        Some((self.attempt, delay))
-    }
-    /// A successful model response closes the incident: restart the schedule
-    /// so the next token rotation starts back at the shortest delay.
-    fn reset(&mut self) {
-        *self = Self::new();
-    }
-}
-#[cfg(test)]
-mod auth_retry_schedule_tests {
-    use super::AuthRetrySchedule;
-    use std::time::Duration;
-    /// Pins the exact schedule. Guards against the `from_millis(1000)`
-    /// footgun (baseⁿ semantics): that spelling produced sleeps of 1s,
-    /// 16m40s, and 11.57 days, observed in the field as a silent
-    /// ~27-minute hang in `waiting_model` that the user had to cancel.
-    #[test]
-    fn schedule_is_one_two_four_seconds_then_exhausted() {
-        let mut schedule = AuthRetrySchedule::new();
-        let steps: Vec<_> = std::iter::from_fn(|| schedule.next_delay()).collect();
-        assert_eq!(
-            steps,
-            vec![
-                (1, Duration::from_secs(1)),
-                (2, Duration::from_secs(2)),
-                (3, Duration::from_secs(4)),
-            ],
-        );
-        assert_eq!(
-            schedule.next_delay(),
-            None,
-            "must exhaust after MAX_RETRIES"
-        );
-    }
-    /// Each successful response must restart the schedule: hourly token
-    /// rotations within one long turn are independent incidents, so they
-    /// must not escalate toward exhaustion (turn failure).
-    #[test]
-    fn reset_restarts_delays_and_attempt_numbering() {
-        let mut schedule = AuthRetrySchedule::new();
-        schedule.next_delay();
-        schedule.next_delay();
-        schedule.reset();
-        assert_eq!(schedule.next_delay(), Some((1, Duration::from_secs(1))));
     }
 }
 #[cfg(test)]

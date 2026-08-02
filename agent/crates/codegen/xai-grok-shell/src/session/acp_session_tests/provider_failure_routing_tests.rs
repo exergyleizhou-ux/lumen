@@ -136,7 +136,7 @@ async fn expert_pool_skips_quota_exhausted_priority_before_a_new_task() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
+async fn ordinary_turn_provider_failure_is_terminal_and_only_a_new_root_admission_can_reroute() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -169,17 +169,21 @@ async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
                 .handle_set_session_model(initial, false, false, true, 85)
                 .await
                 .expect("test session accepts flash");
+            actor
+                .models_manager
+                .set_current_model_id_for_routing(acp::ModelId::new("flash"));
 
-            assert!(matches!(
+            assert!(
                 actor
                     .handle_sampling_failure(sampling_error(
                         xai_grok_sampler::SamplingErrorKind::Api,
                         Some(402),
                         "out of credits",
                     ))
-                    .await,
-                Ok(SamplerFailureRecovery::RerouteAndResubmit)
-            ));
+                    .await
+                    .is_err(),
+                "a failed request has no provider-attempt receipt, so it must not reroute and replay"
+            );
             assert_eq!(
                 actor
                     .chat_state_handle
@@ -187,12 +191,27 @@ async fn ordinary_turn_reroutes_only_after_zero_output_provider_failure() {
                     .await
                     .expect("sampling config")
                     .model,
-                "grok"
+                "flash",
+                "the failed root request keeps its original model"
             );
-            assert_eq!(actor.models_manager.current_model_id().0.as_ref(), "grok");
+            assert_eq!(actor.models_manager.current_model_id().0.as_ref(), "flash");
             assert!(
                 !actor.models_manager.user_selected_model(),
-                "automatic reroute must not turn into a user model pin"
+                "recording a provider failure must not turn into a user model pin"
+            );
+
+            actor
+                .maybe_select_ordinary_model_for_task("implement a fresh task", true)
+                .await;
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "grok",
+                "a later root admission may select a healthy allowlisted model"
             );
         })
         .await;
@@ -234,7 +253,7 @@ async fn ordinary_root_turn_preselects_a_healthy_pool_model_for_its_task() {
                 .expect("test session accepts flash");
 
             actor
-                .maybe_select_ordinary_model_for_task("review the security boundary")
+                .maybe_select_ordinary_model_for_task("review the security boundary", true)
                 .await;
 
             assert_eq!(
@@ -251,7 +270,80 @@ async fn ordinary_root_turn_preselects_a_healthy_pool_model_for_its_task() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
+async fn ordinary_model_preselection_is_ignored_after_the_initial_root_sampling_attempt() {
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let (gateway_tx, _gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, _persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let actor = std::sync::Arc::new(
+                create_test_actor(0, 32_000, 85, gateway_tx, persistence_tx).await,
+            );
+            actor.models_manager.insert_test_entry(
+                "flash",
+                test_model_entry("flash", "https://flash.example.test/v1"),
+            );
+            actor.models_manager.insert_test_entry(
+                "grok",
+                test_model_entry("grok", "https://grok.example.test/v1"),
+            );
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec!["grok".to_owned(), "flash".to_owned()],
+                    task_preferences: Default::default(),
+                },
+            );
+            let initial = actor
+                .resolve_aux_sampler_config("flash")
+                .await
+                .expect("test flash catalog entry resolves");
+            actor
+                .handle_set_session_model(initial, false, false, true, 85)
+                .await
+                .expect("test session accepts flash");
+
+            actor
+                .maybe_select_ordinary_model_for_task("review the security boundary", true)
+                .await;
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "grok"
+            );
+
+            actor.models_manager.set_model_routing_config(
+                crate::agent::config::ModelRoutingConfig {
+                    enabled: true,
+                    model_pool: vec!["flash".to_owned(), "grok".to_owned()],
+                    priority: vec!["flash".to_owned(), "grok".to_owned()],
+                    task_preferences: Default::default(),
+                },
+            );
+            actor
+                .maybe_select_ordinary_model_for_task("continue the same root task", false)
+                .await;
+            assert_eq!(
+                actor
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .expect("sampling config")
+                    .model,
+                "grok",
+                "a tool, stop-gate, goal, or completion continuation cannot switch model mid-root"
+            );
+        })
+        .await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explicit_model_pin_keeps_provider_failure_terminal() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -312,7 +404,7 @@ async fn explicit_model_pin_blocks_ordinary_turn_reroute() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn subagent_turn_never_inherits_ordinary_reroute_without_its_own_contract() {
+async fn subagent_provider_failure_is_terminal_without_its_own_receipt_contract() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -405,7 +497,7 @@ async fn subagent_turn_never_preselects_an_ordinary_pool_model() {
                 .expect("test session accepts flash");
 
             actor
-                .maybe_select_ordinary_model_for_task("review the security boundary")
+                .maybe_select_ordinary_model_for_task("review the security boundary", true)
                 .await;
 
             assert_eq!(

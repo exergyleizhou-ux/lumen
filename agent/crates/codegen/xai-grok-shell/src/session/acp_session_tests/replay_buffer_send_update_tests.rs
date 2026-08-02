@@ -1240,9 +1240,10 @@ async fn reasoning_only_doomloop_turn_captures_every_generation_as_segments() {
                     error: error.clone(),
                 })
                 .await;
-            let Err(_terminal) = actor.handle_sampling_failure(error).await else {
-                panic!("a reasoning_only empty response must be a terminal error, not recoverable");
-            };
+            let _terminal = actor
+                .handle_sampling_failure(error)
+                .await
+                .expect_err("a reasoning_only empty response must be a terminal error");
             let (cmd_tx, cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
             let (_chat_tx, chat_rx) = mpsc::unbounded_channel::<xai_chat_state::ChatStateEvent>();
             let codebase_indexes = Arc::new(parking_lot::Mutex::new(

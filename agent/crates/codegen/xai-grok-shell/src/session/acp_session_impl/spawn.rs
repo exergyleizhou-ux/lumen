@@ -1349,6 +1349,10 @@ pub(crate) async fn spawn_session_actor(
     let (event_tx, event_rx) = mpsc::unbounded_channel::<SessionEvent>();
     let mut sampler_config_initial = sampling_config.clone();
     sampler_config_initial.idle_timeout_secs = Some(inference_idle_timeout_secs);
+    // P0: no same-turn replay before ProviderAttemptReceipt exists. Keep the
+    // config and actor policy aligned so neither layer can reopen retries.
+    sampler_config_initial.max_retries = Some(NO_RECEIPT_MAX_RETRIES);
+    sampler_config_initial.doom_loop_recovery = None;
     let task_output_budgeted = tool_context.task_output_token_budget.is_some();
     let retry_only_before_output =
         task_output_budgeted || tool_context.sampler_retry_only_before_output;
@@ -1356,7 +1360,7 @@ pub(crate) async fn spawn_session_actor(
         sampler_config_initial.doom_loop_recovery = None;
     }
     let sampler_retry_policy = xai_grok_sampler::RetryPolicy {
-        max_retries: max_retries.unwrap_or(5),
+        max_retries: NO_RECEIPT_MAX_RETRIES,
         rate_limit_retry_threshold: 2,
         retry_only_before_output,
     };

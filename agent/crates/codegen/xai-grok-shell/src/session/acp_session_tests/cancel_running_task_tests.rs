@@ -844,6 +844,7 @@ async fn run_first_turn_memory_injection_disabled_body() {
         None,
         None,
         None,
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
     ))
     .await;
     let (flush_tx, flush_rx) = tokio::sync::oneshot::channel();

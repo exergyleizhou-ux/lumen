@@ -12,39 +12,13 @@ pub(crate) enum McpReminderMode {
     Full,
 }
 
-/// Recovery decision returned by
-/// `SessionActor::handle_sampling_failure` for the sampler-based
-/// turn loop.
-pub(crate) enum SamplerFailureRecovery {
-    /// Compaction ran. The turn loop should rebuild the request from
-    /// the compacted conversation and resubmit.
-    CompactAndResubmit,
-    /// Auth 401 recovery succeeded (devbox re-mint, OIDC refresh, or auth
-    /// provider re-mint). The turn loop should resubmit once with the
-    /// fresh token.
-    RefreshAuthAndResubmit,
-    /// A provider failed before producing a response or tool side effect, and
-    /// the actor atomically moved to a user-allowlisted healthy model. The
-    /// outer loop may rebuild and resubmit the same request once it observes
-    /// this result.
-    RerouteAndResubmit,
-}
-
-/// Outcome of a single turn attempt via the sampler-based path.
-/// `CompactAndResubmit` short-circuits the outer turn loop with
-/// `continue` (the turn driver re-builds the request from the latest
-/// chat state).
-pub(crate) enum SamplerTurnOutcome {
-    /// Model responded, with per-call latency stats for `shell.turn.inference_done`.
-    Response(
-        Box<ConversationResponse>,
-        Box<xai_grok_sampler::InferenceLatencyStats>,
-    ),
-    CompactAndResubmit,
-    /// Auth recovery succeeded; the outer loop should retry once.
-    RefreshAuthAndResubmit,
-    RerouteAndResubmit,
-}
+/// P0 no-replay baseline for ordinary sampler turns.
+///
+/// We do not yet have a durable provider-attempt receipt that can prove a
+/// failed transport request produced neither output nor an external effect.
+/// Until that contract exists, a normal turn must make one sampler submission
+/// and surface any failure rather than replaying the request in-process.
+pub(crate) const NO_RECEIPT_MAX_RETRIES: u32 = 0;
 
 /// Outcome of `process_conversation_turn`, distinguishing normal completion from cancellation.
 pub(crate) enum TurnOutcome {
