@@ -319,6 +319,49 @@ impl GovernedSpawnAdmission {
     }
 }
 
+#[cfg(test)]
+mod governed_admission_tests {
+    use super::*;
+
+    fn admission() -> GovernedSpawnAdmission {
+        GovernedSpawnAdmission {
+            task_tree_id: "root".into(),
+            root_session_id: "root".into(),
+            node_id: "child".into(),
+            manifest_hash: String::new(),
+            accepted_snapshot_hash: "sha256:snapshot".into(),
+            immutable_assignment_hash: "sha256:assignment".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            policy_revision: 7,
+            budget_reservation_id: "budget-1".into(),
+        }
+    }
+
+    #[test]
+    fn canonical_identity_is_required_and_stable() {
+        let lineage = SubagentLineage::child_of(&SubagentLineage::direct("root"), "root");
+        let mut receipt = admission();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        assert!(receipt.validate_for(&lineage, "child").is_ok());
+        let original = receipt.manifest_hash.clone();
+        receipt.tool_catalog_hash = "sha256:changed".into();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        assert_ne!(original, receipt.canonical_manifest_hash());
+    }
+
+    #[test]
+    fn foreign_node_and_empty_policy_inputs_fail_closed() {
+        let lineage = SubagentLineage::child_of(&SubagentLineage::direct("root"), "root");
+        let mut receipt = admission();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        receipt.node_id = "other-child".into();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        receipt.node_id = "child".into();
+        receipt.budget_reservation_id.clear();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+    }
+}
+
 /// Re-export of [`xai_tool_types::is_not_sentinel`] for existing call sites.
 pub use xai_tool_types::is_not_sentinel;
 
