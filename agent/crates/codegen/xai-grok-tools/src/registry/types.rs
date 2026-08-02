@@ -1810,7 +1810,12 @@ impl FinalizedToolset {
             prompt_text,
             effective_tool_name,
             verify_outcome,
-            context_manifest_hash: None,
+            context_manifest_hash: self
+                .resources
+                .lock()
+                .await
+                .get::<crate::types::task_tree_memory::ContextManifestHashResource>()
+                .map(|resource| resource.0.clone()),
         })
     }
     /// Reverse-remap client-facing param names to canonical names.

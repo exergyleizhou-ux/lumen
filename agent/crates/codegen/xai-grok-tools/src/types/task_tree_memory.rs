@@ -107,3 +107,14 @@ crate::register_resource!(
     "TaskTreeMemoryBackendResource",
     TaskTreeMemoryBackendResource
 );
+
+/// Host-owned manifest provenance made available to terminal tool results.
+/// The model-facing tools cannot create or mutate this resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManifestHashResource(pub String);
+
+crate::register_resource!(
+    "grok_build",
+    "ContextManifestHashResource",
+    ContextManifestHashResource
+);
