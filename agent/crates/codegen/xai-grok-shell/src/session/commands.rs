@@ -642,6 +642,19 @@ pub enum SessionCommand {
     IsBusy {
         respond_to: oneshot::Sender<bool>,
     },
+    /// Atomically decide whether this actor can be detached after a client
+    /// disconnect. Unlike an `IsBusy` query followed by a separate
+    /// `Shutdown`, this command makes the decision in the actor mailbox and
+    /// begins shutdown only when no running or queued turn exists.
+    ///
+    /// The caller must hold the session dispatch lock until it has removed an
+    /// accepted session from the resident map, so a prompt cannot be admitted
+    /// between the decision and the detach.
+    UnloadIfIdle {
+        /// `true` means this actor admitted the unload and has started its
+        /// normal shutdown path; `false` means it retained the session.
+        respond_to: oneshot::Sender<bool>,
+    },
     GetHooksList {
         respond_to: oneshot::Sender<xai_hooks_plugins_types::HooksListResponse>,
     },

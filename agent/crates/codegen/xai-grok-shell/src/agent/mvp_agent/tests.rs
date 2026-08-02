@@ -3479,9 +3479,10 @@ fn make_live_session_handle(
     }
     (handle, cmd_tx, cmd_rx)
 }
-/// Spawn a minimal fake session actor on the `LocalSet` that answers
-/// `SessionCommand::IsBusy` with `busy` and forwards every other command to
-/// the returned receiver so a test can assert on them (e.g. `Shutdown`).
+/// Spawn a minimal fake session actor on the `LocalSet` that answers the
+/// actor-owned idle-unload admission. An admitted unload exits immediately,
+/// matching the real actor after it begins its normal shutdown path; ordinary
+/// commands are still forwarded for tests that exercise terminal close.
 fn spawn_fake_actor(
     mut cmd_rx: tokio::sync::mpsc::UnboundedReceiver<TestSessionCommand>,
     busy: bool,
@@ -3490,8 +3491,11 @@ fn spawn_fake_actor(
     tokio::task::spawn_local(async move {
         while let Some(cmd) = cmd_rx.recv().await {
             match cmd {
-                TestSessionCommand::IsBusy { respond_to } => {
-                    let _ = respond_to.send(busy);
+                TestSessionCommand::UnloadIfIdle { respond_to } => {
+                    let _ = respond_to.send(!busy);
+                    if !busy {
+                        return;
+                    }
                 }
                 other => {
                     let _ = observed_tx.send(other);
@@ -3661,13 +3665,12 @@ fn disconnect_unloads_idle_session_without_finalize() {
             agent.session_threads.borrow().contains_key(&sid),
             "idle-unload must keep the SessionThread for reconnect drain"
         );
-        let shutdown = tokio::time::timeout(std::time::Duration::from_secs(1), observed.recv())
+        let actor_exit = tokio::time::timeout(std::time::Duration::from_secs(1), observed.recv())
             .await
-            .expect("idle-unload must send a command within 1s")
-            .expect("fake actor channel must stay open");
+            .expect("idle-unload actor must exit within 1s");
         assert!(
-            matches!(shutdown, TestSessionCommand::Shutdown),
-            "idle-unload must send SessionCommand::Shutdown"
+            actor_exit.is_none(),
+            "idle-unload must be admitted and exit in the actor, not race a separate Shutdown"
         );
         assert!(
             agent.finalize_spy.borrow().is_empty(),
@@ -3705,11 +3708,9 @@ fn disconnect_unloads_idle_session_without_finalize() {
         );
     });
 }
-/// The `IsBusy` keep-resident path. A between-turns session
-/// (`current_prompt_id = None`) whose actor answers `IsBusy = true` (queued
-/// inputs at the turn boundary) must be kept resident — NOT unloaded — and
-/// must receive no `Shutdown`. This exercises the async round-trip that the
-/// sync fast-path tests skip.
+/// The actor-owned `UnloadIfIdle` keep-resident path. A between-turns session
+/// (`current_prompt_id = None`) whose actor rejects unload (queued inputs at
+/// the turn boundary) must stay resident and must not be shut down.
 #[test]
 fn disconnect_keeps_resident_when_actor_reports_busy() {
     run_local_for_bridge_test(|| async {
@@ -3721,7 +3722,7 @@ fn disconnect_keeps_resident_when_actor_reports_busy() {
         drive_disconnect(&agent, &sid).await;
         assert!(
             agent.sessions.borrow().contains_key(&sid),
-            "a between-turns session with queued work (IsBusy=true) must stay resident"
+            "a between-turns session with queued work must stay resident"
         );
         assert_eq!(
             agent.session_live_state_for(&sid),
@@ -3734,15 +3735,16 @@ fn disconnect_keeps_resident_when_actor_reports_busy() {
                 observed.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             ),
-            "a busy session must not be sent Shutdown"
+            "a busy session must not be shut down"
         );
     });
 }
 /// A between-turns session whose ONLY outstanding work is a parked
 /// `PlanApproval` reverse-request (the resume re-park) must be kept resident on
-/// disconnect. The actor answers `IsBusy = false`, so the keep-resident outcome
-/// can come ONLY from the parked-approval sync fast path in `session_has_live_work`
-/// — deleting that check would let this session unload (mutation-killing).
+/// disconnect. The actor state may otherwise look idle, so the keep-resident
+/// outcome can come ONLY from the parked-approval precheck in
+/// `unload_session_if_idle` — deleting it would let this session unload
+/// (mutation-killing).
 #[test]
 fn disconnect_keeps_resident_when_plan_approval_parked() {
     run_local_for_bridge_test(|| async {
@@ -3771,17 +3773,16 @@ fn disconnect_keeps_resident_when_plan_approval_parked() {
                 observed.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             ),
-            "a parked-approval session must not be sent Shutdown"
+            "a parked-approval session must not be shut down"
         );
     });
 }
 /// Mixed batch in a *single* `x.ai/internal/evict_sessions` notification —
 /// the realistic disconnect shape and the path that exercises
-/// `handle_evict_sessions`' `join_all` two-pass (concurrent `IsBusy` checks,
-/// then sequential act). One session's actor reports busy (→ kept resident,
-/// `Working`, no `Shutdown`); the other is idle (→ unloaded, `Dormant`,
-/// `Shutdown` sent). Each must get its own outcome with no cross-contamination
-/// between the concurrent check pass and the sequential act pass.
+/// `handle_evict_sessions`' concurrent actor-owned admission. One session
+/// rejects unload (→ kept resident, `Working`); the other admits it (→
+/// unloaded, `Dormant`). Each must get its own outcome with no
+/// cross-contamination.
 #[test]
 fn disconnect_mixed_batch_keeps_busy_unloads_idle() {
     run_local_for_bridge_test(|| async {
@@ -3819,14 +3820,13 @@ fn disconnect_mixed_batch_keeps_busy_unloads_idle() {
             Some(SessionLiveState::Dormant),
             "the idle session must be Dormant"
         );
-        let idle_shutdown =
+        let idle_actor_exit =
             tokio::time::timeout(std::time::Duration::from_secs(1), idle_observed.recv())
                 .await
-                .expect("idle session must receive a command within 1s")
-                .expect("fake actor channel must stay open");
+                .expect("idle session actor must exit within 1s");
         assert!(
-            matches!(idle_shutdown, TestSessionCommand::Shutdown),
-            "the idle session must be sent Shutdown"
+            idle_actor_exit.is_none(),
+            "the idle session must be admitted and exit in its actor"
         );
         tokio::task::yield_now().await;
         assert!(
@@ -3834,7 +3834,7 @@ fn disconnect_mixed_batch_keeps_busy_unloads_idle() {
                 busy_observed.try_recv(),
                 Err(tokio::sync::mpsc::error::TryRecvError::Empty)
             ),
-            "the busy session must not be sent Shutdown in a mixed batch"
+            "the busy session must not be shut down in a mixed batch"
         );
         assert!(
             agent.finalize_spy.borrow().is_empty(),

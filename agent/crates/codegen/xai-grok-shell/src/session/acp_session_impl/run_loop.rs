@@ -117,6 +117,122 @@ async fn shutdown_workflows(session: &SessionActor) {
         Err(_) => tracing::warn!("workflow shutdown persistence flush timed out"),
     }
 }
+
+/// Run the single, durable session shutdown path used by an explicit shutdown
+/// and by an actor-approved idle unload. Keeping this in the actor avoids a
+/// separate `IsBusy` → `Shutdown` round trip where a newly queued prompt could
+/// be lost between the two commands.
+async fn shutdown_session(session: &SessionActor, replay_buffer: &mut ReplayBuffer) {
+    shutdown_workflows(session).await;
+    // Flush the actor-owned replay buffer so any streamed chunks still pending
+    // at shutdown (e.g. reasoning text from a sampler stream racing with a CLI
+    // exit / harness teardown) are committed to updates.jsonl before the
+    // session directory is snapshotted for trace upload. Mirrors the same
+    // flush in the Cancel, CopyFile, and FlushComplete arms.
+    if let Some(notification) = replay_buffer.flush() {
+        session.emit_buffered(notification).await;
+    }
+    // Drop any queued synthetic auto-wake prompts and pending notifications
+    // before running hooks. Without this, a synthetic prompt that slipped
+    // through the per-tool-result sweep could still get flushed to
+    // chat_history.jsonl by a later persistence path, producing a trailing
+    // `<system-reminder>` with no assistant reply. Placed BEFORE hook dispatch
+    // so the cleanup runs even if hooks abort.
+    session.drop_pending_synthetic_items().await;
+
+    // ── session_end hook (shutdown path) ─────────────────────────────────
+    // Fires BEFORE memory auto-save per plan contract.
+    let envelope = session.fire_hook(
+        xai_grok_hooks::event::HookEventName::SessionEnd,
+        None,
+        xai_grok_hooks::event::HookPayload::SessionEnd {
+            reason: "shutdown".to_string(),
+            turn_count: None,
+            tool_call_count: None,
+        },
+    );
+    if let Some(registry) = session.hook_registry.borrow().clone() {
+        let ctx = session.hook_run_ctx();
+        let results = xai_grok_hooks::dispatcher::dispatch_non_blocking(
+            &registry,
+            xai_grok_hooks::event::HookEventName::SessionEnd,
+            &envelope,
+            &ctx,
+        )
+        .await;
+        session
+            .send_hook_execution("session_end", None, None, &results)
+            .await;
+    }
+    session.dispatch_session_end_stop("shutdown").await;
+
+    // Memory: save session summary before shutdown. Subagent sessions are
+    // deliberately excluded: their task-tree ledger is governed separately
+    // and they cannot directly promote long-term memory.
+    let mut session_end_result = "disabled";
+    let mut total_chunks_at_end = 0usize;
+    if !session.startup_hints.is_subagent {
+        if let Some(storage) = session.memory.storage() {
+            let conversation = session.chat_state_handle.get_conversation().await;
+            let result = crate::session::memory::hooks::on_session_end(
+                &storage,
+                &conversation,
+                &session.session_info.id.0,
+                session.memory.save_on_end,
+            );
+            session_end_result = match &result {
+                crate::session::memory::hooks::SessionEndResult::Written(_) => "written",
+                crate::session::memory::hooks::SessionEndResult::Skipped => "skipped",
+                crate::session::memory::hooks::SessionEndResult::Failed(_) => "failed",
+            };
+            total_chunks_at_end = storage.total_chunk_count();
+            let telem = session.memory.telemetry_snapshot();
+            tracing::info!(
+                target: xai_grok_telemetry::memory_log::TARGET,
+                result = ?result,
+                tool_searches = telem.tool_search_count,
+                injection_searches = telem.injection_count,
+                recovery_searches = telem.compaction_recovery_count,
+                "MEMORY_SESSION_END: session summary saved"
+            );
+            // Reindex + embed the written file so it's searchable next session.
+            if let crate::session::memory::hooks::SessionEndResult::Written(ref path_str) = result {
+                session
+                    .reindex_and_embed(std::path::Path::new(path_str), "session")
+                    .await;
+                session
+                    .send_xai_notification(XaiSessionUpdate::MemorySessionSaved {
+                        path: path_str.clone(),
+                    })
+                    .await;
+            }
+        }
+    } else {
+        tracing::debug!(
+            target: xai_grok_telemetry::memory_log::TARGET,
+            "MEMORY_SUBAGENT_SKIP: skipping on_session_end for subagent session"
+        );
+    }
+    // Dream: attempt consolidation at session end.
+    session.maybe_run_dream().await;
+    // Structured telemetry after dream so counters are populated.
+    let telem = session.memory.telemetry_snapshot();
+    session.emit_memory_session_summary(&telem, total_chunks_at_end, session_end_result);
+    // Shutdown feedback sync loop and do final sync.
+    if let Some(cancel) = &session.sync_loop_cancel {
+        cancel.cancel();
+    }
+    // Shutdown feedback manager (syncs signals, drains upload queue).
+    session
+        .feedback_manager
+        .shutdown(session.upload_queue.get())
+        .await;
+    if !session.startup_hints.is_subagent {
+        session.persist_background_task_manifest().await;
+    }
+    // Clean up scratch directory (pre-edit file copies).
+    cleanup_session_scratch(session);
+}
 pub(super) async fn run_session(
     session: Arc<SessionActor>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCommand>,
@@ -1404,6 +1520,25 @@ pub(super) async fn run_session(
                             };
                             let _ = respond_to.send(busy);
                         }
+                        SessionCommand::UnloadIfIdle { respond_to } => {
+                            // This is deliberately one actor-mailbox operation:
+                            // a Prompt processed before it makes `state` busy;
+                            // the MvpAgent holds its dispatch lock until it has
+                            // removed an accepted session, so a later Prompt
+                            // cannot be admitted between this decision and
+                            // detach.
+                            let idle = {
+                                let state = session.state.lock().await;
+                                !state_is_busy(&state)
+                            };
+                            if !idle {
+                                let _ = respond_to.send(false);
+                                continue;
+                            }
+                            let _ = respond_to.send(true);
+                            shutdown_session(&session, &mut replay_buffer).await;
+                            return;
+                        }
                         SessionCommand::FlushComplete { respond_to } => {
                             // Flush the actor-owned replay buffer inline. This branch
                             // already runs inside `run_session()`, so sending a replay
@@ -2245,108 +2380,7 @@ pub(super) async fn run_session(
                             );
                         }
                         SessionCommand::Shutdown => {
-                            shutdown_workflows(&session).await;
-                            // Flush the actor-owned replay buffer so any
-                            // streamed chunks still pending at shutdown
-                            // (e.g. reasoning text from a sampler stream
-                            // racing with a CLI exit / harness teardown)
-                            // are committed to updates.jsonl before the
-                            // session directory is snapshotted for trace
-                            // upload. Mirrors the same flush in the
-                            // Cancel, CopyFile, and FlushComplete arms.
-                            if let Some(notification) = replay_buffer.flush() {
-                                session.emit_buffered(notification).await;
-                            }
-                            // Drop any queued synthetic auto-wake prompts and pending
-                            // notifications before running hooks. Without this, a
-                            // synthetic prompt that slipped through the per-tool-result
-                            // sweep could still get flushed to chat_history.jsonl by
-                            // any later persistence path, producing a trailing
-                            // `<system-reminder>` with no assistant reply. Placed
-                            // BEFORE hook dispatch so the cleanup runs even if hooks
-                            // abort.
-                            session.drop_pending_synthetic_items().await;
-
-                            // ── session_end hook (shutdown path) ────────
-                            // Fires BEFORE memory auto-save per plan contract.
-                            let envelope = session.fire_hook(
-                                xai_grok_hooks::event::HookEventName::SessionEnd,
-                                None,
-                                xai_grok_hooks::event::HookPayload::SessionEnd {
-                                    reason: "shutdown".to_string(),
-                                    turn_count: None,
-                                    tool_call_count: None,
-                                },
-                            );
-                            if let Some(registry) = session.hook_registry.borrow().clone() {
-                                let ctx = session.hook_run_ctx();
-                                let results = xai_grok_hooks::dispatcher::dispatch_non_blocking(
-                                    &registry,
-                                    xai_grok_hooks::event::HookEventName::SessionEnd,
-                                    &envelope,
-                                    &ctx,
-                                )
-                                .await;
-                                session.send_hook_execution("session_end", None, None, &results).await;
-                            }
-                            session.dispatch_session_end_stop("shutdown").await;
-                            // Memory: save session summary before shutdown
-                            let mut session_end_result = "disabled";
-                            let mut total_chunks_at_end = 0usize;
-                            if !session.startup_hints.is_subagent {
-                                if let Some(storage) = session.memory.storage() {
-                                    let conversation = session.chat_state_handle.get_conversation().await;
-                                    let result = crate::session::memory::hooks::on_session_end(
-                                        &storage,
-                                        &conversation,
-                                        &session.session_info.id.0,
-                                        session.memory.save_on_end,
-                                    );
-                                    session_end_result = match &result {
-                                        crate::session::memory::hooks::SessionEndResult::Written(_) => "written",
-                                        crate::session::memory::hooks::SessionEndResult::Skipped => "skipped",
-                                        crate::session::memory::hooks::SessionEndResult::Failed(_) => "failed",
-                                    };
-                                    total_chunks_at_end = storage.total_chunk_count();
-                                    let telem = session.memory.telemetry_snapshot();
-                                    tracing::info!(
-                                        target: xai_grok_telemetry::memory_log::TARGET,
-                                        result = ?result,
-                                        tool_searches = telem.tool_search_count,
-                                        injection_searches = telem.injection_count,
-                                        recovery_searches = telem.compaction_recovery_count,
-                                        "MEMORY_SESSION_END: session summary saved"
-                                    );
-                                    // Reindex + embed the written file so it's searchable next session
-                                    if let crate::session::memory::hooks::SessionEndResult::Written(ref path_str) = result {
-                                        session.reindex_and_embed(std::path::Path::new(path_str), "session").await;
-                                        session.send_xai_notification(XaiSessionUpdate::MemorySessionSaved {
-                                            path: path_str.clone(),
-                                        }).await;
-                                    }
-                                }
-                            } else {
-                                tracing::debug!(
-                                    target: xai_grok_telemetry::memory_log::TARGET,
-                                    "MEMORY_SUBAGENT_SKIP: skipping on_session_end for subagent session"
-                                );
-                            }
-                            // Dream: attempt consolidation at session end
-                            session.maybe_run_dream().await;
-                            // Structured telemetry after dream so counters are populated
-                            let telem = session.memory.telemetry_snapshot();
-                            session.emit_memory_session_summary(&telem, total_chunks_at_end, session_end_result);
-                            // Shutdown feedback sync loop and do final sync
-                            if let Some(cancel) = &session.sync_loop_cancel {
-                                cancel.cancel();
-                            }
-                            // Shutdown feedback manager (syncs signals, drains upload queue)
-                            session.feedback_manager.shutdown(session.upload_queue.get()).await;
-                            if !session.startup_hints.is_subagent {
-                                session.persist_background_task_manifest().await;
-                            }
-                            // Clean up scratch directory (pre-edit file copies).
-                            cleanup_session_scratch(&session);
+                            shutdown_session(&session, &mut replay_buffer).await;
                             return;
                         }
                     }

@@ -398,41 +398,23 @@ impl MvpAgent {
             }
         });
     }
-    /// Coarse "any work pending" check for the idle-unload stub.
-    /// Returns `true` while the session has work in flight.
+    /// Atomically detach a session only when its actor admits it is idle.
     ///
-    /// Three layers:
-    /// 1. **Fast path (sync):** the shared `current_prompt_id` slot, which the
-    ///    actor sets while a turn is running (`maybe_start_running_task`) and
-    ///    clears via its RAII guard. A poisoned lock is treated as busy → never
-    ///    unload.
-    /// 1b. **Parked plan-approval (sync):** the shared `pending_interactions`
-    ///    slot. The parked plan-approval resume re-park is the one outstanding work with no
-    ///    running turn, so it needs its own sync check (the same shared-`Arc`
-    ///    idiom as `current_prompt_id`) rather than the async round-trip below.
-    /// 2. **Queue check (async):** when no turn is running, the actor is between
-    ///    turns and responsive, so we ask it whether `pending_inputs` is
-    ///    non-empty (a prompt queued at the turn boundary). This closes the
-    ///    sub-tick window where `current_prompt_id` is momentarily `None` but a
-    ///    queued input is about to be drained. On timeout we keep the session
-    ///    resident (conservative).
+    /// The caller holds the same per-session dispatch lock that prompt intake
+    /// holds. A prompt submitted before this method appears in the actor's
+    /// mailbox before `UnloadIfIdle` and keeps the actor resident; a prompt
+    /// submitted afterwards waits until this method has either retained the
+    /// session or removed it from the resident map. This closes the prior
+    /// `IsBusy` → `Shutdown` check-then-act race.
     ///
-    /// TODO(PR-4): once the aggregate `SessionActivity` signal exists, also
-    /// consult the autonomous background sources so a detached session is never
-    /// idle-unloaded (→ `Shutdown` → `KillOnDrop`) while they are live:
-    /// `monitor_event_buffer`, pending scheduler fires,
-    /// `ToolContext.background_tasks`, and background subagent sessions. Until
-    /// then those background-only sessions rely on the keep-resident default and
-    /// the `current_prompt_id` auto-wake turn being active.
-    ///
-    /// TODO(PR-4): this is also inherently a *check-then-act* across the
-    /// actor-thread boundary — work can arrive (a new `Prompt`/auto-wake) in the
-    /// gap between this `IsBusy` answer and the caller's subsequent `Shutdown`,
-    /// so an idle-unload can still race a just-arrived turn. The actor processes
-    /// its mailbox in order, so the lost work is bounded and recoverable on
-    /// reload; PR-4 closes the gap properly by gating the unload inside the
-    /// actor (a single `Unload`-if-idle command) rather than check-then-send.
-    pub(super) async fn session_has_live_work(&self, id: &acp::SessionId) -> bool {
+    /// A parked approval is not represented in the actor's `State`, so it is
+    /// conservatively checked before asking the actor. The remaining known
+    /// gap is broader activity aggregation: monitor events, scheduler fires,
+    /// background terminal tasks, subagent sessions, and leases must join the
+    /// actor's future `SessionActivitySnapshot` before they may be unloaded.
+    pub(super) async fn unload_session_if_idle(&self, id: &acp::SessionId) -> bool {
+        let dispatch_lock = self.dispatch_lock(id);
+        let _dispatch_guard = dispatch_lock.lock().await;
         let Some(handle) = self.sessions.borrow().get(id).cloned() else {
             return false;
         };
@@ -442,16 +424,42 @@ impl MvpAgent {
             .map(|g| g.is_some())
             .unwrap_or(true);
         if turn_running {
-            return true;
+            // `true` is the *unloaded* outcome of this method. A running
+            // turn, including an unreadable/poisoned slot, must fail closed
+            // and leave the session resident.
+            return false;
         }
         if crate::session::pending_interaction::has_parked_plan_approval(
             &handle.pending_interactions,
         ) {
-            return true;
+            return false;
         }
-        tokio::time::timeout(IDLE_QUERY_TIMEOUT, handle.is_busy())
+        let (respond_to, response) = tokio::sync::oneshot::channel();
+        if handle
+            .cmd_tx
+            .send(SessionCommand::UnloadIfIdle { respond_to })
+            .is_err()
+        {
+            return false;
+        }
+        let admitted = tokio::time::timeout(IDLE_QUERY_TIMEOUT, response)
             .await
-            .unwrap_or(true)
+            .ok()
+            .and_then(Result::ok)
+            .unwrap_or(false);
+        if !admitted {
+            return false;
+        }
+
+        // Keep the dispatch lock through this removal. The actor has already
+        // committed to its normal shutdown path, and no prompt can enter via
+        // MvpAgent between that decision and the resident-map detach.
+        if self.take_session(id).is_none() {
+            return false;
+        }
+        self.resident_resources.borrow_mut().remove(id);
+        self.set_session_live_state(id, SessionLiveState::Dormant);
+        true
     }
     /// Entry counts for every collection [`Self::remove_session`] drains,
     /// plus workspace bindings and shared coordinator state.

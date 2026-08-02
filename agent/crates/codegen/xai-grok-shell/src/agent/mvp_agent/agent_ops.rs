@@ -2015,14 +2015,15 @@ impl MvpAgent {
     ///   driver/subscriber maps don't exist yet), so for now we only mark the
     ///   live state.
     /// - **Fully idle sessions are unloaded to disk** to bound memory (the
-    ///   `sessions`/`session_threads` maps are uncapped). This preserves the
-    ///   legacy unload path — `Shutdown` the actor, drop the `SessionHandle`,
-    ///   but KEEP the `SessionThread` so `drain_old_session_thread` can drain it
-    ///   on reconnect — and crucially does **not** finalize the cloud replica
-    ///   (the session remains resumable via `session/load`).
+    ///   `sessions`/`session_threads` maps are uncapped). The actor admits and
+    ///   starts this shutdown itself, then MvpAgent drops the `SessionHandle`
+    ///   but KEEPS the `SessionThread` so `drain_old_session_thread` can drain
+    ///   it on reconnect. This crucially does **not** finalize the cloud
+    ///   replica (the session remains resumable via `session/load`).
     ///
-    /// The "live work" check is the coarse PR-2 stub (`session_has_live_work`);
-    /// the full `SessionActivity` signal lands in PR-4.
+    /// The actor decides idle-unload atomically through `UnloadIfIdle`, while
+    /// MvpAgent holds the same dispatch lock as prompt intake. Full background
+    /// activity aggregation remains a later NG-03A slice.
     pub(super) async fn handle_evict_sessions(
         &self,
         params: &serde_json::value::RawValue,
@@ -2050,29 +2051,24 @@ impl MvpAgent {
             .map(|sid| {
                 let id = acp::SessionId::new(sid.clone());
                 async move {
-                    let busy = self.session_has_live_work(&id).await;
-                    (id, busy)
+                    let unloaded = self.unload_session_if_idle(&id).await;
+                    (id, unloaded)
                 }
             });
         let resolved = futures::future::join_all(checks).await;
         let mut kept_resident: usize = 0;
         let mut unloaded: usize = 0;
-        for (id, busy) in resolved {
-            if busy {
+        for (id, did_unload) in resolved {
+            if did_unload {
+                unloaded += 1;
+                tracing::debug!(session_id = %id.0, "idle session unloaded to disk on disconnect");
+            } else {
                 self.set_session_live_state(&id, SessionLiveState::Working);
                 kept_resident += 1;
                 tracing::info!(
                     session_id = %id.0,
-                    "kept session resident across client disconnect (live work)"
+                    "kept session resident across client disconnect (live work or conservative unload rejection)"
                 );
-                continue;
-            }
-            self.request_session_shutdown(&id);
-            if self.take_session(&id).is_some() {
-                self.resident_resources.borrow_mut().remove(&id);
-                self.set_session_live_state(&id, SessionLiveState::Dormant);
-                unloaded += 1;
-                tracing::debug!(session_id = %id.0, "idle session unloaded to disk on disconnect");
             }
         }
         tracing::info!(kept_resident, unloaded, "client-disconnect detach complete");
@@ -2081,9 +2077,10 @@ impl MvpAgent {
     /// Wait for an old session thread to finish before reloading the same session.
     ///
     /// When a client disconnects and a session is *idle*, `handle_evict_sessions`
-    /// unloads it: sends `Shutdown`, drops the `SessionHandle`, and keeps the
-    /// `SessionThread`. (Sessions with live work stay fully resident and skip
-    /// this path.) If the client reconnects and loads the same session, we must
+    /// unloads it: the actor accepts `UnloadIfIdle`, MvpAgent drops the
+    /// `SessionHandle`, and retains the `SessionThread`. (Sessions with live
+    /// work stay fully resident and skip this path.) If the client reconnects
+    /// and loads the same session, we must
     /// wait for the old actor to finish flushing to disk before replaying
     /// `updates.jsonl`.
     ///
