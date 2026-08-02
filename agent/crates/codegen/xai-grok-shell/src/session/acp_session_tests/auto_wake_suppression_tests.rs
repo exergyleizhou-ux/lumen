@@ -1294,6 +1294,7 @@ async fn handle_bridge_tool_success_runs_consumed_completion_sweep() {
                 prompt_text: "ok".into(),
                 effective_tool_name: None,
                 verify_outcome: None,
+                context_manifest_hash: None,
             };
             let parsed_args = serde_json::json!({});
             let _ = actor
@@ -1547,6 +1548,7 @@ async fn between_turn_drain_suppresses_reserved_subagents() {
                             tool_calls: 3,
                             turns: 1,
                             output: std::sync::Arc::from("done"),
+                            context_manifest_hash: None,
                         };
                         let mut completions = vec![mk("sa-autowake"), mk("sa-fresh")];
                         completions.retain(|c| !req.suppress_ids.contains(&c.subagent_id));

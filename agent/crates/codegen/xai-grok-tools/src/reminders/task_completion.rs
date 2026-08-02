@@ -427,6 +427,9 @@ pub fn format_subagent_completion(
         c.tool_calls,
         c.turns,
     );
+    if let Some(hash) = c.context_manifest_hash.as_deref() {
+        out.push_str(&format!("\nContext manifest: {hash}"));
+    }
     out.push_str(match task_output_name {
         Some(_) => "\n",
         None => "\n\n",
@@ -1470,6 +1473,7 @@ mod tests {
             tool_calls: 3,
             turns: 2,
             output: std::sync::Arc::from(format!("output for {id}")),
+            context_manifest_hash: None,
         }
     }
     #[tokio::test]
@@ -1673,6 +1677,13 @@ mod tests {
         let c = make_subagent_completion("sub-fail", false);
         let msg = format_subagent_completion(&c, Some("get_task_output"));
         assert!(msg.contains("with failure"));
+    }
+    #[test]
+    fn format_subagent_completion_surfaces_context_manifest_provenance() {
+        let mut c = make_subagent_completion("sub-governed", true);
+        c.context_manifest_hash = Some("sha256:manifest-1".into());
+        let msg = format_subagent_completion(&c, Some("get_task_output"));
+        assert!(msg.contains("Context manifest: sha256:manifest-1"));
     }
     #[test]
     fn format_subagent_completion_inlines_output_when_no_poll_tool() {

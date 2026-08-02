@@ -389,6 +389,7 @@ fn bash_tool_result(command: &str, exit_code: i32, output: &str) -> ToolRunResul
         prompt_text: output.to_owned(),
         effective_tool_name: None,
         verify_outcome: None,
+        context_manifest_hash: None,
     }
 }
 

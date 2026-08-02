@@ -750,6 +750,7 @@ pub fn completion_summary(
         tool_calls: result.tool_calls,
         turns: result.turns,
         output,
+        context_manifest_hash: request.runtime_overrides.context_manifest_hash.clone(),
     }
 }
 

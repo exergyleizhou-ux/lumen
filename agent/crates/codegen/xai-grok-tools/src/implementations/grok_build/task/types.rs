@@ -818,6 +818,9 @@ pub struct SubagentCompletionSummary {
     /// that DO have a polling tool keep the existing metadata-only line +
     /// "Use get_task_output(...)" pointer.
     pub output: Arc<str>,
+    /// Immutable context identity used for this child, when governed.
+    /// Legacy children intentionally remain `None`; no identity is invented.
+    pub context_manifest_hash: Option<String>,
 }
 
 /// Multi-wait request: block until one or all of the listed subagents finish.
@@ -1669,6 +1672,7 @@ mod tests {
             tool_calls: 7,
             turns: 3,
             output: std::sync::Arc::from("subagent answer"),
+            context_manifest_hash: None,
         }];
         req.respond_to.send(summaries).unwrap();
 
