@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T18:44:47Z",
+  "generated_at": "2026-08-02T04:35:32Z",
   "monorepo": {
-    "git_head": "0fae4c7bb0620deb89eb77a566ea9e660be40c17",
-    "git_short": "0fae4c7"
+    "git_head": "2e778682203db788048ee1b2df74554d3b08b64b",
+    "git_short": "2e77868"
   },
   "lumen_version": "2.0.0-alpha.1",
   "upstream_pin": {
@@ -46,9 +46,9 @@
     "scripts/verify-readiness.sh": "0a43db522bd5c90ae869a85fd1e26e19c047091dfe0d61dead1dbbfd7718d40e",
     "scripts/probe-local.sh": "72a93b36c1c3178f23ef06f8f3f9ee59db6f5a6b3def445aa6ba79a15da3ec12",
     "scripts/doctor-verticals.sh": "49cb550ea04b6d5ab890598ac9426f65fff71ccc0dc2f84e6f22b2d9e11c88fb",
-    "docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md": "8f7621a5fad1c02afc5b62bbcf2b9fa207cec584853d7bebb148fceda6635491",
+    "docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md": "9ce40685e3740265c69ec44b7a1c65f149f242f9ea526db0415623c02efc2b69",
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "d8c5650de3b478dc1b5860d05ce6788142f1a04edbc8578be560a0c1badef585"
+  "aggregate_critical_sha256": "f83e26427df9518e32cf5a09e4b2c86cb656b7b0c6f903cff8012d934010945f"
 }
