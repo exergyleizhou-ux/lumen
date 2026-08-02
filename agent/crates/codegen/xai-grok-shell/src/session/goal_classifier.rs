@@ -2472,7 +2472,7 @@ mod tests {
             trace_sink: None,
             skeptic_overrides: Vec::new(),
             events: None,
-            context_manifest_hash: None,
+            context_manifest_hash: Some("sha256:goal-manifest".into()),
         };
         let handle = tokio::spawn(async move {
             let _ = spawner
@@ -2497,6 +2497,11 @@ mod tests {
             request.resume_from.as_deref(),
             Some("prior-child"),
             "resume_from must propagate to the SubagentRequest",
+        );
+        assert_eq!(
+            request.runtime_overrides.context_manifest_hash.as_deref(),
+            Some("sha256:goal-manifest"),
+            "governed Goal verifier resume must retain manifest identity",
         );
         let _ = request.result_tx.send(SubagentResult::default());
         handle.await.unwrap();
