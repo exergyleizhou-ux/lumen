@@ -1060,6 +1060,7 @@ pub(crate) async fn spawn_session_actor(
             .map(|s| s.workspace_memory_file().to_string_lossy().into_owned()),
         memory_backend: memory_backend_for_spec,
         task_tree_memory_backend: task_tree_memory_backend_for_spec,
+        task_tree_manifest_hash: tool_context.task_tree_manifest_hash.clone(),
         web_search_config: web_search_config.clone(),
         backend_search: backend_tools_enabled,
         web_fetch_config: web_fetch_config.clone(),

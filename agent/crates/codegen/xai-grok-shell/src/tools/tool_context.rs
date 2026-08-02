@@ -163,6 +163,8 @@ pub struct ToolContext {
     /// Workspace-memory directory chosen by the root session for the shared
     /// task-tree ledger. Carries across worktree-isolated descendants.
     pub task_tree_memory_workspace_dir: Option<std::path::PathBuf>,
+    /// Host-issued manifest provenance for governed task-tree children.
+    pub task_tree_manifest_hash: Option<String>,
     /// Unified subagent event sender — carries spawn, query, cancel,
     /// list-active, completions, and outstanding messages to the coordinator.
     /// `None` if subagent support is not enabled.
@@ -277,6 +279,7 @@ impl ToolContext {
             subagent_depth: 0,
             task_tree_root_session_id: None,
             task_tree_memory_workspace_dir: None,
+            task_tree_manifest_hash: None,
             subagent_event_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
@@ -320,6 +323,7 @@ impl ToolContext {
             subagent_depth: 0,
             task_tree_root_session_id: None,
             task_tree_memory_workspace_dir: None,
+            task_tree_manifest_hash: None,
             subagent_event_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
@@ -416,6 +420,7 @@ mod tests {
                 subagent_depth: 0,
                 task_tree_root_session_id: None,
                 task_tree_memory_workspace_dir: None,
+                task_tree_manifest_hash: None,
                 subagent_event_tx: None,
                 lsp: None,
                 lsp_server_names: Vec::new(),

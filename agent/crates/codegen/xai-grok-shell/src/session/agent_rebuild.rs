@@ -93,6 +93,7 @@ pub(crate) struct AgentRebuildSpec {
     pub memory_backend: Option<Arc<dyn MemoryBackend>>,
     pub task_tree_memory_backend:
         Option<Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>>,
+    pub task_tree_manifest_hash: Option<String>,
     pub web_search_config: WebSearchConfig,
     pub backend_search: bool,
     pub web_fetch_config: WebFetchConfig,
@@ -199,6 +200,7 @@ impl AgentRebuildSpec {
             memory_workspace_path,
             memory_backend,
             task_tree_memory_backend,
+            task_tree_manifest_hash,
             web_search_config,
             backend_search,
             web_fetch_config,
@@ -399,6 +401,16 @@ impl AgentRebuildSpec {
                 .tool_bridge()
                 .update_resource(
                     xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackendResource(backend),
+                )
+                .await;
+        }
+        if let Some(manifest_hash) = task_tree_manifest_hash {
+            agent
+                .tool_bridge()
+                .update_resource(
+                    xai_grok_tools::types::task_tree_memory::ContextManifestHashResource(
+                        manifest_hash.clone(),
+                    ),
                 )
                 .await;
         }

@@ -117,6 +117,7 @@ fn interrupted_wait_tool_result_with_msg(args: &serde_json::Value, msg: &str) ->
         prompt_text: msg.to_string(),
         effective_tool_name: None,
         verify_outcome: None,
+        context_manifest_hash: None,
     }
 }
 /// Clears `awaiting_plan_approval` (and re-persists) when the

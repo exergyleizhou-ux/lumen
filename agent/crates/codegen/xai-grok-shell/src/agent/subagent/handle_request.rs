@@ -1035,6 +1035,11 @@ pub(crate) async fn run_shell_child(
     tool_ctx.subagent_depth = child_depth;
     tool_ctx.task_tree_root_session_id = Some(request.lineage.root_session_id.clone());
     tool_ctx.task_tree_memory_workspace_dir = ctx.task_tree_memory_workspace_dir.clone();
+    tool_ctx.task_tree_manifest_hash = request
+        .runtime_overrides
+        .governed_admission
+        .as_ref()
+        .map(|admission| admission.manifest_hash.clone());
     tool_ctx.lsp = ctx.lsp.clone();
     tool_ctx.process_scope = ctx.process_scope.clone();
     let parent_traceparent = xai_file_utils::trace_context::current_traceparent();
