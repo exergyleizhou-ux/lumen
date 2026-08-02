@@ -202,6 +202,50 @@ fn inject_task_tree_working_memory(
     }
 }
 
+fn validate_governed_snapshot(
+    request: &SubagentRequest,
+    ctx: &SubagentSpawnContext,
+) -> Result<(), String> {
+    if request.runtime_overrides.harness_agent_type.as_deref() != Some("governed_tree") {
+        return Ok(());
+    }
+    let admission = request
+        .runtime_overrides
+        .governed_admission
+        .as_ref()
+        .ok_or_else(|| "governed child has no admission receipt".to_owned())?;
+    let storage = ctx
+        .memory_config
+        .as_ref()
+        .filter(|config| config.enabled)
+        .map(|config| {
+            xai_grok_memory::MemoryStorage::new(
+                &ctx.parent_cwd,
+                config.root_dir_override.as_deref(),
+            )
+        })
+        .ok_or_else(|| "governed child has no enabled memory storage".to_owned())?;
+    let ledger = match ctx.task_tree_memory_workspace_dir.as_deref() {
+        Some(workspace_dir) => xai_grok_memory::WorkingMemoryLedger::for_workspace_dir(
+            workspace_dir,
+            &request.lineage.root_session_id,
+        ),
+        None => xai_grok_memory::WorkingMemoryLedger::for_task_tree(
+            &storage,
+            &request.lineage.root_session_id,
+        ),
+    };
+    let snapshot = ledger
+        .accepted_snapshot()
+        .map_err(|error| format!("governed child snapshot unavailable: {error}"))?;
+    if admission.accepted_snapshot_hash != snapshot.accepted_set_hash
+        && admission.accepted_snapshot_hash != snapshot.journal_hash
+    {
+        return Err("governed child admission snapshot hash is stale or foreign".to_owned());
+    }
+    Ok(())
+}
+
 pub(super) fn canonical_total_tokens(totals: &xai_chat_state::UsageTotals) -> u64 {
     totals.total_tokens()
 }
@@ -275,6 +319,9 @@ pub(crate) async fn run_shell_child(
 ) -> ChildRunOutput<ShellCompletionData> {
     let start = std::time::Instant::now();
     let mut completion_data = ShellCompletionData::from_context(&ctx);
+    if let Err(error) = validate_governed_snapshot(&request, &ctx) {
+        return child_run_output(failure_result(&request, &error), completion_data, None);
+    }
     if request.owner.is_workflow() && cancel_token.is_cancelled() {
         return child_run_output(
             cancelled_result(&request, "Subagent was cancelled"),
