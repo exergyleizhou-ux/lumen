@@ -274,6 +274,30 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                 // child look like depth zero and thereby bypass depth-based
                 // tool and capability ceilings in the shell runner.
                 request.runtime_overrides.spawn_depth = Some(request.lineage.depth);
+                // Governed-tree children must carry a host-issued manifest
+                // identity before they enter the runner.  The model-facing
+                // task tool never sets `harness_agent_type`, so this gate is
+                // only reachable through an internal host admission path.
+                if request.runtime_overrides.harness_agent_type.as_deref() == Some("governed_tree")
+                    && request
+                        .runtime_overrides
+                        .context_manifest_hash
+                        .as_deref()
+                        .is_none_or(|hash| hash.trim().is_empty())
+                {
+                    let id = request.id.clone();
+                    let _ = command.result_tx.send(SubagentResult {
+                        success: false,
+                        error: Some(
+                            "governed-tree spawn requires a host-issued context manifest hash"
+                                .to_owned(),
+                        ),
+                        subagent_id: id.clone(),
+                        child_session_id: id,
+                        ..Default::default()
+                    });
+                    return;
+                }
                 // Tool-side depth checks are the normal admission path, but
                 // this coordinator owns the shared mailbox and must retain a
                 // final hard ceiling.  Otherwise a caller that can construct

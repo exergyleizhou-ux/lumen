@@ -240,6 +240,22 @@ async fn direct_spawn_canonicalizes_runtime_depth_from_validated_lineage() {
 }
 
 #[tokio::test]
+async fn governed_tree_spawn_requires_host_manifest_identity() {
+    let mut harness = harness(false, std::time::Duration::from_secs(60));
+    let mut req = request("governed-without-manifest", false);
+    req.runtime_overrides.harness_agent_type = Some("governed_tree".to_owned());
+    let result = harness.backend.spawn(req).await.unwrap();
+    assert!(!result.success);
+    assert!(
+        result.error.as_deref().is_some_and(|error| {
+            error.contains("requires a host-issued context manifest hash")
+        })
+    );
+    assert!(harness.requests.try_recv().is_err());
+    harness.actor.abort();
+}
+
+#[tokio::test]
 async fn recovered_terminal_is_queryable_only_in_its_parent_session() {
     let harness = harness(false, std::time::Duration::from_secs(60));
     harness

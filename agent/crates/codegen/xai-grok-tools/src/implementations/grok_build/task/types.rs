@@ -243,6 +243,10 @@ pub struct SubagentRuntimeOverrides {
     /// (implementer vs explorer). `None` for every non-goal spawn ⇒ the parent
     /// agent decides the flavor (unchanged behavior).
     pub harness_agent_type: Option<String>,
+    /// Host-issued ContextManifest identity. It is required when the host
+    /// selects the governed-tree harness profile; model task calls cannot set
+    /// that profile or forge this value.
+    pub context_manifest_hash: Option<String>,
     pub completion_output_cap: Option<usize>,
     pub spawn_depth: Option<u32>,
     pub output_token_budget: Option<u64>,
