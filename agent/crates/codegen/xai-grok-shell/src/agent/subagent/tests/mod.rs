@@ -2312,3 +2312,81 @@ fn spawn_test_parent_chat_state(model_slug: &str) -> xai_chat_state::ChatStateHa
     )
 }
 mod rest;
+
+/// NG-02: the depth-based capability ceiling is monotone and never expands a
+/// concrete request.  Deeper children are never more capable than shallower
+/// ones, and every leaf (depth >= 3) narrows to read-only — even when the
+/// request asked for write/execute authority.
+#[test]
+fn capability_ceiling_is_monotonic_and_never_expands() {
+    use xai_tool_types::SubagentCapabilityMode;
+
+    // Lattice: All ⊇ {ReadWrite, Execute} ⊇ ReadOnly.  `at_most(inner,
+    // outer)` means the effective mode may never hold more authority than the
+    // ceiling allows.
+    fn at_most(inner: SubagentCapabilityMode, outer: SubagentCapabilityMode) -> bool {
+        match (inner, outer) {
+            (SubagentCapabilityMode::ReadOnly, _) => true,
+            (SubagentCapabilityMode::ReadWrite, SubagentCapabilityMode::ReadWrite)
+            | (SubagentCapabilityMode::ReadWrite, SubagentCapabilityMode::All) => true,
+            (SubagentCapabilityMode::Execute, SubagentCapabilityMode::Execute)
+            | (SubagentCapabilityMode::Execute, SubagentCapabilityMode::All) => true,
+            (SubagentCapabilityMode::All, SubagentCapabilityMode::All) => true,
+            _ => false,
+        }
+    }
+
+    let requests = [
+        Some(SubagentCapabilityMode::ReadOnly),
+        Some(SubagentCapabilityMode::ReadWrite),
+        Some(SubagentCapabilityMode::Execute),
+        Some(SubagentCapabilityMode::All),
+    ];
+
+    for depth in 0..=5u32 {
+        for requested in requests {
+            let effective = capability_ceiling_at_depth(requested, depth);
+            // 1. Never expands a concrete request.
+            if let Some(effective) = effective {
+                assert!(
+                    at_most(effective, requested.expect("concrete request")),
+                    "depth {depth}: {effective:?} must not exceed requested {requested:?}"
+                );
+            }
+            // 2. Leaf (depth >= 3) is always read-only or absent; never
+            //    write/execute, even when the request asked for more.
+            if depth >= 3 {
+                assert!(
+                    effective.is_none() || effective == Some(SubagentCapabilityMode::ReadOnly),
+                    "depth {depth}: leaf must narrow to ReadOnly, got {effective:?}"
+                );
+            }
+        }
+        // 3. Non-leaf depths pass the request through unchanged.
+        if depth < 3 {
+            for requested in requests {
+                assert_eq!(
+                    capability_ceiling_at_depth(requested, depth),
+                    requested,
+                    "depth {depth} must not alter the requested mode"
+                );
+            }
+        }
+    }
+
+    // 4. Monotone in depth: a deeper child is never more capable than a
+    //    shallower one for the same request.
+    for depth in 0..5u32 {
+        for requested in requests {
+            let shallow = capability_ceiling_at_depth(requested, depth);
+            let deeper = capability_ceiling_at_depth(requested, depth + 1);
+            if let (Some(shallow), Some(deeper)) = (shallow, deeper) {
+                assert!(
+                    at_most(deeper, shallow),
+                    "depth {depth}->{}: {deeper:?} must not exceed {shallow:?}",
+                    depth + 1
+                );
+            }
+        }
+    }
+}
