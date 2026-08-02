@@ -56,9 +56,28 @@ pub fn run_step(root: &Path, step: &Step, timeout_secs: u64) -> Result<StepResul
         command.process_group(0);
     }
 
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("spawn verification command {}", step.command))?;
+    // macOS can briefly report ETXTBSY when a freshly-created executable
+    // fixture is still being closed by the writer. Retry only that precise
+    // transient error; all other spawn failures remain fail-closed.
+    let mut spawn_attempt = 0;
+    let mut child = loop {
+        match command.spawn() {
+            Ok(child) => break child,
+            Err(error)
+                if cfg!(unix)
+                    && error.raw_os_error() == Some(26)
+                    && spawn_attempt < 4 =>
+            {
+                spawn_attempt += 1;
+                std::thread::sleep(Duration::from_millis(10 * spawn_attempt));
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("spawn verification command {}", step.command)
+                });
+            }
+        }
+    };
     let stdout = child.stdout.take().context("capture verifier stdout")?;
     let stderr = child.stderr.take().context("capture verifier stderr")?;
     let stdout_reader = std::thread::spawn(move || read_bounded(stdout));
