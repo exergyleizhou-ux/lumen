@@ -840,6 +840,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         subagent_type: child.request.subagent_type.clone(),
                         persona: child.persona.clone(),
                         model_id: Some(child.effective_model_id.clone()),
+                        context_manifest_hash: child
+                            .request
+                            .runtime_overrides
+                            .context_manifest_hash
+                            .clone(),
                     })
                 } else {
                     SubagentResumeLookup::Missing

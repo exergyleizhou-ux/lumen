@@ -956,6 +956,10 @@ pub struct SubagentResumeSource {
     pub subagent_type: String,
     pub persona: Option<String>,
     pub model_id: Option<String>,
+    /// Immutable context identity used by the source run, when governed.
+    /// Resume adapters must preserve this value or fail closed; they must not
+    /// synthesize a replacement identity.
+    pub context_manifest_hash: Option<String>,
 }
 
 /// Result of a resume-source lookup.
