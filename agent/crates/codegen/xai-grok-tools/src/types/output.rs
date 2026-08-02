@@ -157,6 +157,20 @@ pub struct ToolRunResult {
     pub context_manifest_hash: Option<String>,
 }
 impl ToolRunResult {
+    /// Attach host-verified ContextManifest provenance to a terminal result.
+    /// Callers must pass a non-empty canonical hash; model text cannot set it.
+    pub fn with_context_manifest_hash(
+        mut self,
+        hash: impl Into<String>,
+    ) -> Result<Self, &'static str> {
+        let hash = hash.into();
+        if hash.trim().is_empty() {
+            return Err("context manifest hash must not be empty");
+        }
+        self.context_manifest_hash = Some(hash);
+        Ok(self)
+    }
+
     /// Like [`TypedToolOutput::from_value`], but reattaches `chat_completion_output` from `output`.
     pub fn into_typed_tool_output(
         self,
@@ -2630,6 +2644,21 @@ mod tests {
             serde_json::to_value(&passed).unwrap()["verify_outcome"],
             "pass"
         );
+    }
+
+    #[test]
+    fn context_manifest_provenance_requires_non_empty_hash() {
+        let result = sample_run_result(ToolOutput::Text("ok".into()));
+        assert!(result.with_context_manifest_hash(" ").is_err());
+        let result = sample_run_result(ToolOutput::Text("ok".into()))
+            .with_context_manifest_hash("sha256:manifest")
+            .unwrap();
+        assert_eq!(
+            result.context_manifest_hash.as_deref(),
+            Some("sha256:manifest")
+        );
+        let encoded = serde_json::to_value(result).unwrap();
+        assert_eq!(encoded["context_manifest_hash"], "sha256:manifest");
     }
     fn bash_tool_id() -> xai_tool_protocol::ToolId {
         xai_tool_protocol::ToolId::new("bash").unwrap()
