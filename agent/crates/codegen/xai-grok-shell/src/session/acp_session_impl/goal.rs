@@ -651,6 +651,7 @@ impl SessionActor {
                 trace_sink: Some((self.chat_state_handle.clone(), task_tool_name)),
                 skeptic_overrides,
                 events: Some(self.events.writer()),
+                context_manifest_hash: self.tool_context.task_tree_manifest_hash.clone(),
             });
 
         let implementer_scratch =

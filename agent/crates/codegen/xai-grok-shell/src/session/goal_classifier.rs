@@ -532,6 +532,8 @@ pub(crate) struct ChannelSpawner {
     /// Event sink for the spawn-and-retry-once fail-open telemetry; `None`
     /// in tests / when no event log is wired.
     pub(crate) events: Option<EventWriter>,
+    /// Host-issued context identity for governed Goal verifier children.
+    pub(crate) context_manifest_hash: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -617,6 +619,7 @@ impl ChannelSpawner {
             runtime_overrides: SubagentRuntimeOverrides {
                 model,
                 harness_agent_type,
+                context_manifest_hash: self.context_manifest_hash.clone(),
                 ..Default::default()
             },
             run_in_background: false,
@@ -2469,6 +2472,7 @@ mod tests {
             trace_sink: None,
             skeptic_overrides: Vec::new(),
             events: None,
+            context_manifest_hash: None,
         };
         let handle = tokio::spawn(async move {
             let _ = spawner
@@ -2525,6 +2529,7 @@ mod tests {
                 },
                 RoleSpawnOverride::default(),
             ],
+            context_manifest_hash: None,
             events: None,
         };
         let handle = tokio::spawn(async move {
@@ -2591,6 +2596,7 @@ mod tests {
             trace_sink: None,
             skeptic_overrides: vec![RoleSpawnOverride::default()],
             events: None,
+            context_manifest_hash: None,
         };
         let handle = tokio::spawn(async move {
             let _ = spawner
@@ -5894,6 +5900,7 @@ mod tests {
                 RoleSpawnOverride::default(),
             ],
             events: None,
+            context_manifest_hash: None,
         });
 
         let (_log, emit) = collect_events();
@@ -6261,6 +6268,7 @@ mod tests {
             trace_sink: None,
             skeptic_overrides: Vec::new(),
             events: None,
+            context_manifest_hash: None,
         };
         let spawn_task = tokio::spawn(async move {
             spawner
