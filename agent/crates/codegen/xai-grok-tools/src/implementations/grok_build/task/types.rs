@@ -266,6 +266,19 @@ pub struct GovernedSpawnAdmission {
 }
 
 impl GovernedSpawnAdmission {
+    pub fn canonical_manifest_hash(&self) -> String {
+        let canonical = format!(
+            "v1\n{}\n{}\n{}\n{}\n{}\n",
+            self.task_tree_id,
+            self.root_session_id,
+            self.node_id,
+            self.accepted_snapshot_hash,
+            "governed_tree"
+        );
+        use sha2::{Digest, Sha256};
+        format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()))
+    }
+
     pub fn validate_for(
         &self,
         lineage: &SubagentLineage,
@@ -287,6 +300,9 @@ impl GovernedSpawnAdmission {
         }
         if self.task_tree_id != lineage.root_session_id {
             return Err("governed admission task tree does not match root lineage");
+        }
+        if self.manifest_hash != self.canonical_manifest_hash() {
+            return Err("governed admission manifest hash does not match canonical identity");
         }
         Ok(())
     }
