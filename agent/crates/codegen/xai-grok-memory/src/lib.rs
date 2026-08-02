@@ -43,7 +43,7 @@ pub use index::{MemoryIndex, init_sqlite_vec};
 pub use storage::{MemoryScope, MemoryStorage};
 pub use task_ledger::{
     WorkingMemoryFact, WorkingMemoryLedger, WorkingMemoryLedgerBackend, WorkingMemoryLedgerError,
-    WorkingMemoryState,
+    WorkingMemoryPromotion, WorkingMemoryState,
 };
 
 /// Embed all chunks that don't have embeddings yet.

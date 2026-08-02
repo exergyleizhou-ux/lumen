@@ -14,7 +14,7 @@ use std::sync::{LazyLock, Mutex};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::MemoryStorage;
+use crate::{MemoryScope, MemoryStorage};
 use xai_grok_tools::types::task_tree_memory::{
     TaskTreeMemoryBackend, TaskTreeMemoryFact as BackendFact, TaskTreeMemoryFactKind,
     TaskTreeMemoryReviewState, TaskTreeMemoryWriteReceipt,
@@ -163,6 +163,21 @@ pub struct WorkingMemoryLedger {
 #[derive(Debug, Clone)]
 pub struct WorkingMemoryLedgerBackend {
     ledger: WorkingMemoryLedger,
+}
+
+/// Result of a user-authorized promotion of reviewed working-memory facts into
+/// workspace long-term memory.  The fact identities are returned so the shell
+/// can give the user an auditable, human-readable receipt without exposing a
+/// writable long-term-memory capability to any model or child agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkingMemoryPromotion {
+    pub promoted: Vec<(String, u64)>,
+}
+
+impl WorkingMemoryPromotion {
+    pub fn promoted_count(&self) -> usize {
+        self.promoted.len()
+    }
 }
 
 impl WorkingMemoryLedgerBackend {
@@ -347,6 +362,76 @@ impl WorkingMemoryLedger {
         Ok(accepted.into_values().collect())
     }
 
+    /// Copy only reusable, root-reviewed task facts into the workspace's
+    /// curated long-term memory.
+    ///
+    /// This deliberately is not part of [`TaskTreeMemoryBackend`]: a model or
+    /// child agent may propose and a root agent may review task-local facts,
+    /// but only a direct user command in the root session may decide that an
+    /// accepted fact should outlive this task tree.  Progress, blockers,
+    /// assumptions, and raw evidence references are useful for coordination
+    /// but are not durable project knowledge, so they never cross this
+    /// boundary.
+    ///
+    /// The generated HTML marker makes the operation idempotent for a given
+    /// `(task_tree, fact_id, revision)` even after restart.  It is intentionally
+    /// stored next to the human-readable entry rather than in a second journal:
+    /// a crash cannot acknowledge a promotion that was never written to
+    /// `MEMORY.md`.
+    pub fn promote_accepted_facts_to_workspace_memory(
+        &self,
+        storage: &MemoryStorage,
+    ) -> Result<WorkingMemoryPromotion, WorkingMemoryLedgerError> {
+        if storage.is_ephemeral() {
+            return Err(WorkingMemoryLedgerError::Invalid(
+                "cannot promote task-tree memory from an ephemeral workspace".to_owned(),
+            ));
+        }
+        let memory_path = storage.workspace_memory_file();
+        let existing = match std::fs::read_to_string(&memory_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error.into()),
+        };
+        let facts = self
+            .accepted_facts()?
+            .into_iter()
+            .filter(|fact| {
+                matches!(
+                    fact.kind,
+                    TaskTreeMemoryFactKind::Fact | TaskTreeMemoryFactKind::Decision
+                )
+            })
+            .filter(|fact| !existing.contains(&promotion_marker(fact)))
+            .collect::<Vec<_>>();
+        if facts.is_empty() {
+            return Ok(WorkingMemoryPromotion {
+                promoted: Vec::new(),
+            });
+        }
+
+        let mut content = String::from("## Root-reviewed task-tree knowledge\n\n");
+        let mut promoted = Vec::with_capacity(facts.len());
+        for fact in facts {
+            let evidence = fact
+                .evidence_ref
+                .as_deref()
+                .expect("accepted facts require evidence_ref");
+            content.push_str(&format!(
+                "<!-- {} -->\n- **{} `{}` r{}**: {}\n  Evidence: `{}`\n",
+                promotion_marker(&fact),
+                fact.kind.label(),
+                fact.fact_id,
+                fact.revision,
+                fact.text,
+                evidence,
+            ));
+            promoted.push((fact.fact_id, fact.revision));
+        }
+        storage.append_to_memory(MemoryScope::Workspace, &content)?;
+        Ok(WorkingMemoryPromotion { promoted })
+    }
+
     pub fn load_all(&self) -> Result<Vec<WorkingMemoryFact>, WorkingMemoryLedgerError> {
         let file = match std::fs::File::open(&self.path) {
             Ok(file) => file,
@@ -455,6 +540,20 @@ impl WorkingMemoryLedger {
         file.unlock()?;
         result
     }
+}
+
+/// Stable, delimiter-safe identity for one promoted revision.  Fact IDs and
+/// session IDs are model-visible strings, so never place them unescaped in the
+/// marker itself.
+fn promotion_marker(fact: &WorkingMemoryFact) -> String {
+    let identity = format!(
+        "{}\u{1f}{}\u{1f}{}",
+        fact.task_tree_id, fact.fact_id, fact.revision
+    );
+    format!(
+        "lumen-task-tree-promotion:{}",
+        blake3::hash(identity.as_bytes()).to_hex()
+    )
 }
 
 #[cfg(test)]
@@ -737,6 +836,54 @@ mod tests {
             .unwrap();
         assert_eq!(facts.len(), 1);
         assert_eq!(facts[0].revision, 1);
+    }
+
+    #[test]
+    fn user_authorized_promotion_is_evidence_preserving_and_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let storage = MemoryStorage::with_paths(
+            temp.path().join("global-memory"),
+            temp.path().join("workspace-memory"),
+        );
+        let ledger = WorkingMemoryLedger::for_task_tree(&storage, "root");
+
+        ledger
+            .propose(fact("build-status", 1, "child", "cargo check completed"))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact("build-status", 2, "root", "cargo check passed"),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        let mut transient = fact("current-progress", 1, "child", "still running");
+        transient.kind = TaskTreeMemoryFactKind::Progress;
+        ledger.propose(transient.clone()).unwrap();
+        transient.revision = 2;
+        transient.text = "complete soon".to_owned();
+        ledger
+            .review("root", transient, WorkingMemoryState::Accepted)
+            .unwrap();
+
+        let first = ledger
+            .promote_accepted_facts_to_workspace_memory(&storage)
+            .unwrap();
+        assert_eq!(first.promoted, vec![("build-status".to_owned(), 2)]);
+        let content = std::fs::read_to_string(storage.workspace_memory_file()).unwrap();
+        assert!(content.contains("cargo check passed"));
+        assert!(content.contains("test://evidence"));
+        assert!(!content.contains("complete soon"));
+
+        let second = ledger
+            .promote_accepted_facts_to_workspace_memory(&storage)
+            .unwrap();
+        assert_eq!(second.promoted_count(), 0);
+        assert_eq!(
+            std::fs::read_to_string(storage.workspace_memory_file()).unwrap(),
+            content,
+            "a repeated user command must not duplicate an already-promoted revision"
+        );
     }
 
     #[test]

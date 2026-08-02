@@ -9,6 +9,20 @@ pub(super) struct MemoryFlushSnapshot {
     chat_history: Vec<ChatRequestMessage>,
 }
 
+fn task_tree_memory_promotion_authorized(
+    is_subagent: bool,
+    root_session_id: &str,
+    session_id: &str,
+) -> Result<(), &'static str> {
+    if is_subagent {
+        return Err("only the root session may promote task-tree memory");
+    }
+    if root_session_id != session_id {
+        return Err("only the task-tree root session may promote shared memory");
+    }
+    Ok(())
+}
+
 /// Build first-turn injection backend params without mutating the shared
 /// session params.
 ///
@@ -99,6 +113,38 @@ impl SessionActor {
     /// and embeddings up to date immediately.
     pub(super) async fn reindex_and_embed(&self, path: &std::path::Path, source: &str) {
         self.memory.reindex_and_embed(path, source).await;
+    }
+
+    /// Move reusable, root-reviewed task-tree knowledge into the workspace's
+    /// curated long-term memory after an explicit user slash command.
+    ///
+    /// This is intentionally not a model tool.  Child sessions never get to
+    /// invoke it, and the root must be the actual task-tree root rather than a
+    /// nested session with access to the same ledger.
+    pub(super) async fn promote_task_tree_memory_to_long_term(&self) -> Result<usize, String> {
+        let root_session_id = &self.rebuild_spec.task_tree_root_session_id;
+        task_tree_memory_promotion_authorized(
+            self.startup_hints.is_subagent,
+            root_session_id,
+            self.session_info.id.0.as_ref(),
+        )
+        .map_err(str::to_owned)?;
+        let storage = self
+            .memory
+            .storage()
+            .ok_or_else(|| "memory is not enabled for this session".to_owned())?;
+        let ledger = crate::session::memory::WorkingMemoryLedger::for_workspace_dir(
+            storage.workspace_dir(),
+            root_session_id,
+        );
+        let promotion = ledger
+            .promote_accepted_facts_to_workspace_memory(&storage)
+            .map_err(|error| error.to_string())?;
+        if promotion.promoted_count() > 0 {
+            let memory_file = storage.workspace_memory_file();
+            self.reindex_and_embed(&memory_file, "workspace").await;
+        }
+        Ok(promotion.promoted_count())
     }
 
     /// Common setup for dream methods: storage, lock, sessions dir, and truncated session id.
@@ -764,5 +810,23 @@ impl SessionActor {
                 Err(format!("rewrite inference failed: {}", e.message))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod task_tree_memory_promotion_tests {
+    use super::task_tree_memory_promotion_authorized;
+
+    #[test]
+    fn only_root_interactive_session_may_promote_task_tree_memory() {
+        assert!(task_tree_memory_promotion_authorized(false, "root", "root").is_ok());
+        assert_eq!(
+            task_tree_memory_promotion_authorized(true, "root", "root"),
+            Err("only the root session may promote task-tree memory")
+        );
+        assert_eq!(
+            task_tree_memory_promotion_authorized(false, "root", "child"),
+            Err("only the task-tree root session may promote shared memory")
+        );
     }
 }

@@ -792,6 +792,21 @@ impl SessionActor {
                 self.refresh_goal_harness_enabled().await;
                 ok_end_turn(0, None)
             }
+            BuiltinAction::PromoteTaskTreeMemory => {
+                let message = match self.promote_task_tree_memory_to_long_term().await {
+                    Ok(0) => {
+                        "No new root-reviewed facts or decisions were eligible for promotion. \
+                         Accepted progress, assumptions, blockers, and raw evidence stay task-local."
+                            .to_owned()
+                    }
+                    Ok(count) => format!(
+                        "Promoted {count} root-reviewed task-tree fact(s) to workspace long-term memory."
+                    ),
+                    Err(error) => format!("Task-tree memory promotion was not performed: {error}"),
+                };
+                self.send_host_turn_slash_command_output(&message).await;
+                ok_end_turn(0, None)
+            }
             // GoalSet is handled directly in handle_prompt (before this
             // function is called) so the turn flows through to model inference
             // instead of ending immediately.
