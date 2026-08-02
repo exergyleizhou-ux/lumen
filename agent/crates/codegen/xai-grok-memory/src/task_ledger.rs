@@ -13,6 +13,7 @@ use std::sync::{LazyLock, Mutex};
 
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{MemoryScope, MemoryStorage};
 use xai_grok_tools::types::task_tree_memory::{
@@ -172,6 +173,17 @@ pub struct WorkingMemoryLedgerBackend {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkingMemoryPromotion {
     pub promoted: Vec<(String, u64)>,
+}
+
+/// Immutable read view used by a ContextManifest. It is computed from the
+/// validated append-only journal and never accepts caller-supplied revisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptedLedgerSnapshot {
+    pub task_tree_id: String,
+    pub record_count: u64,
+    pub accepted_count: u64,
+    pub accepted_set_hash: String,
+    pub journal_hash: String,
 }
 
 impl WorkingMemoryPromotion {
@@ -375,6 +387,23 @@ impl WorkingMemoryLedger {
             }
         }
         Ok(accepted.into_values().collect())
+    }
+
+    /// Freeze the currently accepted view and the validated journal boundary.
+    /// The resulting hashes are suitable for admission checks; a later
+    /// proposal or review cannot mutate this value in place.
+    pub fn accepted_snapshot(&self) -> Result<AcceptedLedgerSnapshot, WorkingMemoryLedgerError> {
+        let records = self.load_all()?;
+        let accepted = self.accepted_facts()?;
+        let accepted_bytes = serde_json::to_vec(&accepted)?;
+        let journal_bytes = serde_json::to_vec(&records)?;
+        Ok(AcceptedLedgerSnapshot {
+            task_tree_id: self.root_session_id.clone(),
+            record_count: records.len() as u64,
+            accepted_count: accepted.len() as u64,
+            accepted_set_hash: format!("sha256:{:x}", Sha256::digest(accepted_bytes)),
+            journal_hash: format!("sha256:{:x}", Sha256::digest(journal_bytes)),
+        })
     }
 
     /// Copy only reusable, root-reviewed task facts into the workspace's
@@ -806,6 +835,33 @@ mod tests {
             )
             .unwrap();
         assert_eq!(ledger.accepted_facts().unwrap()[0].text, "accepted truth");
+    }
+
+    #[test]
+    fn accepted_snapshot_changes_only_at_a_new_journal_boundary() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let empty = ledger.accepted_snapshot().unwrap();
+        assert_eq!(empty.record_count, 0);
+        assert_eq!(empty.accepted_count, 0);
+
+        ledger
+            .propose(fact("snapshot-fact", 1, "child", "observed"))
+            .unwrap();
+        let proposed = ledger.accepted_snapshot().unwrap();
+        assert_eq!(proposed.accepted_count, 0);
+        assert_ne!(empty.journal_hash, proposed.journal_hash);
+
+        ledger
+            .review(
+                "root",
+                fact("snapshot-fact", 2, "root", "observed"),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        let accepted = ledger.accepted_snapshot().unwrap();
+        assert_eq!(accepted.accepted_count, 1);
+        assert_ne!(proposed.accepted_set_hash, accepted.accepted_set_hash);
     }
 
     #[test]
