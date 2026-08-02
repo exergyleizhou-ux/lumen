@@ -151,6 +151,10 @@ pub struct ToolRunResult {
     /// evidence without parsing `prompt_text`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify_outcome: Option<crate::verify_after_edit::VerifyAfterEditOutcome>,
+    /// ContextManifest identity for governed task-tree tool calls. Legacy and
+    /// ordinary interactive calls leave this absent for wire compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_manifest_hash: Option<String>,
 }
 impl ToolRunResult {
     /// Like [`TypedToolOutput::from_value`], but reattaches `chat_completion_output` from `output`.
@@ -2605,6 +2609,7 @@ mod tests {
             prompt_text: "prompt".into(),
             effective_tool_name: None,
             verify_outcome: None,
+            context_manifest_hash: None,
             output,
         }
     }

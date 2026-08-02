@@ -1810,6 +1810,7 @@ impl FinalizedToolset {
             prompt_text,
             effective_tool_name,
             verify_outcome,
+            context_manifest_hash: None,
         })
     }
     /// Reverse-remap client-facing param names to canonical names.
