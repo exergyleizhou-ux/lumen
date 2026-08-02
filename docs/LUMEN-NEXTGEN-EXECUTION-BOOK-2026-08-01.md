@@ -6,7 +6,7 @@
 **性质：** Lumen 后续实施的唯一排序、依赖、验收与交接总纲；不是功能完成、CI 通过、发布、安装或 live/provider 证明。
 **范围：** Rust Lumen coding agent；macOS-first；不做 Windows 专项、未授权 provider/billable 调用、deploy 或 release。
 **方法参考：** 同日 Lumen Science 执行书只提供阶段与证据结构；它不是 Lumen Core 的 API、代码或发布依赖。
-**证据窗口：** 当前源码、当前 GitHub、当前工作树与 2026-08-01 起的 NextGen 决策。2026-07-27 至 07-31 的恢复资料只能解释现有代码；窗口外旧规划仅是历史，不是需求、优先级或完成依据。
+**证据窗口：** 当前源码、当前 GitHub、当前工作树与 2026-08-01 起的 NextGen 决策。窗口外的旧 Lumen 规划、恢复资料和旧聊天不读取、不参与需求、优先级或完成判断。
 
 本书先冻结事实，再规定每项的文件接缝、数据合同、迁移、反例、命令、退出门和回退。下文标为【拟建】的类型、crate、配置或命令，在真正提交前都不是现有 API。
 
@@ -14,15 +14,19 @@
 
 1. **P0 当前事实：** 当前 worktree/HEAD、`git ls-remote` 的 GitHub branch head、原始 command exit、当前源码测试；它们可推翻本文任何旧数字或路径。
 2. **P1 当前设计：** 2026-08-01 起由本书和已提交 NextGen contract 定义的产品目标；变更必须有 issue/slice、negative test、commit 和本节校准更新。
-3. **P2 历史材料：** 早期 `FINAL-*`、旧聊天、恢复包、外部架构文章/PDF 只能提供风险清单或模式灵感，不能证明当前 API、版本、CI、GitHub 状态或完成度。
+3. **P2 非权威材料：** 窗口外 Lumen 文档/聊天一律不读取；本轮素材仓中明确登记的当日外部材料只提供问题清单或模式灵感，不能证明当前 API、版本、CI、GitHub 状态或完成度。
 
 任何实施者先读 P0，再读 P1；P2 与 P0/P1 冲突时直接弃用。不得为了“沿用计划”覆盖当前代码、把历史测试计数挪作新 HEAD 的绿，或从旧文件恢复已被否决的设计。
 
 ### 本轮实施校准（2026-08-02，必须在 R0 前重新实测）
 
 本书不是以旧规划或 implementer 口述来“报绿”。最近一次已推送 runtime 代码 checkpoint 是
-`2a3a9913e5e687c71dbd27cef44cdb122dba9813`（分支
-`sync/absorb-upstream-20260731`；GitHub `main` 是否已合并、CI 或发布必须每次另测），它在本书的事实增量是：
+`637b5825086303034082ea51baabd97b916883cf`（分支
+`sync/absorb-upstream-20260731`；GitHub `main` 是否已合并、CI 或发布必须每次另测）。
+其中 `2a3a9913` 是本轮 activity snapshot 的父 checkpoint，不能再被写成最新 HEAD；`637b5825`
+在其上追加了 root-only、backup-first 的 ledger torn-tail repair。当前远端事实是
+`origin/main=2f47a9ad`、`origin/sync/absorb-upstream-20260731=637b5825`，候选相对 main
+为 ahead 164 / behind 0。它在本书的事实增量是：
 
 1. 根 Session 也获得同一 task-tree ledger 的受控 review port；child 仍无 promotion
    authority（`85e1a4c8`）。
@@ -41,6 +45,9 @@
    child、scheduler active-run lease 与 pending interaction；adapter probe timeout fail-closed，恢复清单
    也不会把 child terminal 误记到 root（`2a3a9913`）。它不等于跨 adapter transaction、event journal 或
    24h recovery。
+7. root 用户可执行 `/memory repair-ledger`，但它只能在先 fsync 保存 exact raw tail backup 后裁剪最后
+   一条 torn record；child、non-root 和 middle corruption 一律 fail-closed（`637b5825`）。这只是
+   ledger file repair，不是完整 recovery journal、read-model rebuild 或 task recovery。
 
 本轮本地证据仅包括上述 memory/contract 的定向 unit tests、activity snapshot 2-test group、background
 manifest 1-test group、scheduler lease 1-test group、`cargo check -p xai-grok-shell`、idle-unload 断连
@@ -94,6 +101,43 @@ Main Agent               depth 0，唯一 authority
 
 max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深度 3 必须硬拒下一次 spawn。它不表示默认开启三层，也不表示 child 继承 root 权力。
 
+### 0.0.1 本版需求可追溯矩阵（只采纳最近两天确认的结论）
+
+| 已确认的方向或灵感 | 本书中的工程化落点 | 不允许的误读 | 可验收事实 |
+|---|---|---|---|
+| Main → Code → Research/Review/Test → Evidence leaf | NG-01 lineage、NG-02 ceiling、NG-03 reservation、NG-09A exact-binary path | 配置 `max_depth=3` 就等于产品完成 | 每层 parent/path、scope、budget、取消与 UI 投影一致；leaf 无法 spawn。 |
+| 并行是嵌套 Agent 的执行底座 | 一个 root-owned process/lease/budget/evidence 合同覆盖 child、terminal、monitor、scheduler | 同一 worktree 自由并发写入；tmux/PID 充当恢复状态 | 并发 reservation、late event、orphan、cancel、lease takeover 都有反例。 |
+| 子 Agent 会跑偏/幻觉 | NG-04 ledger + NG-04C ContextManifest + root acceptance；Advisor 只做第八道审阅 | 用 Advisor、长 prompt、summary 或 sibling 投票代替事实门 | child 只能 Proposed；只有 evidence + host/root review 才成为 Accepted。 |
+| 双模记忆 | Session/Scratch 与 SharedWorkingLedger/LongTermMemory 分层；current facts 与 reusable knowledge 分离 | 让 child 共写 MEMORY.md 或把 chat summary 当权威 | foreign/stale/unproven fact 不进入 child；promotion 可追溯且幂等。 |
+| Expert/Advisor 与用户模型池 | NG-05/06/07：pin、pool、priority、privacy、health、budget、independence、root approval | Advisor 直接改正在输出的模型、接受事实或宣布完成 | every selection/advice/applied assignment 有 receipt；已输出绝不重放。 |
+| DeepSeek Flash / Grok / DeepSeek Pro 的可选主力组合 | 用户 allowlist + 可改 priority；`auto` 仅在用户池内、仅对新任务推荐 | 根据“谁更聪明”绕过用户 pool、BYOK 或隐私边界 | pin、quota exhausted、pool exhausted、failure-domain 与 no-replay 负例。 |
+| Kairos/daemon/24h 自动化 | NG-03C/NG-08：operation identity、lease、outbox、reconcile、freeze | 多开一个 daemon Agent、靠日志/PID 断言可恢复 | crash/takeover/duplicate/outbox/external-effect Frozen 演练。 |
+| Claude 类 harness、CrewAI、公开文章/PDF 的经验 | 仅作为风险清单：authority、tool boundary、context rebuild、maker/checker、events | 导入专有实现/flag，或把外部描述当 API 与完成证据 | 每项只以 Lumen source、tests 与 receipts 定案。 |
+| Lumen Science 当前执行书 | 借用 source gate 与 contract gate 分离、shadow-first proof 的结构 | 把 Science domain/API/发布范围抄入 Lumen Core | Lumen 自己的 Core gates、Rust source、exact binary 证明。 |
+
+这张表是本版防遗漏清单。任何新增能力必须先补一行，再指定一个 phase、一个 authority owner、一个失败
+模式和一个证据 gate；没有这些字段的想法只能停在 RFC，不能交给模型或进入 runtime。
+
+### 0.0.2 素材仓盘点、采用边界与弃用规则
+
+本表记录本轮实际讨论过的素材，目的是防遗漏，而不是赋予它们相同权威。只有第一行和第二行可
+证明 Lumen 当前状态；其余都只能提供问题、模式或验收方法。任何从素材得到的结论，仍须在 Lumen
+中落到 source anchor、负例测试和 evidence receipt。
+
+| 素材仓 | 本轮可提取的内容 | 纳入的 NextGen 结论 | 明确不做 |
+|---|---|---|---|
+| 当前 Lumen `/Users/lei/code/lumen`、当前 GitHub `exergyleizhou-ux/lumen`、上游 `xai-org/grok-build` | 当前 API、提交、分支、测试、上游吸收边界 | P0 事实源；SessionActor/ACP/Grok Build 是唯一运行时底座 | 以 README、旧审计或别的分支冒充当前事实。 |
+| Lumen Science 执行书 `/Users/lei/code/lumen-science/docs/science/5.0/LUMEN_SCIENCE_NEXTGEN_FINAL_EXECUTION_BOOK_2026-08-01.md` | source gate 与 contract gate 分离；shadow-first 的验收顺序 | R0 contract receipt、NG-09A 再 NG-07/NG-09B | 搬运 Science domain、connector、设备或发布合同。 |
+| `Claude-Code-Source-Analysis-zh-v260411.pdf`、`Claude-Code-Complete-Guide-zh-v260411.pdf` | harness、tool/permission/context、独立验证和压缩风险清单 | 十平面 Harness、context rebuild、maker/checker 分层 | 将二手描述、内部目录、flag 或专有行为当 Lumen API。 |
+| `Loop-Engineering橙皮书-v260615.pdf` | 可观测 loop、检查点、反馈与停止条件 | typed lifecycle event、receipt、bounded retry、freeze | 用无限 loop、stdout 文本或自评替代状态机。 |
+| `ultraworkers/claw-code` | 多 Agent 状态、事件/任务阶段、harness 的反例检查 | boot/ready/prompt-accepted/running/blocked/terminal 事件与 outbox/reconcile 要求 | 获取、导入、反编译或分发未授权 Claude Code 源码。 |
+| `crewAIInc/crewAI` | crew/flow/role 协作的产品启发 | task contract、role narrowing、可观察协作；但 authority 保持 Rust SessionActor | 新增第二编排 runtime、让 role prompt 成为权限边界。 |
+| 用户提供的两张任务树/权限截图 | 真实 UX 诉求：树展示、正在做什么、bypass 可见、分层 delegation | truthful task-tree projection、root-only bypass、depth=3 leaf hard deny | 将截图里的 bypass 下放、把 UI 文案当事实源。 |
+| 窗口外的 Lumen 文档/聊天/恢复归档 | 不在本轮读取范围 | 无；仅在文件存在层面标为 out-of-scope | 恢复淘汰架构、旧版本号、旧测试数或旧完成判断。 |
+
+每次新增外部材料或新灵感，都必须附：来源日期、可采用的一条工程结论、对应 phase、反例、以及
+不采用的内容。没有这五项，不得改动 runtime。
+
 ---
 
 ## 0.1 Lumen Harness Kernel v1：不是功能清单，而是统一运行时
@@ -128,7 +172,7 @@ terminal receipt。任何功能少一个平面都只能标 `Draft/Experimental`�
 
 ### 0.1.2 唯一受治理运行信封【拟建】
 
-后续 NG-01 至 NG-09 的 DTO 不能各自携带半套身份。它们都投影自下列版本化合同；字段可拆分为
+后续 NG-01 至 NG-09B 的 DTO 不能各自携带半套身份。它们都投影自下列版本化合同；字段可拆分为
 crate-local 类型，但语义不得分叉：
 
 ~~~rust
@@ -218,6 +262,7 @@ root creates envelope + immutable objective + accepted snapshot
 | 工作树 | 每次 R0 source candidate 前必须重新实测 clean/dirty；任何未分类路径都不进入候选 | R0 manifest 必须逐路径归属，不能沿用旧计数或旧 evidence。 |
 | 上游吸收 | f9cf565d → 818d6488 → a556d74b → b09b929f → e7afd15b；上游 pin dd04f397 | 已在本机，尚未进入 GitHub main。 |
 | 版本 | 当前开发 VERSION 为 2.0.0-alpha.1；Lumen 2 首候选目标为 2.0.0-rc.1 | alpha、RC、tag、release 与同步分门；未过 R0 不得创建 RC/tag。 |
+| 当前证据错位 | HEAD=637b5825；SOURCE_LOCK source=0fae4c7b；readiness head=9e719020 且 state=BLOCKED | 三者不是同一 candidate。旧 lock/SBOM/readiness、旧 binary 或旧 CI 全部不得证明 637b5825。 |
 | GitHub CI | 只承认 PR 上与 source candidate 对应的 exact-SHA run | 未完成、失败或其他 SHA 的 run 都不能被说成当前全绿。 |
 | readiness | 只承认与 source candidate 同源的 lock、SBOM、binary 与 readiness | 旧 evidence 不证明后续源码。 |
 | 发布门 | L5 soak、binary tuple post、M5、M6、eval_live、reconcile 未闭合或失败 | R0 不解除这些门。 |
@@ -237,11 +282,11 @@ SOURCE_LOCK 的 source SHA 与关键文件 hash 必须每次从当前候选实�
 | 域 | 已有资产 | 不能误报为完成 |
 |---|---|---|
 | 子 Agent | 真实 lineage、三级硬拒、根取消、Pager 递归树、树级 token/tool/time 限额 | exact CI、跨进程恢复和完整产品 golden path。 |
-| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority；普通 turn no-replay；全新 root scheduler iteration 的请求前 pool 选择 | root-approved assignment、一般后台 workflow/subagent 的完整 no-replay 路由与 provider 额度证据。 |
+| Expert | Fast/Vision/Deep/Dual、双 proposal、单 writer、HostVerification、shadow advice、用户 pool/priority；ordinary turn reroute 仅为未验证 candidate；全新 root scheduler iteration 的请求前 pool 选择 | root-approved assignment、sealed no-replay receipt、一般后台 workflow/subagent 的完整 routing 与 provider 额度证据。 |
 | memory | global/workspace、SQLite/FTS/vector、JSONL/summary、task-tree Proposed/Accepted ledger、root-only `/memory promote` | 跨 worktree/recovery 的完整产品证明、claim 状态机/read-model gate。 |
 | 进程 | scheduler 已有 task-scoped durable run lease/takeover、workflow、leader、background terminal、子任务 heartbeat/孤儿收口、workflow budget/recovery | workflow/general process 的跨进程 operation lease/takeover、统一 activity 原子聚合、24h daemon golden path。 |
 | 验证 | VerifyAfterEditOutcome；Some(Pass) 才算 edit delivery | 全任务或 release 成功。 |
-| provider | catalog、BYOK、role pin、Expert pool health skip、普通 turn 与全新 root scheduler preflight routing evidence | 可复核的 provider failover receipt、真实额度证明。 |
+| provider | catalog、BYOK、role pin、Expert pool health skip、ordinary reroute candidate、全新 root scheduler preflight routing evidence | sealed ProviderAttemptReceipt/no-replay fault matrix、可复核 failover receipt、真实额度证明。 |
 
 ### 1.4 状态词典
 
@@ -394,21 +439,28 @@ budget、blocked reason 和下一次可安全动作。它不能展示模型思�
 flowchart LR
   R0["R0 source + GitHub sync"] --> T1["NG-01 TaskTree"]
   T1 --> C2["NG-02 Capability Ceiling"]
+  T1 --> X4C["NG-04C ContextManifest"]
   C2 --> B3["NG-03 TreeBudget + lifecycle"]
   C2 --> L4["NG-04 WorkingLedger"]
-  R0 --> F5["NG-05 Provider health"]
+  L4 --> X4C
+  R0 --> F5["NG-05 Provider health + no-replay"]
   F5 --> A6["NG-06 Advisor shadow"]
   L4 --> A6
-  B3 --> A7["NG-07 bounded assignment"]
-  A6 --> A7
+  B3 --> G9A["NG-09A shadow-only offline golden path"]
+  L4 --> G9A
+  X4C --> G9A
+  A6 --> G9A
+  G9A --> A7["NG-07 bounded assignment"]
+  A7 --> G9B["NG-09B assignment golden-path extension"]
   B3 --> K8["NG-08 Kairos local"]
   L4 --> K8
-  A7 --> G9["NG-09 offline golden path"]
-  K8 --> G10["NG-10 release hardening"]
+  X4C --> K8
+  G9B --> G10["NG-10 release hardening"]
+  K8 --> G10
 ~~~
 
-允许并行：R0 只读审计、NG-01 DTO/UI inventory、NG-04 schema RFC、NG-05 mock transport matrix、Kairos fake-clock harness。
-绝不提前：没有 Tree/Ceiling/Budget 不开三层；没有 health/no-replay 不做自动 routing；没有 ledger scope 不共写记忆；没有 lease/crash proof 不称 24h；没有 R0 exact SHA/CI 不把本地当正式基础。
+允许并行：R0 只读审计、NG-01 DTO/UI inventory、NG-04 schema RFC、NG-04C ContextManifest RFC、NG-05 mock transport matrix、Kairos fake-clock harness。
+绝不提前：没有 Tree/Ceiling/Budget 不开三层；没有 accepted snapshot/manifest 不把压缩摘要当 child contract；没有 health/no-replay 不做自动 routing；没有 ledger scope 不共写记忆；没有 lease/crash proof 不称 24h；没有 R0 exact SHA/CI 不把本地当正式基础。
 
 ---
 
@@ -530,6 +582,24 @@ Stop：origin 再前进、CI 失败、冲突无可验证裁决。
 | Install | 隔离环境安装、version/hash/basic run | M5/M6/live/soak 已通过。 |
 
 R0 结束仅可称可消费 source baseline，不解除 M5/M6、soak、live eval 或当前失败 CI。
+
+### R0 source gate 与 NextGen contract gate 必须分开
+
+`R0_SOURCE_GATE=PASS` 只证明 canonical source 已完成 integration、exact-SHA CI、source lock、
+binary/SBOM/readiness 同源和 rollback 记录。它不证明任何【拟建】的 TaskTree read model、
+CapabilityGrant、ContextManifest、WorkingLedger replay、ProviderAttemptReceipt、lifecycle journal
+或 Kairos API 已实现、稳定或可供其他系统调用。
+
+每一个进入产品控制面的合同另有独立 `<CONTRACT>_GATE=PASS` receipt，至少必须包含：
+
+- exact canonical commit 与 rollback commit；
+- schema/API revision、compatibility 与 deprecation 声明；
+- manifest hash、positive/negative/fault 测试的 argv、raw exit 与真实计数；
+- 只要该合同进入 ACP/TUI seam，就必须有 rebuilt-binary hash 和离线产品证明；
+- 若触发 CI，则附 exact GitHub SHA、URL 与 conclusion；未跑明确写 `NOT RUN`。
+
+缺任一字段即为 `BLOCKED_CONTRACT`。R0 的绿不能替代 contract gate；contract gate 的绿也不能替代
+release、live/provider、24h soak 或人工 merge。
 
 ---
 
@@ -685,6 +755,75 @@ pub struct TreeBudgetV1 {
 **Exit：** root cancel 回收整树；reserve 在 success/fail/cancel/timeout 恰好 release 一次。
 **Rollback：** flag 拒绝新 child，所有 process 按 root scope 回收。
 
+### NG-03C：GovernedOperation、operation lease、outbox 与 reconciliation
+
+**状态：** Draft。scheduler 的 task-scoped durable lease、heartbeat、backoff/dead-letter 与
+occurrence journal 是可复用局部基础；workflow 在进程重启后转 terminal，正说明它不是通用可恢复
+operation。`SessionActivitySnapshot` 也只是 unload read model，不能代替 durable event journal。
+
+**目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
+root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以
+lease epoch、idempotency class、receipt 和 outbox 判定，不以 PID、stdout 或内存 registry 猜测。
+
+#### 【拟建】最小持久合同
+
+~~~rust
+pub struct GovernedOperationV1 {
+    pub operation_id: OperationId,
+    pub task_tree_id: TaskTreeId,
+    pub owner_node_id: TaskNodeId,
+    pub owner_session_id: SessionId,
+    pub operation_class: ReadOnly | ReversibleWrite | ExternalEffect,
+    pub idempotency_key: Option<IdempotencyKey>,
+    pub lease: OperationLeaseV1,
+    pub budget_reservation_id: ReservationId,
+    pub context_manifest_hash: Sha256,
+    pub state: OperationState,
+    pub last_event_sequence: u64,
+}
+
+pub struct OperationLeaseV1 {
+    pub lease_id: LeaseId,
+    pub epoch: u64,
+    pub holder: SupervisorId,
+    pub acquired_at: Timestamp,
+    pub expires_at: Timestamp,
+    pub heartbeat_at: Timestamp,
+}
+~~~
+
+`GovernedLifecycleEventV1`（第 3.3.1 节）是 append-only authority；OutboxRecord 必须和 state
+transition 原子写入。消费者按 event_id 幂等，不能因为重启再派发一次 effect。没有 idempotency receipt
+的 ExternalEffect、任何 emitted model output、tool/effect state Unknown 都进入 `Frozen`，只可由 root/user
+重新批准。
+
+#### 实施顺序
+
+1. 先在现有 scheduler occurrence journal 的 durable write/read/recovery pattern 上抽出 crate-local
+   operation store；不得直接让 Kairos 或 shell 各自存一套 JSON。
+2. 接入 read-only terminal/monitor/child lifecycle；只做 event record + projection，不开放自动 retry。
+3. 接入 root cancel：ancestor cancel 必须标记 descendant operation、撤销 lease、幂等 release budget，
+   再由 process adapter 收尾。
+4. 接入 crash recovery：同 epoch 只有一个 holder；foreign/expired lease 先 reconcile terminal receipt；
+   任何 sequence gap、unknown owner、missing manifest/budget/evidence 进入 RecoveryRequired/Frozen。
+5. 最后才使 NG-08 的 Kairos 以该 API claim/heartbeat/complete/fail/freeze/take_over；Kairos 不持有
+   shell/model/tool 的第二执行权。
+
+#### 必测反例
+
+- 两个 supervisor 同时 claim、旧 owner heartbeat、lease expired takeover、duplicate outbox consumer。
+- process exit/late terminal event 在 cancel/restart 后到达；不得复活 node、重复 release 或伪造 success。
+- crash 发生在 state 写入前后、outbox 写入前后、effect receipt 前后；每种状态唯一安全动作明确。
+- idempotent read 与 write 可重试的界限；model output/tool/external effect/unknown 永远不自动 replay。
+- orphan owner、foreign tree、budget/manifest mismatch、operator freeze 与 root close 都 fail-closed。
+
+**Gate：** `OPERATION_RECOVERY_GATE=PASS` 要有 fake clock、two-holder、crash point、outbox duplicate、
+late-event、cancel/release、Frozen negative matrix，以及 exact-binary start/stop/recover proof。它不等于
+24h soak。
+
+**停止条件：** 如果 operation 没有 durable owner/lease/manifest/budget/terminal receipt 中任一项，或
+无法判定外部 effect 是否发生，就不能自动 retry、takeover 或标 success。
+
 ## 12. NG-04：SharedWorkingLedger 与四层记忆
 
 **状态：** 核心 ledger 已实现：child 只能 Proposed、root 才能接受、foreign/torn/unproven-accepted
@@ -745,10 +884,130 @@ pub struct MemoryClaimV1 {
 **Exit：** journal replay/read model 一致；所有 conflict 显式；summary 仅引用 Accepted。
 **Rollback：** journal 保留，index 可删后重建。
 
+### NG-04C：ContextManifest 与压缩/恢复重建
+
+**状态：** Not started；这不是把现有 summary 改个名字。当前 child 已有 task-tree prompt，且可使用
+`CompactionMode::Summary`，但仓库尚无 `ContextManifest`、`immutable_assignment_hash` 或
+`accepted_snapshot_hash` 的实现。故现有压缩不能作为 child anti-drift contract 或 resume proof。
+
+**目标：** 每个将被模型消费的 root/child turn 都从一个不可变、可 hash、可重建的 manifest 生成
+受控输入；压缩、resume、retry、pager/ACP 都读同一 identity，而不是重用原始 chat、sibling scratch
+或自由文本摘要。它是 Context 平面的 admission gate，不是新的 memory store。
+
+**前置：** NG-01 的真实 lineage 和 NG-04 的 Accepted ledger snapshot。**非目标：** 保存模型思维链、
+向 child 暴露 root 全量 chat、自动写长期记忆、借 manifest 放宽 capability 或自动重放 provider。
+
+#### 先读的真实接缝
+
+| 路径 | 当前事实 | 本 phase 的职责 |
+|---|---|---|
+| `xai-grok-tools/.../task/types.rs`、`coordinator.rs` | lineage/root 与直接父节点已有可信来源 | manifest 只从 coordinator-provided lineage 构建，不信 caller 字段。 |
+| `xai-grok-memory/src/task_ledger.rs` | `accepted_facts()` 与 evidence-gated/root-only review 已存在 | 冻结 revision/hash 的 AcceptedSnapshot；不拷贝 Proposed/sibling scratch。 |
+| `xai-grok-shell/src/agent/subagent/handle_request.rs` | 当前 child contract、memory injection 与 `CompactionMode::Summary` 接线 | 在 spawn 处消费 manifest；删除所有临时拼接绕过。 |
+| `xai-grok-shell/src/session/summary.rs` 及实际 resume/compaction 调用链 | summary 是会话便利机制 | compact/resume 必须重新 render manifest，summary 只能是非权威辅助材料。 |
+
+#### 【拟建】版本化合同
+
+~~~rust
+pub struct ContextManifestV1 {
+    pub schema_version: u16,
+    pub task_tree_id: TaskTreeId,
+    pub node_id: TaskNodeId,
+    pub root_session_id: SessionId,
+    pub immediate_parent_id: Option<TaskNodeId>,
+    pub lineage_path: Vec<TaskNodeId>,
+    pub immutable_assignment_ref: ArtifactRef,
+    pub immutable_assignment_hash: Sha256,
+    pub user_objective_ref: ArtifactRef,
+    pub accepted_snapshot: AcceptedLedgerSnapshotRef, // tree/revision/end-hash
+    pub capability_grant_id: GrantId,
+    pub policy_revision: PolicyRevision,
+    pub budget_reservation_id: ReservationId,
+    pub deadline: Timestamp,
+    pub permitted_artifact_refs: Vec<ArtifactRef>,
+    pub model_selection_ref: Option<ModelSelectionReceipt>,
+    pub parent_compaction_ref: Option<ManifestHash>,
+    pub producer_version: String,
+    pub created_at: Timestamp,
+}
+~~~
+
+canonical serialization 的 SHA-256 是 `context_manifest_hash`。manifest **不包含** secret、raw
+PermissionHandle、bypass/yolo、未接受 ledger、sibling chat、任意裸路径、模型隐含 prompt、或可执行
+自由文本指令。它只携带 immutable assignment 的引用；显示或注入前仍受 capability/path redaction policy
+处理。
+
+#### 实施顺序
+
+1. 在 task/coordinator 与 ledger 提供只读 `build_context_manifest_v1(...)` 输入；先做纯 DTO、canonical
+   serializer、schema version、hash 与 foreign-tree validation，不修改 prompt。
+2. 将 immutable assignment 与 Accepted snapshot 生成为 root-owned artifact；新 child 的
+   `PromptAccepted` 必须先验证 manifest、grant、budget reservation 和 snapshot hash。缺任一项返回
+   `Blocked(ContextUnavailable|ContextMismatch)`，不 best effort spawn。
+3. 以 manifest renderer 替代 child prompt 的身份/能力/accepted-fact 临时拼接；renderer 只产生
+   assignment、accepted facts、evidence schema、budget/deadline 与 blocking rules。
+4. 在 compact、resume、reconnect 三条路径重读 immutable assignment + frozen snapshot 生成相同 hash；
+   summary 可加入说明，但不影响授权或 acceptance。
+5. 让 child proposal、tool receipt、verify outcome、terminal receipt 和 pager/ACP status 都回链
+   `context_manifest_hash`；UI 只能展示 hash/phase/age，不展示隐私内容。
+6. 旧 session 迁移为 `LegacyNoManifest`：只能继续人工 read/close；不得自动 spawn、自动 reroute、
+   自动 promotion 或进入 Kairos。需要 root 明确 re-admit 才生成 V1 manifest。
+
+#### 必测正例与反例
+
+- root → Code → Review → Evidence leaf 得到不同 node/path/grant 的 manifest；leaf 不能 spawn。
+- 同一 immutable assignment + 同一 Accepted revision 在 spawn/compact/resume 后 hash 相同；新 Accepted
+  fact 不会悄悄改变已运行 child 的 snapshot。
+- child 只能看自身 assignment 和 Accepted snapshot；foreign tree、sibling Proposed、raw root chat、
+  secret/path outside scope 均不可见。
+- forged parent/depth/grant/budget/assignment hash、tampered artifact、stale revision、sequence gap、
+  corrupt canonical JSON、unknown schema 都 fail-closed。
+- cancel 或 grant revoke 后 manifest 不可用于新的 tool dispatch；late completion 只能 reconcile，
+  不能把旧 manifest 的 child 复活。
+
+**命令骨架（测试落位后必须以真实计数替换）：**
+
+~~~zsh
+cd /Users/lei/code/lumen/agent
+cargo test -p xai-grok-tools context_manifest_v1_ --lib
+cargo test -p xai-grok-memory accepted_snapshot_ --lib
+cargo test -p xai-grok-shell context_manifest_ --lib
+cargo test -p xai-grok-shell subagent_compact_resume_manifest_ --lib
+cargo check -p xai-grok-shell
+~~~
+
+`filter=0`、无 rebuilt-binary proof 或未保存 raw exit 都不能通过。
+
+**Gate：** `CONTEXT_MANIFEST_GATE=PASS` 需 exact source、schema revision、manifest fixture hashes、
+正/负/compact-resume test counts、actor/product proof（若 ACP 已接线）和 rollback SHA。
+
+**停止条件：** 若为兼容旧 summary 而让 hash mismatch/unknown schema/foreign snapshot 继续执行，或为
+“上下文更完整”而把 raw chat/secret/sibling scratch 塞回 child，则立即停止并回退 consumer。
+
 ## 13. NG-05：ProviderHealth 与 no-replay failover
 
-**状态：** Implementing；已完成 Expert 新任务的受限候选选择，普通 turn/background task 的自动重试仍是 NOT RUN。
+**状态：** Implementing。Expert 新任务的受限候选选择已落地。源码还存在 ordinary root turn 的
+`maybe_reroute_ordinary_turn_after_failure` → `RerouteAndResubmit` 路径；配置默认关闭不能替代
+安全证明。该路径目前没有 actor-owned `ProviderAttemptReceiptV1` 或全 event-order fault matrix，
+因此只能称为 feature-gated candidate，绝不能称为已验证的 no-replay capability，也不得扩展到 child、
+workflow、scheduler、Kairos 或 release。后台自动重试仍是 NOT RUN。
 **非目标：** cheapest/fastest router、默认跨 provider、绕 user pin、在已输出或有工具副作用后重放。
+
+### P0-NR：ordinary reroute 与 no-replay receipt 收口
+
+**这是当前计划与源码发现不一致后的最高优先级修正。** 在 receipt gate 通过前，只允许两条路径之一：
+
+1. 将 ordinary reroute consumer 明确保持关闭，并用测试证明 disabled 时没有 reroute；或
+2. 先完整实现本节 13.2 的 actor-owned observation、sealed receipt 与 fault matrix，再有限开放。
+
+不得以注释、控制流推断或“理论上发生在 zero output”替代 observation。发现已发任何 token、thought、
+tool delta、backend tool call、dispatch、shell/network/write effect，或事件顺序/通道未知时，一律视为
+partial failure：保留原错误和 receipt，不换模型、不重新提交。
+
+`NO_REPLAY_GATE=PASS` 的最低收据为：exact SHA、config enablement proof、attempt/receipt schema、
+first-token/tool/effect/unknown/closed-channel/duplicate-failure 的 mock fault counts、UI/provenance
+显示的 actual from/to/reason，以及 rollback SHA。没有它，所有 normal-turn routing 状态写
+`BLOCKED_CONTRACT`。
 
 ### 13.1 已落地的 P4a：用户模型池与额度耗尽处理
 
@@ -783,6 +1042,29 @@ pub struct MemoryClaimV1 {
 ~~~
 
 这把 Flash 放在执行默认位、Grok 放在 review/research 默认位、Pro 留作池内可选深度候选；用户可随时重排 priority。Lumen 不根据“谁更聪明”的主观断言越过你的 pool。
+
+#### Lumen 2 最终的用户可控模型策略
+
+此处定义产品语义，现有 Expert P4a 只实现其中的受限新任务子集。优先级从高到低固定为：
+
+1. 一次明确的 `/model` 或 UI pin；
+2. 当前 session 的 explicit pool/priority；
+3. 用户持久化 profile 的 pool/priority；
+4. `priority=auto` 的任务策略；
+5. profile 内原始顺序；绝不使用 pool 外的静默默认。
+
+`priority=list` 是严格用户顺序；`priority=auto` 也只能在用户 allowlist 内推荐：机械实现、快速
+迭代默认偏向 `deepseek-v4-flash`，独立 code review/research 默认偏向 `grok-4.5`，高复杂度设计、
+跨模块推理或用户明确要求的深度分析才可偏向 `deepseek-v4-pro`。任务分类置信度不足时按用户原始
+顺序，不假装知道“最聪明”。root pin、BYOK、endpoint/privacy policy、context/tool compatibility、
+failure-domain independence、budget 与 capability 永远先于任务偏好。
+
+额度或可辨识 quota exhausted 只影响**下一项尚未开始的新任务**的候选选择；本次 attempt 绝不重放。
+401/403/普通 400、usage 缺失、未知 event state 都不能伪装成 quota。pool 全部不可用时 fail-closed
+并显示可操作原因；不会换到未选择模型、不会把未知 usage 记为零成本。
+
+任何 child、workflow 或 Kairos 的模型分配，在 NG-07 前只可继承 root 明确 pin/assignment，不能自行
+调用 `auto`；NG-07 后仍必须满足 no-output/no-effect、root approval、receipt 和 budget reservation。
 
 ### 13.2 P4b：普通 turn 与后台任务的唯一允许路线
 
@@ -858,7 +1140,7 @@ Rollback：关闭 consumer，不删除 advice log。
 
 ## 15. NG-07：recommend 与 bounded assignment
 
-**状态：** Not started；前置 NG-01 至 NG-06。
+**状态：** Not started；前置 NG-01 至 NG-06 与 `NG-09A`。
 仅当 new child/new turn、no output、no user pin、allowlisted/compatible、health 可用、budget reserve 成功、privacy 允许、capability 不变、root approval record 完整时可 Applied。
 
 禁止：SetDefaultModel、替换 stream、静默 cross-provider、无限 spend、Advisor PASS→completion、advice text→tool call。
@@ -870,6 +1152,12 @@ Rollback：关闭 auto apply，历史 advice 不改写。
 
 **状态：** scheduler 层已实现 lease heartbeat、foreign lease proof、terminal receipt、backoff/dead-letter；统一 KairosSupervisor 状态机、operator freeze surface、exact-binary 24h/local proof 仍为 Draft。Advisor 不是前置。
 **目标：** SessionActor 之下的长期运行治理，不是新 Agent 或 shell daemon。
+
+| 层 | 当前真实状态 | 不能宣称 |
+|---|---|---|
+| SchedulerRunLease | task-scoped lease/heartbeat/takeover/terminal receipt 已有局部源码基础 | general process/workflow/tree recovery。 |
+| KairosSupervisor | Draft；只能建立在 NG-03C operation API 上 | 已是第二执行 actor 或无人值守 daemon。 |
+| 24h autonomous mode | NOT RUN | 一次 scheduler 或短测通过即可 24h。 |
 
 | 路径 | 事实 |
 |---|---|
@@ -898,13 +1186,16 @@ Draft → AwaitingScheduleApproval → Scheduled → Leased → Starting
 | promotion/completion | rehash ledger/evidence/verify 后决定。 |
 
 验证：fake clock、lease race、two supervisor、dispatch crash、duplicate outbox、expired approval、root cancel、no replay、exact binary start/ready/crash/reconcile/stop。
-Exit：local no-side-effect fixture 完成矩阵；仍不称 24h autonomous。
+Exit：`KAIROS_LOCAL_GATE=PASS`，即 local no-side-effect fixture 完成矩阵、operator freeze/unfreeze、
+start/ready/crash/reconcile/stop exact-binary proof、raw exits 和 rollback receipt 齐全；仍不称 24h autonomous。
 Stop：外部副作用无 idempotency receipt 时永远 Frozen。
 
-## 17. NG-09：三层 offline golden path
+## 17. NG-09A：三层 shadow-only offline golden path
 
-**状态：** Not started；前置所有适用 NG gate。
-**目标：** 用零 provider、零外部副作用的 rebuilt binary 证明边界一起工作。
+**状态：** Not started；前置 NG-01、NG-02、NG-03、NG-04、NG-04C、NG-05、NG-06；**刻意不等待
+NG-07**。先证明没有自动模型分配时的树、权限、记忆、上下文、预算与 evidence 边界，再让系统获得
+任何 Applied assignment 权力。
+**目标：** 用零 provider、零外部副作用的 rebuilt binary 证明 shadow-only 边界一起工作。
 
 ~~~text
 root creates immutable contract and fixture workspace
@@ -919,12 +1210,30 @@ root creates immutable contract and fixture workspace
 ~~~
 
 必须证明：lineage/fanout；grant TTL/unknown MCP denial；reserve/cancel/late completion；
-proposal-only/evidence requirement；conflict no-auto-merge；Advisor non-authority；artifact tamper、
-stale snapshot、owner/session/workspace mismatch；crash read-model rebuild；UI/ACP 与 coordinator/ledger 一致。
+proposal-only/evidence requirement；conflict no-auto-merge；Advisor non-authority；ContextManifest artifact tamper、
+stale accepted snapshot、owner/session/workspace mismatch；crash read-model rebuild；UI/ACP 与 coordinator/ledger 一致。
 
-非目标：真实 provider、auto commit、跨机 restore、daemon soak。
-Exit：newly rebuilt exact-source binary 真跨 ACP/TUI seam。
-Stop：需要 live key/network/bypass 才能证明，说明 fixture 错误。
+非目标：真实 provider、Applied advice、ordinary reroute、auto commit、跨机 restore、daemon soak。
+Exit：newly rebuilt exact-source binary 真跨 ACP/TUI seam；Advice 只能 `Shadow`，所有 model assignment
+均由 fixture/root pin 固定。
+Stop：需要 live key/network/bypass、未验证的 reroute 或 Applied advice 才能证明，说明 fixture/边界错误。
+
+### NG-09B：bounded-assignment golden-path extension
+
+**状态：** Not started；前置 `NG-09A` 与 `NG-07`。本 phase 不重测整套 Harness，而是唯一一次有根批准的
+新 child/new turn assignment 扩展；依然零 provider、零外部副作用。
+
+必须同时证明每一条 `Applied` model advice 都有：root approval record、allowlist/privacy/compatibility
+检查、sealed `ProviderAttemptReceipt`（NoOutput/NoToolCall/None）、`TreeBudget` reservation、
+`ContextManifest` hash、实际执行 model receipt 和 ledger decision。一个字段缺失即不 Applied。
+
+反例：user pin、private endpoint、breaker open、quota/pool exhausted、budget exhausted、schema mismatch、
+stale advice、already emitted output、thought/tool delta、backend tool、dispatch/effect、unknown observation。
+每一例都必须保持原模型/原错误或 Blocked，不能重放。
+
+Exit：exact binary 显示 advice → root approval → receipt → actual assignment 的完整因果链；不同 failure
+domain、usage unavailable 和 cancel/late event 不改变 no-replay 语义。
+Stop：任何 advice 能绕过 user pin/root approval，或尝试替换正在输出的 stream，立即关闭 consumer。
 
 ---
 
@@ -942,21 +1251,45 @@ Stop：需要 live key/network/bypass 才能证明，说明 fixture 错误。
 | NG-01 | TaskTree | R0 | Codex |
 | NG-02 | Capability Ceiling | NG-01 | Codex |
 | NG-03 | activity/budget/process | NG-01/02 | Codex |
+| NG-03C | operation lease/event/outbox/reconcile | NG-03 | Codex |
 | NG-04 | WorkingLedger | NG-01/02 | Codex |
+| NG-04C | ContextManifest/compact-resume rebuild | NG-01/04 | Codex |
 | NG-05 | health/no replay | R0 | Codex |
-| NG-06/07 | Advisor shadow/apply | NG-04/05 and all prior | Codex |
+| NG-06 | Advisor shadow | NG-04/04C/05 | Codex |
+| NG-09A | shadow-only offline golden path | NG-01..06, no NG-07 | Codex + independent reviewer |
+| NG-07 | bounded assignment | NG-09A | Codex |
+| NG-09B | bounded-assignment golden extension | NG-07/09A | Codex + independent reviewer |
 | NG-08 | Kairos local | NG-01..04 | Codex |
-| NG-09 | offline golden path | applicable gates | Codex + independent reviewer |
 
-## 19. Codex、DeepSeek Flash、Grok 4.5
+## 19. Codex、DeepSeek Flash、Grok 4.5、DeepSeek Pro 的工程协作边界
 
 | 角色 | 可以做 | 永不独立决定 |
 |---|---|---|
 | Codex | RFC、authority/permission/recovery、核心 Rust、integration、独立验收、built binary、CI/release truth | 未授权 merge/push/tag/billable provider。 |
-| DeepSeek Flash 0731 | rg inventory、文档链接、serde fixture、approved state table 测试目录、差异表 | authority/grant、source pin、routing、最终验收。 |
-| Grok 4.5 | mock/fake-clock、property/negative、DTO/read-only tests、独立 review | SessionActor、permission、release、provider/live、merge。 |
+| DeepSeek V4 Flash | rg inventory、文档链接、serde fixture、approved state-table 测试骨架、差异表、机械性目录核对 | authority/grant、source pin、routing、最终验收。 |
+| Grok 4.5 | mock/fake-clock、property/negative、DTO/read-only tests、独立 review、fault-matrix 扩展 | SessionActor、permission、release、provider/live、merge。 |
+| DeepSeek V4 Pro | 限定路径的设计反例、schema/recovery review、测试失败归因、与 Flash 结果的独立交叉审阅 | authority owner、capability/permission、source pin、自动 routing、最终 ACCEPT。 |
 
 辅助任务必须有 Allowed paths，且不与其他写任务重叠。coordinator/schema/permission/source-lock 只能单 writer。
+
+### 辅助模型交付卡（防止机械任务污染核心）
+
+每次交给 Flash、Grok 或 Pro 的工作卡必须固定写出：
+
+~~~text
+exact input SHA / task ID / goal / non-goals
+allowed paths / forbidden paths / no-overlap owner
+existing source anchors and tests to read
+proposed files and schema compatibility
+positive + negative cases / exact commands
+raw exit + counts + diff hash required
+STOP on unexpected dirty path, API invention, provider call, or failing baseline
+no merge / no tag / no source-pin change / no final acceptance
+~~~
+
+Codex 必须独立复读 diff、重跑真实命令并按 `ACCEPT` / `REJECT` 记录，而不是采纳模型总结。任何
+authority、permission、coordinator、manifest schema、source-lock、ordinary reroute 或 release 路径只允许
+一个 writer；并行仅适用于只读 inventory、fixture、mock、独立 review 或无重叠的 test 模块。
 
 ## 20. 八层验收和 evidence packet
 
@@ -988,8 +1321,10 @@ NOT RUN / BLOCKED / manual gates / known risks / generated_at
 - max_depth=3 被说成完整三级产品；
 - Advisor 被当作 child 幻觉解决方案，或 Advisor PASS→success；
 - child 继承 bypass/yolo/PermissionHandle，或 child 写 Accepted；
+- summary、raw root chat、sibling Proposed 或 secret 被伪装成 ContextManifest/Accepted snapshot；
 - unknown MCP 因无 ToolKind 自动保留；
 - emitted stream 后 fallback/replay；
+- ordinary reroute 的注释/默认关闭被当作 sealed no-replay receipt；
 - usage 缺失却记成本为零；
 - PID/scheduler/短测试被称为 24h daemon；
 - source lock 覆盖 dirty tree 被称为 release source；
@@ -1010,24 +1345,26 @@ NOT RUN / BLOCKED / manual gates / known risks / generated_at
 3. child capability 单调收缩，unknown MCP deny，bypass root-only/TTL/revocable；
 4. 并行/process/budget 由 root actor 原子治理，usage unknown 如实展示；
 5. SessionMemory、scratchpad、WorkingLedger、LongTermMemory 分离；
-6. child proposal 只有 evidence/verification/root acceptance 后才为事实；
-7. Expert 是第二意见；Advisor 受 pin/privacy/health/budget/independence 限制；
-8. provider 无输出才 visible fallback，绝不重放；
-9. Kairos 经 lease/crash/idempotency/takeover/no-replay 演练；
-10. Source/Unit/Actor/Product/CI/Package/Live/Release 证据分别完整，NOT RUN/BLOCKED 不隐藏。
+6. 每次 spawn/compact/resume 都由不可变 ContextManifest + Accepted snapshot 重建，mismatch fail-closed；
+7. child proposal 只有 evidence/verification/root acceptance 后才为事实；
+8. Expert 是第二意见；Advisor 受 pin/privacy/health/budget/independence 限制；
+9. provider 仅在 sealed NoOutput/NoToolCall/NoEffect receipt 下 visible fallback，绝不重放；
+10. Kairos 经 lease/crash/idempotency/takeover/no-replay 演练，external effect 缺 receipt 永远 Frozen；
+11. Source/Unit/Actor/Product/CI/Package/Live/Release 证据分别完整，NOT RUN/BLOCKED 不隐藏。
 
 ### 最短开工序列
 
-1. R0-00：path-level manifest，不动 runtime；
-2. R0-01：复验 source/diff/test，失败即修或 BLOCKED；
-3. R0-02 至 R0-04：clean candidate、GitHub integration、exact CI/source/binary/evidence；
-4. NG-01 真 lineage；不开放三层；
-5. NG-02 封 bypass/MCP/permission inheritance；
-6. NG-03 activity/budget/process；
-7. NG-04 ledger；
-8. NG-05 no-replay health；
-9. NG-06 shadow，NG-07 bounded assignment；
-10. NG-08 local Kairos，NG-09 exact-binary offline golden path；
-11. 全部通过后才进入 release candidate、long soak 和人工门。
+1. R0-00/01：对 `637b5825` 重新做 path manifest、remote refresh、分组验证；只读审计先行，不能拿旧 lock/readiness 当绿。
+2. P0-NR：先收口 existing ordinary reroute。证明 disabled，或实现 sealed `ProviderAttemptReceiptV1` + fault matrix；未过不做任何扩展。
+3. R0-02 至 R0-05：在 P0-NR 合入候选后形成 clean candidate、exact CI/source/binary/SBOM/readiness、人工 merge；它使当前 164-ahead 基线可消费，但不是 release。
+4. NG-01：以已同步的 lineage 底座补 tree read model、resume/orphan/late-event 故障注入；不把已有字段重写成另一套设计。
+5. NG-02：将已有 depth/tool ceiling 升级为 grant/TTL/revoke/policy receipt 与 unknown-MCP deny。
+6. NG-03B/03C：先 atomic budget reservation/settlement，再 operation lease/event/outbox/reconcile；不先开 24h daemon。
+7. NG-04：把已落地 ledger 升级为 claim/read-model/recovery gate；保持 root-only evidence promotion。
+8. NG-04C：接入 ContextManifest，令 spawn/compact/resume 全部从 immutable assignment + Accepted snapshot rebuild。
+9. NG-05/06：完成 provider health/no-replay receipt 与 Advisor shadow corpus；Advisor 仍无 acceptance/execution 权。
+10. NG-09A：先用 exact binary 跑三层 shadow-only golden path，独立验收安全边界。
+11. NG-07 → NG-09B：仅在 NG-09A 后，做 root-approved bounded assignment 及其 golden extension。
+12. NG-08：以 operation API 做 Kairos local crash/reconcile/freeze proof；随后才评估 long soak 与 24h autonomy。每个新源码 candidate 都重走 source/evidence/CI gate；全部通过后才讨论 RC/tag/release。
 
 这是可验证、可停止、可回退的路线。任何没有 source、命令、负例和证据的愿景，不获得执行或完成权。
