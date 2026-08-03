@@ -10,13 +10,13 @@ For the generation date, see the last ledger commit in `git log`.
 
 | Question | Answer |
 |---|---|
-| Version (root VERSION) | **2.0.0-alpha.1** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=16 |
+| Version (root VERSION) | **2.0.0-rc.1** |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=1 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 48efa30a Merge pull request #134 from exergyleizhou-ux/sync/absorb-upstream-20260731 |
+| Last non-bot commit | 1d8a4a73 chore(release): evidence for v2.0.0-rc.1 |
 
 ---
 
