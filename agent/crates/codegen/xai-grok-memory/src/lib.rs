@@ -31,6 +31,8 @@ pub mod bounded_assignment_apply;
 pub mod client_advisor_shadow;
 pub mod client_advisor_consult;
 pub mod kairos_supervisor;
+pub mod kairos_lease_consumer;
+pub mod operator_control;
 pub mod nextgen_contract_gates;
 pub mod sealed_attempt_receipt;
 pub mod authority_event;
@@ -87,6 +89,13 @@ pub use client_advisor_consult::{
 pub use kairos_supervisor::{
     KairosCommand, KairosDeny, KairosSupervisorState, apply_kairos_command,
     note_external_effect_unknown,
+};
+pub use kairos_lease_consumer::{
+    ConsumerOperation, ConsumerPolicy, ConsumerStep, lease_is_expired, outbox_should_deliver,
+};
+pub use operator_control::{
+    OperatorCommand, OperatorDeny, OperatorReceipt, OperationView, ResumeApproval,
+    apply_operator_command, issue_resume_approval,
 };
 pub use nextgen_contract_gates::{GateResult, NextGenContractGateReceipt, run_offline_contract_gates};
 pub use sealed_attempt_receipt::{
