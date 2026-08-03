@@ -10,6 +10,7 @@ use futures::StreamExt;
 use indicatif::{ProgressBar, ProgressStyle};
 use tokio::io::AsyncWriteExt;
 
+use crate::release_gate::require_lumen_update_authority;
 use crate::version::{
     UpdateConfig, fetch_latest_version, get_installed_grok_version, get_latest_version,
     is_version_cache_fresh, try_fetch_stable_pointer, write_version_cache,
@@ -113,6 +114,20 @@ pub async fn check_update_status(update_config: &UpdateConfig) -> UpdateStatus {
     let current_config = config::load_config().await;
     let auto_update = current_config.cli.auto_update;
     let channel = update_config.channel.clone();
+
+    // NG-10A fail-closed: before RC / without a valid ReleaseSourceTupleV1
+    // the Lumen product must not advertise or accept updates.
+    if let Err(reason) = require_lumen_update_authority() {
+        return UpdateStatus {
+            current_version,
+            latest_version: None,
+            update_available: false,
+            installer,
+            channel,
+            auto_update,
+            error: Some(format!("release gate: {}", reason.message())),
+        };
+    }
 
     let Some(ref inst) = installer else {
         return UpdateStatus {
@@ -237,6 +252,10 @@ async fn fetch_update_plan(
 /// on the installer (via `installer_allows_downgrade`) so npm is never
 /// downgraded — the decision depends on the installer, never the caller.
 pub async fn auto_update_target(update_config: &UpdateConfig) -> Option<(&'static str, String)> {
+    // NG-10A fail-closed: no update target before RC / without a tuple.
+    if require_lumen_update_authority().is_err() {
+        return None;
+    }
     let installer = get_installer().await?;
     let current = get_installed_grok_version();
     let policy = config::VersionPolicy::resolve();
@@ -289,6 +308,11 @@ pub async fn ensure_latest_on_disk(update_config: &UpdateConfig) -> Result<Ensur
         installed: None,
         relaunch_needed: false,
     };
+    // NG-10A fail-closed: the leader auto-update pass must not converge to
+    // anything before RC / without a valid release tuple.
+    if require_lumen_update_authority().is_err() {
+        return Ok(outcome);
+    }
     let Some(installer) = get_installer().await else {
         return Ok(outcome);
     };
@@ -462,6 +486,10 @@ impl BackgroundUpdateCheck {
 /// TUI, the leader's hourly checker) already put the target version on disk,
 /// no download is started — only the restart hint is surfaced.
 pub async fn check_update_background(update_config: &UpdateConfig) -> BackgroundUpdateCheck {
+    // NG-10A fail-closed: no background update before RC / without a tuple.
+    if require_lumen_update_authority().is_err() {
+        return BackgroundUpdateCheck::none();
+    }
     let Some(installer) = get_installer().await else {
         return BackgroundUpdateCheck::none();
     };
@@ -549,6 +577,12 @@ pub async fn run_update_if_available(
     interactive: bool,
     update_config: &UpdateConfig,
 ) -> Result<bool> {
+    // NG-10A fail-closed: pre-RC Lumen never auto-updates, so it must not
+    // even probe the channel pointers.
+    if let Err(reason) = require_lumen_update_authority() {
+        tracing::warn!(reason = %reason, "auto-update refused by the release gate");
+        return Ok(false);
+    }
     let Some(inst) = get_installer().await else {
         // Skip update check if no known installer.
         return Ok(false);
@@ -2369,6 +2403,12 @@ pub async fn run_update(
     channel_switch: Option<&str>,
     update_config: &mut UpdateConfig,
 ) -> Result<Option<String>> {
+    // NG-10A fail-closed: an explicit update before RC / without a valid
+    // ReleaseSourceTupleV1 must refuse loudly instead of installing an
+    // unproven artifact.
+    if let Err(reason) = require_lumen_update_authority() {
+        anyhow::bail!("release gate: {}", reason.message());
+    }
     apply_channel_switch(channel_switch, update_config).await;
     let installer = match get_installer().await {
         Some(i) => i,
