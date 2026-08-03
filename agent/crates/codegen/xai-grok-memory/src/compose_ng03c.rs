@@ -1,23 +1,29 @@
-//! NG-03C-4 — compose integration of the three durable pieces that must
-//! agree before coordinator wiring:
+//! NG-03C-4 — compose integration of the durable pieces that must agree
+//! before coordinator wiring:
 //!
 //! 1. [`BudgetLedger`](xai_grok_tools::implementations::grok_build::task::budget::BudgetLedger)
 //!    — atomic check-and-reserve structural + token ceilings
-//! 2. [`GovernedOperationStore`] — durable operation identity, lease, cancel
+//! 2. [`GovernedOperationStore`] — durable operation identity, lease, cancel,
+//!    and outbox records in the same atomic snapshot
 //! 3. [`LifecycleJournal`] — append-only authority events (K2 read model)
+//! 4. [`project_authority_trail`] — coordinator `TreeAuthorityLog` → journal
+//!    schema bridge (no tools→memory crate cycle)
 //!
 //! Plus [`crash_action_for`] for the recovery decision that must never invent
 //! a replay after output/effect uncertainty (P0-NR-A / K4).
 //!
 //! This is intentionally *not* a coordinator rewrite: the live coordinator
 //! already enforces structural ceilings. The contract proven here is the
-//! composition order and fail-closed edges those three stores must share
-//! when they are eventually stitched onto spawn/complete paths.
+//! composition order and fail-closed edges those stores must share when
+//! stitched onto spawn/complete paths.
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
+    use crate::authority_projection::{
+        project_authority_trail, AuthorityProjectionContext, AuthorityProjectionError,
+    };
     use crate::effect_recovery::{
         crash_action_for, CrashSafeAction, EffectRecoveryClass, ExternalEffectObservation,
         OutputObservation,
@@ -26,6 +32,9 @@ mod tests {
     use crate::lifecycle_journal::{
         DerivedOperationState, GovernedLifecycleEventKind, GovernedLifecycleEventSource,
         GovernedLifecycleEventV1, JournalError, LifecycleJournal,
+    };
+    use xai_grok_tools::implementations::grok_build::task::authority_log::{
+        AuthorityEventKind, TreeAuthorityLog,
     };
     use xai_grok_tools::implementations::grok_build::task::budget::{
         BudgetDenial, BudgetLedger, ReleaseOutcome, TreeBudgetV1, UsageSettlement,
@@ -379,6 +388,133 @@ mod tests {
             .reserve_spawn("parent-2", Some(ROOT), 1, false, 10, 0)
             .unwrap();
         assert_eq!(budget.release(again), ReleaseOutcome::Released);
+    }
+
+    /// Coordinator authority log + op store outbox + lifecycle projection
+    /// share one compose path: reserve/claim/complete enqueue outbox, and
+    /// the slim authority trail projects into NG-00 journal kinds.
+    #[test]
+    fn authority_log_outbox_and_lifecycle_projection_compose() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut budget = tight_ledger();
+        let ops = GovernedOperationStore::with_path(TREE, temp.path().join("ops-auth.json"));
+        let mut authority = TreeAuthorityLog::at_path(temp.path().join("authority.jsonl"));
+        let mut journal = LifecycleJournal::at_path(TREE, temp.path().join("lifecycle.jsonl"));
+
+        let res = budget
+            .reserve_spawn(CHILD, Some(ROOT), 1, false, 40, 1)
+            .unwrap();
+        let res_key = format!("ledger:{}", res.0);
+
+        authority
+            .append(CHILD, "op-auth", AuthorityEventKind::SpawnReserved, Some(res_key.clone()))
+            .unwrap();
+        let created = ops
+            .create(
+                "op-auth",
+                CHILD,
+                "spawn_child",
+                "idem-auth",
+                Some(res_key.clone()),
+                None,
+                60,
+            )
+            .unwrap();
+        assert!(
+            ops.list_outbox()
+                .iter()
+                .any(|r| r.transition == "created" && r.operation_id == "op-auth"),
+            "create must enqueue outbox atomically"
+        );
+
+        authority
+            .append(CHILD, "op-auth", AuthorityEventKind::SpawnClaimed, Some(res_key.clone()))
+            .unwrap();
+        let claimed = ops.claim("op-auth", CHILD, "lease-auth", 60).unwrap();
+        assert_eq!(claimed.state, GovernedOperationState::Claimed);
+
+        let done = ops
+            .complete("op-auth", CHILD, "lease-auth", "receipt://auth-ok")
+            .unwrap();
+        authority
+            .append(CHILD, "op-auth", AuthorityEventKind::TerminalSucceeded, None)
+            .unwrap();
+        assert!(done.budget_released);
+        let completed_outbox = ops
+            .list_outbox()
+            .into_iter()
+            .find(|r| r.transition == "completed")
+            .expect("complete must enqueue outbox");
+        assert_eq!(
+            completed_outbox.payload_ref.as_deref(),
+            Some("receipt://auth-ok")
+        );
+        assert_eq!(
+            completed_outbox.delivery,
+            xai_grok_tools::implementations::grok_build::task::OutboxDeliveryState::Undelivered
+        );
+
+        let ctx = AuthorityProjectionContext {
+            task_tree_id: TREE.into(),
+            owner_session_id: ROOT.into(),
+            policy_revision: 1,
+        };
+        let written =
+            project_authority_trail(&mut journal, &ctx, authority.events(), 1_700_000_000)
+                .unwrap();
+        assert_eq!(written, 3);
+        assert_eq!(
+            journal.events()[0].kind,
+            GovernedLifecycleEventKind::Ready
+        );
+        assert_eq!(
+            journal.events()[1].kind,
+            GovernedLifecycleEventKind::Running
+        );
+        assert_eq!(
+            journal.events()[2].kind,
+            GovernedLifecycleEventKind::TerminalSucceeded
+        );
+        assert!(journal.derived_state().terminal);
+
+        // Disk: ops snapshot carries outbox; authority + lifecycle reload.
+        drop(journal);
+        drop(authority);
+        let reopened = GovernedOperationStore::with_path(TREE, temp.path().join("ops-auth.json"));
+        assert_eq!(
+            reopened.get("op-auth").unwrap().state,
+            GovernedOperationState::Completed
+        );
+        assert!(
+            reopened
+                .list_outbox()
+                .iter()
+                .any(|r| r.transition == "completed")
+        );
+        let reloaded_auth = TreeAuthorityLog::at_path(temp.path().join("authority.jsonl"));
+        assert!(reloaded_auth.is_operation_terminal("op-auth"));
+        let reloaded_life = LifecycleJournal::at_path(TREE, temp.path().join("lifecycle.jsonl"));
+        assert!(reloaded_life.derived_state().terminal);
+
+        // Budget settle after projection still exactly-once.
+        assert_eq!(
+            budget.settle_usage(res, Some(40), Some(1)),
+            UsageSettlement::Applied
+        );
+        assert_eq!(budget.release(res), ReleaseOutcome::AlreadyReleased);
+
+        // Projecting again after terminal fails closed.
+        let mut journal2 = LifecycleJournal::at_path(TREE, temp.path().join("lifecycle.jsonl"));
+        assert!(matches!(
+            project_authority_trail(
+                &mut journal2,
+                &ctx,
+                reloaded_auth.events(),
+                1_700_000_500
+            ),
+            Err(AuthorityProjectionError::Journal(_))
+        ));
+        let _ = created;
     }
 
     /// P0-NR-A / K4: crash recovery is derived, never a free replay.

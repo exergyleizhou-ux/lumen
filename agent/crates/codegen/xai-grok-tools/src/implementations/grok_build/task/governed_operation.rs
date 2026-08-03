@@ -34,6 +34,36 @@ pub enum OutboxDeliveryState {
     Uncertain,
 }
 
+/// Snapshot schema for the durable operation store. v1 was a bare
+/// `Vec<GovernedOperation>`; v2 wraps ops + outbox so state transition and
+/// outbox enqueue share one atomic rename.
+pub const OPS_SNAPSHOT_SCHEMA_VERSION: u16 = 2;
+
+/// One outbox record: an authority transition that must be delivered (or
+/// explicitly marked uncertain) exactly once. Appended in the same atomic
+/// persist as the operation state change that produced it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OutboxRecordV1 {
+    pub outbox_id: String,
+    pub operation_id: String,
+    pub root_tree_id: String,
+    pub event_sequence: u64,
+    /// Stable transition token: `created`, `claimed`, `running`,
+    /// `completed`, `failed`, `frozen`, `cancelled`, `outbox_delivered`,
+    /// `outbox_uncertain`.
+    pub transition: String,
+    pub delivery: OutboxDeliveryState,
+    pub payload_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OperationStoreSnapshot {
+    schema_version: u16,
+    ops: Vec<GovernedOperation>,
+    #[serde(default)]
+    outbox: Vec<OutboxRecordV1>,
+}
+
 /// External side-effect observation (never invent success without receipt).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -118,6 +148,8 @@ struct OperationStoreInner {
     /// Reservation ids that have already been released exactly once.
     released_reservations: BTreeMap<String, String>,
     event_seq: u64,
+    /// Append-only outbox trail; delivery flags update in place by outbox_id.
+    outbox: Vec<OutboxRecordV1>,
 }
 
 /// In-process durable store used by SessionActor. Persistence path is optional
@@ -139,6 +171,43 @@ fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
+/// Accept v2 snapshot `{schema_version,ops,outbox}` or legacy bare `Vec<ops>`.
+fn decode_store_snapshot(
+    bytes: &[u8],
+) -> Result<(Vec<GovernedOperation>, Vec<OutboxRecordV1>), String> {
+    if let Ok(snapshot) = serde_json::from_slice::<OperationStoreSnapshot>(bytes) {
+        if snapshot.schema_version > OPS_SNAPSHOT_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported ops snapshot schema_version {}",
+                snapshot.schema_version
+            ));
+        }
+        return Ok((snapshot.ops, snapshot.outbox));
+    }
+    let ops = serde_json::from_slice::<Vec<GovernedOperation>>(bytes)
+        .map_err(|error| error.to_string())?;
+    Ok((ops, Vec::new()))
+}
+
+fn enqueue_outbox(
+    inner: &mut OperationStoreInner,
+    op: &GovernedOperation,
+    transition: &str,
+    delivery: OutboxDeliveryState,
+    payload_ref: Option<String>,
+) {
+    let outbox_id = format!("{}:{}", op.operation_id, op.event_sequence);
+    inner.outbox.push(OutboxRecordV1 {
+        outbox_id,
+        operation_id: op.operation_id.clone(),
+        root_tree_id: op.root_tree_id.clone(),
+        event_sequence: op.event_sequence,
+        transition: transition.to_owned(),
+        delivery,
+        payload_ref,
+    });
+}
+
 impl GovernedOperationStore {
     pub fn for_tree(root_tree_id: impl Into<String>) -> Self {
         Self {
@@ -154,8 +223,8 @@ impl GovernedOperationStore {
         let mut store = Self::for_tree(root_tree_id);
         store.path = Some(path.clone());
         match std::fs::read(&path) {
-            Ok(bytes) => match serde_json::from_slice::<Vec<GovernedOperation>>(&bytes) {
-                Ok(ops) => {
+            Ok(bytes) => match decode_store_snapshot(&bytes) {
+                Ok((ops, outbox)) => {
                     let mut inner = store.inner.lock().expect("operation store lock");
                     for op in ops {
                         // A root-scoped journal must never import another tree's
@@ -183,6 +252,20 @@ impl GovernedOperationStore {
                         }
                         inner.event_seq = inner.event_seq.max(op.event_sequence);
                         inner.by_id.insert(op.operation_id.clone(), op);
+                    }
+                    if *store
+                        .persistence_healthy
+                        .lock()
+                        .expect("operation persistence state lock")
+                    {
+                        for record in outbox {
+                            if record.root_tree_id != store.root_tree_id {
+                                store.mark_persistence_unhealthy();
+                                break;
+                            }
+                            inner.event_seq = inner.event_seq.max(record.event_sequence);
+                            inner.outbox.push(record);
+                        }
                     }
                 }
                 Err(_) => store.mark_persistence_unhealthy(),
@@ -248,6 +331,13 @@ impl GovernedOperationStore {
             parent_operation_id,
         };
         inner.by_idempotency.insert(key, operation_id.clone());
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "created",
+            OutboxDeliveryState::Undelivered,
+            op.reservation_id.clone(),
+        );
         inner.by_id.insert(operation_id, op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -292,6 +382,13 @@ impl GovernedOperationStore {
         op.deadline_unix = now.saturating_add(lease_ttl_secs.max(1));
         op.outbox_state = OutboxDeliveryState::Undelivered;
         op.event_sequence = inner.event_seq;
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "claimed",
+            OutboxDeliveryState::Undelivered,
+            op.lease_id.clone(),
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -330,6 +427,13 @@ impl GovernedOperationStore {
         op.heartbeat_unix = now;
         op.deadline_unix = now.saturating_add(lease_ttl_secs.max(1));
         op.event_sequence = inner.event_seq;
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "running",
+            OutboxDeliveryState::Undelivered,
+            op.lease_id.clone(),
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -396,6 +500,13 @@ impl GovernedOperationStore {
         op.outbox_state = OutboxDeliveryState::Uncertain;
         op.external_effect_state = ExternalEffectState::Unknown;
         op.event_sequence = inner.event_seq;
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "frozen",
+            OutboxDeliveryState::Uncertain,
+            op.frozen_reason.clone(),
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -440,6 +551,13 @@ impl GovernedOperationStore {
         op.heartbeat_unix = now_unix_secs;
         op.deadline_unix = now_unix_secs.saturating_add(lease_ttl_secs.max(1));
         op.event_sequence = inner.event_seq;
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "claimed",
+            OutboxDeliveryState::Undelivered,
+            op.lease_id.clone(),
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -494,12 +612,24 @@ impl GovernedOperationStore {
             }
             inner.event_seq = inner.event_seq.saturating_add(1);
             let seq = inner.event_seq;
-            if let Some(op) = inner.by_id.get_mut(&id) {
+            let cancelled_snapshot = if let Some(op) = inner.by_id.get_mut(&id) {
                 op.cancelled = true;
                 op.state = GovernedOperationState::Cancelled;
                 op.lease_id = None;
                 op.outbox_state = OutboxDeliveryState::Undelivered;
                 op.event_sequence = seq;
+                Some(op.clone())
+            } else {
+                None
+            };
+            if let Some(ref op) = cancelled_snapshot {
+                enqueue_outbox(
+                    &mut inner,
+                    op,
+                    "cancelled",
+                    OutboxDeliveryState::Undelivered,
+                    None,
+                );
             }
             Self::release_budget_once(&mut inner, &id)?;
             if let Some(op) = inner.by_id.get(&id) {
@@ -525,6 +655,23 @@ impl GovernedOperationStore {
         inner.event_seq = inner.event_seq.saturating_add(1);
         op.outbox_state = OutboxDeliveryState::Delivered;
         op.event_sequence = inner.event_seq;
+        // Advance the latest undelivered outbox row for this op, then record
+        // the observation itself so consumers can reconcile by event_sequence.
+        if let Some(record) = inner
+            .outbox
+            .iter_mut()
+            .rev()
+            .find(|r| r.operation_id == operation_id && r.delivery == OutboxDeliveryState::Undelivered)
+        {
+            record.delivery = OutboxDeliveryState::Delivered;
+        }
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "outbox_delivered",
+            OutboxDeliveryState::Delivered,
+            None,
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
@@ -549,9 +696,36 @@ impl GovernedOperationStore {
         inner.event_seq = inner.event_seq.saturating_add(1);
         op.outbox_state = OutboxDeliveryState::Uncertain;
         op.event_sequence = inner.event_seq;
+        if let Some(record) = inner
+            .outbox
+            .iter_mut()
+            .rev()
+            .find(|r| {
+                r.operation_id == operation_id
+                    && matches!(
+                        r.delivery,
+                        OutboxDeliveryState::Undelivered | OutboxDeliveryState::Delivered
+                    )
+            })
+        {
+            record.delivery = OutboxDeliveryState::Uncertain;
+        }
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            "outbox_uncertain",
+            OutboxDeliveryState::Uncertain,
+            None,
+        );
         inner.by_id.insert(operation_id.to_owned(), op.clone());
         self.persist(&inner)?;
         Ok(op)
+    }
+
+    /// Append-only outbox trail (authority transitions + delivery observations).
+    pub fn list_outbox(&self) -> Vec<OutboxRecordV1> {
+        let inner = self.inner.lock().expect("operation store lock");
+        inner.outbox.clone()
     }
 
     pub fn get(&self, operation_id: &str) -> Result<GovernedOperation, OperationDenyReason> {
@@ -619,6 +793,29 @@ impl GovernedOperationStore {
             op.external_effect_state = ExternalEffectState::Applied;
         }
         op.event_sequence = inner.event_seq;
+        let transition = match state {
+            GovernedOperationState::Completed => "completed",
+            GovernedOperationState::Failed => "failed",
+            GovernedOperationState::Frozen => "frozen",
+            GovernedOperationState::Cancelled => "cancelled",
+            other => {
+                // finish() is only called with terminal states; refuse silently
+                // inventing a transition name for non-terminals.
+                debug_assert!(
+                    false,
+                    "finish() called with non-terminal state {other:?}"
+                );
+                "terminal"
+            }
+        };
+        let payload_ref = op.terminal_receipt.clone();
+        enqueue_outbox(
+            &mut inner,
+            &op,
+            transition,
+            OutboxDeliveryState::Undelivered,
+            payload_ref,
+        );
         let id = op.operation_id.clone();
         inner.by_id.insert(id.clone(), op);
         Self::release_budget_once(&mut inner, &id)?;
@@ -694,8 +891,12 @@ impl GovernedOperationStore {
                 std::io::Error::new(ErrorKind::InvalidInput, "journal path has no parent")
             })?;
             std::fs::create_dir_all(parent)?;
-            let ops: Vec<_> = inner.by_id.values().cloned().collect();
-            let bytes = serde_json::to_vec_pretty(&ops).map_err(std::io::Error::other)?;
+            let snapshot = OperationStoreSnapshot {
+                schema_version: OPS_SNAPSHOT_SCHEMA_VERSION,
+                ops: inner.by_id.values().cloned().collect(),
+                outbox: inner.outbox.clone(),
+            };
+            let bytes = serde_json::to_vec_pretty(&snapshot).map_err(std::io::Error::other)?;
             let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
             use std::io::Write;
             temporary.write_all(&bytes)?;
@@ -902,6 +1103,17 @@ mod tests {
         let completed = store
             .complete("op-1", "root", "lease-1", "receipt://done")
             .unwrap();
+        // State transition and outbox row share one atomic snapshot write.
+        let outbox = store.list_outbox();
+        assert!(
+            outbox
+                .iter()
+                .any(|r| r.transition == "completed"
+                    && r.event_sequence == completed.event_sequence
+                    && r.delivery == OutboxDeliveryState::Undelivered
+                    && r.payload_ref.as_deref() == Some("receipt://done")),
+            "complete must enqueue undelivered outbox in the same snapshot: {outbox:?}"
+        );
         let delivered = store.mark_outbox_delivered("op-1").unwrap();
         assert_eq!(delivered.outbox_state, OutboxDeliveryState::Delivered);
         assert!(delivered.event_sequence > completed.event_sequence);
@@ -911,6 +1123,74 @@ mod tests {
 
         let reopened = GovernedOperationStore::with_path("root", &path);
         assert_eq!(reopened.get("op-1").unwrap(), uncertain);
+        assert_eq!(reopened.list_outbox().len(), store.list_outbox().len());
+        assert!(
+            reopened
+                .list_outbox()
+                .iter()
+                .any(|r| r.transition == "completed"
+                    && r.payload_ref.as_deref() == Some("receipt://done"))
+        );
+    }
+
+    #[test]
+    fn legacy_bare_ops_array_still_loads() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("legacy-ops.json");
+        let legacy = serde_json::json!([{
+            "operation_id": "op-legacy",
+            "root_tree_id": "root",
+            "owner_node_id": "root",
+            "kind": "work",
+            "idempotency_key": "idem-legacy",
+            "state": "created",
+            "attempt": 0,
+            "lease_id": null,
+            "heartbeat_unix": 1,
+            "deadline_unix": 2,
+            "reservation_id": null,
+            "external_effect_state": "none",
+            "outbox_state": "undelivered",
+            "event_sequence": 1,
+            "terminal_receipt": null,
+            "frozen_reason": null,
+            "budget_released": false,
+            "cancelled": false,
+            "parent_operation_id": null
+        }]);
+        std::fs::write(&path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+        let store = GovernedOperationStore::with_path("root", &path);
+        assert_eq!(store.get("op-legacy").unwrap().state, GovernedOperationState::Created);
+        assert!(store.list_outbox().is_empty());
+        // Next mutation rewrites as v2 snapshot with outbox.
+        store.claim("op-legacy", "root", "lease-1", 30).unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("\"schema_version\": 2"), "{raw}");
+        assert!(raw.contains("\"outbox\""), "{raw}");
+    }
+
+    #[test]
+    fn state_transition_and_outbox_share_one_persist() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("atomic-ops.json");
+        let store = GovernedOperationStore::with_path("root", &path);
+        let created = store
+            .create("op-a", "root", "spawn", "idem-a", Some("res-a".into()), None, 30)
+            .unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let snapshot: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(snapshot["schema_version"], 2);
+        assert_eq!(snapshot["ops"].as_array().unwrap().len(), 1);
+        let outbox = snapshot["outbox"].as_array().unwrap();
+        assert_eq!(outbox.len(), 1);
+        assert_eq!(outbox[0]["transition"], "created");
+        assert_eq!(outbox[0]["event_sequence"], created.event_sequence);
+        assert_eq!(outbox[0]["operation_id"], "op-a");
+        // Same sequence on op and outbox proves they were written together.
+        assert_eq!(
+            snapshot["ops"][0]["event_sequence"],
+            outbox[0]["event_sequence"]
+        );
     }
 
     #[test]

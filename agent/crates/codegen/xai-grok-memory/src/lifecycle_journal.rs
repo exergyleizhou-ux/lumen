@@ -37,7 +37,7 @@ pub enum GovernedLifecycleEventKind {
 }
 
 impl GovernedLifecycleEventKind {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             GovernedLifecycleEventKind::Booting => "booting",
             GovernedLifecycleEventKind::Ready => "ready",

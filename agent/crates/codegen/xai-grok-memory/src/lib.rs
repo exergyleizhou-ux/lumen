@@ -24,6 +24,7 @@
 
 pub mod archive;
 pub mod authority_event;
+pub mod authority_projection;
 pub mod backend;
 pub mod canonical;
 pub mod chunker;
@@ -60,9 +61,14 @@ pub use context_manifest::{
 pub use governed_assignment::{
     RootGovernedAssignmentError, RootGovernedAssignmentStore, RootGovernedAssignmentV1,
 };
+pub use authority_projection::{
+    AuthorityProjectionContext, AuthorityProjectionError, project_authority_event,
+    project_authority_trail,
+};
 pub use governed_operation::{
     ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
-    OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,
+    OPS_SNAPSHOT_SCHEMA_VERSION, OperationDenyReason, OutboxDeliveryState, OutboxRecordV1,
+    TreeBudgetLedger,
 };
 pub use index::{MemoryIndex, init_sqlite_vec};
 pub use storage::{MemoryScope, MemoryStorage};

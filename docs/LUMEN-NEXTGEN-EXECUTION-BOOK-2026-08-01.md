@@ -1591,10 +1591,28 @@ durable create 失败回滚 reservation 防 slot 泄漏。`TreeAuthorityLog` 作
 `TreeAuthorityLog` 以 JSONL 写入 `task-tree-authority/{hex-root}.jsonl`，
 进程重启后 reload 仍保留 per-op 终态与 no-revival（与 ops snapshot 同根目录）。
 
-**未完成（接线）：** memory NG-00 `LifecycleJournal` 与 coordinator authority
-log 的 schema 统一（现分处 tools/memory 防 crate 环）；outbox 与 state
-transition 的原子落盘；Kairos claim/heartbeat/complete API；token 预留额
-（现 reserve tokens=0，usage 在 settle 时记账）。
+**已实施（schema 桥 + outbox 原子快照，NG-03C-5）：**
+- tools `AuthorityEventKind::{lifecycle_kind_str,from_lifecycle_kind_str,as_str}`
+  给出与 §3.3.2 生命周期 kind 的稳定映射表（SpawnReserved→ready、
+  SpawnClaimed→running、终端 1:1）；`AuthorityEvent.schema_version` 默认可
+  读旧 JSONL。
+- memory `authority_projection`：`project_authority_event` /
+  `project_authority_trail` 把 coordinator 精简 trail 升成带 payload hash /
+  evidence（`op:`、`coord_kind:`、`reservation:`）的
+  `GovernedLifecycleEventV1`，防 tools→memory crate 环；compose 测试
+  `authority_log_outbox_and_lifecycle_projection_compose` 覆盖
+  authority JSONL + ops outbox + lifecycle 投影 + 磁盘 reload。
+- `GovernedOperationStore` 持久化升级为 snapshot v2
+  `{schema_version,ops,outbox}`：每次 state transition
+  （create/claim/heartbeat/complete/fail/freeze/cancel/takeover）与
+  `OutboxRecordV1` 同一次 tempfile+rename 原子写；仍可读 v1 裸
+  `Vec<GovernedOperation>`。`list_outbox()` 供 reconcile 消费。
+
+**未完成（接线）：** Kairos claim/heartbeat/complete API；token 预留额
+（现 reserve tokens=0，usage 在 settle 时记账）；outbox consumer /
+  reconcile loop（现只保证记录与 state 同快照，尚无投递 worker）；
+  LifecycleJournal 仍为 tree-wide no-revival（多 op 投影宜 per-op journal
+  或后续改 per-node terminal）。
 
 **目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
 root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以

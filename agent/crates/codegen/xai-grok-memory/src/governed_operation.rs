@@ -4,5 +4,6 @@
 
 pub use xai_grok_tools::implementations::grok_build::task::governed_operation::{
     ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
-    OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,
+    OPS_SNAPSHOT_SCHEMA_VERSION, OperationDenyReason, OutboxDeliveryState, OutboxRecordV1,
+    TreeBudgetLedger,
 };

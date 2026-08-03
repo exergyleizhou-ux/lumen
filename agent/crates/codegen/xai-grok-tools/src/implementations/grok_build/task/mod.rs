@@ -32,7 +32,8 @@ pub use budget::{
 };
 pub use governed_operation::{
     ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
-    OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,
+    OPS_SNAPSHOT_SCHEMA_VERSION, OperationDenyReason, OutboxDeliveryState, OutboxRecordV1,
+    TreeBudgetLedger,
 };
 pub use write_scope::{
     WriteScopeDenyReason, WriteScopeLease, WriteScopeLeaseResource, enforce_write_scope_if_present,
