@@ -487,6 +487,24 @@ impl AgentRebuildSpec {
                 .tool_bridge()
                 .update_resource(WriteScopeLeaseResource { lease })
                 .await;
+
+            // NG-04D-4: project sandbox capabilities into the tool bridge so
+            // writers/spawn can fail closed without a tools→memory crate cycle.
+            if governed_child {
+                use xai_grok_tools::implementations::grok_build::task::{
+                    ChildSandboxCapability, ChildSandboxCapabilityResource, HARD_MAX_SUBAGENT_DEPTH,
+                };
+                let cap = ChildSandboxCapability::governed_defaults(
+                    session_id_str.clone(),
+                    task_tree_root_session_id.clone(),
+                    *subagent_depth,
+                    HARD_MAX_SUBAGENT_DEPTH,
+                );
+                agent
+                    .tool_bridge()
+                    .update_resource(ChildSandboxCapabilityResource(cap))
+                    .await;
+            }
         }
         agent
             .tool_bridge()
@@ -696,6 +714,17 @@ mod tests {
                     scope
                         .authorize(std::path::Path::new("src/lib.rs"), u64::MAX - 1)
                         .is_err()
+                );
+                use xai_grok_tools::implementations::grok_build::task::ChildSandboxCapabilityResource;
+                let sandbox = agent
+                    .tool_bridge()
+                    .toolset()
+                    .get_resource_cloned::<ChildSandboxCapabilityResource>()
+                    .await
+                    .expect("governed child must carry sandbox capability resource");
+                assert!(
+                    sandbox.authorize_write().is_err(),
+                    "governed child sandbox defaults to write-denied"
                 );
             })
             .await;

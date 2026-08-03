@@ -25,6 +25,7 @@
 pub mod agent_sandbox;
 pub mod archive;
 pub mod handoff_packet;
+pub mod evidence_loop;
 pub mod m1_governed_tree_preview;
 pub mod authority_event;
 pub mod authority_projection;
@@ -60,6 +61,10 @@ pub use agent_sandbox::{
 };
 pub use handoff_packet::{
     HandoffDenyReason, HandoffPacketV1, HANDOFF_MAX_BYTES, HANDOFF_PACKET_SCHEMA_VERSION,
+};
+pub use evidence_loop::{
+    DEFAULT_NO_PROGRESS_CAP, DEFAULT_REPAIR_CAP, LoopEffect, LoopEvent, LoopPhase,
+    LoopReduceError, NodeLoopState, reduce_node_loop,
 };
 pub use m1_governed_tree_preview::{
     DenyMechanism, DenyRecord, M1PreviewReceipt, TreeNodeProjection, run_m1_governed_tree_preview,

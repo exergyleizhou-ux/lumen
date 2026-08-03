@@ -206,6 +206,14 @@ pub(crate) async fn run_search_replace(
                 input.file_path
             )));
         }
+        if let Err(err) =
+            crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(&res)
+        {
+            return Ok(SearchReplaceOutput::InvalidInput(format!(
+                "Error: {err} (file: {})",
+                input.file_path
+            )));
+        }
     }
     let is_legacy = SearchReplaceVersion::from_contract(contract_version.as_deref()).is_legacy();
     if !is_legacy {

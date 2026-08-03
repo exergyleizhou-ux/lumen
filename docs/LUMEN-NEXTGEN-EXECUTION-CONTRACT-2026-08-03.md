@@ -145,12 +145,12 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | Tree budget（NG-03/03B） | 70% | 100% | token 预留额（现 reserve=0）；daily-cost/artifact 限额；legacy exhausted-set 收编 |
 | Operation lease/journal/outbox（NG-03C） | 72% | 100% | S1 schema bridge + S2 outbox 原子快照已落地；待 Kairos API + outbox consumer/reconcile |
 | WriteScope（NG-03D） | 70% | 100% | S3：overlap 纯函数 + spawn 前拒绝 + MergeReceipt 根侧 handoff；待 worktree auto-handoff 接线与 dirty-target fixture |
-| Flow control（NG-03E） | 15% | 100% | bounded queue、DeliveryObservation、backpressure、fair share |
+| Flow control（NG-03E） | 40% | 100% | QueuePressure+DeliverySample+cache_epoch；待全 mailbox 有界 load fixture |
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
 | derived_from（NG-04A） | 60% | 100% | 全图 enforcement（revoke 传播到消费方） |
-| Sandbox（NG-04D） | 60% | 100% | S5 schema+accepted-only + HandoffPacketV1 合同；待 shell 注入与 consumer enforcement |
-| Evidence loop（NG-04E） | 15% | 100% | Node/Tree/Supervisor reducer；收敛/stop/escalate 合同 |
+| Sandbox（NG-04D） | 75% | 100% | shell 注入 ChildSandboxCapability + search_replace enforce；待 process/network 全路径 |
+| Evidence loop（NG-04E） | 35% | 100% | Node pure reducer 已落地；待 Tree/Supervisor + run_loop 接线 |
 | 模型选择/Expert（NG-05） | 40% | 100% | P4b 唯一允许路线；provider health + no-replay failover 全审计 |
 | Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
 | Assignment（NG-07） | 10% | 100% | root-approved bounded assignment；Applied 全条件 |
@@ -275,7 +275,7 @@ exact-SHA CI `NOT RUN`）。
 
 ### S4 — NG-03E：Flow control、delivery uncertainty 与 liveness
 
-**状态：** 部分实施（合同类型 + 首条生产接线）。前置：S2。
+**状态：** 部分实施（合同 + pressure + cache_epoch + disposition）。前置：S2。
 **目标：** 无界 channel 改为有界 + `DeliveryObservationV1`（Enqueued/Coalesced/Dropped/ReceiverClosed/Unknown +
 QueuePressure）。UI token 可 coalesce；tool signal/grant/cancel/lease/terminal receipt/claim/evidence 不可静默 drop。
 **已落地：** `delivery_observation::{DeliveryObservationV1,observe_std_sync_try_send}`（真实
@@ -337,7 +337,7 @@ read-only grandchild）；grandchild 尝试 spawn/write/network/unknown ToolKind
 
 ### S7 — NG-04E：Governed Evidence Loop 与收敛合同
 
-**状态：** 待开工（Draft）。前置：S1–S6。
+**状态：** 部分实施（Node pure reducer）。前置：S1–S6。
 **目标：** Node/Tree/Supervisor 三个 pure reducer + typed fake event source；progress 仅因 obligation
 discharge/refute/获批 refine/新 evidence 推进；repair 引用上轮 failure receipt；completion 只
 `CompletionCandidate` 且 verify/host/root 三层后才 terminal；连续 no-progress、scope/budget/model 越界 →

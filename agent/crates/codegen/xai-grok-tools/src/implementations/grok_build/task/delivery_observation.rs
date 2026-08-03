@@ -29,11 +29,11 @@ impl DeliveryObservationV1 {
     /// Authority-safe path: only Enqueued is "delivered enough to continue
     /// without a delivery observation gate". Coalesced is allowed only for
     /// non-authority UI (callers must not use it for grants/leases/receipts).
-    pub fn is_authority_safe(self) -> bool {
+    pub fn is_authority_safe(&self) -> bool {
         matches!(self, DeliveryObservationV1::Enqueued)
     }
 
-    pub fn requires_recovery_or_freeze(self) -> bool {
+    pub fn requires_recovery_or_freeze(&self) -> bool {
         matches!(
             self,
             DeliveryObservationV1::DroppedFull
@@ -76,6 +76,86 @@ pub fn observe_std_sync_try_send<T>(
     }
 }
 
+/// Bounded-queue pressure sample (capacity / depth). Pure accounting for
+/// fair-share and backpressure UI — not authority by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueuePressureV1 {
+    pub capacity: u32,
+    pub depth: u32,
+    pub high_watermark: u32,
+}
+
+impl QueuePressureV1 {
+    pub fn new(capacity: u32, depth: u32) -> Self {
+        let high_watermark = capacity.saturating_mul(80).saturating_div(100).max(1);
+        Self {
+            capacity,
+            depth: depth.min(capacity),
+            high_watermark,
+        }
+    }
+
+    pub fn utilization_bps(self) -> u32 {
+        if self.capacity == 0 {
+            return 10_000;
+        }
+        (u64::from(self.depth) * 10_000 / u64::from(self.capacity)) as u32
+    }
+
+    pub fn is_high(self) -> bool {
+        self.depth >= self.high_watermark
+    }
+
+    pub fn is_saturated(self) -> bool {
+        self.capacity > 0 && self.depth >= self.capacity
+    }
+}
+
+/// Combine a try-send observation with queue pressure for operator projection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeliverySampleV1 {
+    pub observation: DeliveryObservationV1,
+    pub pressure: QueuePressureV1,
+}
+
+impl DeliverySampleV1 {
+    pub fn from_try_send(
+        result: Result<(), TrySendKind>,
+        capacity: u32,
+        depth_before_send: u32,
+    ) -> Self {
+        let observation = observation_from_try_send(result);
+        let depth = match observation {
+            DeliveryObservationV1::Enqueued => depth_before_send.saturating_add(1),
+            _ => depth_before_send,
+        };
+        Self {
+            observation,
+            pressure: QueuePressureV1::new(capacity, depth.min(capacity)),
+        }
+    }
+
+    /// Authority path: full/closed/unknown → freeze; high pressure alone is
+    /// warning, not freeze (INV-18 needs delivery failure, not just load).
+    pub fn authority_disposition(&self) -> AuthorityDeliveryDisposition {
+        if self.observation.requires_recovery_or_freeze() {
+            AuthorityDeliveryDisposition::FreezeOrRecover
+        } else if self.pressure.is_high() {
+            AuthorityDeliveryDisposition::WarnPressure
+        } else {
+            AuthorityDeliveryDisposition::Continue
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AuthorityDeliveryDisposition {
+    Continue,
+    WarnPressure,
+    FreezeOrRecover,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +186,34 @@ mod tests {
             dropped: 9
         }
         .is_authority_safe());
+    }
+
+    #[test]
+    fn queue_pressure_and_sample_drive_disposition() {
+        let ok = DeliverySampleV1::from_try_send(Ok(()), 10, 2);
+        assert_eq!(ok.observation, DeliveryObservationV1::Enqueued);
+        assert_eq!(ok.pressure.depth, 3);
+        assert_eq!(
+            ok.authority_disposition(),
+            AuthorityDeliveryDisposition::Continue
+        );
+
+        let high = DeliverySampleV1 {
+            observation: DeliveryObservationV1::Enqueued,
+            pressure: QueuePressureV1::new(10, 9),
+        };
+        assert!(high.pressure.is_high());
+        assert_eq!(
+            high.authority_disposition(),
+            AuthorityDeliveryDisposition::WarnPressure
+        );
+
+        let full = DeliverySampleV1::from_try_send(Err(TrySendKind::Full), 4, 4);
+        assert_eq!(full.observation, DeliveryObservationV1::DroppedFull);
+        assert_eq!(
+            full.authority_disposition(),
+            AuthorityDeliveryDisposition::FreezeOrRecover
+        );
+        assert!(full.pressure.is_saturated());
     }
 }
