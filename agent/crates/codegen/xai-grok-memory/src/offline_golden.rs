@@ -324,13 +324,31 @@ mod tests {
         );
         assert_eq!(sup.phase, LoopPhase::NeedsParentDecision);
 
-        // --- S8 sealed receipt: partial output forbids in-process retry ---
+        // --- S8 sealed receipt: partial output forbids; durable clean opens 1 ---
         use crate::sealed_attempt_receipt::{
-            clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
+            DurableSealAuthority, SealedAttemptReceiptStore, clean_preflight_receipt,
+            mark_output_emitted, may_in_process_retry, ordinary_turn_max_retries_with_authority,
         };
         assert!(may_in_process_retry(&clean_preflight_receipt("g1")).is_ok());
         assert!(
             may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("g2"))).is_err()
+        );
+        let seal_store = SealedAttemptReceiptStore::in_memory();
+        let clean = clean_preflight_receipt("g3");
+        seal_store.record(clean.clone(), None, None).unwrap();
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&clean),
+                seal_store.authority_for(&clean)
+            ),
+            1
+        );
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&clean),
+                DurableSealAuthority::Absent
+            ),
+            0
         );
 
         // --- sandbox leaf deny (S5/S6 surface) ---

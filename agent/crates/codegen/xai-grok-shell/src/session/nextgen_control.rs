@@ -5,16 +5,27 @@
 //! durable daemon or exact-binary product readiness.
 
 use xai_grok_memory::{
-    AdviceReportV1, AdvisorDeny, AdvisorMode, AttemptSealTracker, KairosCommand, KairosDeny,
-    KairosSupervisorState, LoopPhase, SealedAttemptReceiptV1, advice_may_mutate_authority,
-    apply_kairos_command, issue_shadow_advice, ordinary_turn_max_retries,
+    AdviceReportV1, AdvisorDeny, AdvisorMode, AttemptSealTracker, DurableSealAuthority,
+    KairosCommand, KairosDeny, KairosSupervisorState, LoopPhase, RetryAdmissionRequest,
+    RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION, SealedAttemptReceiptStore,
+    SealedAttemptReceiptV1, advice_may_mutate_authority, apply_kairos_command,
+    authorize_in_process_retry_budget, issue_shadow_advice, ordinary_turn_max_retries,
+    ordinary_turn_max_retries_with_authority,
 };
 
 /// Session-local shadow advisor host: records advice, never mutates authority.
+///
+/// `live_policy_epoch` is bumped when catalog/health/pool policy changes.
+/// Each `issue` stamps `last_advice_policy_epoch`; if live advances past that
+/// stamp the advice is **stale** and P4b admission must deny (S8).
 #[derive(Debug, Clone)]
 pub struct ShadowAdvisorHost {
     pub mode: AdvisorMode,
     pub reports: Vec<AdviceReportV1>,
+    /// Live policy/catalog/health epoch (starts at 1).
+    pub live_policy_epoch: u64,
+    /// Epoch at which the last advice was issued. `None` = no advice on file.
+    pub last_advice_policy_epoch: Option<u64>,
 }
 
 impl Default for ShadowAdvisorHost {
@@ -28,6 +39,8 @@ impl ShadowAdvisorHost {
         Self {
             mode,
             reports: Vec::new(),
+            live_policy_epoch: 1,
+            last_advice_policy_epoch: None,
         }
     }
 
@@ -48,11 +61,109 @@ impl ShadowAdvisorHost {
         )?;
         debug_assert!(!advice_may_mutate_authority(&report));
         self.reports.push(report);
+        self.last_advice_policy_epoch = Some(self.live_policy_epoch);
         Ok(self.reports.last().expect("just pushed"))
     }
 
     pub fn last(&self) -> Option<&AdviceReportV1> {
         self.reports.last()
+    }
+
+    /// Advance live policy epoch (pool/health/model policy change).
+    pub fn bump_policy_epoch(&mut self) {
+        self.live_policy_epoch = self.live_policy_epoch.saturating_add(1);
+    }
+
+    /// True when advice exists and was issued under an older policy epoch.
+    pub fn has_stale_advice(&self) -> bool {
+        advice_is_stale(self.last_advice_policy_epoch, self.live_policy_epoch)
+    }
+}
+
+/// Advice is stale when it was issued under an older policy epoch than live.
+///
+/// No advice (`None`) is **not** stale — only an issued-then-superseded
+/// stamp fails closed.
+pub fn advice_is_stale(issued_policy_epoch: Option<u64>, live_policy_epoch: u64) -> bool {
+    match issued_policy_epoch {
+        Some(issued) if issued < live_policy_epoch => true,
+        _ => false,
+    }
+}
+
+/// Live P4b side conditions derived from session observations (S8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct P4bLiveSideConditions {
+    pub pool_exhausted: bool,
+    pub breaker_open: bool,
+    pub stale_advice: bool,
+}
+
+/// Derive P4b side conditions from live observations.
+///
+/// - `pool_exhausted`: routing enabled, non-empty user pool, zero healthy
+///   catalog-backed candidates remain.
+/// - `breaker_open`: active provider endpoint is passively `Degraded`
+///   (domain health ledger acts as the circuit for ordinary turns).
+/// - `stale_advice`: see [`advice_is_stale`].
+pub fn derive_p4b_side_conditions(
+    routing_enabled: bool,
+    pool_len: usize,
+    any_healthy_in_pool: bool,
+    provider_degraded: bool,
+    advice_issued_policy_epoch: Option<u64>,
+    live_policy_epoch: u64,
+) -> P4bLiveSideConditions {
+    let pool_exhausted = routing_enabled && pool_len > 0 && !any_healthy_in_pool;
+    P4bLiveSideConditions {
+        pool_exhausted,
+        breaker_open: provider_degraded,
+        stale_advice: advice_is_stale(advice_issued_policy_epoch, live_policy_epoch),
+    }
+}
+
+/// Outcome of the S8 shell auth-class same-turn retry decision table.
+///
+/// Extracted from `run_turn_via_sampler` so the production loop body and unit
+/// tests share one fail-closed matrix (Critic M2). Full SamplerActor mock is
+/// not required to prove admission + budget + refresh gating.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuthClassRetryAction {
+    /// Perform one same-turn resubmit with a fresh request id.
+    Resubmit { next_used: u32 },
+    /// Fall through to terminal `handle_sampling_failure`.
+    Terminal { reason: &'static str },
+}
+
+/// Pure decision for auth-class same-turn resubmit (S8).
+///
+/// Call order in production: seal → admit → refresh → this table.
+/// Non-auth failures never resubmit. Admission deny reasons surface as
+/// terminal reasons (stable codes from [`RetryDenyReason::code`]).
+pub fn decide_auth_class_retry(
+    is_auth_failure: bool,
+    admission: Result<u32, RetryDenyReason>,
+    refresh_succeeded: bool,
+    auth_class_retries_used: u32,
+) -> AuthClassRetryAction {
+    if !is_auth_failure {
+        return AuthClassRetryAction::Terminal {
+            reason: "non_auth_failure",
+        };
+    }
+    match admission {
+        Err(deny) => AuthClassRetryAction::Terminal {
+            reason: deny.code(),
+        },
+        Ok(0) => AuthClassRetryAction::Terminal {
+            reason: "retry.budget_exhausted",
+        },
+        Ok(_) if !refresh_succeeded => AuthClassRetryAction::Terminal {
+            reason: "auth_refresh_failed",
+        },
+        Ok(_) => AuthClassRetryAction::Resubmit {
+            next_used: auth_class_retries_used.saturating_add(1),
+        },
     }
 }
 
@@ -85,10 +196,72 @@ impl KairosControlHost {
     }
 }
 
-/// Resolve ordinary-turn sampler max retries from an optional seal (always 0
-/// until durable multi-transport receipts exist).
+/// Resolve ordinary-turn sampler max retries from an optional in-memory seal.
+///
+/// Without durable confirmation this is always 0 (INV-11 / P0-NR-A). Prefer
+/// [`ordinary_sampler_max_retries_with_authority`] once a store has confirmed
+/// a clean seal for the attempt.
 pub fn ordinary_sampler_max_retries(receipt: Option<&SealedAttemptReceiptV1>) -> u32 {
     ordinary_turn_max_retries(receipt)
+}
+
+/// Ordinary-turn budget with durable seal authority (S8).
+pub fn ordinary_sampler_max_retries_with_authority(
+    receipt: Option<&SealedAttemptReceiptV1>,
+    authority: DurableSealAuthority,
+) -> u32 {
+    ordinary_turn_max_retries_with_authority(receipt, authority)
+}
+
+/// P4b admission for a bounded same-turn in-process retry (auth-refresh class).
+///
+/// `actor_policy_max_retries` is the GROK_MAX_RETRIES / config ceiling and may
+/// only lower the seal budget — never reopen a closed safety gate.
+pub fn authorize_ordinary_retry_budget(
+    req: &RetryAdmissionRequest<'_>,
+) -> Result<u32, RetryDenyReason> {
+    authorize_in_process_retry_budget(req)
+}
+
+/// Build a default admission request for ordinary turns (tests + shell).
+pub fn ordinary_retry_admission<'a>(
+    receipt: Option<&'a SealedAttemptReceiptV1>,
+    durable_authority: DurableSealAuthority,
+    model_pinned: bool,
+    pool_exhausted: bool,
+    breaker_open: bool,
+    stale_advice: bool,
+    actor_policy_max_retries: u32,
+    already_used_retries: u32,
+) -> RetryAdmissionRequest<'a> {
+    RetryAdmissionRequest {
+        receipt,
+        durable_authority,
+        schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        model_pinned,
+        pool_exhausted,
+        breaker_open,
+        stale_advice,
+        actor_policy_max_retries,
+        already_used_retries,
+    }
+}
+
+/// Persist a sealed receipt and resolve durable authority for it.
+pub fn seal_and_authority(
+    store: &SealedAttemptReceiptStore,
+    receipt: SealedAttemptReceiptV1,
+    turn_id: Option<String>,
+    session_id: Option<String>,
+) -> (SealedAttemptReceiptV1, DurableSealAuthority) {
+    match store.record(receipt.clone(), turn_id, session_id) {
+        Ok(_) => {
+            let authority = store.authority_for(&receipt);
+            (receipt, authority)
+        }
+        Err(_) => (receipt, DurableSealAuthority::Untrusted),
+    }
 }
 
 /// Escalation guidance appended to terminal sampling failures.
@@ -147,7 +320,10 @@ pub fn begin_attempt_seal(attempt_id: impl Into<String>) -> AttemptSealTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xai_grok_memory::{mark_output_emitted, may_in_process_retry};
+    use xai_grok_memory::{
+        DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, clean_preflight_receipt, mark_output_emitted,
+        may_in_process_retry,
+    };
 
     #[test]
     fn shadow_host_never_grants_authority() {
@@ -181,6 +357,8 @@ mod tests {
 
     #[test]
     fn ordinary_sampler_budget_is_zero_without_durable_store() {
+        // Without durable confirmation, clean in-memory seals stay at 0
+        // (P0-NR-A baseline). S8 only opens budget via ConfirmedClean.
         assert_eq!(ordinary_sampler_max_retries(None), 0);
         let mut seal = begin_attempt_seal("turn-1");
         assert!(seal.may_retry().is_ok());
@@ -188,10 +366,212 @@ mod tests {
         seal.mark_output();
         assert!(may_in_process_retry(seal.receipt()).is_err());
         assert_eq!(
-            ordinary_sampler_max_retries(Some(&mark_output_emitted(
-                xai_grok_memory::clean_preflight_receipt("x")
-            ))),
+            ordinary_sampler_max_retries(Some(&mark_output_emitted(clean_preflight_receipt(
+                "x"
+            )))),
             0
+        );
+    }
+
+    #[test]
+    fn ordinary_sampler_budget_opens_for_durable_clean_seal_only() {
+        let clean = clean_preflight_receipt("s8-clean");
+        assert_eq!(
+            ordinary_sampler_max_retries_with_authority(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean
+            ),
+            DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES
+        );
+        let store = SealedAttemptReceiptStore::in_memory();
+        let (sealed, authority) = seal_and_authority(&store, clean.clone(), None, None);
+        assert_eq!(authority, DurableSealAuthority::ConfirmedClean);
+        assert_eq!(
+            ordinary_sampler_max_retries_with_authority(Some(&sealed), authority),
+            1
+        );
+    }
+
+    #[test]
+    fn p4b_admission_denies_all_required_reject_paths() {
+        let clean = clean_preflight_receipt("p4b");
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean,
+                true,
+                false,
+                false,
+                false,
+                15,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::ModelPinned,
+            "pin bypass must deny"
+        );
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                true,
+                false,
+                false,
+                15,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::PoolExhausted,
+            "pool exhausted must deny"
+        );
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                false,
+                true,
+                false,
+                15,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::BreakerOpen,
+            "breaker open must deny"
+        );
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                false,
+                false,
+                true,
+                15,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::StaleAdvice,
+            "stale advice must deny"
+        );
+        let dirty = mark_output_emitted(clean_preflight_receipt("out"));
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&dirty),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                false,
+                false,
+                false,
+                15,
+                0,
+            ))
+            .unwrap_err()
+            .code(),
+            "retry.output_emitted",
+            "existing output must deny"
+        );
+        let mut schema = ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean,
+            false,
+            false,
+            false,
+            false,
+            15,
+            0,
+        );
+        schema.schema_version = 0;
+        assert_eq!(
+            authorize_ordinary_retry_budget(&schema).unwrap_err(),
+            RetryDenyReason::SchemaMismatch,
+            "schema mismatch must deny"
+        );
+    }
+
+    #[test]
+    fn grok_max_retries_cannot_raise_seal_budget_via_shell_admission() {
+        let clean = clean_preflight_receipt("env-cap");
+        // Actor policy 15 (GROK_MAX_RETRIES territory) still caps at seal budget.
+        let remaining = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean,
+            false,
+            false,
+            false,
+            false,
+            15,
+            0,
+        ))
+        .unwrap();
+        assert_eq!(remaining, 1);
+        // Actor policy 0 forces closed even with clean durable seal.
+        assert!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                false,
+                false,
+                false,
+                0,
+                0,
+            ))
+            .is_err()
+        );
+        // Dirty seal: actor 15 cannot reopen.
+        let dirty = mark_output_emitted(clean_preflight_receipt("env-dirty"));
+        assert!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&dirty),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                false,
+                false,
+                false,
+                15,
+                0,
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn clean_durable_auth_class_retry_is_bounded_positive_path() {
+        let store = SealedAttemptReceiptStore::in_memory();
+        let mut tracker = begin_attempt_seal("auth-clean");
+        tracker.apply_failure_observations(false, false, true);
+        assert!(tracker.may_retry().is_ok());
+        let (receipt, authority) =
+            seal_and_authority(&store, tracker.receipt().clone(), None, None);
+        assert_eq!(authority, DurableSealAuthority::ConfirmedClean);
+        let remaining = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&receipt),
+            authority,
+            false,
+            false,
+            false,
+            false,
+            15,
+            0,
+        ))
+        .expect("clean durable seal must authorize one auth-class retry");
+        assert_eq!(remaining, 1);
+        // Second attempt consumes budget.
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&receipt),
+                authority,
+                false,
+                false,
+                false,
+                false,
+                15,
+                1,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::BudgetExhausted
         );
     }
 
@@ -236,5 +616,211 @@ mod tests {
         assert!(guidance.contains("provider"), "guidance: {guidance}");
         assert!(guidance.contains("health was recorded"), "guidance: {guidance}");
         assert!(!guidance.contains("credential"));
+    }
+
+    #[test]
+    fn derive_p4b_side_conditions_from_live_observations() {
+        // Healthy routing pool → no denies.
+        let ok = derive_p4b_side_conditions(true, 2, true, false, None, 1);
+        assert!(!ok.pool_exhausted);
+        assert!(!ok.breaker_open);
+        assert!(!ok.stale_advice);
+
+        // Enabled non-empty pool, zero healthy → pool exhausted.
+        let pool = derive_p4b_side_conditions(true, 2, false, false, None, 1);
+        assert!(pool.pool_exhausted);
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean_preflight_receipt("p")),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                pool.pool_exhausted,
+                pool.breaker_open,
+                pool.stale_advice,
+                1,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::PoolExhausted
+        );
+
+        // Provider degraded → breaker open.
+        let br = derive_p4b_side_conditions(false, 0, true, true, None, 1);
+        assert!(br.breaker_open);
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean_preflight_receipt("b")),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                br.pool_exhausted,
+                br.breaker_open,
+                br.stale_advice,
+                1,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::BreakerOpen
+        );
+
+        // Advice issued at epoch 1, live advanced to 2 → stale.
+        let stale = derive_p4b_side_conditions(false, 0, true, false, Some(1), 2);
+        assert!(stale.stale_advice);
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&clean_preflight_receipt("s")),
+                DurableSealAuthority::ConfirmedClean,
+                false,
+                stale.pool_exhausted,
+                stale.breaker_open,
+                stale.stale_advice,
+                1,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::StaleAdvice
+        );
+
+        // Routing disabled / empty pool never counts as exhausted.
+        let no_pool = derive_p4b_side_conditions(false, 0, false, false, None, 1);
+        assert!(!no_pool.pool_exhausted);
+        let empty = derive_p4b_side_conditions(true, 0, false, false, None, 1);
+        assert!(!empty.pool_exhausted);
+    }
+
+    #[test]
+    fn shadow_advisor_epoch_detects_stale_advice() {
+        let mut host = ShadowAdvisorHost::new(AdvisorMode::Shadow);
+        assert!(!host.has_stale_advice());
+        host.issue("a1", "consider running tests", None, None)
+            .unwrap();
+        assert!(!host.has_stale_advice(), "fresh advice is not stale");
+        host.bump_policy_epoch();
+        assert!(host.has_stale_advice(), "policy bump must stale prior advice");
+        assert!(advice_is_stale(Some(1), 2));
+        assert!(!advice_is_stale(None, 99));
+        assert!(!advice_is_stale(Some(5), 5));
+    }
+
+    #[test]
+    fn auth_class_retry_decision_matrix_covers_required_paths() {
+        let clean = clean_preflight_receipt("dec");
+        let admit_ok = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean,
+            false,
+            false,
+            false,
+            false,
+            1,
+            0,
+        ));
+        assert!(admit_ok.is_ok());
+
+        // (a) 401 + clean seal + refresh ok → resubmit once
+        assert_eq!(
+            decide_auth_class_retry(true, admit_ok.clone(), true, 0),
+            AuthClassRetryAction::Resubmit { next_used: 1 }
+        );
+
+        // (b) second 401 after budget used → terminal budget exhausted
+        let admit_spent = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean,
+            false,
+            false,
+            false,
+            false,
+            1,
+            1,
+        ));
+        assert_eq!(
+            decide_auth_class_retry(true, admit_spent, true, 1),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.budget_exhausted"
+            }
+        );
+
+        // (c) refresh failed → terminal, no resubmit
+        assert_eq!(
+            decide_auth_class_retry(true, Ok(1), false, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "auth_refresh_failed"
+            }
+        );
+
+        // (d) non-auth failure → terminal, never resubmit
+        assert_eq!(
+            decide_auth_class_retry(false, Ok(1), true, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "non_auth_failure"
+            }
+        );
+
+        // Admission deny reasons surface as terminal codes.
+        assert_eq!(
+            decide_auth_class_retry(true, Err(RetryDenyReason::ModelPinned), true, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.model_pinned"
+            }
+        );
+        assert_eq!(
+            decide_auth_class_retry(true, Err(RetryDenyReason::PoolExhausted), true, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.pool_exhausted"
+            }
+        );
+        assert_eq!(
+            decide_auth_class_retry(true, Err(RetryDenyReason::BreakerOpen), true, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.breaker_open"
+            }
+        );
+        assert_eq!(
+            decide_auth_class_retry(true, Err(RetryDenyReason::StaleAdvice), true, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.stale_advice"
+            }
+        );
+    }
+
+    #[test]
+    fn mid_stream_tool_delta_forbids_in_process_retry() {
+        // L3: tool signal seals dirty — same path as CapturePhase::ToolCall.
+        let mut tracker = begin_attempt_seal("tool-delta");
+        tracker.apply_failure_observations(false, true, true);
+        assert_eq!(
+            tracker.may_retry().unwrap_err(),
+            RetryDenyReason::ToolCallEmitted
+        );
+        let store = SealedAttemptReceiptStore::in_memory();
+        let (receipt, authority) =
+            seal_and_authority(&store, tracker.receipt().clone(), None, None);
+        // Dirty durable seal never ConfirmedClean → budget 0.
+        assert_ne!(authority, DurableSealAuthority::ConfirmedClean);
+        assert_eq!(
+            authorize_ordinary_retry_budget(&ordinary_retry_admission(
+                Some(&receipt),
+                DurableSealAuthority::ConfirmedClean, // even if forced
+                false,
+                false,
+                false,
+                false,
+                15,
+                0,
+            ))
+            .unwrap_err(),
+            RetryDenyReason::ToolCallEmitted
+        );
+        assert_eq!(
+            decide_auth_class_retry(
+                true,
+                Err(RetryDenyReason::ToolCallEmitted),
+                true,
+                0
+            ),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.tool_call_emitted"
+            }
+        );
     }
 }

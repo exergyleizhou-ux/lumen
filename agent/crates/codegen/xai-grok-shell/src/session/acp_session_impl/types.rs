@@ -12,25 +12,29 @@ pub(crate) enum McpReminderMode {
     Full,
 }
 
-/// P0 no-replay baseline for ordinary sampler turns.
+/// P0 no-replay baseline for ordinary sampler turns **without** a durable
+/// sealed receipt.
 ///
 /// In-process retry is only legal when a sealed attempt receipt proves
 /// `NoOutput + NoToolCall + NotAttempted + NoExternalEffect` (see
-/// `xai_grok_memory::may_in_process_retry`). Until every transport path
-/// produces that receipt, ordinary turns keep max retries at zero and surface
-/// failure instead of replaying in-process.
+/// `xai_grok_memory::may_in_process_retry`) **and** a durable store confirms
+/// that clean seal (S8). This constant is the hard ceiling when no receipt is
+/// available: spawn / prepare_sampler_for_turn keep sampler actor retries at
+/// zero so transport-level resubmit cannot reopen without admission.
 ///
-/// Prefer [`ordinary_turn_max_retries`] / [`crate::session::nextgen_control::ordinary_sampler_max_retries`]
-/// at call sites that already hold an optional seal; this constant is the
-/// hard ceiling when no receipt is available.
+/// Prefer [`ordinary_turn_max_retries`] /
+/// [`ordinary_turn_max_retries_with_authority`] /
+/// [`crate::session::nextgen_control::ordinary_sampler_max_retries`] at call
+/// sites that already hold an optional seal + durable authority.
 pub(crate) const NO_RECEIPT_MAX_RETRIES: u32 = 0;
 
 #[cfg(test)]
 mod no_replay_policy_tests {
     use super::NO_RECEIPT_MAX_RETRIES;
     use xai_grok_memory::{
-        clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
-        ordinary_turn_max_retries,
+        DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, DurableSealAuthority, clean_preflight_receipt,
+        mark_output_emitted, may_in_process_retry, ordinary_turn_max_retries,
+        ordinary_turn_max_retries_with_authority,
     };
 
     #[test]
@@ -43,14 +47,30 @@ mod no_replay_policy_tests {
         assert_eq!(
             ordinary_turn_max_retries(Some(&clean_preflight_receipt("t0"))),
             NO_RECEIPT_MAX_RETRIES,
-            "clean seal does not raise budget until durable multi-transport store"
+            "clean in-memory seal alone still maps to 0; durable authority required (S8)"
         );
-        // Clean preflight is the only seal that would permit a *future* retry
-        // path once durable receipts are wired; today max_retries stays 0.
+        // Clean preflight is the observation gate; durable ConfirmedClean is
+        // what may raise the budget (still bounded by DURABLE_CLEAN_MAX).
         assert!(may_in_process_retry(&clean_preflight_receipt("t0")).is_ok());
         assert!(
             may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("t1"))).is_err(),
             "any emitted output must forbid in-process retry"
+        );
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&clean_preflight_receipt("t2")),
+                DurableSealAuthority::ConfirmedClean
+            ),
+            DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES,
+            "S8: durable clean seal may open a bounded budget (auth-class only at shell)"
+        );
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&mark_output_emitted(clean_preflight_receipt("t3"))),
+                DurableSealAuthority::ConfirmedClean
+            ),
+            0,
+            "existing output never opens budget"
         );
     }
 }

@@ -240,6 +240,12 @@ pub struct ToolContext {
     /// sampling response succeeds. Drives failure-escalation guidance so
     /// repeated failures never read as "stuck".
     pub(crate) consecutive_sampling_failures: Arc<std::sync::atomic::AtomicU32>,
+    /// Live policy/catalog/health epoch for S8 stale-advice detection.
+    /// Starts at 1; bump when pool/health/model policy changes.
+    pub(crate) live_policy_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// Policy epoch at which shadow advice was last issued. `0` means no
+    /// advice on file (not stale).
+    pub(crate) advice_issued_policy_epoch: Arc<std::sync::atomic::AtomicU64>,
     /// This session's child-process reaper, set at session spawn; `None` for
     /// contexts without one (subagents, defaults). Spawn sites enroll children
     /// into it; enrolled children are killed when the session closes.
@@ -318,6 +324,8 @@ impl ToolContext {
             // Consecutive ordinary-turn sampling failures for the current
             // session model. Reset on any successful sampling response.
             consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
     pub fn with_preloaded_env(
@@ -365,6 +373,8 @@ impl ToolContext {
             sampler_retry_only_before_output: false,
             process_scope: None,
             consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
     pub fn with_file_state_handle(mut self, handle: FileStateHandle) -> Self {
@@ -465,6 +475,8 @@ mod tests {
                 sampler_retry_only_before_output: false,
                 process_scope: None,
                 consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             }
         }
     }

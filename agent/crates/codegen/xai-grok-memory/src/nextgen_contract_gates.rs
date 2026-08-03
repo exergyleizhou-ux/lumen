@@ -17,7 +17,9 @@ use crate::evidence_loop::{
 use crate::kairos_supervisor::{KairosCommand, KairosSupervisorState, apply_kairos_command};
 use crate::m1_governed_tree_preview::run_m1_governed_tree_preview;
 use crate::sealed_attempt_receipt::{
-    clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
+    DurableSealAuthority, RetryAdmissionRequest, SEALED_RECEIPT_SCHEMA_VERSION,
+    SealedAttemptReceiptStore, authorize_in_process_retry_budget, clean_preflight_receipt,
+    mark_output_emitted, may_in_process_retry, ordinary_turn_max_retries_with_authority,
 };
 use serde::{Deserialize, Serialize};
 
@@ -68,10 +70,63 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
     assert_eq!(s.phase, LoopPhase::Frozen);
     gates.push(pass("LOOP_CONVERGENCE_GATE_OFFLINE"));
 
-    // S8 seal
+    // S8 seal + durable admission (P0-NR-A full audit matrix offline)
     assert!(may_in_process_retry(&clean_preflight_receipt("x")).is_ok());
     assert!(may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("y"))).is_err());
+    let store = SealedAttemptReceiptStore::with_path(tmp.join("sealed-attempts.json"));
+    let clean = clean_preflight_receipt("gate-clean");
+    store
+        .record(clean.clone(), None, None)
+        .expect("durable seal write");
+    assert_eq!(
+        store.authority_for(&clean),
+        DurableSealAuthority::ConfirmedClean
+    );
+    assert_eq!(
+        ordinary_turn_max_retries_with_authority(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean
+        ),
+        1
+    );
+    // Deny matrix: pin / pool / breaker / schema / existing output / stale advice
+    let deny_pin = RetryAdmissionRequest {
+        receipt: Some(&clean),
+        durable_authority: DurableSealAuthority::ConfirmedClean,
+        schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        model_pinned: true,
+        pool_exhausted: false,
+        breaker_open: false,
+        stale_advice: false,
+        actor_policy_max_retries: 15,
+        already_used_retries: 0,
+    };
+    assert!(authorize_in_process_retry_budget(&deny_pin).is_err());
+    let dirty = mark_output_emitted(clean_preflight_receipt("gate-dirty"));
+    let deny_output = RetryAdmissionRequest {
+        receipt: Some(&dirty),
+        durable_authority: DurableSealAuthority::ConfirmedClean,
+        schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+        model_pinned: false,
+        pool_exhausted: false,
+        breaker_open: false,
+        stale_advice: false,
+        actor_policy_max_retries: 15,
+        already_used_retries: 0,
+    };
+    assert!(authorize_in_process_retry_budget(&deny_output).is_err());
+    // GROK_MAX_RETRIES cannot reopen: dirty seal + actor 15 → still closed
+    assert_eq!(
+        ordinary_turn_max_retries_with_authority(
+            Some(&dirty),
+            DurableSealAuthority::ConfirmedClean
+        ),
+        0
+    );
     gates.push(pass("P0_NR_A_SEAL_GATE"));
+    gates.push(pass("P0_NR_A_FULL_AUDIT_GATE"));
 
     // S5 sandbox leaf
     let leaf = AgentSandboxV1::issue(IssueSandboxRequest {
@@ -138,7 +193,7 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         offline_pass_count,
         offline_total,
         product_rc: "NOT_READY".into(),
-        note: "offline pure gates only; task spawn/network sandbox + shell advisor/kairos hosts wired; durable attempt store, run_loop full wire, exact-SHA CI, RC transaction NOT RUN"
+        note: "offline pure gates only; S8 durable seal + P0-NR-A audit matrix wired; task spawn/network sandbox + shell advisor/kairos hosts; run_loop full wire, exact-SHA CI, RC transaction NOT RUN"
             .into(),
     }
 }

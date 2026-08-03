@@ -84,9 +84,13 @@ pub use kairos_supervisor::{
 };
 pub use nextgen_contract_gates::{GateResult, NextGenContractGateReceipt, run_offline_contract_gates};
 pub use sealed_attempt_receipt::{
-    AttemptSealTracker, Obs, RetryDenyReason, SealedAttemptReceiptV1, clean_preflight_receipt,
-    mark_attempt_started, mark_external_effect_unknown, mark_output_emitted, mark_tool_call,
-    may_in_process_retry, ordinary_turn_max_retries,
+    AttemptSealTracker, DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, DurableSealAuthority, Obs,
+    RetryAdmissionRequest, RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION,
+    SealedAttemptReceiptRecord, SealedAttemptReceiptStore, SealedAttemptReceiptV1,
+    SealedReceiptStoreError, authorize_in_process_retry_budget, clean_preflight_receipt,
+    effective_retry_budget, mark_attempt_started, mark_external_effect_unknown,
+    mark_output_emitted, mark_tool_call, may_in_process_retry, ordinary_turn_max_retries,
+    ordinary_turn_max_retries_with_authority,
 };
 pub use m1_governed_tree_preview::{
     DenyMechanism, DenyRecord, M1PreviewReceipt, TreeNodeProjection, run_m1_governed_tree_preview,

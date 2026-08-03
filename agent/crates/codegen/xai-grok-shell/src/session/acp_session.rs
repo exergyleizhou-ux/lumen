@@ -1900,6 +1900,10 @@ mod prompt_context_persistence_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/provider_failure_routing_tests.rs"]
 mod provider_failure_routing_tests;
+/// S8 durable seal: live P4b side conditions + auth-class decision wiring.
+#[cfg(test)]
+#[path = "acp_session_tests/s8_sealed_retry_live_tests.rs"]
+mod s8_sealed_retry_live_tests;
 #[cfg(test)]
 #[path = "acp_session_tests/reactive_managed_reauth_e2e_tests.rs"]
 mod reactive_managed_reauth_e2e_tests;
