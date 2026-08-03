@@ -238,18 +238,29 @@ fn fake_standalone_facts_compose_through_shared_view() {
         false,
         RuntimeEvidence::Available(ColorLevel::TrueColor),
     );
-    let report = collect_report_with(snapshot);
+    // Hermetic composition path only. `collect_report_with` also runs
+    // `apply_voice_probe`, which hits real audio devices and fails closed with
+    // an extra Issue on CI runners without a microphone (Linux audio feature
+    // on, no input device). That path is covered by product doctor flows, not
+    // this fixture-composition unit test.
+    let report = crate::diagnostics::view(snapshot.into());
 
-    assert_eq!(report.issue_count(), 1);
+    let issue_ids: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|finding| finding.disposition == FindingDisposition::Issue)
+        .map(|finding| finding.id)
+        .collect();
+    assert_eq!(
+        issue_ids,
+        vec![DiagnosticId::new("terminal", "tmux-clipboard")],
+        "fixture must surface only the tmux-clipboard issue, not control-mode or env probes"
+    );
     assert!(
         report
             .findings
             .iter()
-            .all(|finding| { finding.id != DiagnosticId::new("terminal", "control-mode") })
-    );
-    assert_eq!(
-        report.findings[0].id,
-        DiagnosticId::new("terminal", "tmux-clipboard")
+            .all(|finding| finding.id != DiagnosticId::new("terminal", "control-mode"))
     );
 }
 
