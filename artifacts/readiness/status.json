@@ -1,32 +1,39 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-01T18:55:20Z",
+  "generated_at": "2026-08-03T18:09:32Z",
   "version": "2.0.0-alpha.1",
-  "head_short": "9e719020",
+  "head_short": "1c349210",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": false,
   "l0_pass": false,
   "engineering_complete": false,
-  "source_lock_sha256": "dd1a31f524dd0d947aeab6eccba97f2c4fe65c4676a871296829e0fc1b998e84",
-  "binary_sha256": "16b97226cac3f1c6ea8addf7c2c893dfedb62930eb3e7e911d94a24b0b99ee6d",
+  "source_lock_sha256": "a6d81493e6e6057ea7e5c07e301c88cdf1ca73214f7f74dc46aec8efd65e4ce0",
+  "binary_sha256": "fc7b31652cb963005a29dd181fdb68106ae9c300dee2d861bef54efcdc0995c9",
   "blockers": [
-    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "binary_tuple_pre:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) ",
+    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) ",
+    "source_lock:non-evidence drift after source lock: .gitleaksignore, agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs, agent/crates/codegen/xai-grok-memory/src/harness_regression.rs, \"docs/\\344\\272\\272\\345\\267\\245\\351\\227\\250\\346\\270\\205\\345\\215\\225-2026-08-04.md\"",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_tool_calls', 'status_check_not_pass:L2_min_",
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:.gitleaksignore,agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs,agent/crates/codegen/x",
     "L0_connect:SKIP",
     "L1_tool_calls:SKIP",
     "L2_min_e2e:SKIP",
     "L3_multi_tool:SKIP",
+    "L4_fault_cancel:SKIP",
+    "L5_long_session:SKIP",
+    "L5_one_hour_soak:SKIP",
+    "R0_full:SKIP",
+    "R0_min:SKIP",
     "eval_live:SKIP"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=16b97226cac3"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) "
     },
     {
       "id": "gitleaks",
@@ -80,55 +87,55 @@
       "id": "L0_connect",
       "pass": false,
       "result": "SKIP",
-      "detail": "no DEEPSEEK_API_KEY"
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L1_tool_calls",
       "pass": false,
       "result": "SKIP",
-      "detail": "no DEEPSEEK_API_KEY"
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L2_min_e2e",
       "pass": false,
       "result": "SKIP",
-      "detail": "no DEEPSEEK_API_KEY"
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L3_multi_tool",
       "pass": false,
       "result": "SKIP",
-      "detail": "no DEEPSEEK_API_KEY"
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L4_fault_cancel",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_long_session",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "L5_one_hour_soak",
       "pass": false,
-      "result": "FAIL",
-      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_full",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "R0_min",
-      "pass": true,
-      "result": "PASS",
-      "detail": "via R0_full"
+      "pass": false,
+      "result": "SKIP",
+      "detail": "binary tuple preflight failed"
     },
     {
       "id": "sbom",
@@ -150,15 +157,15 @@
     },
     {
       "id": "binary_tuple_post",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=16b97226cac3"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) "
     },
     {
       "id": "source_lock",
-      "pass": true,
-      "result": "PASS",
-      "detail": "source=0fae4c7 head=9e71902 suffix=evidence-only+2 files=32"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "non-evidence drift after source lock: .gitleaksignore, agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs, agent/crates/codegen/xai-grok-memory/src/harness_regression.rs, \"docs/\\344\\272\\272\\345\\267\\245\\351\\227\\250\\346\\270\\205\\345\\215\\225-2026-08-04.md\""
     },
     {
       "id": "M5_10_min_stranger",
@@ -176,10 +183,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid', 'status_check_not_pass:L0_connect', 'status_check_not_pass:L1_tool_calls', 'status_check_not_pass:L2_min_"
+      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:.gitleaksignore,agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs,agent/crates/codegen/x"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-08-01T18:55:20Z",
+  "reconciled_at": "2026-08-03T18:09:31Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
