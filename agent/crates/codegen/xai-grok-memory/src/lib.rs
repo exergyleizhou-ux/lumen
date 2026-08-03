@@ -23,7 +23,9 @@
 //! is not initialized by the host.
 
 pub mod archive;
+pub mod authority_event;
 pub mod backend;
+pub mod canonical;
 pub mod chunker;
 pub mod claim_authority;
 pub mod context_manifest;
