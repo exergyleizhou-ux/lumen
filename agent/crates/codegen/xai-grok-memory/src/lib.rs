@@ -25,6 +25,7 @@
 pub mod agent_sandbox;
 pub mod archive;
 pub mod handoff_packet;
+pub mod m1_governed_tree_preview;
 pub mod authority_event;
 pub mod authority_projection;
 pub mod backend;
@@ -59,6 +60,9 @@ pub use agent_sandbox::{
 };
 pub use handoff_packet::{
     HandoffDenyReason, HandoffPacketV1, HANDOFF_MAX_BYTES, HANDOFF_PACKET_SCHEMA_VERSION,
+};
+pub use m1_governed_tree_preview::{
+    DenyMechanism, DenyRecord, M1PreviewReceipt, TreeNodeProjection, run_m1_governed_tree_preview,
 };
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
 pub use claim_authority::{

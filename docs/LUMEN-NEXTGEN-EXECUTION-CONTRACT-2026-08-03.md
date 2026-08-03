@@ -320,16 +320,18 @@ secret/控制 prose 拒、过期 snapshot 仅可提示 rebase（`authorize_view`
 
 ### S6 — M1：Governed Tree Preview（最早产品证明）
 
-**状态：** 待开工。前置：S1、S2、S5 + 现有 NG-00/01/02/04A-C。
+**状态：** 已实施（offline 路径）；exact TUI/ACP binary 投影仍待接线。前置：S1、S2、S5 + NG-00/01/02/04A-C。
 **目标：** exact rebuilt TUI/ACP binary 打开 offline fixture 显示三节点树（root→read-only child→
 read-only grandchild）；grandchild 尝试 spawn/write/network/unknown ToolKind/读 sibling scratch 均
 **typed deny**；root 接受一项带 artifact receipt 的 proposal 后，child 只在明确 rebase 后看到新 snapshot。
+**已落地：** `m1_governed_tree_preview::run_m1_governed_tree_preview` — 真实 ledger + sandbox + handoff；
+三节点 projection；每条 deny 带 `DenyMechanism`；root accept → rebase 前后可见性；
+`M1_GOVERNED_TREE_PREVIEW_GATE=PASS` receipt（本地 lib test，无 provider）。
 **禁止：** provider 调用、写文件、联网、Advisor、Kairos、自动 repair、promotion。
-**必测：** 每条 deny 记录 `deny_mechanism: CapabilityCeiling | ToolFilter | SandboxEnforcement | LineageDepth`
-（防证据挪用）；输出 `M1_GOVERNED_TREE_PREVIEW_GATE=PASS` 带 binary hash、fixture hash、tree projection、
-deny reason、raw counts、source/evidence tuple。
-**停止：** 出现 `0 tests matched`、mock-only UI 或绕过 SessionActor 的 projection 即 FAIL。
-**意义：** M1 通过只说明基础产品可见；不说明三层写入、自动化、OS sandbox 认证或 24h daemon。
+**未接线：** pager/ACP exact-binary 打开 fixture 渲染树 UI。
+**必测：** deny_mechanism 四类齐全；0 tests matched 即 FAIL。
+**Gate：** `M1_GOVERNED_TREE_PREVIEW_GATE=PASS`（offline；exact-binary UI `NOT RUN`）。
+**意义：** 只说明治理树合同可离线证明；不说明三层写入、OS sandbox 或 24h daemon。
 
 ---
 
