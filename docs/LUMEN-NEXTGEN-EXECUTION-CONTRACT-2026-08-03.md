@@ -149,7 +149,7 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
 | derived_from（NG-04A） | 60% | 100% | 全图 enforcement（revoke 传播到消费方） |
-| Sandbox（NG-04D） | 45% | 100% | S5 schema+accepted-only 已落地；待 handoff packet + consumer enforcement |
+| Sandbox（NG-04D） | 60% | 100% | S5 schema+accepted-only + HandoffPacketV1 合同；待 shell 注入与 consumer enforcement |
 | Evidence loop（NG-04E） | 15% | 100% | Node/Tree/Supervisor reducer；收敛/stop/escalate 合同 |
 | 模型选择/Expert（NG-05） | 40% | 100% | P4b 唯一允许路线；provider health + no-replay failover 全审计 |
 | Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
@@ -302,9 +302,19 @@ two-tree fairness、shutdown drain。
 - `authorize_*` 纯函数：sibling scratch 恒拒、cross-branch propose 拒、foreign/stale snapshot 拒、
   expire/revoke/freeze、bypass token 拒
 - 真实 `WorkingMemoryLedger::accepted_snapshot` 绑定双 sibling + rebase 测试
-**未接线：** shell admission 注入 sandbox 到每个 child、HandoffPacket（NG-04D-3）、tool dispatch
-enforcement（NG-04D-4）。
+**未接线：** shell admission 注入 sandbox 到每个 child、tool dispatch enforcement（NG-04D-4）。
 **Gate：** `SANDBOX_SCHEMA_GATE=PASS` + `SANDBOX_MEMORY_GATE=PASS`（本地 lib tests；CI `NOT RUN`）。
+
+---
+
+### S5b — NG-04D-3：HandoffPacketV1（有界 handoff，view≠accept）
+
+**状态：** 已实施（纯合同）。前置：S5。
+**已落地：** `handoff_packet::HandoffPacketV1` — 固定字段、content hash、16KiB 上限、
+secret/控制 prose 拒、过期 snapshot 仅可提示 rebase（`authorize_view` SnapshotMismatch）。
+查看绝不 Accept claim（INV-2）。
+**未接线：** ACP/TUI 投递、delivery receipt 入 journal。
+**Gate：** `HANDOFF_GATE=PASS`（本地 shape/secret/view tests；CI `NOT RUN`）。
 
 ---
 

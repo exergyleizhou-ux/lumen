@@ -24,6 +24,7 @@
 
 pub mod agent_sandbox;
 pub mod archive;
+pub mod handoff_packet;
 pub mod authority_event;
 pub mod authority_projection;
 pub mod backend;
@@ -55,6 +56,9 @@ pub use agent_sandbox::{
     AgentSandboxState, AgentSandboxV1, FilesystemWriteMode, IssueSandboxRequest, MemoryCapability,
     NetworkMode, SANDBOX_HARD_MAX_DEPTH, SandboxAssuranceV1, SandboxDenyReason,
     AGENT_SANDBOX_SCHEMA_VERSION,
+};
+pub use handoff_packet::{
+    HandoffDenyReason, HandoffPacketV1, HANDOFF_MAX_BYTES, HANDOFF_PACKET_SCHEMA_VERSION,
 };
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
 pub use claim_authority::{
