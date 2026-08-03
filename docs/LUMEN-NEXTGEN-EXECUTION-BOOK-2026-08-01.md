@@ -1572,10 +1572,18 @@ durable event journal。
   函数——输出已发/未知一律不重放；effect applied/unknown 时仅 Idempotent（同 key）与 Queryable
   （probe）可继续，Pure/Opaque Frozen；取代手写 crash 表。
 
-**未完成（接线）：** LifecycleJournal 接入 `GovernedOperationStore` 与 coordinator spawn/complete
-路径；BudgetLedger 替换 coordinator 分散的 exhausted-set 检查（独立 commit）；outbox 与 state
-transition 的原子落盘（当前 store 为整库 snapshot，不是 event+outbox 原子追加）；Kairos claim/
-heartbeat/complete API。
+**已实施（compose 证据，NG-03C-4）：** `compose_ng03c` 集成测试把
+`BudgetLedger` + `GovernedOperationStore` + `LifecycleJournal` 串成一条
+reserve→create→claim→complete/cancel→settle/release→terminal 路径，并覆盖
+ceilings、idempotency、late complete、journal no-revival、crash_action_for
+（P0-NR-A/K4）fail-closed 边。这是接线前的合同证据，**不是** coordinator 全量
+替换完成。
+
+**未完成（接线）：** LifecycleJournal 接入 coordinator spawn/complete 路径；
+BudgetLedger 替换 coordinator 分散的 exhausted-set 检查（独立 commit；现有
+coordinator 已有等价结构性限额，强替换无新能力且风险高）；outbox 与 state
+transition 的原子落盘（当前 store 为整库 snapshot，不是 event+outbox 原子追加）；
+Kairos claim/heartbeat/complete API。
 
 **目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
 root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以

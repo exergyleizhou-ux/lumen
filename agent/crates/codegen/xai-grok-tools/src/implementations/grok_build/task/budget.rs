@@ -120,12 +120,12 @@ struct Reservation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct LiveNode {
-    node_id: String,
-    parent: Option<String>,
-    depth: u8,
-    background: bool,
-    reservations: Vec<ReservationId>,
+pub struct LiveNode {
+    pub node_id: String,
+    pub parent: Option<String>,
+    pub depth: u8,
+    pub background: bool,
+    pub reservations: Vec<ReservationId>,
 }
 
 /// 单一 root tree 的原子预算账本。`Arc<Mutex<BudgetLedger>>` 下并发安全。

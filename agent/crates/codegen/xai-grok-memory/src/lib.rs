@@ -28,6 +28,7 @@ pub mod backend;
 pub mod canonical;
 pub mod chunker;
 pub mod claim_authority;
+pub mod compose_ng03c;
 pub mod context_manifest;
 pub mod dream;
 pub mod dream_lock;
