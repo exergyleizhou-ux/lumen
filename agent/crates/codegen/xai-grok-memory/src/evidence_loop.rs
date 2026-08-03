@@ -315,6 +315,133 @@ pub fn reduce_tree_loop(
     }
 }
 
+/// Supervisor (Kairos-facing) lease consumer — pure stop conditions only.
+/// Does not claim 24h autonomy or auto-retry external effects.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SupervisorLoopState {
+    pub supervisor_id: String,
+    pub phase: LoopPhase,
+    pub lease_epoch: u64,
+    pub trees_frozen: u32,
+    pub trees_need_parent: u32,
+    pub heartbeat_misses: u32,
+    pub max_heartbeat_misses: u32,
+}
+
+impl SupervisorLoopState {
+    pub fn fresh(id: impl Into<String>) -> Self {
+        Self {
+            supervisor_id: id.into(),
+            phase: LoopPhase::Running,
+            lease_epoch: 0,
+            trees_frozen: 0,
+            trees_need_parent: 0,
+            heartbeat_misses: 0,
+            max_heartbeat_misses: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SupervisorLoopEvent {
+    LeaseAcquired { epoch: u64 },
+    HeartbeatOk,
+    HeartbeatMiss,
+    TreeFrozen,
+    TreeNeedsParent,
+    OperatorFreeze,
+    OperatorCancel,
+    /// External effect unknown — never auto-retry (INV-15).
+    ExternalEffectUnknown,
+}
+
+pub fn reduce_supervisor_loop(
+    mut state: SupervisorLoopState,
+    event: SupervisorLoopEvent,
+) -> (SupervisorLoopState, LoopEffect) {
+    if state.phase.is_terminal() {
+        return (state, LoopEffect::None);
+    }
+    match event {
+        SupervisorLoopEvent::LeaseAcquired { epoch } => {
+            if epoch < state.lease_epoch {
+                // Stale lease claim — freeze.
+                state.phase = LoopPhase::Frozen;
+                return (
+                    state,
+                    LoopEffect::MarkFrozen {
+                        reason: "stale_lease_epoch".into(),
+                    },
+                );
+            }
+            state.lease_epoch = epoch;
+            state.heartbeat_misses = 0;
+            state.phase = LoopPhase::Running;
+            (state, LoopEffect::None)
+        }
+        SupervisorLoopEvent::HeartbeatOk => {
+            state.heartbeat_misses = 0;
+            (state, LoopEffect::None)
+        }
+        SupervisorLoopEvent::HeartbeatMiss => {
+            state.heartbeat_misses = state.heartbeat_misses.saturating_add(1);
+            if state.heartbeat_misses >= state.max_heartbeat_misses {
+                state.phase = LoopPhase::RecoveryRequired;
+                return (
+                    state,
+                    LoopEffect::RequestParentDecision {
+                        reason: "heartbeat_miss_cap".into(),
+                    },
+                );
+            }
+            (state, LoopEffect::None)
+        }
+        SupervisorLoopEvent::TreeFrozen => {
+            state.trees_frozen = state.trees_frozen.saturating_add(1);
+            state.phase = LoopPhase::Frozen;
+            (
+                state,
+                LoopEffect::MarkFrozen {
+                    reason: "tree_frozen".into(),
+                },
+            )
+        }
+        SupervisorLoopEvent::TreeNeedsParent => {
+            state.trees_need_parent = state.trees_need_parent.saturating_add(1);
+            state.phase = LoopPhase::NeedsParentDecision;
+            (
+                state,
+                LoopEffect::RequestParentDecision {
+                    reason: "tree_needs_parent".into(),
+                },
+            )
+        }
+        SupervisorLoopEvent::OperatorFreeze => {
+            state.phase = LoopPhase::Frozen;
+            (
+                state,
+                LoopEffect::MarkFrozen {
+                    reason: "operator_freeze".into(),
+                },
+            )
+        }
+        SupervisorLoopEvent::OperatorCancel => {
+            state.phase = LoopPhase::Cancelled;
+            (state, LoopEffect::None)
+        }
+        SupervisorLoopEvent::ExternalEffectUnknown => {
+            state.phase = LoopPhase::Frozen;
+            (
+                state,
+                LoopEffect::MarkFrozen {
+                    reason: "external_effect_unknown".into(),
+                },
+            )
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +576,52 @@ mod tests {
         assert_eq!(node.phase, LoopPhase::Frozen);
         let (tree, effect) = reduce_tree_loop(TreeLoopState::fresh("root"), TreeLoopEvent::NodeFrozen);
         assert_eq!(tree.phase, LoopPhase::Frozen);
+        assert!(matches!(effect, LoopEffect::MarkFrozen { .. }));
+    }
+
+    #[test]
+    fn supervisor_stale_lease_and_effect_unknown_freeze() {
+        let s = SupervisorLoopState::fresh("sup-1");
+        let (s, _) = reduce_supervisor_loop(s, SupervisorLoopEvent::LeaseAcquired { epoch: 2 });
+        assert_eq!(s.lease_epoch, 2);
+        let (s, effect) =
+            reduce_supervisor_loop(s, SupervisorLoopEvent::LeaseAcquired { epoch: 1 });
+        assert_eq!(s.phase, LoopPhase::Frozen);
+        assert!(matches!(effect, LoopEffect::MarkFrozen { reason } if reason == "stale_lease_epoch"));
+
+        let s = SupervisorLoopState::fresh("sup-2");
+        let (s, effect) =
+            reduce_supervisor_loop(s, SupervisorLoopEvent::ExternalEffectUnknown);
+        assert_eq!(s.phase, LoopPhase::Frozen);
+        assert!(matches!(
+            effect,
+            LoopEffect::MarkFrozen { reason } if reason == "external_effect_unknown"
+        ));
+    }
+
+    #[test]
+    fn supervisor_heartbeat_miss_cap_needs_parent() {
+        let mut s = SupervisorLoopState::fresh("sup");
+        s.max_heartbeat_misses = 2;
+        let (s, _) = reduce_supervisor_loop(s, SupervisorLoopEvent::HeartbeatMiss);
+        let (s, effect) = reduce_supervisor_loop(s, SupervisorLoopEvent::HeartbeatMiss);
+        assert_eq!(s.phase, LoopPhase::RecoveryRequired);
+        assert!(matches!(
+            effect,
+            LoopEffect::RequestParentDecision { reason } if reason == "heartbeat_miss_cap"
+        ));
+    }
+
+    #[test]
+    fn compose_node_tree_supervisor_freeze_chain() {
+        let (node, _) =
+            reduce_node_loop(NodeLoopState::fresh(), LoopEvent::DeliveryUnknown).unwrap();
+        assert!(node.phase.is_terminal() || matches!(node.phase, LoopPhase::Frozen));
+        let (tree, _) = reduce_tree_loop(TreeLoopState::fresh("root"), TreeLoopEvent::NodeFrozen);
+        let (sup, effect) =
+            reduce_supervisor_loop(SupervisorLoopState::fresh("sup"), SupervisorLoopEvent::TreeFrozen);
+        assert_eq!(tree.phase, LoopPhase::Frozen);
+        assert_eq!(sup.phase, LoopPhase::Frozen);
         assert!(matches!(effect, LoopEffect::MarkFrozen { .. }));
     }
 }

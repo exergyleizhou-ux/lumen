@@ -291,5 +291,74 @@ mod tests {
         // Child at depth > HARD_MAX is rejected by coordinator (shipped constant).
         assert!(4 > HARD_MAX_SUBAGENT_DEPTH);
         let _ = good_hash;
+
+        // --- S7 loop: leaf no-progress escalates; delivery unknown freezes ---
+        use crate::evidence_loop::{
+            LoopEvent, LoopPhase, NodeLoopState, SupervisorLoopEvent, SupervisorLoopState,
+            TreeLoopEvent, TreeLoopState, reduce_node_loop, reduce_supervisor_loop,
+            reduce_tree_loop,
+        };
+        let mut leaf_loop = NodeLoopState::fresh();
+        leaf_loop.no_progress_cap = 2;
+        let (leaf_loop, _) = reduce_node_loop(
+            leaf_loop,
+            LoopEvent::NoProgress {
+                fingerprint: "same".into(),
+            },
+        )
+        .unwrap();
+        let (leaf_loop, _) = reduce_node_loop(
+            leaf_loop,
+            LoopEvent::NoProgress {
+                fingerprint: "same".into(),
+            },
+        )
+        .unwrap();
+        assert_eq!(leaf_loop.phase, LoopPhase::NeedsParentDecision);
+        let (tree, _) =
+            reduce_tree_loop(TreeLoopState::fresh("root"), TreeLoopEvent::NodeNeedsParent);
+        assert_eq!(tree.phase, LoopPhase::NeedsParentDecision);
+        let (sup, _) = reduce_supervisor_loop(
+            SupervisorLoopState::fresh("sup"),
+            SupervisorLoopEvent::TreeNeedsParent,
+        );
+        assert_eq!(sup.phase, LoopPhase::NeedsParentDecision);
+
+        // --- S8 sealed receipt: partial output forbids in-process retry ---
+        use crate::sealed_attempt_receipt::{
+            clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
+        };
+        assert!(may_in_process_retry(&clean_preflight_receipt("g1")).is_ok());
+        assert!(
+            may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("g2"))).is_err()
+        );
+
+        // --- sandbox leaf deny (S5/S6 surface) ---
+        use crate::agent_sandbox::{
+            AgentSandboxV1, IssueSandboxRequest, SANDBOX_HARD_MAX_DEPTH, SandboxAssuranceV1,
+        };
+        let leaf_sb = AgentSandboxV1::issue(IssueSandboxRequest {
+            sandbox_id: "sb-ev".into(),
+            task_tree_id: "root".into(),
+            node_id: "evidence".into(),
+            immediate_parent_id: Some("review".into()),
+            depth: SANDBOX_HARD_MAX_DEPTH,
+            branch_id: "branch-evidence".into(),
+            context_manifest_hash: "sha256:m".into(),
+            accepted_snapshot_hash: snapshot.accepted_set_hash.clone(),
+            capability_grant_id: "grant-ev".into(),
+            policy_revision: 1,
+            budget_reservation_id: "budget-evidence".into(),
+            is_root: false,
+            request_write: true,
+            request_network: true,
+            request_spawn: true,
+            issued_at_unix: 1_700_000_000,
+            ttl_secs: 60,
+            assurance: SandboxAssuranceV1::HarnessPolicyOnly,
+        })
+        .unwrap();
+        assert!(leaf_sb.authorize_spawn(1_700_000_100).is_err());
+        assert!(leaf_sb.authorize_filesystem_write(1_700_000_100).is_err());
     }
 }

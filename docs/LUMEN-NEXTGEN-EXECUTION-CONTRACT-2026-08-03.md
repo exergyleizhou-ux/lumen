@@ -150,12 +150,12 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
 | derived_from（NG-04A） | 60% | 100% | 全图 enforcement（revoke 传播到消费方） |
 | Sandbox（NG-04D） | 80% | 100% | 全主 writer 接 sandbox write 门；待 process/network/spawn 全路径 |
-| Evidence loop（NG-04E） | 50% | 100% | Node+Tree pure reducers；待 Supervisor + run_loop 接线 |
-| 模型选择/Expert（NG-05） | 40% | 100% | P4b 唯一允许路线；provider health + no-replay failover 全审计 |
+| Evidence loop（NG-04E） | 65% | 100% | Node+Tree+Supervisor pure reducers；待 run_loop 接线 |
+| 模型选择/Expert（NG-05） | 50% | 100% | SealedAttemptReceiptV1 gate 已落地；待全 sampler 接线与 inventory |
 | Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
 | Assignment（NG-07） | 10% | 100% | root-approved bounded assignment；Applied 全条件 |
-| Kairos（NG-08） | 15% | 100% | KairosSupervisor 状态机；operator freeze surface；local proof |
-| exact-binary golden（NG-09A/B） | 10% | 100% | 三层 shadow golden + regression corpus + bounded assignment 扩展 |
+| Kairos（NG-08） | 30% | 100% | SupervisorLoop pure 合同；待 real lease consumer |
+| exact-binary golden（NG-09A/B） | 35% | 100% | offline golden 串 loop/seal/sandbox；待 exact-binary UI |
 | R0/CI/release（R0、NG-10） | 25% | 100% | exact-SHA CI；A/B tuple；二阶段 release transaction；updater 隔离 |
 | 产品品牌/UI 身份 | 75% | 100% | 细节打磨（欢迎屏、状态栏、菜单） |
 
@@ -337,7 +337,7 @@ read-only grandchild）；grandchild 尝试 spawn/write/network/unknown ToolKind
 
 ### S7 — NG-04E：Governed Evidence Loop 与收敛合同
 
-**状态：** 部分实施（Node+Tree pure reducers）。前置：S1–S6。
+**状态：** 部分实施（Node+Tree+Supervisor pure reducers）。前置：S1–S6。
 **目标：** Node/Tree/Supervisor 三个 pure reducer + typed fake event source；progress 仅因 obligation
 discharge/refute/获批 refine/新 evidence 推进；repair 引用上轮 failure receipt；completion 只
 `CompletionCandidate` 且 verify/host/root 三层后才 terminal；连续 no-progress、scope/budget/model 越界 →
@@ -353,7 +353,7 @@ cancel/late event、verification failure、closed channel、intent-before-effect
 
 ### S8 — NG-05：ProviderHealth、P0-NR-A 收口审计与 P4b 唯一路线
 
-**状态：** P4a 已落地；收口待做。前置：S1。
+**状态：** P4a 已落地；SealedAttemptReceiptV1 合同已落地；sampler 全路径收口待做。前置：S1。
 **目标：** 审计所有同轮重投路径是否带 sealed receipt（NoOutput+NoToolCall+NotAttempted+NoExternalEffect）；
 输出已发/thought/tool delta/effect unknown 一律 partial failure 不重放（INV-11）；P4b 成为普通 turn 与
 后台任务唯一允许路线（用户池 + health + budget + privacy + no-replay）。
@@ -377,7 +377,7 @@ shadow 模式所有 advice 落盘 `Shadow` 标记。
 
 ### S10 — NG-09A：三层 shadow-only offline golden path + Harness regression corpus
 
-**状态：** Not started。前置：S1–S9 中除 S11/S12 外的全部（总纲：刻意不等 NG-07）。
+**状态：** 部分实施（offline multi-layer golden + loop/seal/sandbox）；exact-binary 待做。前置：S1–S9 中除 S11/S12 外的全部。
 **目标：** 用零 provider、零外部副作用的 rebuilt binary 证明 shadow-only 边界一起工作（§0.4 场景）；
 同时交付 `NG-09A-1` 版本化 scenario corpus（5 个 corpus：authority / context-claim / execution-liveness /
 provider-model / UX-provenance），每条含 input hash、fixture hash、expected transitions、negative mutation、

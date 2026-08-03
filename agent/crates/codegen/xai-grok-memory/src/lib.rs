@@ -27,6 +27,7 @@ pub mod archive;
 pub mod handoff_packet;
 pub mod evidence_loop;
 pub mod m1_governed_tree_preview;
+pub mod sealed_attempt_receipt;
 pub mod authority_event;
 pub mod authority_projection;
 pub mod backend;
@@ -64,8 +65,12 @@ pub use handoff_packet::{
 };
 pub use evidence_loop::{
     DEFAULT_NO_PROGRESS_CAP, DEFAULT_REPAIR_CAP, LoopEffect, LoopEvent, LoopPhase,
-    LoopReduceError, NodeLoopState, TreeLoopEvent, TreeLoopState, reduce_node_loop,
-    reduce_tree_loop,
+    LoopReduceError, NodeLoopState, SupervisorLoopEvent, SupervisorLoopState, TreeLoopEvent,
+    TreeLoopState, reduce_node_loop, reduce_supervisor_loop, reduce_tree_loop,
+};
+pub use sealed_attempt_receipt::{
+    Obs, RetryDenyReason, SealedAttemptReceiptV1, clean_preflight_receipt, mark_attempt_started,
+    mark_external_effect_unknown, mark_output_emitted, mark_tool_call, may_in_process_retry,
 };
 pub use m1_governed_tree_preview::{
     DenyMechanism, DenyRecord, M1PreviewReceipt, TreeNodeProjection, run_m1_governed_tree_preview,
