@@ -14,11 +14,35 @@ pub(crate) enum McpReminderMode {
 
 /// P0 no-replay baseline for ordinary sampler turns.
 ///
-/// We do not yet have a durable provider-attempt receipt that can prove a
-/// failed transport request produced neither output nor an external effect.
-/// Until that contract exists, a normal turn must make one sampler submission
-/// and surface any failure rather than replaying the request in-process.
+/// In-process retry is only legal when a sealed attempt receipt proves
+/// `NoOutput + NoToolCall + NotAttempted + NoExternalEffect` (see
+/// `xai_grok_memory::may_in_process_retry`). Until every transport path
+/// produces that receipt, ordinary turns keep max retries at zero and surface
+/// failure instead of replaying in-process.
 pub(crate) const NO_RECEIPT_MAX_RETRIES: u32 = 0;
+
+#[cfg(test)]
+mod no_replay_policy_tests {
+    use super::NO_RECEIPT_MAX_RETRIES;
+    use xai_grok_memory::{
+        clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
+    };
+
+    #[test]
+    fn ordinary_turn_retries_stay_zero_and_seal_gate_matches_policy() {
+        assert_eq!(
+            NO_RECEIPT_MAX_RETRIES, 0,
+            "ordinary turns must not in-process retry without sealed receipt"
+        );
+        // Clean preflight is the only seal that would permit a *future* retry
+        // path once durable receipts are wired; today max_retries stays 0.
+        assert!(may_in_process_retry(&clean_preflight_receipt("t0")).is_ok());
+        assert!(
+            may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("t1"))).is_err(),
+            "any emitted output must forbid in-process retry"
+        );
+    }
+}
 
 /// Outcome of `process_conversation_turn`, distinguishing normal completion from cancellation.
 pub(crate) enum TurnOutcome {

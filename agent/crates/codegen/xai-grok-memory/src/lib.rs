@@ -27,6 +27,7 @@ pub mod archive;
 pub mod handoff_packet;
 pub mod evidence_loop;
 pub mod m1_governed_tree_preview;
+pub mod bounded_assignment_apply;
 pub mod sealed_attempt_receipt;
 pub mod authority_event;
 pub mod authority_projection;
@@ -67,6 +68,9 @@ pub use evidence_loop::{
     DEFAULT_NO_PROGRESS_CAP, DEFAULT_REPAIR_CAP, LoopEffect, LoopEvent, LoopPhase,
     LoopReduceError, NodeLoopState, SupervisorLoopEvent, SupervisorLoopState, TreeLoopEvent,
     TreeLoopState, reduce_node_loop, reduce_supervisor_loop, reduce_tree_loop,
+};
+pub use bounded_assignment_apply::{
+    AssignmentApplyDeny, AssignmentApplyRequest, AssignmentLifecycle, authorize_assignment_apply,
 };
 pub use sealed_attempt_receipt::{
     Obs, RetryDenyReason, SealedAttemptReceiptV1, clean_preflight_receipt, mark_attempt_started,

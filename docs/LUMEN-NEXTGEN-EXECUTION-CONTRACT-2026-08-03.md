@@ -153,7 +153,7 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | Evidence loop（NG-04E） | 65% | 100% | Node+Tree+Supervisor pure reducers；待 run_loop 接线 |
 | 模型选择/Expert（NG-05） | 50% | 100% | SealedAttemptReceiptV1 gate 已落地；待全 sampler 接线与 inventory |
 | Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
-| Assignment（NG-07） | 10% | 100% | root-approved bounded assignment；Applied 全条件 |
+| Assignment（NG-07） | 45% | 100% | authorize_assignment_apply 纯门 + RootGovernedAssignment 存储；待 recommend UI |
 | Kairos（NG-08） | 30% | 100% | SupervisorLoop pure 合同；待 real lease consumer |
 | exact-binary golden（NG-09A/B） | 35% | 100% | offline golden 串 loop/seal/sandbox；待 exact-binary UI |
 | R0/CI/release（R0、NG-10） | 25% | 100% | exact-SHA CI；A/B tuple；二阶段 release transaction；updater 隔离 |
@@ -390,7 +390,7 @@ exact binary hash、raw exits；维护 `verification_debt` read model。
 
 ### S11 — NG-07：recommend 与 bounded assignment
 
-**状态：** Not started。前置：S10（+ NG-01..06）。
+**状态：** 部分实施（apply 纯门）；recommend UI 待做。前置：S10（+ NG-01..06）。
 **目标：** 仅当 new child/new turn、no output、no user pin、allowlisted/compatible、health 可用、
 budget reserve 成功、privacy 允许、capability 不变、root approval 完整时可 Applied。
 **禁止：** SetDefaultModel、替换 stream、静默 cross-provider、无限 spend、Advisor PASS→completion。
