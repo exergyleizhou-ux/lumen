@@ -35,16 +35,17 @@ async fn welcome_screen_braille_logo_renders_correctly() {
     // byte characters each (e.g. Cyrillic). Check for a few that only
     // appear in the logo — not in any ASCII menu label.
     //
-    // From logo07.txt line 2: ⣠⣾⠿⠛
+    // The LUMEN wordmark is built from full-block ⣿ (U+28FF) on blank
+    // ⠀ (U+2800); letter bottoms (L/E) form a 5-wide ⣿ run per line 7.
     assert!(
-        screen.contains('⣾'),
-        "Braille character ⣾ (U+28FE) not found in screen — \
+        screen.contains('⣿'),
+        "Braille character ⣿ (U+28FF) not found in screen — \
          logo may be garbled by code-page misinterpretation.\n\
          Screen contents:\n{screen}"
     );
     assert!(
-        screen.contains('⣿'),
-        "Braille character ⣿ (U+28FF) not found in screen — \
+        screen.contains("⣿⣿⣿⣿⣿"),
+        "LUMEN wordmark bottom row (5-wide full-block run) not found in screen — \
          logo may be garbled.\n\
          Screen contents:\n{screen}"
     );

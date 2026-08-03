@@ -449,7 +449,7 @@ pub(super) fn render_version_badge(
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                format!("{}{}", xai_grok_version::VERSION, channel),
+                format!("{}{}", crate::LUMEN_PRODUCT_VERSION, channel),
                 Style::default().fg(theme.gray),
             ));
         }
@@ -471,7 +471,7 @@ pub(super) fn render_version_badge(
                     .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::styled(
-                xai_grok_version::VERSION,
+                crate::LUMEN_PRODUCT_VERSION,
                 Style::default().fg(theme.gray),
             ));
         }

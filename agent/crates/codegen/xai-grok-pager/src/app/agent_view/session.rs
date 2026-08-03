@@ -1983,8 +1983,8 @@ mod truth_runtime_tests {
         let mut agent = test_agent_view(Some("s1"), std::path::PathBuf::from("/tmp"));
         let bad = TruthSnapshot {
             product: ProductIdentity {
-                display_name: "Grok Build".into(),
-                version: "1".into(),
+                display_name: "Lumen".into(),
+                version: "".into(),
                 release_channel: "alpha".into(),
             },
             provider: crate::ui_contract::ProviderState::Unknown,
