@@ -245,6 +245,8 @@ mod tests {
             output_token_budget: None,
             output_schema: None,
             loop_task_id: None,
+            context_manifest_hash: None,
+            governed_admission: None,
         }
     }
 

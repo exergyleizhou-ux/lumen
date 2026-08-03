@@ -229,6 +229,12 @@ pub fn apply_child_tool_policy(
     if let Some(mode) = capability_mode {
         mode.filter_tool_config(&mut definition.tool_config);
     }
+    // NG-02A foundation: children never receive tools whose kind is unknown
+    // (`None`) or the open-set sink (`Other`). Root sessions keep the full
+    // registry surface; only this child admission path applies the deny.
+    definition.tool_config.tools.retain(|tool| {
+        !matches!(tool.kind, None | Some(ToolKind::Other))
+    });
     if !allow_nested_subagents {
         definition
             .tool_config
@@ -334,6 +340,47 @@ mod tests {
         assert!(kinds.contains(&Some(ToolKind::Search)));
         assert!(!kinds.contains(&Some(ToolKind::Execute)));
         assert!(!kinds.contains(&Some(ToolKind::Task)));
+        assert!(!kinds.contains(&Some(ToolKind::Other)));
+        assert!(!kinds.contains(&None));
+    }
+
+    #[test]
+    fn child_tool_policy_strips_unknown_and_other_kinds() {
+        use xai_grok_tools::registry::types::ToolConfig;
+
+        let cwd = tempfile::tempdir().unwrap();
+        let toggles = HashMap::new();
+        let mut definition =
+            resolve_agent_definition("explore", &context(cwd.path(), &toggles)).unwrap();
+        definition.tool_config.tools.push(ToolConfig {
+            id: "custom:mystery".to_owned(),
+            params: None,
+            name_override: None,
+            params_name_overrides: None,
+            description_override: None,
+            behavior_version: None,
+            kind: Some(ToolKind::Other),
+        });
+        definition.tool_config.tools.push(ToolConfig {
+            id: "custom:untyped".to_owned(),
+            params: None,
+            name_override: None,
+            params_name_overrides: None,
+            description_override: None,
+            behavior_version: None,
+            kind: None,
+        });
+        let before = definition.tool_config.tools.len();
+        apply_child_tool_policy(&mut definition, None, true);
+        assert!(
+            definition.tool_config.tools.len() < before,
+            "Other/None tools must be removed from the child tool surface"
+        );
+        assert!(definition
+            .tool_config
+            .tools
+            .iter()
+            .all(|tool| !matches!(tool.kind, None | Some(ToolKind::Other))));
     }
     #[test]
     fn gates_disabled_and_not_allowed_definitions() {
