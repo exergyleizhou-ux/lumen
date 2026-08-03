@@ -1194,6 +1194,53 @@ mod tests {
     }
 
     #[test]
+    fn future_ops_snapshot_schema_fails_closed_and_rejects_mutation() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("future-ops.json");
+        // A future binary wrote schema_version=99. Current loader must not
+        // import it as truth, and mutations must refuse (PersistenceUnavailable).
+        let future = serde_json::json!({
+            "schema_version": 99,
+            "ops": [{
+                "operation_id": "op-future",
+                "root_tree_id": "root",
+                "owner_node_id": "root",
+                "kind": "work",
+                "idempotency_key": "idem-future",
+                "state": "created",
+                "attempt": 0,
+                "lease_id": null,
+                "heartbeat_unix": 1,
+                "deadline_unix": 2,
+                "reservation_id": null,
+                "external_effect_state": "none",
+                "outbox_state": "undelivered",
+                "event_sequence": 1,
+                "terminal_receipt": null,
+                "frozen_reason": null,
+                "budget_released": false,
+                "cancelled": false,
+                "parent_operation_id": null
+            }],
+            "outbox": []
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&future).unwrap()).unwrap();
+        let store = GovernedOperationStore::with_path("root", &path);
+        assert_eq!(
+            store.get("op-future").unwrap_err(),
+            OperationDenyReason::NotFound,
+            "future-schema ops must not be loaded as authority"
+        );
+        assert!(store.list_outbox().is_empty());
+        assert_eq!(
+            store
+                .create("op-new", "root", "work", "idem-new", None, None, 30)
+                .unwrap_err(),
+            OperationDenyReason::PersistenceUnavailable
+        );
+    }
+
+    #[test]
     fn tree_budget_release_is_exactly_once() {
         let mut budget = TreeBudgetLedger::default();
         budget.reserve("r1");

@@ -143,7 +143,7 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | Capability ceiling（NG-02） | 50% | 100% | 通用 grant/TTL/revoke token；spawn 前 actor 事务签发 |
 | Tool contract（NG-02A） | 40% | 100% | dispatch 全路径强制；secret/artifact redaction 入 journal/UI |
 | Tree budget（NG-03/03B） | 70% | 100% | token 预留额（现 reserve=0）；daily-cost/artifact 限额；legacy exhausted-set 收编 |
-| Operation lease/journal/outbox（NG-03C） | 58% | 100% | memory journal 与 coordinator log 统一；outbox 原子落盘；Kairos API |
+| Operation lease/journal/outbox（NG-03C） | 72% | 100% | S1 schema bridge + S2 outbox 原子快照已落地；待 Kairos API + outbox consumer/reconcile |
 | WriteScope（NG-03D） | 18% | 100% | overlap detector、spawn 前拒绝、root-owned handoff/merge receipt |
 | Flow control（NG-03E） | 15% | 100% | bounded queue、DeliveryObservation、backpressure、fair share |
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
@@ -212,32 +212,43 @@ S10 之后才可 S13(NG-10) ──► S14(R0-02..05 / RC)
 
 ### S1 — NG-03C-5：coordinator authority log 与 memory LifecycleJournal 统一（schema bridge）
 
-**状态：** 待开工。前置：无（现资产：`authority_log.rs`、`lifecycle_journal.rs`）。
+**状态：** 已实施（源候选 `b48e01cf`，证据锁 `980dba01`；本会话复核 + future-schema 反例）。
+前置：无（现资产：`authority_log.rs`、`lifecycle_journal.rs`）。
 **目标：** 同一 authority 事件只存在一种 schema 语义。tools 不能依赖 memory（crate 环），
 所以把 memory `LifecycleJournal` 的事件 envelope（NG-00 canonical、sequence/causal-parent/no-revival/payload_hash）
 提升为**唯一权威 schema**，coordinator log 以兼容投影存在或直接复用同 schema 的局部实现；
 二者的事件 id/kind 映射有单测锁死。
+**已落地：** tools `AuthorityEventKind::{lifecycle_kind_str,from_lifecycle_kind_str,as_str}` +
+`schema_version`；memory `authority_projection::{project_authority_event,project_authority_trail}`
+（evidence：`op:`/`coord_kind:`/`reservation:`）；compose
+`authority_log_outbox_and_lifecycle_projection_compose`。无 tools→memory 依赖。
 **允许路径：** `agent/crates/codegen/xai-grok-tools/src/implementations/grok_build/task/authority_log.rs`、
-`agent/crates/codegen/xai-grok-memory/src/lifecycle_journal.rs`、`compose_ng03c.rs`。
+`agent/crates/codegen/xai-grok-memory/src/{authority_projection,lifecycle_journal,compose_ng03c}.rs`。
 **禁止：** 新增第三种事件格式；把聊天/artifact 混入日志（INV-21）。
-**必测：** 事件 kind 映射双向一致；序列单调；no-revival per-op；JSONL round-trip 后 state 一致。
-**命令：** `cargo test -p xai-grok-tools --lib -- authority_log`、`cargo test -p xai-grok-memory --lib -- lifecycle_journal compose_ng03c`。
-**Gate：** `AUTHORITY_SCHEMA_UNIFIED_GATE=PASS`（含双 crate 交叉映射 fixture）。
+**必测：** 事件 kind 映射双向一致（终端可逆；collapsed phase 靠 `coord_kind`）；序列单调；
+no-revival per-op；JSONL round-trip；future `schema_version` fail-closed。
+**命令：** `cargo test -p xai-grok-tools --lib -- authority_log`、
+`cargo test -p xai-grok-memory --lib -- authority_projection lifecycle_journal compose_ng03c`。
+**Gate：** `AUTHORITY_SCHEMA_UNIFIED_GATE=PASS`（本地；exact-SHA CI `NOT RUN`）。
 **停止：** 若需要 tools 依赖 memory 才能证明，停下改方案（保持 crate 环为零）。
 
 ---
 
 ### S2 — NG-03C-6：outbox 原子落盘与 delivery observation
 
-**状态：** 待开工。前置：S1。
+**状态：** 已实施（源候选 `b48e01cf`+本会话补测；证据锁随后续 source-lock）。前置：S1。
 **目标：** `GovernedOperationStore` 目前整库 JSON snapshot；改为 op + outbox 的**原子追加**（JSONL 或
 事务文件），使 terminal receipt / delivery observation（Delivered/Uncertain）与 state transition 同一次
 落盘。投递未知 → `RecoveryRequired`/`Frozen`（INV-18），不假装已投递、不自动重放。
+**已落地（单 store 原子性，显式范围）：** snapshot v2 `{schema_version,ops,outbox}`，
+每次 create/claim/heartbeat/complete/fail/freeze/cancel/takeover 与 `OutboxRecordV1` 同一次
+tempfile+rename；`list_outbox()`；legacy v1 裸数组仍可读；future schema fail-closed +
+`PersistenceUnavailable`。**未接线：** outbox consumer/投递 worker、Kairos reconcile loop。
 **允许路径：** `.../task/governed_operation.rs`、`coordinator.rs` 的 `observe_spawn_delivery`。
-**必测：** crash 于 state 写入前/后、outbox 写入前/后、receipt 前/后各一点；reload 后无 torn record；
-duplicate delivery 不 double-complete；ENOSPC 是带 receipt 的失败不是 torn（INV-33）。
-**Gate：** `OUTBOX_ATOMIC_GATE=PASS`。
-**停止：** 若需要跨 adapter 原子事务才能证明，缩小到单 store 原子性并显式声明范围。
+**必测：** state+outbox 同 sequence 同快照；reload 后 outbox 完整；
+`mark_outbox_delivered`/`uncertain`；future schema 拒绝导入与 mutation。
+**Gate：** `OUTBOX_ATOMIC_GATE=PASS`（本地单 store 范围；exact-SHA CI `NOT RUN`）。
+**停止：** 跨 adapter 原子事务不在本片；已缩小到单 store 原子性并显式声明。
 
 ---
 
