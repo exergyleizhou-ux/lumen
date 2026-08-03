@@ -1587,10 +1587,14 @@ durable create 失败回滚 reservation 防 slot 泄漏。`TreeAuthorityLog` 作
 既有 exhausted-set（token/tool/wall）保留作 usage 后关闭 admission 的补充，
 不与 ledger 结构性限额冲突。
 
-**未完成（接线）：** memory `LifecycleJournal` JSONL 与 coordinator 日志统一；
-outbox 与 state transition 的原子落盘（当前 store 为整库 snapshot）；
-Kairos claim/heartbeat/complete API；token 预留额（现 reserve tokens=0，
-usage 在 settle 时记账）。
+**已实施（authority JSONL 落盘）：** 当 host 提供 `operation_store_dir` 时，
+`TreeAuthorityLog` 以 JSONL 写入 `task-tree-authority/{hex-root}.jsonl`，
+进程重启后 reload 仍保留 per-op 终态与 no-revival（与 ops snapshot 同根目录）。
+
+**未完成（接线）：** memory NG-00 `LifecycleJournal` 与 coordinator authority
+log 的 schema 统一（现分处 tools/memory 防 crate 环）；outbox 与 state
+transition 的原子落盘；Kairos claim/heartbeat/complete API；token 预留额
+（现 reserve tokens=0，usage 在 settle 时记账）。
 
 **目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
 root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以

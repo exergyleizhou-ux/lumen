@@ -388,7 +388,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             tracing::error!(root, "authority log lock poisoned");
             return;
         };
-        let log = map.entry(root.to_owned()).or_default();
+        let operation_store_dir = self.operation_store_dir.clone();
+        let log = map.entry(root.to_owned()).or_insert_with(|| {
+            let Some(dir) = operation_store_dir else {
+                return TreeAuthorityLog::in_memory();
+            };
+            let encoded_root: String = root
+                .as_bytes()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            TreeAuthorityLog::at_path(
+                dir.join("task-tree-authority")
+                    .join(format!("{encoded_root}.jsonl")),
+            )
+        });
         // Cascade cancel + finish_child both try to terminalize; the second is
         // an expected no-op, not an authority breach.
         if log.is_operation_terminal(operation_id) {
