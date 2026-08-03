@@ -198,32 +198,91 @@ max_depth=3 的意思是 root 深度 0 后允许 1、2、3 三代子节点；深
 acceptance；terminal stdout 不能替代 evidence；tmux/PID 不能替代 lease；“模型说完成了”不能替代
 terminal receipt。任何功能少一个平面都只能标 `Draft/Experimental`，不能标自治完成。
 
-### 0.1.2 唯一受治理运行信封【拟建】
+### 0.1.2 不变量注册表与审计快照必须分离【拟建】
 
-后续 NG-01 至 NG-09B 的 DTO 不能各自携带半套身份。它们都投影自下列版本化合同；字段可拆分为
-crate-local 类型，但语义不得分叉：
+本书中的“禁止”不能靠多处复制来维持。新增 `docs/nextgen/INVARIANTS.md` 作为唯一规范性不变量注册表：
+每一条拥有稳定 `INV-*` ID、唯一语句、authority owner、consumer choke point、negative corpus、gate、
+rollback 和状态。执行书、RFC、PR、TUI reason code 和测试只引用 ID；可以保留人类可读摘要，但摘要与注册表
+冲突时以注册表为准。至少先登记：单一 SessionActor authority、root-only acceptance/bypass、unknown tool deny、
+Accepted-only sharing、no same-turn replay、intent-before-effect、terminal proof、secret/redaction、source/evidence
+tuple 和无静默 fallback。
+
+同样，本书是罕变的规范，不能继续承担易变 Git/CI 数字。第 1 节中已有 SHA/PR/run 只保留为历史审计锚点；
+R0 后新增脚本生成的 `artifacts/audit/latest.json`（以及可选签名/文本投影），其中包含 input SHA、remote heads、
+dirty-path manifest、CI run、命令原始 exit、生成时间和 schema revision。该文件禁止手改、每个 phase receipt
+只引用它的 hash。没有生成快照时写 `NOT RUN`，不得为更新数字而编辑不变量。
+
+### 0.1.3 类型化 admission choke point【拟建】
+
+十二平面是审计分类，不应在每个调用点各自“记得闭环”。对于新增的 governed profile，副作用入口必须取得
+crate-private、不可由 adapter/MCP/插件构造的 `DispatchPermitV1`。它不是第二个 actor，也不替代 runtime
+检查；它将内部顺序错误从 review 漏洞升级为无法构造的类型错误。
 
 ~~~rust
-pub struct GovernedRunEnvelopeV1 {
-    pub run_id: RunId,
+pub struct RawIntent(/* crate-private */);
+pub struct IdentityBound(/* crate-private */);
+pub struct PolicyResolved(/* crate-private */);
+pub struct ContextAdmitted(/* crate-private */);
+pub struct BudgetReserved(/* crate-private */);
+pub struct DispatchPermitV1(/* crate-private */);
+
+// SessionActor owns this linear admission chain.
+// Every tool/process/provider adapter receives a permit, never a raw root handle.
+RawIntent -> IdentityBound -> PolicyResolved -> ContextAdmitted
+          -> BudgetReserved -> DispatchPermitV1
+~~~
+
+`DispatchPermitV1` 绑定 `identity_hash / grant_revision / manifest_hash / budget_reservation / policy_revision /
+expiry / adapter_contract_hash`。dispatch 时仍须由 actor 比对当前 grant revision、lease epoch 和 cancellation；
+类型系统不能证明外部进程、MCP、反序列化或崩溃恢复正确。所有实际 spawn/transport/worktree apply 必须经过
+少数可枚举的 permit consumer；新增入口未登记时默认无法获得 permit，而不是靠测试“希望它也遵守”。
+
+### 0.1.4 唯一受治理运行信封【拟建】
+
+后续 NG-01 至 NG-09B 的 DTO 不能各自携带半套身份。但 `GovernedRunEnvelopeV1` 也不能混合永恒 identity、
+可撤销 grant、一次 attempt 与 takeover lease；否则 rebase 后出现“同一 run 多个 envelope 哪个权威”的漂移。
+因此 owner state 拆为三种生命周期，envelope 仅为不可变 receipt/projection：
+
+~~~rust
+pub struct NodeIdentityV1 {
     pub task_tree_id: TaskTreeId,
     pub node_id: TaskNodeId,
     pub root_session_id: SessionId,
     pub immediate_parent_id: Option<TaskNodeId>,
     pub lineage_path: Vec<TaskNodeId>,
     pub immutable_assignment_hash: Sha256,
+    pub identity_hash: Sha256,
+}
+
+pub struct GrantRevisionV1 {
+    pub revision: u64,
     pub accepted_snapshot_hash: Sha256,
     pub context_manifest_hash: Sha256,
     pub capability_grant_id: GrantId,
     pub policy_revision: PolicyRevision,
+    pub sandbox_id: SandboxId,
+    pub write_scope_lease_id: Option<WriteLeaseId>,
+    pub valid_until: Timestamp,
+}
+
+pub struct AttemptContextV1 {
+    pub attempt_id: AttemptId,
     pub budget_reservation_id: ReservationId,
     pub model_selection_receipt: ModelSelectionReceipt,
+    pub idempotency_key: Option<IdempotencyKey>,
+    pub deadline: Timestamp,
+    pub observed_grant_revision: u64,
+}
+
+pub struct GovernedRunEnvelopeV1 {
+    pub run_id: RunId,
+    pub identity_hash: Sha256,
+    pub grant_revision: u64,
+    pub attempt_id: AttemptId,
     pub lease_id: Option<LeaseId>,
     pub operation_class: OperationClass,
-    pub idempotency_key: Option<IdempotencyKey>,
     pub evidence_sink: ArtifactSink,
     pub created_at: Timestamp,
-    pub deadline: Timestamp,
 }
 
 pub enum OperationClass {
@@ -246,7 +305,11 @@ pub enum OperationClass {
 5. TUI、CLI、Pager、daemon log 都只读这个合同和事件 journal；它们不能创造 `Running`、`Succeeded` 或
    `Accepted` 状态。
 
-### 0.1.3 Lumen、PDF 中的 Claude harness 与早期 Lumen 2 计划的差异
+grant revision 不是 hash 的替代品：revision 解决 dispatch 时的快速 stale/TOCTOU 检查；identity、manifest、
+snapshot 和 artifact hash 仍证明该 revision 实际绑定的内容。任何 rebase/revoke 都创建新 `GrantRevisionV1`；
+历史 receipt 永远引用当时三元组 `(identity_hash, grant_revision, attempt_id)`，不原地改写。
+
+### 0.1.5 Lumen、PDF 中的 Claude harness 与早期 Lumen 2 计划的差异
 
 | 维度 | PDF 描述的历史 Claude Code | Lumen 原有基础 | Lumen Harness Kernel v1 的加强 |
 |---|---|---|---|
@@ -262,7 +325,7 @@ pub enum OperationClass {
 Grok Build、Expert、Goal、ACP、scheduler、typed verification；补上它们之间原来缺少的共同身份、
 状态、证据、资源和恢复合同。模型越强，这一层越重要，因为并行数、工具权限、成本和副作用都会同步放大。
 
-### 0.1.4 终局验收：Harness 不是“看起来齐”，而是一次完整受控运行
+### 0.1.6 终局验收：Harness 不是“看起来齐”，而是一次完整受控运行
 
 只有下列零 provider、零外部副作用的 exact-binary 场景全过，才可称 Harness Kernel v1 已就绪：
 
@@ -282,7 +345,7 @@ root creates envelope + immutable objective + accepted snapshot
 这个场景通过后只是 **Harness Kernel local-ready**；仍不等于 GitHub exact-SHA CI、Windows、release、
 真实 provider、24 小时 soak 或无人值守自动 commit 已完成。
 
-### 0.1.5 开发态开关与短任务快路径：减少开销，不减少治理
+### 0.1.7 开发态开关与短任务快路径：减少开销，不减少治理
 
 治理层已经很厚；若每一句短问答都启动 TaskTree、持久 ledger、daemon、树面板和多份 artifact，产品会
 变慢且把研发态复杂性转嫁给用户。解决办法不是提供绕过开关，而是在同一 SessionActor authority 下提供
@@ -311,7 +374,7 @@ reservation、root-only bypass 或 hash verification。`warn` 模式只记录“
 claim；用户一旦请求并行/子 Agent/恢复/定时任务，TUI/ACP 必须先显示“将升级为受治理任务树”的 scope、
 模型 pin/池、权限、预算与可取消性。UI 状态始终来源于 actor/journal，不能用 profile 文案伪造完成。
 
-### 0.1.6 红队补洞：并行写入、秘密、流控、人工接管与评估必须显式闭环
+### 0.1.8 红队补洞：并行写入、秘密、流控、人工接管与评估必须显式闭环
 
 本书原有 Tree/Grant/Ledger/Manifest/Lease 主线是正确的，但若省略下面五项，系统仍会在真实长任务中
 “看起来受治理、实际在旁路失控”。它们不是新产品愿望，而是把已经存在的 worktree、secret redaction、
@@ -329,7 +392,7 @@ unbounded event channel、scheduler lease 和离线 golden path 接成闭环：
 SessionActor/其 durable store 决定；它们不得由 model、Advisor、TUI、PID 或 worktree 文件自行宣布。这样
 增强的是当前 Lumen 的 Rust harness，而不是引入一个难以维护的“多 Agent 平行控制系统”。
 
-### 0.1.7 跨版本、迁移与删除：宁可冻结，不可猜测兼容
+### 0.1.9 跨版本、迁移与删除：宁可冻结，不可猜测兼容
 
 TaskTree、grant、claim、manifest、operation、receipt、write lease 与 delivery observation 都会跨 crash、
 resume、升级和 rollback 存活。因此每一个持久合同必须在首次 PR 中同时写清 **read-new / write-new /
@@ -496,6 +559,24 @@ self-report、网页片段和 sibling 投票默认最多 `Proposed`；`Accepted`
 accepted_claim_set_hash)`。`Proposed`、`Conflicted`、`Inconclusive`、`Revoked`、foreign tree、scope
 外 artifact、过期 grant 或 manifest 不匹配 claim 都不得进入 child 输入。这样即使多个 child 同时
 工作，它们也共享的是已确认事实，不是互相放大的猜测。
+
+#### 3.1.3 局部失效、验证环境与渲染输入
+
+撤销/证伪一个 Accepted claim 不能只写一条 `Revoked` record 后让整棵树猜测。actor 维护可由 journal 重建的
+`ClaimDependencyIndex`：`claim_id -> snapshot_id -> manifest_id -> live node/attempt/operation`，并保存
+`derived_from` 因果边。收到 revocation 时：未 dispatch node 重新 admission；纯 read node cancel 到 safe
+checkpoint 后 rebase；write/effect node 立即阻止新 dispatch 并进入 `RecoveryRequired`、`NeedsParentDecision`
+或 `Frozen`。不依赖该 claim 的 sibling 必须继续；不能为方便一律冻结全树，也不能遗漏间接消费者。
+
+`HostVerified` 必须绑定 `EnvironmentFingerprintV1(toolchain, lockfile, target, executable_hash,
+allowlisted_env_hash, input_artifact_hashes)`。任务内可标 `RecomputedSameEnv`；跨任务 promotion 至少要求
+`RecomputedCanonicalEnv`；进入 LongTermMemory 或 release provenance 的高价值证据才要求独立 verifier 按
+evidence bundle 重算 `ThirdPartyReproducible`。第三方 verifier 可以独立于 Lumen runtime，但不要求复制所有
+Lumen 业务逻辑；它必须能读取公开 descriptor、输入引用、判定规则、argv/env、raw exit/stdout/stderr hash。
+
+manifest hash 也不等于模型实际看见的 bytes。每个 attempt receipt 记录 redacted `rendered_input_hash` 与
+renderer/producer revision；compact/resume gate 同时比较 manifest identity 和 render artifact/hash。模型输入的
+实际内容必须受 retention/redaction 保护，不能因可复现要求保存 secret 或 raw root chat。
 
 ### 3.2 child heartbeat
 
@@ -676,6 +757,11 @@ shell/tool/process launch path 都持有同一 policy revision，且 platform-sp
 `OsSandboxVerified`。只做 tool filtering/worktree isolation 的节点必须如实显示较低 assurance；未知 adapter、
 自定义 MCP、无法证明的 subprocess 一律降级并阻止高风险 child，而不是借“sandbox”字样继续执行。
 
+assurance 不凭某一成功路径升高。launch/process/tool 路径来自穷举的 adapter registry，effective assurance
+取全部实际 enforcement path 的最低等级；未登记/无法观察路径默认 `HarnessPolicyOnly`。这只适用于 assurance。
+DataClassification 取最严格标签；Confidence 需要带来源独立性与冲突的聚合；MemoryClaimStatus 是状态机而非
+lattice，不能把这些不同语义粗暴套进同一个 `meet` 函数。
+
 **信息流硬规则：**
 
 1. 每个 child 读取的当前任务记忆仅为 `TaskContract + ContextManifest + AcceptedSnapshot`；可有自己的
@@ -713,7 +799,7 @@ cancel/revoke 与 exact-binary tree projection；它不证明 OS/container escap
 
 #### 3.4.2 GovernedEvidenceLoopV1：Loop 是状态机，不是无限提示词
 
-Lumen 的 loop 分三层，且每层都有唯一状态、预算和停止条件：
+Lumen 的 loop 分三层，但它们不能共用一个“字段取并集”的 reducer/state enum：
 
 | 层 | 驱动者 | 单轮输入/输出 | 允许继续 | 必须停止或升级 |
 |---|---|---|---|---|
@@ -722,44 +808,36 @@ Lumen 的 loop 分三层，且每层都有唯一状态、预算和停止条件�
 | supervisor loop | Kairos/operation consumer | lease/heartbeat/outbox → reconcile/freeze/operator action | receipt 可判定且 retry class 安全 | delivery/effect/owner unknown、lease gap、deadline 或 policy revoke |
 
 ~~~rust
-pub struct LoopContractV1 {
-    pub loop_id: LoopId,
-    pub task_tree_id: TaskTreeId,
-    pub node_id: TaskNodeId,
-    pub sandbox_id: SandboxId,
-    pub context_manifest_hash: ManifestHash,
-    pub accepted_snapshot_hash: Sha256,
-    pub allowed_actions: Vec<LoopActionClass>,
-    pub checkpoint_policy: CheckpointPolicyV1,
-    pub verification_policy: VerificationPolicyRef,
-    pub stop_conditions: Vec<StopCondition>,
-    pub budget_reservation_id: ReservationId,
-    pub deadline: Timestamp,
+pub struct CheckpointEnvelopeV1 {
+    pub loop_kind: LoopKind,
+    pub tree_id: TaskTreeId,
+    pub node_or_operation_id: OwnerId,
+    pub sequence: u64,
+    pub causal_parent: Option<EventId>,
+    pub payload_hash: Sha256,
+    pub encoding_revision: u16,
 }
 
-pub struct LoopCheckpointV1 {
-    pub loop_id: LoopId,
-    pub iteration: u32,
-    pub input_snapshot_hash: Sha256,
-    pub action_receipts: Vec<ReceiptRef>,
-    pub evidence_refs: Vec<ArtifactRef>,
-    pub proposed_claim_refs: Vec<ClaimId>,
-    pub progress_fingerprint: Sha256,
-    pub state: LoopCheckpointState,
-    pub reason_codes: Vec<LoopReasonCode>,
-}
-
-pub enum LoopCheckpointState {
-    Progressed,
-    NeedsEvidence,
-    NeedsParentDecision,
-    Blocked,
-    BudgetExhausted,
-    Cancelled,
-    Frozen,
-    CompletionCandidate,
+pub struct ObligationV1 {
+    pub obligation_id: ObligationId,
+    pub predicate: HostCheckablePredicate,
+    pub state: ObligationState,
+    pub parent: Option<ObligationId>,
+    pub approved_refinement_limit: u16,
 }
 ~~~
+
+`NodeLoopReducer` 消费 obligation、action signature、evidence yield、repair budget；`TreeLoopReducer` 消费
+fair-share credits、claim conflict、snapshot rebase、write overlap 与 tree budget；`SupervisorLoopReducer` 消费
+lease epoch、intent/outcome、reconcile 与 disposition deadline。三者只共享 journal envelope 和 actor authority，
+不共享终态语义。`BudgetExhausted` 在 node、tree、supervisor 的后果不同，必须是不同 reducer 的 typed result。
+
+`progress_fingerprint` 只用于审计与完全重复检测，绝不单独定义进展。node progress 仅在下列之一成立：
+obligation `Open -> Discharged/Refuted`；经 root/parent 批准的有限 refine；或新 evidence artifact 经绑定后达到
+`EvidenceAttached`。同一 obligation state 下重复同一 `tool_identity + canonical_args + manifest revision` 的
+`ActionSignature` 立即升级；evidence yield 在滑动窗口持续低且无 obligation discharge 时才与 iteration cap
+共同触发 `NeedsParentDecision`。没有至少一个 host-checkable obligation 或显式人工 checkpoint 的任务，不得进入
+无人值守 Kairos loop。
 
 `CompletionCandidate` 永远不是 success；它只允许进入 typed verification、HostVerification 和 root
 acceptance。相反，`NeedsEvidence`、`NeedsParentDecision`、`Blocked`、`Frozen` 都是可见的正常结果，禁止
@@ -767,22 +845,29 @@ acceptance。相反，`NeedsEvidence`、`NeedsParentDecision`、`Blocked`、`Fro
 deadline、token/tool/artifact 预算限制。
 
 **事件与检查点分离：** 每次 tool/evidence 都追加有界 lifecycle event，但不强制 fsync 一份完整 checkpoint；
-durable checkpoint 只在首次副作用前、配置的事件/时间高水位、连续两次 progress fingerprint 不变、scope/
-预算/模型变更前、验证失败、终端候选、cancel/revoke/queue uncertainty 产生。这样保留可恢复性，同时限制
-journal 写放大。每个 adapter 的 coalesce 上限和 crash-loss window 必须在 policy 中显式，不可凭实现默认值。
+durable checkpoint 在首次副作用前、任何后续恢复依赖尚未持久化数据的转移前、配置的事件/时间高水位、scope/
+预算/模型变更前、obligation 无进展/循环升级、验证失败、终端候选、cancel/revoke/queue uncertainty 产生。
+`EffectIntent(idempotency_key, scope, preimage_or_compensation_ref)` 必须先持久化，才允许 dispatch effect；
+effect 后再持久化 `EffectOutcome`。可逆写在获得 `CompensationReadyReceipt`（pre-image、scope/base、无冲突、
+reverse action 幂等）前不能标为 `AutoCompensable`。这样保留可恢复性，同时限制 journal 写放大。每个 adapter
+的 coalesce 上限和 crash-loss window 必须在 policy 中显式，不可凭实现默认值。
 
 只有 deterministic policy 能判定 transition；模型、Advisor 和 UI 只能提供输入。node/tree/supervisor 的状态
-归并由同一个 actor mailbox 串行完成，固定顺序是 `control → revoke/cancel → delivery observation → operation
-event → budget settlement → claim/snapshot → UI projection`；外部 adapter 不持 actor lock，异步结果只带
-epoch/sequence 回投。违反 lock order、同一 event 重复 settlement 或 stale epoch mutation 都进入 Frozen。
-这样 harness 管一次受治理运行，loop 管可观测的多轮闭环，但二者共用同一 SessionActor authority。
+归并由同一个 actor mailbox 取得顺序、append authority event 后再 reducer，固定优先级是 `control → revoke/cancel
+→ delivery observation → operation event → budget settlement → claim/snapshot`。UI projection、artifact 大对象写入和
+metrics 不持 actor lock，只消费已定序结果；外部 adapter 的异步结果只带 epoch/sequence 回投。tree fairness 不靠
+FIFO mailbox 许愿：每 node 使用 bounded dispatch credit，按 tree checkpoint/budget slice 补充，耗尽即
+`Blocked(NoDispatchCredit)`。违反 lock order、同一 event 重复 settlement 或 stale epoch mutation 按可确定性
+进入 `RecoveryRequired` 或 `Frozen`，不能笼统升级。这样 harness 管一次受治理运行，loop 管可观测的多轮闭环，
+但二者共用同一 SessionActor authority。
 
-**实施切片 `NG-04E Governed Evidence Loop`：** 先做无 provider 的 pure state reducer + fake clock +
-bounded iteration property tests；再将 checkpoint 写入 operation journal/ledger；最后映射现有 Expert repair、
-workflow 以及 tree UI。禁止以 cron、tmux、stdout、普通 retry 或“模型自评完成”替代 checkpoint。
-`LOOP_CONVERGENCE_GATE=PASS` 需：progress、no-progress、repair limit、stale snapshot、cancel/late event、
-verification failed、queue unknown、budget expiry、duplicate event、lock-order/reentrant callback、checkpoint
-coalesce/crash-window 的完整状态矩阵；同时要求 exact-binary offline trace。
+**实施切片 `NG-04E Governed Evidence Loop`：** 先做三个无 provider pure reducer + fake event source +
+bounded iteration/property tests；再将 checkpoint envelope 写入对应 journal；最后映射现有 Expert repair、workflow
+以及 tree UI。禁止以 cron、tmux、stdout、普通 retry 或“模型自评完成”替代 checkpoint。
+`LOOP_CONVERGENCE_GATE=PASS` 需：obligation discharge/refute/refine、action cycle、low evidence yield、repair limit、
+stale snapshot、cancel/late event、verification failed、queue unknown、budget expiry、duplicate event、lock-order/
+reentrant callback、intent-before-effect、preimage crash-window、checkpoint coalesce/crash-window 的完整状态矩阵；
+同时要求 exact-binary offline trace。
 
 #### 3.4.3 ClientAdvisorV1：复现功能体验，不复制供应商服务端
 
@@ -892,9 +977,12 @@ manifest，可经独立 review 调整，但不能在测试失败后临时放宽�
 | default fast path p95 latency and resident-memory regression | 相对同机 pinned baseline 各不超过 5% 与 2 MiB | feature 保持 opt-in，先优化热路径 |
 | governed admission（1000 accepted claims fixture）p95 | 不超过 100 ms，且 hash deterministic | 不开放默认 governed profile |
 | saturated normal lane control ack p99 | 不超过 250 ms；无 cancel/stop loss | 不开放后台并行/daemon |
-| no-progress convergence | 默认连续 2 个相同 progress fingerprint 后升级，绝不无限 iteration | Blocked/NeedParentDecision |
+| governed actor mailbox | actor messages/s、mailbox depth p99、饱和 live nodes 均随 trace 落盘 | 不开放同树并行；不能以“CPU 低”掩盖排队 |
+| no-progress convergence | 仅 obligation discharge/refute、获批有限 refine、或经绑定的新 evidence yield 才算 progress；重复 ActionSignature 立即升级 | Blocked/NeedParentDecision |
 | Advisor automatic calls | 默认 0；checkpoint mode 每 tree/call cap 均由配置和 receipt 证明 | 拒绝新咨询，不透支主任务 |
-| queue/artifact growth | 有静态上限；压力、drop/coalesce、retention 均有 observation | RecoveryRequired/Frozen |
+| governance overhead | 相对同机 pinned fast-path 记录 admission/checkpoint/ledger 的 p50/p95、RSS 与 bytes；超阈值只降级 profile/提示用户，不削弱安全门 | governed profile 保持 opt-in，不能以降低 depth 或跳过 evidence 伪造安全 |
+| queue/artifact/storage growth | 有静态上限；压力、drop/coalesce、retention、ENOSPC 与 journal 可用字节均有 observation | RecoveryRequired/Frozen，禁止静默丢 authority event |
+| recovery disposition | 每 24h 的 Frozen/RecoveryRequired 数、可恢复率、人工 disposition deadline 均有 receipt | 逾期必须显式 ArchivedNeedsReview 或继续冻结，不能从 UI 消失 |
 | crash/replay | 同 event/operation exactly-once settlement；外部 effect unknown 永不 replay | Frozen + operator action |
 
 正确性指标优先于延迟；延迟目标不能通过丢 authority event、减少验证或隐藏 ledger 取得。性能 gate 使用
@@ -914,7 +1002,8 @@ provider benchmark、把 Lumen Science domain runtime 合入 Core。它们可使
 ~~~mermaid
 flowchart LR
   P0["P0-NR-A unsafe resubmit closed"] --> R0["R0 source + GitHub sync"]
-  R0 --> T1["NG-01 TaskTree"]
+  R0 --> E0["NG-00 encoding + reducer probe"]
+  E0 --> T1["NG-01 TaskTree"]
   T1 --> C2["NG-02 Capability Ceiling"]
   C2 --> TC["NG-02A ToolContract + result boundary"]
   T1 --> X4C["NG-04C ContextManifest"]
@@ -925,16 +1014,18 @@ flowchart LR
   C2 --> L4["NG-04 WorkingLedger"]
   L4 --> X4C
   TC --> X4C
-  X4C --> S4D["NG-04D AgentSandbox + Handoff"]
-  C2 --> S4D
-  O3C --> S4D
-  S4D --> E4E["NG-04E Governed Evidence Loop"]
+  X4C --> S4D12["NG-04D-1/2 sandbox schema + accepted-only"]
+  C2 --> S4D12
+  S4D12 --> M1["M1 offline governed-tree preview"]
+  S4D12 --> S4D34["NG-04D-3/4 handoff + consumer enforcement"]
+  O3C --> S4D34
+  S4D34 --> E4E["NG-04E Governed Evidence Loop"]
   F3E --> E4E
   R0 --> F5["NG-05 receipt + provider health"]
   F5 --> A6["NG-06 Advisor policy shadow"]
   X4C --> A6
   A6 --> CA6A["NG-06A ClientAdvisor virtual tool"]
-  S4D --> CA6A
+  S4D34 --> CA6A
   E4E --> CA6A
   W3D --> G9A["NG-09A shadow-only offline golden path"]
   F3E --> G9A
@@ -951,10 +1042,10 @@ flowchart LR
 ~~~
 
 **本轮最短开工纪律：** 在 `P0-NR-A=PASS` 与 `R0_SOURCE_GATE=PASS` 前，只允许只读 inventory、RFC、
-fixture/test 设计和当前 P0 修复；不得并行实施 NG-01/02/03/04/04C/05/06/07/08/09 的 runtime consumer。
+fixture/test 设计和当前 P0 修复；不得并行实施 NG-00/01/02/03/04/04C/05/06/07/08/09 的 runtime consumer。
 这避免在 ahead 195（开工时必须再实测）、source lock/readiness 失配的候选上同时叠加多个不可拆分的架构改变。
 
-R0 之后才允许并行的**无重叠设计/测试准备**：NG-01 DTO/UI inventory、NG-04 claim schema RFC、NG-04C
+R0 之后才允许并行的**无重叠设计/测试准备**：NG-00 canonical vectors/probe、NG-01 DTO/UI inventory、NG-04 claim schema RFC、NG-04C
 ContextManifest fixture RFC、NG-05 mock transport matrix、Kairos fake-clock harness。每个 runtime contract 仍
 一次只允许一个 writer；同一 coordinator/schema/permission/source-lock 路径绝不并行写。
 
@@ -1107,6 +1198,47 @@ release、live/provider、24h soak 或人工 merge。
 ---
 
 # Part II — NextGen Core phases
+
+## 8.6 NG-00：CanonicalEncoding、可重放 authority event 与 Reducer Purity Probe
+
+**状态：** Draft；它是所有 hash-bearing contract 的共同前置，不是可以分散到各 phase 的 serializer 小事。
+当前“canonical serialization”的说法不足以定义历史 journal、manifest、capsule、tool catalog、receipt 和
+release provenance 的相等性。
+
+### NG-00A CanonicalEncoding
+
+唯一 owner 是一个 crate-local `CanonicalEncodingV1` 模块；其它 crate 不得各自调用 `serde_json` 后声称得到
+canonical hash。它必须冻结并 golden-test：field order、integer encoding、Unicode normalization、absent 与 null、
+array order/排序键、map key、禁止或精确定义 float、byte/text encoding、domain-separation prefix、schema revision
+是否进入 preimage。每个 hash-bearing record 都带 `encoding_revision`；revision 改变等价于显式 migration/
+rehash transaction，旧新 revision 不能静默比较或混写。
+
+`CANONICAL_ENCODING_GATE=PASS` 需 Unicode/空值/嵌套/大整数/排序/跨平台 golden vectors、unknown revision deny、
+legacy replay 与 hash collision/domain-separation negative cases。它是 `CLAIM_JOURNAL`、`ACCEPTED_SNAPSHOT`、
+`CONTEXT_MANIFEST`、`SANDBOX_SCHEMA`、`TOOL_CONTRACT`、Advisor capsule 与 release provenance gate 的前置。
+
+### NG-00B logical authority event envelope，不要求单一物理日志
+
+每一个 authority mutation 使用同一逻辑 envelope：`tree_id / tree_sequence / causal_parent / actor_owner /
+event_kind / payload_hash_or_ref / durability_class / encoding_revision / observed_time_ref`。claim journal、operation/
+outbox journal、artifact store 与会话 JSONL 仍可物理分层；它们的 retention、fsync、privacy 与吞吐不同。禁止把
+“统一因果顺序”误实现为一份承载聊天、大 artifact 和 effect 的巨型文件。
+
+reducer 只读取 ordered authority events；时钟、filesystem、process、network 和 random ID 均由 adapter 形成
+typed observation/input event。不能每秒持久化 `TimeTick` 造成写放大：deadline、heartbeat timeout、clock
+discontinuity、host sleep/wake 只在 policy 边界产生事件。fake clock 不会消失，它迁移为 event-source fixture；
+macOS 唤醒后任何 lease/effect 均先 reconcile，不能依赖旧内存自动继续。
+
+### NG-00.5 Reducer Purity Probe（只读，必须先做）
+
+在改动 authority runtime 前，逐一 inventory `SessionActor`、sampler、coordinator、workflow、scheduler、tool/
+process dispatch 的决策点，写出 `state + event -> new_state + emitted_effects`，并标记直接 IO、clock read、
+hidden writer、不可 replay input、未序列化 cancellation/lease 和跨 store transaction。产物是 source anchored
+`artifacts/r0/<candidate>/reducer-purity-probe.json`；它只记录事实，不改运行逻辑。
+
+若一个 decision 无法表达为 reducer，必须在后续 card 中指定 adapter observation 或保留为显式 non-deterministic
+boundary；不得把它藏进 helper。probe 结果决定纯 reducer 的改造范围，不能假定“全 actor event-sourced”或为了
+概念完整性阻塞 M1。`REDUCER_PROBE_GATE=PASS` 只证明 inventory 完整，不证明 recovery、exactly-once 或 daemon。
 
 ## 9. NG-01：TaskTreeLineage v1
 
@@ -1390,11 +1522,20 @@ pub struct TreeBudgetV1 {
     pub token_reservation_limit: Option<u64>,
     pub tool_call_limit: Option<u32>,
     pub wall_time_limit: Duration,
-    pub daily_cost_limit: Option<Money>,
     pub artifact_byte_limit: Option<u64>,
+    pub account_budget_reservation_id: Option<AccountBudgetReservationId>,
+}
+
+pub struct AccountBudgetPolicyV1 {
+    pub account_or_user_id: BudgetOwnerId,
+    pub daily_cost_limit: Option<Money>,
+    pub monthly_cost_limit: Option<Money>,
+    pub provider_limits: Vec<ProviderBudgetLimit>,
 }
 ~~~
 
+日/月/provider 额度属于 account/user budget，不属于单一 tree；tree 只能申请可追踪、可释放的 account reservation，
+不能让十棵树各自“遵守同一个日限”。tree/node slice 仍负责 live nodes、tool、wall time、token 和 artifact。
 受管进程记录 tree_id、owner_node_id、lease_id、process_scope、pid、deadline、heartbeat、artifact_location、reservation_id。reserve_spawn 是原子 check+reserve；release 幂等。
 
 可信 provider usage 才扣 token/cost；缺失明确 usage_unavailable。
@@ -1442,12 +1583,33 @@ pub struct OperationLeaseV1 {
     pub expires_at: Timestamp,
     pub heartbeat_at: Timestamp,
 }
+
+pub struct ProcessScopeV1 {
+    pub scope_id: ProcessScopeId,
+    pub task_tree_id: TaskTreeId,
+    pub owner_node_id: TaskNodeId,
+    pub process_group_or_job: OsProcessGroupRef,
+    pub pid: u32,
+    pub pid_start_identity: ProcessStartIdentity,
+    pub termination_policy: TerminationPolicyV1,
+}
+
+pub struct TerminationPolicyV1 {
+    pub sigterm_grace: Duration,
+    pub force_kill_after_grace: bool,
+    pub descendant_reap_required: bool,
+}
 ~~~
 
 `GovernedLifecycleEventV1`（第 3.3.2 节）是 append-only authority；OutboxRecord 必须和 state
 transition 原子写入。消费者按 event_id 幂等，不能因为重启再派发一次 effect。没有 idempotency receipt
 的 ExternalEffect、任何 emitted model output、tool/effect state Unknown 都进入 `Frozen`，只可由 root/user
-重新批准。
+重新批准。`RecoveryRequired` 与 `Frozen` 必须分开：前者表示 receipt 足以确定需要 reconcile、但尚未完成；
+后者表示 identity/order/effect/authority 不确定，任何自动 dispatch/takeover/retry 都禁止。最终 disposition
+只能是 root-approved resume、cancelled/reconciled、或 `ArchivedNeedsReview`；不能用 terminal UI 卸载掩盖。
+`ProcessScopeV1` 绑定 OS process group/job、PID 起始身份而非裸 PID；root cancel 先撤销 lease、发 SIGTERM，
+等 grace 到期才 SIGKILL 并验证 descendants reaped。scope 记录失败/ENOSPC/权限拒绝为 receipt，不能把进程消失
+误当 operation 成功。
 
 #### 实施顺序
 
@@ -1457,14 +1619,16 @@ transition 原子写入。消费者按 event_id 幂等，不能因为重启再�
 3. 接入 root cancel：ancestor cancel 必须标记 descendant operation、撤销 lease、幂等 release budget，
    再由 process adapter 收尾。
 4. 接入 crash recovery：同 epoch 只有一个 holder；foreign/expired lease 先 reconcile terminal receipt；
-   任何 sequence gap、unknown owner、missing manifest/budget/evidence 进入 RecoveryRequired/Frozen。
+   可判定但未完成 reconcile 的进入 `RecoveryRequired`，任何 sequence gap、unknown owner、missing
+   manifest/budget/evidence/effect observation 才进入 `Frozen`。
 5. 最后才使 NG-08 的 Kairos 以该 API claim/heartbeat/complete/fail/freeze/take_over；Kairos 不持有
    shell/model/tool 的第二执行权。
 
 #### 必测反例
 
 - 两个 supervisor 同时 claim、旧 owner heartbeat、lease expired takeover、duplicate outbox consumer。
-- process exit/late terminal event 在 cancel/restart 后到达；不得复活 node、重复 release 或伪造 success。
+- process exit/late terminal event 在 cancel/restart 后到达；不得复活 node、重复 release 或伪造 success；PID reuse、
+  descendant escape、SIGTERM grace 到 SIGKILL、sleep/wake 与 ENOSPC 均必须保留 scope receipt。
 - crash 发生在 state 写入前后、outbox 写入前后、effect receipt 前后；每种状态唯一安全动作明确。
 - idempotent read 与 write 可重试的界限；model output/tool/external effect/unknown 永远不自动 replay。
 - orphan owner、foreign tree、budget/manifest mismatch、operator freeze 与 root close 都 fail-closed。
@@ -1764,7 +1928,8 @@ pub struct ContextManifestV1 {
     pub permitted_artifact_refs: Vec<ArtifactRef>,
     pub model_selection_ref: Option<ModelSelectionReceipt>,
     pub parent_compaction_ref: Option<ManifestHash>,
-    pub producer_version: String,
+    pub renderer_revision: u16,
+    pub rendered_input_hash: Sha256,
     pub created_at: Timestamp,
 }
 
@@ -1775,7 +1940,9 @@ pub enum AdmissionProfile {
 }
 ~~~
 
-canonical serialization 的 SHA-256 是 `context_manifest_hash`。manifest **不包含** secret、raw
+canonical serialization 的 SHA-256 是 `context_manifest_hash`；独立的 renderer 在固定 revision 下对 allowlisted
+manifest 片段产生 `rendered_input_hash`。二者都必须回链到 attempt/evidence receipt：前者证明 admission 输入，
+后者证明模型实际看到的受控文本。manifest **不包含** secret、raw
 PermissionHandle、bypass/yolo、未接受 ledger、sibling chat、任意裸路径、模型隐含 prompt、或可执行
 自由文本指令。它只携带 immutable assignment 的引用；显示或注入前仍受 capability/path redaction policy
 处理。
@@ -1783,8 +1950,9 @@ PermissionHandle、bypass/yolo、未接受 ledger、sibling chat、任意裸路�
 **读取集与构造顺序是合同的一部分：** builder 只接受 coordinator 的 lineage、root-owned immutable
 assignment、NG-04C 的 frozen `AcceptedSnapshot`、actor-issued grant/policy/budget/lease（如适用）和
 allowlisted artifact refs；caller supplied `parent/depth/path`、summary、child memory、model text 都不是输入。
-先 canonicalize 各引用和数组排序，再 compute hash，再写 artifact，最后由 SessionActor 发
-`PromptAccepted`。任何 hash/sequence/owner mismatch、未知 schema、redaction failure 或写入错误都使
+先 canonicalize 各引用和数组排序，再 compute manifest hash；renderer 按 revision render 并 compute rendered hash，
+两者写入 artifact 后才由 SessionActor 发 `PromptAccepted`。任何 hash/sequence/owner mismatch、未知 schema、
+renderer drift、redaction failure 或写入错误都使
 admission `Blocked`；不允许重新抓取聊天或“用最新 memory 补齐”。
 
 #### 实施顺序
@@ -1796,8 +1964,9 @@ admission `Blocked`；不允许重新抓取聊天或“用最新 memory 补齐�
    `Blocked(ContextUnavailable|ContextMismatch)`，不 best effort spawn。
 3. 以 manifest renderer 替代 child prompt 的身份/能力/accepted-fact 临时拼接；renderer 只产生
    assignment、accepted facts、evidence schema、budget/deadline 与 blocking rules。
-4. 在 compact、resume、reconnect 三条路径重读 immutable assignment + frozen snapshot 生成相同 hash；
-   summary 可加入说明，但不影响授权或 acceptance。
+4. 在 compact、resume、reconnect 三条路径重读 immutable assignment + frozen snapshot，生成相同 manifest 和
+   rendered-input hash；summary 可加入说明，但不影响授权或 acceptance。renderer revision 变化是新 admission，
+   不得拿旧 rendered text 继续执行。
 5. 让 child proposal、tool receipt、verify outcome、terminal receipt 和 pager/ACP status 都回链
    `context_manifest_hash`；UI 只能展示 hash/phase/age，不展示隐私内容。
 6. 旧 session 迁移为 `LegacyNoManifest`：只能继续人工 read/close；不得自动 spawn、自动 reroute、
@@ -1806,8 +1975,8 @@ admission `Blocked`；不允许重新抓取聊天或“用最新 memory 补齐�
 #### 必测正例与反例
 
 - root → Code → Review → Evidence leaf 得到不同 node/path/grant 的 manifest；leaf 不能 spawn。
-- 同一 immutable assignment + 同一 Accepted revision 在 spawn/compact/resume 后 hash 相同；新 Accepted
-  fact 不会悄悄改变已运行 child 的 snapshot。
+- 同一 immutable assignment + 同一 Accepted revision 在 spawn/compact/resume 后 manifest 与 rendered-input hash
+  都相同；新 Accepted fact 不会悄悄改变已运行 child 的 snapshot。
 - child 只能看自身 assignment 和 Accepted snapshot；foreign tree、sibling Proposed、raw root chat、
   secret/path outside scope 均不可见。
 - forged parent/depth/grant/budget/assignment hash、tampered artifact、stale revision、sequence gap、
@@ -1869,6 +2038,25 @@ handoff foreign/stale/malformed/oversize/secret reject；revoke vs in-flight too
 leaf cannot spawn/write/network/bypass；read-only sandbox cannot obtain write lease。每条测试保存 raw counts；
 `SANDBOX_ISOLATION_GATE=PASS` 不等于 OS/container security certification。
 
+### M1：Governed Tree Preview（最早产品证明，非完整自治）
+
+这不是“等全部 Kairos/Advisor/loop 完成再看产品”的许愿式里程碑。M1 只使用已经闭合的最小链路：root
+depth=0、read-only child depth=1、read-only grandchild depth=2；每个节点都展示真实 lineage、Capability Ceiling、
+AcceptedSnapshot revision、ContextManifest/rendered-input hash、sandbox assurance 和 terminal/Blocked reason。它
+**禁止** provider 调用、写文件、联网、Advisor、Kairos、自动 repair、child 自发 spawn 以及任何 production
+memory promotion；全部输入来自 offline fixture，全部输出为 artifact/claim receipt。
+
+**仅依赖：** `NG-00` encoding/probe、NG-01 lineage、NG-02 ceiling、NG-04A-C accepted snapshot/manifest、
+`NG-04D-1/2` sandbox schema + accepted-only capability。它不等待 NG-03C 的完整 effect recovery、NG-04D-3/4
+handoff/process enforcement、NG-04E loop 或 NG-06 Advisor。
+
+**一条可证伪的完成路径：** exact rebuilt TUI/ACP binary 打开 offline fixture 后同时显示三节点树；grandchild
+尝试 spawn、write、network、unknown ToolKind、读取 sibling scratch 均被 typed deny；root 接受一项具 artifact
+receipt 的 proposal 后，child 只在明确 rebase 后看到新 snapshot。输出 `M1_GOVERNED_TREE_PREVIEW_GATE=PASS`
+必须带 binary hash、fixture hash、tree projection、deny reason、raw test counts 和 source/evidence tuple。任何
+`0 tests matched`、mock-only UI 或绕过 SessionActor 的 projection 都是 FAIL。M1 通过只说明基础产品可见，
+绝不说明三层写入、自动化、OS sandbox 认证或 24h daemon 可用。
+
 ### NG-04E：Governed Evidence Loop 与收敛合同
 
 **状态：** Draft。现有 Expert repair、workflow、verification 与 operation state 各自能循环/重试，但没有一份
@@ -1884,26 +2072,28 @@ checkpoint transition，并保证树级冲突、取消、预算和 delivery unce
 
 | 规则 | 强制语义 |
 |---|---|
-| progress | 一轮只能在新增 artifact/receipt、accepted snapshot rebase、或明确 parent decision 后继续。 |
+| progress | 仅 obligation discharge/refute、获批有限 refine、或经绑定的新 evidence yield 后继续；fingerprint 只审计重复。 |
 | repair | 必须引用上轮 failure receipt；新 iteration 独立计数，不能保留上一轮 PASS。 |
 | completion | 仅 `CompletionCandidate`；须 verify/host/root 三层后才 terminal success。 |
 | escalation | scope、budget、model、write lease、snapshot stale、连续 no-progress 进入 `NeedsParentDecision`。 |
-| uncertainty | queue/effect/lease/manifest/owner 任一 unknown 进入 `Frozen`，不可自动 retry。 |
+| uncertainty | 可判定但未完成 reconcile 进入 `RecoveryRequired`；queue/effect/lease/manifest/owner 任一不确定进入 `Frozen`，不可自动 retry。 |
 | fairness | actor 按 tree/node 限制 active iterations、tool calls、artifact bytes、queue share，避免一个分支饿死同树其它分支。 |
 
-**实现顺序：** (1) pure reducer + schema/fake-clock；(2) node checkpoint 绑定 operation/ledger receipts；
-(3) root tree reducer 与 deterministic stop/escalate；(4) workflow/Expert repair adapter；(5) ACP/Pager truthful
+**实现顺序：** (1) 分别实现 Node/Tree/Supervisor 三个 pure reducer + typed fake event source；(2) 先持久化
+`EffectIntent` 与 preimage/compensation readiness，再允许 node checkpoint 绑定 operation/ledger receipts；(3) root
+tree reducer 做 deterministic stop/escalate/fair-share credit；(4) workflow/Expert repair adapter；(5) ACP/Pager truthful
 projection；(6) offline corpus/fault injection。任何步骤发现需要 provider 或外部 effect 才能证明，停止并换为
-fixture。`LOOP_CONVERGENCE_GATE=PASS` 需要 progress/no-progress、repair limit、budget/deadline、rebase,
-conflict、cancel/late event、verification failure、closed channel/unknown delivery 的 positive+negative matrix。
+fixture。`LOOP_CONVERGENCE_GATE=PASS` 需要 obligation/action-cycle/evidence-yield、repair limit、budget/deadline、
+rebase/conflict、cancel/late event、verification failure、closed channel/unknown delivery、intent-before-effect 与
+preimage crash window 的 positive+negative matrix。
 
 ## 13. NG-05：ProviderHealth 与 no-replay failover
 
-**状态：** P4a（Expert 新任务的受限候选选择）已落地；`P0-NR-A` 与完整 receipt/P4b 均 Not started。源码还存在 ordinary root turn 的
-`maybe_reroute_ordinary_turn_after_failure` → `RerouteAndResubmit` 路径；配置默认关闭不能替代
-安全证明。该路径目前没有 actor-owned `ProviderAttemptReceiptV1` 或全 event-order fault matrix，
-因此只能称为 feature-gated candidate，绝不能称为已验证的 no-replay capability，也不得扩展到 child、
-workflow、scheduler、Kairos 或 release。后台自动重试仍是 NOT RUN。
+**状态：** P4a（Expert 新任务的受限候选选择）已落地。当前 moving source candidate 已出现 P0-NR-A 的
+`max_retries=0` 及若干 sampler 负例实现；它尚未经过本书要求的 exact-source shell + sampler counting fixture、
+raw exit、全 consumer inventory 与 independent acceptance。因此状态是 `Implementing / NOT ACCEPTED`，不是 PASS，
+更不能据此宣称完整 receipt/P4b、child/workflow/scheduler/Kairos no-replay 或 release 已完成。任何新 source/evidence
+tuple 都必须重新验证；配置默认关闭不能替代安全证明。
 **非目标：** cheapest/fastest router、默认跨 provider、绕 user pin、在已输出或有工具副作用后重放。
 
 ### P0-NR：先关闭所有无 receipt 的同轮重投，再谈自动 fallback
@@ -2571,6 +2761,7 @@ live/provider proof 或 long soak。
 | R0-02 | clean source candidate | R0-01 | 单一集成 owner |
 | R0-03 | integration + exact CI | R0-02 | Codex + human merge |
 | R0-04/05 | evidence/release gates | R0-03 | Codex + release authority |
+| NG-00 | canonical encoding + reducer purity probe | R0 | Codex（hash/event single writer） |
 | NG-01 | TaskTree | R0 | Codex |
 | NG-02 | Capability Ceiling | NG-01 | Codex |
 | NG-02A | ToolContract/result boundary | NG-02 | Codex（registry 单 writer） |
@@ -2581,6 +2772,7 @@ live/provider proof 或 long soak。
 | NG-04A/B | claim journal + authority state machine | NG-01/02 | Codex（schema 单 writer） |
 | NG-04C-1/2 | AcceptedSnapshot + ContextManifest/compact-resume rebuild | NG-01/04A/B | Codex（schema/prompt 单 writer） |
 | NG-04D | AgentSandbox + bounded handoff | NG-02/03C/04C | Codex（authority single writer） |
+| M1 | offline governed-tree product preview | NG-00/01/02/04A-C/04D-1/2 | Codex + independent reviewer |
 | NG-04E | Governed Evidence Loop/checkpoint reducer | NG-03E/04D/04C | Codex（actor/operation single writer） |
 | NG-05 | health/no replay | R0 | Codex |
 | NG-06 | Advisor shadow | NG-04/04C/05 | Codex |
@@ -2652,8 +2844,11 @@ NOT RUN / BLOCKED / manual gates / known risks / generated_at
 - Advisor 被当作 child 幻觉解决方案，或 Advisor PASS→success；
 - `AgentSandbox` 只做 tool filter/worktree 却宣称 OS 隔离，或无法证明 adapter coverage 仍标高 assurance；
 - sibling private scratch/chat/Proposal 直接互通，handoff 自由文本被当作指令或 Accepted fact；
+- 用一份物理全局日志混装 chat、artifact 与 effect，或以“统一事件”要求重写所有现有 store；
+- 把 raw response body 为空当作 provider 未见/未计费，重新开放同轮 retry；
 - 每个 tool event 都同步 full-checkpoint/fsync 造成写放大，或为提速静默丢 authority event；
-- Loop 无 progress fingerprint、repair cap、safe checkpoint、stop/escalation，靠模型“继续努力”无限运行；
+- Loop 只凭 progress fingerprint 判进展、无 obligation/action signature/evidence yield、repair cap、safe checkpoint、stop/escalation，靠模型“继续努力”无限运行；
+- 未持久化 EffectIntent/preimage/compensation readiness 就执行可逆写，或因 claim 被撤销自动执行补偿；
 - Advisor report 中的 shell/URL/tool JSON 可直接执行，或同一 capsule 并发触发咨询风暴；
 - 同模型/同 endpoint 的相关审查被 UI 标成独立 maker/checker；
 - child 继承 bypass/yolo/PermissionHandle，或 child 写 Accepted；
@@ -2662,6 +2857,9 @@ NOT RUN / BLOCKED / manual gates / known risks / generated_at
 - emitted stream 后 fallback/replay；
 - ordinary reroute 的注释/默认关闭被当作 sealed no-replay receipt；
 - usage 缺失却记成本为零；
+- 把 account/day/month/provider 限额复制到每棵 tree，或把单 tree budget 当作账户预算；
+- 单一 claim 失效就冻结整棵树，或不建立 dependency index 而遗漏间接 consumer；
+- 把 `RecoveryRequired`、`Frozen`、`ArchivedNeedsReview` 混成一个“失败”状态，让未知副作用从 UI 消失；
 - PID/scheduler/短测试被称为 24h daemon；
 - source lock 覆盖 dirty tree 被称为 release source；
 - evidence suffix B 被当作 build/tag source A，或 version bump 后在脏树中硬跑 source-lock；
@@ -2691,12 +2889,14 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
 8. child proposal 只有 evidence/verification/root acceptance 后才为事实；
 9. 每 node 有 actor-issued、可撤销 `AgentSandboxV1`，其 context/memory/tool/process/filesystem/network/budget
    边界都可审计；
-10. 每一 loop 由 `LoopContractV1`/checkpoint/stop condition 约束；无新 evidence、stale snapshot、repair limit、
-    queue/effect uncertainty 必须 Blocked/Frozen，不可无限自评重试；
+10. 每一 loop 由 node/tree/supervisor reducer、host-checkable obligation、action signature、evidence yield、
+    checkpoint/stop condition 约束；无新 evidence、stale snapshot、repair limit、queue/effect uncertainty 必须
+    Blocked/RecoveryRequired/Frozen，不可无限自评重试；
 11. Expert 是第二意见；ClientAdvisor 是本地 virtual tool，受 pin/privacy/health/budget/independence/capsule
     redaction 限制，不能 acceptance、execution 或 mid-stream switch；
 12. provider 仅在 sealed NoOutput/NoToolCall/NoEffect receipt 下 visible fallback，绝不重放；
-13. Kairos 经 lease/crash/idempotency/takeover/no-replay 演练，external effect 缺 receipt 永远 Frozen；
+13. Kairos 经 lease/crash/idempotency/takeover/no-replay、sleep/wake、ProcessScope descendant reap 与 ENOSPC
+    演练；external effect 缺 receipt 永远 Frozen；
 14. 并行 writer 只持有 root-signed、path-scoped、可撤销的 `WriteScopeLease`；worktree handoff 有冲突、
     stale-base、dirty-target、verification 与 root-decision receipt，绝不 child auto-commit/merge/push；
 15. 每一 authority event 的 queue/closed-channel/sequence-gap 有 delivery observation；UI 可明确 coalesce，
@@ -2718,29 +2918,34 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
 3. **R0-02 至 R0-05**：先 clean source candidate，再 exact-SHA CI；再从同一 source 构建 binary、生成
    lock/SBOM/readiness evidence suffix；最后由人决定 PR merge。它使当前 ahead 候选可消费，但不是 release，
    更不是 24h/product 完成。
-4. **NG-01 → NG-02 → NG-02A**：不重写已有 lineage；补 tree read model、resume/orphan/late-event 故障
+4. **NG-00**：先冻结 canonical encoding golden vectors、logical authority envelope 与只读 reducer-purity probe；
+   不改任何 runtime consumer。没有这一 hash/event 基础，不开始新 journal、manifest 或 capsule schema。
+5. **NG-01 → NG-02 → NG-02A**：不重写已有 lineage；补 tree read model、resume/orphan/late-event 故障
    注入，再将 depth/tool ceiling 升级为 grant/TTL/revoke/policy receipt 与 unknown-MCP deny；随后冻结可调用
    tool contract、result artifact/redaction/context budget，禁止把任意 MCP 输出塞入后续上下文。
-5. **NG-03B → NG-03C → NG-03D/03E**：先 atomic budget reservation/settlement，再 operation
+6. **NG-03B → NG-03C → NG-03D/03E**：先 atomic budget reservation/settlement，再 operation
    lease/event/outbox/reconcile；接着补 write-scope/worktree handoff 和 queue/delivery/liveness。`8b74b361`
    的 ingress/control-lane 只是开始，普通 authority data plane 仍须 delivery observation。不要先开 24h daemon，
    不把 PID、worktree 目录或无界队列当状态。
-6. **NG-04A → NG-04B → NG-04C-1 → NG-04C-2**：已有 core DTO/authority/manifest foundation 仍须按该次序
+7. **NG-04A → NG-04B → NG-04C-1 → NG-04C-2**：已有 core DTO/authority/manifest foundation 仍须按该次序
    做 migration、snapshot/read-model、完整 admission 与 compact/resume product gate；禁止把已存在的 hash
    误称已闭环。summary、长期记忆和 Advisor 都不能插队替代。
-7. **NG-04D → NG-04E**：先由 actor 签发 AgentSandbox、隔离 scratch、限制 handoff，再把 node/tree/supervisor
+8. **NG-04D-1/2 → M1**：先签发 schema/accepted-only sandbox；立刻做 exact-binary、零 provider/零写入的
+   三节点 governed-tree preview。M1 是最早产品门，不等待 loop、Advisor 或 Kairos；失败先修 lineage/ceiling/
+   snapshot/manifest，不用 mock UI 伪造演示。
+9. **NG-04D-3/4 → NG-04E**：完成 bounded handoff、tool/process/worktree consumer enforcement 后，再把 node/tree/supervisor
    的 checkpoint、evidence、repair limit、stop/escalation 接入同一 operation/ledger。没有该两项，不开真实
    多层并行，也不把“反复尝试”称为 loop engineering。
-8. **NG-05 → NG-06 → NG-06A**：实现 sealed receipt 后，每次只重开一种 resubmit reason；完成 provider health
+10. **NG-05 → NG-06 → NG-06A**：实现 sealed receipt 后，每次只重开一种 resubmit reason；完成 provider health
    mock matrix 与 Advisor shadow corpus；随后以 `off → shadow → mock on-demand → gated checkpoint` 顺序实现
    ClientAdvisor。Advisor 始终无 acceptance/execution 权。
-9. **NG-09A**：用 exact binary 跑三层 shadow-only golden path，独立验收树、sandbox、grant、claim、manifest、
+11. **NG-09A**：用 exact binary 跑三层 shadow-only golden path，独立验收树、sandbox、grant、claim、manifest、
    loop、预算、no-replay、mock Advisor 与 UI 真相；不调用 provider。
-10. **NG-07 → NG-09B**：只在 NG-09A 后做 root-approved bounded assignment 和其 golden extension；任何
+12. **NG-07 → NG-09B**：只在 NG-09A 后做 root-approved bounded assignment 和其 golden extension；任何
    user pin、已输出、effect/usage/receipt unknown 都 fail-closed。
-11. **NG-08**：以 operation API 做 Kairos local crash/reconcile/freeze proof；随后才评估 long soak 与
-    24h autonomy。
-12. **NG-10**：先修复并证明 S→E release transaction，再做 clean install/upgrade/rollback receipt；每个新
+13. **NG-08**：以 operation API 做 Kairos local crash/reconcile/freeze proof；随后才评估 long soak 与
+   24h autonomy。
+14. **NG-10**：先修复并证明 S→E release transaction，再做 clean install/upgrade/rollback receipt；每个新
     源码 candidate 都重走 source/evidence/CI gate。所有这些完成且获得人类 release authority 后，才讨论
     RC/tag/release。
 
@@ -2754,9 +2959,13 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
 1. Rust `SessionActor` 是唯一执行、权限、事实接受和完成 authority；没有第二编排 runtime。
 2. 子 Agent 共享 Accepted facts，不共享 private scratch/思维/未接受 proposal；Advisor 不能解决 child 幻觉。
 3. 并行收益必须大于隔离、协调、验证和恢复成本；短任务默认不升级为 tree/daemon/Advisor。
-4. ClientAdvisor 复现独立咨询的用户能力，但 Lumen 自己负责 capsule、隐私、预算、receipt、取消与真相。
-5. Loop 的价值是更快取得新证据并安全停止，不是增加迭代数；无进展、未知 effect、未知 delivery 必须停。
-6. 更强模型不降低 harness 要求；模型能力越强、并行越大，权限、证据和成本边界越要硬。
+4. `docs/nextgen/INVARIANTS.md` 的 `INV-*` 才是规范性硬规则；本书的 phase 状态与 Git/CI 数字只能由生成审计
+   快照更新，缺 source/evidence tuple 永远写 `NOT RUN`。
+5. 统一的是逻辑 authority event 与因果顺序，不是一个全局物理日志；强类型 admission 减少内部绕过，但 actor
+   必须在每次 dispatch 再验证 grant/lease/cancel。
+6. ClientAdvisor 复现独立咨询的用户能力，但 Lumen 自己负责 capsule、隐私、预算、receipt、取消与真相。
+7. Loop 的价值是更快取得新证据并安全停止，不是增加迭代数；无进展、未知 effect、未知 delivery 必须停。
+8. 更强模型不降低 harness 要求；模型能力越强、并行越大，权限、证据和成本边界越要硬。
 
 ### 24.1 四视角终审结论
 
@@ -2789,10 +2998,13 @@ binary/readiness 的 A/B tuple、rollback SHA 和 main 合并审查记录。tag/
 ~~~text
 CI failure truth + P0-NR-A
   → R0 exact source/evidence sync
+  → NG-00 encoding + reducer purity probe
   → NG-01/02/02A lineage + capability + tool/result contract
   → NG-03B/03C/03D/03E budget + durable operation + write scope + bounded delivery
   → NG-04A/B/C accepted snapshot + full manifest admission
-  → NG-04D AgentSandbox + Handoff
+  → NG-04D-1/2 sandbox schema + accepted-only sharing
+  → M1 offline governed-tree preview
+  → NG-04D-3/4 handoff + consumer enforcement
   → NG-04E Governed Evidence Loop
   → NG-05 sealed no-replay receipt
   → NG-06 shadow + NG-06A ClientAdvisor
