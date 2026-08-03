@@ -83,25 +83,22 @@ if git -C "$ROOT" show-ref --verify --quiet "refs/tags/$TAG" \
   fail "release tag already exists: $TAG"
 fi
 
+# ── Phase A: clean source candidate (HEAD = A) ───────────────────────────────
+# source-lock.sh refuses a dirty tree by design: the lock records the commit
+# the source was built from, so that commit must already exist. The version/
+# changelog/Cargo bump therefore becomes its own explicit-paths commit FIRST;
+# the source lock and readiness evidence are collected on that clean tree and
+# committed as an evidence-only suffix (B) afterwards. The release tag always
+# points at A (the build source), never at B.
 python3 "$VERSION_TOOL" --root "$ROOT" set "$NEXT" >/dev/null
 python3 "$CHANGELOG_TOOL" --root "$ROOT" "$NEXT"
 python3 "$VERSION_TOOL" --root "$ROOT" check >/dev/null
-"$ROOT/scripts/source-lock.sh"
-python3 "$ROOT/scripts/invalidate-release-readiness.py" --root "$ROOT"
-"$ROOT/scripts/check-version-consistency.sh" "$ROOT"
 git -C "$ROOT" diff --check
 (cd "$ROOT/agent" && cargo check --locked --package xai-grok-pager-bin --features release-dist)
-"$ROOT/scripts/test-release-prep.sh"
-RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
-  CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" \
-  "$ROOT/scripts/test-release-contract.sh"
 
-VERSION_PATHS=(
+SOURCE_PATHS=(
   VERSION
   CHANGELOG.md
-  SOURCE_LOCK.json
-  artifacts/readiness/engineering_complete.json
-  artifacts/readiness/status.json
   agent/Cargo.lock
   agent/crates/codegen/xai-grok-pager/Cargo.toml
   agent/crates/codegen/xai-grok-pager-bin/Cargo.toml
@@ -113,9 +110,7 @@ VERSION_PATHS=(
 )
 while IFS= read -r changed_path; do
   case "$changed_path" in
-    VERSION|CHANGELOG.md|SOURCE_LOCK.json|\
-    artifacts/readiness/engineering_complete.json|\
-    artifacts/readiness/status.json|agent/Cargo.lock|\
+    VERSION|CHANGELOG.md|agent/Cargo.lock|\
     agent/crates/codegen/xai-grok-pager/Cargo.toml|\
     agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
     agent/crates/codegen/xai-grok-shell/Cargo.toml|\
@@ -123,7 +118,7 @@ while IFS= read -r changed_path; do
     agent/crates/codegen/xai-grok-tools-api/Cargo.toml|\
     agent/crates/codegen/xai-grok-update/Cargo.toml|\
     agent/crates/codegen/xai-grok-workspace/Cargo.toml) ;;
-    *) fail "release verification changed an unexpected path: $changed_path" ;;
+    *) fail "release source candidate changed an unexpected path: $changed_path" ;;
   esac
 done < <(
   {
@@ -131,16 +126,58 @@ done < <(
     git -C "$ROOT" ls-files --others --exclude-standard
   } | sort -u
 )
-git -C "$ROOT" add -- "${VERSION_PATHS[@]}"
+git -C "$ROOT" add -- "${SOURCE_PATHS[@]}"
 git -C "$ROOT" diff --cached --quiet && fail "version bump produced no staged changes"
-git -C "$ROOT" commit -m "chore(release): prepare $TAG"
+git -C "$ROOT" commit -m "chore(release): prepare $TAG source candidate"
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
+[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
+  || fail "source candidate must leave a clean tree for source-lock"
 
+# ── Phase B: evidence-only suffix on clean A ─────────────────────────────────
+# The lock names A; readiness evidence is regenerated for the bumped version;
+# the only files that may change now are lock/readiness evidence, and B must
+# never carry source, version, Cargo, or runtime changes.
+"$ROOT/scripts/source-lock.sh"
+python3 "$ROOT/scripts/invalidate-release-readiness.py" --root "$ROOT"
+"$ROOT/scripts/check-version-consistency.sh" "$ROOT"
+git -C "$ROOT" diff --check
+"$ROOT/scripts/test-release-prep.sh"
+RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
+  CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" \
+  "$ROOT/scripts/test-release-contract.sh"
+
+EVIDENCE_PATHS=(
+  SOURCE_LOCK.json
+  artifacts/readiness/engineering_complete.json
+  artifacts/readiness/status.json
+)
+while IFS= read -r changed_path; do
+  case "$changed_path" in
+    SOURCE_LOCK.json|\
+    artifacts/readiness/engineering_complete.json|\
+    artifacts/readiness/status.json) ;;
+    *) fail "release evidence changed an unexpected path: $changed_path" ;;
+  esac
+done < <(
+  {
+    git -C "$ROOT" diff --name-only
+    git -C "$ROOT" ls-files --others --exclude-standard
+  } | sort -u
+)
+git -C "$ROOT" add -- "${EVIDENCE_PATHS[@]}"
+git -C "$ROOT" diff --cached --quiet && fail "release evidence produced no staged changes"
+git -C "$ROOT" commit -m "chore(release): evidence for $TAG"
+
+# ── Tag: names the build source A, never the evidence suffix B ──────────────
 if ((UNSIGNED_TAG)); then
-  git -C "$ROOT" tag -a "$TAG" -m "Lumen $TAG"
+  git -C "$ROOT" tag -a "$TAG" -m "Lumen $TAG" "$SOURCE_COMMIT"
 else
-  git -C "$ROOT" tag -s "$TAG" -m "Lumen $TAG"
+  git -C "$ROOT" tag -s "$TAG" -m "Lumen $TAG" "$SOURCE_COMMIT"
   git -C "$ROOT" tag -v "$TAG"
 fi
+TAGGED_COMMIT="$(git -C "$ROOT" rev-parse "$TAG^{commit}")"
+[[ "$TAGGED_COMMIT" == "$SOURCE_COMMIT" ]] \
+  || fail "release tag $TAG peeled to $TAGGED_COMMIT, not source commit $SOURCE_COMMIT"
 
 if ((NO_PUSH)); then
   echo "OK: prepared $TAG locally; no remote changes were made"
