@@ -28,6 +28,9 @@ pub mod handoff_packet;
 pub mod evidence_loop;
 pub mod m1_governed_tree_preview;
 pub mod bounded_assignment_apply;
+pub mod client_advisor_shadow;
+pub mod kairos_supervisor;
+pub mod nextgen_contract_gates;
 pub mod sealed_attempt_receipt;
 pub mod authority_event;
 pub mod authority_projection;
@@ -72,6 +75,14 @@ pub use evidence_loop::{
 pub use bounded_assignment_apply::{
     AssignmentApplyDeny, AssignmentApplyRequest, AssignmentLifecycle, authorize_assignment_apply,
 };
+pub use client_advisor_shadow::{
+    AdviceReportV1, AdvisorDeny, AdvisorMode, advice_may_mutate_authority, issue_shadow_advice,
+};
+pub use kairos_supervisor::{
+    KairosCommand, KairosDeny, KairosSupervisorState, apply_kairos_command,
+    note_external_effect_unknown,
+};
+pub use nextgen_contract_gates::{GateResult, NextGenContractGateReceipt, run_offline_contract_gates};
 pub use sealed_attempt_receipt::{
     Obs, RetryDenyReason, SealedAttemptReceiptV1, clean_preflight_receipt, mark_attempt_started,
     mark_external_effect_unknown, mark_output_emitted, mark_tool_call, may_in_process_retry,

@@ -152,9 +152,9 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | Sandbox（NG-04D） | 80% | 100% | 全主 writer 接 sandbox write 门；待 process/network/spawn 全路径 |
 | Evidence loop（NG-04E） | 65% | 100% | Node+Tree+Supervisor pure reducers；待 run_loop 接线 |
 | 模型选择/Expert（NG-05） | 50% | 100% | SealedAttemptReceiptV1 gate 已落地；待全 sampler 接线与 inventory |
-| Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
+| Advisor（NG-06/06A） | 45% | 100% | shadow issue 纯合同；待 virtual tool 接线与 consult 模式 |
 | Assignment（NG-07） | 45% | 100% | authorize_assignment_apply 纯门 + RootGovernedAssignment 存储；待 recommend UI |
-| Kairos（NG-08） | 30% | 100% | SupervisorLoop pure 合同；待 real lease consumer |
+| Kairos（NG-08） | 45% | 100% | KairosSupervisor claim/freeze/takeover 纯控制面；待 daemon 接线 |
 | exact-binary golden（NG-09A/B） | 35% | 100% | offline golden 串 loop/seal/sandbox；待 exact-binary UI |
 | R0/CI/release（R0、NG-10） | 25% | 100% | exact-SHA CI；A/B tuple；二阶段 release transaction；updater 隔离 |
 | 产品品牌/UI 身份 | 75% | 100% | 细节打磨（欢迎屏、状态栏、菜单） |
@@ -365,7 +365,7 @@ cancel/late event、verification failure、closed channel、intent-before-effect
 
 ### S9 — NG-06/NG-06A：AdvisorPolicy shadow + ClientAdvisor virtual tool
 
-**状态：** shadow 已落地；ClientAdvisor Draft。前置：S8。
+**状态：** shadow 纯合同已落地；virtual tool/consult 待接线。前置：S8。
 **目标：** 主模型可按检查点请求咨询独立模型：SessionActor 生成最小 capsule、执行本地 policy、
 审计/限额/可取消；structured report + 独立 usage receipt；**永远不能**接受事实、切换模型或宣布完成。
 **必测：** Advisor 超时/不可用 → Blocked 而非降级；advice 不能改 claim 状态；usage receipt 独立可审计；
@@ -402,7 +402,7 @@ budget reserve 成功、privacy 允许、capability 不变、root approval 完�
 
 ### S12 — NG-08：KairosSupervisor local proof + OperatorControlPlane v1
 
-**状态：** scheduler 局部有；统一状态机 Draft。前置：S2（operation API）、S10。
+**状态：** pure KairosSupervisor 合同已落地；daemon/lease consumer 待接线。前置：S2、S10。
 **目标：** KairosSupervisor 状态机（Draft→AwaitingScheduleApproval→…→Succeeded/Failed/DeadLetter/
 Frozen/TakenOver/RecoveryRequired），接口只做 claim_run/heartbeat/complete/fail/freeze/take_over；
 所有 tool/model/process 仍经 root actor。OperatorControlPlane：Inspect/Freeze/Cancel/ApproveResume/TakeOver
