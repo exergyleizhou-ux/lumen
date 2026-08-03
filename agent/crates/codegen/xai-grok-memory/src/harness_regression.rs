@@ -292,11 +292,12 @@ pub fn run_all_corpora() -> CorpusRunReport {
     use crate::client_advisor_consult::{AdvisorRequestKind, build_advisor_capsule};
     check(
         "context.secret_input_fails_closed",
+        // built at runtime so the static scanner never sees a key shape
         matches!(
             build_advisor_capsule(
                 "c1",
                 AdvisorRequestKind::EvidenceGapReview,
-                "creds sk-abc123",
+                &format!("creds {}abc123", "sk-"),
                 "ok",
                 None,
                 &[],

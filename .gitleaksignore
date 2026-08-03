@@ -49,3 +49,4 @@ f725120fdc14b806232a9c7423dfab8f581aa76a:internal/env/env_test.go:generic-api-ke
 756eec96da4311db76774e58d74e9e1d0199ee83:internal/doctor/doctor_test.go:generic-api-key:144
 756eec96da4311db76774e58d74e9e1d0199ee83:internal/env/env_test.go:generic-api-key:56
 756eec96da4311db76774e58d74e9e1d0199ee83:lumen.toml:generic-api-key:8
+ca8281234bac1f756321d6f16726fe75932335ff:agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs:generic-api-key:391

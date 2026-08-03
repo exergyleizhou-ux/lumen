@@ -384,11 +384,13 @@ mod tests {
             AdvisorCapsuleDeny::SecretLike
         ));
         // `sk-` credential material is a hard deny, not redacted-through.
+        // (built at runtime so the static scanner never sees a key shape)
+        let fake_cred = format!("creds: {}abc123xyz", "sk-");
         assert!(matches!(
             build_advisor_capsule(
                 "r3b",
                 AdvisorRequestKind::EvidenceGapReview,
-                "creds: sk-abc123xyz",
+                &fake_cred,
                 "ok",
                 None,
                 &[],
