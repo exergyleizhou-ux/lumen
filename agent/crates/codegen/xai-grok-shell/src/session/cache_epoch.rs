@@ -9,7 +9,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicU8, Ordering},
-        mpsc::{self, SyncSender, TrySendError},
+        mpsc::{self, SyncSender},
     },
 };
 
@@ -110,22 +110,41 @@ impl DurableCacheEvidenceObserver {
             );
             return;
         }
-        match self.sender.try_send(snapshot.clone()) {
-            Ok(()) => {}
-            Err(TrySendError::Full(_)) => {
+        // Map the real SyncSender outcome through the NG-03E delivery
+        // observation contract so a full/closed queue cannot be mistaken for
+        // silent success (INV-18). Cache evidence is non-authority for model
+        // output, but the observation still drives availability fail-closed.
+        let observation = xai_grok_tools::implementations::grok_build::task::observe_std_sync_try_send(
+            self.sender.try_send(snapshot.clone()),
+        );
+        use xai_grok_tools::implementations::grok_build::task::DeliveryObservationV1;
+        match observation {
+            DeliveryObservationV1::Enqueued => {}
+            DeliveryObservationV1::DroppedFull => {
                 self.availability
                     .store(EVIDENCE_UNAVAILABLE_QUEUE_FULL, Ordering::Release);
                 tracing::warn!(
                     cache_evidence = "unavailable",
+                    delivery = "dropped_full",
                     "cache request evidence queue is full; continuing provider call"
                 );
             }
-            Err(TrySendError::Disconnected(_)) => {
+            DeliveryObservationV1::ReceiverClosed => {
                 self.availability
                     .store(EVIDENCE_UNAVAILABLE_WRITER_CLOSED, Ordering::Release);
                 tracing::warn!(
                     cache_evidence = "unavailable",
+                    delivery = "receiver_closed",
                     "cache request evidence writer stopped; continuing provider call"
+                );
+            }
+            other => {
+                self.availability
+                    .store(EVIDENCE_UNAVAILABLE_WRITER_CLOSED, Ordering::Release);
+                tracing::warn!(
+                    cache_evidence = "unavailable",
+                    delivery = ?other,
+                    "cache request evidence delivery uncertain; continuing provider call"
                 );
             }
         }

@@ -275,13 +275,15 @@ exact-SHA CI `NOT RUN`）。
 
 ### S4 — NG-03E：Flow control、delivery uncertainty 与 liveness
 
-**状态：** 待开工（Draft）。前置：S2。
+**状态：** 部分实施（合同类型 + 首条生产接线）。前置：S2。
 **目标：** 无界 channel 改为有界 + `DeliveryObservationV1`（Enqueued/Coalesced/Dropped/ReceiverClosed/Unknown +
 QueuePressure）。UI token 可 coalesce；tool signal/grant/cancel/lease/terminal receipt/claim/evidence 不可静默 drop。
-**允许路径：** sampler event pipeline、shell spawn/actor 的 channel 定义处。
-**必测：** fake slow consumer、high watermark、receiver closed、sequence gap、token flood、tool flood、
-two-tree fairness、shutdown drain deadline；每项断言 UI 诚实、预算/lease 不泄漏、无 duplicate completion。
-**Gate：** `FLOW_CONTROL_GATE=PASS`（exact load fixture + delivery observations + bounded-resource 断言）。
+**已落地：** `delivery_observation::{DeliveryObservationV1,observe_std_sync_try_send}`（真实
+`sync_channel` Full/Disconnected 单测）；`cache_epoch` durable evidence observer 经该合同观测
+try_send，满/闭均 fail-closed 标 unavailable（INV-18）。
+**未接线：** 全 actor/sampler mailbox 有界化、QueuePressure、token flood load fixture、
+two-tree fairness、shutdown drain。
+**Gate：** `FLOW_CONTROL_GATE=PARTIAL`（合同+cache_epoch；全路径 `NOT RUN`）。
 **停止：** 一次 benchmark 通过不等于 daemon soak。
 
 ---

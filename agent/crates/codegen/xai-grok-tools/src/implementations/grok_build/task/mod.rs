@@ -20,6 +20,7 @@ pub mod budget;
 pub mod coordinator;
 mod coordinator_state;
 pub use coordinator_state::{cap_completion_output, completion_summary};
+pub mod delivery_observation;
 pub mod governed_operation;
 pub mod types;
 pub mod write_scope;
@@ -34,6 +35,9 @@ pub use governed_operation::{
     ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
     OPS_SNAPSHOT_SCHEMA_VERSION, OperationDenyReason, OutboxDeliveryState, OutboxRecordV1,
     TreeBudgetLedger,
+};
+pub use delivery_observation::{
+    DeliveryObservationV1, TrySendKind, observation_from_try_send, observe_std_sync_try_send,
 };
 pub use write_scope::{
     MergeApplyResult, MergeHandoffDenyReason, MergeReceiptV1, WriteScopeDenyReason,
