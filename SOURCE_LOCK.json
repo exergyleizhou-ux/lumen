@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-03T18:09:55Z",
+  "generated_at": "2026-08-03T19:05:40Z",
   "monorepo": {
-    "git_head": "4c06ed41bf373b7de433eea1998c156e0901d40a",
-    "git_short": "4c06ed4"
+    "git_head": "9864cc0db98c177f3c3ca5a04bd7ad7d85f02a71",
+    "git_short": "9864cc0"
   },
   "lumen_version": "2.0.0-alpha.1",
   "upstream_pin": {
