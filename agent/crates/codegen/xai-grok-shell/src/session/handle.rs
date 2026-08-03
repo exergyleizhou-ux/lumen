@@ -34,6 +34,10 @@ pub enum SessionLiveState {
     /// `Dormant` on the next disk scan.
     DeadFailed,
 }
+/// `_meta` key carrying [`SessionHandle::scheduler_background_loops`] on the
+/// `session/new` and `session/load` responses. Defined here so the shell that
+/// publishes it and the clients that read it share one spelling.
+pub const SCHEDULER_BACKGROUND_LOOPS_META_KEY: &str = "x.ai/schedulerBackgroundLoops";
 /// Handle for interacting with a session actor.
 /// Note: Permission event receivers are returned separately from `spawn_session_actor`
 /// and should be stored/managed by the caller.
@@ -58,6 +62,9 @@ pub struct SessionHandle {
     /// Resolved turn limit for this session; lets a spawned subagent inherit
     /// the parent's limit. `None` = unlimited.
     pub max_turns: Option<usize>,
+    /// Configured cutoff a subagent inherits, published by the session actor. `None` when unset.
+    pub resolved_tool_overrides:
+        std::sync::Arc<arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>>,
     /// Handle to the hunk tracker for this session
     pub hunk_tracker_handle: HunkTrackerHandle,
     /// Actor-based chat state handle — lets callers inspect final conversation state.
@@ -105,6 +112,14 @@ pub struct SessionHandle {
     /// Per-session tracking prevents cross-client contamination in leader mode
     /// where `MvpAgent.current_model_id` is shared mutable state.
     pub model_id: acp::ModelId,
+    /// Whether this session's scheduled fires run as detached background
+    /// subagents. Copied from the value the spawn resolved for the session's
+    /// [`AgentRebuildSpec`](crate::session::agent_rebuild::AgentRebuildSpec), so
+    /// it is pinned for the session's whole life exactly like the fire side.
+    /// Published to clients on the `session/new` / `session/load` response so
+    /// they describe the fires this session will actually get rather than
+    /// re-resolving a setting that may have flipped since spawn.
+    pub scheduler_background_loops: bool,
     pub reasoning_effort: Option<ReasoningEffort>,
     /// YOLO (auto-approve) mode for this session.
     /// Per-session tracking prevents cross-client contamination in leader mode
@@ -165,6 +180,31 @@ pub struct SessionHandle {
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
 }
 impl SessionHandle {
+    /// Ask the root SessionActor to persist an immutable governed-child
+    /// assignment and return its derived spawn admission.  This method never
+    /// writes the journal itself, so adapter callers cannot bypass actor
+    /// authority or choose a child-controlled storage path.
+    pub async fn issue_governed_assignment(
+        &self,
+        assignment: xai_grok_memory::RootGovernedAssignmentV1,
+    ) -> Result<
+        xai_grok_tools::implementations::grok_build::task::types::GovernedSpawnAdmission,
+        String,
+    > {
+        let (respond_to, response) = tokio::sync::oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::IssueGovernedAssignment(Box::new(
+                crate::session::commands::IssueGovernedAssignment {
+                    assignment,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| "root SessionActor is unavailable for governed assignment".to_owned())?;
+        response
+            .await
+            .map_err(|_| "root SessionActor dropped governed assignment response".to_owned())?
+    }
+
     /// S4 product path for the deterministic offline Science micro-loop.
     /// Approval is requested from the existing session-scoped Lumen permission
     /// manager before the command can reach `SessionActor`; a rejection never
@@ -674,6 +714,31 @@ impl SessionHandle {
             Vec::new()
         })
     }
+    pub(crate) async fn workflow_catalog_state(&self) -> (bool, bool) {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::GetWorkflowCatalogState { respond_to: tx })
+            .is_err()
+        {
+            return (false, false);
+        }
+        rx.await.unwrap_or((false, false))
+    }
+    pub(crate) async fn list_available_commands(
+        &self,
+    ) -> crate::session::slash_commands::ListCommandsResponse {
+        let (tx, rx) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::ListAvailableCommands { respond_to: tx })
+            .is_err()
+        {
+            return crate::session::slash_commands::ListCommandsResponse::default();
+        }
+        rx.await
+            .unwrap_or_else(|_| crate::session::slash_commands::ListCommandsResponse::default())
+    }
     /// Replace the live session's client-registered hooks (see `SessionCommand::SetClientHooks`).
     pub(crate) fn set_client_hooks(&self, hooks: crate::extensions::hooks::ClientHooks) {
         let _ = self.cmd_tx.send(SessionCommand::SetClientHooks { hooks });
@@ -860,7 +925,7 @@ impl SessionHandle {
             .is_err()
         {
             tracing::warn!(
-                session_id = % self.info.id.0,
+                session_id = %self.info.id.0,
                 "feedback persistence channel closed; entry dropped",
             );
         }

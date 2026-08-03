@@ -102,7 +102,7 @@ mod tests {
     ///
     /// Uses `GROK_AUTH_PATH` (not `GROK_HOME`) so a OnceLock-cached real home
     /// with `auth.json` cannot leak into these tests.
-    fn isolate_auth_sources() -> (tempfile::TempDir, [EnvGuard; 12]) {
+    fn isolate_auth_sources() -> (tempfile::TempDir, [EnvGuard; 13]) {
         let dir = tempfile::tempdir().unwrap();
         let auth_path = dir.path().join("no-auth.json");
         let guards = [
@@ -118,6 +118,7 @@ mod tests {
             EnvGuard::unset("OPENAI_API_KEY"),
             EnvGuard::unset("KIMI_API_KEY"),
             EnvGuard::unset("KIMI_CODE_API_KEY"),
+            EnvGuard::unset("MINIMAX_API_KEY"),
             EnvGuard::unset("ANTHROPIC_API_KEY"),
         ];
         (dir, guards)

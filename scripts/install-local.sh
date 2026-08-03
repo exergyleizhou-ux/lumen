@@ -26,9 +26,61 @@ fi
 BIN_SRC="$ROOT/agent/target/release/lumen"
 DEST_DIR="${LUMEN_INSTALL_DIR:-$HOME/.local/bin}"
 DEST="$DEST_DIR/lumen"
-SOURCE_COMMIT="$(git -C "$ROOT" rev-parse --short HEAD)"
+HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD)"
+
+# Release evidence is deliberately committed after the source candidate it
+# describes.  When that suffix is limited to lock/SBOM/readiness artifacts,
+# install the already-built locked candidate instead of rebuilding HEAD and
+# stamping the evidence commit into the executable.  The same critical-file
+# checks used by the tuple gate prevent this from accepting an arbitrary stale
+# lock.
+EXPECTED_SOURCE="$HEAD_FULL"
+LOCKED_SOURCE="$(python3 - "$ROOT" "$HEAD_FULL" <<'PY'
+import hashlib, json, subprocess, sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+head = sys.argv[2]
+try:
+    lock = json.loads((root / "SOURCE_LOCK.json").read_text())
+    locked = ((lock.get("monorepo") or {}).get("git_head") or "")
+    if len(locked) != 40:
+        raise ValueError("missing locked source")
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", locked, head],
+        cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    suffix = subprocess.check_output(
+        ["git", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
+    ).splitlines()
+    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+    if any(not path.startswith(allowed) for path in suffix):
+        raise ValueError("non-evidence suffix")
+    critical = lock.get("critical_file_sha256")
+    if not isinstance(critical, dict) or not critical:
+        raise ValueError("missing critical hashes")
+    for relative, expected in critical.items():
+        path = root / relative
+        if not isinstance(expected, str) or not path.is_file():
+            raise ValueError("missing critical file")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            raise ValueError("critical content drift")
+    print(locked)
+except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError):
+    pass
+PY
+)"
+if [[ -n "$LOCKED_SOURCE" && "$LOCKED_SOURCE" != "$HEAD_FULL" ]]; then
+  EXPECTED_SOURCE="$LOCKED_SOURCE"
+fi
+SOURCE_COMMIT="$(git -C "$ROOT" rev-parse --short "$EXPECTED_SOURCE")"
 
 if [[ "${LUMEN_SKIP_BUILD:-0}" != "1" ]]; then
+  if [[ "$EXPECTED_SOURCE" != "$HEAD_FULL" ]]; then
+    echo "FAIL: current HEAD is evidence for locked source $SOURCE_COMMIT; refusing to rebuild and stamp the evidence commit." >&2
+    echo "Build the source candidate before source-lock, then run LUMEN_SKIP_BUILD=1 scripts/install-local.sh." >&2
+    exit 1
+  fi
   echo "Building release lumen from source commit $SOURCE_COMMIT..."
   (cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo build -p xai-grok-pager-bin --release)
 else

@@ -1,9 +1,11 @@
-//! ACP slash command advertising and resolution.
 
+
+//! ACP slash command advertising and resolution.
 use agent_client_protocol as acp;
+use std::collections::{HashMap, HashSet};
+use xai_grok_tools::implementations::grok_build::LoopFireMode;
 use xai_grok_tools::implementations::skills::skill::format_skill_name;
 use xai_grok_tools::implementations::skills::types::SkillInfo;
-
 /// A built-in slash command.
 pub(crate) struct BuiltinCommand {
     pub name: &'static str,
@@ -16,7 +18,6 @@ pub(crate) struct BuiltinCommand {
     pub gate: BuiltinGate,
     resolve: fn(args: &str) -> BuiltinAction,
 }
-
 /// Capability gate that decides whether a `BuiltinCommand` is advertised
 /// and resolvable in a given session.
 ///
@@ -28,8 +29,6 @@ pub(crate) struct BuiltinCommand {
 /// - `Feedback`: the feedback manager is enabled.
 /// - `MemoryConfigured`: memory backend params exist (may be currently
 ///   disabled). Used for `/memory` so the user can re-enable via toggle.
-/// - `Goal`: `resolve_goal()` feature flag is on AND `update_goal` is in the
-///   session toolset (see `goal_slash_and_harness_available` in `acp_session.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BuiltinGate {
     AlwaysOn,
@@ -42,10 +41,97 @@ pub(crate) enum BuiltinGate {
     Hooks,
     Plugins,
     Goal,
+    WorkflowLaunches,
+    WorkflowManagement,
     Expert,
 }
-
 /// All built-in slash commands. Order here = display order in autocomplete.
+fn resolve_expert(args: &str) -> BuiltinAction {
+    let trimmed = args.trim();
+    let lowered = trimmed.to_ascii_lowercase();
+    if let Some(models) = trimmed.strip_prefix("pool=") {
+        return parse_expert_model_list(models, true)
+            .map(|models| BuiltinAction::ExpertModelPool { models })
+            .unwrap_or(BuiltinAction::ExpertBadArgs);
+    }
+    if let Some(models) = trimmed.strip_prefix("priority=") {
+        return parse_expert_model_list(models, false)
+            .map(|models| BuiltinAction::ExpertModelPriority { models })
+            .unwrap_or(BuiltinAction::ExpertBadArgs);
+    }
+    match lowered.as_str() {
+        "" | "status" => BuiltinAction::ExpertStatus { verbose: false },
+        "show" => BuiltinAction::ExpertStatus { verbose: true },
+        "budget" => BuiltinAction::ExpertBudget,
+        "off" => BuiltinAction::ExpertOff,
+        "exec=pro" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::PRO_EXECUTOR_MODEL.to_owned(),
+        },
+        "exec=flash" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
+        },
+        "exec=grok" => BuiltinAction::ExpertExecutor {
+            model: crate::session::expert::GROK_MODEL.to_owned(),
+        },
+        // Bare mode tokens without a task are bad_args (including dual).
+        "fast" | "deep" | "vision" | "dual" => BuiltinAction::ExpertBadArgs,
+        "go" => BuiltinAction::ExpertContinue { repair: false },
+        "revise" => BuiltinAction::ExpertContinue { repair: true },
+        _ if trimmed.to_ascii_lowercase().starts_with("exec=") => BuiltinAction::ExpertBadArgs,
+        _ if trimmed.to_ascii_lowercase().starts_with("fast ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Fast,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("vision ") => BuiltinAction::ExpertStart {
+            task: trimmed[7..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Vision,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("deep ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Deep,
+            images: Vec::new(),
+        },
+        _ if trimmed.to_ascii_lowercase().starts_with("dual ") => BuiltinAction::ExpertStart {
+            task: trimmed[5..].trim().to_owned(),
+            mode: crate::session::expert::ExpertMode::Dual,
+            images: Vec::new(),
+        },
+        _ => BuiltinAction::ExpertStart {
+            task: trimmed.to_owned(),
+            mode: crate::session::expert::ExpertMode::Default,
+            images: Vec::new(),
+        },
+    }
+}
+
+/// Parse a comma-delimited, user-authored Expert policy list. A pool may be
+/// explicitly disabled with `pool=off`; priority can return to task policy
+/// with `priority=auto`. Empty elements and duplicates fail closed so the
+/// displayed priority is exactly the persisted priority.
+fn parse_expert_model_list(input: &str, pool: bool) -> Option<Vec<String>> {
+    let normalized = input.trim();
+    if (pool && normalized.eq_ignore_ascii_case("off"))
+        || (!pool
+            && (normalized.eq_ignore_ascii_case("auto") || normalized.eq_ignore_ascii_case("off")))
+    {
+        return Some(Vec::new());
+    }
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut models = Vec::new();
+    for model in normalized.split(',') {
+        let model = model.trim();
+        if model.is_empty() || models.iter().any(|known| known == model) {
+            return None;
+        }
+        models.push(model.to_owned());
+    }
+    Some(models)
+}
+
 pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         name: "compact",
@@ -93,7 +179,7 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
     BuiltinCommand {
         name: "memory",
         description: "Browse, view, and manage your memories",
-        argument_hint: Some("on|off"),
+        argument_hint: Some("on|off|promote|repair-ledger"),
         aliases: &["mem"],
         gate: BuiltinGate::MemoryConfigured,
         resolve: |args| {
@@ -101,6 +187,8 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             match trimmed.as_str() {
                 "on" | "enable" => BuiltinAction::MemoryToggle { enabled: true },
                 "off" | "disable" => BuiltinAction::MemoryToggle { enabled: false },
+                "promote" => BuiltinAction::PromoteTaskTreeMemory,
+                "repair-ledger" => BuiltinAction::RepairTaskTreeMemoryLedger,
                 _ => BuiltinAction::MemoryBrowse,
             }
         },
@@ -235,6 +323,52 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
         },
     },
     BuiltinCommand {
+        name: "deep-research",
+        description: "Research with bounded parallel agents, cross-check evidence, and write a cited report",
+        argument_hint: Some("<query>"),
+        aliases: &[],
+        gate: BuiltinGate::WorkflowLaunches,
+        resolve: |args| BuiltinAction::DeepResearch {
+            query: args.trim().to_string(),
+        },
+    },
+    BuiltinCommand {
+        name: "workflow",
+        description: "Launch a saved workflow, or manage a run (pause, resume, stop, save)",
+        argument_hint: Some("<name> [args] | pause|resume|stop|save [name]"),
+        aliases: &[],
+        gate: BuiltinGate::WorkflowManagement,
+        resolve: |args| {
+            const OPS: [&str; 4] = ["pause", "resume", "stop", "save"];
+
+            let trimmed = args.trim();
+            let mut parts = trimmed.split_whitespace();
+            let first = parts.next().unwrap_or_default();
+            let second = parts.next().unwrap_or_default();
+            let first_is_op = OPS.contains(&first.to_lowercase().as_str());
+            let second_is_final_op =
+                OPS.contains(&second.to_lowercase().as_str()) && parts.next().is_none();
+            if first.is_empty() || first_is_op || second_is_final_op {
+                let (op, run_id) = if first_is_op {
+                    (
+                        first.to_lowercase(),
+                        trimmed[first.len()..].trim_start().to_string(),
+                    )
+                } else if second_is_final_op {
+                    (second.to_lowercase(), first.to_string())
+                } else {
+                    (String::new(), String::new())
+                };
+                BuiltinAction::WorkflowManage { run_id, op }
+            } else {
+                BuiltinAction::WorkflowLaunch {
+                    name: first.to_string(),
+                    input: trimmed[first.len()..].trim_start().to_string(),
+                }
+            }
+        },
+    },
+    BuiltinCommand {
         name: "goal",
         description: "Set, manage, or check an autonomous goal",
         argument_hint: Some("<objective> [--budget <tokens>] | status | pause | resume | clear"),
@@ -285,73 +419,42 @@ pub(super) const BUILTIN_COMMANDS: &[BuiltinCommand] = &[
             }
         },
     },
+
     BuiltinCommand {
         name: "expert",
         description: "Run a bounded expert-assisted task",
         argument_hint: Some(
-            "<task> | fast|vision|deep|dual <task> | revise | go | status | show | budget | off | exec=pro|flash|grok",
+            "<task> | fast|vision|deep|dual <task> | revise | go | status | show | budget | off | exec=pro|flash|grok | pool=<model,...>|off | priority=<model,...>|auto",
         ),
         aliases: &[],
         gate: BuiltinGate::Expert,
         resolve: resolve_expert,
     },
 ];
-
-fn resolve_expert(args: &str) -> BuiltinAction {
-    let trimmed = args.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
-        "" | "status" => BuiltinAction::ExpertStatus { verbose: false },
-        "show" => BuiltinAction::ExpertStatus { verbose: true },
-        "budget" => BuiltinAction::ExpertBudget,
-        "off" => BuiltinAction::ExpertOff,
-        "exec=pro" => BuiltinAction::ExpertExecutor {
-            model: crate::session::expert::DEFAULT_EXECUTOR_MODEL.to_owned(),
-        },
-        "exec=flash" => BuiltinAction::ExpertExecutor {
-            model: crate::session::expert::FLASH_EXECUTOR_MODEL.to_owned(),
-        },
-        "exec=grok" => BuiltinAction::ExpertExecutor {
-            model: crate::session::expert::GROK_MODEL.to_owned(),
-        },
-        // Bare mode tokens without a task are bad_args (including dual).
-        "fast" | "deep" | "vision" | "dual" => BuiltinAction::ExpertBadArgs,
-        "go" => BuiltinAction::ExpertContinue { repair: false },
-        "revise" => BuiltinAction::ExpertContinue { repair: true },
-        _ if trimmed.to_ascii_lowercase().starts_with("exec=") => BuiltinAction::ExpertBadArgs,
-        _ if trimmed.to_ascii_lowercase().starts_with("fast ") => BuiltinAction::ExpertStart {
-            task: trimmed[5..].trim().to_owned(),
-            mode: crate::session::expert::ExpertMode::Fast,
-            images: Vec::new(),
-        },
-        _ if trimmed.to_ascii_lowercase().starts_with("vision ") => BuiltinAction::ExpertStart {
-            task: trimmed[7..].trim().to_owned(),
-            mode: crate::session::expert::ExpertMode::Vision,
-            images: Vec::new(),
-        },
-        _ if trimmed.to_ascii_lowercase().starts_with("deep ") => BuiltinAction::ExpertStart {
-            task: trimmed[5..].trim().to_owned(),
-            mode: crate::session::expert::ExpertMode::Deep,
-            images: Vec::new(),
-        },
-        _ if trimmed.to_ascii_lowercase().starts_with("dual ") => BuiltinAction::ExpertStart {
-            task: trimmed[5..].trim().to_owned(),
-            mode: crate::session::expert::ExpertMode::Dual,
-            images: Vec::new(),
-        },
-        _ => BuiltinAction::ExpertStart {
-            task: trimmed.to_owned(),
-            mode: crate::session::expert::ExpertMode::Default,
-            images: Vec::new(),
-        },
-    }
-}
-
 /// Split a trailing `--budget <tokens>` flag off a `/goal` objective.
 ///
 /// Only a TRAILING, standalone flag is consumed: the flag must be its own
 /// whitespace-separated token and the value a final all-digit positive
 /// token. Anything else stays part of the objective so a goal text that
 /// merely mentions the flag is never silently mangled.
+fn parse_goal_args(trimmed: &str) -> (String, Option<i64>, bool) {
+    let mut expert_policy = false;
+    let objective = trimmed
+        .split_whitespace()
+        .filter(|token| {
+            if *token == "--expert" {
+                expert_policy = true;
+                false
+            } else {
+                true
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let (objective, token_budget) = parse_goal_budget(&objective);
+    (objective, token_budget, expert_policy)
+}
+
 fn parse_goal_budget(trimmed: &str) -> (String, Option<i64>) {
     if let Some((head, tail)) = trimmed.rsplit_once("--budget") {
         let value = tail.trim();
@@ -371,101 +474,14 @@ fn parse_goal_budget(trimmed: &str) -> (String, Option<i64>) {
     }
     (trimmed.to_string(), None)
 }
-
-/// Parse `/goal` composition without introducing a second orchestration.
-/// `--expert` is an exact standalone flag; every other token remains part of
-/// the objective, then the existing trailing budget parser is applied.
-fn parse_goal_args(trimmed: &str) -> (String, Option<i64>, bool) {
-    let mut expert_policy = false;
-    let objective = trimmed
-        .split_whitespace()
-        .filter(|token| {
-            if *token == "--expert" {
-                expert_policy = true;
-                false
-            } else {
-                true
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ");
-    let (objective, token_budget) = parse_goal_budget(&objective);
-    (objective, token_budget, expert_policy)
-}
-
 const PROMPT_COMMANDS: &[BuiltinCommand] = &[BuiltinCommand {
     name: "loop",
     description: "Run a prompt on a recurring interval",
     argument_hint: Some("[interval] <prompt>"),
     aliases: &[],
     gate: BuiltinGate::Scheduler,
-    // INVARIANT: resolve() short-circuits any prompt-only command via a
-    // PROMPT_COMMANDS lookup before reaching this closure. If a future
-    // refactor changes that ordering this `unreachable!` will surface
-    // the bug loudly instead of silently dispatching to ContextInfo
-    // (which is what the previous sentinel did).
     resolve: |_| unreachable!("/loop is dispatched via the PROMPT_COMMANDS path in resolve()"),
 }];
-
-/// A slash command — either built-in or from a SKILL.md file.
-pub(super) enum SlashCommand<'a> {
-    BuiltIn(&'a BuiltinCommand),
-    Skill(&'a SkillInfo),
-}
-
-impl<'a> SlashCommand<'a> {
-    pub fn name(&self) -> &str {
-        match self {
-            SlashCommand::BuiltIn(b) => b.name,
-            SlashCommand::Skill(s) => &s.name,
-        }
-    }
-
-    pub fn description(&self) -> &str {
-        match self {
-            SlashCommand::BuiltIn(b) => b.description,
-            SlashCommand::Skill(s) => s.short_description.as_deref().unwrap_or(&s.description),
-        }
-    }
-
-    pub fn argument_hint(&self) -> Option<&str> {
-        match self {
-            SlashCommand::BuiltIn(b) => b.argument_hint,
-            SlashCommand::Skill(s) => s.argument_hint.as_deref(),
-        }
-    }
-}
-
-/// Builtins first (win on name collisions), then user-invocable skills.
-///
-/// `availability` filters tool/extension-gated builtins so commands like
-/// `/flush` and `/loop` only show up when the agent
-/// actually has the backing capability. Always-on builtins are
-/// unaffected.
-pub(super) fn all_commands<'a>(
-    skills: &'a [SkillInfo],
-    availability: CommandAvailability,
-) -> Vec<SlashCommand<'a>> {
-    let mut commands: Vec<SlashCommand<'_>> = BUILTIN_COMMANDS
-        .iter()
-        .filter(|b| availability.allows(b.gate))
-        .map(SlashCommand::BuiltIn)
-        .collect();
-    commands.extend(
-        PROMPT_COMMANDS
-            .iter()
-            .filter(|b| availability.allows(b.gate))
-            .map(SlashCommand::BuiltIn),
-    );
-    commands.extend(
-        skills
-            .iter()
-            .filter(|s| s.user_invocable && s.enabled)
-            .map(SlashCommand::Skill),
-    );
-    commands
-}
-
 /// Per-session capability snapshot used to gate which built-in slash
 /// commands the shell advertises and resolves.
 ///
@@ -496,9 +512,11 @@ pub(crate) struct CommandAvailability {
     pub hooks: bool,
     pub plugins: bool,
     pub goal: bool,
+    pub workflows: bool,
+    pub workflow_management: bool,
+    /// Expert-mode commands (`/expert`, expert-goal policy) advertised.
     pub expert: bool,
 }
-
 impl CommandAvailability {
     /// `true` if commands gated on `gate` should be advertised this session.
     pub fn allows(&self, gate: BuiltinGate) -> bool {
@@ -511,10 +529,11 @@ impl CommandAvailability {
             BuiltinGate::Hooks => self.hooks,
             BuiltinGate::Plugins => self.plugins,
             BuiltinGate::Goal => self.goal,
+            BuiltinGate::WorkflowLaunches => self.workflows,
+            BuiltinGate::WorkflowManagement => self.workflows || self.workflow_management,
             BuiltinGate::Expert => self.expert,
         }
     }
-
     /// Test helper: every gate satisfied (matches the legacy "feedback only"
     /// fixture but enables every newly-gated command too).
     #[cfg(test)]
@@ -527,11 +546,13 @@ impl CommandAvailability {
             hooks: true,
             plugins: true,
             goal: true,
+            workflows: true,
+            workflow_management: true,
             expert: true,
+
         }
     }
 }
-
 /// Build the JSON value for `AvailableCommandsUpdate.meta` containing the
 /// agent's currently-registered tool names.
 ///
@@ -561,7 +582,201 @@ pub(crate) fn build_tools_meta(tool_names: &[String], tool_schema_hash: &str) ->
     );
     meta
 }
-
+struct EffectiveCommandCatalog<'a> {
+    builtins: Vec<&'a BuiltinCommand>,
+    skills: Vec<SkillCommand<'a>>,
+    workflows: Vec<&'a crate::session::workflow::registry::WorkflowListing>,
+}
+struct SkillCommand<'a> {
+    name: String,
+    skill: &'a SkillInfo,
+}
+impl<'a> EffectiveCommandCatalog<'a> {
+    fn build(
+        skills: &'a [SkillInfo],
+        availability: CommandAvailability,
+        workflows: &'a [crate::session::workflow::registry::WorkflowListing],
+    ) -> Self {
+        let builtins: Vec<_> = BUILTIN_COMMANDS
+            .iter()
+            .chain(PROMPT_COMMANDS.iter())
+            .filter(|builtin| availability.allows(builtin.gate))
+            .collect();
+        const PAGER_COMMAND_KEYS: &[&str] = &[
+            "agents",
+            "agents-dashboard",
+            "always-approve",
+            "announcements",
+            "auto",
+            "btw",
+            "cd",
+            "changelog",
+            "chat",
+            "clear",
+            "cloud",
+            "compact",
+            "compact-mode",
+            "config",
+            "config-agents",
+            "context",
+            "copy",
+            "cost",
+            "dashboard",
+            "debug",
+            "docs",
+            "doctor",
+            "effort",
+            "exit",
+            "expand",
+            "export",
+            "feedback",
+            "find",
+            "fork",
+            "full",
+            "fullscreen",
+            "gboom",
+            "guides",
+            "help",
+            "history",
+            "home",
+            "hooks",
+            "howto",
+            "imagine",
+            "imagine-video",
+            "import-claude",
+            "jump",
+            "login",
+            "logout",
+            "log",
+            "loop",
+            "m",
+            "marketplace",
+            "mcps",
+            "minimal",
+            "ml",
+            "model",
+            "multiline",
+            "new",
+            "onboarding",
+            "personas",
+            "plan",
+            "plan-view",
+            "plugins",
+            "preferences",
+            "prefs",
+            "privacy",
+            "queue",
+            "quit",
+            "recap",
+            "release-notes",
+            "remember",
+            "rename",
+            "resume",
+            "rewind",
+            "scroll-debug",
+            "session-info",
+            "sessions",
+            "settings",
+            "share",
+            "show-plan",
+            "skills",
+            "tasks",
+            "terminal-check",
+            "terminal-info",
+            "terminal-setup",
+            "theme",
+            "timeline",
+            "timestamps",
+            "title",
+            "toggle-mouse-reporting",
+            "tour",
+            "transcript",
+            "tutorial",
+            "t",
+            "undo",
+            "usage",
+            "view-plan",
+            "vim-mode",
+            "voice",
+            "welcome",
+            "workflows",
+            "yolo",
+        ];
+        let mut taken: HashSet<String> = builtins
+            .iter()
+            .flat_map(|builtin| {
+                std::iter::once(builtin.name)
+                    .chain(builtin.aliases.iter().copied())
+                    .map(str::to_owned)
+            })
+            .chain(PAGER_COMMAND_KEYS.iter().copied().map(str::to_owned))
+            .collect();
+        let candidates: Vec<_> = skills
+            .iter()
+            .filter(|skill| skill.user_invocable && skill.enabled)
+            .collect();
+        let mut bare_counts: HashMap<&str, usize> = HashMap::new();
+        let mut qualified_counts: HashMap<String, usize> = HashMap::new();
+        for skill in &candidates {
+            *bare_counts.entry(skill.name.as_str()).or_default() += 1;
+            *qualified_counts
+                .entry(format_skill_name(skill))
+                .or_default() += 1;
+        }
+        let mut effective_skills = Vec::new();
+        for skill in candidates {
+            let bare_available = bare_counts.get(skill.name.as_str()) == Some(&1)
+                && !taken.contains(skill.name.as_str());
+            let name = if bare_available {
+                skill.name.clone()
+            } else {
+                let qualified = format_skill_name(skill);
+                if qualified_counts.get(&qualified) != Some(&1) || taken.contains(&qualified) {
+                    continue;
+                }
+                qualified
+            };
+            taken.insert(name.clone());
+            effective_skills.push(SkillCommand { name, skill });
+        }
+        taken.extend(bare_counts.keys().map(|name| (*name).to_owned()));
+        let effective_workflows = if availability.allows(BuiltinGate::WorkflowLaunches) {
+            let mut counts: HashMap<&str, usize> = HashMap::new();
+            for workflow in workflows {
+                *counts.entry(workflow.name.as_str()).or_default() += 1;
+            }
+            workflows
+                .iter()
+                .filter(|workflow| {
+                    counts.get(workflow.name.as_str()) == Some(&1)
+                        && !taken.contains(workflow.name.as_str())
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        Self {
+            builtins,
+            skills: effective_skills,
+            workflows: effective_workflows,
+        }
+    }
+    fn skill(&self, name: &str) -> Option<&'a SkillInfo> {
+        self.skills
+            .iter()
+            .find(|command| command.name == name)
+            .map(|command| command.skill)
+    }
+    fn workflow(
+        &self,
+        name: &str,
+    ) -> Option<&'a crate::session::workflow::registry::WorkflowListing> {
+        self.workflows
+            .iter()
+            .copied()
+            .find(|workflow| workflow.name == name)
+    }
+}
 /// Build the ACP `AvailableCommand` list for the client autocomplete menu.
 ///
 /// Skills include `scope` and `path` in `_meta` so the client can show
@@ -570,70 +785,69 @@ pub(crate) fn build_tools_meta(tool_names: &[String], tool_schema_hash: &str) ->
 pub(super) fn available_commands(
     skills: &[SkillInfo],
     availability: CommandAvailability,
+    workflows: &[crate::session::workflow::registry::WorkflowListing],
 ) -> Vec<acp::AvailableCommand> {
-    // Detect duplicate bare names among user-invocable skills so we can
-    // advertise qualified names (e.g. "local:commit") when ambiguous.
-    let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for s in skills.iter().filter(|s| s.user_invocable) {
-        *name_counts.entry(&s.name).or_default() += 1;
-    }
-
-    // Collect builtin command names so skills that collide are also qualified.
-    let builtin_names: std::collections::HashSet<&str> =
-        BUILTIN_COMMANDS.iter().map(|b| b.name).collect();
-
-    all_commands(skills, availability)
-        .iter()
-        .flat_map(|cmd| {
-            let entries: Vec<acp::AvailableCommand> = match cmd {
-                SlashCommand::BuiltIn(b) => {
-                    vec![
-                        acp::AvailableCommand::new(
-                            b.name.to_string(),
-                            cmd.description().to_string(),
-                        )
-                        .input(cmd.argument_hint().map(|hint| {
-                            acp::AvailableCommandInput::Unstructured(
-                                acp::UnstructuredCommandInput::new(hint.to_string()),
-                            )
-                        })),
-                    ]
+    let catalog = EffectiveCommandCatalog::build(skills, availability, workflows);
+    let mut commands =
+        Vec::with_capacity(catalog.builtins.len() + catalog.skills.len() + catalog.workflows.len());
+    commands.extend(catalog.builtins.iter().map(|builtin| {
+        acp::AvailableCommand::new(builtin.name.to_string(), builtin.description.to_string()).input(
+            builtin.argument_hint.map(|hint| {
+                acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+                    hint.to_string(),
+                ))
+            }),
+        )
+    }));
+    commands.extend(catalog.skills.iter().map(|command| {
+        let skill = command.skill;
+        let mut meta_map = serde_json::Map::new();
+        meta_map.insert("scope".into(), serde_json::json!(skill.scope));
+        meta_map.insert("path".into(), serde_json::json!(skill.path));
+        if let Some(display_name) = skill.display_name.as_deref().filter(|s| !s.is_empty()) {
+            meta_map.insert("displayName".into(), serde_json::json!(display_name));
+        }
+        if let Some(extra) = &skill.metadata {
+            for key in ["product", "icon"] {
+                if let Some(value) = extra.get(key) {
+                    meta_map.insert(key.to_string(), serde_json::json!(value));
                 }
-                SlashCommand::Skill(s) => {
-                    let meta = serde_json::json!({
-                        "scope": s.scope,
-                        "path": s.path,
-                    })
-                    .as_object()
-                    .cloned();
-                    let qualified = format_skill_name(s);
-                    let bare_collides = name_counts.get(s.name.as_str()).copied().unwrap_or(0) > 1
-                        || builtin_names.contains(s.name.as_str());
-                    let make_entry = |name: String| {
-                        acp::AvailableCommand::new(name, cmd.description().to_string())
-                            .input(cmd.argument_hint().map(|hint| {
-                                acp::AvailableCommandInput::Unstructured(
-                                    acp::UnstructuredCommandInput::new(hint.to_string()),
-                                )
-                            }))
-                            .meta(meta.clone())
-                    };
-                    // Always advertise the qualified name for plugin skills.
-                    // Also advertise the bare name if it doesn't collide.
-                    if bare_collides {
-                        vec![make_entry(qualified)]
-                    } else {
-                        // No collision — bare name only. The qualified form
-                        // would just duplicate the entry in autocomplete.
-                        vec![make_entry(s.name.clone())]
-                    }
-                }
-            };
-            entries
+            }
+        }
+        let meta = Some(meta_map);
+        acp::AvailableCommand::new(
+            command.name.clone(),
+            skill
+                .short_description
+                .as_deref()
+                .unwrap_or(&skill.description)
+                .to_string(),
+        )
+        .input(skill.argument_hint.as_ref().map(|hint| {
+            acp::AvailableCommandInput::Unstructured(acp::UnstructuredCommandInput::new(
+                hint.clone(),
+            ))
+        }))
+        .meta(meta)
+    }));
+    commands.extend(catalog.workflows.iter().map(|workflow| {
+        let meta = serde_json::json!({
+            "workflowSource": workflow.source,
+            "workflowPath": workflow.path,
         })
-        .collect()
+        .as_object()
+        .cloned();
+        acp::AvailableCommand::new(
+            workflow.name.clone(),
+            format!("Workflow: {}", workflow.description),
+        )
+        .input(Some(acp::AvailableCommandInput::Unstructured(
+            acp::UnstructuredCommandInput::new("<args>".to_string()),
+        )))
+        .meta(meta)
+    }));
+    commands
 }
-
 /// Pre-session builtin commands for `InitializeResponse._meta`.
 ///
 /// Advertises every always-on command plus any gated command whose gate
@@ -659,29 +873,347 @@ pub(crate) fn builtin_commands(availability: CommandAvailability) -> Vec<acp::Av
         })
         .collect()
 }
-
-// ── x.ai/commands/list ext method ────────────────────────────────
-
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct ListCommandsRequest {
+    #[serde(default)]
+    pub session_id: Option<acp::SessionId>,
+    #[serde(default)]
     pub cwd: Option<String>,
+    /// Product lane: `"chat"` filters to Grok Chat / Grok Computer first-party
+    /// skills only. Omitted or any other value keeps the full Build catalog.
+    #[serde(default)]
+    pub kind: Option<String>,
 }
-
-#[derive(serde::Serialize)]
-pub(crate) struct ListCommandsResponse {
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct ListCommandsResponse {
     pub commands: Vec<acp::AvailableCommand>,
+    /// Live-session tool names (`None` = unknown / pre-session). Same set as
+    /// `AvailableCommandsUpdate.meta.tools`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
 }
-
+/// Last successful product catalog shared by ACU, `commands/list(kind=chat)`,
+/// and chat slash resolve. Matched by auth token / user id / team / org so
+/// OIDC enrichment and team switches never leak another context's menu.
+static PRODUCT_SKILLS_CACHE: parking_lot::Mutex<Option<ProductSkillsCacheEntry>> =
+    parking_lot::Mutex::new(None);
+/// Short-lived degraded (user-list failed) catalog. Separate from success cache
+/// so incomplete menus are not pinned for the full success TTL.
+static PRODUCT_SKILLS_DEGRADED_CACHE: parking_lot::Mutex<Option<ProductSkillsCacheEntry>> =
+    parking_lot::Mutex::new(None);
+/// Short-lived total-failure marker so cold ACU/resolve during an outage does
+/// not re-run the full REST ladder every turn.
+static PRODUCT_SKILLS_NEGATIVE_CACHE: parking_lot::Mutex<Option<ProductSkillsIdentityStamp>> =
+    parking_lot::Mutex::new(None);
+/// Coalesce concurrent catalog fetches (ACU + list + resolve) into one REST
+/// ladder. Callers re-check caches after acquiring the gate.
+static PRODUCT_SKILLS_FETCH_GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+    std::sync::OnceLock::new();
+/// Fresh successful catalog is reused without another REST round-trip so ACU,
+/// list, and per-turn resolve do not stampede grok.com.
+const PRODUCT_SKILLS_SUCCESS_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+/// Bounded negative cache for user-list failure (bundled-only). Keeps consumers
+/// from re-paying the full retry ladder during a short outage.
+const PRODUCT_SKILLS_DEGRADED_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+/// Bounded negative cache for total catalog Err (bundled failed after retries).
+const PRODUCT_SKILLS_NEGATIVE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+/// Locale for product Skills REST. Catalog is English-only today.
+const PRODUCT_SKILLS_LOCALE: &str = "en";
+#[derive(Clone)]
+struct ProductSkillsCacheEntry {
+    auth_key: String,
+    user_id: String,
+    team_id: Option<String>,
+    organization_id: Option<String>,
+    skills: Vec<SkillInfo>,
+    fetched_at: std::time::Instant,
+}
+/// Identity stamp without skills payload (negative / Err cache).
+#[derive(Clone)]
+struct ProductSkillsIdentityStamp {
+    auth_key: String,
+    user_id: String,
+    team_id: Option<String>,
+    organization_id: Option<String>,
+    fetched_at: std::time::Instant,
+}
+fn product_skills_identity_matches(
+    auth_key: &str,
+    user_id: &str,
+    team_id: &Option<String>,
+    organization_id: &Option<String>,
+    auth: &crate::auth::GrokAuth,
+) -> bool {
+    if team_id != &auth.team_id || organization_id != &auth.organization_id {
+        return false;
+    }
+    if !auth.key.is_empty() && auth_key == auth.key {
+        return true;
+    }
+    if !auth.user_id.is_empty() && !user_id.is_empty() && user_id == auth.user_id {
+        return true;
+    }
+    false
+}
+fn product_skills_cache_matches(
+    entry: &ProductSkillsCacheEntry,
+    auth: &crate::auth::GrokAuth,
+) -> bool {
+    product_skills_identity_matches(
+        &entry.auth_key,
+        &entry.user_id,
+        &entry.team_id,
+        &entry.organization_id,
+        auth,
+    )
+}
+fn product_skills_negative_matches(
+    entry: &ProductSkillsIdentityStamp,
+    auth: &crate::auth::GrokAuth,
+) -> bool {
+    product_skills_identity_matches(
+        &entry.auth_key,
+        &entry.user_id,
+        &entry.team_id,
+        &entry.organization_id,
+        auth,
+    )
+}
+fn product_skills_cache_entry(
+    auth: &crate::auth::GrokAuth,
+    skills: Vec<SkillInfo>,
+) -> ProductSkillsCacheEntry {
+    ProductSkillsCacheEntry {
+        auth_key: auth.key.clone(),
+        user_id: auth.user_id.clone(),
+        team_id: auth.team_id.clone(),
+        organization_id: auth.organization_id.clone(),
+        skills,
+        fetched_at: std::time::Instant::now(),
+    }
+}
+/// Success-cache write after a catalog fetch.
+///
+/// Always keys by the **primary** auth identity (user + team/org), even when
+/// the HTTP request succeeded via an untagged recovery credential. That lets
+/// the same team primary hit TTL without re-running the 403 ladder, while
+/// personal (empty team/org) primaries cannot match a team-keyed entry.
+fn product_skills_cache_entry_after_fetch(
+    primary: &crate::auth::GrokAuth,
+    skills: Vec<SkillInfo>,
+    _used_untagged_recovery: bool,
+) -> ProductSkillsCacheEntry {
+    product_skills_cache_entry(primary, skills)
+}
+fn product_skills_negative_stamp(auth: &crate::auth::GrokAuth) -> ProductSkillsIdentityStamp {
+    ProductSkillsIdentityStamp {
+        auth_key: auth.key.clone(),
+        user_id: auth.user_id.clone(),
+        team_id: auth.team_id.clone(),
+        organization_id: auth.organization_id.clone(),
+        fetched_at: std::time::Instant::now(),
+    }
+}
+fn clear_degraded_cache_for_auth(auth: &crate::auth::GrokAuth) {
+    let mut guard = PRODUCT_SKILLS_DEGRADED_CACHE.lock();
+    if let Some(entry) = guard.as_ref()
+        && product_skills_cache_matches(entry, auth)
+    {
+        *guard = None;
+    }
+}
+fn clear_negative_cache_for_auth(auth: &crate::auth::GrokAuth) {
+    let mut guard = PRODUCT_SKILLS_NEGATIVE_CACHE.lock();
+    if let Some(entry) = guard.as_ref()
+        && product_skills_negative_matches(entry, auth)
+    {
+        *guard = None;
+    }
+}
+fn product_skills_fetch_gate() -> &'static tokio::sync::Mutex<()> {
+    PRODUCT_SKILLS_FETCH_GATE.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+#[cfg(test)]
+pub(crate) fn clear_product_skills_cache_for_test() {
+    *PRODUCT_SKILLS_CACHE.lock() = None;
+    *PRODUCT_SKILLS_DEGRADED_CACHE.lock() = None;
+    *PRODUCT_SKILLS_NEGATIVE_CACHE.lock() = None;
+}
+/// Product (grok.com) Skills catalog as SkillInfo rows for slash advertising
+/// and chat-kind slash resolve / skill expansion.
+///
+/// Shared by `list_commands(kind=chat)`, chat-session
+/// `available_commands_update`, and turn/interjection skill resolution.
+/// Never substitutes Build disk skills.
+///
+/// Catalog source is product Skills REST (see `remote::skills_client`), not
+/// gateway `conversation.commands.updated` — one process-local source for ACU
+/// and shell-side resolve without a gateway bridge.
+///
+/// - `Some(skills)` — REST succeeded (possibly empty; empty 200 is authoritative),
+///   a fresh in-TTL success cache hit, a short-TTL degraded (user-list failed)
+///   hit, or a prior successful catalog for **this** auth identity reused after
+///   a transient failure
+/// - `None` — no auth, REST failed with no matching cached catalog, or logout
+pub(crate) async fn product_skill_infos(
+    auth: Option<std::sync::Arc<crate::auth::AuthManager>>,
+) -> Option<Vec<SkillInfo>> {
+    let Some(auth) = auth else {
+        tracing::warn!("product skills: no auth — catalog unavailable");
+        return None;
+    };
+    let grok_auth = match auth.auth().await {
+        Ok(a) => a,
+        Err(err) => {
+            tracing::warn!(error = %err, "product skills: auth unavailable");
+            return None;
+        }
+    };
+    if let Some(skills) = product_skills_cache_lookup(&grok_auth) {
+        return skills;
+    }
+    let _gate = product_skills_fetch_gate().lock().await;
+    if let Some(skills) = product_skills_cache_lookup(&grok_auth) {
+        return skills;
+    }
+    let client = crate::remote::SkillsClient::new(auth);
+    match client.try_list_catalog(PRODUCT_SKILLS_LOCALE).await {
+        Ok((catalog, used_untagged_recovery)) if catalog.user_list_failed => {
+            let skills = catalog.to_skill_infos();
+            {
+                let guard = PRODUCT_SKILLS_CACHE.lock();
+                if let Some(entry) = guard.as_ref()
+                    && product_skills_cache_matches(entry, &grok_auth)
+                {
+                    tracing::warn!(
+                        skill_count = entry.skills.len(),
+                        "product skills: user list failed — reusing last successful catalog"
+                    );
+                    return Some(entry.skills.clone());
+                }
+            }
+            *PRODUCT_SKILLS_DEGRADED_CACHE.lock() = Some(product_skills_cache_entry_after_fetch(
+                &grok_auth,
+                skills.clone(),
+                used_untagged_recovery,
+            ));
+            clear_negative_cache_for_auth(&grok_auth);
+            tracing::warn!(
+                skill_count = skills.len(),
+                used_untagged_recovery,
+                "product skills: user list failed — caching degraded catalog briefly"
+            );
+            Some(skills)
+        }
+        Ok((catalog, used_untagged_recovery)) => {
+            let skills = catalog.to_skill_infos();
+            *PRODUCT_SKILLS_CACHE.lock() = Some(product_skills_cache_entry_after_fetch(
+                &grok_auth,
+                skills.clone(),
+                used_untagged_recovery,
+            ));
+            clear_degraded_cache_for_auth(&grok_auth);
+            clear_negative_cache_for_auth(&grok_auth);
+            Some(skills)
+        }
+        Err(err) => {
+            let cached = PRODUCT_SKILLS_CACHE.lock().clone();
+            if let Some(entry) = cached
+                && product_skills_cache_matches(&entry, &grok_auth)
+            {
+                tracing::warn!(
+                    error = %err,
+                    skill_count = entry.skills.len(),
+                    "product skills: catalog unavailable — reusing last successful catalog"
+                );
+                return Some(entry.skills);
+            }
+            *PRODUCT_SKILLS_NEGATIVE_CACHE.lock() = Some(product_skills_negative_stamp(&grok_auth));
+            tracing::warn!(
+                error = %err,
+                "product skills: catalog unavailable after retries — negative cache"
+            );
+            None
+        }
+    }
+}
+/// `Some(Some(skills))` success/degraded hit, `Some(None)` negative hit, `None` miss.
+fn product_skills_cache_lookup(
+    grok_auth: &crate::auth::GrokAuth,
+) -> Option<Option<Vec<SkillInfo>>> {
+    {
+        let guard = PRODUCT_SKILLS_CACHE.lock();
+        if let Some(entry) = guard.as_ref()
+            && product_skills_cache_matches(entry, grok_auth)
+            && entry.fetched_at.elapsed() < PRODUCT_SKILLS_SUCCESS_TTL
+        {
+            return Some(Some(entry.skills.clone()));
+        }
+    }
+    {
+        let guard = PRODUCT_SKILLS_DEGRADED_CACHE.lock();
+        if let Some(entry) = guard.as_ref()
+            && product_skills_cache_matches(entry, grok_auth)
+            && entry.fetched_at.elapsed() < PRODUCT_SKILLS_DEGRADED_TTL
+        {
+            return Some(Some(entry.skills.clone()));
+        }
+    }
+    {
+        let guard = PRODUCT_SKILLS_NEGATIVE_CACHE.lock();
+        if let Some(entry) = guard.as_ref()
+            && product_skills_negative_matches(entry, grok_auth)
+            && entry.fetched_at.elapsed() < PRODUCT_SKILLS_NEGATIVE_TTL
+        {
+            return Some(None);
+        }
+    }
+    None
+}
+/// Skill source for `available_commands_update` given sticky session kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AcuSkillSource {
+    /// Product REST catalog (`kind: chat`).
+    Product,
+    /// Disk / plugin skills via `SkillManager` (Build).
+    Disk,
+}
+pub(crate) fn acu_skill_source(is_chat_kind: bool) -> AcuSkillSource {
+    if is_chat_kind {
+        AcuSkillSource::Product
+    } else {
+        AcuSkillSource::Disk
+    }
+}
 /// Build the available commands list, optionally scoped to a working directory.
 /// - `Some(cwd)`: full skill discovery (Local + Repo + User) + builtins.
 /// - `None`: builtins + global (User-scoped) skills only.
+/// - `kind == Some("chat")` (feature `chat` only): **product Skills REST
+///   catalog** (same as grok-web) + builtins — not Build disk skills. Without
+///   the feature, returns `Err` (invalid params). Product REST failure still
+///   advertises builtins only (empty product skills).
 pub(crate) async fn list_commands(
     cwd: Option<&str>,
     skills_config: &xai_grok_agent::prompt::skills::SkillsConfig,
     plugin_registry: Option<&xai_grok_agent::plugins::PluginRegistry>,
     availability: CommandAvailability,
     compat: xai_grok_tools::types::compat::CompatConfig,
-) -> ListCommandsResponse {
+    include_project_workflows: bool,
+    kind: Option<&str>,
+    auth: Option<std::sync::Arc<crate::auth::AuthManager>>,
+) -> Result<ListCommandsResponse, acp::Error> {
+    if kind == Some("chat") {
+        {
+            return Err(acp::Error::invalid_params()
+                .data("commands/list kind=\"chat\" requires a chat-enabled binary"));
+        }
+        let skills = product_skill_infos(auth).await.unwrap_or_default();
+        return Ok(ListCommandsResponse {
+            commands: available_commands(&skills, availability, &[]),
+            tools: None,
+        });
+    }
     let skills = xai_grok_agent::prompt::skills::list_skills_with_plugins(
         cwd,
         skills_config,
@@ -689,13 +1221,17 @@ pub(crate) async fn list_commands(
         compat,
     )
     .await;
-    ListCommandsResponse {
-        commands: available_commands(&skills, availability),
-    }
+    let workflows = crate::session::workflow::registry::list_workflows(
+        include_project_workflows
+            .then_some(cwd)
+            .flatten()
+            .map(std::path::Path::new),
+    );
+    Ok(ListCommandsResponse {
+        commands: available_commands(&skills, availability, &workflows),
+        tools: None,
+    })
 }
-
-// ── Slash command resolution ────────────────────────────────────
-
 /// A parsed skill reference from user input.
 ///
 /// Produced by `parse_skill_references()` when scanning user text for known
@@ -713,7 +1249,7 @@ pub(crate) struct ParsedSkillRef {
     /// Plugin name if this is a plugin skill.
     pub plugin_name: Option<String>,
 }
-
+#[derive(Debug)]
 pub(super) enum SlashCommandOutcome {
     /// Execute directly, no model round-trip.
     Builtin(BuiltinAction),
@@ -730,7 +1266,7 @@ pub(super) enum SlashCommandOutcome {
         skills: Vec<ParsedSkillRef>,
     },
 }
-
+#[derive(Debug)]
 pub(super) enum BuiltinAction {
     Compact {
         user_context: Option<String>,
@@ -778,6 +1314,12 @@ pub(super) enum BuiltinAction {
     MemoryToggle {
         enabled: bool,
     },
+    /// User-authorized promotion of root-reviewed facts from one task tree
+    /// into workspace long-term memory. Never model-invocable.
+    PromoteTaskTreeMemory,
+    /// User-authorized recovery for only a torn final task-tree ledger record.
+    /// Never model-invocable; malformed middle records stay fail-closed.
+    RepairTaskTreeMemoryLedger,
     GoalSet {
         objective: String,
         token_budget: Option<i64>,
@@ -787,6 +1329,17 @@ pub(super) enum BuiltinAction {
     GoalPause,
     GoalResume,
     GoalClear,
+    DeepResearch {
+        query: String,
+    },
+    WorkflowManage {
+        run_id: String,
+        op: String,
+    },
+    WorkflowLaunch {
+        name: String,
+        input: String,
+    },
     GoalExpertOff,
     ExpertStart {
         task: String,
@@ -804,9 +1357,14 @@ pub(super) enum BuiltinAction {
     ExpertExecutor {
         model: String,
     },
+    ExpertModelPool {
+        models: Vec<String>,
+    },
+    ExpertModelPriority {
+        models: Vec<String>,
+    },
     ExpertBadArgs,
 }
-
 impl BuiltinAction {
     pub(crate) fn command_name(&self) -> &'static str {
         match self {
@@ -832,22 +1390,28 @@ impl BuiltinAction {
             BuiltinAction::Feedback { .. } => "feedback",
             BuiltinAction::MemoryBrowse => "memory",
             BuiltinAction::MemoryToggle { .. } => "memory",
+            BuiltinAction::PromoteTaskTreeMemory => "memory",
+            BuiltinAction::RepairTaskTreeMemoryLedger => "memory",
             BuiltinAction::GoalSet { .. }
             | BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
             | BuiltinAction::GoalClear => "goal",
-            BuiltinAction::GoalExpertOff => "goalexpert",
+            BuiltinAction::DeepResearch { .. } => "deep-research",
+            BuiltinAction::WorkflowManage { .. } => "workflow",
+            BuiltinAction::WorkflowLaunch { .. } => "workflow",
+            BuiltinAction::GoalExpertOff => "goal",
             BuiltinAction::ExpertStart { .. }
             | BuiltinAction::ExpertContinue { .. }
             | BuiltinAction::ExpertStatus { .. }
             | BuiltinAction::ExpertBudget
             | BuiltinAction::ExpertOff
             | BuiltinAction::ExpertExecutor { .. }
+            | BuiltinAction::ExpertModelPool { .. }
+            | BuiltinAction::ExpertModelPriority { .. }
             | BuiltinAction::ExpertBadArgs => "expert",
         }
     }
-
     pub(crate) fn args_provided(&self) -> bool {
         match self {
             BuiltinAction::Compact { user_context } => user_context.is_some(),
@@ -872,23 +1436,29 @@ impl BuiltinAction {
             BuiltinAction::Feedback { text } => !text.is_empty(),
             BuiltinAction::MemoryBrowse => false,
             BuiltinAction::MemoryToggle { .. } => true,
+            BuiltinAction::PromoteTaskTreeMemory => true,
+            BuiltinAction::RepairTaskTreeMemoryLedger => true,
             BuiltinAction::GoalSet { .. } => true,
             BuiltinAction::GoalStatus
             | BuiltinAction::GoalPause
             | BuiltinAction::GoalResume
-            | BuiltinAction::GoalClear
-            | BuiltinAction::GoalExpertOff => false,
-            BuiltinAction::ExpertStart { task, .. } => !task.is_empty(),
-            BuiltinAction::ExpertContinue { .. } => false,
-            BuiltinAction::ExpertStatus { .. }
-            | BuiltinAction::ExpertBudget
-            | BuiltinAction::ExpertOff
-            | BuiltinAction::ExpertBadArgs => false,
+            | BuiltinAction::GoalClear => false,
+            BuiltinAction::DeepResearch { .. } => true,
+            BuiltinAction::WorkflowManage { .. } => true,
+            BuiltinAction::WorkflowLaunch { input, .. } => !input.is_empty(),
+            BuiltinAction::GoalExpertOff => false,
+            BuiltinAction::ExpertStart { .. } => true,
+            BuiltinAction::ExpertContinue { .. } => true,
+            BuiltinAction::ExpertStatus { .. } => false,
+            BuiltinAction::ExpertBudget => false,
+            BuiltinAction::ExpertOff => false,
             BuiltinAction::ExpertExecutor { .. } => true,
+            BuiltinAction::ExpertModelPool { .. } => true,
+            BuiltinAction::ExpertModelPriority { .. } => true,
+            BuiltinAction::ExpertBadArgs => false,
         }
     }
 }
-
 /// How to rewrite the user's prompt when a slash command resolves to a skill.
 ///
 /// - `RewriteToRun` (default): replace `/foo args` with `"run /foo args"`,
@@ -902,7 +1472,6 @@ pub(crate) enum SkillSlashRewrite {
     RewriteToRun,
     Passthrough,
 }
-
 /// Scan user input left-to-right for `/{word}` tokens where `word` matches
 /// a **known registered skill name** (bare or qualified).
 ///
@@ -917,141 +1486,75 @@ pub(crate) fn parse_skill_references(
     skills: &[SkillInfo],
     availability: CommandAvailability,
 ) -> Option<Vec<ParsedSkillRef>> {
+    let catalog = EffectiveCommandCatalog::build(skills, availability, &[]);
+    parse_skill_references_with_catalog(text, &catalog)
+}
+fn parse_skill_references_with_catalog(
+    text: &str,
+    catalog: &EffectiveCommandCatalog<'_>,
+) -> Option<Vec<ParsedSkillRef>> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return None;
     }
-
-    let commands = all_commands(skills, availability);
-
-    // Build a map from bare name → SkillInfo reference, tracking ambiguous
-    // names (multiple skills sharing the same bare name). Ambiguous bare
-    // names are excluded from the map so `/commit` passes through when two
-    // skills are both called "commit" in different scopes — the user must
-    // use the qualified form `/local:commit` instead.
-    let mut skill_map: std::collections::HashMap<&str, Option<&SkillInfo>> =
-        std::collections::HashMap::new();
-    for cmd in &commands {
-        if let SlashCommand::Skill(s) = cmd {
-            skill_map
-                .entry(&s.name)
-                .and_modify(|v| *v = None) // duplicate → mark ambiguous
-                .or_insert(Some(s));
-        }
-    }
-    // Remove ambiguous entries so they're never matched by bare name.
-    skill_map.retain(|_, v| v.is_some());
-
-    // Collect positions of all /{word} tokens, checking if each matches a known skill.
     struct SkillHit<'a> {
-        /// Byte offset of the '/' in the source text.
         offset: usize,
-        /// The text as typed by the user (e.g. "commit", "user:commit").
         typed_name: String,
-        /// Resolved skill info.
         skill: &'a SkillInfo,
     }
-
-    let mut hits: Vec<SkillHit<'_>> = Vec::new();
+    let mut hits = Vec::new();
     let bytes = trimmed.as_bytes();
     let mut i = 0;
-
     while i < bytes.len() {
         if bytes[i] != b'/' {
             i += 1;
             continue;
         }
-        // Must be at start of text or preceded by whitespace.
         if i > 0 && !bytes[i - 1].is_ascii_whitespace() {
             i += 1;
             continue;
         }
-        let start = i + 1; // skip '/'
+        let start = i + 1;
         if start >= bytes.len() {
             break;
         }
-        // Grab the word: everything until whitespace, '/' or end.
         let end = trimmed[start..]
             .find(|c: char| c.is_whitespace())
-            .map(|rel| start + rel)
+            .map(|relative| start + relative)
             .unwrap_or(trimmed.len());
         let word = &trimmed[start..end];
-        if word.is_empty() {
-            i = start;
-            continue;
-        }
-
-        // Check if it's a builtin — skip those (builtins are not multi-skill candidates).
-        let is_builtin = BUILTIN_COMMANDS
-            .iter()
-            .chain(PROMPT_COMMANDS.iter())
-            .any(|b| b.name == word || b.aliases.contains(&word));
-        if is_builtin {
-            i = end;
-            continue;
-        }
-
-        // Check bare name in map (only unambiguous entries remain).
-        if let Some(Some(skill)) = skill_map.get(word) {
+        if let Some(skill) = catalog.skill(word) {
             hits.push(SkillHit {
                 offset: i,
                 typed_name: word.to_string(),
                 skill,
             });
-            i = end;
-            continue;
         }
-
-        // Check qualified name (e.g. "user:commit").
-        let mut found = false;
-        for cmd in &commands {
-            if let SlashCommand::Skill(s) = cmd
-                && format_skill_name(s) == word
-            {
-                hits.push(SkillHit {
-                    offset: i,
-                    typed_name: word.to_string(),
-                    skill: s,
-                });
-                found = true;
-                break;
-            }
-        }
-        if found {
-            i = end;
-            continue;
-        }
-
-        // Unknown /word — skip.
-        i = end;
+        i = end.max(start);
     }
-
     if hits.is_empty() {
         return None;
     }
-
-    // Compute args for each hit: text from end-of-skill-token to start of next hit (or end).
-    let mut refs = Vec::with_capacity(hits.len());
-    for (idx, hit) in hits.iter().enumerate() {
-        let word_end = hit.offset + 1 + hit.typed_name.len(); // past the /word
-        let args_end = if idx + 1 < hits.len() {
-            hits[idx + 1].offset
-        } else {
-            trimmed.len()
-        };
-        let args = trimmed[word_end..args_end].trim().to_string();
-        refs.push(ParsedSkillRef {
-            name: hit.typed_name.clone(),
-            args,
-            skill_path: hit.skill.path.clone(),
-            qualified_name: format_skill_name(hit.skill),
-            plugin_name: hit.skill.plugin_name.clone(),
-        });
-    }
-
-    Some(refs)
+    Some(
+        hits.iter()
+            .enumerate()
+            .map(|(index, hit)| {
+                let word_end = hit.offset + 1 + hit.typed_name.len();
+                let args_end = hits
+                    .get(index + 1)
+                    .map(|next| next.offset)
+                    .unwrap_or(trimmed.len());
+                ParsedSkillRef {
+                    name: hit.typed_name.clone(),
+                    args: trimmed[word_end..args_end].trim().to_string(),
+                    skill_path: hit.skill.path.clone(),
+                    qualified_name: format_skill_name(hit.skill),
+                    plugin_name: hit.skill.plugin_name.clone(),
+                }
+            })
+            .collect(),
+    )
 }
-
 /// Load each parsed skill's SKILL.md, apply substitutions, and build the
 /// `<skill_information>` envelope.
 ///
@@ -1069,11 +1572,8 @@ pub(super) async fn build_skill_information_for_refs(
         SkillRef, SubstitutionContext, apply_substitutions, build_skill_block,
         build_skill_information, load_skill_content,
     };
-
     let mut skill_blocks: Vec<String> = Vec::new();
     for sk in parsed_skills {
-        // Find the SkillInfo by path (more reliable than by name for
-        // qualified skills).
         let Some(info) = slash_skills.iter().find(|s| s.path == sk.skill_path) else {
             continue;
         };
@@ -1100,11 +1600,24 @@ pub(super) async fn build_skill_information_for_refs(
                 skill_blocks.push(build_skill_block(&sk.name, &sk.args, &content));
             }
             Err(e) => {
-                tracing::warn!(skill = %sk.name, error = %e, "failed to load skill for expansion");
+                let body_less_product =
+                    info.path.contains("://") && info.body.as_ref().is_none_or(|b| b.is_empty());
+                if body_less_product {
+                    tracing::debug!(
+                        skill = %sk.name,
+                        path = %info.path,
+                        "product skill has no local body — skip shell expansion"
+                    );
+                } else {
+                    tracing::warn!(
+                        skill = %sk.name,
+                        error = %e,
+                        "failed to load skill for expansion"
+                    );
+                }
             }
         }
     }
-
     if skill_blocks.is_empty() {
         return None;
     }
@@ -1117,7 +1630,6 @@ pub(super) async fn build_skill_information_for_refs(
         .collect();
     Some(build_skill_information(&skill_blocks, &refs))
 }
-
 /// Resolve prompt blocks as a slash command.
 /// `Ok(blocks)` = not a command, pass through. `Err(outcome)` = matched.
 pub(super) fn resolve(
@@ -1125,32 +1637,21 @@ pub(super) fn resolve(
     skills: &[SkillInfo],
     availability: CommandAvailability,
     _skill_rewrite: SkillSlashRewrite,
+    workflows: &[crate::session::workflow::registry::WorkflowListing],
+    loop_fire_mode: LoopFireMode,
 ) -> Result<Vec<acp::ContentBlock>, SlashCommandOutcome> {
     let Some((command_name, args)) = parse_slash_prefix(&prompt_blocks) else {
         return Ok(prompt_blocks);
     };
-
-    // Prompt-only commands (e.g. /loop) need a full agent round-trip, not
-    // a direct BuiltinAction. They're filtered against the same gate the
-    // PROMPT_COMMANDS entry declares -- looking it up here means the gate
-    // value lives in exactly one place (the PROMPT_COMMANDS entry) and a
-    // future addition just needs the entry, not a parallel branch.
     if let Some(prompt_cmd) = PROMPT_COMMANDS.iter().find(|c| c.name == command_name)
         && availability.allows(prompt_cmd.gate)
     {
-        // Dispatch by name so a future PROMPT_COMMANDS entry without a
-        // matching arm fails loudly at the call site instead of silently
-        // reusing /loop's prompt builder.
         let mut blocks = match prompt_cmd.name {
-            "loop" => build_loop_prompt_blocks(args),
+            "loop" => build_loop_prompt_blocks(args, loop_fire_mode),
             other => {
                 unreachable!("prompt-only command /{other} has no resolver wired in resolve()")
             }
         };
-        // Annotate with the compact invocation as `displayText` so every client
-        // and session replay renders "/loop <args>" instead of the expanded
-        // instruction. The pager does this client-side; bare-text clients rely
-        // on this server-side annotation.
         let display_text = if args.is_empty() {
             format!("/{command_name}")
         } else {
@@ -1163,22 +1664,20 @@ pub(super) fn resolve(
                 serde_json::Value::String(display_text),
             );
         }
-        // /loop is a prompt-only command — use InvokeSkill with empty skills
-        // so the caller forwards the rewritten blocks directly to the model.
         return Err(SlashCommandOutcome::InvokeSkill {
             blocks,
             skills: vec![],
         });
     }
-
-    // Check if the leading /command is a builtin.
-    let commands = all_commands(skills, availability);
-    let builtin_match = commands
+    let catalog = EffectiveCommandCatalog::build(skills, availability, workflows);
+    if let Some(builtin) = catalog
+        .builtins
         .iter()
-        .find(|c| matches!(c, SlashCommand::BuiltIn(b) if c.name() == command_name || b.aliases.contains(&command_name)));
-
-    if let Some(SlashCommand::BuiltIn(builtin)) = builtin_match {
+        .find(|builtin| builtin.name == command_name || builtin.aliases.contains(&command_name))
+    {
         let mut action = (builtin.resolve)(args);
+        // `/expert vision` (and any image-carrying expert start) must keep the
+        // prompt's real image blocks, in order — they become the vision input.
         if let BuiltinAction::ExpertStart { images, .. } = &mut action {
             *images = prompt_blocks
                 .iter()
@@ -1188,11 +1687,11 @@ pub(super) fn resolve(
                 })
                 .collect();
         }
+        if matches!(action, BuiltinAction::WorkflowLaunch { .. }) && !availability.workflows {
+            return Ok(prompt_blocks);
+        }
         return Err(SlashCommandOutcome::Builtin(action));
     }
-
-    // Not a builtin — use the multi-skill parser to detect ALL /{skill}
-    // references in the full input text, splitting args at skill boundaries.
     let full_text = prompt_blocks
         .iter()
         .find_map(|b| {
@@ -1203,18 +1702,22 @@ pub(super) fn resolve(
             }
         })
         .unwrap_or("");
-
-    if let Some(parsed_skills) = parse_skill_references(full_text, skills, availability) {
+    if let Some(parsed_skills) = parse_skill_references_with_catalog(full_text, &catalog) {
         return Err(SlashCommandOutcome::InvokeSkill {
             blocks: prompt_blocks,
             skills: parsed_skills,
         });
     }
-
-    // No known skill matched — pass through as regular user input.
+    if let Some(workflow) = catalog.workflow(command_name) {
+        return Err(SlashCommandOutcome::Builtin(
+            BuiltinAction::WorkflowLaunch {
+                name: workflow.name.clone(),
+                input: args.to_string(),
+            },
+        ));
+    }
     Ok(prompt_blocks)
 }
-
 /// Extract `(name, args)` if the first text block starts with `/`.
 ///
 /// - `"/compact keep auth"` → `Some(("compact", "keep auth"))`
@@ -1227,22 +1730,17 @@ fn parse_slash_prefix(prompt_blocks: &[acp::ContentBlock]) -> Option<(&str, &str
             None
         }
     })?;
-
     let trimmed = text.trim();
     let without_slash = trimmed.strip_prefix('/')?;
-
     let (name, args) = match without_slash.find(char::is_whitespace) {
         Some(idx) => (&without_slash[..idx], without_slash[idx..].trim()),
         None => (without_slash, ""),
     };
-
     if name.is_empty() {
         return None;
     }
-
     Some((name, args))
 }
-
 /// Build the `/loop` prompt blocks for the shell client.
 ///
 /// The wording (usage hint + scheduling instruction) is sourced from
@@ -1250,33 +1748,139 @@ fn parse_slash_prefix(prompt_blocks: &[acp::ContentBlock]) -> Option<(&str, &str
 /// two front-ends can't drift. Like the pager, there is no host-side interval
 /// default: the model derives the cadence from the request and asks when none
 /// is given.
-fn build_loop_prompt_blocks(args: &str) -> Vec<acp::ContentBlock> {
+fn build_loop_prompt_blocks(args: &str, mode: LoopFireMode) -> Vec<acp::ContentBlock> {
     use xai_grok_tools::implementations::grok_build::{
         loop_schedule_instruction, loop_usage_message,
     };
-
     let text = if args.trim().is_empty() {
         loop_usage_message().to_string()
     } else {
-        loop_schedule_instruction(args)
+        loop_schedule_instruction(args, mode)
     };
-
     vec![acp::ContentBlock::Text(acp::TextContent::new(text))]
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use xai_grok_tools::implementations::skills::types::SkillScope;
-
+    /// Shadows [`super::resolve`] for the cases that route something other
+    /// than `/loop`: they are indifferent to the fire mode, and pinning it
+    /// here keeps a plumbing change out of every unrelated call site. Tests
+    /// that care about the mode call `super::resolve` directly.
+    fn resolve(
+        prompt_blocks: Vec<acp::ContentBlock>,
+        skills: &[SkillInfo],
+        availability: CommandAvailability,
+        skill_rewrite: SkillSlashRewrite,
+        workflows: &[crate::session::workflow::registry::WorkflowListing],
+    ) -> Result<Vec<acp::ContentBlock>, SlashCommandOutcome> {
+        super::resolve(
+            prompt_blocks,
+            skills,
+            availability,
+            skill_rewrite,
+            workflows,
+            LoopFireMode::Detached,
+        )
+    }
+    #[test]
+    fn acu_skill_source_chat_vs_build() {
+        assert_eq!(acu_skill_source(true), AcuSkillSource::Product);
+        assert_eq!(acu_skill_source(false), AcuSkillSource::Disk);
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn product_skill_infos_none_without_auth() {
+        clear_product_skills_cache_for_test();
+        assert!(product_skill_infos(None).await.is_none());
+    }
+    #[test]
+    fn product_skills_cache_matches_identity_and_team() {
+        use crate::auth::{AuthMode, GrokAuth};
+        let base = ProductSkillsCacheEntry {
+            auth_key: "tok-a".into(),
+            user_id: "user-1".into(),
+            team_id: Some("team-a".into()),
+            organization_id: None,
+            skills: vec![],
+            fetched_at: std::time::Instant::now(),
+        };
+        let same = GrokAuth {
+            key: "tok-a".into(),
+            user_id: "user-1".into(),
+            team_id: Some("team-a".into()),
+            auth_mode: AuthMode::Oidc,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        assert!(product_skills_cache_matches(&base, &same));
+        let other_team = GrokAuth {
+            team_id: Some("team-b".into()),
+            ..same.clone()
+        };
+        assert!(!product_skills_cache_matches(&base, &other_team));
+        let same_user_other_key = GrokAuth {
+            key: "tok-b".into(),
+            user_id: "user-1".into(),
+            team_id: Some("team-a".into()),
+            auth_mode: AuthMode::WebLogin,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        assert!(product_skills_cache_matches(&base, &same_user_other_key));
+        let other_user = GrokAuth {
+            key: "tok-c".into(),
+            user_id: "user-2".into(),
+            team_id: Some("team-a".into()),
+            auth_mode: AuthMode::Oidc,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        assert!(!product_skills_cache_matches(&base, &other_user));
+        let personal_same_user = GrokAuth {
+            key: "tok-personal".into(),
+            user_id: "user-1".into(),
+            team_id: None,
+            organization_id: None,
+            auth_mode: AuthMode::WebLogin,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        assert!(!product_skills_cache_matches(&base, &personal_same_user));
+    }
+    #[test]
+    fn product_skills_cache_after_untagged_recovery_keeps_primary_tenant() {
+        use crate::auth::{AuthMode, GrokAuth};
+        let primary = GrokAuth {
+            key: "oidc-team".into(),
+            user_id: "user-1".into(),
+            team_id: Some("team-a".into()),
+            organization_id: Some("org-1".into()),
+            auth_mode: AuthMode::Oidc,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        let entry = product_skills_cache_entry_after_fetch(&primary, vec![], true);
+        assert_eq!(entry.team_id.as_deref(), Some("team-a"));
+        assert_eq!(entry.organization_id.as_deref(), Some("org-1"));
+        assert_eq!(entry.user_id, "user-1");
+        assert!(product_skills_cache_matches(&entry, &primary));
+        let personal = GrokAuth {
+            key: "web-personal".into(),
+            user_id: "user-1".into(),
+            team_id: None,
+            organization_id: None,
+            auth_mode: AuthMode::WebLogin,
+            create_time: chrono::Utc::now(),
+            ..Default::default()
+        };
+        assert!(!product_skills_cache_matches(&entry, &personal));
+    }
     fn all_gated() -> CommandAvailability {
         CommandAvailability::all_enabled()
     }
-
     fn text_block(s: &str) -> acp::ContentBlock {
         acp::ContentBlock::Text(acp::TextContent::new(s.to_string()))
     }
-
     fn make_skill(name: &str, user_invocable: bool) -> SkillInfo {
         SkillInfo {
             name: name.to_string(),
@@ -1307,7 +1911,6 @@ mod tests {
             body: None,
         }
     }
-
     /// Extract the first parsed skill from an InvokeSkill outcome.
     fn first_skill(outcome: SlashCommandOutcome) -> ParsedSkillRef {
         match outcome {
@@ -1318,7 +1921,6 @@ mod tests {
             _ => panic!("expected InvokeSkill"),
         }
     }
-
     /// Extract original text from InvokeSkill blocks (for prompt-only commands like /loop).
     fn invoke_text(outcome: SlashCommandOutcome) -> String {
         match outcome {
@@ -1332,21 +1934,6 @@ mod tests {
             _ => panic!("expected InvokeSkill"),
         }
     }
-
-    // ── description fallback ────────────────────────────────────────
-
-    #[test]
-    fn skill_description_falls_back_when_no_short_description() {
-        let skill = SkillInfo {
-            short_description: None,
-            ..make_skill("deploy", true)
-        };
-        let cmd = SlashCommand::Skill(&skill);
-        assert_eq!(cmd.description(), "A skill called deploy");
-    }
-
-    // ── parse_slash_prefix ──────────────────────────────────────────
-
     #[test]
     fn parse_slash_prefix_extracts_name_and_args() {
         assert_eq!(
@@ -1358,7 +1945,6 @@ mod tests {
             Some(("yolo", "")),
         );
     }
-
     #[test]
     fn parse_slash_prefix_ignores_non_leading_slash() {
         assert_eq!(
@@ -1368,7 +1954,6 @@ mod tests {
         assert_eq!(parse_slash_prefix(&[text_block("fix the bug")]), None);
         assert_eq!(parse_slash_prefix(&[text_block("/")]), None);
     }
-
     #[test]
     fn parse_slash_prefix_trims_whitespace() {
         assert_eq!(
@@ -1376,9 +1961,6 @@ mod tests {
             Some(("commit", "fix typo")),
         );
     }
-
-    // ── builtin resolve fns ─────────────────────────────────────────
-
     fn resolve_builtin(name: &str, args: &str) -> Option<BuiltinAction> {
         BUILTIN_COMMANDS
             .iter()
@@ -1386,7 +1968,6 @@ mod tests {
             .find(|b| b.name == name)
             .map(|b| (b.resolve)(args))
     }
-
     #[test]
     fn compact_parses_optional_context() {
         assert!(matches!(
@@ -1398,7 +1979,6 @@ mod tests {
             Some(BuiltinAction::Compact { user_context: Some(ctx) }) if ctx == "keep auth"
         ));
     }
-
     #[test]
     fn always_approve_parses_on_off() {
         for arg in ["", "on", "true", "1", "yes", "enable"] {
@@ -1420,20 +2000,16 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn yolo_alias_resolves_to_always_approve() {
-        // /yolo should resolve via alias to the always-approve command
         let blocks = vec![text_block("/yolo on")];
-        let outcome = resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err();
+        let outcome =
+            resolve(blocks, &[], all_gated(), SkillSlashRewrite::default(), &[]).unwrap_err();
         assert!(matches!(
             outcome,
             SlashCommandOutcome::Builtin(BuiltinAction::SetYolo { enabled: true })
         ));
     }
-
-    // ── resolve ─────────────────────────────────────────────────────
-
     #[test]
     fn resolve_routes_builtin() {
         let outcome = resolve(
@@ -1441,6 +2017,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -1449,7 +2026,6 @@ mod tests {
             if ctx == "preserve auth"
         ));
     }
-
     #[test]
     fn status_alias_resolves_to_session_info() {
         let outcome = resolve(
@@ -1457,6 +2033,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -1464,7 +2041,6 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::SessionInfo)
         ));
     }
-
     #[test]
     fn resolve_parses_skill_with_args() {
         let skills = vec![make_skill("commit", true)];
@@ -1473,24 +2049,24 @@ mod tests {
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let skill = first_skill(outcome);
         assert_eq!(skill.name, "commit");
         assert_eq!(skill.args, "fix typo");
-
         let outcome = resolve(
             vec![text_block("/commit")],
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let skill = first_skill(outcome);
         assert_eq!(skill.name, "commit");
         assert_eq!(skill.args, "");
     }
-
     /// `build_skill_information_for_refs` loads the SKILL.md, applies
     /// substitutions, and wraps everything in `<skill_information>`;
     /// unloadable refs are skipped, and no loadable content → `None`.
@@ -1500,11 +2076,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("SKILL.md");
         std::fs::write(&path, "Body with $ARGUMENTS").unwrap();
-
         let mut skill = make_skill("commit", true);
         skill.path = path.to_string_lossy().to_string();
         let skills = vec![skill];
-
         let parsed = parse_skill_references("/commit fix typo", &skills, all_gated())
             .expect("known skill must parse");
         let info = build_skill_information_for_refs(&parsed, &skills, "sid-1")
@@ -1519,8 +2093,6 @@ mod tests {
             info.contains("Body with fix typo"),
             "$ARGUMENTS must substitute: {info}"
         );
-
-        // Missing file → logged, skipped, and with nothing loaded: None.
         let missing = vec![make_skill("ghost", true)];
         let parsed = parse_skill_references("/ghost", &missing, all_gated())
             .expect("known skill must parse");
@@ -1529,7 +2101,6 @@ mod tests {
             None
         );
     }
-
     #[test]
     fn resolve_loop_annotates_block_with_compact_display_text() {
         let outcome = resolve(
@@ -1537,6 +2108,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let blocks = match outcome {
@@ -1567,16 +2139,14 @@ mod tests {
             "/loop renders as a plain prompt, not a skill"
         );
     }
-
     #[test]
     fn resolve_loop_without_args_uses_bare_command_display_text() {
-        // `/loop` with no args expands to the usage message but should still
-        // carry a sensible compact `displayText`.
         let outcome = resolve(
             vec![text_block("/loop")],
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let SlashCommandOutcome::InvokeSkill { blocks, .. } = outcome else {
@@ -1593,32 +2163,57 @@ mod tests {
             Some("/loop")
         );
     }
-
+    #[test]
+    fn resolve_loop_expands_for_the_sessions_fire_mode() {
+        let text_of = |mode| {
+            let outcome = super::resolve(
+                vec![text_block("/loop 1m echo hello")],
+                &[],
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &[],
+                mode,
+            )
+            .unwrap_err();
+            let SlashCommandOutcome::InvokeSkill { blocks, .. } = outcome else {
+                panic!("expected InvokeSkill for /loop");
+            };
+            let Some(acp::ContentBlock::Text(tb)) = blocks.into_iter().next() else {
+                panic!("expected a text block");
+            };
+            tb.text
+        };
+        assert!(
+            text_of(LoopFireMode::Detached).contains("cannot see this conversation"),
+            "detached sessions must get the standalone-prompt framing"
+        );
+        assert!(
+            text_of(LoopFireMode::InSession).contains("arrives as a new turn in this conversation"),
+            "in-session sessions must get the standing-order framing"
+        );
+    }
     #[test]
     fn resolve_passthrough_preserves_original_blocks() {
-        // External-harness agents: blocks are passed through verbatim.
-        // The prompt assembly layer decides how to format them.
         let skills = vec![make_skill("commit", true)];
         let outcome = resolve(
             vec![text_block("/commit fix typo")],
             &skills,
             all_gated(),
             SkillSlashRewrite::Passthrough,
+            &[],
         )
         .unwrap_err();
-        // Original text is preserved in blocks.
         assert_eq!(invoke_text(outcome), "/commit fix typo");
-
         let outcome = resolve(
             vec![text_block("/commit")],
             &skills,
             all_gated(),
             SkillSlashRewrite::Passthrough,
+            &[],
         )
         .unwrap_err();
         assert_eq!(invoke_text(outcome), "/commit");
     }
-
     #[test]
     fn resolve_passes_through_normal_prompts() {
         let skills = vec![make_skill("commit", true)];
@@ -1627,7 +2222,8 @@ mod tests {
                 vec![text_block("fix the login bug")],
                 &skills,
                 all_gated(),
-                SkillSlashRewrite::default()
+                SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok()
         );
@@ -1636,12 +2232,12 @@ mod tests {
                 vec![text_block("/unknown")],
                 &skills,
                 all_gated(),
-                SkillSlashRewrite::default()
+                SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok()
         );
     }
-
     #[test]
     fn resolve_filters_non_invocable_skills() {
         let skills = vec![make_skill("internal-only", false)];
@@ -1650,12 +2246,12 @@ mod tests {
                 vec![text_block("/internal-only")],
                 &skills,
                 all_gated(),
-                SkillSlashRewrite::default()
+                SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok()
         );
     }
-
     #[test]
     fn resolve_builtin_shadows_same_named_skill() {
         let skills = vec![make_skill("compact", true)];
@@ -1664,17 +2260,15 @@ mod tests {
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(outcome, SlashCommandOutcome::Builtin(_)));
     }
-
-    // ── available_commands (ACP) ─────────────────────────────────────
-
     #[test]
     fn available_commands_orders_builtins_first() {
         let skills = vec![make_skill("commit", true), make_skill("deploy", true)];
-        let commands = available_commands(&skills, all_gated());
+        let commands = available_commands(&skills, all_gated(), &[]);
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
         assert_eq!(
             names,
@@ -1694,6 +2288,8 @@ mod tests {
                 "reload-plugins",
                 "session-info",
                 "feedback",
+                "deep-research",
+                "workflow",
                 "goal",
                 "goalexpert",
                 "expert",
@@ -1703,18 +2299,14 @@ mod tests {
             ]
         );
     }
-
     fn advertised_names(availability: CommandAvailability) -> Vec<String> {
-        available_commands(&[], availability)
+        available_commands(&[], availability, &[])
             .into_iter()
             .map(|c| c.name)
             .collect()
     }
-
     #[test]
     fn availability_filters_memory_commands() {
-        // memory=false hides /flush and /dream but NOT /memory (gated on
-        // memory_configured instead, so the user can re-enable via toggle).
         let names = advertised_names(CommandAvailability {
             memory: false,
             ..CommandAvailability::all_enabled()
@@ -1726,8 +2318,6 @@ mod tests {
             "/memory should still be available when memory_configured=true, got: {names:?}"
         );
         assert!(names.iter().any(|n| n == "compact"));
-
-        // memory_configured=false hides /memory too.
         let names2 = advertised_names(CommandAvailability {
             memory: false,
             memory_configured: false,
@@ -1738,7 +2328,6 @@ mod tests {
             "/memory should be hidden when memory_configured=false, got: {names2:?}"
         );
     }
-
     #[test]
     fn availability_filters_loop_command() {
         let names = advertised_names(CommandAvailability {
@@ -1747,7 +2336,22 @@ mod tests {
         });
         assert!(!names.iter().any(|n| n == "loop"), "got: {names:?}");
     }
-
+    #[test]
+    fn workflows_gate_hides_workflow_but_not_goal() {
+        let names = advertised_names(CommandAvailability {
+            workflows: false,
+            workflow_management: false,
+            ..CommandAvailability::all_enabled()
+        });
+        assert!(!names.iter().any(|n| n == "workflow"), "got: {names:?}");
+        assert!(names.iter().any(|n| n == "goal"), "got: {names:?}");
+        let names2 = advertised_names(CommandAvailability {
+            goal: false,
+            ..CommandAvailability::all_enabled()
+        });
+        assert!(!names2.iter().any(|n| n == "goal"), "got: {names2:?}");
+        assert!(names2.iter().any(|n| n == "workflow"), "got: {names2:?}");
+    }
     #[test]
     fn availability_filters_hooks_and_plugins() {
         let names = advertised_names(CommandAvailability {
@@ -1770,7 +2374,6 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn availability_filters_goal_command() {
         let names = advertised_names(CommandAvailability {
@@ -1779,9 +2382,8 @@ mod tests {
         });
         assert!(!names.iter().any(|n| n == "goal"), "got: {names:?}");
     }
-
     #[test]
-    fn goal_does_not_resolve_when_update_goal_unavailable() {
+    fn goal_does_not_resolve_when_host_capability_is_off() {
         let availability = CommandAvailability {
             goal: false,
             ..CommandAvailability::all_enabled()
@@ -1792,17 +2394,14 @@ mod tests {
                 &[],
                 availability,
                 SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok(),
             "expected pass-through (Ok), got an outcome",
         );
     }
-
     #[test]
     fn loop_does_not_resolve_when_scheduler_unavailable() {
-        // Without the scheduler gate the shell should not route /loop --
-        // it would otherwise produce a useless "call scheduler_create"
-        // prompt the model can't act on.
         let availability = CommandAvailability {
             scheduler: false,
             ..CommandAvailability::all_enabled()
@@ -1813,34 +2412,31 @@ mod tests {
                 &[],
                 availability,
                 SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok(),
             "expected pass-through (Ok), got an outcome",
         );
     }
-
     /// Extract the text of the first block produced by `build_loop_prompt_blocks`.
-    fn loop_text(args: &str) -> String {
-        match build_loop_prompt_blocks(args).into_iter().next() {
+    fn loop_text(args: &str, mode: LoopFireMode) -> String {
+        match build_loop_prompt_blocks(args, mode).into_iter().next() {
             Some(acp::ContentBlock::Text(t)) => t.text,
             other => panic!("expected a text block, got {other:?}"),
         }
     }
-
     #[test]
     fn loop_usage_has_no_10m_default() {
-        // The shell client must not advertise a silent 10m default.
-        let usage = loop_text("");
+        let usage = loop_text("", LoopFireMode::Detached);
         assert!(usage.contains("Usage: /loop"), "got: {usage}");
         assert!(
             !usage.contains("10m"),
             "usage must not claim a default: {usage}"
         );
     }
-
     #[test]
     fn loop_instruction_derives_interval_without_default_or_inline_execute() {
-        let instr = loop_text("every 30 minutes do x");
+        let instr = loop_text("every 30 minutes do x", LoopFireMode::Detached);
         assert!(
             !instr.contains("10m"),
             "instruction must not default: {instr}"
@@ -1855,20 +2451,19 @@ mod tests {
         );
         assert!(instr.contains("every 30 minutes do x"));
     }
-
     #[test]
     fn loop_prompt_matches_pager_wording() {
-        // The shell and pager must stay textually identical so they don't drift.
         use xai_grok_tools::implementations::grok_build::{
             loop_schedule_instruction, loop_usage_message,
         };
-        assert_eq!(loop_text(""), loop_usage_message());
-        assert_eq!(
-            loop_text("2h run tests"),
-            loop_schedule_instruction("2h run tests")
-        );
+        assert_eq!(loop_text("", LoopFireMode::Detached), loop_usage_message());
+        for mode in [LoopFireMode::Detached, LoopFireMode::InSession] {
+            assert_eq!(
+                loop_text("2h run tests", mode),
+                loop_schedule_instruction("2h run tests", mode)
+            );
+        }
     }
-
     #[test]
     fn build_tools_meta_serialises_tool_names() {
         let names = vec!["scheduler_create".to_string(), "image_gen".to_string()];
@@ -1909,12 +2504,8 @@ mod tests {
             tool_schema_hash(&[a, changed])
         );
     }
-
     #[test]
     fn pre_session_builtin_commands_excludes_gated_entries() {
-        // The pre-session list (advertised in InitializeResponse._meta)
-        // with a default (fail-closed) availability must not include any
-        // gated command -- we don't know the toolset yet at that point.
         let names: Vec<String> = builtin_commands(CommandAvailability::default())
             .into_iter()
             .map(|c| c.name)
@@ -1934,7 +2525,6 @@ mod tests {
                 "{forbidden} should be excluded pre-session, got: {names:?}",
             );
         }
-        // Always-on commands are still present.
         for required in ["compact", "always-approve", "context", "session-info"] {
             assert!(
                 names.iter().any(|n| n == required),
@@ -1942,13 +2532,8 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn pre_session_builtin_commands_advertises_goal_when_flag_enabled() {
-        // `/goal` is gated on a config feature flag known at initialize
-        // time (not a live toolset), so when the pre-session availability
-        // enables it the command must be advertised -- otherwise it would
-        // only show up after the first user turn created a session.
         let availability = CommandAvailability {
             goal: true,
             ..CommandAvailability::default()
@@ -1961,7 +2546,6 @@ mod tests {
             names.iter().any(|n| n == "goal"),
             "goal should be advertised pre-session when the flag is on, got: {names:?}",
         );
-        // Runtime/tool-dependent gates stay closed pre-session.
         for forbidden in ["flush", "dream", "memory", "feedback", "plugins"] {
             assert!(
                 !names.iter().any(|n| n == forbidden),
@@ -1969,37 +2553,28 @@ mod tests {
             );
         }
     }
-
     #[test]
     fn available_commands_populates_acp_fields() {
         let skills = vec![make_skill("commit", true)];
-        let commands = available_commands(&skills, all_gated());
-
+        let commands = available_commands(&skills, all_gated(), &[]);
         let builtin = commands.iter().find(|c| c.name == "compact").unwrap();
         assert!(builtin.input.is_some());
-
         let flush = commands.iter().find(|c| c.name == "flush").unwrap();
-        assert!(flush.input.is_none()); // no argument_hint
-
+        assert!(flush.input.is_none());
         let skill = commands.iter().find(|c| c.name == "commit").unwrap();
         assert_eq!(skill.description, "Short: commit");
     }
-
-    // ── /flush ─────────────────────────────────────────────────────
-
     #[test]
     fn flush_resolves_to_builtin_action() {
         assert!(matches!(
             resolve_builtin("flush", ""),
             Some(BuiltinAction::FlushMemory)
         ));
-        // Args are ignored — still resolves to FlushMemory
         assert!(matches!(
             resolve_builtin("flush", "some extra args"),
             Some(BuiltinAction::FlushMemory)
         ));
     }
-
     #[test]
     fn resolve_routes_flush_builtin() {
         let outcome = resolve(
@@ -2007,6 +2582,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -2014,7 +2590,6 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::FlushMemory)
         ));
     }
-
     #[test]
     fn flush_builtin_shadows_same_named_skill() {
         let skills = vec![make_skill("flush", true)];
@@ -2023,13 +2598,11 @@ mod tests {
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(outcome, SlashCommandOutcome::Builtin(_)));
     }
-
-    // ── /dream ─────────────────────────────────────────────────────
-
     #[test]
     fn dream_resolves_to_builtin_action() {
         assert!(matches!(
@@ -2041,7 +2614,6 @@ mod tests {
             Some(BuiltinAction::Dream)
         ));
     }
-
     #[test]
     fn resolve_routes_dream_builtin() {
         let outcome = resolve(
@@ -2049,6 +2621,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -2056,7 +2629,6 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::Dream)
         ));
     }
-
     #[test]
     fn dream_builtin_shadows_same_named_skill() {
         let skills = vec![make_skill("dream", true)];
@@ -2065,13 +2637,11 @@ mod tests {
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(outcome, SlashCommandOutcome::Builtin(_)));
     }
-
-    // ── ambiguous skill names ─────────────────────────────────────
-
     fn make_scoped_skill(name: &str, scope: SkillScope) -> SkillInfo {
         SkillInfo {
             name: name.to_string(),
@@ -2102,58 +2672,52 @@ mod tests {
             body: None,
         }
     }
-
     #[test]
     fn resolve_ambiguous_bare_name_passes_through() {
-        // Two skills share the bare name "commit" in different scopes.
         let skills = vec![
             make_scoped_skill("commit", SkillScope::Local),
             make_scoped_skill("commit", SkillScope::User),
         ];
-        // Bare "/commit" is ambiguous -- should pass through (not first-match).
         assert!(
             resolve(
                 vec![text_block("/commit")],
                 &skills,
                 all_gated(),
-                SkillSlashRewrite::default()
+                SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok()
         );
     }
-
     #[test]
     fn resolve_qualified_skill_name() {
         let skills = vec![
             make_scoped_skill("commit", SkillScope::Local),
             make_scoped_skill("commit", SkillScope::User),
         ];
-
-        // Qualified "/local:commit" resolves unambiguously.
         let outcome = resolve(
             vec![text_block("/local:commit fix typo")],
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let skill = first_skill(outcome);
         assert_eq!(skill.name, "local:commit");
         assert_eq!(skill.args, "fix typo");
-
-        // Qualified "/user:commit" resolves unambiguously.
         let outcome = resolve(
             vec![text_block("/user:commit")],
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let skill = first_skill(outcome);
         assert_eq!(skill.name, "user:commit");
         assert_eq!(skill.args, "");
     }
-
     #[test]
     fn available_commands_uses_qualified_names_for_duplicates() {
         let skills = vec![
@@ -2161,89 +2725,73 @@ mod tests {
             make_scoped_skill("commit", SkillScope::User),
             make_skill("deploy", true),
         ];
-        let commands = available_commands(&skills, all_gated());
+        let commands = available_commands(&skills, all_gated(), &[]);
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-        // Duplicate "commit" skills should use qualified names.
         assert!(names.contains(&"local:commit"));
         assert!(names.contains(&"user:commit"));
-        // Unique "deploy" keeps bare name only (no duplicate qualified form).
         assert!(names.contains(&"deploy"));
         assert!(
             !names.contains(&"local:deploy"),
             "non-colliding skill should NOT get a qualified duplicate, got: {names:?}"
         );
-        // Bare "commit" should NOT appear.
         assert!(!names.contains(&"commit"));
     }
-
-    // ── builtin/skill name collisions ─────────────────────────────
-
     #[test]
     fn available_commands_qualifies_builtin_colliding_skill() {
-        // A skill named "compact" collides with the builtin /compact.
         let skills = vec![
             make_scoped_skill("compact", SkillScope::Local),
             make_skill("deploy", true),
         ];
-        let commands = available_commands(&skills, all_gated());
+        let commands = available_commands(&skills, all_gated(), &[]);
         let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
-        // The skill should be advertised under its qualified name.
         assert!(
             names.contains(&"local:compact"),
             "builtin-colliding skill should use qualified name, got: {names:?}"
         );
-        // The bare "compact" entry should be the builtin, not the skill.
         let compact_cmd = commands.iter().find(|c| c.name == "compact").unwrap();
         assert!(
             compact_cmd.meta.is_none(),
             "bare 'compact' should be the builtin (no meta)"
         );
-        // Non-colliding skill keeps bare name.
         assert!(names.contains(&"deploy"));
     }
-
     #[test]
     fn resolve_qualified_builtin_colliding_skill() {
-        // A skill named "compact" collides with the builtin.
         let skills = vec![make_scoped_skill("compact", SkillScope::Local)];
-
-        // Bare "/compact" should resolve to the builtin, not the skill.
         let outcome = resolve(
             vec![text_block("/compact")],
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(outcome, SlashCommandOutcome::Builtin(_)));
-
-        // Qualified "/local:compact" should resolve to the skill.
         let outcome = resolve(
             vec![text_block("/local:compact")],
             &skills,
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         let skill = first_skill(outcome);
         assert_eq!(skill.name, "local:compact");
         assert_eq!(skill.args, "");
     }
-
     #[test]
     fn feedback_does_not_resolve_when_disabled() {
-        // /feedback should pass through as unrecognized when the feature is off.
         assert!(
             resolve(
                 vec![text_block("/feedback hello")],
                 &[],
                 CommandAvailability::default(),
-                SkillSlashRewrite::default()
+                SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok()
         );
     }
-
     #[test]
     fn feedback_resolves_when_enabled() {
         let outcome = resolve(
@@ -2251,6 +2799,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -2258,15 +2807,13 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::Feedback { ref text }) if text == "hello"
         ));
     }
-
     /// Collect the advertised command names for the given availability.
     fn advertised_names_with(availability: CommandAvailability) -> Vec<String> {
-        available_commands(&[], availability)
+        available_commands(&[], availability, &[])
             .into_iter()
             .map(|c| c.name)
             .collect()
     }
-
     /// `CommandAvailability::default()` must be fail-closed: every gated
     /// command is hidden, only `BuiltinGate::AlwaysOn` survives. The
     /// pre-session `MvpAgent::command_availability()` builds on this value
@@ -2302,7 +2849,6 @@ mod tests {
             );
         }
     }
-
     /// `/flush` is a memory-write that's only useful when the model can
     /// later read back what it wrote. The shell's
     /// `build_command_availability()` ANDs `memory.is_enabled()` with
@@ -2314,10 +2860,7 @@ mod tests {
         let off = advertised_names_with(CommandAvailability::default());
         assert!(!off.iter().any(|n| n == "flush"), "got: {off:?}");
         assert!(!off.iter().any(|n| n == "dream"), "got: {off:?}");
-        // /memory is gated on memory_configured, not memory — hidden here
-        // because Default sets both to false.
         assert!(!off.iter().any(|n| n == "memory"), "got: {off:?}");
-
         let on = advertised_names_with(CommandAvailability {
             memory: true,
             memory_configured: true,
@@ -2327,22 +2870,17 @@ mod tests {
         assert!(on.iter().any(|n| n == "dream"), "got: {on:?}");
         assert!(on.iter().any(|n| n == "memory"), "got: {on:?}");
     }
-
-    // ── /memory ─────────────────────────────────────────────────────
-
     #[test]
     fn memory_bare_resolves_to_browse() {
         assert!(matches!(
             resolve_builtin("memory", ""),
             Some(BuiltinAction::MemoryBrowse)
         ));
-        // Any unrecognized arg also falls through to browse
         assert!(matches!(
             resolve_builtin("memory", "status"),
             Some(BuiltinAction::MemoryBrowse)
         ));
     }
-
     #[test]
     fn memory_on_off_resolves_to_toggle() {
         for (arg, expected) in [
@@ -2364,7 +2902,44 @@ mod tests {
             );
         }
     }
-
+    #[test]
+    fn memory_promote_resolves_to_user_authorized_task_tree_action() {
+        assert!(matches!(
+            resolve_builtin("memory", "promote"),
+            Some(BuiltinAction::PromoteTaskTreeMemory)
+        ));
+        let outcome = resolve(
+            vec![text_block("/memory promote")],
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            outcome,
+            SlashCommandOutcome::Builtin(BuiltinAction::PromoteTaskTreeMemory)
+        ));
+    }
+    #[test]
+    fn task_tree_memory_repair_ledger_resolves_to_user_authorized_recovery_action() {
+        assert!(matches!(
+            resolve_builtin("memory", "repair-ledger"),
+            Some(BuiltinAction::RepairTaskTreeMemoryLedger)
+        ));
+        let outcome = resolve(
+            vec![text_block("/memory repair-ledger")],
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            outcome,
+            SlashCommandOutcome::Builtin(BuiltinAction::RepairTaskTreeMemoryLedger)
+        ));
+    }
     #[test]
     fn mem_alias_resolves_to_memory_browse() {
         let outcome = resolve(
@@ -2372,6 +2947,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -2379,7 +2955,6 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::MemoryBrowse)
         ));
     }
-
     #[test]
     fn mem_alias_resolves_toggle_with_args() {
         let outcome = resolve(
@@ -2387,6 +2962,7 @@ mod tests {
             &[],
             all_gated(),
             SkillSlashRewrite::default(),
+            &[],
         )
         .unwrap_err();
         assert!(matches!(
@@ -2394,11 +2970,8 @@ mod tests {
             SlashCommandOutcome::Builtin(BuiltinAction::MemoryToggle { enabled: false })
         ));
     }
-
     #[test]
     fn memory_resolves_when_disabled_but_configured() {
-        // memory=false but memory_configured=true: /memory must still work
-        // so the user can re-enable via the toggle.
         let availability = CommandAvailability {
             memory: false,
             ..CommandAvailability::all_enabled()
@@ -2408,13 +2981,13 @@ mod tests {
             &[],
             availability,
             SkillSlashRewrite::default(),
+            &[],
         );
         assert!(
             outcome.is_err(),
             "expected /memory to resolve when memory_configured=true",
         );
     }
-
     #[test]
     fn memory_not_resolved_when_not_configured() {
         let availability = CommandAvailability {
@@ -2428,14 +3001,12 @@ mod tests {
                 &[],
                 availability,
                 SkillSlashRewrite::default(),
+                &[],
             )
             .is_ok(),
             "expected pass-through (Ok) when memory_configured is false",
         );
     }
-
-    // ── parse_skill_references ──────────────────────────────────────
-
     #[test]
     fn parse_skill_refs_single_skill() {
         let skills = vec![make_skill("commit", true)];
@@ -2444,7 +3015,6 @@ mod tests {
         assert_eq!(refs[0].name, "commit");
         assert_eq!(refs[0].args, "fix typo");
     }
-
     #[test]
     fn parse_skill_refs_single_no_args() {
         let skills = vec![make_skill("commit", true)];
@@ -2453,7 +3023,6 @@ mod tests {
         assert_eq!(refs[0].name, "commit");
         assert_eq!(refs[0].args, "");
     }
-
     #[test]
     fn parse_skill_refs_multi_skill() {
         let skills = vec![make_skill("review", true), make_skill("lint", true)];
@@ -2465,41 +3034,33 @@ mod tests {
         assert_eq!(refs[1].name, "lint");
         assert_eq!(refs[1].args, "--strict");
     }
-
     #[test]
     fn parse_skill_refs_ignores_unknown_slash() {
         let skills = vec![make_skill("commit", true)];
-        // /api/v2/users is not a known skill — should be ignored.
         let result = parse_skill_references("check /api/v2/users", &skills, all_gated());
         assert!(result.is_none());
     }
-
     #[test]
     fn parse_skill_refs_ignores_builtins() {
         let skills = vec![make_skill("commit", true)];
-        // /compact is a builtin — should NOT appear in skill refs.
         let result = parse_skill_references("/compact", &skills, all_gated());
         assert!(result.is_none());
     }
-
     #[test]
     fn parse_skill_refs_empty_text() {
         let skills = vec![make_skill("commit", true)];
         assert!(parse_skill_references("", &skills, all_gated()).is_none());
     }
-
     #[test]
     fn parse_skill_refs_no_slash() {
         let skills = vec![make_skill("commit", true)];
         assert!(parse_skill_references("just some text", &skills, all_gated()).is_none());
     }
-
     #[test]
     fn parse_skill_refs_non_invocable_skill_ignored() {
         let skills = vec![make_skill("internal-only", false)];
         assert!(parse_skill_references("/internal-only", &skills, all_gated()).is_none());
     }
-
     #[test]
     fn parse_skill_refs_qualified_name() {
         let skills = vec![
@@ -2512,11 +3073,8 @@ mod tests {
         assert_eq!(refs[0].args, "fix typo");
         assert_eq!(refs[0].qualified_name, "local:commit");
     }
-
     #[test]
     fn parse_skill_refs_text_before_first_skill() {
-        // Text before the first skill reference is part of user query,
-        // not consumed as args.
         let skills = vec![make_skill("commit", true)];
         let refs =
             parse_skill_references("please do /commit fix typo", &skills, all_gated()).unwrap();
@@ -2529,7 +3087,31 @@ mod tests {
 
     fn resolve_expert_for_test(args: &str) -> BuiltinAction {
         let blocks = vec![text_block(&format!("/expert {args}"))];
-        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+        match resolve(
+            blocks,
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err()
+        {
+            SlashCommandOutcome::Builtin(action) => action,
+            _ => panic!("expected Builtin outcome"),
+        }
+    }
+
+    fn resolve_goalexpert(args: &str) -> BuiltinAction {
+        let blocks = vec![text_block(&format!("/goalexpert {args}"))];
+        match resolve(
+            blocks,
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &[],
+        )
+        .unwrap_err()
+        {
             SlashCommandOutcome::Builtin(action) => action,
             _ => panic!("expected Builtin outcome"),
         }
@@ -2562,6 +3144,24 @@ mod tests {
         assert!(
             matches!(resolve_expert_for_test("exec=grok"), BuiltinAction::ExpertExecutor { model } if model == "grok-4.5")
         );
+        assert!(matches!(
+            resolve_expert_for_test("pool=deepseek-v4-flash, grok-4.5, deepseek-v4-pro"),
+            BuiltinAction::ExpertModelPool { models }
+                if models == ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("priority=grok-4.5,deepseek-v4-flash"),
+            BuiltinAction::ExpertModelPriority { models }
+                if models == ["grok-4.5", "deepseek-v4-flash"]
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("pool=off"),
+            BuiltinAction::ExpertModelPool { models } if models.is_empty()
+        ));
+        assert!(matches!(
+            resolve_expert_for_test("priority=auto"),
+            BuiltinAction::ExpertModelPriority { models } if models.is_empty()
+        ));
         assert!(matches!(
             resolve_expert_for_test("fast fix auth"),
             BuiltinAction::ExpertStart {
@@ -2602,7 +3202,15 @@ mod tests {
 
     #[test]
     fn expert_future_surface_is_fail_closed() {
-        for arg in ["deep", "vision", "dual", "exec=other"] {
+        for arg in [
+            "deep",
+            "vision",
+            "dual",
+            "exec=other",
+            "pool=",
+            "pool=flash,,grok",
+            "priority=grok,grok",
+        ] {
             assert!(
                 matches!(resolve_expert_for_test(arg), BuiltinAction::ExpertBadArgs),
                 "{arg}"
@@ -2620,7 +3228,14 @@ mod tests {
             acp::ContentBlock::Image(second),
         ];
         let action =
-            match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+            match resolve(
+                blocks,
+                &[],
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &[],
+            )
+            .unwrap_err() {
                 SlashCommandOutcome::Builtin(action) => action,
                 _ => panic!("expected builtin"),
             };
@@ -2646,49 +3261,256 @@ mod tests {
 
     // ── /goal command resolution ─────────────────────────────────
 
+
+    // ── /goal command resolution ─────────────────────────────────
+
     fn resolve_goal(args: &str) -> BuiltinAction {
         let blocks = vec![text_block(&format!("/goal {args}"))];
-        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
+        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default(), &[]).unwrap_err() {
             SlashCommandOutcome::Builtin(action) => action,
             _ => panic!("expected Builtin outcome"),
         }
     }
-
-    fn resolve_goalexpert(args: &str) -> BuiltinAction {
-        let blocks = vec![text_block(&format!("/goalexpert {args}"))];
-        match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default()).unwrap_err() {
-            SlashCommandOutcome::Builtin(action) => action,
-            _ => panic!("expected Builtin outcome"),
-        }
-    }
-
     #[test]
     fn goal_empty_resolves_to_status() {
         assert!(matches!(resolve_goal(""), BuiltinAction::GoalStatus));
     }
-
+    fn listing(name: &str) -> crate::session::workflow::registry::WorkflowListing {
+        crate::session::workflow::registry::WorkflowListing {
+            name: name.to_string(),
+            description: "does things".to_string(),
+            when_to_use: None,
+            source: "project",
+            path: Some(format!(".grok/workflows/{name}.rhai")),
+        }
+    }
+    #[test]
+    fn named_workflows_advertise_and_resolve() {
+        let workflows = vec![listing("triage-flakes"), listing("goal")];
+        let commands = available_commands(&[], all_gated(), &workflows);
+        let names: Vec<&str> = commands.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"triage-flakes"), "{names:?}");
+        assert_eq!(names.iter().filter(|n| **n == "goal").count(), 1);
+        let wf = commands.iter().find(|c| c.name == "triage-flakes").unwrap();
+        assert!(
+            wf.description.starts_with("Workflow:"),
+            "{}",
+            wf.description
+        );
+        let blocks = vec![text_block("/triage-flakes fix the CI")];
+        match resolve(
+            blocks,
+            &[],
+            all_gated(),
+            SkillSlashRewrite::default(),
+            &workflows,
+        )
+        .unwrap_err()
+        {
+            SlashCommandOutcome::Builtin(BuiltinAction::WorkflowLaunch { name, input }) => {
+                assert_eq!(name, "triage-flakes");
+                assert_eq!(input, "fix the CI");
+            }
+            other => panic!("expected WorkflowLaunch, got {other:?}"),
+        }
+        let blocks = vec![text_block("/goal status")];
+        assert!(matches!(
+            resolve(
+                blocks,
+                &[],
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &workflows
+            )
+            .unwrap_err(),
+            SlashCommandOutcome::Builtin(BuiltinAction::GoalStatus)
+        ));
+    }
+    #[test]
+    fn workflow_collision_policy_includes_aliases_and_ambiguous_skills() {
+        let skills = vec![
+            make_scoped_skill("commit", SkillScope::Local),
+            make_scoped_skill("commit", SkillScope::User),
+        ];
+        let workflows = vec![
+            listing("status"),
+            listing("yolo"),
+            listing("sessions"),
+            listing("commit"),
+            listing("review"),
+        ];
+        let names: Vec<_> = available_commands(&skills, all_gated(), &workflows)
+            .into_iter()
+            .map(|command| command.name)
+            .collect();
+        assert!(!names.iter().any(|name| name == "status"));
+        assert!(!names.iter().any(|name| name == "yolo"));
+        assert!(!names.iter().any(|name| name == "sessions"));
+        assert!(!names.iter().any(|name| name == "commit"));
+        assert!(names.iter().any(|name| name == "local:commit"));
+        assert!(names.iter().any(|name| name == "user:commit"));
+        assert!(names.iter().any(|name| name == "review"));
+        assert!(matches!(
+            resolve(
+                vec![text_block("/status")],
+                &skills,
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &workflows,
+            )
+            .unwrap_err(),
+            SlashCommandOutcome::Builtin(BuiltinAction::SessionInfo)
+        ));
+        for unavailable in ["sessions", "commit"] {
+            assert!(
+                resolve(
+                    vec![text_block(&format!("/{unavailable}"))],
+                    &skills,
+                    all_gated(),
+                    SkillSlashRewrite::default(),
+                    &workflows,
+                )
+                .is_ok()
+            );
+        }
+    }
+    #[test]
+    fn duplicate_qualified_skills_are_omitted_and_do_not_first_match() {
+        let mut first = make_scoped_skill("commit", SkillScope::Plugin);
+        first.plugin_name = Some("same-plugin".into());
+        let mut second = first.clone();
+        second.path = "/other/commit/SKILL.md".into();
+        let skills = vec![first, second];
+        assert!(
+            available_commands(&skills, all_gated(), &[])
+                .iter()
+                .all(|command| command.name != "same-plugin:commit")
+        );
+        assert!(
+            resolve(
+                vec![text_block("/same-plugin:commit")],
+                &skills,
+                all_gated(),
+                SkillSlashRewrite::default(),
+                &[],
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn existing_runs_keep_management_but_hide_launch_catalog() {
+        let availability = CommandAvailability {
+            workflows: false,
+            workflow_management: true,
+            ..CommandAvailability::all_enabled()
+        };
+        let workflows = vec![listing("review")];
+        let names: Vec<_> = available_commands(&[], availability, &workflows)
+            .into_iter()
+            .map(|command| command.name)
+            .collect();
+        assert!(names.iter().any(|name| name == "workflow"));
+        assert!(!names.iter().any(|name| name == "review"));
+        assert!(!names.iter().any(|name| name == "deep-research"));
+        assert!(matches!(
+            resolve(
+                vec![text_block("/workflow stop old-run")],
+                &[],
+                availability,
+                SkillSlashRewrite::default(),
+                &workflows,
+            )
+            .unwrap_err(),
+            SlashCommandOutcome::Builtin(BuiltinAction::WorkflowManage { .. })
+        ));
+        assert!(
+            resolve(
+                vec![text_block("/workflow review")],
+                &[],
+                availability,
+                SkillSlashRewrite::default(),
+                &workflows,
+            )
+            .is_ok()
+        );
+    }
+    #[test]
+    fn workflow_manage_parses_both_orders_and_optional_id() {
+        let resolve_workflow = |args: &str| -> BuiltinAction {
+            let blocks = vec![text_block(&format!("/workflow {args}"))];
+            match resolve(blocks, &[], all_gated(), SkillSlashRewrite::default(), &[]).unwrap_err()
+            {
+                SlashCommandOutcome::Builtin(action) => action,
+                _ => panic!("expected Builtin outcome"),
+            }
+        };
+        for (args, want_id, want_op) in [
+            ("resume", "", "resume"),
+            ("pause", "", "pause"),
+            ("wf_12ab pause", "wf_12ab", "pause"),
+            ("pause wf_12ab", "wf_12ab", "pause"),
+            ("SAVE wf_12ab", "wf_12ab", "save"),
+            ("pause deep research", "deep research", "pause"),
+            ("", "", ""),
+        ] {
+            match resolve_workflow(args) {
+                BuiltinAction::WorkflowManage { run_id, op } => {
+                    assert_eq!(run_id, want_id, "args: {args:?}");
+                    assert_eq!(op, want_op, "args: {args:?}");
+                }
+                other => panic!("expected WorkflowManage, got {}", other.command_name()),
+            }
+        }
+        for (args, want_name, want_input) in [
+            (
+                r#"pr-review {"pr": 243776}"#,
+                "pr-review",
+                r#"{"pr": 243776}"#,
+            ),
+            ("pr-review", "pr-review", ""),
+            (
+                "deep-research rust pitfalls",
+                "deep-research",
+                "rust pitfalls",
+            ),
+            (
+                "triage resume the failed jobs",
+                "triage",
+                "resume the failed jobs",
+            ),
+        ] {
+            match resolve_workflow(args) {
+                BuiltinAction::WorkflowLaunch { name, input } => {
+                    assert_eq!(name, want_name, "args: {args:?}");
+                    assert_eq!(input, want_input, "args: {args:?}");
+                }
+                other => {
+                    panic!(
+                        "expected WorkflowLaunch for {args:?}, got {}",
+                        other.command_name()
+                    )
+                }
+            }
+        }
+    }
     #[test]
     fn goal_status_keyword_resolves_to_status() {
         assert!(matches!(resolve_goal("status"), BuiltinAction::GoalStatus));
         assert!(matches!(resolve_goal("STATUS"), BuiltinAction::GoalStatus));
     }
-
     #[test]
     fn goal_pause_resolves_to_pause() {
         assert!(matches!(resolve_goal("pause"), BuiltinAction::GoalPause));
         assert!(matches!(resolve_goal("PAUSE"), BuiltinAction::GoalPause));
     }
-
     #[test]
     fn goal_resume_resolves_to_resume() {
         assert!(matches!(resolve_goal("resume"), BuiltinAction::GoalResume));
     }
-
     #[test]
     fn goal_clear_resolves_to_clear() {
         assert!(matches!(resolve_goal("clear"), BuiltinAction::GoalClear));
     }
-
     #[test]
     fn goal_expert_flag_is_exact_and_composes_with_budget() {
         for (args, objective, budget) in [
@@ -2774,7 +3596,6 @@ mod tests {
             other => panic!("expected GoalSet, got {}", other.command_name()),
         }
     }
-
     #[test]
     fn goal_set_preserves_original_casing() {
         match resolve_goal("Fix BUG in AuthManager") {
@@ -2784,7 +3605,6 @@ mod tests {
             other => panic!("expected GoalSet, got {}", other.command_name()),
         }
     }
-
     #[test]
     fn goal_set_trailing_budget_flag_parses() {
         match resolve_goal("implement X --budget 500000") {
@@ -2799,7 +3619,6 @@ mod tests {
             other => panic!("expected GoalSet, got {}", other.command_name()),
         }
     }
-
     #[test]
     fn goal_set_budget_accepts_boundary_and_extra_whitespace() {
         for (text, objective, budget) in [
@@ -2820,11 +3639,8 @@ mod tests {
             }
         }
     }
-
     #[test]
     fn goal_set_malformed_budget_stays_in_objective() {
-        // Non-numeric, missing, non-positive, glued, signed, overflowing,
-        // or mid-text values must not be consumed as a budget.
         for text in [
             "implement X --budget abc",
             "implement X --budget",
@@ -2851,7 +3667,6 @@ mod tests {
             }
         }
     }
-
     #[test]
     fn goal_command_name_is_goal() {
         assert_eq!(BuiltinAction::GoalStatus.command_name(), "goal");
@@ -2868,7 +3683,6 @@ mod tests {
             "goal"
         );
     }
-
     #[test]
     fn goal_args_provided() {
         assert!(
@@ -2884,11 +3698,6 @@ mod tests {
         assert!(!BuiltinAction::GoalResume.args_provided());
         assert!(!BuiltinAction::GoalClear.args_provided());
     }
-
-    // ── GoalTracker handler-level interaction tests ──────────────
-    // These test the exact tracker state transitions that the slash
-    // command handlers perform, without constructing a full SessionActor.
-
     #[test]
     fn goal_tracker_status_with_no_goal_returns_none() {
         use crate::session::goal_tracker::GoalTracker;
@@ -2896,7 +3705,6 @@ mod tests {
         assert!(tracker.snapshot().is_none());
         assert!(tracker.status().is_none());
     }
-
     #[test]
     fn goal_tracker_create_sets_active() {
         use crate::session::goal_tracker::{GoalStatus, GoalTracker};
@@ -2905,33 +3713,26 @@ mod tests {
         assert_eq!(tracker.status(), Some(GoalStatus::Active));
         assert_eq!(tracker.objective(), Some("obj"));
     }
-
     #[test]
     fn goal_tracker_pause_only_when_active() {
         use crate::session::goal_tracker::{GoalPauseReason, GoalStatus, GoalTracker};
         let mut tracker = GoalTracker::new(std::path::PathBuf::from("/tmp/test"));
-        // No goal — pause returns false
         assert!(!tracker.pause(GoalPauseReason::User));
-
         tracker.create_goal("g1".into(), "obj".into(), None, 0, "now".into(), None);
         assert!(tracker.pause(GoalPauseReason::User));
         assert_eq!(tracker.status(), Some(GoalStatus::UserPaused));
-        // Already paused — pause returns false
         assert!(!tracker.pause(GoalPauseReason::User));
     }
-
     #[test]
     fn goal_tracker_resume_only_when_paused() {
         use crate::session::goal_tracker::{GoalPauseReason, GoalStatus, GoalTracker};
         let mut tracker = GoalTracker::new(std::path::PathBuf::from("/tmp/test"));
         tracker.create_goal("g1".into(), "obj".into(), None, 0, "now".into(), None);
-        // Active — resume returns false
         assert!(!tracker.resume());
         tracker.pause(GoalPauseReason::User);
         assert!(tracker.resume());
         assert_eq!(tracker.status(), Some(GoalStatus::Active));
     }
-
     #[test]
     fn goal_tracker_clear_removes_orchestration() {
         use crate::session::goal_tracker::GoalTracker;
@@ -2941,7 +3742,6 @@ mod tests {
         tracker.clear();
         assert!(tracker.snapshot().is_none());
     }
-
     #[test]
     fn goal_tracker_create_replaces_existing() {
         use crate::session::goal_tracker::GoalTracker;
@@ -2950,16 +3750,13 @@ mod tests {
         tracker.create_goal("g2".into(), "second".into(), None, 0, "now".into(), None);
         assert_eq!(tracker.objective(), Some("second"));
     }
-
     #[test]
     fn goal_tracker_account_elapsed_flushes_delta() {
         use crate::session::goal_tracker::GoalTracker;
         let mut tracker = GoalTracker::new(std::path::PathBuf::from("/tmp/test"));
         tracker.create_goal("g1".into(), "obj".into(), None, 0, "now".into(), None);
-        // After create_goal, elapsed_ms is 0 but active_since is set.
         let before = tracker.snapshot().unwrap().elapsed_ms;
         assert_eq!(before, 0);
-        // account_elapsed flushes pending wall-clock time.
         std::thread::sleep(std::time::Duration::from_millis(5));
         tracker.account_elapsed();
         let after = tracker.snapshot().unwrap().elapsed_ms;

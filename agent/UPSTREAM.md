@@ -1,18 +1,19 @@
 # Upstream pin — 下次对标从这里开始
 
-## 当前登记（2026-07-20 · Lumen v0.1.222）
+## 当前登记（2026-08-01 · Lumen v0.1.251 上游吸收）
 
 | 侧 | 字段 | 值 |
 |----|------|-----|
-| **Lumen 产品版本** | `VERSION` / tag | **0.1.222** |
-| **Lumen main tip** | git | `5371919` (`537191998c959b66b41f6a057dd3d3bdf16a9eb6`) |
+| **Lumen 产品版本** | `VERSION` / release tag | **0.1.251** |
+| **Lumen 产品基线** | git | `dc563b1` (`v0.1.251` 的源码基线；GitHub ledger 提交不改变该产品基线) |
 | **Lumen 仓库** | origin | `exergyleizhou-ux/lumen` |
 | **上游** | remote | `https://github.com/xai-org/grok-build.git` (`upstream`) |
-| **上游对标 tip（已吸收基线）** | `upstream/main` @ 登记时 | **`ba76b0a`** = `ba76b0a683fa52e4e60685017b85905451be17bc` |
-| **上游 monorepo SOURCE_REV** | 该 tip 内文件 | `ba69d70c2f7d70a130a323b2becdf137af784c7f` |
-| **上游产品版本号** | `xai-grok-version` / pager crate | **0.2.106** |
+| **上游对标 tip（本次已吸收快照）** | `upstream/main` @ 吸收时 | **`dd04f397`** = `dd04f397b1d02f2272b092555669dfba1f01bc85` |
+| **上游 monorepo SOURCE_REV** | 该 tip 内文件 | `2a28b4a86cfc4a4c133c35b7fc2a6a9964387c39` |
+| **上游产品版本号** | `xai-grok-version` / pager crate | **0.2.116** |
 | **路径映射** | 上游 → 我们 | `crates/...` → `agent/crates/...` |
-| **政策** | | **PINNED** · 安全/正确性 **点状 cherry** · **禁止** 全量 merge |
+| **本次吸收提交** | Lumen | `f9cf565d`（将 `dd04f397` 镜像为 `agent/` 布局） |
+| **政策** | | 此快照已吸收；后续 **PINNED**，仅安全/正确性 **点状补入**，禁止自动整树再吸收 |
 
 ### 下次「对照最新 grok-build 辩证吸收」起手式
 
@@ -20,16 +21,16 @@
 cd /Users/lei/code/lumen
 git fetch origin && git checkout main && git pull --ff-only origin main
 git fetch upstream
-# 基线：我们已对齐到 ba76b0a / 上游 0.2.106
+# 基线：本次已吸收 dd04f397 / 上游 0.2.116
 # 新 tip：
 NEW=$(git rev-parse upstream/main)
-OLD=ba76b0a683fa52e4e60685017b85905451be17bc
+OLD=dd04f397b1d02f2272b092555669dfba1f01bc85
 git log --oneline $OLD..$NEW | head -50
 # 只对安全/正确性文件做 diff，不要整树 merge
 git diff $OLD..$NEW --stat -- crates/codegen/xai-grok-shell crates/codegen/xai-grok-pager-render crates/codegen/xai-grok-auth crates/codegen/xai-grok-mcp | head -80
 ```
 
-吸收后：更新本文件「当前登记」的 tip/版本行 + cherry 表；bump Lumen VERSION；**勿**改下方铁律区。
+后续点状补入后：更新本文件「当前登记」与 cherry 表；是否 bump Lumen VERSION 由正式发布计划决定；**勿**改下方铁律区。
 
 ---
 
@@ -37,7 +38,7 @@ git diff $OLD..$NEW --stat -- crates/codegen/xai-grok-shell crates/codegen/xai-g
 
 - Source: **xai-org/grok-build**
 - 初始快照导入：`~/Desktop/grok-build-main`（2026-07-16）
-- **禁止** `git merge upstream/main` 或整树覆盖
+- **禁止**未审计的 `git merge upstream/main` 或整树覆盖（本次 `dd04f397` 吸收已完成，不可据此推导后续自动吸收）
 - **禁止** 覆盖 Lumen 优势区：
   - Expert dual / merge / budget / consultant tools
   - `lumen-guard` / `lumen-discipline`
@@ -69,7 +70,7 @@ git diff $OLD..$NEW --stat -- crates/codegen/xai-grok-shell crates/codegen/xai-g
 
 ## How to port more later
 
-1. `git fetch upstream`；对比 **`ba76b0a..upstream/main`**（或本文件登记的最新 tip）
+1. `git fetch upstream`；对比 **`dd04f397..upstream/main`**（或本文件登记的最新 tip）
 2. Diff **单文件/单模块**，不整树
 3. 手工 port 到 `agent/crates/...`
 4. Expert / guard / DeepSeek / defaults **不动**

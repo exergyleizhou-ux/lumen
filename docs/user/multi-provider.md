@@ -1,8 +1,8 @@
 # 多模型适配（Multi-provider）
 
 Lumen 的内置目录是多厂商 BYOK，不是 DeepSeek 单厂商产品。默认执行模型为正式
-API ID `deepseek-v4-pro`；`deepseek-v4-flash` 是快速备选，`grok-4.5` 是可选的
-高能力/多模态模型。长会话保持稳定前缀时，DeepSeek 的 **automatic prefix cache**
+API ID `deepseek-v4-flash`；`grok-4.5` 和 `deepseek-v4-pro` 是用户允许池内的
+高能力候选与升级路径。长会话保持稳定前缀时，DeepSeek 的 **automatic prefix cache**
 仍可降低成本。用户可以随时用 `-m`、`/model` 或 Ctrl+M 切换。
 
 ### Prompt cache 是否「全模型同等」？
@@ -79,6 +79,63 @@ default = "claude-sonnet"
 Flash 缓存命中输入 `$0.0028`、未命中输入 `$0.14`、输出 `$0.28`；Pro 分别为
 `$0.003625`、`$0.435`、`$0.87`。价格可能调整，发布或成本核算时应重新核对
 [官方模型与价格](https://api-docs.deepseek.com/quick_start/pricing)，而不是读取嵌入目录。
+
+## Expert 模型池：优先级、自动选择与额度耗尽
+
+普通 `/model` 是最强的用户 pin，Lumen 不会越过它。对新建的 **Expert** 任务，可以限定一组
+允许的模型，并选择“固定顺序”或“自动”。这不会把普通会话或一个已经开始输出的任务重放到
+另一个模型。
+
+```text
+/expert pool=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+/expert priority=auto
+```
+
+`priority=auto` 只在这个 pool 内按任务种类选择：实现类优先 Flash，review/research 类优先
+Grok；无法分类时保留 pool 顺序。若希望自己决定顺序：
+
+```text
+/expert priority=deepseek-v4-flash,grok-4.5,deepseek-v4-pro
+```
+
+也可以将相同配置写到 `[expert]`，见 `config/lumen.example.toml`。pool 是严格 allowlist：
+
+- 选项中的每个模型都必须已经配置有效的 endpoint 与凭据；
+- 当前 `/model` pin 优先于 pool；后来显式设置 `/expert pool=` 则只取代旧的 Expert 单模型选择；
+- 可辨认的额度/信用耗尽仅把该 endpoint 标为“下一项 Expert 任务跳过”；当前任务绝不重放；
+- pool 内没有健康候选时，任务在发请求前失败，不会悄悄使用 pool 外模型或产生额外计费；
+- `401`、`403` 和普通 `400` 不会被误判为“额度耗尽”。
+
+用 `/expert status` 查看当前 pool、priority 和最近一次选择证据；用 `/expert pool=off` 清除它。
+这套 Expert pool 路由只覆盖新建 Expert 任务。普通 turn 和 scheduler 有各自受限的
+no-replay 路径，不能把上述行为扩大宣称为全局自动切模型。
+
+## 普通 turn：显式池、前台预选与零输出重路由
+
+普通会话也可以启用独立的 `[model_routing]`；它默认关闭，且不复用 Expert 的临时模型状态：
+
+```toml
+[model_routing]
+enabled = true
+model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+```
+
+这是受限的前台策略，不是“自动让模型随时换人”：
+
+- 每个普通前台 turn 开始前，若没有 `/model` pin 且 `priority` 为空，才会在用户 allowlist 内按任务分类预选模型；这个决策只读本地配置和被动健康记录，不探测、不发请求、不消耗额度；
+- 只有已观察到的 `402`、额度耗尽、限流、超时或上游失败才会把 endpoint 暂时标记为降级；不会主动探测或消耗额度；
+- 原请求必须尚未收到模型响应、工具调用或工具副作用，才会切到池内下一健康候选并重建同一请求；
+- `/model` 的显式用户 pin 禁止自动切换；任何 subagent（前台或后台）和已进入输出约束的路径也禁止该重放；
+- 所有候选降级、未配置或安装切换失败时，保留原始错误，不回退到池外模型；
+- `priority` 为空时在 pool 内按任务选择：implementation 优先 Flash，review/research 优先 Grok；没有匹配候选时才保留 pool 顺序。priority 中不在 pool 的 ID 被忽略。
+- 自定义模型别名可用 `[model_routing.task_preferences]` 为 `implementation`、`review`、`research` 分别列出候选顺序；它仅在全局 `priority` 为空时生效，且仍严格受 `model_pool` allowlist 限制。
+
+当前这一能力覆盖普通前台 sampler turn，以及 **全新、根会话拥有的 scheduler loop
+iteration** 的请求前选择。后者只在尚未 spawn child 时选择健康候选；resume chain、嵌套
+child、显式 runtime model 和任何用户 `/model` pin 都不会被自动改写。后台 workflow 与
+一般 subagent 的完整预算、幂等恢复和自动 routing 仍属于 Kairos 后续阶段，不能把本节扩大为
+“所有后台任务已自动切模型”。
 
 自定义厂商或租户端点：
 

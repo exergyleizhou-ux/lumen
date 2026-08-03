@@ -9,8 +9,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const EXPERT_SCHEMA_VERSION: u32 = 1;
-pub const DEFAULT_EXECUTOR_MODEL: &str = "deepseek-v4-pro";
 pub const FLASH_EXECUTOR_MODEL: &str = "deepseek-v4-flash";
+pub const PRO_EXECUTOR_MODEL: &str = "deepseek-v4-pro";
+/// New Expert sessions follow the user's configured primary preference:
+/// Flash first, with the configured consultant and fallback kept separate.
+pub const DEFAULT_EXECUTOR_MODEL: &str = FLASH_EXECUTOR_MODEL;
 pub const GROK_MODEL: &str = "grok-4.5";
 pub const DEFAULT_CONSULT_CAP: u32 = 3;
 pub const DEFAULT_CONSULT_TOKEN_CAP: u64 = 3_072;
@@ -54,6 +57,321 @@ pub enum ExpertMode {
     /// Two real proposal sources (executor-model plan + consultant plan),
     /// then a single Executor Writer. Not a dual-writer runtime.
     Dual,
+}
+
+/// Coarse task class used by the local, deterministic Advisor shadow policy.
+/// It is intentionally not a model verdict: it only makes the later routing
+/// decision explainable and testable before automatic switching is enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorTaskClass {
+    #[default]
+    Implementation,
+    Review,
+    Research,
+}
+
+/// Why the locally configured executor pool chose a candidate. The source is
+/// persisted in the owning Expert state's audit trail; it never grants any
+/// write, completion, or provider authority by itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorPoolSelectionSource {
+    UserPriority,
+    TaskPolicy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvisorPoolSelection {
+    pub model_id: String,
+    pub source: AdvisorPoolSelectionSource,
+    /// Models the user allowed but which were not currently routable. This is
+    /// evidence, not a diagnosis: the caller owns the health reason and must
+    /// never invent one here.
+    pub skipped_unavailable_candidates: Vec<String>,
+}
+
+pub fn classify_advisor_task(task: &str) -> AdvisorTaskClass {
+    let task_lower = task.to_ascii_lowercase();
+    if ["review", "audit", "security", "verify", "test"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Review
+    } else if ["research", "design", "architecture", "investigate"]
+        .iter()
+        .any(|needle| task_lower.contains(needle))
+    {
+        AdvisorTaskClass::Research
+    } else {
+        AdvisorTaskClass::Implementation
+    }
+}
+
+/// Select an executor only from a user's configured pool. A nonempty priority
+/// order wins deterministically; otherwise the local policy prefers a Grok
+/// candidate for review/research and a Flash candidate for implementation.
+///
+/// `routable_catalog_ids` must already exclude models that are absent or whose
+/// provider is currently degraded. An empty configured pool returns `None`,
+/// preserving legacy explicit executor configuration.
+pub fn advisor_pool_executor_selection(
+    task: &str,
+    configured_pool: &[String],
+    configured_priority: &[String],
+    routable_catalog_ids: impl IntoIterator<Item = String>,
+) -> Option<AdvisorPoolSelection> {
+    if configured_pool.is_empty() {
+        return None;
+    }
+    let routable: std::collections::HashSet<_> = routable_catalog_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+    let mut eligible = Vec::new();
+    for model in configured_pool {
+        if !model.trim().is_empty()
+            && routable.contains(model)
+            && !eligible.iter().any(|candidate: &String| candidate == model)
+        {
+            eligible.push(model.clone());
+        }
+    }
+    if eligible.is_empty() {
+        return None;
+    }
+    let skipped_unavailable_candidates = configured_pool
+        .iter()
+        .filter(|model| !model.trim().is_empty() && !eligible.contains(model))
+        .fold(Vec::new(), |mut unique, model| {
+            if !unique.contains(model) {
+                unique.push(model.clone());
+            }
+            unique
+        });
+    for preferred in configured_priority {
+        if eligible.iter().any(|candidate| candidate == preferred) {
+            return Some(AdvisorPoolSelection {
+                model_id: preferred.clone(),
+                source: AdvisorPoolSelectionSource::UserPriority,
+                skipped_unavailable_candidates,
+            });
+        }
+    }
+    let task_class = classify_advisor_task(task);
+    let preferred_marker = match task_class {
+        AdvisorTaskClass::Review | AdvisorTaskClass::Research => "grok",
+        AdvisorTaskClass::Implementation => "flash",
+    };
+    let selected = eligible
+        .iter()
+        .find(|model| model.to_ascii_lowercase().contains(preferred_marker))
+        .unwrap_or(&eligible[0]);
+    Some(AdvisorPoolSelection {
+        model_id: selected.clone(),
+        source: AdvisorPoolSelectionSource::TaskPolicy,
+        skipped_unavailable_candidates,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AdvisorShadowDecision {
+    /// Both configured models appear in the local, allowed model catalog.
+    #[default]
+    KeepConfigured,
+    /// The configured executor is unavailable, but the host-configured
+    /// fallback is in the local allowlist. Shadow mode records this proposal;
+    /// it never applies it.
+    RecommendFallbackExecutor,
+    ExecutorUnavailable,
+    ConsultantUnavailable,
+    UserModelPinned,
+    ConsultBudgetUnavailable,
+    SharedProviderFailureDomain,
+    ProviderHealthDegraded,
+}
+
+/// Persisted, secret-free output from the Advisor shadow policy.
+///
+/// Shadow mode never changes a model.  It records the choice it would submit
+/// for SessionActor approval once the policy has enough observed evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct AdvisorShadowAdvice {
+    pub algorithm: String,
+    pub task_class: AdvisorTaskClass,
+    pub decision: AdvisorShadowDecision,
+    pub executor_candidate: String,
+    pub consultant_candidate: String,
+    #[serde(default)]
+    pub eligible_model_ids: Vec<String>,
+    #[serde(default)]
+    pub reason_codes: Vec<String>,
+    #[serde(default)]
+    pub user_model_pinned: bool,
+    #[serde(default)]
+    pub consult_budget_available: bool,
+    /// `Some(false)` means a review task's executor and consultant are known
+    /// to share one endpoint failure domain. `None` means no safe comparison
+    /// was available; it is not interpreted as independence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub independent_provider_failure_domain: Option<bool>,
+    #[serde(default)]
+    pub provider_health_degraded: bool,
+    /// Must remain false until a separately approved, fail-safe routing phase.
+    #[serde(default)]
+    pub automatic_switch_allowed: bool,
+    pub recorded_at: DateTime<Utc>,
+}
+
+/// Deterministic, no-network advisor preflight.  The candidate list comes
+/// from the host's already allowed catalog; credentials, endpoints and spend
+/// are deliberately not inspected or emitted here.
+pub fn advisor_shadow_advice(
+    task: &str,
+    executor: &str,
+    consultant: &str,
+    catalog_model_ids: impl IntoIterator<Item = String>,
+    user_model_pinned: bool,
+    consult_budget_available: bool,
+    executor_provider_domain: Option<&str>,
+    consultant_provider_domain: Option<&str>,
+    executor_provider_degraded: bool,
+    consultant_provider_degraded: bool,
+) -> AdvisorShadowAdvice {
+    advisor_shadow_advice_with_fallback(
+        task,
+        executor,
+        executor,
+        consultant,
+        catalog_model_ids,
+        user_model_pinned,
+        consult_budget_available,
+        executor_provider_domain,
+        consultant_provider_domain,
+        executor_provider_degraded,
+        consultant_provider_degraded,
+    )
+}
+
+/// Like [`advisor_shadow_advice`], but records an allowlisted fallback
+/// recommendation if the configured executor no longer exists locally.
+/// This is still a deterministic, no-network and no-switch decision.
+#[allow(clippy::too_many_arguments)]
+pub fn advisor_shadow_advice_with_fallback(
+    task: &str,
+    executor: &str,
+    fallback_executor: &str,
+    consultant: &str,
+    catalog_model_ids: impl IntoIterator<Item = String>,
+    user_model_pinned: bool,
+    consult_budget_available: bool,
+    executor_provider_domain: Option<&str>,
+    consultant_provider_domain: Option<&str>,
+    executor_provider_degraded: bool,
+    consultant_provider_degraded: bool,
+) -> AdvisorShadowAdvice {
+    let task_class = classify_advisor_task(task);
+    let mut eligible_model_ids: Vec<_> = catalog_model_ids
+        .into_iter()
+        .filter(|model| !model.trim().is_empty())
+        .collect();
+    eligible_model_ids.sort();
+    eligible_model_ids.dedup();
+    eligible_model_ids.truncate(32);
+    let executor_available = eligible_model_ids.iter().any(|model| model == executor);
+    let fallback_available = eligible_model_ids
+        .iter()
+        .any(|model| model == fallback_executor);
+    let consultant_available = eligible_model_ids.iter().any(|model| model == consultant);
+    let independent_provider_failure_domain =
+        match (executor_provider_domain, consultant_provider_domain) {
+            (Some(executor), Some(consultant)) => Some(executor != consultant),
+            _ => None,
+        };
+    let decision = if user_model_pinned {
+        AdvisorShadowDecision::UserModelPinned
+    } else if !consult_budget_available {
+        AdvisorShadowDecision::ConsultBudgetUnavailable
+    } else if !executor_available && fallback_available && fallback_executor != executor {
+        AdvisorShadowDecision::RecommendFallbackExecutor
+    } else if !executor_available {
+        AdvisorShadowDecision::ExecutorUnavailable
+    } else if !consultant_available {
+        AdvisorShadowDecision::ConsultantUnavailable
+    } else if executor_provider_degraded || consultant_provider_degraded {
+        AdvisorShadowDecision::ProviderHealthDegraded
+    } else if task_class == AdvisorTaskClass::Review
+        && independent_provider_failure_domain == Some(false)
+    {
+        AdvisorShadowDecision::SharedProviderFailureDomain
+    } else {
+        AdvisorShadowDecision::KeepConfigured
+    };
+    let mut reason_codes = vec![
+        "shadow_only".to_owned(),
+        "catalog_allowlist_checked".to_owned(),
+    ];
+    reason_codes.push(match decision {
+        AdvisorShadowDecision::KeepConfigured => "configured_pair_available".to_owned(),
+        AdvisorShadowDecision::RecommendFallbackExecutor => {
+            "fallback_executor_allowlisted".to_owned()
+        }
+        AdvisorShadowDecision::ExecutorUnavailable => "executor_not_in_catalog".to_owned(),
+        AdvisorShadowDecision::ConsultantUnavailable => "consultant_not_in_catalog".to_owned(),
+        AdvisorShadowDecision::UserModelPinned => "user_model_pinned".to_owned(),
+        AdvisorShadowDecision::ConsultBudgetUnavailable => "consult_budget_unavailable".to_owned(),
+        AdvisorShadowDecision::SharedProviderFailureDomain => {
+            "shared_provider_failure_domain".to_owned()
+        }
+        AdvisorShadowDecision::ProviderHealthDegraded => "provider_health_degraded".to_owned(),
+    });
+    if executor != consultant {
+        reason_codes.push("independent_consultant_configured".to_owned());
+    }
+    let executor_candidate = if decision == AdvisorShadowDecision::RecommendFallbackExecutor {
+        fallback_executor
+    } else {
+        executor
+    };
+    AdvisorShadowAdvice {
+        algorithm: "advisor-shadow-v1".to_owned(),
+        task_class,
+        decision,
+        executor_candidate: executor_candidate.to_owned(),
+        consultant_candidate: consultant.to_owned(),
+        eligible_model_ids,
+        reason_codes,
+        user_model_pinned,
+        consult_budget_available,
+        independent_provider_failure_domain,
+        provider_health_degraded: executor_provider_degraded || consultant_provider_degraded,
+        automatic_switch_allowed: false,
+        recorded_at: Utc::now(),
+    }
+}
+
+/// The first P4 routing gate. It intentionally accepts only a preconfigured,
+/// catalog-allowlisted fallback for a *new* task whose primary executor is
+/// absent. It is not a general model chooser, cannot override a user pin, and
+/// cannot run after a task has started producing output.
+pub fn advisor_fallback_switch_allowed(
+    advice: &AdvisorShadowAdvice,
+    fallback_rollout_enabled: bool,
+    is_new_task: bool,
+    fallback_provider_degraded: bool,
+) -> bool {
+    fallback_rollout_enabled
+        && is_new_task
+        && !advice.user_model_pinned
+        && advice.consult_budget_available
+        && !advice.provider_health_degraded
+        && !fallback_provider_degraded
+        && advice.decision == AdvisorShadowDecision::RecommendFallbackExecutor
+        && advice
+            .eligible_model_ids
+            .iter()
+            .any(|model| model == &advice.executor_candidate)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -346,6 +664,21 @@ pub struct ExpertAuditEvent {
     pub timestamp: DateTime<Utc>,
 }
 
+/// Durable, user-readable evidence for a new-task executor choice. This is
+/// deliberately separate from the redacted audit hash: model identifiers are
+/// needed to explain a user-defined priority or a provider-health skip.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AdvisorPoolRoutingEvidence {
+    pub from_model: String,
+    pub to_model: String,
+    pub source: AdvisorPoolSelectionSource,
+    pub skipped_unavailable_candidates: Vec<String>,
+    /// Always false for this mechanism. A model choice is made only before a
+    /// task begins; the sampler never replays an already-started response.
+    pub had_output: bool,
+    pub timestamp: DateTime<Utc>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExpertModeState {
     pub schema_version: u32,
@@ -362,6 +695,22 @@ pub struct ExpertModeState {
     pub task_hash: Option<String>,
     pub plan: Vec<String>,
     pub executor_requested: String,
+    /// Host-configured emergency fallback for the narrow missing-primary gate.
+    #[serde(default = "default_fallback_executor_model")]
+    pub fallback_executor_requested: String,
+    /// User-selected candidate pool for Advisor. Empty retains the legacy
+    /// explicit executor/consultant/fallback triplet.
+    #[serde(default)]
+    pub advisor_model_pool: Vec<String>,
+    /// User-authored priority order within `advisor_model_pool`. Empty means
+    /// no priority was supplied; it is not silently replaced by one.
+    #[serde(default)]
+    pub advisor_model_priority: Vec<String>,
+    /// Set only by an explicit `/expert pool=...` action in this session.
+    /// It outranks an older single-model pin, because it is the user's newer,
+    /// more specific execution choice. Config-file pools leave this false.
+    #[serde(default)]
+    pub advisor_model_pool_user_override: bool,
     pub executor_resolved: Option<String>,
     pub consultant_requested: String,
     pub consultant_resolved: Option<String>,
@@ -416,6 +765,20 @@ pub struct ExpertModeState {
     pub consultant_readonly_tools: bool,
     #[serde(default = "default_consultant_tool_cap")]
     pub consultant_tool_call_cap: u32,
+    /// Records deterministic advisor recommendations. Shadow is on by default
+    /// so evidence accumulates even when the narrow P4 fallback gate is off.
+    #[serde(default = "default_true")]
+    pub advisor_shadow_enabled: bool,
+    /// Explicitly enables only the P4 missing-primary fallback gate. It is
+    /// independent from a user-configured pool, which is selected only before
+    /// a new, unpinned task begins.
+    #[serde(default)]
+    pub advisor_auto_switch_fallback_enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advisor_shadow_advice: Option<AdvisorShadowAdvice>,
+    /// Bounded, persisted choices from the user-selected Advisor model pool.
+    #[serde(default)]
+    pub advisor_pool_routing_evidence: Vec<AdvisorPoolRoutingEvidence>,
     pub evidence_fields: Vec<String>,
     #[serde(default)]
     pub evidence_bundle_hash: Option<String>,
@@ -463,6 +826,10 @@ impl Default for ExpertModeState {
             task_hash: None,
             plan: Vec::new(),
             executor_requested: DEFAULT_EXECUTOR_MODEL.to_owned(),
+            fallback_executor_requested: PRO_EXECUTOR_MODEL.to_owned(),
+            advisor_model_pool: Vec::new(),
+            advisor_model_priority: Vec::new(),
+            advisor_model_pool_user_override: false,
             executor_resolved: None,
             consultant_requested: GROK_MODEL.to_owned(),
             consultant_resolved: None,
@@ -491,6 +858,10 @@ impl Default for ExpertModeState {
             dual_rollout: default_dual_rollout(),
             consultant_readonly_tools: false,
             consultant_tool_call_cap: default_consultant_tool_cap(),
+            advisor_shadow_enabled: true,
+            advisor_auto_switch_fallback_enabled: false,
+            advisor_shadow_advice: None,
+            advisor_pool_routing_evidence: Vec::new(),
             evidence_fields: Vec::new(),
             evidence_bundle_hash: None,
             audit_events: Vec::new(),
@@ -514,6 +885,10 @@ fn default_dual_rollout() -> String {
     "opt_in".to_owned()
 }
 
+fn default_fallback_executor_model() -> String {
+    PRO_EXECUTOR_MODEL.to_owned()
+}
+
 fn default_consultant_tool_cap() -> u32 {
     5
 }
@@ -527,6 +902,10 @@ impl ExpertModeState {
         };
         state.enabled = config.enabled;
         state.executor_requested = config.executor_model.clone();
+        state.fallback_executor_requested = config.fallback_executor_model.clone();
+        state.advisor_model_pool = config.advisor_model_pool.clone();
+        state.advisor_model_priority = config.advisor_model_priority.clone();
+        state.advisor_model_pool_user_override = false;
         state.consultant_requested = config.consultant_model.clone();
         state.budget.attempt_cap = config.consult_cap_default;
         state.budget.token_cap = u64::from(config.consult_cap_default)
@@ -541,6 +920,8 @@ impl ExpertModeState {
         state.dual_rollout = config.dual_rollout.clone();
         state.consultant_readonly_tools = config.consultant_readonly_tools;
         state.consultant_tool_call_cap = config.consultant_tool_call_cap.max(1);
+        state.advisor_shadow_enabled = config.advisor_shadow_enabled;
+        state.advisor_auto_switch_fallback_enabled = config.advisor_auto_switch_fallback_enabled;
         state
     }
 
@@ -648,6 +1029,7 @@ impl ExpertModeState {
         self.evidence_fields.clear();
         self.evidence_bundle_hash = None;
         self.audit_events.clear();
+        self.advisor_pool_routing_evidence.clear();
         self.finished_at = None;
         self.last_outcome = None;
         self.updated_at = Utc::now();
@@ -709,6 +1091,34 @@ impl ExpertModeState {
             self.task_hash.clone(),
         );
         Ok(task)
+    }
+
+    /// Apply the narrow P4 fallback only while the SessionActor is still
+    /// preparing a fresh task. This owns the persistent executor mutation and
+    /// its audit evidence so callers cannot change one without the other.
+    pub fn apply_advisor_fallback_before_output(
+        &mut self,
+        advice: &mut AdvisorShadowAdvice,
+        is_new_task: bool,
+        fallback_provider_degraded: bool,
+    ) -> bool {
+        if !advisor_fallback_switch_allowed(
+            advice,
+            self.advisor_auto_switch_fallback_enabled,
+            is_new_task,
+            fallback_provider_degraded,
+        ) {
+            return false;
+        }
+        self.executor_requested = advice.executor_candidate.clone();
+        advice.automatic_switch_allowed = true;
+        self.audit(
+            "advisor_fallback_applied_before_output",
+            None,
+            None,
+            Some(self.executor_requested.clone()),
+        );
+        true
     }
 
     pub fn transition(
@@ -1244,6 +1654,36 @@ impl ExpertModeState {
         });
     }
 
+    /// Record a model-pool selection made before the task has emitted output.
+    /// The state object is the sole writer so this evidence remains attached to
+    /// the exact Expert task that consumed the choice.
+    pub fn record_advisor_pool_routing(&mut self, selection: &AdvisorPoolSelection, from: &str) {
+        if self.advisor_pool_routing_evidence.len() == MAX_AUDIT_EVENTS {
+            self.advisor_pool_routing_evidence.remove(0);
+        }
+        self.advisor_pool_routing_evidence
+            .push(AdvisorPoolRoutingEvidence {
+                from_model: from.to_owned(),
+                to_model: selection.model_id.clone(),
+                source: selection.source,
+                skipped_unavailable_candidates: selection.skipped_unavailable_candidates.clone(),
+                had_output: false,
+                timestamp: Utc::now(),
+            });
+        let detail = format!(
+            "{from}\u{0}{}\u{0}{:?}\u{0}{}",
+            selection.model_id,
+            selection.source,
+            selection.skipped_unavailable_candidates.join("\u{1}"),
+        );
+        self.audit(
+            "advisor_pool_selected_before_output",
+            None,
+            None,
+            Some(sha256_hex(detail.as_bytes())),
+        );
+    }
+
     pub fn status(&self, verbose: bool) -> String {
         let mut out = format!(
             "Expert: {:?} | Phase: {:?}\nExecutor: {}{} | Consultant: {}\nConsult budget: {}/{} attempts, {}/{} tokens",
@@ -1313,6 +1753,33 @@ impl ExpertModeState {
                 out.push_str(&format!(
                     "\nDual: pending | rollout={} (not active until /expert dual with task)",
                     self.dual_rollout
+                ));
+            }
+        }
+        if !self.advisor_model_pool.is_empty() {
+            let priority = if self.advisor_model_priority.is_empty() {
+                "task-policy".to_owned()
+            } else {
+                self.advisor_model_priority.join(" > ")
+            };
+            out.push_str(&format!(
+                "\nAdvisor pool: [{}] | priority={priority} | source={}",
+                self.advisor_model_pool.join(", "),
+                if self.advisor_model_pool_user_override {
+                    "this-session"
+                } else {
+                    "config"
+                },
+            ));
+            if let Some(last) = self.advisor_pool_routing_evidence.last() {
+                let skipped = if last.skipped_unavailable_candidates.is_empty() {
+                    "none".to_owned()
+                } else {
+                    last.skipped_unavailable_candidates.join(", ")
+                };
+                out.push_str(&format!(
+                    "\nAdvisor pool choice: {} -> {} ({:?}; skipped={skipped}; had_output={})",
+                    last.from_model, last.to_model, last.source, last.had_output
                 ));
             }
         }
@@ -1554,7 +2021,8 @@ pub fn merge_dual_proposals(
         return DualMergeResult {
             merged_plan: a.steps.iter().take(8).cloned().collect(),
             disagreements: Vec::new(),
-            selection_reason: "source B unavailable; using executor-side proposal A only".to_owned(),
+            selection_reason: "source B unavailable; using executor-side proposal A only"
+                .to_owned(),
             degraded: true,
         };
     }
@@ -1958,6 +2426,389 @@ mod tests {
     use super::*;
 
     #[test]
+    fn advisor_shadow_classifies_review_and_never_grants_switch_authority() {
+        let advice = advisor_shadow_advice(
+            "Audit the security-sensitive migration and verify its tests",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            true,
+            Some("executor.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert_eq!(advice.algorithm, "advisor-shadow-v1");
+        assert_eq!(advice.task_class, AdvisorTaskClass::Review);
+        assert_eq!(advice.decision, AdvisorShadowDecision::KeepConfigured);
+        assert!(!advice.automatic_switch_allowed);
+        assert!(
+            advice
+                .reason_codes
+                .contains(&"independent_consultant_configured".to_owned())
+        );
+    }
+
+    #[test]
+    fn advisor_pool_honors_user_priority_and_skips_unavailable_candidates() {
+        let pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            GROK_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        let priority = vec![GROK_MODEL.to_owned(), FLASH_EXECUTOR_MODEL.to_owned()];
+        let selection = advisor_pool_executor_selection(
+            "implement a durable task ledger",
+            &pool,
+            &priority,
+            [
+                FLASH_EXECUTOR_MODEL.to_owned(),
+                PRO_EXECUTOR_MODEL.to_owned(),
+            ],
+        )
+        .expect("at least one selected model remains routable");
+
+        assert_eq!(selection.model_id, FLASH_EXECUTOR_MODEL);
+        assert_eq!(selection.source, AdvisorPoolSelectionSource::UserPriority);
+        assert_eq!(selection.skipped_unavailable_candidates, vec![GROK_MODEL]);
+    }
+
+    #[test]
+    fn advisor_pool_uses_task_policy_only_inside_user_pool() {
+        let pool = vec![
+            PRO_EXECUTOR_MODEL.to_owned(),
+            GROK_MODEL.to_owned(),
+            FLASH_EXECUTOR_MODEL.to_owned(),
+        ];
+        let review = advisor_pool_executor_selection(
+            "review the evidence and test plan",
+            &pool,
+            &[],
+            pool.clone(),
+        )
+        .expect("all pool members are routable");
+        assert_eq!(review.model_id, GROK_MODEL);
+        assert_eq!(review.source, AdvisorPoolSelectionSource::TaskPolicy);
+
+        let implementation = advisor_pool_executor_selection(
+            "implement the actor boundary",
+            &pool,
+            &[],
+            pool.clone(),
+        )
+        .expect("all pool members are routable");
+        assert_eq!(implementation.model_id, FLASH_EXECUTOR_MODEL);
+
+        assert!(advisor_pool_executor_selection("implement", &[], &[], pool).is_none());
+    }
+
+    #[test]
+    fn advisor_pool_routing_evidence_is_pre_output_and_persisted() {
+        let mut state = ExpertModeState::configured();
+        state
+            .start(
+                "implement safe routing",
+                ExpertMode::Default,
+                FLASH_EXECUTOR_MODEL,
+            )
+            .unwrap();
+        let selection = AdvisorPoolSelection {
+            model_id: PRO_EXECUTOR_MODEL.to_owned(),
+            source: AdvisorPoolSelectionSource::UserPriority,
+            skipped_unavailable_candidates: vec![GROK_MODEL.to_owned()],
+        };
+        state.record_advisor_pool_routing(&selection, FLASH_EXECUTOR_MODEL);
+
+        let evidence = state.advisor_pool_routing_evidence.last().unwrap();
+        assert_eq!(evidence.from_model, FLASH_EXECUTOR_MODEL);
+        assert_eq!(evidence.to_model, PRO_EXECUTOR_MODEL);
+        assert!(!evidence.had_output);
+        assert_eq!(evidence.skipped_unavailable_candidates, vec![GROK_MODEL]);
+        assert!(
+            state
+                .audit_events
+                .iter()
+                .any(|event| event.event == "advisor_pool_selected_before_output")
+        );
+        state.advisor_model_pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        state.advisor_model_priority = vec![PRO_EXECUTOR_MODEL.to_owned()];
+        assert!(state.status(false).contains("Advisor pool choice"));
+        let wire = serde_json::to_string(&state).unwrap();
+        assert!(wire.contains("advisor_pool_routing_evidence"));
+    }
+
+    #[test]
+    fn advisor_shadow_reports_missing_configured_candidate_without_fallback() {
+        let advice = advisor_shadow_advice(
+            "Design a resilient orchestration architecture",
+            "executor",
+            "missing-consultant",
+            ["executor".to_owned(), "alternate".to_owned()],
+            false,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert_eq!(advice.task_class, AdvisorTaskClass::Research);
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::ConsultantUnavailable
+        );
+        assert_eq!(advice.consultant_candidate, "missing-consultant");
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_recommends_allowlisted_fallback_without_switch_authority() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            Some("primary.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::RecommendFallbackExecutor
+        );
+        assert_eq!(advice.executor_candidate, "deepseek-v4-flash");
+        assert!(
+            advice
+                .reason_codes
+                .contains(&"fallback_executor_allowlisted".to_owned())
+        );
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn fallback_gate_allows_only_a_new_unpinned_allowlisted_missing_primary() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            Some("primary.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert!(advisor_fallback_switch_allowed(&advice, true, true, false));
+        assert!(!advisor_fallback_switch_allowed(
+            &advice, false, true, false
+        ));
+        assert!(!advisor_fallback_switch_allowed(
+            &advice, true, false, false
+        ));
+        assert!(!advisor_fallback_switch_allowed(&advice, true, true, true));
+    }
+
+    #[test]
+    fn fallback_gate_refuses_pin_budget_and_degraded_provider() {
+        let pinned = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            true,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(&pinned, true, true, false));
+
+        let no_budget = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            false,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(
+            &no_budget, true, true, false
+        ));
+
+        let degraded = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            None,
+            None,
+            true,
+            false,
+        );
+        assert!(!advisor_fallback_switch_allowed(
+            &degraded, true, true, false
+        ));
+    }
+
+    #[test]
+    fn fallback_application_mutates_executor_and_leaves_audit_evidence() {
+        let mut state = ExpertModeState::configured();
+        state.advisor_auto_switch_fallback_enabled = true;
+        state
+            .start(
+                "implement the orchestration safeguard",
+                ExpertMode::Default,
+                "missing-primary",
+            )
+            .unwrap();
+        let mut advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            false,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(state.apply_advisor_fallback_before_output(&mut advice, true, false));
+        assert_eq!(state.executor_requested, "deepseek-v4-flash");
+        assert!(advice.automatic_switch_allowed);
+        assert!(
+            state
+                .audit_events
+                .iter()
+                .any(|event| event.event == "advisor_fallback_applied_before_output")
+        );
+
+        let executor_after_switch = state.executor_requested.clone();
+        assert!(!state.apply_advisor_fallback_before_output(&mut advice, false, false));
+        assert_eq!(state.executor_requested, executor_after_switch);
+    }
+
+    #[test]
+    fn advisor_shadow_does_not_recommend_fallback_over_user_pin() {
+        let advice = advisor_shadow_advice_with_fallback(
+            "implement the orchestration safeguard",
+            "missing-primary",
+            "deepseek-v4-flash",
+            "grok-4.5",
+            ["deepseek-v4-flash".to_owned(), "grok-4.5".to_owned()],
+            true,
+            true,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert_eq!(advice.decision, AdvisorShadowDecision::UserModelPinned);
+        assert_eq!(advice.executor_candidate, "missing-primary");
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_never_routes_away_from_user_pin_or_spends_unavailable_budget() {
+        let pinned = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            true,
+            true,
+            Some("executor.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert_eq!(pinned.decision, AdvisorShadowDecision::UserModelPinned);
+        assert!(pinned.user_model_pinned);
+        assert!(!pinned.automatic_switch_allowed);
+
+        let out_of_budget = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            false,
+            Some("executor.example"),
+            Some("consultant.example"),
+            false,
+            false,
+        );
+        assert_eq!(
+            out_of_budget.decision,
+            AdvisorShadowDecision::ConsultBudgetUnavailable
+        );
+        assert!(!out_of_budget.consult_budget_available);
+    }
+
+    #[test]
+    fn advisor_shadow_rejects_review_pair_in_same_provider_failure_domain() {
+        let advice = advisor_shadow_advice(
+            "Review the security change before delivery",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            true,
+            Some("shared.example"),
+            Some("shared.example"),
+            false,
+            false,
+        );
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::SharedProviderFailureDomain
+        );
+        assert_eq!(advice.independent_provider_failure_domain, Some(false));
+        assert!(!advice.automatic_switch_allowed);
+    }
+
+    #[test]
+    fn advisor_shadow_blocks_degraded_provider_without_overriding_pin_or_budget() {
+        let advice = advisor_shadow_advice(
+            "implement feature",
+            "executor",
+            "consultant",
+            ["executor".to_owned(), "consultant".to_owned()],
+            false,
+            true,
+            Some("executor.example"),
+            Some("consultant.example"),
+            false,
+            true,
+        );
+        assert_eq!(
+            advice.decision,
+            AdvisorShadowDecision::ProviderHealthDegraded
+        );
+        assert!(advice.provider_health_degraded);
+    }
+
+    #[test]
     fn simple_and_fast_never_consult() {
         assert!(!should_consult(
             "fix typo in src/lib.rs",
@@ -2176,11 +3027,25 @@ mod tests {
     }
 
     #[test]
+    fn default_expert_model_priority_is_flash_then_grok_then_pro_fallback() {
+        let config = crate::agent::config::ExpertConfig::default();
+        let state = ExpertModeState::from_config(&config);
+        assert_eq!(state.executor_requested, FLASH_EXECUTOR_MODEL);
+        assert_eq!(state.consultant_requested, GROK_MODEL);
+        assert_eq!(state.fallback_executor_requested, PRO_EXECUTOR_MODEL);
+    }
+
+    #[test]
     fn runtime_config_is_applied_and_disabled_feature_fails_closed() {
         let mut config = crate::agent::config::ExpertConfig::default();
         config.enabled = false;
         config.executor_model = FLASH_EXECUTOR_MODEL.to_owned();
         config.consultant_model = "consult-test".to_owned();
+        config.advisor_model_pool = vec![
+            FLASH_EXECUTOR_MODEL.to_owned(),
+            PRO_EXECUTOR_MODEL.to_owned(),
+        ];
+        config.advisor_model_priority = vec![PRO_EXECUTOR_MODEL.to_owned()];
         config.consult_cap_default = 2;
         config.max_consult_output_tokens = 99;
         config.consult_timeout_secs = 7;
@@ -2188,6 +3053,8 @@ mod tests {
         assert_eq!(state.feature_state, ExpertFeatureState::Off);
         assert_eq!(state.executor_requested, FLASH_EXECUTOR_MODEL);
         assert_eq!(state.consultant_requested, "consult-test");
+        assert_eq!(state.advisor_model_pool, config.advisor_model_pool);
+        assert_eq!(state.advisor_model_priority, config.advisor_model_priority);
         assert_eq!(state.budget.attempt_cap, 2);
         assert_eq!(state.budget.token_cap, 198);
         assert_eq!(state.consult_timeout_secs, 7);
@@ -2321,13 +3188,17 @@ mod tests {
         let degraded = merge_dual_proposals(&a, &DualProposal::default(), true, false);
         assert!(degraded.degraded);
         assert_eq!(degraded.merged_plan, a.steps);
-        let both_fail = merge_dual_proposals(&DualProposal::default(), &DualProposal::default(), false, false);
+        let both_fail = merge_dual_proposals(
+            &DualProposal::default(),
+            &DualProposal::default(),
+            false,
+            false,
+        );
         assert!(both_fail.degraded);
         assert!(both_fail.merged_plan.is_empty());
-        assert!(parse_dual_proposal(
-            r#"{"summary":"s","steps":["a"],"risks":[],"extra":1}"#
-        )
-        .is_err());
+        assert!(
+            parse_dual_proposal(r#"{"summary":"s","steps":["a"],"risks":[],"extra":1}"#).is_err()
+        );
         assert!(parse_dual_proposal(r#"{"summary":"s","steps":["step one"],"risks":[]}"#).is_ok());
     }
 
@@ -2335,7 +3206,11 @@ mod tests {
     fn dual_request_ids_differ_and_status_labels_are_honest() {
         let mut state = ExpertModeState::configured();
         state
-            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "production dual plan",
+                ExpertMode::Dual,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         state
             .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
@@ -2383,7 +3258,11 @@ mod tests {
     fn dual_both_sources_fail_clears_plan() {
         let mut state = ExpertModeState::configured();
         state
-            .start("production dual plan", ExpertMode::Dual, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "production dual plan",
+                ExpertMode::Dual,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         state
             .transition(ExpertPhase::Triage, ExpertPhase::PreparingEvidence)
@@ -2399,12 +3278,7 @@ mod tests {
             .unwrap();
         let gb = state.reserve_consult(10, 32).unwrap();
         state
-            .finish_dual_source_b(
-                &gb,
-                (0, 0),
-                Err(ExpertErrorCode::Timeout),
-                None,
-            )
+            .finish_dual_source_b(&gb, (0, 0), Err(ExpertErrorCode::Timeout), None)
             .unwrap();
         let dual = state.dual_result.as_ref().unwrap();
         assert_eq!(dual.status_label(), "failed");
@@ -2443,10 +3317,7 @@ mod tests {
             generation: Some(state.task_generation),
             executor_pass: Some("initial".into()),
         };
-        state.restored(
-            Ok(()),
-            ExpertOutcome::Partial,
-        );
+        state.restored(Ok(()), ExpertOutcome::Partial);
         state.resumable_task = true;
         state.last_outcome = Some(ExpertOutcome::Partial);
         state
@@ -2477,7 +3348,11 @@ mod tests {
         state.phase = ExpertPhase::Restoring;
         state.restored(Ok(()), ExpertOutcome::Partial);
         state
-            .start("next independent expert", ExpertMode::Fast, DEFAULT_EXECUTOR_MODEL)
+            .start(
+                "next independent expert",
+                ExpertMode::Fast,
+                DEFAULT_EXECUTOR_MODEL,
+            )
             .unwrap();
         assert!(!state.goal_composed_this_task);
     }

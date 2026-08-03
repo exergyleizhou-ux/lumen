@@ -3,8 +3,6 @@
 //! The adversarial skeptic panel is the whole verification: it
 //! spawns N independent skeptic subagents in parallel,
 //! parses each one's JSON verdict (with terminal-token fallback), and
-//! aggregates via majority-refute to drive `update_goal(completed:
-//! true)`. Each spawn sends a `SubagentEvent::Spawn` directly over
 //! `tool_context.subagent_event_tx` — no `task` tool call, so the
 //! parent model's transcript stays clean. The spawn is hidden behind
 //! the [`GoalClassifierSpawner`] trait so tests can inject deterministic
@@ -12,11 +10,14 @@
 //! constant names retain the `classifier` prefix to keep the env /
 //! remote / config wire contract stable across the rewire.
 
+#![allow(dead_code)]
+
 pub(crate) mod evidence;
 
 use crate::session::events::{Event, GoalClassifierFailOpenReason};
 use crate::session::goal_planner::{
-    GOAL_ROLE_SUBAGENT_TYPE, RoleRenderedPrompt, RoleSpawnOverride, spawn_with_fail_open_retry,
+    GOAL_ROLE_AWAIT_BUDGET_EXCEEDED, GOAL_ROLE_SUBAGENT_TYPE, RoleRenderedPrompt,
+    RoleSpawnOverride, spawn_with_fail_open_retry,
 };
 use crate::session::goal_role_tools::RoleToolNames;
 use crate::session::goal_tracker::GoalClassifierVerdict;
@@ -25,6 +26,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use xai_file_utils::events::EventWriter;
+use xai_grok_tools::implementations::grok_build::task::backend::{ChannelBackend, SubagentBackend};
+use xai_grok_tools::implementations::grok_build::task::types::{
+    SubagentOwner, SubagentRequest, SubagentRuntimeOverrides,
+};
 
 // Constants
 
@@ -404,7 +409,7 @@ pub(crate) fn parse_skeptic_terminal_response(text: &str) -> Option<bool> {
 /// signal (each skeptic renders `CHANGES_FILE: (unavailable)` and the
 /// verifier prompt's rule 5 takes over).
 pub(crate) async fn capture_git_baseline(workspace_root: &Path) -> Option<String> {
-    let mut cmd = tokio::process::Command::new(evidence::git_bin());
+    let mut cmd = tokio::process::Command::new(crate::util::subprocess::git_bin());
     cmd.arg("rev-parse").arg("HEAD").current_dir(workspace_root);
 
     let output = match tokio::time::timeout(GIT_BASELINE_CAPTURE_TIMEOUT, cmd.output()).await {
@@ -511,6 +516,8 @@ pub(crate) struct ChannelSpawner {
     pub(crate) event_tx: tokio::sync::mpsc::UnboundedSender<
         xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
     >,
+    pub(crate) foreground_wait:
+        Option<xai_grok_tools::implementations::grok_build::task::types::SubagentForegroundWait>,
     pub(crate) parent_session_id: String,
     pub(crate) parent_prompt_id: Option<String>,
     pub(crate) cwd: Option<String>,
@@ -525,6 +532,8 @@ pub(crate) struct ChannelSpawner {
     /// Event sink for the spawn-and-retry-once fail-open telemetry; `None`
     /// in tests / when no event log is wired.
     pub(crate) events: Option<EventWriter>,
+    /// Host-issued context identity for governed Goal verifier children.
+    pub(crate) context_manifest_hash: Option<String>,
 }
 
 #[async_trait::async_trait]
@@ -594,15 +603,15 @@ impl ChannelSpawner {
         harness_agent_type: Option<String>,
         resume_from: Option<&str>,
     ) -> Result<String, SpawnError> {
-        use xai_grok_tools::implementations::grok_build::task::types::{
-            SubagentEvent, SubagentRequest, SubagentRuntimeOverrides,
-        };
-        let (result_tx, result_rx) = tokio::sync::oneshot::channel();
         let request = SubagentRequest {
             id: id.to_string(),
             prompt,
             description: GOAL_CLASSIFIER_SUBAGENT_DESCRIPTION.to_string(),
             subagent_type: GOAL_CLASSIFIER_SUBAGENT_TYPE.to_string(),
+            lineage:
+                xai_grok_tools::implementations::grok_build::task::types::SubagentLineage::direct(
+                    self.parent_session_id.clone(),
+                ),
             parent_session_id: self.parent_session_id.clone(),
             parent_prompt_id: self.parent_prompt_id.clone(),
             resume_from: resume_from.map(str::to_string),
@@ -610,26 +619,29 @@ impl ChannelSpawner {
             runtime_overrides: SubagentRuntimeOverrides {
                 model,
                 harness_agent_type,
+                context_manifest_hash: self.context_manifest_hash.clone(),
                 ..Default::default()
             },
             run_in_background: false,
             // Harness-internal: never surface to the model's idle reminder.
             surface_completion: false,
+            await_to_completion: false,
             fork_context: false,
-            result_tx,
+            owner: SubagentOwner::Task,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
         };
-        if self
-            .event_tx
-            .send(SubagentEvent::Spawn(Box::new(request)))
-            .is_err()
-        {
-            return Err(SpawnError::Transport(
-                "subagent coordinator channel closed".to_string(),
-            ));
-        }
-        let result = result_rx
+        let backend = ChannelBackend::new(self.event_tx.clone());
+        let result = backend
+            .spawn_with_foreground_wait(request, self.foreground_wait.as_ref())
             .await
-            .map_err(|_| SpawnError::Transport("subagent result channel dropped".to_string()))?;
+            .map_err(|error| SpawnError::Transport(error.to_string()))?;
+        if result.backgrounded {
+            let _ = backend.cancel(&result.subagent_id).await;
+            return Err(SpawnError::Runtime {
+                message: GOAL_ROLE_AWAIT_BUDGET_EXCEEDED.to_owned(),
+                cancelled: true,
+            });
+        }
         if !result.success {
             let message = result.error.unwrap_or_else(|| "unknown error".to_string());
             return Err(SpawnError::Runtime {
@@ -2453,12 +2465,14 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let spawner = ChannelSpawner {
             event_tx: tx,
+            foreground_wait: None,
             parent_session_id: "parent".into(),
             parent_prompt_id: None,
             cwd: None,
             trace_sink: None,
             skeptic_overrides: Vec::new(),
             events: None,
+            context_manifest_hash: Some("sha256:goal-manifest".into()),
         };
         let handle = tokio::spawn(async move {
             let _ = spawner
@@ -2484,6 +2498,11 @@ mod tests {
             Some("prior-child"),
             "resume_from must propagate to the SubagentRequest",
         );
+        assert_eq!(
+            request.runtime_overrides.context_manifest_hash.as_deref(),
+            Some("sha256:goal-manifest"),
+            "governed Goal verifier resume must retain manifest identity",
+        );
         let _ = request.result_tx.send(SubagentResult::default());
         handle.await.unwrap();
     }
@@ -2503,6 +2522,7 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let spawner = ChannelSpawner {
             event_tx: tx,
+            foreground_wait: None,
             parent_session_id: "parent".into(),
             parent_prompt_id: None,
             cwd: None,
@@ -2514,6 +2534,7 @@ mod tests {
                 },
                 RoleSpawnOverride::default(),
             ],
+            context_manifest_hash: None,
             events: None,
         };
         let handle = tokio::spawn(async move {
@@ -2573,12 +2594,14 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let spawner = ChannelSpawner {
             event_tx: tx,
+            foreground_wait: None,
             parent_session_id: "parent".into(),
             parent_prompt_id: None,
             cwd: None,
             trace_sink: None,
             skeptic_overrides: vec![RoleSpawnOverride::default()],
             events: None,
+            context_manifest_hash: None,
         };
         let handle = tokio::spawn(async move {
             let _ = spawner
@@ -5636,7 +5659,7 @@ mod tests {
         let wait_for = |target: usize| {
             let observed = observed.clone();
             async move {
-                for _ in 0..10_000 {
+                for _ in 0..2_000 {
                     if observed
                         .spawn_count
                         .load(std::sync::atomic::Ordering::SeqCst)
@@ -5644,7 +5667,7 @@ mod tests {
                     {
                         return;
                     }
-                    tokio::task::yield_now().await;
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
                 }
                 panic!("timed out waiting for spawn_count == {target}");
             }
@@ -5868,6 +5891,7 @@ mod tests {
 
         let spawner: Arc<dyn GoalClassifierSpawner> = Arc::new(ChannelSpawner {
             event_tx: tx,
+            foreground_wait: None,
             parent_session_id: "parent".into(),
             parent_prompt_id: None,
             cwd: None,
@@ -5881,6 +5905,7 @@ mod tests {
                 RoleSpawnOverride::default(),
             ],
             events: None,
+            context_manifest_hash: None,
         });
 
         let (_log, emit) = collect_events();
@@ -6241,12 +6266,14 @@ mod tests {
 
         let spawner = ChannelSpawner {
             event_tx,
+            foreground_wait: None,
             parent_session_id: "parent-session".into(),
             parent_prompt_id: None,
             cwd: None,
             trace_sink: None,
             skeptic_overrides: Vec::new(),
             events: None,
+            context_manifest_hash: None,
         };
         let spawn_task = tokio::spawn(async move {
             spawner

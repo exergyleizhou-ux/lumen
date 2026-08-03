@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# FINAL-2.0 L4 full short contract.
+# R0 L4 full short contract.
 #
 # Deterministic localhost fault injection drives the shipped Lumen binary
 # through 429, 5xx, mid-stream disconnect, idle timeout, and cancellation.
@@ -150,7 +150,7 @@ inference_idle_timeout_secs = $IDLE_TIMEOUT_SECONDS
 
 [model.l4-fixture]
 model = "lumen-final20-fixture"
-name = "FINAL-2.0 L4 localhost fixture"
+name = "R0 L4 localhost fixture"
 base_url = "http://127.0.0.1:$port/v1"
 api_backend = "chat_completions"
 env_key = "LUMEN_FIXTURE_API_KEY"

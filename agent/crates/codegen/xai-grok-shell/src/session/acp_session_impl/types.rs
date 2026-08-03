@@ -12,31 +12,67 @@ pub(crate) enum McpReminderMode {
     Full,
 }
 
-/// Recovery decision returned by
-/// `SessionActor::handle_sampling_failure` for the sampler-based
-/// turn loop.
-pub(crate) enum SamplerFailureRecovery {
-    /// Compaction ran. The turn loop should rebuild the request from
-    /// the compacted conversation and resubmit.
-    CompactAndResubmit,
-    /// Auth 401 recovery succeeded (devbox re-mint or OIDC refresh).
-    /// The turn loop should resubmit once with the fresh token.
-    RefreshAuthAndResubmit,
-}
+/// P0 no-replay baseline for ordinary sampler turns **without** a durable
+/// sealed receipt.
+///
+/// In-process retry is only legal when a sealed attempt receipt proves
+/// `NoOutput + NoToolCall + NotAttempted + NoExternalEffect` (see
+/// `xai_grok_memory::may_in_process_retry`) **and** a durable store confirms
+/// that clean seal (S8). This constant is the hard ceiling when no receipt is
+/// available: spawn / prepare_sampler_for_turn keep sampler actor retries at
+/// zero so transport-level resubmit cannot reopen without admission.
+///
+/// Prefer [`ordinary_turn_max_retries`] /
+/// [`ordinary_turn_max_retries_with_authority`] /
+/// [`crate::session::nextgen_control::ordinary_sampler_max_retries`] at call
+/// sites that already hold an optional seal + durable authority.
+pub(crate) const NO_RECEIPT_MAX_RETRIES: u32 = 0;
 
-/// Outcome of a single turn attempt via the sampler-based path.
-/// `CompactAndResubmit` short-circuits the outer turn loop with
-/// `continue` (the turn driver re-builds the request from the latest
-/// chat state).
-pub(crate) enum SamplerTurnOutcome {
-    /// Model responded, with per-call latency stats for `shell.turn.inference_done`.
-    Response(
-        Box<ConversationResponse>,
-        Box<xai_grok_sampler::InferenceLatencyStats>,
-    ),
-    CompactAndResubmit,
-    /// Auth recovery succeeded; the outer loop should retry once.
-    RefreshAuthAndResubmit,
+#[cfg(test)]
+mod no_replay_policy_tests {
+    use super::NO_RECEIPT_MAX_RETRIES;
+    use xai_grok_memory::{
+        DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, DurableSealAuthority, clean_preflight_receipt,
+        mark_output_emitted, may_in_process_retry, ordinary_turn_max_retries,
+        ordinary_turn_max_retries_with_authority,
+    };
+
+    #[test]
+    fn ordinary_turn_retries_stay_zero_and_seal_gate_matches_policy() {
+        assert_eq!(
+            NO_RECEIPT_MAX_RETRIES, 0,
+            "ordinary turns must not in-process retry without sealed receipt"
+        );
+        assert_eq!(ordinary_turn_max_retries(None), NO_RECEIPT_MAX_RETRIES);
+        assert_eq!(
+            ordinary_turn_max_retries(Some(&clean_preflight_receipt("t0"))),
+            NO_RECEIPT_MAX_RETRIES,
+            "clean in-memory seal alone still maps to 0; durable authority required (S8)"
+        );
+        // Clean preflight is the observation gate; durable ConfirmedClean is
+        // what may raise the budget (still bounded by DURABLE_CLEAN_MAX).
+        assert!(may_in_process_retry(&clean_preflight_receipt("t0")).is_ok());
+        assert!(
+            may_in_process_retry(&mark_output_emitted(clean_preflight_receipt("t1"))).is_err(),
+            "any emitted output must forbid in-process retry"
+        );
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&clean_preflight_receipt("t2")),
+                DurableSealAuthority::ConfirmedClean
+            ),
+            DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES,
+            "S8: durable clean seal may open a bounded budget (auth-class only at shell)"
+        );
+        assert_eq!(
+            ordinary_turn_max_retries_with_authority(
+                Some(&mark_output_emitted(clean_preflight_receipt("t3"))),
+                DurableSealAuthority::ConfirmedClean
+            ),
+            0,
+            "existing output never opens budget"
+        );
+    }
 }
 
 /// Outcome of `process_conversation_turn`, distinguishing normal completion from cancellation.
@@ -50,9 +86,9 @@ pub(crate) enum TurnOutcome {
         snapshot: Box<Option<TurnDeltaSnapshot>>,
         tools_called: Vec<String>,
         structured_output: Option<Result<serde_json::Value, String>>,
-        /// Terminal response was a content-filter refusal; maps the prompt's
-        /// ACP stop reason to `Refusal` instead of `EndTurn`.
-        refusal: bool,
+        /// `Some(explanation)` marks a content-filter refusal (empty when the
+        /// provider gave no message).
+        refusal: Option<String>,
     },
     /// The turn was cancelled (user rejection, hook denial, doom loop, etc.).
     /// The category distinguishes the cause for analytics.
@@ -62,6 +98,11 @@ pub(crate) enum TurnOutcome {
     },
     /// The `--max-turns` limit was reached after a tool-execution cycle.
     MaxTurnsReached { limit: usize },
+    /// Silent EndTurn after stationarity/true-noop thrash. Distinct from
+    /// Completed so recovery/goal/stop-hook cannot re-open the sampling loop.
+    StationarityEnded {
+        snapshot: Box<Option<TurnDeltaSnapshot>>,
+    },
 }
 
 #[derive(Debug)]
@@ -221,6 +262,14 @@ pub(crate) enum NotAchievedSyntheticReason {
 pub(crate) enum GoalRoundDecision {
     Continue(String),
     EndTurn,
+}
+
+/// Decision from the turn-end stop gate: allow the turn to end, or keep the
+/// agent working by injecting `feedback` as a synthetic user message.
+#[derive(Debug)]
+pub(crate) enum StopGateDecision {
+    AllowStop,
+    KeepWorking { feedback: String },
 }
 
 /// Which part of the model's streaming lifecycle the capture was tied to

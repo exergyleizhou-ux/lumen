@@ -1,7 +1,7 @@
 # Lumen example config — multi-provider BYOK catalog.
 # Copy to ~/.grok/config.toml (or the product config path after home migration).
 #
-# DeepSeek V4 Pro is the default coding executor. Stable long-session prefixes
+# DeepSeek V4 Flash is the default coding executor. Stable long-session prefixes
 # also produce high prompt-cache hit rates. Switch per invocation with `lumen -m <id>` or inside
 # the TUI with `/model <id>` (Ctrl+M opens the picker).
 #
@@ -10,9 +10,42 @@
 # agent loop.
 
 [models]
-default = "deepseek-v4-pro"
+default = "deepseek-v4-flash"
 
-# ── DeepSeek (preferred default) ────────────────────────────────────────────
+# ── Optional Expert model pool ──────────────────────────────────────────────
+# The normal `/model` choice always wins. This pool applies only to a *new*
+# `/expert` task. Uncomment after configuring credentials for every model in
+# the pool. Empty `advisor_model_priority` means deterministic task-aware
+# selection inside this allowlist; it never selects a model outside the pool.
+#
+# [expert]
+# advisor_model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+# advisor_model_priority = [] # auto: implementation→Flash, review/research→Grok
+#
+# To force an order instead, list only IDs from the same pool:
+# advisor_model_priority = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+#
+# A recognizable quota/credit-exhausted response marks only that endpoint
+# unavailable for the *next* Expert task. Lumen does not replay a task that
+# already produced output, and it never falls back outside this allowlist.
+
+# ── Optional ordinary-turn no-replay routing ────────────────────────────────
+# This is separate from Expert. It is off by default. When an ordinary request
+# fails before it produces any response or tool side effect, Lumen may retry it
+# on the next healthy model in this strict allowlist. An explicit `/model` pin
+# always disables this automatic path for that session.
+#
+# [model_routing]
+# enabled = true
+# model_pool = ["deepseek-v4-flash", "grok-4.5", "deepseek-v4-pro"]
+# priority = [] # auto: implementation→Flash, review/research→Grok
+# To force an order instead, list only IDs from model_pool.
+# [model_routing.task_preferences]
+# implementation = ["deepseek-v4-flash", "deepseek-v4-pro"]
+# review = ["grok-4.5", "deepseek-v4-pro"]
+# research = ["grok-4.5", "deepseek-v4-pro"]
+
+# ── DeepSeek (Flash is the preferred default; Pro is escalation) ────────────
 [model.deepseek-v4-pro]
 model = "deepseek-v4-pro"
 name = "DeepSeek V4 Pro"

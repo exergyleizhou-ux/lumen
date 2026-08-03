@@ -23,7 +23,7 @@ use super::{apply, errors::ApplyPatchError};
 // ─── Description ─────────────────────────────────────────────────────
 
 /// Tool description derived from the codex `apply_patch_tool_instructions.md`.
-const DESCRIPTION: &str = r#"Use the `apply_patch` tool to edit files.
+const DESCRIPTION: &str = r#"Use this tool to edit files.
 Your patch language is a stripped‑down, file‑oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high‑level envelope:
 
 *** Begin Patch
@@ -41,6 +41,9 @@ Each operation starts with one of three headers:
 May be immediately followed by *** Move to: <new path> if you want to rename the file.
 Then one or more “hunks”, each introduced by @@ (optionally followed by a hunk header).
 Within a hunk each line starts with:
++ for inserted text,
+- for removed text, or
+  (a space) for unchanged context.
 
 For instructions on [context_before] and [context_after]:
 - By default, show 3 lines of code immediately above and 3 lines immediately below each change. If a change is within 3 lines of a previous change, do NOT duplicate the first change’s [context_after] lines in the second change’s [context_before] lines.
@@ -277,7 +280,7 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
             "apply_patch",
-            crate::types::tool_metadata::ToolMetadata::description_template(self),
+            crate::types::tool_metadata::ToolMetadata::sanitized_description_template(self),
         )
     }
 
@@ -333,6 +336,46 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
             Ok(c) => c,
             Err(msg) => return Ok(ApplyPatchOutput::ApplicationError(msg)),
         };
+
+        // Validate the complete mutation set before the first filesystem
+        // operation.  A multi-file patch must not partially apply because a
+        // later destination lies outside a child agent's host-issued grant.
+        {
+            let res = resources.lock().await;
+            for change in &changes {
+                let paths: Vec<&std::path::Path> = match change {
+                    FileChange::Add { path, .. }
+                    | FileChange::Delete { path, .. }
+                    | FileChange::Update { path, .. } => vec![path.as_path()],
+                    FileChange::Move {
+                        source_path,
+                        dest_path,
+                        ..
+                    } => vec![source_path.as_path(), dest_path.as_path()],
+                };
+                for path in &paths {
+                    if let Err(error) =
+                        crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                            &res, path, &cwd,
+                        )
+                    {
+                        return Ok(ApplyPatchOutput::ApplicationError(format!(
+                            "{error}: patch target is outside this child agent's write scope ({})",
+                            path.display()
+                        )));
+                    }
+                }
+                if let Err(error) =
+                    crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                        &res,
+                    )
+                {
+                    return Ok(ApplyPatchOutput::ApplicationError(format!(
+                        "{error}: child sandbox forbids write"
+                    )));
+                }
+            }
+        }
 
         // ── Phase 3: Apply all changes (write to filesystem) ─────
         let mut file_results = Vec::new();
@@ -540,6 +583,38 @@ mod tests {
             }
             other => panic!("Expected Success, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn write_scope_rejects_entire_multi_file_patch_before_any_write() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed.clone()], 60)
+                .unwrap(),
+        });
+        let patch = wrap_patch(
+            "*** Add File: allowed/ok.txt\n+allowed\n*** Add File: denied.txt\n+must-not-write",
+        );
+        let result = xai_tool_runtime::Tool::run(
+            &ApplyPatchTool,
+            test_ctx(resources.into_shared()),
+            make_input(&patch),
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(result, ApplyPatchOutput::ApplicationError(message) if message.contains("write_scope"))
+        );
+        assert!(
+            !allowed.join("ok.txt").exists(),
+            "allowed first file must not be written when a later target is denied"
+        );
+        assert!(!tmp.path().join("denied.txt").exists());
     }
 
     // ── Delete file ──────────────────────────────────────────────

@@ -3,6 +3,42 @@
 //! recovery, and per-response usage recording.
 use super::*;
 
+/// Classify only observed failures that make a provider unsuitable for a
+/// *later* new task. This function deliberately does not authorize retry or
+/// model switching for the current turn: after any output or side effect,
+/// replay would be unsafe.
+pub(super) fn provider_failure_kind_for_sampling_error(
+    error: &xai_grok_sampler::SamplingErrorInfo,
+) -> Option<&'static str> {
+    use xai_grok_sampler::SamplingErrorKind;
+
+    if error.status_code == Some(402) {
+        return Some("quota_exhausted");
+    }
+    let message = error.message.to_ascii_lowercase();
+    if matches!(error.kind, SamplingErrorKind::Api)
+        && [
+            "out of credits",
+            "run out of credits",
+            "spending limit",
+            "insufficient balance",
+        ]
+        .iter()
+        .any(|needle| message.contains(needle))
+    {
+        return Some("quota_exhausted");
+    }
+    match error.kind {
+        SamplingErrorKind::RateLimited => Some("rate_limited"),
+        SamplingErrorKind::IdleTimeout => Some("timeout"),
+        SamplingErrorKind::Http => Some("upstream"),
+        SamplingErrorKind::Api if error.status_code.is_some_and(|status| status >= 500) => {
+            Some("upstream")
+        }
+        _ => None,
+    }
+}
+
 /// Map only mutations whose cache effect is represented faithfully by the
 /// provider-neutral evidence vocabulary. Other durable rewrites still rotate
 /// the epoch, but are not mislabeled as a compaction or memory change.
@@ -74,7 +110,7 @@ impl SessionTokenAuthGate {
             is_session_based: auth_method_id
                 .is_some_and(crate::agent::auth_method::is_session_based_method),
             model_byok,
-            endpoint_is_first_party: crate::util::is_first_party_xai_url(base_url),
+            endpoint_is_first_party: crate::util::is_xai_api_url(base_url),
         }
     }
     fn active(self) -> bool {
@@ -127,7 +163,7 @@ where
         xai_grok_telemetry::unified_log::warn(
             "auth recovery: tool 401, refresh failed",
             None,
-            Some(serde_json::json!({ "tool" : tool_name })),
+            Some(serde_json::json!({ "tool": tool_name })),
         );
         result
     }
@@ -218,13 +254,76 @@ impl SessionActor {
     /// (`prepare_tool_definitions_*`); this applies only the `web_search` drop
     /// under backend search and the `ToolSpec::from` mapping.
     pub(crate) fn turn_base_tool_specs(&self, defs: &[ToolDefinition]) -> Vec<ToolSpec> {
-        let use_backend_search =
-            self.agent.borrow().backend_search_enabled() && self.supports_backend_search.get();
+        let backend_search_active = self.backend_search_active();
         defs.iter()
-            .filter(|td| !use_backend_search || td.function.name != "web_search")
+            .filter(|td| !backend_search_active || td.function.name != "web_search")
             .cloned()
             .map(ToolSpec::from)
             .collect()
+    }
+    /// Hosted tools with overrides applied, plus the applied overrides to echo, in one pass.
+    fn resolve_hosted(
+        &self,
+    ) -> (
+        Vec<xai_grok_sampling_types::HostedTool>,
+        xai_grok_sampling_types::ToolOverrides,
+    ) {
+        let mut tools = self.agent.borrow().hosted_tools().to_vec();
+        let applied = xai_grok_sampling_types::apply_tool_overrides(
+            &mut tools,
+            self.tool_overrides.borrow().as_ref(),
+        );
+        (tools, applied)
+    }
+    /// Ungated. Prefer [`Self::hosted_tools_for_turn`], which folds in the backend-search gate.
+    pub(crate) fn effective_hosted_tools(&self) -> Vec<xai_grok_sampling_types::HostedTool> {
+        self.resolve_hosted().0
+    }
+    pub(crate) fn hosted_tools_for_turn(&self) -> Vec<xai_grok_sampling_types::HostedTool> {
+        if self.backend_search_active() {
+            self.effective_hosted_tools()
+        } else {
+            Vec::new()
+        }
+    }
+    /// The applied overrides to echo, or `None` when backend search is off.
+    pub(crate) fn effective_tool_overrides(
+        &self,
+    ) -> Option<xai_grok_sampling_types::ToolOverrides> {
+        if !self.backend_search_active() {
+            return None;
+        }
+        let applied = self.resolve_hosted().1;
+        (!applied.is_empty()).then_some(applied)
+    }
+    pub(crate) fn backend_search_active(&self) -> bool {
+        self.agent.borrow().backend_search_enabled() && self.supports_backend_search.get()
+    }
+    /// Set the per-turn override and emit it before any turn runs, so a subagent spawned this turn
+    /// inherits it.
+    pub(crate) fn set_tool_overrides(&self, overrides: xai_grok_sampling_types::ToolOverrides) {
+        *self.tool_overrides.borrow_mut() = Some(overrides);
+        self.emit_resolved_tool_overrides();
+    }
+    /// Fold a per-turn update at promotion: an object sets, `null` clears to the seed, absent leaves.
+    pub(crate) fn apply_tool_overrides_update(
+        &self,
+        update: Option<xai_grok_sampling_types::ToolOverridesUpdate>,
+    ) {
+        let Some(update) = update else { return };
+        {
+            let mut slot = self.tool_overrides.borrow_mut();
+            *slot = update.apply(slot.take());
+        }
+        self.emit_resolved_tool_overrides();
+    }
+    /// Store this session's cutoff in the cell a subagent spawn reads. Not gated on backend search,
+    /// so a bounded parent bounds a searching child even if it isn't searching.
+    pub(crate) fn emit_resolved_tool_overrides(&self) {
+        let seed = self.agent.borrow().definition().tool_overrides.clone();
+        let effective = resolve_configured_cutoff(seed, self.tool_overrides.borrow().as_ref());
+        self.resolved_tool_overrides
+            .store((!effective.is_empty()).then(|| std::sync::Arc::new(effective)));
     }
     pub(super) async fn prepare_tool_definitions_inner(&self) -> Vec<ToolDefinition> {
         let bridge = self.agent.borrow().tool_bridge().clone();
@@ -232,34 +331,136 @@ impl SessionActor {
         let plan_active = self.plan_mode.lock().is_active();
         filter_cursor_tools_by_plan_mode(defs, plan_active)
     }
-    /// Memoized per-model [`ModelAuthFacts`](crate::agent::config::ModelAuthFacts),
-    /// keyed by `model_id`.
-    ///
-    /// A fresh `Unknown` (config currently unparseable) falls back to the last
-    /// definite value for the same `model_id` rather than demoting a live session
-    /// to non-refreshable api-key mode. Because a config edit can turn the
-    /// currently-selected model into a per-model BYOK model without changing
-    /// `model_id`, keying on `model_id` alone is insufficient — each
-    /// model/credential chokepoint must clear this memo (`replace(None)`).
     pub(super) fn model_auth_facts(&self, model_id: &str) -> crate::agent::config::ModelAuthFacts {
+        self.model_auth_state(model_id).0
+    }
+    pub(super) fn model_auth_provider(
+        &self,
+        model_id: &str,
+    ) -> Option<crate::auth::AuthProviderRef> {
+        self.model_auth_state(model_id).1
+    }
+    /// Drop the memoized per-model auth state; see [`Self::model_auth_memo`]
+    /// for why each model/credential chokepoint must call this.
+    pub(crate) fn invalidate_model_auth_memo(&self) {
+        self.model_auth_memo.replace(None);
+    }
+    /// Reads and populates [`Self::model_auth_memo`]; a fresh `Unknown`
+    /// falls back to the last definite entry (see the field's contract).
+    fn model_auth_state(
+        &self,
+        model_id: &str,
+    ) -> (
+        crate::agent::config::ModelAuthFacts,
+        Option<crate::auth::AuthProviderRef>,
+    ) {
         use crate::agent::auth_method::ModelByok;
-        if let Some((cached_id, facts)) = self.model_auth_facts.borrow().as_ref()
-            && cached_id == model_id
-            && facts.byok != ModelByok::Unknown
+        use crate::session::acp_session::ModelAuthMemo;
+        if let Some(memo) = self.model_auth_memo.borrow().as_ref()
+            && memo.model_id == model_id
+            && memo.facts.byok != ModelByok::Unknown
         {
-            return *facts;
+            return (memo.facts, memo.provider.clone());
         }
-        let fresh = crate::agent::config::resolve_model_auth_facts(model_id);
+        let (fresh, provider) =
+            crate::agent::config::resolve_model_auth_facts_and_provider(model_id);
         if fresh.byok == ModelByok::Unknown {
-            if let Some((cached_id, facts)) = self.model_auth_facts.borrow().as_ref()
-                && cached_id == model_id
+            if let Some(memo) = self.model_auth_memo.borrow().as_ref()
+                && memo.model_id == model_id
             {
-                return *facts;
+                return (memo.facts, memo.provider.clone());
             }
-            return fresh;
+            return (fresh, provider);
         }
-        *self.model_auth_facts.borrow_mut() = Some((model_id.to_string(), fresh));
-        fresh
+        *self.model_auth_memo.borrow_mut() = Some(ModelAuthMemo {
+            model_id: model_id.to_string(),
+            facts: fresh,
+            provider: provider.clone(),
+        });
+        (fresh, provider)
+    }
+    /// The single writer of a provider mint/rotation into chat-state credentials.
+    async fn set_chat_api_key(&self, new_key: String) {
+        let mut creds = self.chat_state_handle.get_credentials().await;
+        creds.api_key = Some(new_key);
+        self.chat_state_handle.update_credentials(creds);
+    }
+    /// Pre-turn arm for a provider-backed model: mint on a cold cache,
+    /// re-mint near expiry, and adopt a rotation chat-state missed. No-op
+    /// when `current_key` is already the fresh cached token.
+    async fn refresh_provider_token_pre_turn(
+        &self,
+        provider: &crate::auth::AuthProviderRef,
+        current_key: Option<&str>,
+        model_id: &str,
+    ) {
+        match provider.ensure_fresh_token(current_key).await {
+            crate::auth::ProviderRefreshOutcome::Rotated(new_key) => {
+                tracing::info!(
+                    model = %model_id,
+                    provider = %provider.name,
+                    cold = current_key.is_none(),
+                    "auth provider token rotated pre-turn"
+                );
+                self.set_chat_api_key(new_key).await;
+            }
+            crate::auth::ProviderRefreshOutcome::Unchanged => {}
+            crate::auth::ProviderRefreshOutcome::MintFailed => {
+                tracing::warn!(
+                    session_id = %self.session_info.id.0,
+                    provider = %provider.name,
+                    model = %model_id,
+                    "auth provider pre-turn refresh failed"
+                );
+                xai_grok_telemetry::unified_log::warn(
+                    "auth provider pre-turn refresh failed",
+                    Some(self.session_info.id.0.as_ref()),
+                    Some(serde_json::json!({
+                        "provider": provider.name,
+                        "model": model_id,
+                        "cold": current_key.is_none(),
+                    })),
+                );
+            }
+            crate::auth::ProviderRefreshOutcome::Unusable => {}
+        }
+    }
+    /// 401 arm for a provider-backed model: re-run the helper once and
+    /// resubmit. A missing key means the cold mint failed and the request
+    /// went out unauthenticated, so mint instead. Returns `false` when the
+    /// fresh-mint guard blocked the re-run or the helper failed; the 401
+    /// then surfaces as a terminal error.
+    async fn try_provider_401_recovery(&self, provider: &crate::auth::AuthProviderRef) -> bool {
+        let rejected_key = self.chat_state_handle.get_credentials().await.api_key;
+        let recovered = match rejected_key {
+            Some(ref rejected_key) => provider.recover_rejected_token(rejected_key).await,
+            None => provider.ensure_fresh_token(None).await.rotated(),
+        };
+        let Some(new_key) = recovered else {
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                provider = %provider.name,
+                "auth recovery: sampler 401, provider re-mint declined or failed"
+            );
+            xai_grok_telemetry::unified_log::warn(
+                "auth recovery: sampler 401, provider re-mint declined or failed",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({ "provider": provider.name })),
+            );
+            return false;
+        };
+        tracing::info!(
+            session_id = %self.session_info.id.0,
+            provider = %provider.name,
+            "auth recovery: sampler 401, auth provider re-mint, retrying"
+        );
+        xai_grok_telemetry::unified_log::info(
+            "auth recovery: sampler 401, auth provider re-mint, retrying",
+            Some(self.session_info.id.0.as_ref()),
+            None,
+        );
+        self.set_chat_api_key(new_key).await;
+        true
     }
     /// Gate inputs for `model_id` routed to `base_url`. See
     /// [`crate::agent::auth_method::session_token_auth_gate`] for the rationale
@@ -285,12 +486,14 @@ impl SessionActor {
             return;
         }
         let refresh_active = gate.active();
-        let ctx = serde_json::json!(
-            { "site" : site, "model_byok" : gate.model_byok.as_str(), "is_session_based"
-            : gate.is_session_based, "endpoint_is_first_party" : gate
-            .endpoint_is_first_party, "refresh_active" : refresh_active, "base_url" :
-            base_url, }
-        );
+        let ctx = serde_json::json!({
+            "site": site,
+            "model_byok": gate.model_byok.as_str(),
+            "is_session_based": gate.is_session_based,
+            "endpoint_is_first_party": gate.endpoint_is_first_party,
+            "refresh_active": refresh_active,
+            "base_url": base_url,
+        });
         let sid = Some(self.session_info.id.0.as_ref());
         if refresh_active {
             xai_grok_telemetry::unified_log::info(
@@ -323,18 +526,6 @@ impl SessionActor {
                 }
             }
         }
-        #[allow(clippy::items_after_statements)]
-        struct AuthManagerBearerResolver(std::sync::Arc<crate::auth::AuthManager>);
-        impl std::fmt::Debug for AuthManagerBearerResolver {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                f.debug_struct("AuthManagerBearerResolver").finish()
-            }
-        }
-        impl xai_grok_sampler::BearerResolver for AuthManagerBearerResolver {
-            fn current_bearer(&self) -> Option<String> {
-                self.0.current_or_expired().map(|a| a.key)
-            }
-        }
         let cfg = self
             .chat_state_handle
             .get_sampling_config()
@@ -347,6 +538,8 @@ impl SessionActor {
                 top_p: None,
                 api_backend: Default::default(),
                 extra_headers: Default::default(),
+                query_params: Default::default(),
+                env_http_headers: Default::default(),
                 context_window: std::num::NonZeroU64::new(256_000).unwrap(),
                 reasoning_effort: None,
                 stream_tool_calls: None,
@@ -358,6 +551,16 @@ impl SessionActor {
             SessionTokenAuthGate::new(auth_method.as_deref(), model_facts.byok, &cfg.base_url);
         let use_bearer_resolver = gate.active();
         self.log_auth_gate_unknown("reconstruct_full_config", gate, &cfg.base_url);
+        if use_bearer_resolver && let Some(am) = self.auth_manager.as_ref() {
+            let _ = am.auth().await;
+        }
+        let api_key = if use_bearer_resolver {
+            self.auth_manager
+                .as_ref()
+                .and_then(|am| am.current_wire_valid().map(|a| a.key))
+        } else {
+            creds.api_key
+        };
         let auth_scheme = model_facts.auth_scheme;
         let mut extra_headers = cfg.extra_headers;
         crate::agent::config::inject_url_derived_headers(
@@ -390,7 +593,7 @@ impl SessionActor {
             }
         }
         SamplingConfig {
-            api_key: creds.api_key,
+            api_key,
             base_url: cfg.base_url,
             model: cfg.model,
             max_completion_tokens: cfg.max_completion_tokens,
@@ -399,11 +602,16 @@ impl SessionActor {
             api_backend: cfg.api_backend,
             auth_scheme,
             extra_headers,
+            query_params: cfg.query_params.clone(),
+            env_http_headers: cfg.env_http_headers.clone(),
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
             reasoning_effort: cfg.reasoning_effort,
             force_http1: false,
-            max_retries: Some(self.max_retries),
+            // P0: a turn without a durable provider-attempt receipt is never
+            // safe to replay automatically. The actor policy is the second
+            // ceiling; keep this per-turn config explicit as well.
+            max_retries: Some(NO_RECEIPT_MAX_RETRIES),
             stream_tool_calls: cfg.stream_tool_calls.unwrap_or(false),
             idle_timeout_secs: None,
             client_identifier: self.client_identifier.clone(),
@@ -419,11 +627,9 @@ impl SessionActor {
             origin_client: self.origin_client.clone(),
             attribution_callback: self.attribution_callback.clone(),
             bearer_resolver: if use_bearer_resolver {
-                self.auth_manager
-                    .as_ref()
-                    .map(|am| -> xai_grok_sampler::SharedBearerResolver {
-                        std::sync::Arc::new(AuthManagerBearerResolver(am.clone()))
-                    })
+                self.auth_manager.as_ref().map(|am| {
+                    crate::auth::credential_provider::WireValidBearerResolver::shared(am.clone())
+                })
             } else {
                 None
             },
@@ -470,13 +676,15 @@ impl SessionActor {
         );
         let (prompt_type, classifier_reasoning_effort) =
             crate::util::config::auto_mode_classifier_defaults(&auto_cfg, effective_supports_re);
+        let classify_timeout = crate::util::config::auto_mode_classify_timeout(&auto_cfg);
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<(
             Vec<xai_grok_workspace::permission::ClassifierMessage>,
-            tokio::sync::oneshot::Sender<Result<String, String>>,
+            tokio::sync::oneshot::Sender<
+                Result<String, xai_grok_workspace::permission::ClassifierFailure>,
+            >,
         )>();
         let session = Arc::clone(self);
         tokio::task::spawn_local(async move {
-            const TIMEOUT_MS: u64 = 15_000;
             while let Some((messages, respond_to)) = rx.recv().await {
                 let result = async {
                     let (sampling_client, model) = match &aux_classifier_sampler {
@@ -485,7 +693,9 @@ impl SessionActor {
                             let client = session
                                 .prepare_chat_completion(false)
                                 .await
-                                .map_err(|e| e.to_string())?;
+                                .map_err(|e| xai_grok_workspace::permission::ClassifierFailure::TransportError(
+                                    e.to_string(),
+                                ))?;
                             let model = session
                                 .chat_state_handle
                                 .get_sampling_config()
@@ -519,21 +729,31 @@ impl SessionActor {
                             xai_grok_workspace::permission::classifier_output_json_schema(),
                         ),
                         reasoning_effort: classifier_reasoning_effort,
-                        x_grok_conv_id: Some(session_id.clone()),
-                        x_grok_req_id: Some(format!("xai-perm-auto-{}", uuid::Uuid::new_v4())),
+                        x_grok_conv_id: Some(
+                            format!("perm-classifier-{}", uuid::Uuid::new_v4()),
+                        ),
+                        x_grok_req_id: Some(
+                            format!("xai-perm-auto-{}", uuid::Uuid::new_v4()),
+                        ),
                         x_grok_session_id: Some(session_id),
                         x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
                         ..ConversationRequest::default()
                     };
                     let fut = sampling_client.conversation_collect(request);
-                    let response =
-                        tokio::time::timeout(std::time::Duration::from_millis(TIMEOUT_MS), fut)
-                            .await
-                            .map_err(|_| "permission auto classifier timed out".to_string())?
-                            .map_err(|e| e.to_string())?;
+                    let response = tokio::time::timeout(classify_timeout, fut)
+                        .await
+                        .map_err(|_| {
+                            xai_grok_workspace::permission::ClassifierFailure::Timeout
+                        })?
+                        .map_err(|e| xai_grok_workspace::permission::ClassifierFailure::TransportError(
+                            e.to_string(),
+                        ))?;
                     Ok(response.assistant_text())
                 }
-                .await;
+                    .await;
+                if let Err(error) = &result {
+                    tracing::warn!(%error, "permission auto classifier side-query failed");
+                }
                 let _ = respond_to.send(result);
             }
         });
@@ -545,7 +765,7 @@ impl SessionActor {
         );
         self.permissions.set_classifier_with_side_query(clf, true);
         tracing::info!(
-            session_id = % self.session_info.id,
+            session_id = %self.session_info.id,
             "Wired live LLM permission auto-mode classifier (session sampling channel)"
         );
     }
@@ -600,10 +820,7 @@ impl SessionActor {
         let model = cfg.model.clone();
         let client = xai_grok_sampler::SamplingClient::new(cfg)
             .map_err(|e| {
-                tracing::warn!(
-                    error = % e,
-                    "auto classifier aux sampler build failed; using session model"
-                )
+                tracing::warn!(error = %e, "auto classifier aux sampler build failed; using session model")
             })
             .ok()?;
         Some((client, model))
@@ -638,9 +855,80 @@ impl SessionActor {
     pub(crate) async fn prepare_sampler_for_turn(&self) {
         self.refresh_token_if_expired().await;
         let mut sampler_config = self.reconstruct_full_config().await;
+        sampler_config.max_retries = Some(NO_RECEIPT_MAX_RETRIES);
+        sampler_config.doom_loop_recovery = None;
+        if self.tool_context.task_output_token_budget.is_some()
+            || self.tool_context.sampler_retry_only_before_output
+        {
+            sampler_config.doom_loop_recovery = None;
+        }
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
         self.sampler_handle.update_config(sampler_config);
     }
+
+    /// Apply the user-selected ordinary model pool once, before the first
+    /// sampler submission of a root turn. A tool-loop continuation is not a
+    /// new admission and must not silently change its model mid-turn.
+    pub(crate) async fn maybe_select_ordinary_model_for_task(
+        &self,
+        task: &str,
+        is_initial_root_sampling_attempt: bool,
+    ) {
+        if !is_initial_root_sampling_attempt
+            || self.tool_context.subagent_depth > 0
+            || self.models_manager.user_selected_model()
+        {
+            return;
+        }
+        let policy = self.models_manager.model_routing_config();
+        if !policy.enabled || policy.model_pool.is_empty() {
+            return;
+        }
+        let Some(next_model) = self.models_manager.select_healthy_model_for_task(
+            &policy.model_pool,
+            &policy.priority,
+            &policy.task_preferences,
+            task,
+        ) else {
+            return;
+        };
+        let active = self.reconstruct_full_config().await;
+        if active.model == next_model {
+            return;
+        }
+        let Some(mut config) = self.resolve_aux_sampler_config(&next_model).await else {
+            return;
+        };
+        crate::agent::config::stamp_session_local_sampler_fields(
+            &mut config,
+            &active,
+            self.client_identifier.clone(),
+            Some(NO_RECEIPT_MAX_RETRIES),
+        );
+        if self
+            .handle_set_session_model(
+                config,
+                false,
+                false,
+                true,
+                self.compaction.threshold_percent.get(),
+            )
+            .await
+            .is_ok()
+        {
+            self.models_manager
+                .set_current_model_id_for_routing(acp::ModelId::new(next_model.clone()));
+            xai_grok_telemetry::unified_log::info(
+                "model routing: selected ordinary turn model from user pool",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({
+                    "to_model": next_model,
+                    "reason": if policy.priority.is_empty() { "task_policy" } else { "user_priority" },
+                })),
+            );
+        }
+    }
+
     fn log_terminal_failure(&self, error_type: &str, status_code: Option<u16>, message: &str) {
         let auth = self
             .auth_manager
@@ -650,47 +938,90 @@ impl SessionActor {
         xai_grok_telemetry::unified_log::warn(
             "turn.terminal_failure",
             Some(self.session_info.id.0.as_ref()),
-            Some(serde_json::json!(
-                { "error_type" : error_type, "status_code" : status_code,
-                "reauthable" : reauthable, "auth_mode" : auth.as_ref().map(| a |
-                format!("{:?}", a.auth_mode)), "key_prefix" : auth.as_ref().map(| a |
-                crate ::auth::token_suffix(& a.key).to_owned()), "expires_at" : auth
-                .as_ref().and_then(| a | a.expires_at.map(| e | e.to_rfc3339())),
-                "message" : crate ::util::truncate(message, 300), }
-            )),
+            Some(serde_json::json!({
+                "error_type": error_type,
+                "status_code": status_code,
+                "reauthable": reauthable,
+                "auth_mode": auth.as_ref().map(|a| format!("{:?}", a.auth_mode)),
+                "key_prefix": auth.as_ref().map(|a| crate::auth::token_suffix(&a.key).to_owned()),
+                "expires_at": auth
+                    .as_ref()
+                    .and_then(|a| a.expires_at.map(|e| e.to_rfc3339())),
+                "message": crate::util::truncate(message, 300),
+            })),
         );
     }
     pub(crate) async fn handle_sampling_failure(
         self: &Arc<Self>,
         error: xai_grok_sampler::SamplingErrorInfo,
-    ) -> Result<SamplerFailureRecovery, acp::Error> {
+    ) -> Result<std::convert::Infallible, acp::Error> {
         use xai_grok_sampler::SamplingErrorKind;
-        if self.should_compact_on_error(&error).await {
-            let cw = error
+        if self.tool_context.task_output_token_budget.is_some() {
+            self.tool_context.fail_task_output_usage_closed();
+            let message = format!(
+                "budgeted workflow child model request failed; output grant exhausted: {}",
+                error.message
+            );
+            self.log_terminal_failure("output_budget_usage_unknown", error.status_code, &message);
+            return Err(acp::Error::internal_error().data(message));
+        }
+        if self.tool_context.sampler_retry_only_before_output {
+            let handle = self.chat_state_handle.clone();
+            tokio::spawn(async move {
+                let _ = handle.mark_usage_incomplete(true, true).await;
+            });
+            let message = format!(
+                "workflow child model request failed; usage may understate real spend: {}",
+                error.message
+            );
+            self.log_terminal_failure(
+                "workflow_child_sampling_failed",
+                error.status_code,
+                &message,
+            );
+            return Err(acp::Error::internal_error().data(message));
+        }
+        let compact_would_be_required = self.should_compact_on_error(&error).await;
+        let mut detailed_message = error.message.clone();
+        if compact_would_be_required {
+            let context_window = error
                 .model_metadata
                 .as_ref()
-                .and_then(|m| m.context_window)
+                .and_then(|metadata| metadata.context_window)
                 .expect("should_compact_on_error guarantees context_window");
-            {
-                let total_tokens = self.chat_state_handle.get_estimated_total_tokens().await;
-                let percentage = xai_token_estimation::usage_percentage_u8(total_tokens, cw);
-                if let Some(mut cfg) = self.chat_state_handle.get_sampling_config().await
-                    && let Some(new_cw) = std::num::NonZeroU64::new(cw)
-                    && self.compaction.context_window_override.is_none()
-                {
-                    cfg.context_window = new_cw;
-                    self.chat_state_handle.update_sampling_config(cfg);
-                }
-                let trigger_info = compaction::AutoCompactTriggerInfo {
-                    tokens_used: total_tokens,
-                    context_window: cw,
-                    percentage,
-                };
-                self.run_compact_only(trigger_info).await?;
-                return Ok(SamplerFailureRecovery::CompactAndResubmit);
-            }
+            tracing::warn!(
+                session_id = %self.session_info.id.0,
+                context_window,
+                "context overflow is terminal until a new task; refusing error-triggered compaction and replay without a provider-attempt receipt"
+            );
+            detailed_message.push_str(
+                "\n\nThe request was not automatically compacted or resubmitted. Start a new task to retry after reviewing the context." ,
+            );
         }
-        let detailed_message = error.message.clone();
+        let (failed_model_id, failed_base_url) = self
+            .chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|c| (c.model, c.base_url))
+            .unwrap_or_default();
+        // Failure escalation: repeated ordinary-turn failures must never read
+        // as "stuck". The counter resets on the next successful response.
+        let consecutive_failures = self
+            .tool_context
+            .consecutive_sampling_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        let provider_failure_kind = provider_failure_kind_for_sampling_error(&error);
+        if let Some(kind) = provider_failure_kind {
+            self.models_manager
+                .record_provider_failure(&failed_base_url, kind);
+            tracing::info!(
+                session_id = %self.session_info.id.0,
+                failed_model = %failed_model_id,
+                failure_kind = kind,
+                "model routing: recorded provider failure for a later root admission; refusing same-turn reroute"
+            );
+        }
         if matches!(error.kind, SamplingErrorKind::Api)
             && error.status_code == Some(400)
             && error.message.contains("encrypted_content")
@@ -727,46 +1058,56 @@ impl SessionActor {
             .data(detailed_message);
             return Err(acp_err);
         }
+        let auth_provider =
+            if matches!(error.kind, SamplingErrorKind::Auth) || error.status_code == Some(401) {
+                self.model_auth_provider(&failed_model_id)
+            } else {
+                None
+            };
         let auth_recovery_eligible = matches!(error.kind, SamplingErrorKind::Auth) && {
-            let (model_id, base_url) = self
-                .chat_state_handle
-                .get_sampling_config()
-                .await
-                .map(|c| (c.model, c.base_url))
-                .unwrap_or_default();
-            let gate = self.auth_gate(&model_id, &base_url);
+            let gate = self.auth_gate(&failed_model_id, &failed_base_url);
             let eligible = gate.active();
-            self.log_auth_gate_unknown("handle_sampling_failure", gate, &base_url);
-            if !eligible {
+            self.log_auth_gate_unknown("handle_sampling_failure", gate, &failed_base_url);
+            if !eligible && auth_provider.is_none() {
                 tracing::warn!(
-                    session_id = % self.session_info.id.0, is_session_based = gate
-                    .is_session_based, model_byok = gate.model_byok.as_str(),
+                    session_id = %self.session_info.id.0,
+                    is_session_based = gate.is_session_based,
+                    model_byok = gate.model_byok.as_str(),
                     endpoint_is_first_party = gate.endpoint_is_first_party,
                     "auth recovery: sampler 401 not refreshable (api-key auth) — surfacing 401",
                 );
                 xai_grok_telemetry::unified_log::warn(
                     "auth recovery: sampler 401 not eligible (api-key auth)",
                     Some(self.session_info.id.0.as_ref()),
-                    Some(serde_json::json!(
-                        { "kind" : error.kind.as_str(), "status_code" : error
-                        .status_code, "is_session_based" : gate.is_session_based,
-                        "model_byok" : gate.model_byok.as_str(),
-                        "endpoint_is_first_party" : gate.endpoint_is_first_party, }
-                    )),
+                    Some(serde_json::json!({
+                        "kind": error.kind.as_str(),
+                        "status_code": error.status_code,
+                        "is_session_based": gate.is_session_based,
+                        "model_byok": gate.model_byok.as_str(),
+                        "endpoint_is_first_party": gate.endpoint_is_first_party,
+                    })),
                 );
             }
             eligible
         };
-        if !matches!(error.kind, SamplingErrorKind::Auth) && error.status_code == Some(401) {
+        debug_assert!(
+            !(auth_recovery_eligible && auth_provider.is_some()),
+            "a provider-backed model must not be session-recovery-eligible"
+        );
+        if !matches!(error.kind, SamplingErrorKind::Auth)
+            && error.status_code == Some(401)
+            && auth_provider.is_none()
+        {
             xai_grok_telemetry::unified_log::warn(
                 "auth recovery: sampler 401 not eligible (non-auth error kind)",
                 Some(self.session_info.id.0.as_ref()),
-                Some(serde_json::json!(
-                    { "kind" : error.kind.as_str(), "status_code" : error
-                    .status_code, }
-                )),
+                Some(serde_json::json!({
+                    "kind": error.kind.as_str(),
+                    "status_code": error.status_code,
+                })),
             );
         }
+        let mut credentials_refreshed_for_next_task = false;
         if auth_recovery_eligible
             && crate::auth::devbox_login::is_devbox_environment()
             && let Some(ref am) = self.auth_manager
@@ -774,51 +1115,59 @@ impl SessionActor {
             match am.try_devbox_recovery().await {
                 Ok(auth) => {
                     tracing::info!(
-                        session_id = % self.session_info.id.0, user_id = % auth.user_id,
-                        "auth recovery: sampler 401, devbox re-mint, retrying"
+                        session_id = %self.session_info.id.0,
+                        user_id = %auth.user_id,
+                        "auth recovery: sampler 401, devbox re-mint succeeded for a later task; refusing same-turn replay"
                     );
-                    self.prepare_sampler_for_turn().await;
-                    return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                    credentials_refreshed_for_next_task = true;
                 }
                 Err(e) => {
                     tracing::warn!(
-                        session_id = % self.session_info.id.0, error = % e,
+                        session_id = %self.session_info.id.0,
+                        error = %e,
                         "auth recovery: sampler 401, devbox re-mint failed"
                     );
                     xai_grok_telemetry::unified_log::warn(
                         "auth recovery: sampler 401, devbox re-mint failed",
                         Some(self.session_info.id.0.as_ref()),
-                        Some(serde_json::json!({ "error" : format!("{e}") })),
+                        Some(serde_json::json!({ "error": format!("{e}") })),
                     );
                 }
             }
         }
-        if auth_recovery_eligible && let Some(ref am) = self.auth_manager {
+        if !credentials_refreshed_for_next_task
+            && auth_recovery_eligible
+            && let Some(ref am) = self.auth_manager
+        {
             if am
                 .try_recover_unauthorized(crate::auth::recovery::RecoverySource::Turn)
                 .await
             {
-                tracing::info!(
-                    session_id = % self.session_info.id.0,
-                    "auth recovery: sampler 401, recovered, retrying"
-                );
+                tracing::info!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, recovered for a later task; refusing same-turn replay");
                 xai_grok_telemetry::unified_log::info(
-                    "auth recovery: sampler 401, recovered, retrying",
+                    "auth recovery: sampler 401, recovered for a later task; refusing same-turn replay",
                     Some(self.session_info.id.0.as_ref()),
                     None,
                 );
-                self.prepare_sampler_for_turn().await;
-                return Ok(SamplerFailureRecovery::RefreshAuthAndResubmit);
+                credentials_refreshed_for_next_task = true;
             }
-            tracing::warn!(
-                session_id = % self.session_info.id.0,
-                "auth recovery: sampler 401, refresh failed"
-            );
+            tracing::warn!(session_id = %self.session_info.id.0, "auth recovery: sampler 401, refresh failed");
             xai_grok_telemetry::unified_log::warn(
                 "auth recovery: sampler 401, refresh failed",
                 Some(self.session_info.id.0.as_ref()),
                 None,
             );
+        }
+        if !credentials_refreshed_for_next_task
+            && let Some(ref provider) = auth_provider
+            && self.try_provider_401_recovery(provider).await
+        {
+            tracing::info!(
+                session_id = %self.session_info.id.0,
+                provider = %provider.name,
+                "auth recovery: provider credential refreshed for a later task; refusing same-turn replay"
+            );
+            credentials_refreshed_for_next_task = true;
         }
         if matches!(error.kind, SamplingErrorKind::IdleTimeout) {
             self.signals_handle().record_idle_timeout();
@@ -826,15 +1175,18 @@ impl SessionActor {
         if matches!(error.kind, SamplingErrorKind::EmptyResponse) {
             if let Some(ref ctx) = error.empty_response_context {
                 tracing::warn!(
-                    empty_response = true, empty_reason = ctx.reason.as_str(),
-                    had_reasoning = ctx.had_reasoning, content_len = ctx.content_len,
-                    tool_call_count = ctx.tool_call_count, completion_tokens = ctx
-                    .completion_tokens.unwrap_or(0), reasoning_tokens = ctx
-                    .reasoning_tokens.unwrap_or(0), finish_reason = ctx
-                    .finish_reason_str(), first_choice_seen = ctx.first_choice_seen,
-                    model = % ctx.model,
-                    "empty response after retries exhausted: {reason}", reason = ctx
-                    .reason,
+                    empty_response = true,
+                    empty_reason = ctx.reason.as_str(),
+                    had_reasoning = ctx.had_reasoning,
+                    content_len = ctx.content_len,
+                    tool_call_count = ctx.tool_call_count,
+                    completion_tokens = ctx.completion_tokens.unwrap_or(0),
+                    reasoning_tokens = ctx.reasoning_tokens.unwrap_or(0),
+                    finish_reason = ctx.finish_reason_str(),
+                    first_choice_seen = ctx.first_choice_seen,
+                    model = %ctx.model,
+                    "empty response after retries exhausted: {reason}",
+                    reason = ctx.reason,
                 );
                 {
                     let mut cap = self.streaming_turn_capture.lock();
@@ -892,6 +1244,14 @@ impl SessionActor {
             let mut msg = format!("{detailed_message}\n");
             msg.push_str(&format!("\n  Model:     {current_model}"));
             msg.push_str(&format!("\n  Auth:      {auth_mode_str}"));
+            if let Some(ref provider) = auth_provider {
+                msg.push_str(
+                    &format!(
+                    "\n  Provider:  [auth_provider.{}] (check the provider command and the debug log)",
+                    provider.name
+                ),
+                );
+            }
             msg.push_str(&format!("\n  Version:   {client_version}"));
             if available.is_empty() {
                 msg.push_str("\n  Available: (none)");
@@ -914,6 +1274,65 @@ impl SessionActor {
         } else {
             error.kind.as_str()
         };
+        let (error_type, detailed_message) = if error_type == "auth"
+            && self
+                .auth_manager
+                .as_ref()
+                .is_some_and(|am| !am.requires_manual_reauth())
+        {
+            xai_grok_telemetry::unified_log::info(
+                "auth: turn failure downgraded to auth_transient (refreshable credential present)",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({ "status_code": error.status_code })),
+            );
+            (
+                "auth_transient",
+                format!(
+                    "{detailed_message}\n\nAuthentication is temporarily unavailable \
+                     (often a network blip right after wake). Your session is still \
+                     signed in. This failed request was not automatically resubmitted; \
+                     submit a new task to retry."
+                ),
+            )
+        } else {
+            (error_type, detailed_message)
+        };
+        let detailed_message = if credentials_refreshed_for_next_task {
+            format!(
+                "{detailed_message}\n\nCredentials were refreshed for a new task, but this request was not automatically resubmitted."
+            )
+        } else {
+            format!(
+                "{detailed_message}\n\nThis request was not automatically resubmitted because no provider-attempt receipt can prove replay is safe. Submit a new task to retry."
+            )
+        };
+        // Escalation guidance turns repeated identical failures into an
+        // actionable hint instead of a silent wall of the same error.
+        let is_auth_failure = matches!(error.kind, SamplingErrorKind::Auth)
+            || error.status_code == Some(401);
+        let model_pinned = self.models_manager.user_selected_model();
+        let provider_degraded = matches!(
+            self.models_manager.provider_health(&failed_base_url),
+            crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+        );
+        let detailed_message = match crate::session::nextgen_control::failure_escalation_guidance(
+            consecutive_failures,
+            is_auth_failure,
+            error.status_code,
+            model_pinned,
+            provider_degraded,
+        ) {
+            Some(guidance) => format!("{detailed_message}\n\n{guidance}"),
+            None => detailed_message,
+        };
+        // S9 / NG-06A: the failure-convergence checkpoint (>=2 repeated
+        // failures) records that a consult *would* be issued (shadow mode;
+        // no provider attempt) and stamps the advice epoch. The stamp is the
+        // P4b `stale_advice` write side: if policy later changes (live epoch
+        // bump), in-flight retry admission denies instead of replaying.
+        if consecutive_failures >= 2 {
+            self.tool_context.record_advice_issued();
+        }
         self.log_terminal_failure(error_type, error.status_code, &detailed_message);
         self.send_xai_notification(XaiSessionUpdate::RetryState(
             crate::extensions::notification::RetryState::Failed {
@@ -934,96 +1353,339 @@ impl SessionActor {
     ///
     /// Calls `prepare_sampler_for_turn` first (auth refresh + config
     /// push), then submits via `SamplerHandle::submit_and_collect` and
-    /// returns:
-    /// * `Ok(SamplerTurnOutcome::Response(_))` - model responded.
-    /// * `Ok(SamplerTurnOutcome::CompactAndResubmit)` - compaction
-    ///    ran, the outer turn loop should `continue`.
-    /// * `Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)` - auth 401
-    ///    recovery succeeded, credentials refreshed, retry once.
-    /// * `Err(acp::Error)` - terminal failure already reported via
-    ///    `send_xai_notification(RetryState::Failed)`.
+    /// returns a model response or a terminal failure already reported via
+    /// `send_xai_notification(RetryState::Failed)`.
+    ///
+    /// S8: every failure path seals a durable attempt receipt. A **clean**
+    /// seal (zero output / zero tools / complete observation) that admits
+    /// under P4b may authorize **one** same-turn resubmit after auth
+    /// refresh. All other failures stay terminal (INV-11 / P0-NR-A).
+    /// Sampler actor `max_retries` remains [`NO_RECEIPT_MAX_RETRIES`] so
+    /// transport-level replay cannot reopen without this admission gate.
     pub(crate) async fn run_turn_via_sampler(
         self: &Arc<Self>,
         request: ConversationRequest,
-    ) -> Result<SamplerTurnOutcome, acp::Error> {
-        self.prepare_sampler_for_turn().await;
-        let stream_drained_rx = {
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            *self.turn_stream_drained.lock() = Some(tx);
-            rx
-        };
-        let request_id = xai_grok_sampler::RequestId::random();
-        let request_id_str = request_id.as_str().to_string();
-        let wire_context = {
-            let domain = self.cache_domain().await;
-            match crate::session::cache_epoch::load_or_rotate(
-                &crate::session::persistence::session_dir(&self.session_info),
-                &domain,
-                false,
-            ) {
-                Ok((epoch, _)) => Some(lumen_discipline::WireObservationContext {
-                    cache_domain_hash: domain.fingerprint(),
-                    cache_epoch_id: epoch.epoch_id.to_string(),
-                    mutation_reasons: crate::session::cache_epoch::take_pending_mutation_reasons(
-                        &crate::session::persistence::session_dir(&self.session_info),
-                        epoch.epoch_id,
-                    )
-                    .unwrap_or_else(|error| {
-                        tracing::warn!(%error, "cache mutation attribution unavailable for wire observation");
-                        Vec::new()
+        is_initial_root_sampling_attempt: bool,
+    ) -> Result<
+        (
+            Box<ConversationResponse>,
+            Box<xai_grok_sampler::InferenceLatencyStats>,
+        ),
+        acp::Error,
+    > {
+        let task_hint = request
+            .items
+            .iter()
+            .rev()
+            .find_map(|item| match item {
+                ConversationItem::User(_) => Some(item.text_content()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        self.maybe_select_ordinary_model_for_task(&task_hint, is_initial_root_sampling_attempt)
+            .await;
+
+        // Shell-level auth-class retries already used this turn (bounded by
+        // durable clean seal admission; independent of sampler max_retries).
+        let mut auth_class_retries_used: u32 = 0;
+        loop {
+            self.prepare_sampler_for_turn().await;
+            let stream_drained_rx = {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                *self.turn_stream_drained.lock() = Some(tx);
+                rx
+            };
+            let request_id = xai_grok_sampler::RequestId::random();
+            let request_id_str = request_id.as_str().to_string();
+            let mut seal =
+                crate::session::nextgen_control::begin_attempt_seal(request_id_str.clone());
+            let session_dir =
+                crate::session::persistence::session_dir(&self.session_info);
+            let wire_context = {
+                let domain = self.cache_domain().await;
+                match crate::session::cache_epoch::load_or_rotate(&session_dir, &domain, false) {
+                    Ok((epoch, _)) => Some(lumen_discipline::WireObservationContext {
+                        cache_domain_hash: domain.fingerprint(),
+                        cache_epoch_id: epoch.epoch_id.to_string(),
+                        mutation_reasons:
+                            crate::session::cache_epoch::take_pending_mutation_reasons(
+                                &session_dir,
+                                epoch.epoch_id,
+                            )
+                            .unwrap_or_else(|error| {
+                                tracing::warn!(%error, "cache mutation attribution unavailable for wire observation");
+                                Vec::new()
+                            }),
                     }),
-                }),
-                Err(error) => {
-                    tracing::warn!(%error, "cache epoch unavailable for wire observation");
-                    None
+                    Err(error) => {
+                        tracing::warn!(%error, "cache epoch unavailable for wire observation");
+                        None
+                    }
                 }
-            }
-        };
-        match self
-            .sampler_handle
-            .submit_and_collect_with_wire_context(request_id, request, wire_context)
-            .await
-        {
-            Ok((response, metrics)) => {
-                let span = tracing::Span::current();
-                span.record("request_id", request_id_str.as_str());
-                if let Some(ttft) = metrics.time_to_first_token_ms {
-                    span.record("ttft_ms", ttft as i64);
+            };
+            match self
+                .sampler_handle
+                .submit_and_collect_with_wire_context(
+                    request_id,
+                    request.clone(),
+                    wire_context,
+                )
+                .await
+            {
+                Ok((response, metrics)) => {
+                    let span = tracing::Span::current();
+                    span.record("request_id", request_id_str.as_str());
+                    if let Some(ttft) = metrics.time_to_first_token_ms {
+                        span.record("ttft_ms", ttft as i64);
+                    }
+                    if metrics.attempts > 0 {
+                        span.record("attempt", i64::from(metrics.attempts));
+                    }
+                    if tokio::time::timeout(std::time::Duration::from_secs(5), stream_drained_rx)
+                        .await
+                        .is_err()
+                    {
+                        self.turn_stream_drained.lock().take();
+                        tracing::warn!(
+                            "stream-drain barrier timed out; proceeding to emit tool \
+                             calls (eventId ordering may be imperfect this turn)"
+                        );
+                    }
+                    // A successful sampling response resets the consecutive-failure
+                    // escalation counter for the session model.
+                    self.tool_context
+                        .consecutive_sampling_failures
+                        .store(0, std::sync::atomic::Ordering::Relaxed);
+                    return Ok((Box::new(response), Box::new(metrics)));
                 }
-                if metrics.attempts > 0 {
-                    span.record("attempt", i64::from(metrics.attempts));
-                }
-                if tokio::time::timeout(std::time::Duration::from_secs(5), stream_drained_rx)
-                    .await
-                    .is_err()
-                {
+                Err(rich_err) => {
                     self.turn_stream_drained.lock().take();
-                    tracing::warn!(
-                        "stream-drain barrier timed out; proceeding to emit tool \
-                         calls (eventId ordering may be imperfect this turn)"
+                    let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
+
+                    // S8: seal observations from streaming capture (fail-closed).
+                    // DEBT-008: `observation_complete` is true because the
+                    // capture is drained by the turn's own await points; the
+                    // failure path reads after the streaming task has stopped
+                    // producing, so no in-flight ToolCallDelta race is
+                    // exploitable here (tool deltas only arrive before a
+                    // Completed signal; 401s occur before the stream starts).
+                    let (had_output, had_tool_call, observation_complete) =
+                        self.seal_observations_from_streaming_capture();
+                    seal.apply_failure_observations(
+                        had_output,
+                        had_tool_call,
+                        observation_complete,
                     );
-                }
-                Ok(SamplerTurnOutcome::Response(
-                    Box::new(response),
-                    Box::new(metrics),
-                ))
-            }
-            Err(rich_err) => {
-                self.turn_stream_drained.lock().take();
-                let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
-                match self.handle_sampling_failure(info).await? {
-                    SamplerFailureRecovery::CompactAndResubmit => {
-                        Ok(SamplerTurnOutcome::CompactAndResubmit)
+                    let store_path = session_dir.join("sealed-attempt-receipts.json");
+                    let store = xai_grok_memory::SealedAttemptReceiptStore::with_path(store_path);
+                    let (receipt, authority) = crate::session::nextgen_control::seal_and_authority(
+                        &store,
+                        seal.receipt().clone(),
+                        Some(request_id_str.clone()),
+                        Some(self.session_info.id.0.to_string()),
+                    );
+                    let model_pinned = self.models_manager.user_selected_model();
+                    let is_auth = matches!(
+                        info.kind,
+                        xai_grok_sampler::SamplingErrorKind::Auth
+                    ) || info.status_code == Some(401);
+
+                    // Live P4b side conditions (pool / breaker / stale advice).
+                    let failed_base_url = self
+                        .chat_state_handle
+                        .get_sampling_config()
+                        .await
+                        .map(|c| c.base_url)
+                        .unwrap_or_default();
+                    let side = self.collect_p4b_live_side_conditions(&failed_base_url);
+
+                    // Bounded auth-class same-turn resubmit only when P4b
+                    // admission grants remaining budget (clean durable seal,
+                    // not pinned, pool/breaker/advice ok). GROK_MAX_RETRIES is
+                    // not used here — shell auth-class ceiling is the seal
+                    // budget (1).
+                    let admission = crate::session::nextgen_control::authorize_ordinary_retry_budget(
+                        &crate::session::nextgen_control::ordinary_retry_admission(
+                            Some(&receipt),
+                            authority,
+                            model_pinned,
+                            side.pool_exhausted,
+                            side.breaker_open,
+                            side.stale_advice,
+                            xai_grok_memory::DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES,
+                            auth_class_retries_used,
+                        ),
+                    );
+                    let refresh_ok = if is_auth && admission.is_ok() {
+                        self.try_auth_refresh_for_clean_seal_retry().await
+                    } else {
+                        false
+                    };
+                    match crate::session::nextgen_control::decide_auth_class_retry(
+                        is_auth,
+                        admission,
+                        refresh_ok,
+                        auth_class_retries_used,
+                    ) {
+                        crate::session::nextgen_control::AuthClassRetryAction::Resubmit {
+                            next_used,
+                        } => {
+                            auth_class_retries_used = next_used;
+                            tracing::info!(
+                                session_id = %self.session_info.id.0,
+                                attempt_id = %receipt.attempt_id,
+                                auth_class_retries_used,
+                                "S8: clean durable seal authorized one auth-class same-turn resubmit"
+                            );
+                            xai_grok_telemetry::unified_log::info(
+                                "s8.auth_class_retry.authorized",
+                                Some(self.session_info.id.0.as_ref()),
+                                Some(serde_json::json!({
+                                    "attempt_id": receipt.attempt_id,
+                                    "auth_class_retries_used": auth_class_retries_used,
+                                })),
+                            );
+                            continue;
+                        }
+                        crate::session::nextgen_control::AuthClassRetryAction::Terminal {
+                            reason,
+                        } => {
+                            tracing::debug!(
+                                session_id = %self.session_info.id.0,
+                                attempt_id = %receipt.attempt_id,
+                                reason,
+                                kind = info.kind.as_str(),
+                                "S8: auth-class retry terminal; sealed receipt recorded"
+                            );
+                        }
                     }
-                    SamplerFailureRecovery::RefreshAuthAndResubmit => {
-                        Ok(SamplerTurnOutcome::RefreshAuthAndResubmit)
-                    }
+
+                    let never = self.handle_sampling_failure(info).await?;
+                    match never {}
                 }
             }
         }
     }
+
+    /// Live P4b side conditions from models_manager + advice epoch atomics.
+    ///
+    /// - pool_exhausted: routing enabled, non-empty pool, no healthy candidate
+    /// - breaker_open: provider domain is passively Degraded
+    /// - stale_advice: advice issued under an older live_policy_epoch
+    pub(crate) fn collect_p4b_live_side_conditions(
+        &self,
+        base_url: &str,
+    ) -> crate::session::nextgen_control::P4bLiveSideConditions {
+        use std::sync::atomic::Ordering;
+        let policy = self.models_manager.model_routing_config();
+        let any_healthy_in_pool = if policy.enabled && !policy.model_pool.is_empty() {
+            self.models_manager
+                .select_healthy_model_from_pool(
+                    &policy.model_pool,
+                    &policy.priority,
+                    "",
+                )
+                .is_some()
+        } else {
+            // Pool not in play → not exhausted.
+            true
+        };
+        let provider_degraded = matches!(
+            self.models_manager.provider_health(base_url),
+            crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+        );
+        let live_epoch = self
+            .tool_context
+            .live_policy_epoch
+            .load(Ordering::Relaxed);
+        let issued_raw = self
+            .tool_context
+            .advice_issued_policy_epoch
+            .load(Ordering::Relaxed);
+        let issued = if issued_raw == 0 {
+            None
+        } else {
+            Some(issued_raw)
+        };
+        crate::session::nextgen_control::derive_p4b_side_conditions(
+            policy.enabled,
+            policy.model_pool.len(),
+            any_healthy_in_pool,
+            provider_degraded,
+            issued,
+            live_epoch,
+        )
+    }
+
+    /// Positive observations from the turn's streaming capture for S8 seal.
+    ///
+    /// Returns `(had_output, had_tool_call, observation_complete)`.
+    /// Tool-call signal is true when capture phase is [`CapturePhase::ToolCall`]
+    /// or any retained segment ended in that phase (INV-11). Observation is
+    /// complete when we hold the capture mutex after the stream-drain oneshot
+    /// was taken (failure path always takes the oneshot).
+    ///
+    /// DEBT-009: `pub(crate)` so the live integration tests drive this real
+    /// function directly instead of mirror-copying the phase expression.
+    pub(crate) fn seal_observations_from_streaming_capture(&self) -> (bool, bool, bool) {
+        use crate::session::acp_session::CapturePhase;
+        let cap = self.streaming_turn_capture.lock();
+        let had_output = !cap.response_text.is_empty()
+            || !cap.reasoning_text.is_empty()
+            || cap.text_chunks > 0
+            || cap.reasoning_chunks > 0
+            || cap.reasoning_tokens.is_some()
+            || cap.completion_tokens.is_some()
+            || cap.segments.iter().any(|s| {
+                !s.response_text.is_empty()
+                    || !s.reasoning_text.is_empty()
+                    || s.text_chunks > 0
+                    || s.reasoning_chunks > 0
+            });
+        let had_tool_call = cap.phase == CapturePhase::ToolCall
+            || cap
+                .segments
+                .iter()
+                .any(|s| s.phase == CapturePhase::ToolCall);
+        let observation_complete = true;
+        (had_output, had_tool_call, observation_complete)
+    }
+
+    /// Best-effort credential refresh for a clean-seal auth-class retry.
+    /// Returns true only when a refresh path reports success.
+    async fn try_auth_refresh_for_clean_seal_retry(&self) -> bool {
+        let (failed_model_id, failed_base_url) = self
+            .chat_state_handle
+            .get_sampling_config()
+            .await
+            .map(|c| (c.model, c.base_url))
+            .unwrap_or_default();
+        let gate = self.auth_gate(&failed_model_id, &failed_base_url);
+        if gate.active()
+            && let Some(ref am) = self.auth_manager
+            && am
+                .try_recover_unauthorized(crate::auth::recovery::RecoverySource::Turn)
+                .await
+        {
+            return true;
+        }
+        if let Some(provider) = self.model_auth_provider(&failed_model_id)
+            && self.try_provider_401_recovery(&provider).await
+        {
+            return true;
+        }
+        false
+    }
     /// Proactively refresh the auth token if near expiry.
-    pub(super) async fn refresh_token_if_expired(&self) {
+    ///
+    /// Session-token path is best-effort: on success, update credentials and
+    /// return. On failure, do **not** fall through to the JWT/config.toml
+    /// branch when the session gate was active — that path is for BYOK JWTs
+    /// only. Falling through after a failed session refresh left hard-expired
+    /// opaque tokens (External/OIDC) on the wire and guaranteed a 401.
+    /// Soft failures with a still-usable access token still return here
+    /// (grace / optimistic send); 401 recovery remains the safety net.
+    pub(crate) async fn refresh_token_if_expired(&self) {
         if let Some(ref am) = self.auth_manager {
             let creds = self.chat_state_handle.get_credentials().await;
             let (model_id, base_url) = self
@@ -1032,15 +1694,42 @@ impl SessionActor {
                 .await
                 .map(|c| (c.model, c.base_url))
                 .unwrap_or_default();
-            if self.auth_gate(&model_id, &base_url).active()
-                && let Ok(key) = am.get_valid_token().await
-            {
-                if creds.api_key.as_deref() != Some(&key) {
-                    let mut creds = creds;
-                    creds.api_key = Some(key);
-                    self.chat_state_handle.update_credentials(creds);
+            if self.auth_gate(&model_id, &base_url).active() {
+                match am.get_valid_token().await {
+                    Ok(key) => {
+                        if creds.api_key.as_deref() != Some(&key) {
+                            let mut creds = creds;
+                            creds.api_key = Some(key);
+                            self.chat_state_handle.update_credentials(creds);
+                        }
+                        self.clear_auth_compact_suppression();
+                        return;
+                    }
+                    Err(e) => {
+                        let hard_expired = !am.has_usable_token();
+                        if hard_expired && creds.api_key.is_some() {
+                            let mut cleared = creds;
+                            cleared.api_key = None;
+                            self.chat_state_handle.update_credentials(cleared);
+                        }
+                        tracing::warn!(
+                            error = %e,
+                            hard_expired,
+                            model = %model_id,
+                            "auth: preflight get_valid_token failed"
+                        );
+                        xai_grok_telemetry::unified_log::warn(
+                            "auth.preflight.refresh_failed",
+                            Some(self.session_info.id.0.as_ref()),
+                            Some(serde_json::json!({
+                                "error": format!("{e}"),
+                                "hard_expired": hard_expired,
+                                "model": model_id,
+                            })),
+                        );
+                        return;
+                    }
                 }
-                return;
             }
         } else {
             xai_grok_telemetry::unified_log::debug(
@@ -1059,17 +1748,28 @@ impl SessionActor {
             .await
             .map(|c| c.model)
             .unwrap_or_default();
+        if let Some(provider) = self.model_auth_provider(&current_model_id) {
+            self.refresh_provider_token_pre_turn(
+                &provider,
+                current_key.as_deref(),
+                &current_model_id,
+            )
+            .await;
+            return;
+        }
         let Some(ref key) = current_key else { return };
         if !is_jwt_expired_or_near(key, REFRESH_THRESHOLD) {
             if let Some(exp) = parse_jwt_expiration(key) {
                 let remaining_secs = (exp - chrono::Utc::now()).num_seconds();
                 tracing::debug!(
-                    model = % current_model_id, remaining_secs,
+                    model = %current_model_id,
+                    remaining_secs,
                     "JWT token valid, no refresh needed"
                 );
             } else {
                 tracing::debug!(
-                    model = % current_model_id, key_len = key.len(),
+                    model = %current_model_id,
+                    key_len = key.len(),
                     "Token is not a JWT, expiry-based refresh not applicable"
                 );
             }
@@ -1078,7 +1778,8 @@ impl SessionActor {
         let remaining_secs =
             parse_jwt_expiration(key).map_or(0, |exp| (exp - chrono::Utc::now()).num_seconds());
         tracing::info!(
-            model = % current_model_id, remaining_secs,
+            model = %current_model_id,
+            remaining_secs,
             "JWT near expiry, refreshing from config.toml"
         );
         let Some(new_key) = self.reload_api_key_from_config(&current_model_id) else {
@@ -1086,7 +1787,7 @@ impl SessionActor {
         };
         if key == &new_key {
             tracing::warn!(
-                model = % current_model_id,
+                model = %current_model_id,
                 "Config.toml returned same token (not yet rotated by external process?)"
             );
             return;
@@ -1094,7 +1795,9 @@ impl SessionActor {
         let new_remaining_secs = parse_jwt_expiration(&new_key)
             .map_or(0, |exp| (exp - chrono::Utc::now()).num_seconds());
         tracing::info!(
-            model = % current_model_id, new_remaining_secs, key_len = new_key.len(),
+            model = %current_model_id,
+            new_remaining_secs,
+            key_len = new_key.len(),
             "Refreshed API token from config.toml"
         );
         let mut creds = self.chat_state_handle.get_credentials().await;
@@ -1103,10 +1806,10 @@ impl SessionActor {
     }
     fn reload_api_key_from_config(&self, current_model_id: &str) -> Option<String> {
         let raw_config = crate::config::load_effective_config()
-            .map_err(|e| tracing::warn!(error = % e, "Failed to reload config"))
+            .map_err(|e| tracing::warn!(error = %e, "Failed to reload config"))
             .ok()?;
         let config = crate::agent::config::Config::new_from_toml_cfg(&raw_config)
-            .map_err(|e| tracing::warn!(error = % e, "Failed to parse reloaded config.toml"))
+            .map_err(|e| tracing::warn!(error = %e, "Failed to parse reloaded config.toml"))
             .ok()?;
         let config_model = config
             .config_models
@@ -1115,8 +1818,9 @@ impl SessionActor {
             .map(|(_, v)| v);
         let Some(model) = config_model else {
             tracing::warn!(
-                model = % current_model_id, available = ? config.config_models.keys()
-                .collect::< Vec < _ >> (), "Model not found in config.toml [model.*]"
+                model = %current_model_id,
+                available = ?config.config_models.keys().collect::<Vec<_>>(),
+                "Model not found in config.toml [model.*]"
             );
             return None;
         };
@@ -1126,7 +1830,8 @@ impl SessionActor {
         );
         if key.is_none() {
             tracing::warn!(
-                model = % current_model_id, env_key = ? model.env_key,
+                model = %current_model_id,
+                env_key = ?model.env_key,
                 "No api_key or env_key resolved for model"
             );
         }
@@ -1149,6 +1854,8 @@ impl SessionActor {
         api_duration_ms: Option<u64>,
     ) {
         if let Some(ref u) = response.usage {
+            self.tool_context
+                .record_task_model_output(u64::from(u.completion_tokens));
             self.chat_state_handle
                 .record_token_usage(u64::from(u.total_tokens));
             self.chat_state_handle.record_last_turn_usage(u.clone());
@@ -1160,14 +1867,23 @@ impl SessionActor {
             );
             self.signals_handle()
                 .record_token_usage(u.completion_tokens, u.reasoning_tokens);
+        } else if self.tool_context.task_output_token_budget.is_some() {
+            self.tool_context.fail_task_output_usage_closed();
+            let handle = self.chat_state_handle.clone();
+            tokio::spawn(async move {
+                let _ = handle.mark_usage_incomplete(true, true).await;
+            });
+        } else if self.tool_context.sampler_retry_only_before_output {
+            let handle = self.chat_state_handle.clone();
+            tokio::spawn(async move {
+                let _ = handle.mark_usage_incomplete(true, true).await;
+            });
         }
     }
     pub(super) async fn record_assistant_response(&self, assistant_item: ConversationItem) {
         self.signals_handle().record_assistant_message();
         if let ConversationItem::Assistant(ref a) = assistant_item {
-            tracing::info!(
-                model_id = ? a.model_id, "DEBUG record_assistant_response model_id"
-            );
+            tracing::info!(model_id = ?a.model_id, "DEBUG record_assistant_response model_id");
         }
         if let ConversationItem::Assistant(ref a) = assistant_item
             && let Some(first_call) = a.tool_calls.first()
@@ -1176,5 +1892,117 @@ impl SessionActor {
         }
         self.chat_state_handle
             .push_assistant_response(assistant_item);
+    }
+}
+/// Per-tool precedence: a non-empty `over` wins, else the non-empty `seed`.
+fn prefer_non_empty<T>(
+    over: Option<T>,
+    seed: Option<T>,
+    is_empty: impl Fn(&T) -> bool,
+) -> Option<T> {
+    over.filter(|o| !is_empty(o))
+        .or_else(|| seed.filter(|s| !is_empty(s)))
+}
+/// The cutoff a subagent inherits: a non-empty per-turn `base` wins per tool, else the `seed`.
+fn resolve_configured_cutoff(
+    seed: Option<xai_grok_sampling_types::ToolOverrides>,
+    base: Option<&xai_grok_sampling_types::ToolOverrides>,
+) -> xai_grok_sampling_types::ToolOverrides {
+    use xai_grok_sampling_types::{ToolOverrides, WebSearchOptions, XSearchOptions};
+    let ToolOverrides {
+        x_search: seed_x,
+        web_search: seed_w,
+    } = seed.unwrap_or_default();
+    let (over_x, over_w) =
+        base.map_or((None, None), |b| (b.x_search.clone(), b.web_search.clone()));
+    ToolOverrides {
+        x_search: prefer_non_empty(over_x, seed_x, XSearchOptions::is_empty),
+        web_search: prefer_non_empty(over_w, seed_w, WebSearchOptions::is_empty),
+    }
+}
+#[cfg(test)]
+mod configured_cutoff_tests {
+    use xai_grok_sampling_types::{
+        SearchDateBound, ToolOverrides, WebSearchOptions, XSearchOptions,
+    };
+    fn x_cut(to: &str) -> XSearchOptions {
+        XSearchOptions {
+            date_bound: Some(SearchDateBound::new(None, Some(to.into())).unwrap()),
+        }
+    }
+    #[test]
+    fn seed_only_is_inherited_without_a_per_turn_update() {
+        let seed = ToolOverrides {
+            x_search: Some(x_cut("2020-01-01")),
+            web_search: None,
+        };
+        assert_eq!(
+            super::resolve_configured_cutoff(Some(seed.clone()), None),
+            seed
+        );
+    }
+    #[test]
+    fn non_empty_base_wins_per_tool_and_empty_reverts_to_seed() {
+        let seed = ToolOverrides {
+            x_search: Some(x_cut("2020-01-01")),
+            web_search: Some(WebSearchOptions {
+                allowed_domains: Some(vec!["x.com".into()]),
+            }),
+        };
+        let base = ToolOverrides {
+            x_search: Some(x_cut("2019-06-01")),
+            web_search: Some(WebSearchOptions {
+                allowed_domains: Some(vec![]),
+            }),
+        };
+        let got = super::resolve_configured_cutoff(Some(seed.clone()), Some(&base));
+        assert_eq!(got.x_search, Some(x_cut("2019-06-01")));
+        assert_eq!(got.web_search, seed.web_search);
+    }
+    /// The contamination invariant: `resolve_configured_cutoff` (inheritance) must resolve the same
+    /// bound the wire/echo path (`apply_tool_overrides`) does for the same seed and per-turn base.
+    /// Two independent precedence implementations, so drift on the inherited boundary fails CI.
+    #[test]
+    fn inherited_cutoff_agrees_with_the_wire_echo() {
+        use xai_grok_sampling_types::{HostedTool, apply_tool_overrides};
+        let web = WebSearchOptions {
+            allowed_domains: Some(vec!["x.com".into()]),
+        };
+        let cases = [
+            (
+                Some(ToolOverrides {
+                    x_search: Some(x_cut("2020-01-01")),
+                    web_search: None,
+                }),
+                None,
+            ),
+            (
+                Some(ToolOverrides {
+                    x_search: Some(x_cut("2020-01-01")),
+                    web_search: Some(web.clone()),
+                }),
+                Some(ToolOverrides {
+                    x_search: Some(x_cut("2019-06-01")),
+                    web_search: None,
+                }),
+            ),
+            (
+                None,
+                Some(ToolOverrides {
+                    x_search: Some(x_cut("2018-01-01")),
+                    web_search: Some(web.clone()),
+                }),
+            ),
+        ];
+        for (seed, base) in cases {
+            let mut tools = vec![
+                HostedTool::WebSearch { options: None },
+                HostedTool::XSearch { options: None },
+            ];
+            apply_tool_overrides(&mut tools, seed.as_ref());
+            let wire_echo = apply_tool_overrides(&mut tools, base.as_ref());
+            let inherited = super::resolve_configured_cutoff(seed.clone(), base.as_ref());
+            assert_eq!(wire_echo, inherited, "seed={seed:?} base={base:?}");
+        }
     }
 }

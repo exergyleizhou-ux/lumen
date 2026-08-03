@@ -5,6 +5,8 @@ version = "0.1.0"
 edition.workspace = true
 
 [features]
+# Exposes `#[cfg(test)]`-only helpers (`MemoryStorage::with_paths`,
+# `MockEmbeddingProvider`) to downstream crates' test targets.
 test-support = []
 
 [dependencies]
@@ -15,6 +17,7 @@ blake3 = { workspace = true }
 chrono = { workspace = true }
 dunce = { workspace = true }
 flate2 = { workspace = true }
+fs2 = { workspace = true }
 git2 = { version = "0.20", default-features = false, features = [
     "vendored-libgit2",
 ] }
@@ -23,10 +26,14 @@ reqwest = { workspace = true }
 reqwest-middleware = { workspace = true }
 # rusqlite 0.37 + bundled = self-contained SQLite (>= 3.50.2) with FTS5.
 rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
+unicode-normalization = "0.1.25"
 # sqlite-vec: vec0 virtual table for KNN vector search.
 sqlite-vec = "=0.1.7-alpha.2"
 tar = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"] }
 tracing = { workspace = true }
 xai-grok-auth = { workspace = true }
@@ -45,7 +52,6 @@ windows = { workspace = true }
 
 [dev-dependencies]
 filetime = { workspace = true }
-tempfile = { workspace = true }
 
 [lints]
 workspace = true

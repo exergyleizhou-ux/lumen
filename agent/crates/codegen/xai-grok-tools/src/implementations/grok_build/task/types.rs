@@ -1,7 +1,8 @@
-//! Channel types for subagent communication (TaskTool ↔ MvpAgent coordinator).
+//! Data and channel types for subagent coordination.
 //!
-//! These types define the request/response protocol between the `TaskTool`
-//! (in `xai-grok-tools`) and the subagent coordinator (in `xai-grok-shell`).
+//! Request data is deliberately separate from command reply envelopes. The
+//! shared coordinator actor owns every reply sender and every lifecycle
+//! transition; child runners receive only plain request data.
 //!
 //! ## Resource types
 //!
@@ -9,33 +10,71 @@
 //!
 //! - `SubagentBackendResource` — wraps an `Arc<dyn SubagentBackend>` that
 //!   abstracts spawn/query/cancel (see [`super::backend`])
-//! - `SubagentDepthCounter` — tracks nesting depth (max 1, no recursive spawning)
+//! - `SubagentDepthCounter` — current nesting depth
+//! - `MaxSubagentDepth` — configured max nesting depth
 //! - `SessionIdResource` — carries the current session ID for parent scoping
 //! - `TaskModelValidator` — validates explicit model slugs before background spawn
 //!
 //! All coordinator messages are funnelled through a single
 //! `SubagentEventSender` / `SubagentEvent` enum channel.
 
+use std::path::{Component, PathBuf};
 use std::sync::Arc;
 
 use educe::Educe;
 use tokio::sync::{mpsc, oneshot};
+use tokio_util::sync::CancellationToken;
 use xai_tool_types::{SubagentCapabilityMode, SubagentIsolationMode, WaitMode};
 
 use crate::register_resource;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum SubagentOwner {
+    #[default]
+    Task,
+    Workflow {
+        run_id: String,
+    },
+}
+
+impl SubagentOwner {
+    pub fn workflow(run_id: impl Into<String>) -> Self {
+        Self::Workflow {
+            run_id: run_id.into(),
+        }
+    }
+
+    pub fn workflow_run_id(&self) -> Option<&str> {
+        match self {
+            Self::Task => None,
+            Self::Workflow { run_id } => Some(run_id),
+        }
+    }
+
+    pub fn is_workflow(&self) -> bool {
+        matches!(self, Self::Workflow { .. })
+    }
+}
+
 // Request / Response
 
-/// Request emitted by TaskTool, received by MvpAgent coordinator.
-#[derive(Educe)]
-#[educe(Debug)]
+/// Plain spawn request emitted by `TaskTool`.
+#[derive(Debug, Clone)]
 pub struct SubagentRequest {
     /// Subagent ID (UUID v7). Same as `TaskToolInput.task_id`; becomes the child session ID.
     pub id: String,
     pub prompt: String,
     pub description: String,
     pub subagent_type: String,
+    /// The session that directly launched this child.  This is deliberately
+    /// not rewritten when the launcher is itself a subagent: tree rendering,
+    /// working-memory attribution, and child-local cancellation all need the
+    /// real immediate parent.
     pub parent_session_id: String,
+    /// Stable task-tree identity carried independently from the immediate
+    /// parent.  The coordinator uses it for root-owned cancellation and (in a
+    /// later phase) whole-tree budgets, without flattening the tree.
+    pub lineage: SubagentLineage,
     /// Parent turn/prompt ID that launched this subagent.
     ///
     /// Used to cancel only the subagents spawned by the currently-cancelled turn,
@@ -46,26 +85,145 @@ pub struct SubagentRequest {
     /// freshly rendered.
     pub resume_from: Option<String>,
     /// Explicit working directory for the child session.
-    /// Validated at spawn time in `handle_subagent_request()`.
+    /// Validated at spawn time by the injected child runner.
     pub cwd: Option<String>,
     /// Runtime overrides for the child agent.
     pub runtime_overrides: SubagentRuntimeOverrides,
     /// Whether this subagent was launched with `run_in_background: true`.
     ///
-    /// Background subagents survive parent-turn cancellation — they are
-    /// excluded from `cancel_by_parent_prompt_id` so the user can poll
-    /// results later via `get_task_output`.
+    /// Controls immediate handle delivery and completion surfacing. A
+    /// background child still auto-surfaces its completion to the model
+    /// (buffered reminder / auto-wake) when `surface_completion` is set —
+    /// background does not mean fire-and-forget. Prompt cancellation still
+    /// cancels every child owned by that prompt.
     pub run_in_background: bool,
     /// When false, the subagent's completion is NOT buffered for the
     /// between-turn "idle completion" reminder — used by harness-internal
     /// subagents like the goal planner/classifier that the model must never see.
     pub surface_completion: bool,
+    pub await_to_completion: bool,
     /// Harness-only: seed child with normalized parent conversation, then append
     /// `prompt`. Not on TaskToolInput. Successful `resume_from` takes precedence.
     pub fork_context: bool,
-    /// Oneshot channel for the coordinator to send back the result.
+    pub owner: SubagentOwner,
+    pub cancel_token: CancellationToken,
+}
+
+/// Auditable placement of a child in a task tree.
+///
+/// `lineage_path` contains session ids from the root session through the
+/// immediate parent, never the child itself.  Thus a direct child of `root`
+/// has `depth == 1` and `lineage_path == ["root"]`; a grandchild launched by
+/// that child has `depth == 2` and `lineage_path == ["root", "child"]`.
+///
+/// Serialization is lossless for records written by this version and
+/// root-only for legacy records: a record carrying only `root_session_id`
+/// and `immediate_parent_session_id` decodes to `depth == 1` with an empty
+/// `lineage_path` (no ancestor information survived).  Consumers that need a
+/// full lineage must re-validate before trusting `depth` or `lineage_path`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SubagentLineage {
+    pub root_session_id: String,
+    pub immediate_parent_session_id: String,
+    #[serde(default = "legacy_lineage_depth")]
+    pub depth: u32,
+    #[serde(default)]
+    pub lineage_path: Vec<String>,
+}
+
+/// Legacy records predate the depth field; a root-only projection has depth 1
+/// (the record's owner is a direct child of the root it names).
+fn legacy_lineage_depth() -> u32 {
+    1
+}
+
+impl SubagentLineage {
+    /// Initial lineage for a request emitted directly by a session.
+    pub fn direct(parent_session_id: impl Into<String>) -> Self {
+        let parent_session_id = parent_session_id.into();
+        Self {
+            root_session_id: parent_session_id.clone(),
+            immediate_parent_session_id: parent_session_id.clone(),
+            depth: 1,
+            lineage_path: vec![parent_session_id],
+        }
+    }
+
+    /// Build the lineage for a child launched by an already-running child.
+    ///
+    /// `depth` is always `lineage_path.len()` so path and depth cannot drift
+    /// when the same immediate parent is re-applied (path is not duplicated
+    /// but depth used to keep incrementing). Production only ever calls this
+    /// with the spawner's session id, which is not already the path tail.
+    pub fn child_of(parent: &Self, immediate_parent_session_id: impl Into<String>) -> Self {
+        let immediate_parent_session_id = immediate_parent_session_id.into();
+        let mut lineage_path = parent.lineage_path.clone();
+        if lineage_path.last() != Some(&immediate_parent_session_id) {
+            lineage_path.push(immediate_parent_session_id.clone());
+        }
+        Self {
+            root_session_id: parent.root_session_id.clone(),
+            immediate_parent_session_id,
+            depth: lineage_path.len() as u32,
+            lineage_path,
+        }
+    }
+
+    /// Validate a direct (root-session) spawn before it enters the
+    /// coordinator. Nested spawns are rebuilt from their registered parent by
+    /// the coordinator, but a direct request has no trusted parent record to
+    /// overwrite it. Accepting caller-provided root/depth/path fields there
+    /// would let a session forge tree ownership, budget attribution, or the
+    /// shared-memory namespace.
+    pub fn validate_direct_for(&self, parent_session_id: &str) -> Result<(), &'static str> {
+        if parent_session_id.trim().is_empty() {
+            return Err("parent session id must not be empty");
+        }
+        if self.root_session_id != parent_session_id {
+            return Err("direct child root_session_id must equal parent_session_id");
+        }
+        if self.immediate_parent_session_id != parent_session_id {
+            return Err("direct child immediate_parent_session_id must equal parent_session_id");
+        }
+        if self.depth != 1 {
+            return Err("direct child depth must be 1");
+        }
+        if !matches!(self.lineage_path.as_slice(), [only] if only == parent_session_id) {
+            return Err("direct child lineage_path must contain only parent_session_id");
+        }
+        Ok(())
+    }
+}
+
+/// Spawn command envelope owned by the coordinator mailbox.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentSpawnRequest {
+    pub request: Box<SubagentRequest>,
     #[educe(Debug(ignore))]
     pub result_tx: oneshot::Sender<SubagentResult>,
+}
+
+impl std::ops::Deref for SubagentSpawnRequest {
+    type Target = SubagentRequest;
+
+    fn deref(&self) -> &Self::Target {
+        &self.request
+    }
+}
+
+impl SubagentSpawnRequest {
+    /// Build and send a reply while the plain request remains borrowable.
+    ///
+    /// Primarily useful for channel adapters and deterministic test harnesses;
+    /// production lifecycle replies are owned by `SubagentCoordinator`.
+    pub fn respond_with(
+        self,
+        build: impl FnOnce(&SubagentRequest) -> SubagentResult,
+    ) -> Result<(), SubagentResult> {
+        let result = build(&self.request);
+        self.result_tx.send(result)
+    }
 }
 
 /// Per-spawn dynamic runtime overrides for a subagent.
@@ -105,6 +263,159 @@ pub struct SubagentRuntimeOverrides {
     /// (implementer vs explorer). `None` for every non-goal spawn ⇒ the parent
     /// agent decides the flavor (unchanged behavior).
     pub harness_agent_type: Option<String>,
+    /// Host-issued ContextManifest identity. It is required when the host
+    /// selects the governed-tree harness profile; model task calls cannot set
+    /// that profile or forge this value.
+    pub context_manifest_hash: Option<String>,
+    /// Host-issued, immutable identity bundle for governed-tree admission.
+    pub governed_admission: Option<GovernedSpawnAdmission>,
+    pub completion_output_cap: Option<usize>,
+    pub spawn_depth: Option<u32>,
+    pub output_token_budget: Option<u64>,
+    pub output_schema: Option<serde_json::Value>,
+    pub loop_task_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovernedSpawnAdmission {
+    pub task_tree_id: String,
+    pub root_session_id: String,
+    pub node_id: String,
+    pub manifest_hash: String,
+    pub accepted_snapshot_hash: String,
+    pub immutable_assignment_hash: String,
+    pub tool_catalog_hash: String,
+    pub policy_revision: u64,
+    pub budget_reservation_id: String,
+    /// Root-approved write roots for this child. They are part of the receipt
+    /// hash so a resumed or intercepted child cannot widen its own scope.
+    /// Empty is the explicit legacy/no-narrowing form; hosts that issue a
+    /// non-empty scope must use canonical, non-escaping roots.
+    pub write_scope_roots: Vec<PathBuf>,
+}
+
+impl GovernedSpawnAdmission {
+    pub fn canonical_manifest_hash(&self) -> String {
+        let roots = self
+            .write_scope_roots
+            .iter()
+            .map(|root| root.to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let canonical = format!(
+            "v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n",
+            self.task_tree_id,
+            self.root_session_id,
+            self.node_id,
+            self.accepted_snapshot_hash,
+            self.immutable_assignment_hash,
+            self.tool_catalog_hash,
+            self.policy_revision,
+            self.budget_reservation_id,
+            "governed_tree",
+            roots,
+        );
+        use sha2::{Digest, Sha256};
+        format!("sha256:{:x}", Sha256::digest(canonical.as_bytes()))
+    }
+
+    pub fn validate_for(
+        &self,
+        lineage: &SubagentLineage,
+        child_id: &str,
+    ) -> Result<(), &'static str> {
+        if self.task_tree_id.trim().is_empty()
+            || self.root_session_id.trim().is_empty()
+            || self.node_id.trim().is_empty()
+            || self.manifest_hash.trim().is_empty()
+            || self.accepted_snapshot_hash.trim().is_empty()
+            || self.immutable_assignment_hash.trim().is_empty()
+            || self.tool_catalog_hash.trim().is_empty()
+            || self.budget_reservation_id.trim().is_empty()
+        {
+            return Err("governed admission contains an empty identity or hash");
+        }
+        if self.root_session_id != lineage.root_session_id {
+            return Err("governed admission root does not match task lineage");
+        }
+        if self.node_id != child_id {
+            return Err("governed admission node does not match child id");
+        }
+        if self.task_tree_id != lineage.root_session_id {
+            return Err("governed admission task tree does not match root lineage");
+        }
+        if self.manifest_hash != self.canonical_manifest_hash() {
+            return Err("governed admission manifest hash does not match canonical identity");
+        }
+        if self
+            .write_scope_roots
+            .windows(2)
+            .any(|roots| roots[0] > roots[1])
+        {
+            return Err("governed admission write roots are not canonically sorted");
+        }
+        if self.write_scope_roots.iter().any(|root| {
+            root.as_os_str().is_empty()
+                || root
+                    .components()
+                    .any(|component| matches!(component, Component::ParentDir))
+        }) {
+            return Err("governed admission write root is empty or escapes its workspace");
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod governed_admission_tests {
+    use super::*;
+
+    fn admission() -> GovernedSpawnAdmission {
+        GovernedSpawnAdmission {
+            task_tree_id: "root".into(),
+            root_session_id: "root".into(),
+            node_id: "child".into(),
+            manifest_hash: String::new(),
+            accepted_snapshot_hash: "sha256:snapshot".into(),
+            immutable_assignment_hash: "sha256:assignment".into(),
+            tool_catalog_hash: "sha256:tools".into(),
+            policy_revision: 7,
+            budget_reservation_id: "budget-1".into(),
+            write_scope_roots: vec![PathBuf::from("src"), PathBuf::from("tests")],
+        }
+    }
+
+    #[test]
+    fn canonical_identity_is_required_and_stable() {
+        let lineage = SubagentLineage::child_of(&SubagentLineage::direct("root"), "root");
+        let mut receipt = admission();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        assert!(receipt.validate_for(&lineage, "child").is_ok());
+        let original = receipt.manifest_hash.clone();
+        receipt.tool_catalog_hash = "sha256:changed".into();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        assert_ne!(original, receipt.canonical_manifest_hash());
+        receipt.tool_catalog_hash = "sha256:tools".into();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        receipt.write_scope_roots = vec![PathBuf::from("tests"), PathBuf::from("src")];
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+    }
+
+    #[test]
+    fn foreign_node_and_empty_policy_inputs_fail_closed() {
+        let lineage = SubagentLineage::child_of(&SubagentLineage::direct("root"), "root");
+        let mut receipt = admission();
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        receipt.node_id = "other-child".into();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        receipt.node_id = "child".into();
+        receipt.budget_reservation_id.clear();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+        receipt.budget_reservation_id = "budget-1".into();
+        receipt.write_scope_roots = vec![PathBuf::from("../escape")];
+        receipt.manifest_hash = receipt.canonical_manifest_hash();
+        assert!(receipt.validate_for(&lineage, "child").is_err());
+    }
 }
 
 /// Re-export of [`xai_tool_types::is_not_sentinel`] for existing call sites.
@@ -143,8 +454,10 @@ pub trait SubagentCapabilityModeExt {
     ///
     /// Uses the `kind` field on each `ToolConfig`, populated automatically
     /// by `for_tool::<T>()` / `From<&T: Tool>` at toolset construction time.
-    /// Tools without a `kind` (e.g. MCP/custom tools via
-    /// `ToolConfig::from_id()`) are preserved unconditionally.
+    /// A restricted child treats tools without a `kind` (including MCP/custom
+    /// tools created via `ToolConfig::from_id()`) as deny-by-default: without
+    /// a capability classification, the coordinator cannot prove that the
+    /// tool is read-only or otherwise within the child's ceiling.
     fn filter_tool_config(self, config: &mut crate::registry::types::ToolServerConfig);
 
     /// Return the set of `ToolKind`s allowed under this capability mode.
@@ -194,7 +507,7 @@ impl SubagentCapabilityModeExt for SubagentCapabilityMode {
         let allowed = self.allowed_tool_kinds();
         config.tools.retain(|tc| match tc.kind {
             Some(k) => allowed.contains(&k),
-            None => true,
+            None => false,
         });
         prune_orphaned_background_task_tools(config);
     }
@@ -320,11 +633,21 @@ pub struct SubagentResult {
     pub subagent_id: String,
     /// The child session ID (same as subagent_id for MVP).
     pub child_session_id: String,
+    /// Canonical model ID resolved for this child before its first request.
+    ///
+    /// This is execution provenance, not a user-selectable setting: callers
+    /// must not infer a model from an error string or the parent's current
+    /// picker after the child has finished.  Background schedulers persist it
+    /// with their terminal receipt so recovery/audit can distinguish a model
+    /// change from a repeated run of the same model.
+    pub model_id: Option<String>,
     pub tool_calls: u32,
     pub turns: u32,
     pub duration_ms: u64,
-    /// Total tokens consumed by the subagent's context window.
     pub tokens_used: u64,
+    pub output_tokens_used: u64,
+    pub total_tokens_used: u64,
+    pub output_usage_incomplete: bool,
     /// Path to the isolated worktree if one was created.
     pub worktree_path: Option<String>,
     /// Set when a blocking subagent exceeded its await budget and was
@@ -343,10 +666,14 @@ impl Default for SubagentResult {
             cancelled: false,
             subagent_id: String::new(),
             child_session_id: String::new(),
+            model_id: None,
             tool_calls: 0,
             turns: 0,
             duration_ms: 0,
             tokens_used: 0,
+            output_tokens_used: 0,
+            total_tokens_used: 0,
+            output_usage_incomplete: false,
             worktree_path: None,
             backgrounded: false,
         }
@@ -368,12 +695,14 @@ impl SubagentResult {
 
 // Query protocol
 
-/// Query sent by TaskOutputTool, received by MvpAgent coordinator.
+/// Query sent by `TaskOutputTool` to the shared coordinator actor.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentQueryRequest {
     /// The subagent ID to look up.
     pub subagent_id: String,
+    /// Restrict the lookup to children owned by this parent session.
+    pub parent_session_id: Option<String>,
     /// If true, coordinator waits for completion (up to timeout) before responding.
     pub block: bool,
     /// Max wait time in ms when blocking. Default 30s.
@@ -381,6 +710,25 @@ pub struct SubagentQueryRequest {
     /// Oneshot for the coordinator to send back the snapshot.
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<Option<SubagentSnapshot>>,
+}
+
+/// A terminal snapshot reconstructed by the host while resuming a session.
+///
+/// This is intentionally a coordinator message rather than a scheduler file
+/// read: the host remains the only authority over durable child metadata, and
+/// every consumer observes recovery truth through the normal query boundary.
+#[derive(Debug, Clone)]
+pub struct SubagentRecoveredTerminalRequest {
+    pub parent_session_id: String,
+    pub snapshot: SubagentSnapshot,
+}
+
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentLoopUnitActiveRequest {
+    pub task_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<bool>,
 }
 
 /// Point-in-time snapshot of a subagent's state.
@@ -397,6 +745,35 @@ pub struct SubagentSnapshot {
     pub duration_ms: u64,
     /// Persona used by this subagent, if any.
     pub persona: Option<String>,
+}
+
+/// Lifecycle metadata returned to shell presentation and extension callers.
+#[derive(Debug, Clone)]
+pub struct SubagentInspection {
+    pub snapshot: SubagentSnapshot,
+    /// Direct parent session; retained for a faithful task tree.
+    pub parent_session_id: String,
+    /// Root session that owns whole-tree cancellation and budget authority.
+    pub root_session_id: String,
+    /// The child's depth below the root session (direct child = 1).
+    pub depth: u32,
+    /// Root-to-immediate-parent session ids for UI, provenance, and memory
+    /// routing. Never includes the child itself.
+    pub lineage_path: Vec<String>,
+    pub child_session_id: String,
+    pub fork_parent_prompt_id: Option<String>,
+    pub resumed_from: Option<String>,
+}
+
+impl SubagentSnapshot {
+    /// Whether the child is still in flight (initializing or running) — the
+    /// shared liveness rule every driver's blocking query loops on.
+    pub fn is_running(&self) -> bool {
+        matches!(
+            self.status,
+            SubagentSnapshotStatus::Running { .. } | SubagentSnapshotStatus::Initializing
+        )
+    }
 }
 
 /// Status of a subagent snapshot.
@@ -452,14 +829,18 @@ impl SubagentSnapshotStatus {
 #[derive(Debug, Clone)]
 pub enum SubagentCancelTarget {
     SubagentId(String),
+    /// Turn-scoped cancel (soft cancel / max-turns).
     ParentPromptId(String),
+    /// User Stop / Esc with cancel_subagents — prior-turn background too.
+    ParentSession,
+    WorkflowRunId(String),
 }
 
-/// Cancel request sent by KillTaskTool or session cancellation paths,
-/// received by MvpAgent coordinator.
+/// Cancel request sent by `KillTaskTool` or session cancellation paths.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentCancelRequest {
+    pub parent_session_id: Option<String>,
     pub target: SubagentCancelTarget,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<SubagentCancelOutcome>,
@@ -473,6 +854,8 @@ pub enum SubagentCancelOutcome {
 }
 
 /// Summary of a completed subagent, used for between-turn delivery.
+/// Session ownership lives on the coordinator's `BufferedCompletion` wrapper;
+/// drains are scoped there, so delivered summaries carry no owner field.
 #[derive(Debug, Clone)]
 pub struct SubagentCompletionSummary {
     pub subagent_id: String,
@@ -491,6 +874,9 @@ pub struct SubagentCompletionSummary {
     /// that DO have a polling tool keep the existing metadata-only line +
     /// "Use get_task_output(...)" pointer.
     pub output: Arc<str>,
+    /// Immutable context identity used for this child, when governed.
+    /// Legacy children intentionally remain `None`; no identity is invented.
+    pub context_manifest_hash: Option<String>,
 }
 
 /// Multi-wait request: block until one or all of the listed subagents finish.
@@ -508,6 +894,7 @@ pub struct SubagentMultiWaitRequest {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentCompletionsRequest {
+    pub parent_session_id: Option<String>,
     pub suppress_ids: Vec<String>,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<Vec<SubagentCompletionSummary>>,
@@ -527,6 +914,7 @@ pub struct SubagentOutstandingReply {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentOutstandingRequest {
+    pub parent_session_id: String,
     pub prompt_id: String,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<SubagentOutstandingReply>,
@@ -535,6 +923,7 @@ pub struct SubagentOutstandingRequest {
 /// Clear sticky incomplete after freeze/cancel has snapshotted the bill.
 #[derive(Debug)]
 pub struct SubagentClearUsageNotAppliedRequest {
+    pub parent_session_id: String,
     pub prompt_id: String,
 }
 
@@ -542,9 +931,136 @@ pub struct SubagentClearUsageNotAppliedRequest {
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentMarkUsageNotAppliedRequest {
+    pub parent_session_id: String,
     pub prompt_id: String,
     #[educe(Debug(ignore))]
     pub respond_to: oneshot::Sender<()>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SubagentRegistryCounts {
+    pub pending: usize,
+    pub active: usize,
+    pub completed: usize,
+}
+
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentRegistryCountsRequest {
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<SubagentRegistryCounts>,
+}
+
+/// Request for full metadata plus a resolved progress snapshot.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentInspectRequest {
+    pub subagent_id: String,
+    pub parent_session_id: Option<String>,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Option<SubagentInspection>>,
+}
+
+/// Request for all running children owned by one parent session.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentListRunningRequest {
+    pub parent_session_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Vec<SubagentInspection>>,
+}
+
+/// Fork/resume provenance retained by the shared coordinator.
+#[derive(Debug, Clone, Default)]
+pub struct SubagentProvenance {
+    pub root_session_id: String,
+    pub depth: u32,
+    pub lineage_path: Vec<String>,
+    pub fork_parent_prompt_id: Option<String>,
+    pub resumed_from: Option<String>,
+}
+
+/// Reference to a child spawned during one parent prompt.
+#[derive(Debug, Clone)]
+pub struct SpawnedSubagentRef {
+    pub subagent_id: String,
+    pub child_session_id: String,
+    pub subagent_type: String,
+    pub description: String,
+    pub persona: Option<String>,
+    pub resumed_from: Option<String>,
+}
+
+/// Request for prompt-scoped spawned-child references.
+#[derive(Educe)]
+#[educe(Debug)]
+pub struct SubagentSpawnedRefsRequest {
+    pub parent_session_id: String,
+    pub prompt_id: String,
+    #[educe(Debug(ignore))]
+    pub respond_to: oneshot::Sender<Vec<SpawnedSubagentRef>>,
+}
+
+/// In-memory source data used by a runtime adapter to resume a child.
+#[derive(Debug, Clone)]
+pub struct SubagentResumeSource {
+    pub subagent_id: String,
+    pub child_session_id: String,
+    pub child_cwd: String,
+    pub worktree_path: Option<String>,
+    pub snapshot_ref: Option<String>,
+    pub subagent_type: String,
+    pub persona: Option<String>,
+    pub model_id: Option<String>,
+    /// Immutable context identity used by the source run, when governed.
+    /// Resume adapters must preserve this value or fail closed; they must not
+    /// synthesize a replacement identity.
+    pub context_manifest_hash: Option<String>,
+}
+
+impl SubagentResumeSource {
+    /// Validate the source identity before a governed resume is admitted.
+    /// Legacy callers pass `None` and retain compatibility; governed callers
+    /// must provide the exact host-issued hash and fail closed on absence or
+    /// mismatch.
+    pub fn validate_context_manifest(
+        &self,
+        expected_hash: Option<&str>,
+    ) -> Result<(), &'static str> {
+        let Some(expected_hash) = expected_hash else {
+            // LegacyNoManifest: caller did not require a governed identity.
+            // Automatic governed re-admission must pass Some(hash) instead.
+            return Ok(());
+        };
+        if expected_hash.trim().is_empty() {
+            return Err("expected context manifest hash is empty");
+        }
+        match self.context_manifest_hash.as_deref().map(str::trim) {
+            Some(actual) if !actual.is_empty() && actual == expected_hash => Ok(()),
+            Some("") | None => Err("resume source is missing context manifest identity"),
+            Some(_) => Err("resume source context manifest hash mismatch"),
+        }
+    }
+
+    /// Governed resume must never treat a missing expected hash as admission.
+    /// Legacy sessions call [`Self::validate_context_manifest`] with `None`.
+    pub fn validate_governed_context_manifest(
+        &self,
+        expected_hash: &str,
+    ) -> Result<(), &'static str> {
+        if expected_hash.trim().is_empty() {
+            return Err("governed resume requires a non-empty context manifest hash");
+        }
+        self.validate_context_manifest(Some(expected_hash))
+    }
+}
+
+/// Result of a resume-source lookup.
+#[derive(Debug, Clone)]
+pub enum SubagentResumeLookup {
+    Active,
+    Completed(SubagentResumeSource),
+    Missing,
 }
 
 // Validate-type protocol
@@ -647,89 +1163,86 @@ pub struct SubagentDescribeRequest {
     pub respond_to: oneshot::Sender<SubagentDescribeOutcome>,
 }
 
-/// Coordinator message enum. Intentionally NOT `#[non_exhaustive]` —
-/// the cross-crate drain loop in `xai-grok-shell` relies on
-/// compile-time exhaustiveness.
+/// Coordinator message enum. Kept exhaustive so every actor command is handled.
 pub enum SubagentEvent {
-    Spawn(Box<SubagentRequest>),
+    Spawn(SubagentSpawnRequest),
     Query(SubagentQueryRequest),
+    RegisterRecoveredTerminal(SubagentRecoveredTerminalRequest),
     Cancel(SubagentCancelRequest),
     ListActive(SubagentListActiveRequest),
+    ListRunning(SubagentListRunningRequest),
     Completions(SubagentCompletionsRequest),
+    /// Discard a closed session's buffered completions and cancel its children.
+    TeardownSession {
+        parent_session_id: String,
+    },
+    /// Re-open Task spawns for a parent session after a prior ParentSession stop.
+    /// Emitted at the start of each user turn so Stop's late-spawn gate does not
+    /// permanently block the next prompt.
+    OpenSpawnAdmission {
+        parent_session_id: String,
+    },
     Outstanding(SubagentOutstandingRequest),
     ClearUsageNotApplied(SubagentClearUsageNotAppliedRequest),
     MarkUsageNotApplied(SubagentMarkUsageNotAppliedRequest),
+    RegistryCounts(SubagentRegistryCountsRequest),
+    Inspect(SubagentInspectRequest),
+    SpawnedRefs(SubagentSpawnedRefsRequest),
     ValidateType(SubagentValidateTypeRequest),
     DescribeType(SubagentDescribeRequest),
+    LoopUnitActive(SubagentLoopUnitActiveRequest),
+}
+
+/// Scheduling class for coordinator ingress. Control-plane messages must not
+/// share a future bounded data-plane queue with untrusted model fan-out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubagentIngressClass {
+    DataPlane,
+    ControlPlane,
+}
+
+impl SubagentEvent {
+    /// Exhaustive classification is deliberately adjacent to the event enum:
+    /// adding a new event requires choosing its pressure and priority contract.
+    pub const fn ingress_class(&self) -> SubagentIngressClass {
+        match self {
+            Self::Cancel(_) | Self::TeardownSession { .. } | Self::OpenSpawnAdmission { .. } => {
+                SubagentIngressClass::ControlPlane
+            }
+            Self::Spawn(_)
+            | Self::Query(_)
+            | Self::RegisterRecoveredTerminal(_)
+            | Self::ListActive(_)
+            | Self::ListRunning(_)
+            | Self::Completions(_)
+            | Self::Outstanding(_)
+            | Self::ClearUsageNotApplied(_)
+            | Self::MarkUsageNotApplied(_)
+            | Self::RegistryCounts(_)
+            | Self::Inspect(_)
+            | Self::SpawnedRefs(_)
+            | Self::ValidateType(_)
+            | Self::DescribeType(_)
+            | Self::LoopUnitActive(_) => SubagentIngressClass::DataPlane,
+        }
+    }
 }
 
 // Resource types
 
-/// Unified sender for all subagent coordinator events.
-///
-/// Cloned into each session's `ToolContext` / `ToolBridge Resources` so
-/// that `TaskTool`, `TaskOutputTool`, `KillTaskTool`, completion
-/// reminders, compaction queries, and turn-end guards all send through
-/// a single channel.
+/// One shared channel to the subagent coordinator, cloned into each session.
 #[derive(Clone, Educe)]
 #[educe(Debug)]
 pub struct SubagentEventSender(#[educe(Debug(ignore))] pub mpsc::UnboundedSender<SubagentEvent>);
 
 register_resource!("grok_build", "SubagentEventSender", SubagentEventSender);
 
-// Mid-turn monitor event buffer
-
-/// A monitor event notification to be surfaced as a `<system-reminder>` mid-turn.
-#[derive(Debug, Clone)]
-pub struct MonitorEventNotification {
-    pub task_id: String,
-    pub event_text: String,
-    /// Session that owns the monitor which produced this event.
-    ///
-    /// In leader mode every session shares one [`MonitorEventBuffer`], so the
-    /// drain sites filter on this to avoid surfacing one session's monitor
-    /// events inside another session's turn. `None` for legacy / non-grok-build
-    /// backends, which any session drains for backwards compatibility.
-    pub owner_session_id: Option<String>,
-}
-
-impl MonitorEventNotification {
-    /// Whether this buffered event should surface in the session whose owner id
-    /// is `my_owner`. Mirrors `task_owned_by_session`: an event surfaces only
-    /// when it has no recorded owner (legacy) or its owner matches the draining
-    /// session. Foreign events stay buffered for their own session to drain.
-    pub fn owned_by_session(&self, my_owner: Option<&str>) -> bool {
-        match (my_owner, self.owner_session_id.as_deref()) {
-            (Some(me), Some(owner)) => me == owner,
-            _ => true,
-        }
-    }
-}
-
-/// Shared buffer for mid-turn monitor event notifications: an [`EventQueue`]
-/// of [`MonitorEventNotification`]. Producers `push_capped`; the turn loop
-/// drains its session's events via [`drain_owned`].
-pub type MonitorEventBuffer = xai_interjection_core::EventQueue<MonitorEventNotification>;
-
-register_resource!("grok_build", "MonitorEventBuffer", MonitorEventBuffer);
-
-/// Drain only `my_owner`'s events (the buffer is shared across sessions in
-/// leader mode); owner-less legacy events drain anywhere.
-pub fn drain_owned(
-    buffer: &MonitorEventBuffer,
-    my_owner: Option<&str>,
-) -> Vec<MonitorEventNotification> {
-    buffer.drain_matching(|e| e.owned_by_session(my_owner))
-}
-
 // Active subagent listing (compaction)
 
 /// Lightweight summary of a running subagent.
 ///
-/// This is the single shared definition of this type. The coordinator in
-/// xai-grok-shell produces it, the channel protocol carries it, and the
-/// compaction pipeline in xai-chat-state (via `RunningSubagentSummary`)
-/// consumes it. Do not duplicate this type in other crates.
+/// The shared coordinator produces this through the channel protocol, and the
+/// compaction pipeline consumes it through `RunningSubagentSummary`.
 #[derive(Debug, Clone)]
 pub struct ActiveSubagentSummary {
     /// The subagent's unique ID (same ID used by `get_task_output` / `kill_task`).
@@ -745,8 +1258,7 @@ pub struct ActiveSubagentSummary {
 /// Request to list currently-running subagents for a specific parent session.
 ///
 /// Sent by the compaction pipeline in `SessionActor::run_compact_inner()`.
-/// Handled by `MvpAgent::start_subagent_coordinator()` which borrows the
-/// coordinator and calls `active_summaries_for()`.
+/// Handled by the shared coordinator actor.
 #[derive(Educe)]
 #[educe(Debug)]
 pub struct SubagentListActiveRequest {
@@ -755,14 +1267,17 @@ pub struct SubagentListActiveRequest {
     pub respond_to: oneshot::Sender<Vec<ActiveSubagentSummary>>,
 }
 
-/// Tracks nesting depth. Injected into child's Resources with depth+1.
-///
-/// Top-level sessions start at depth 0. Each child increments by 1.
-/// `TaskTool` rejects spawns when `depth >= MAX_SUBAGENT_DEPTH`.
+/// Current nesting depth (top-level = 0; child = parent + 1).
 #[derive(Debug, Clone)]
 pub struct SubagentDepthCounter(pub u32);
 
 register_resource!("grok_build", "SubagentDepthCounter", SubagentDepthCounter);
+
+/// Host-injected max nesting depth; absent → [`super::MAX_SUBAGENT_DEPTH`].
+#[derive(Debug, Clone, Copy)]
+pub struct MaxSubagentDepth(pub u32);
+
+register_resource!("grok_build", "MaxSubagentDepth", MaxSubagentDepth);
 
 /// Session-scoped validator for model-facing `Task.model` arguments.
 ///
@@ -798,6 +1313,48 @@ register_resource!("grok_build", "TaskModelValidator", TaskModelValidator);
 pub struct SessionIdResource(pub String);
 
 register_resource!("grok_build", "SessionIdResource", SessionIdResource);
+
+/// Stable root identity for the current task tree. Unlike
+/// [`SessionIdResource`], this does not change as nested children are rebuilt.
+/// Future whole-tree budgets and working-memory review capabilities must use
+/// this value rather than trusting model-provided identifiers.
+#[derive(Debug, Clone)]
+pub struct TaskTreeRootSessionId(pub String);
+
+register_resource!("grok_build", "TaskTreeRootSessionId", TaskTreeRootSessionId);
+
+/// Host-owned RAII token for an interruptible foreground wait.
+pub trait ForegroundWaitGuard: Send {}
+
+impl<T: Send> ForegroundWaitGuard for T {}
+
+type ForegroundWaitFactory = dyn Fn() -> Box<dyn ForegroundWaitGuard> + Send + Sync;
+
+/// Factory injected by hosts that expose a send-now wait window.
+#[derive(Clone)]
+pub struct SubagentForegroundWait(Arc<ForegroundWaitFactory>);
+
+impl SubagentForegroundWait {
+    pub fn new(factory: impl Fn() -> Box<dyn ForegroundWaitGuard> + Send + Sync + 'static) -> Self {
+        Self(Arc::new(factory))
+    }
+
+    pub fn enter(&self) -> Box<dyn ForegroundWaitGuard> {
+        (self.0)()
+    }
+}
+
+impl std::fmt::Debug for SubagentForegroundWait {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SubagentForegroundWait").finish()
+    }
+}
+
+register_resource!(
+    "grok_build",
+    "SubagentForegroundWait",
+    SubagentForegroundWait
+);
 
 /// Carries the current parent prompt/turn ID for TaskTool subagent scoping.
 ///
@@ -903,7 +1460,69 @@ mod tests {
 
     use super::SubagentCapabilityMode;
     use super::SubagentCapabilityModeExt;
+    use super::SubagentResumeSource;
     use super::is_valid_resume_id;
+
+    fn resume_source(hash: Option<&str>) -> SubagentResumeSource {
+        SubagentResumeSource {
+            subagent_id: "child".into(),
+            child_session_id: "session".into(),
+            child_cwd: "/tmp".into(),
+            worktree_path: None,
+            snapshot_ref: None,
+            subagent_type: "general-purpose".into(),
+            persona: None,
+            model_id: Some("model".into()),
+            context_manifest_hash: hash.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn governed_resume_requires_matching_manifest_identity() {
+        assert!(
+            resume_source(Some("sha256:one"))
+                .validate_context_manifest(Some("sha256:one"))
+                .is_ok()
+        );
+        assert_eq!(
+            resume_source(None)
+                .validate_context_manifest(Some("sha256:one"))
+                .unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
+        assert_eq!(
+            resume_source(Some("sha256:one"))
+                .validate_context_manifest(Some("sha256:two"))
+                .unwrap_err(),
+            "resume source context manifest hash mismatch"
+        );
+    }
+
+    #[test]
+    fn legacy_resume_without_expected_manifest_remains_compatible() {
+        assert!(resume_source(None).validate_context_manifest(None).is_ok());
+    }
+
+    #[test]
+    fn governed_resume_rejects_empty_or_missing_expected_hash() {
+        assert!(
+            resume_source(Some("sha256:one"))
+                .validate_governed_context_manifest("sha256:one")
+                .is_ok()
+        );
+        assert_eq!(
+            resume_source(Some("sha256:one"))
+                .validate_governed_context_manifest("")
+                .unwrap_err(),
+            "governed resume requires a non-empty context manifest hash"
+        );
+        assert_eq!(
+            resume_source(None)
+                .validate_governed_context_manifest("sha256:one")
+                .unwrap_err(),
+            "resume source is missing context manifest identity"
+        );
+    }
 
     /// Create a `ToolConfig` with the given id and kind set.
     fn tc(id: &str, kind: ToolKind) -> ToolConfig {
@@ -1228,12 +1847,14 @@ mod tests {
         let (respond_to, mut response_rx) = oneshot::channel();
 
         tx.send(super::SubagentCompletionsRequest {
+            parent_session_id: Some("parent".into()),
             suppress_ids: vec!["id-1".into(), "id-2".into()],
             respond_to,
         })
         .unwrap();
 
         let req = rx.try_recv().unwrap();
+        assert_eq!(req.parent_session_id.as_deref(), Some("parent"));
         assert_eq!(req.suppress_ids, vec!["id-1", "id-2"]);
 
         let summaries = vec![super::SubagentCompletionSummary {
@@ -1245,6 +1866,7 @@ mod tests {
             tool_calls: 7,
             turns: 3,
             output: std::sync::Arc::from("subagent answer"),
+            context_manifest_hash: None,
         }];
         req.respond_to.send(summaries).unwrap();
 
@@ -1316,6 +1938,7 @@ mod tests {
             .0
             .send(super::SubagentEvent::Completions(
                 super::SubagentCompletionsRequest {
+                    parent_session_id: None,
                     suppress_ids: vec![],
                     respond_to,
                 },
@@ -1347,6 +1970,7 @@ mod tests {
             .0
             .send(super::SubagentEvent::Completions(
                 super::SubagentCompletionsRequest {
+                    parent_session_id: None,
                     suppress_ids: vec![],
                     respond_to,
                 },

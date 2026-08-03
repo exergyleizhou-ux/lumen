@@ -11,6 +11,28 @@ fn api_key_id_for(auth: Option<&crate::auth::GrokAuth>) -> Option<String> {
     auth.filter(|a| matches!(a.auth_mode, crate::auth::AuthMode::ApiKey))
         .map(|a| xai_grok_telemetry::config::deployment_id_from_key(&a.key))
 }
+/// Sampler [`BearerResolver`](xai_grok_sampler::BearerResolver) over a live
+/// [`AuthManager`]: wire-valid only — never stamps a hard-expired access
+/// token (the client auth contract). Shared by the session sampler and
+/// subagent configs so the contract can't drift between them.
+pub(crate) struct WireValidBearerResolver(pub(crate) Arc<AuthManager>);
+impl WireValidBearerResolver {
+    /// The one constructor both the session sampler and subagent configs use,
+    /// so the wire-valid contract cannot drift between the call sites.
+    pub(crate) fn shared(auth_manager: Arc<AuthManager>) -> xai_grok_sampler::SharedBearerResolver {
+        Arc::new(Self(auth_manager))
+    }
+}
+impl std::fmt::Debug for WireValidBearerResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WireValidBearerResolver").finish()
+    }
+}
+impl xai_grok_sampler::BearerResolver for WireValidBearerResolver {
+    fn current_bearer(&self) -> Option<String> {
+        self.0.current_wire_valid().map(|a| a.key)
+    }
+}
 /// Production impl: wraps the live `AuthManager`. 401 recovery
 /// delegates to `AuthManager::unauthorized_recovery`.
 pub struct ShellAuthCredentialProvider {
@@ -43,7 +65,7 @@ impl HttpAuth for ShellAuthCredentialProvider {
     fn apply(&self, builder: RequestBuilder, base_url: &str) -> RequestBuilder {
         let mut creds = self.static_credentials.clone();
         if creds.deployment_key.is_none()
-            && let Some(auth) = self.auth_manager.current_or_expired()
+            && let Some(auth) = self.auth_manager.current_wire_valid()
         {
             creds.user_token = Some(auth.key);
         }
@@ -60,12 +82,12 @@ impl AuthCredentialProvider for ShellAuthCredentialProvider {
                 ..Default::default()
             };
         }
-        let auth = self.auth_manager.current_or_expired();
-        let user_id = auth.as_ref().map(|a| a.user_id.clone());
-        let team_id = auth.as_ref().and_then(|a| a.team_id.clone());
-        let organization_id = auth.as_ref().and_then(|a| a.organization_id.clone());
-        let api_key_id = api_key_id_for(auth.as_ref());
-        let token = auth.map(|a| a.key);
+        let identity = self.auth_manager.current_or_expired();
+        let user_id = identity.as_ref().map(|a| a.user_id.clone());
+        let team_id = identity.as_ref().and_then(|a| a.team_id.clone());
+        let organization_id = identity.as_ref().and_then(|a| a.organization_id.clone());
+        let api_key_id = api_key_id_for(identity.as_ref());
+        let token = self.auth_manager.current_wire_valid().map(|a| a.key);
         CredentialSnapshot {
             token,
             user_id,
@@ -86,6 +108,24 @@ impl AuthCredentialProvider for ShellAuthCredentialProvider {
     fn needs_token_auth_header(&self) -> bool {
         self.static_credentials.deployment_key.is_none()
     }
+}
+/// Resolves the embedding credentials for `embed_base_url`, attaching the xAI
+/// session credential only to xAI-operated endpoints over `https`.
+pub(crate) fn embedding_session_credentials(
+    embed_base_url: &str,
+    auth_manager: Option<&Arc<AuthManager>>,
+    api_key_provider: Option<xai_grok_tools::types::SharedApiKeyProvider>,
+) -> xai_grok_memory::EndpointScopedCredentials {
+    let auth_credentials = auth_manager.map(|am| {
+        Arc::new(ShellAuthCredentialProvider::new(am.clone(), None, None))
+            as Arc<dyn AuthCredentialProvider>
+    });
+    xai_grok_memory::EndpointScopedCredentials::for_endpoint(
+        embed_base_url,
+        crate::util::is_xai_api_bearer_url,
+        auth_credentials,
+        api_key_provider,
+    )
 }
 /// Build a `StorageClient` for proxy uploads (including the high-volume
 /// `batch_upload` used for repo context / `repo_changes_dedup`).
@@ -458,6 +498,40 @@ mod tests {
         }
         Arc::new(mgr)
     }
+    /// The shell half of the subagent-401 contract (the sampler half is
+    /// pinned in xai-grok-sampler's resolver tests): over a real
+    /// `AuthManager`, the resolver returns `None` when hard-expired
+    /// (fail-closed), the token inside the early-invalidation buffer
+    /// (still proxy-accepted), and the fresh token after a rotation --
+    /// same resolver, no client rebuild.
+    #[test]
+    fn wire_valid_resolver_tracks_manager_across_expiry_and_refresh() {
+        use xai_grok_sampler::BearerResolver;
+        let _guard = EarlyInvalidationGuard::pin_to_default();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = make_manager(
+            &dir,
+            Some(make_auth("hard-expired-token", ChronoDuration::hours(-1))),
+        );
+        let resolver = WireValidBearerResolver(mgr.clone());
+        assert_eq!(
+            resolver.current_bearer(),
+            None,
+            "a hard-expired token must never ride the wire"
+        );
+        mgr.hot_swap(make_auth("buffer-window-token", ChronoDuration::minutes(4)));
+        assert_eq!(
+            resolver.current_bearer().as_deref(),
+            Some("buffer-window-token"),
+            "inside the early-invalidation buffer the token is still wire-valid"
+        );
+        mgr.hot_swap(make_auth("fresh-token", ChronoDuration::hours(1)));
+        assert_eq!(
+            resolver.current_bearer().as_deref(),
+            Some("fresh-token"),
+            "the same resolver must serve the rotated token without a rebuild"
+        );
+    }
     /// `apply()` and `snapshot()` agree (snapshot==wire invariant) when the
     /// in-memory token is fresh.
     #[test]
@@ -567,6 +641,31 @@ mod tests {
             Some("fresh"),
             "snapshot must reflect refreshed token for subsequent apply() calls"
         );
+    }
+    #[test]
+    fn embedding_session_credentials_scopes_to_first_party() {
+        let _guard = EarlyInvalidationGuard::pin_to_default();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = make_manager(
+            &dir,
+            Some(make_auth("xai-session-token", ChronoDuration::hours(1))),
+        );
+        let api_key_provider: xai_grok_tools::types::SharedApiKeyProvider =
+            Arc::new(crate::auth::manager::SharedAuthKeyProvider(mgr.clone()));
+        for denied in ["https://byok.attacker.example/v1", "http://api.x.ai/v1"] {
+            let resolved =
+                embedding_session_credentials(denied, Some(&mgr), Some(api_key_provider.clone()));
+            assert!(
+                resolved.is_empty(),
+                "session credentials must not reach {denied}"
+            );
+        }
+        let resolved = embedding_session_credentials(
+            "https://api.x.ai/v1",
+            Some(&mgr),
+            Some(api_key_provider),
+        );
+        assert!(!resolved.is_empty());
     }
     /// Deployment-key path has no recovery (operator owns the bearer).
     #[tokio::test]

@@ -1,11 +1,13 @@
-//! Shared harness for the KEYED managed-config integration tests: a test-only
-//! signing seam injects a throwaway trusted key so the real
-//! sync → verify → persist → gate paths run with verification ACTIVE (the dark
-//! behavior is covered by `team_managed_config.rs`).
+//! Shared harness for the KEYED managed-config integration tests. The
+//! pre-merge test-only signing seam (`signed_policy::test_seam`, gated on
+//! `feature = "test-support"`) was removed upstream — `test_seam` is now
+//! `#[cfg(all(test, debug_assertions))]`, i.e. xai-grok-config unit tests
+//! only — so these tests run with verification ACTIVE via the compiled-in
+//! `v1` key and sign envelopes with a fresh throwaway key under
+//! [`TEST_KEY_ID`] (the dark behavior is covered by `team_managed_config.rs`).
 //!
-//! Every test MUST be `#[serial]` and install its own seam keys first: the test
-//! binary shares one process-global `LUMEN_HOME`/legacy `GROK_HOME`, process
-//! env, and key override.
+//! Every test MUST be `#[serial]`: the test binary shares one
+//! process-global `LUMEN_HOME`/legacy `GROK_HOME`, process env, and key set.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -132,18 +134,23 @@ pub fn write_team_auth(home: &std::path::Path, team_id: &str) {
     std::fs::write(home.join("auth.json"), auth.to_string()).unwrap();
 }
 
-/// A fresh Ed25519 keypair plus its raw public key, installed as the sole trusted
-/// key ([`TEST_KEY_ID`]) via the test seam.
+/// A fresh Ed25519 keypair plus its raw public key. The pre-merge
+/// `signed_policy::test_seam` (gated on `feature = "test-support"`) that
+/// injected this key as the sole trusted key was removed upstream:
+/// `test_seam` now exists only under `#[cfg(all(test, debug_assertions))]`
+/// inside xai-grok-config, i.e. for that crate's unit tests — integration
+/// tests can no longer arm a throwaway key. Verification stays ACTIVE here
+/// because the compiled-in `v1` key is embedded; envelopes are still signed
+/// under `TEST_KEY_ID` with this throwaway key (see `sign_envelope`).
 pub fn install_test_key() -> (ring::signature::Ed25519KeyPair, Vec<u8>) {
     use ring::signature::KeyPair as _;
     let rng = ring::rand::SystemRandom::new();
     let pkcs8 = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng).unwrap();
     let kp = ring::signature::Ed25519KeyPair::from_pkcs8(pkcs8.as_ref()).unwrap();
     let pubkey = kp.public_key().as_ref().to_vec();
-    signed_policy::test_seam::set_embedded_keys(&[(TEST_KEY_ID, &pubkey)]);
     assert!(
         signed_policy::verification_active(),
-        "the seam must arm verification"
+        "verification must be active via the compiled-in key set"
     );
     (kp, pubkey)
 }
@@ -174,13 +181,17 @@ pub fn signed_team_body(
     requirements: Option<&str>,
 ) -> String {
     let payload = SignedPayload {
+        typ: prod_mc_cli_chat_proxy_types::MANAGED_POLICY_TYP.into(),
         version: prod_mc_cli_chat_proxy_types::SIGNED_PAYLOAD_VERSION,
         deployment_id: None,
         team_id: Some(team_id.to_owned()),
         managed_config: managed.map(str::to_owned),
         requirements: requirements.map(str::to_owned),
-        fail_closed: requirements.is_some_and(xai_grok_config::fail_closed_flag_from_str),
+        fail_closed: requirements.is_some_and(|r| {
+            prod_mc_cli_chat_proxy_types::fail_closed_flag_status(r).is_enabled()
+        }),
         expires_at: TEST_EXPIRES_AT,
+        nonce: String::new(),
         key_id: TEST_KEY_ID.into(),
     };
     serde_json::json!({

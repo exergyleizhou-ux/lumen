@@ -22,7 +22,7 @@ use crate::types::tool::{ToolKind, ToolNamespace};
 use crate::types::resources::resolve_model_path;
 use crate::util::format_not_found_error;
 
-const DESCRIPTION: &str = r#"Edit a file using anchors from ${{ tools.by_kind.read }} or ${{ tools.by_kind.search }}.
+const DESCRIPTION: &str = r#"Edit a file using anchors${%- if tools.by_kind.read and tools.by_kind.search %} from ${{ tools.by_kind.read }} or ${{ tools.by_kind.search }}${%- elif tools.by_kind.read %} from ${{ tools.by_kind.read }}${%- elif tools.by_kind.search %} from ${{ tools.by_kind.search }}${%- endif %}.
 
 Operations (use the "op" field):
 
@@ -47,7 +47,7 @@ Operations (use the "op" field):
   "write" — Replace entire file content (no anchors needed).
     { "op": "write", "content": "full file content here" }
 
-Batch edits: pass multiple operations in "edits". They are validated against the
+Batch edits: pass multiple operations in "${{ params.edit.edits }}". They are validated against the
 pre-edit snapshot and applied atomically bottom-up — if any anchor fails
 validation, ALL edits in the batch are rejected (none are applied).
 Overlapping ranges are also rejected.
@@ -65,7 +65,7 @@ Follow-up edits:
   (e.g. "{example_anchor}"). Always include the line number. Do NOT include → or
   the line content after it.
 - Never fabricate or modify anchors — only use exact anchors as returned by
-  previous read, grep, or edit calls."#;
+  previous tool outputs."#;
 
 /// `hashline_edit` tool — edits files using anchor references.
 #[derive(Debug, Default)]
@@ -264,7 +264,7 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
             "hashline_edit",
-            crate::types::tool_metadata::ToolMetadata::description_template(self),
+            crate::types::tool_metadata::ToolMetadata::sanitized_description_template(self),
         )
     }
 
@@ -317,6 +317,32 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
 
         let display_dcwd = display_cwd_or_cwd(&cwd, display_cwd.as_deref());
         let joined_path = resolve_model_path(&cwd, display_cwd.as_deref(), &input.file_path);
+        // Enforce before canonicalization so a new-file Write cannot create a
+        // parent outside the child lease.  Existing files are checked again
+        // after canonicalization below to catch symlink resolution.
+        {
+            let res = resources.lock().await;
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                    &res,
+                    &joined_path,
+                    &cwd,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                    &res,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+        }
         // Error-preserving variant: the Err arm drives new-file creation.
         let path = match crate::util::fs::try_canonicalize(&joined_path).await {
             Ok(p) => p,
@@ -373,6 +399,28 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
                 }
             }
         };
+
+        {
+            let res = resources.lock().await;
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_write_scope_if_present(
+                    &res, &path, &cwd,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                    &res,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+        }
 
         // Read current file content.
         let file_bytes = match fs.read_file(&path).await {
@@ -461,6 +509,35 @@ mod tests {
         resources
     }
 
+    #[test]
+    fn description_template_tracks_renamed_edits() {
+        use crate::types::template_renderer::TemplateRenderer;
+        use crate::types::tool::ToolKind;
+        use crate::types::tool_metadata::ToolMetadata;
+        use std::collections::HashMap;
+
+        let tools = HashMap::from([
+            (ToolKind::Edit, "hashline_edit".to_string()),
+            (ToolKind::Read, "hashline_read".to_string()),
+            (ToolKind::Search, "hashline_grep".to_string()),
+        ]);
+        let params = HashMap::from([(
+            ToolKind::Edit,
+            HashMap::from([("edits".to_string(), "changes".to_string())]),
+        )]);
+        let rendered = TemplateRenderer::new(tools, params)
+            .render(ToolMetadata::description_template(&HashlineEditTool))
+            .unwrap();
+        assert!(
+            rendered.contains("pass multiple operations in \"changes\""),
+            "renamed edits param must appear:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("in \"edits\""),
+            "canonical edits must not remain after rename:\n{rendered}"
+        );
+    }
+
     fn anchors_for(content: &str) -> Vec<String> {
         use crate::implementations::grok_build_hashline::anchor::split_lines;
         use crate::implementations::grok_build_hashline::edit::apply::anchor_suffix;
@@ -498,6 +575,36 @@ mod tests {
             }
             other => panic!("Expected FileNotFound, got {:?}", other),
         }
+    }
+
+    #[tokio::test]
+    async fn write_scope_denies_new_hashline_write_outside_child_grant() {
+        use crate::implementations::grok_build::task::{WriteScopeLease, WriteScopeLeaseResource};
+
+        let tmp = TempDir::new().unwrap();
+        let allowed = tmp.path().join("allowed");
+        std::fs::create_dir_all(&allowed).unwrap();
+        let mut resources = test_resources(tmp.path());
+        resources.insert(WriteScopeLeaseResource {
+            lease: WriteScopeLease::issue("grant", "root", "child", vec![allowed], 60).unwrap(),
+        });
+        let denied = tmp.path().join("outside.txt");
+        let result = xai_tool_runtime::Tool::run(
+            &HashlineEditTool,
+            test_ctx(resources.into_shared()),
+            HashlineEditInput {
+                file_path: denied.to_string_lossy().into_owned(),
+                edits: vec![HashlineOp::Write {
+                    content: "must not exist".into(),
+                }],
+            },
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(result, SearchReplaceOutput::InvalidInput(message) if message.contains("write_scope"))
+        );
+        assert!(!denied.exists());
     }
 
     /// Integration: same-anchor insertions preserve request order on disk.

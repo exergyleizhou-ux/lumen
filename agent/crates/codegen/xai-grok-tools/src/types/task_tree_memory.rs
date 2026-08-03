@@ -1,0 +1,120 @@
+//! Host-owned capability for reviewed task-tree working memory.
+//!
+//! The tool crate defines the port; the shell owns the concrete JSONL ledger.
+//! This avoids a dependency cycle and, more importantly, prevents a model from
+//! supplying a path or root identity to gain arbitrary file-write access.
+
+use std::sync::Arc;
+
+/// What a task-tree memory claim represents.  The label remains attached to
+/// the claim after root review so an accepted assumption cannot masquerade as
+/// a verified fact in a sibling's prompt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskTreeMemoryFactKind {
+    #[default]
+    Fact,
+    Progress,
+    Evidence,
+    Assumption,
+    Blocker,
+    Decision,
+}
+
+impl TaskTreeMemoryFactKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Fact => "fact",
+            Self::Progress => "progress",
+            Self::Evidence => "evidence",
+            Self::Assumption => "assumption",
+            Self::Blocker => "blocker",
+            Self::Decision => "decision",
+        }
+    }
+}
+
+/// A structured fact proposal or reviewed revision.
+#[derive(Debug, Clone)]
+pub struct TaskTreeMemoryFact {
+    pub branch_id: String,
+    pub fact_id: String,
+    pub revision: u64,
+    pub kind: TaskTreeMemoryFactKind,
+    pub evidence_ref: Option<String>,
+    pub confidence: u8,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TaskTreeMemoryReviewState {
+    Accepted,
+    Rejected,
+    Superseded,
+}
+
+impl TaskTreeMemoryReviewState {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Accepted => "accepted",
+            Self::Rejected => "rejected",
+            Self::Superseded => "superseded",
+        }
+    }
+}
+
+/// Result returned after one append-only ledger write.
+#[derive(Debug, Clone)]
+pub struct TaskTreeMemoryWriteReceipt {
+    pub fact_id: String,
+    pub revision: u64,
+    pub state: &'static str,
+}
+
+/// SessionActor-owned backend for the task-tree ledger.
+///
+/// The backend receives the actual caller session ID from an injected resource;
+/// neither it nor the model accepts a filesystem path or a root-session ID.
+#[async_trait::async_trait]
+pub trait TaskTreeMemoryBackend: Send + Sync + 'static {
+    async fn propose(
+        &self,
+        author_session_id: &str,
+        fact: TaskTreeMemoryFact,
+    ) -> Result<TaskTreeMemoryWriteReceipt, String>;
+
+    async fn review(
+        &self,
+        reviewer_session_id: &str,
+        fact: TaskTreeMemoryFact,
+        state: TaskTreeMemoryReviewState,
+    ) -> Result<TaskTreeMemoryWriteReceipt, String>;
+}
+
+/// Ephemeral resource injected only into sessions that belong to a task tree
+/// with workspace memory enabled.
+#[derive(Clone)]
+pub struct TaskTreeMemoryBackendResource(pub Arc<dyn TaskTreeMemoryBackend>);
+
+impl std::fmt::Debug for TaskTreeMemoryBackendResource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskTreeMemoryBackendResource").finish()
+    }
+}
+
+crate::register_resource!(
+    "grok_build",
+    "TaskTreeMemoryBackendResource",
+    TaskTreeMemoryBackendResource
+);
+
+/// Host-owned manifest provenance made available to terminal tool results.
+/// The model-facing tools cannot create or mutate this resource.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextManifestHashResource(pub String);
+
+crate::register_resource!(
+    "grok_build",
+    "ContextManifestHashResource",
+    ContextManifestHashResource
+);

@@ -359,8 +359,17 @@ async fn make_actor_with_cap(
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let (gateway_tx, _gateway_rx) =
         tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-    let (persistence_tx, _persistence_rx) =
+    // Acknowledge the durable ops slash commands require (e.g. `/goal clear`'s
+    // DeleteGoalModeState) so handlers complete instead of bailing early.
+    let (persistence_tx, mut persistence_rx) =
         tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+    tokio::spawn(async move {
+        while let Some(msg) = persistence_rx.recv().await {
+            if let PersistenceMsg::DeleteGoalModeState { respond_to } = msg {
+                let _ = respond_to.send(Ok(()));
+            }
+        }
+    });
     let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
     actor.events = crate::session::events::EventTracker::new(tmp.path());
     actor.goal_enabled = true;
@@ -1683,6 +1692,8 @@ async fn goal_classifier_nudge_suppresses_subsequent_goal_summary() {
                     verbatim: true,
                     json_schema: None,
                     origin: PromptOrigin::GoalClassifierNudge,
+                    task_wake_fallback: None,
+                    tool_overrides_update: None,
                     respond_to,
                     persist_ack: None,
                     parsed_prompt_tx: None,
@@ -2713,6 +2724,7 @@ fn catalog_with(
                 info,
                 api_key: None,
                 env_key: None,
+                auth_provider: None,
                 api_base_url: None,
             },
         );
@@ -2742,8 +2754,17 @@ async fn make_role_model_actor(
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let (gateway_tx, _gateway_rx) =
         tokio::sync::mpsc::unbounded_channel::<xai_acp_lib::AcpClientMessage>();
-    let (persistence_tx, _persistence_rx) =
+    // Acknowledge the durable ops slash commands require (e.g. `/goal clear`'s
+    // DeleteGoalModeState) so handlers complete instead of bailing early.
+    let (persistence_tx, mut persistence_rx) =
         tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
+    tokio::spawn(async move {
+        while let Some(msg) = persistence_rx.recv().await {
+            if let PersistenceMsg::DeleteGoalModeState { respond_to } = msg {
+                let _ = respond_to.send(Ok(()));
+            }
+        }
+    });
     let mut actor = create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await;
     actor.events = crate::session::events::EventTracker::new(tmp.path());
     actor.goal_enabled = true;

@@ -24,6 +24,7 @@ use crate::implementations::grok_build::image_gen::ImageGenInput;
 use crate::implementations::grok_build::list_dir::ListDirInput;
 use crate::implementations::grok_build::read_file::ReadFileInput;
 use crate::implementations::grok_build::search_replace::SearchReplaceInput;
+use crate::implementations::grok_build::task_tree_memory::TaskTreeMemoryInput;
 use crate::implementations::grok_build::todo::TodoWriteInput;
 use crate::implementations::grok_build::update_goal::UpdateGoalInput;
 use crate::implementations::grok_build::video_gen::{ImageToVideoInput, ReferenceToVideoInput};
@@ -70,6 +71,7 @@ pub enum ToolInput {
     WaitTasks(WaitTasksToolInput),
     KillTask(KillTaskToolInput),
     Task(TaskToolInput),
+    TaskTreeMemory(TaskTreeMemoryInput),
     WebSearch(WebSearchInput),
     ImageGen(ImageGenInput),
     ImageEdit(ImageEditInput),
@@ -95,6 +97,7 @@ pub enum ToolInput {
     SchedulerDelete(crate::implementations::grok_build::scheduler::delete::SchedulerDeleteInput),
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListInput),
     UpdateGoal(UpdateGoalInput),
+    Workflow(crate::implementations::grok_build::workflow::WorkflowToolInput),
     /// Dynamic input for runtime-registered tools (MCP, etc.)
     Dynamic(serde_json::Value),
 }
@@ -173,9 +176,9 @@ mod tests {
             before_context: None,
             after_context: None,
             context: None,
-            case_insensitive: None,
+            case_insensitive: false,
             head_limit: None,
-            multiline: None,
+            multiline: false,
             r#type: None,
         })
         .try_into();
@@ -194,7 +197,7 @@ mod tests {
     }
     #[test]
     fn dynamic_input_holds_arbitrary_json() {
-        let input = ToolInput::Dynamic(serde_json::json!({ "custom" : "data" }));
+        let input = ToolInput::Dynamic(serde_json::json!({"custom": "data"}));
         match input {
             ToolInput::Dynamic(v) => {
                 assert_eq!(v["custom"], "data");

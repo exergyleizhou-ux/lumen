@@ -13,6 +13,7 @@ fn response_with_usage(total_tokens: u32) -> ConversationResponse {
 
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
+            cache_creation_prompt_tokens: 0,
             provider_cache_hit_tokens: None,
             cache_miss_prompt_tokens: None,
         }),
@@ -20,6 +21,9 @@ fn response_with_usage(total_tokens: u32) -> ConversationResponse {
         message_chunks_emitted: 1,
         doom_loop_signals: Vec::new(),
         stop_message: None,
+        message_id: None,
+        raw_stop_reason: None,
+        stop_sequence: None,
     }
 }
 
@@ -32,6 +36,9 @@ fn response_without_usage() -> ConversationResponse {
         message_chunks_emitted: 1,
         doom_loop_signals: Vec::new(),
         stop_message: None,
+        message_id: None,
+        raw_stop_reason: None,
+        stop_sequence: None,
     }
 }
 
@@ -182,6 +189,7 @@ async fn build_session_info_sources_show_model_fingerprint_from_catalog() {
                 info: ModelInfo::fallback("test"),
                 api_key: None,
                 env_key: None,
+                auth_provider: None,
                 api_base_url: None,
             };
             entry.info.show_model_fingerprint = false;

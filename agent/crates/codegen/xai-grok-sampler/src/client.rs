@@ -15,12 +15,13 @@
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
+use indexmap::IndexMap;
 use reqwest::header::{
     ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT,
 };
 use serde::Serialize;
 
-use xai_grok_sampling_types::error::{parse_error_bytes, try_parse_stream_error};
+use xai_grok_sampling_types::error::{try_parse_stream_error, user_facing_api_error_message};
 use xai_grok_sampling_types::{
     ChatCompletionChunk, ChatCompletionRequest, ChatCompletionResponse, ConversationRequest,
     ConversationResponse, CreateResponseWrapper, DOOM_LOOP_CHECK_HEADER, MessagesRequestWrapper,
@@ -51,7 +52,6 @@ struct GrokRequestHeaders<'a> {
     deployment_id: Option<&'a str>,
     user_id: Option<&'a str>,
 }
-
 impl GrokRequestHeaders<'_> {
     fn apply(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let mut b = builder
@@ -272,6 +272,105 @@ struct StreamOptions {
     include_usage: bool,
 }
 
+/// Resolve `env_http_headers` (`header -> env var`) into `headers` via `getenv`, skipping unset/blank/invalid entries and trimming values.
+fn apply_env_http_headers(
+    env_http_headers: &IndexMap<String, String>,
+    getenv: impl Fn(&str) -> Option<String>,
+    headers: &mut HeaderMap,
+) {
+    for (key, env_var) in env_http_headers {
+        let Some(value) = getenv(env_var) else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let (Ok(name), Ok(header_value)) = (
+            HeaderName::try_from(key.as_str()),
+            HeaderValue::from_str(value),
+        ) else {
+            tracing::warn!(
+                header = %key,
+                env_var = %env_var,
+                "skipping env_http_header with an invalid header name or value"
+            );
+            continue;
+        };
+        headers.insert(name, header_value);
+    }
+}
+
+/// Endpoint URL builder, resolved once at client construction so each request
+/// only appends its path.
+#[derive(Clone, Debug)]
+enum EndpointTemplate {
+    /// No query params and no query on the base URL (or an unparseable base):
+    /// append the path to the base verbatim.
+    Plain(String),
+    /// Query params configured: `{prefix}/{path}{suffix}`. `suffix` starts with
+    /// `?` and folds any base-URL params, with a configured key winning over the
+    /// same key in `base_url` (percent-encoded, no duplicates).
+    WithQuery { prefix: String, suffix: String },
+}
+
+impl EndpointTemplate {
+    fn new(base_url: &str, query_params: &IndexMap<String, String>) -> Self {
+        let base = base_url.trim_end_matches('/').to_string();
+        // The fast path is safe only when there is nothing to fold: no configured
+        // params and no query already on the base (which would otherwise land
+        // before the appended path).
+        if query_params.is_empty() && !base.contains('?') {
+            return Self::Plain(base);
+        }
+        let mut url = match reqwest::Url::parse(&base) {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!(
+                    url = %base,
+                    %error,
+                    "failed to parse base URL for endpoint; sending without folded query"
+                );
+                return Self::Plain(base);
+            }
+        };
+        let overridden: std::collections::HashSet<&str> =
+            query_params.keys().map(String::as_str).collect();
+        let kept: Vec<(String, String)> = url
+            .query_pairs()
+            .filter(|(k, _)| !overridden.contains(k.as_ref()))
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        let prefix = {
+            let mut prefix_url = url.clone();
+            prefix_url.set_query(None);
+            prefix_url.as_str().trim_end_matches('/').to_string()
+        };
+        {
+            let mut pairs = url.query_pairs_mut();
+            pairs.clear();
+            for (key, value) in &kept {
+                pairs.append_pair(key, value);
+            }
+            for (key, value) in query_params {
+                pairs.append_pair(key, value);
+            }
+        }
+        let suffix = url.query().map(|q| format!("?{q}")).unwrap_or_default();
+        Self::WithQuery { prefix, suffix }
+    }
+
+    fn url_for_path(&self, path: &str) -> String {
+        let path = path.trim_start_matches('/');
+        match self {
+            Self::Plain(base) => format!("{base}/{path}"),
+            Self::WithQuery { prefix, suffix } => format!("{prefix}/{path}{suffix}"),
+        }
+    }
+}
+
+
+
 /// Serialize a Chat Completions payload and apply the model-specific wire
 /// contract documented for DeepSeek V4 thinking mode.
 ///
@@ -379,6 +478,8 @@ pub struct SamplingClient {
     header_injector: Option<crate::config::SharedHeaderInjector>,
     request_observer: Option<crate::config::SharedRequestObserver>,
     wire_observation_context: Option<(lumen_discipline::WireObservationContext, u32)>,
+    /// Endpoint URL builder, resolved once from `base_url` + `query_params`.
+    endpoint: EndpointTemplate,
 }
 
 impl std::fmt::Debug for SamplingClient {
@@ -533,6 +634,14 @@ impl SamplingClient {
             headers.insert(header_name, header_value);
         }
 
+        // Resolve here, not into `extra_headers`, so an env-sourced secret stays
+        // out of persisted state.
+        apply_env_http_headers(
+            &config.env_http_headers,
+            |var| std::env::var(var).ok(),
+            &mut headers,
+        );
+
         // Add x-grok-client-version header for version gating at the proxy.
         if let Some(client_version) = config.client_version.as_ref()
             && let Ok(header_value) = HeaderValue::from_str(client_version)
@@ -619,6 +728,7 @@ impl SamplingClient {
             doom_loop_recovery: config.doom_loop_recovery,
         };
 
+        let endpoint = EndpointTemplate::new(&config.base_url, &config.query_params);
         Ok(Self {
             http,
             default_headers: headers,
@@ -629,6 +739,7 @@ impl SamplingClient {
             header_injector: config.header_injector,
             request_observer: config.request_observer,
             wire_observation_context: None,
+            endpoint,
         })
     }
 
@@ -919,9 +1030,7 @@ impl SamplingClient {
     }
 
     fn endpoint(&self, path: &str) -> String {
-        let base = self.base_url.trim_end_matches('/');
-        let path = path.trim_start_matches('/');
-        format!("{base}/{path}")
+        self.endpoint.url_for_path(path)
     }
 
     fn apply_defaults(&self, mut request: ChatCompletionRequest) -> Result<ChatCompletionRequest> {
@@ -954,12 +1063,12 @@ impl SamplingClient {
         if !status.is_success() {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::ChatCompletions);
-                let server_message = parse_error_bytes(bytes.as_ref());
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401): {server_message}"
                 )));
             }
-            let message = parse_error_bytes(bytes.as_ref());
+            let message = user_facing_api_error_message(status, bytes.as_ref());
             return Err(SamplingError::Api {
                 status,
                 message,
@@ -1129,7 +1238,7 @@ impl SamplingClient {
                 self.format_request_headers(x_grok_conv_id, x_grok_req_id, &model_id, true);
             let resp_headers = Self::format_response_headers(&response);
             let bytes = response.bytes().await?;
-            let server_message = parse_error_bytes(bytes.as_ref());
+            let server_message = user_facing_api_error_message(status, bytes.as_ref());
 
             let message = self.build_api_error_message(
                 status,
@@ -1340,7 +1449,7 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Responses);
                 let endpoint = self.endpoint("responses");
-                let server_message = parse_error_bytes(bytes.as_ref());
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1348,7 +1457,7 @@ impl SamplingClient {
 
             let req_headers =
                 self.format_request_headers(x_grok_conv_id, x_grok_req_id, &model_id, false);
-            let server_message = parse_error_bytes(bytes.as_ref());
+            let server_message = user_facing_api_error_message(status, bytes.as_ref());
 
             let message = self.build_api_error_message(
                 status,
@@ -1525,7 +1634,7 @@ impl SamplingClient {
                 self.format_request_headers(x_grok_conv_id, x_grok_req_id, &model_id, true);
             let resp_headers = Self::format_response_headers(&response);
             let bytes = response.bytes().await?;
-            let server_message = parse_error_bytes(bytes.as_ref());
+            let server_message = user_facing_api_error_message(status, bytes.as_ref());
 
             let message = self.build_api_error_message(
                 status,
@@ -1709,7 +1818,7 @@ impl SamplingClient {
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 self.record_401_attribution(crate::attribution::SamplingConsumer::Messages);
                 let endpoint = self.endpoint("messages");
-                let server_message = parse_error_bytes(bytes.as_ref());
+                let server_message = user_facing_api_error_message(status, bytes.as_ref());
                 return Err(SamplingError::Auth(format!(
                     "Unauthorized (401) from {endpoint}: {server_message}"
                 )));
@@ -1717,7 +1826,7 @@ impl SamplingClient {
 
             let req_headers =
                 self.format_request_headers(x_grok_conv_id, x_grok_req_id, &model_id, false);
-            let server_message = parse_error_bytes(bytes.as_ref());
+            let server_message = user_facing_api_error_message(status, bytes.as_ref());
 
             let message = self.build_api_error_message(
                 status,
@@ -1855,7 +1964,7 @@ impl SamplingClient {
                 self.format_request_headers(x_grok_conv_id, x_grok_req_id, &model_id, true);
             let resp_headers = Self::format_response_headers(&response);
             let bytes = response.bytes().await?;
-            let server_message = parse_error_bytes(bytes.as_ref());
+            let server_message = user_facing_api_error_message(status, bytes.as_ref());
 
             let message = self.build_api_error_message(
                 status,
@@ -2227,6 +2336,8 @@ mod tests {
             api_backend: ApiBackend::ChatCompletions,
             auth_scheme: AuthScheme::Bearer,
             extra_headers: IndexMap::new(),
+            query_params: IndexMap::new(),
+            env_http_headers: IndexMap::new(),
             context_window: 8192,
             force_http1: false,
             max_retries: None,
@@ -2276,6 +2387,7 @@ mod tests {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            extra_raw_tools: vec![],
         };
 
         let wrapper = StreamingChatRequest {

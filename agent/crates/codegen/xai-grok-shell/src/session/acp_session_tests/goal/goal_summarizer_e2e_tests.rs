@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::Arc as StdArc;
 use std::sync::atomic::{AtomicUsize, Ordering as SeqOrd};
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentCancelOutcome, SubagentEvent, SubagentResult,
+    SubagentCancelOutcome, SubagentEvent, SubagentResult, SubagentSpawnRequest,
 };
 use xai_grok_tools::implementations::grok_build::update_goal::UpdateGoalInput;
 
@@ -96,13 +96,10 @@ fn spawn_coordinator(
     (tx, counters)
 }
 
-async fn answer_summarizer(
-    behaviour: SummarizerBehaviour,
-    req: Box<xai_grok_tools::implementations::grok_build::task::types::SubagentRequest>,
-) {
+async fn answer_summarizer(behaviour: SummarizerBehaviour, req: SubagentSpawnRequest) {
     match behaviour {
         SummarizerBehaviour::ReturnSummary => {
-            let _ = req.result_tx.send(SubagentResult {
+            let _ = req.respond_with(|req| SubagentResult {
                 success: true,
                 output: StdArc::from(
                     "Shipped the feature.\n\n- Added the widget\n- Wired the route\n\nVerified by the panel.",
@@ -113,7 +110,7 @@ async fn answer_summarizer(
             });
         }
         SummarizerBehaviour::RuntimeFailure => {
-            let _ = req.result_tx.send(SubagentResult {
+            let _ = req.respond_with(|req| SubagentResult {
                 success: false,
                 error: Some("summarizer crashed".into()),
                 subagent_id: req.id.clone(),
@@ -124,11 +121,7 @@ async fn answer_summarizer(
     }
 }
 
-async fn answer_skeptic(
-    verdict: SkepticVerdict,
-    spawn_idx: usize,
-    req: Box<xai_grok_tools::implementations::grok_build::task::types::SubagentRequest>,
-) {
+async fn answer_skeptic(verdict: SkepticVerdict, spawn_idx: usize, req: SubagentSpawnRequest) {
     if let Some(p) =
         crate::session::goal_classifier::parse_skeptic_details_path_from_prompt(&req.prompt)
     {
@@ -153,7 +146,7 @@ async fn answer_skeptic(
     if let Some(p) = crate::session::goal_classifier::parse_verdict_path_from_prompt(&req.prompt) {
         let _ = tokio::fs::write(&p, json).await;
     }
-    let _ = req.result_tx.send(SubagentResult {
+    let _ = req.respond_with(|req| SubagentResult {
         success: true,
         output: StdArc::from(token),
         subagent_id: req.id.clone(),

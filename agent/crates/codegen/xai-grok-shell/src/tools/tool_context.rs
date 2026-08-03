@@ -16,24 +16,126 @@ use xai_grok_paths::AbsPathBuf;
 use xai_grok_workspace::file_system::{AsyncFileSystem, AsyncFsWrapper};
 use xai_grok_workspace::session::file_state::FileStateHandle;
 use xai_hunk_tracker::HunkTrackerHandle;
-/// RAII marker: the turn is blocked inside an interruptible wait. Increments
-/// [`ToolContext::blocking_wait_depth`] for its lifetime; `Drop` decrements
-/// (a cancelled turn can't leak the count).
-pub(crate) struct BlockingWaitGuard(Arc<std::sync::atomic::AtomicUsize>);
+use xai_tty_utils::ProcessScope;
+#[derive(Debug, Clone, Default)]
+pub struct TaskOutputTokenBudget {
+    inner: Arc<parking_lot::Mutex<TaskOutputTokenBudgetState>>,
+}
+#[derive(Debug, Default)]
+struct TaskOutputTokenBudgetState {
+    total: Option<u64>,
+    spent: u64,
+    incomplete: bool,
+}
+impl TaskOutputTokenBudget {
+    pub fn limited(total: u64) -> Self {
+        debug_assert!(total > 0, "task output grant must be positive");
+        Self {
+            inner: Arc::new(parking_lot::Mutex::new(TaskOutputTokenBudgetState {
+                total: Some(total),
+                spent: 0,
+                incomplete: false,
+            })),
+        }
+    }
+    pub fn remaining(&self) -> Option<u64> {
+        let state = self.inner.lock();
+        state.total.map(|total| total.saturating_sub(state.spent))
+    }
+    pub fn clamp_request(&self, configured: Option<u32>) -> Option<u32> {
+        let remaining = self.remaining()?;
+        if remaining == 0 {
+            return Some(0);
+        }
+        let remaining = u32::try_from(remaining).unwrap_or(u32::MAX);
+        Some(configured.map_or(remaining, |configured| configured.min(remaining)))
+    }
+    pub fn record_reported_output(&self, output_tokens: u64) {
+        let mut state = self.inner.lock();
+        state.spent = state.spent.saturating_add(output_tokens);
+        if let Some(total) = state.total
+            && state.spent > total
+        {
+            state.spent = total;
+            state.incomplete = true;
+        }
+    }
+    pub fn mark_incomplete_and_exhaust(&self) {
+        let mut state = self.inner.lock();
+        state.incomplete = true;
+        if let Some(total) = state.total {
+            state.spent = state.spent.max(total);
+        }
+    }
+    pub fn usage(&self) -> (u64, bool) {
+        let state = self.inner.lock();
+        (state.spent, state.incomplete)
+    }
+    pub fn is_limited(&self) -> bool {
+        self.inner.lock().total.is_some()
+    }
+}
+pub struct BlockingWaitState(std::sync::Mutex<BlockingWaitInner>);
+#[derive(Default)]
+struct BlockingWaitInner {
+    depth: usize,
+    generation: u64,
+}
+impl BlockingWaitState {
+    pub(crate) fn new() -> Self {
+        Self(std::sync::Mutex::new(BlockingWaitInner::default()))
+    }
+    pub(crate) fn depth(&self) -> usize {
+        self.0
+            .lock()
+            .expect("blocking wait state mutex poisoned")
+            .depth
+    }
+    #[cfg(test)]
+    pub(crate) fn set_depth_for_test(&self, depth: usize) {
+        self.0
+            .lock()
+            .expect("blocking wait state mutex poisoned")
+            .depth = depth;
+    }
+    pub(crate) fn reset(&self) {
+        let mut state = self.0.lock().expect("blocking wait state mutex poisoned");
+        state.generation = state.generation.wrapping_add(1);
+        state.depth = 0;
+    }
+}
+pub(crate) struct BlockingWaitGuard {
+    state: Arc<BlockingWaitState>,
+    generation: u64,
+}
 impl BlockingWaitGuard {
-    pub(crate) fn enter(depth: Arc<std::sync::atomic::AtomicUsize>) -> Self {
-        depth.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Self(depth)
+    pub(crate) fn enter(state: Arc<BlockingWaitState>) -> Self {
+        let generation = {
+            let mut inner = state.0.lock().expect("blocking wait state mutex poisoned");
+            inner.depth = inner.depth.saturating_add(1);
+            inner.generation
+        };
+        Self { state, generation }
     }
 }
 impl Drop for BlockingWaitGuard {
     fn drop(&mut self) {
-        let _ = self.0.fetch_update(
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-            |depth| Some(depth.saturating_sub(1)),
-        );
+        let mut inner = self
+            .state
+            .0
+            .lock()
+            .expect("blocking wait state mutex poisoned");
+        if inner.generation == self.generation {
+            inner.depth = inner.depth.saturating_sub(1);
+        }
     }
+}
+pub(crate) fn subagent_foreground_wait(
+    state: Arc<BlockingWaitState>,
+) -> xai_grok_tools::implementations::grok_build::task::types::SubagentForegroundWait {
+    xai_grok_tools::implementations::grok_build::task::types::SubagentForegroundWait::new(
+        move || Box::new(BlockingWaitGuard::enter(Arc::clone(&state))),
+    )
 }
 /// Session-level context. NOT used for tool execution (bridge handles that).
 /// Holds ACP gateway, cwd, hunk tracker, etc. for session infrastructure.
@@ -55,10 +157,28 @@ pub struct ToolContext {
     /// Current subagent nesting depth for this session.
     /// Top-level sessions start at 0; child sessions are parent_depth + 1.
     pub subagent_depth: u32,
+    /// Stable identity of the root session that owns this task tree. `None`
+    /// means this is the root session itself and is resolved at agent build.
+    pub task_tree_root_session_id: Option<String>,
+    /// Workspace-memory directory chosen by the root session for the shared
+    /// task-tree ledger. Carries across worktree-isolated descendants.
+    pub task_tree_memory_workspace_dir: Option<std::path::PathBuf>,
+    /// Host-issued manifest provenance for governed task-tree children.
+    pub task_tree_manifest_hash: Option<String>,
+    /// Root-approved write roots carried by a governed admission receipt.
+    /// `None` means the legacy workspace-wide child policy remains in effect.
+    pub task_tree_write_scope_roots: Option<Vec<std::path::PathBuf>>,
     /// Unified subagent event sender — carries spawn, query, cancel,
     /// list-active, completions, and outstanding messages to the coordinator.
     /// `None` if subagent support is not enabled.
     pub subagent_event_tx: Option<
+        tokio::sync::mpsc::UnboundedSender<
+            xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
+        >,
+    >,
+    /// Independent host control ingress for cancellation and teardown. Kept
+    /// separate from model-facing task traffic when the session is live.
+    pub subagent_control_tx: Option<
         tokio::sync::mpsc::UnboundedSender<
             xai_grok_tools::implementations::grok_build::task::types::SubagentEvent,
         >,
@@ -71,16 +191,17 @@ pub struct ToolContext {
     /// Shared turn-active flag — set `true` at turn start, `false` at turn end.
     /// Used by the between-turn completion drain in `handle_prompt`.
     pub is_turn_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    pub(crate) unattributed_background_usage: Arc<std::sync::atomic::AtomicBool>,
     /// Shared buffer for mid-turn monitor event notifications.
     /// Events pushed here are drained by the session turn loop
     /// (`inject_pending_monitor_events`) and surfaced as ONE hidden
     /// synthetic user message before the next sampling step.
     pub monitor_event_buffer:
-        Option<xai_grok_tools::implementations::grok_build::task::types::MonitorEventBuffer>,
-    /// Shared set of IDs delivered via auto-wake synthetic prompts.
-    /// Used by `TaskCompletionReminder` to suppress duplicate reminders.
-    pub auto_wake_delivered:
-        Option<xai_grok_tools::reminders::task_completion::AutoWakeDeliveredIds>,
+        Option<xai_grok_tools::implementations::grok_build::monitor::types::MonitorEventBuffer>,
+    pub task_completion_reservations:
+        Option<xai_grok_tools::reminders::task_completion::TaskCompletionReservations>,
+    pub task_wake_suppressed:
+        Option<xai_grok_tools::reminders::task_completion::TaskWakeSuppressed>,
     /// Channel for requesting trace uploads for synthetic auto-wake turns.
     pub(crate) synthetic_trace_tx:
         Option<tokio::sync::mpsc::UnboundedSender<crate::upload::turn::SyntheticTurnTraceRequest>>,
@@ -111,9 +232,76 @@ pub struct ToolContext {
     /// Count of interruptible blocking waits the running turn is parked in (via
     /// [`BlockingWaitGuard`]). `queue_input` reads it: a prompt arriving while
     /// non-zero takes the send-now path.
-    pub blocking_wait_depth: Arc<std::sync::atomic::AtomicUsize>,
+    pub blocking_wait_depth: Arc<BlockingWaitState>,
+    pub task_output_token_budget: Option<TaskOutputTokenBudget>,
+    pub(crate) sampler_retry_only_before_output: bool,
+    /// Consecutive ordinary-turn sampling failures for the current session
+    /// model. Incremented by `handle_sampling_failure`, reset to zero when a
+    /// sampling response succeeds. Drives failure-escalation guidance so
+    /// repeated failures never read as "stuck".
+    pub(crate) consecutive_sampling_failures: Arc<std::sync::atomic::AtomicU32>,
+    /// Live policy/catalog/health epoch for S8 stale-advice detection.
+    /// Starts at 1; bump when pool/health/model policy changes.
+    pub(crate) live_policy_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// Policy epoch at which shadow advice was last issued. `0` means no
+    /// advice on file (not stale).
+    pub(crate) advice_issued_policy_epoch: Arc<std::sync::atomic::AtomicU64>,
+    /// This session's child-process reaper, set at session spawn; `None` for
+    /// contexts without one (subagents, defaults). Spawn sites enroll children
+    /// into it; enrolled children are killed when the session closes.
+    pub process_scope: Option<ProcessScope>,
 }
 impl ToolContext {
+    pub(crate) fn clamp_task_model_request(
+        &self,
+        configured: Option<u32>,
+    ) -> Result<Option<u32>, &'static str> {
+        match self.task_output_token_budget.as_ref() {
+            Some(budget) => match budget.clamp_request(configured) {
+                Some(0) => Err("workflow child output-token budget exhausted"),
+                clamped => Ok(clamped),
+            },
+            None => Ok(configured),
+        }
+    }
+    pub(crate) fn record_task_model_output(&self, output_tokens: u64) {
+        if let Some(budget) = self.task_output_token_budget.as_ref() {
+            budget.record_reported_output(output_tokens);
+        }
+    }
+    pub(crate) fn fail_task_output_usage_closed(&self) {
+        if let Some(budget) = self.task_output_token_budget.as_ref() {
+            budget.mark_incomplete_and_exhaust();
+        }
+    }
+
+    /// S9 / DEBT-001 write side: stamp the policy epoch at which shadow
+    /// advice was last issued. `0` means no advice on file (never stale).
+    pub(crate) fn record_advice_issued(&self) {
+        let live = self.live_policy_epoch.load(std::sync::atomic::Ordering::SeqCst);
+        self.advice_issued_policy_epoch
+            .store(live, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// S9 / DEBT-001 write side: advance the live policy epoch when
+    /// catalog/health/model-pool policy changes; issued-before-live advice
+    /// then fails the P4b `stale_advice` admission (fail-closed).
+    pub(crate) fn bump_live_policy_epoch(&self) {
+        self.live_policy_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// S9 read side: the epoch at which shadow advice was last issued
+    /// (0 = none), used by `derive_p4b_side_conditions`.
+    pub(crate) fn advice_issued_epoch(&self) -> u64 {
+        self.advice_issued_policy_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// S9 read side: current live policy epoch (starts at 1).
+    pub(crate) fn live_epoch(&self) -> u64 {
+        self.live_policy_epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
     pub fn new(
         cwd: AbsPathBuf,
         gateway: Option<GatewaySender>,
@@ -138,19 +326,34 @@ impl ToolContext {
             hunk_tracking_enabled: true,
             prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
             subagent_depth: 0,
+            task_tree_root_session_id: None,
+            task_tree_memory_workspace_dir: None,
+            task_tree_manifest_hash: None,
+            task_tree_write_scope_roots: None,
             subagent_event_tx: None,
+            subagent_control_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
             is_turn_active: None,
+            unattributed_background_usage: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             monitor_event_buffer: None,
-            auto_wake_delivered: None,
+            task_completion_reservations: None,
+            task_wake_suppressed: None,
             synthetic_trace_tx: None,
             synthetic_trace_tx_shared: None,
             task_output_tool_name:
                 xai_grok_tools::reminders::task_completion::DEFAULT_TASK_OUTPUT_TOOL.to_string(),
             auto_wake_enabled: true,
             goal_loop_active_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            blocking_wait_depth: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            blocking_wait_depth: Arc::new(BlockingWaitState::new()),
+            task_output_token_budget: None,
+            sampler_retry_only_before_output: false,
+            process_scope: None,
+            // Consecutive ordinary-turn sampling failures for the current
+            // session model. Reset on any successful sampling response.
+            consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
     pub fn with_preloaded_env(
@@ -174,19 +377,32 @@ impl ToolContext {
             hunk_tracking_enabled: true,
             prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
             subagent_depth: 0,
+            task_tree_root_session_id: None,
+            task_tree_memory_workspace_dir: None,
+            task_tree_manifest_hash: None,
+            task_tree_write_scope_roots: None,
             subagent_event_tx: None,
+            subagent_control_tx: None,
             lsp: None,
             lsp_server_names: Vec::new(),
             is_turn_active: None,
+            unattributed_background_usage: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             monitor_event_buffer: None,
-            auto_wake_delivered: None,
+            task_completion_reservations: None,
+            task_wake_suppressed: None,
             synthetic_trace_tx: None,
             synthetic_trace_tx_shared: None,
             task_output_tool_name:
                 xai_grok_tools::reminders::task_completion::DEFAULT_TASK_OUTPUT_TOOL.to_string(),
             auto_wake_enabled: true,
             goal_loop_active_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            blocking_wait_depth: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            blocking_wait_depth: Arc::new(BlockingWaitState::new()),
+            task_output_token_budget: None,
+            sampler_retry_only_before_output: false,
+            process_scope: None,
+            consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
     pub fn with_file_state_handle(mut self, handle: FileStateHandle) -> Self {
@@ -205,7 +421,40 @@ impl ToolContext {
     }
 }
 #[cfg(test)]
+mod output_budget_tests {
+    use super::TaskOutputTokenBudget;
+    #[test]
+    fn clamps_every_request_to_remaining_and_stops_at_zero() {
+        let budget = TaskOutputTokenBudget::limited(10);
+        assert_eq!(budget.clamp_request(None), Some(10));
+        assert_eq!(budget.clamp_request(Some(7)), Some(7));
+        budget.record_reported_output(6);
+        assert_eq!(budget.clamp_request(None), Some(4));
+        assert_eq!(budget.clamp_request(Some(9)), Some(4));
+        budget.record_reported_output(4);
+        assert_eq!(budget.clamp_request(None), Some(0));
+    }
+    #[test]
+    fn provider_output_not_context_drives_spend() {
+        let budget = TaskOutputTokenBudget::limited(100);
+        let provider_prompt_tokens = 90_000u64;
+        budget.record_reported_output(25);
+        assert_eq!(budget.usage(), (25, false));
+        assert_eq!(provider_prompt_tokens, 90_000);
+        assert_eq!(budget.remaining(), Some(75));
+    }
+    #[test]
+    fn unknown_usage_exhausts_grant_pessimistically() {
+        let budget = TaskOutputTokenBudget::limited(50);
+        budget.record_reported_output(7);
+        budget.mark_incomplete_and_exhaust();
+        assert_eq!(budget.usage(), (50, true));
+        assert_eq!(budget.clamp_request(None), Some(0));
+    }
+}
+#[cfg(test)]
 mod tests {
+    use super::BlockingWaitState;
     use crate::{terminal::AsyncTerminalRunner, tools::ToolContext};
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -230,20 +479,61 @@ mod tests {
                 hunk_tracking_enabled: true,
                 prompt_index: Arc::new(tokio::sync::Mutex::new(0)),
                 subagent_depth: 0,
+                task_tree_root_session_id: None,
+                task_tree_memory_workspace_dir: None,
+                task_tree_manifest_hash: None,
+                task_tree_write_scope_roots: None,
                 subagent_event_tx: None,
+                subagent_control_tx: None,
                 lsp: None,
                 lsp_server_names: Vec::new(),
                 is_turn_active: None,
+                unattributed_background_usage: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 monitor_event_buffer: None,
-                auto_wake_delivered: None,
+                task_completion_reservations: None,
+                task_wake_suppressed: None,
                 synthetic_trace_tx: None,
                 synthetic_trace_tx_shared: None,
                 task_output_tool_name:
                     xai_grok_tools::reminders::task_completion::DEFAULT_TASK_OUTPUT_TOOL.to_string(),
                 auto_wake_enabled: true,
                 goal_loop_active_gate: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                blocking_wait_depth: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+                blocking_wait_depth: Arc::new(BlockingWaitState::new()),
+                task_output_token_budget: None,
+                sampler_retry_only_before_output: false,
+                process_scope: None,
+                consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+                live_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+                advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             }
         }
+    }
+
+    // S9 / DEBT-001 write side exercised through the real ToolContext methods:
+    // issuing advice stamps the live epoch; bumping policy makes previously
+    // issued advice stale (the P4b admission input).
+    #[test]
+    fn advice_epoch_write_side_flows_into_stale_detection() {
+        let cwd = AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap();
+        let fs = xai_grok_workspace::file_system::LocalFs::new(std::path::PathBuf::from("/tmp"));
+        let terminal = crate::terminal::LocalTerminalRunner;
+        let ctx = ToolContext::new_local_context(cwd, Arc::new(fs), Arc::new(terminal));
+
+        // Initially: no advice on file (0), live epoch = 1 → not stale.
+        assert_eq!(ctx.advice_issued_epoch(), 0);
+        assert_eq!(ctx.live_epoch(), 1);
+
+        // Issue advice → stamped at live epoch 1.
+        ctx.record_advice_issued();
+        assert_eq!(ctx.advice_issued_epoch(), 1);
+
+        // Policy change bumps live → issued(1) < live(2) → stale.
+        ctx.bump_live_policy_epoch();
+        assert_eq!(ctx.live_epoch(), 2);
+        assert!(ctx.advice_issued_epoch() < ctx.live_epoch());
+
+        // Re-issue after the bump → stamped at 2 → not stale again.
+        ctx.record_advice_issued();
+        assert_eq!(ctx.advice_issued_epoch(), ctx.live_epoch());
     }
 }

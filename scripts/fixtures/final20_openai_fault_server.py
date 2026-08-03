@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic localhost OpenAI-compatible fixture for FINAL-2.0 L4/L5.
+"""Deterministic localhost OpenAI-compatible fixture for R0 L4/L5.
 
 The server records only structural request metadata. Authorization headers,
 message text, tool arguments, and environment values are deliberately never

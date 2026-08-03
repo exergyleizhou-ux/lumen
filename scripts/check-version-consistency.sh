@@ -12,9 +12,11 @@ if [ ! -f VERSION ]; then echo "FAIL: VERSION file missing"; exit 1; fi
 VER_FILE=$(cat VERSION | tr -d '\n' | tr -d ' ')
 echo "VERSION file:        $VER_FILE"
 
-# 2. Cargo.toml version (from xai-grok-version crate)
-CARGO_VER=$(grep '^version = ' agent/crates/codegen/xai-grok-version/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | tr -d ' ')
-echo "Cargo.toml version:  $CARGO_VER"
+# 2. Shipped Lumen CLI package version. `xai-grok-version` is deliberately
+# excluded: it is the upstream protocol/client identity and can advance while
+# the Lumen distribution release stays fixed.
+CARGO_VER=$(grep '^version = ' agent/crates/codegen/xai-grok-pager-bin/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/' | tr -d ' ')
+echo "Lumen CLI Cargo version: $CARGO_VER"
 
 # 3. SOURCE_LOCK version
 if [ -f SOURCE_LOCK.json ]; then

@@ -1,11 +1,25 @@
-//! Shared environment helpers: binary resolution, git workdirs, env var setup.
+//! Binary resolution, serial env guards, and git sandbox creation.
 
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use tempfile::TempDir;
+use crate::sandbox::TestSandbox;
 
+/// Parse env var `key` into `T`, falling back to `default` when it is unset or
+/// present-but-unparseable (warning in the latter case).
+pub fn env_parse<T: std::str::FromStr>(key: &str, default: T) -> T {
+    let Ok(raw) = std::env::var(key) else {
+        return default;
+    };
+    match raw.parse() {
+        Ok(value) => value,
+        Err(_) => {
+            eprintln!("[test-support] ignoring unparseable {key}={raw:?}; using default");
+            default
+        }
+    }
+}
 /// RAII guard for a single environment variable in `#[serial]` tests: snapshots
 /// the prior value on construction, applies the change, then restores the prior
 /// value (or unsets it) on drop — even if an assertion panics. Restoring rather
@@ -101,7 +115,9 @@ pub fn grok_binary() -> PathBuf {
     if let Ok(path) = std::env::var("GROK_BINARY") {
         let p = PathBuf::from(path);
         assert!(p.exists(), "GROK_BINARY does not exist: {}", p.display());
-        return p;
+        // Bazel's GROK_BINARY is runfiles-relative; the harness spawns the child
+        // with a different cwd, so absolutize against the (runfiles-root) cwd now.
+        return std::path::absolute(&p).unwrap_or(p);
     }
 
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_lumen") {
@@ -116,38 +132,10 @@ pub fn grok_binary() -> PathBuf {
     binary
 }
 
-/// Temp dir with a git repo + one committed file.
+/// Git-initialized [`TestSandbox`] with one committed file.
 /// Forces libgit2 to fully init (the codepath that breaks with bad OpenSSL linking).
-pub fn git_workdir() -> TempDir {
-    let dir = TempDir::new().expect("create temp dir");
-    let path = dir.path();
-
-    fn run_git(args: &[&str], dir: &Path) {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(dir)
-            .output()
-            .unwrap_or_else(|e| panic!("failed to spawn git {}: {e}", args.join(" ")));
-        assert!(
-            output.status.success(),
-            "git {} failed (exit {:?}):\n{}",
-            args.join(" "),
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-
-    run_git(&["init"], path);
-    // Configure git user for commits (required in CI where no global config exists)
-    run_git(&["config", "user.email", "test@test.com"], path);
-    run_git(&["config", "user.name", "Test"], path);
-
-    std::fs::write(path.join("README.md"), "test file\n").expect("write test file");
-
-    run_git(&["add", "-A"], path);
-    run_git(&["commit", "-m", "init", "--no-gpg-sign"], path);
-
-    dir
+pub fn git_workdir() -> TestSandbox {
+    TestSandbox::builder().git().build()
 }
 
 /// Point grok at the mock server with a fake API key and telemetry disabled.

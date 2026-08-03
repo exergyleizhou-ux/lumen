@@ -9,6 +9,20 @@ pub(super) struct MemoryFlushSnapshot {
     chat_history: Vec<ChatRequestMessage>,
 }
 
+fn task_tree_memory_root_authorized(
+    is_subagent: bool,
+    root_session_id: &str,
+    session_id: &str,
+) -> Result<(), &'static str> {
+    if is_subagent {
+        return Err("only the root session may administer task-tree memory");
+    }
+    if root_session_id != session_id {
+        return Err("only the task-tree root session may administer shared memory");
+    }
+    Ok(())
+}
+
 /// Build first-turn injection backend params without mutating the shared
 /// session params.
 ///
@@ -99,6 +113,65 @@ impl SessionActor {
     /// and embeddings up to date immediately.
     pub(super) async fn reindex_and_embed(&self, path: &std::path::Path, source: &str) {
         self.memory.reindex_and_embed(path, source).await;
+    }
+
+    /// Move reusable, root-reviewed task-tree knowledge into the workspace's
+    /// curated long-term memory after an explicit user slash command.
+    ///
+    /// This is intentionally not a model tool.  Child sessions never get to
+    /// invoke it, and the root must be the actual task-tree root rather than a
+    /// nested session with access to the same ledger.
+    pub(super) async fn promote_task_tree_memory_to_long_term(&self) -> Result<usize, String> {
+        let root_session_id = &self.rebuild_spec.task_tree_root_session_id;
+        task_tree_memory_root_authorized(
+            self.startup_hints.is_subagent,
+            root_session_id,
+            self.session_info.id.0.as_ref(),
+        )
+        .map_err(str::to_owned)?;
+        let storage = self
+            .memory
+            .storage()
+            .ok_or_else(|| "memory is not enabled for this session".to_owned())?;
+        let ledger = crate::session::memory::WorkingMemoryLedger::for_workspace_dir(
+            storage.workspace_dir(),
+            root_session_id,
+        );
+        let promotion = ledger
+            .promote_accepted_facts_to_workspace_memory(&storage)
+            .map_err(|error| error.to_string())?;
+        if promotion.promoted_count() > 0 {
+            let memory_file = storage.workspace_memory_file();
+            self.reindex_and_embed(&memory_file, "workspace").await;
+        }
+        Ok(promotion.promoted_count())
+    }
+
+    /// Recover only a torn final task-tree ledger record after an explicit
+    /// user slash command. This remains unavailable to child sessions and to
+    /// model tools: a repair discards no bytes until they have been fsynced to
+    /// a local recovery artifact for human review.
+    pub(super) fn repair_task_tree_memory_ledger(
+        &self,
+    ) -> Result<xai_grok_memory::WorkingMemoryLedgerRepair, String> {
+        let root_session_id = &self.rebuild_spec.task_tree_root_session_id;
+        task_tree_memory_root_authorized(
+            self.startup_hints.is_subagent,
+            root_session_id,
+            self.session_info.id.0.as_ref(),
+        )
+        .map_err(str::to_owned)?;
+        let storage = self
+            .memory
+            .storage()
+            .ok_or_else(|| "memory is not enabled for this session".to_owned())?;
+        let ledger = crate::session::memory::WorkingMemoryLedger::for_workspace_dir(
+            storage.workspace_dir(),
+            root_session_id,
+        );
+        ledger
+            .repair_torn_final_record(self.session_info.id.0.as_ref())
+            .map_err(|error| error.to_string())
     }
 
     /// Common setup for dream methods: storage, lock, sessions dir, and truncated session id.
@@ -334,7 +407,7 @@ impl SessionActor {
                 ConversationItem::user(user_message),
             ],
             model: Some(model),
-            x_grok_conv_id: Some(session_id.clone()),
+            x_grok_conv_id: Some(format!("dream-{}", uuid::Uuid::new_v4())),
             x_grok_req_id: Some(format!("xai-dream-{}", uuid::Uuid::new_v4())),
             x_grok_session_id: Some(session_id),
             x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
@@ -441,7 +514,7 @@ impl SessionActor {
             let request = ConversationRequest {
                 items,
                 model: Some(model),
-                x_grok_conv_id: Some(session_id.clone()),
+                x_grok_conv_id: Some(format!("flush-{}", uuid::Uuid::new_v4())),
                 x_grok_req_id: Some(format!("xai-flush-{}", uuid::Uuid::new_v4())),
                 x_grok_session_id: Some(session_id.clone()),
                 x_grok_agent_id: Some(xai_grok_telemetry::id::agent_id()),
@@ -764,5 +837,23 @@ impl SessionActor {
                 Err(format!("rewrite inference failed: {}", e.message))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod task_tree_memory_promotion_tests {
+    use super::task_tree_memory_root_authorized;
+
+    #[test]
+    fn only_root_interactive_session_may_promote_task_tree_memory() {
+        assert!(task_tree_memory_root_authorized(false, "root", "root").is_ok());
+        assert_eq!(
+            task_tree_memory_root_authorized(true, "root", "root"),
+            Err("only the root session may administer task-tree memory")
+        );
+        assert_eq!(
+            task_tree_memory_root_authorized(false, "root", "child"),
+            Err("only the task-tree root session may administer shared memory")
+        );
     }
 }

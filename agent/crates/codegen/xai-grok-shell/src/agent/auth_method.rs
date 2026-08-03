@@ -774,6 +774,7 @@ mod tests {
         let _openai = EnvGuard::unset("OPENAI_API_KEY");
         let _kimi = EnvGuard::unset("KIMI_API_KEY");
         let _kimi_code = EnvGuard::unset("KIMI_CODE_API_KEY");
+        let _minimax = EnvGuard::unset("MINIMAX_API_KEY");
 
         let dm = crate::models::default_model();
         let toml: toml::Value = toml::from_str(&format!(

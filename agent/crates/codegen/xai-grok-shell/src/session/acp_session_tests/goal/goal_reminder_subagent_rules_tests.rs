@@ -17,6 +17,17 @@ async fn fresh_actor() -> SessionActor {
         tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
     create_test_actor(0, 256_000, 85, gateway_tx, persistence_tx).await
 }
+/// Resolved tool names for goal-mode prompts, as produced by
+/// `SessionActor::resolve_goal_tool_names()` (the pre-merge
+/// `goal_tool_names_for_test` helper in the session module was removed
+/// during the upstream absorb; the struct is still crate-visible).
+fn goal_tool_names_for_test(todo: &str) -> GoalToolNames {
+    GoalToolNames {
+        goal: "update_goal".into(),
+        task: "task".into(),
+        todo: todo.into(),
+    }
+}
 fn seed_active_goal(actor: &SessionActor) {
     actor.goal_tracker.lock().create_goal(
         "test-goal".to_string(),
@@ -136,12 +147,12 @@ async fn goal_enabled_without_update_goal_disables_harness_continuation_and_todo
             let mut actor = fresh_actor().await;
             actor.goal_enabled = true;
             let with_tool = vec![UPDATE_GOAL_TOOL_NAME.to_string()];
-            let avail = actor.build_command_availability(&with_tool);
+            let avail = actor.build_command_availability(&with_tool, false);
             assert!(avail.goal);
             assert!(actor.goal_harness_enabled());
             seed_active_goal(&actor);
             let without_tool = vec!["todo_write".to_string()];
-            let avail = actor.build_command_availability(&without_tool);
+            let avail = actor.build_command_availability(&without_tool, false);
             assert!(!avail.goal);
             assert!(
                 !actor.goal_harness_enabled(),
@@ -245,7 +256,7 @@ async fn run_goal_round_end_continues_in_turn_for_active_goal() {
             actor.goal_enabled = true;
             set_goal_harness_for_tests(&actor);
             seed_active_goal(&actor);
-            match actor.run_goal_round_end().await {
+            match actor.run_goal_round_end_legacy().await {
                 GoalRoundDecision::Continue(directive) => {
                     assert!(
                         directive.contains("Goal NOT complete"),
@@ -275,7 +286,7 @@ async fn run_goal_round_end_ends_turn_when_goal_harness_disabled() {
             seed_active_goal(&actor);
             assert!(!actor.goal_enabled);
             assert!(matches!(
-                actor.run_goal_round_end().await,
+                actor.run_goal_round_end_legacy().await,
                 GoalRoundDecision::EndTurn
             ));
         })
@@ -1215,7 +1226,7 @@ fn format_goal_pause_message_includes_summary_when_present_and_omits_when_empty(
 fn render_verifier_gaps_block_inlines_gaps_without_file_ref() {
     let gaps =
         "- [skeptic 0, high]\n  - bug · src/a.rs:1 — wrong index\n  - gap · no test — uncovered";
-    let block = render_verifier_gaps_block(gaps, "update_goal");
+    let block = render_verifier_gaps_block(gaps);
     assert!(
         block.contains("src/a.rs:1 — wrong index") && block.contains("gap · no test — uncovered"),
         "the bounded gaps must be inlined:\n{block}",
@@ -1225,7 +1236,7 @@ fn render_verifier_gaps_block_inlines_gaps_without_file_ref() {
         "must NOT point the model at a details file:\n{block}",
     );
     assert!(
-        render_verifier_gaps_block("", "update_goal").is_empty(),
+        render_verifier_gaps_block("").is_empty(),
         "empty gaps must collapse the block",
     );
 }
@@ -1938,21 +1949,30 @@ fn render_goal_continuation_directive_rejects_empty_objective_in_debug() {
 /// `3 * threshold` the lead hardens.
 #[test]
 fn render_goal_reverify_block_gates_on_refute_and_threshold() {
-    assert!(render_goal_reverify_block(99, false, 8, "update_goal").is_empty());
-    assert!(render_goal_reverify_block(7, true, 8, "update_goal").is_empty());
-    let soft = render_goal_reverify_block(8, true, 8, "update_goal");
-    assert!(soft.contains("Re-verify before continuing."), "{soft}");
+    assert!(render_goal_reverify_block(99, false, 8).is_empty());
+    assert!(render_goal_reverify_block(7, true, 8).is_empty());
+    let soft = render_goal_reverify_block(8, true, 8);
+    assert!(
+        soft.contains("Re-run the verification plan before continuing."),
+        "{soft}"
+    );
     assert!(
         soft.contains("8 rounds"),
         "live round count inlined:\n{soft}"
     );
-    assert!(soft.contains("`update_goal(completed: true)`"), "{soft}");
+    assert!(
+        soft.contains("adversarial rejection"),
+        "soft tier must keep the adversarial-rejection frame:\n{soft}"
+    );
     assert!(
         !soft.contains("STOP DRIFTING"),
         "soft tier below 3x:\n{soft}"
     );
-    let hard = render_goal_reverify_block(24, true, 8, "update_goal");
-    assert!(hard.contains("STOP DRIFTING — RE-VERIFY NOW."), "{hard}");
+    let hard = render_goal_reverify_block(24, true, 8);
+    assert!(
+        hard.contains("STOP DRIFTING — VERIFY THE REMAINING GAP NOW."),
+        "{hard}"
+    );
     assert!(hard.contains("24 rounds"), "{hard}");
 }
 fn reverify(config: Option<u32>) -> u32 {

@@ -2,15 +2,26 @@
 //!
 //! A clean-room implementation built on the v3 pager rendering engine.
 
+/// Lumen product identity: product version + source commit, stamped at build
+/// time to match `lumen --version` (e.g. `2.0.0-alpha.1 (523006bd)`).
+///
+/// UI version badges must render this. Protocol headers and wire identities
+/// keep [`xai_grok_version::VERSION`] — that is the upstream Grok Build
+/// component identity and must never be mistaken for the Lumen product
+/// version (execution book: version identity boundary).
+pub const LUMEN_PRODUCT_VERSION: &str = env!("VERSION_WITH_COMMIT");
+
 pub mod acp;
 pub mod actions;
 pub mod app;
+pub mod ui_contract;
 pub mod client_identity;
 pub mod completions_cmd;
 mod config_toml_edit;
 pub mod diagnostics;
 pub mod diff;
 pub mod docs;
+pub mod doctor_cmd;
 pub mod export_cmd;
 pub mod git_info;
 pub mod headless;
@@ -51,9 +62,11 @@ pub mod share_cmd;
 pub mod slash;
 pub mod startup;
 pub mod tips;
-pub mod ui_contract;
+pub mod tutorial_docs;
 pub mod wrap_clipboard_image;
 pub mod wrap_cmd;
+pub(crate) mod wrap_filter;
+pub(crate) mod wrap_restore;
 
 pub mod tool_usage;
 pub mod truth_assembly;

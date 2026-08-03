@@ -185,6 +185,12 @@
             .expect("SubagentSpawned must register subagent_sessions");
         assert_eq!(info.description.as_ref(), "scan src/");
         assert_eq!(info.subagent_type.as_ref(), "explore");
+        assert_eq!(info.root_session_id.as_deref(), Some("root-session"));
+        assert_eq!(info.depth, Some(2));
+        assert_eq!(
+            info.lineage_path.as_deref(),
+            Some(&["root-session".into(), "sess-parent".into()][..])
+        );
         assert!(
             agent.subagent_views.contains_key(child_sid),
             "SubagentSpawned must create subagent_views eagerly"
@@ -239,6 +245,196 @@
         assert!(
             !agent.scrollback.needs_animation(),
             "finished subagent entry must not keep scrollback animation"
+        );
+    }
+
+    #[test]
+    fn nested_subagent_spawn_stays_with_its_immediate_parent_view() {
+        let mut app = make_app_with_agent("root-session");
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "root-session",
+                "x.ai/session/update",
+                test_subagent_spawned("root-session", "child-session"),
+            ),
+            &mut app,
+        ));
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "child-session",
+                "x.ai/session/update",
+                test_subagent_spawned("child-session", "grandchild-session"),
+            ),
+            &mut app,
+        ));
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "grandchild-session",
+                "x.ai/session/update",
+                test_subagent_spawned("grandchild-session", "great-grandchild-session"),
+            ),
+            &mut app,
+        ));
+
+        let root = app.agents.get(&AgentId(0)).unwrap();
+        assert!(
+            !root.subagent_sessions.contains_key("grandchild-session"),
+            "a grandchild must not be flattened into root bookkeeping"
+        );
+        let child = root
+            .subagent_views
+            .get("child-session")
+            .expect("root spawn creates the direct child view");
+        assert!(child.subagent_sessions.contains_key("grandchild-session"));
+        assert!(child.subagent_views.contains_key("grandchild-session"));
+        let grandchild = child
+            .subagent_views
+            .get("grandchild-session")
+            .expect("child spawn creates the grandchild view");
+        assert!(
+            grandchild
+                .subagent_sessions
+                .contains_key("great-grandchild-session")
+        );
+    }
+
+    /// L2 lifecycle reports are emitted on the L1 session. They must mutate
+    /// L1's task row and child view, not silently disappear because the root
+    /// does not own the grandchild key.
+    #[test]
+    fn nested_subagent_progress_and_finish_stay_with_immediate_parent() {
+        let mut app = make_app_with_agent("root-session");
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "root-session",
+                "x.ai/session/update",
+                test_subagent_spawned("root-session", "child-session"),
+            ),
+            &mut app,
+        ));
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "child-session",
+                "x.ai/session/update",
+                test_subagent_spawned("child-session", "grandchild-session"),
+            ),
+            &mut app,
+        ));
+
+        // Ordinary ACP streaming updates use a different path from the xAI
+        // lifecycle extension. That path must resolve the nested view too.
+        assert!(handle(
+            make_agent_chunk_with_event(
+                "grandchild-session",
+                "nested child text",
+                "p-grandchild",
+                None,
+            ),
+            &mut app,
+        ));
+        assert_eq!(
+            app.agents
+                .get(&AgentId(0))
+                .unwrap()
+                .subagent_views
+                .get("child-session")
+                .unwrap()
+                .subagent_sessions
+                .get("grandchild-session")
+                .unwrap()
+                .activity_label
+                .as_deref(),
+            Some("Responding"),
+            "ordinary nested streaming must refresh the immediate parent row"
+        );
+
+        {
+            let root = app.agents.get_mut(&AgentId(0)).unwrap();
+            let child = root.subagent_views.get_mut("child-session").unwrap();
+            child
+                .subagent_sessions
+                .get_mut("grandchild-session")
+                .unwrap()
+                .context_window_tokens = Some(131_072);
+        }
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "grandchild-session",
+                "x.ai/session/update",
+                XaiSessionUpdate::AutoCompactCompleted {
+                    tokens_before: Some(90_000),
+                    tokens_after: 25_000,
+                    elapsed_ms: Some(300),
+                    summary_preview: None,
+                },
+            ),
+            &mut app,
+        ));
+        {
+            let root = app.agents.get(&AgentId(0)).unwrap();
+            let child = root.subagent_views.get("child-session").unwrap();
+            let info = child.subagent_sessions.get("grandchild-session").unwrap();
+            assert_eq!(info.tokens_used, Some(25_000));
+            assert_eq!(info.context_usage_pct, Some(19));
+            assert_eq!(
+                child
+                    .subagent_views
+                    .get("grandchild-session")
+                    .unwrap()
+                    .context_state
+                    .as_ref()
+                    .map(|context| context.used),
+                Some(25_000),
+                "nested compaction must update the child view and its direct parent row"
+            );
+        }
+
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "child-session",
+                "x.ai/session/update",
+                test_subagent_progress("child-session", "grandchild-session"),
+            ),
+            &mut app,
+        ));
+        {
+            let root = app.agents.get(&AgentId(0)).unwrap();
+            assert!(
+                !root.subagent_sessions.contains_key("grandchild-session"),
+                "progress must not recreate a flattened root row"
+            );
+            let child = root.subagent_views.get("child-session").unwrap();
+            let info = child.subagent_sessions.get("grandchild-session").unwrap();
+            assert_eq!(info.duration_ms, Some(100));
+            assert_eq!(info.turn_count, Some(1));
+            assert!(!info.finished);
+        }
+
+        assert!(handle(
+            make_ext_session_notification_with_method(
+                "child-session",
+                "x.ai/session/update",
+                test_subagent_finished("grandchild-session"),
+            ),
+            &mut app,
+        ));
+        let root = app.agents.get(&AgentId(0)).unwrap();
+        let child = root.subagent_views.get("child-session").unwrap();
+        let info = child.subagent_sessions.get("grandchild-session").unwrap();
+        assert!(info.finished);
+        assert_eq!(info.status.as_deref(), Some("completed"));
+        assert_eq!(info.tool_calls, Some(2));
+        assert!(
+            matches!(
+                child
+                    .subagent_views
+                    .get("grandchild-session")
+                    .unwrap()
+                    .session
+                    .state,
+                AgentState::Idle
+            ),
+            "only the completed nested view becomes idle"
         );
     }
 
@@ -866,4 +1062,3 @@
             "ext notification routed to a non-active agent must not request a redraw"
         );
     }
-

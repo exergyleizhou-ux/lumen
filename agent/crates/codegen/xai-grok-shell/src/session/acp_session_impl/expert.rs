@@ -650,13 +650,62 @@ impl SessionActor {
         } else {
             Vec::new()
         };
+        let advisor_model_catalog = self.models_manager.models();
+        let advisor_catalog_model_ids: Vec<_> = advisor_model_catalog
+            .clone()
+            .into_iter()
+            .flat_map(|(key, entry)| [key, entry.info.model])
+            .collect();
+        // This is deliberately a passive snapshot. It consults only the
+        // locally observed provider-health ledger; it must not probe, bill, or
+        // validate credentials while deciding a new Expert task.
+        let advisor_routable_catalog_ids: Vec<_> = advisor_model_catalog
+            .iter()
+            .filter(|(_, entry)| {
+                !matches!(
+                    self.models_manager.provider_health(&entry.info.base_url),
+                    crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+                )
+            })
+            .flat_map(|(key, entry)| [key.clone(), entry.info.model.clone()])
+            .collect();
+        let advisor_user_model_pinned = self.models_manager.user_selected_model();
         let (executor, consultant, consult, timeout_secs, max_output_tokens) = {
             let mut actor = self.state.lock().await;
-            let executor = actor.expert.executor_requested.clone();
+            let mut executor = actor.expert.executor_requested.clone();
+            let fallback_executor = actor.expert.fallback_executor_requested.clone();
+            let pool_routing_requested = continuation.is_none()
+                && (!advisor_user_model_pinned || actor.expert.advisor_model_pool_user_override)
+                && !actor.expert.advisor_model_pool.is_empty();
+            let pool_selection = if pool_routing_requested {
+                crate::session::expert::advisor_pool_executor_selection(
+                    task,
+                    &actor.expert.advisor_model_pool,
+                    &actor.expert.advisor_model_priority,
+                    advisor_routable_catalog_ids.clone(),
+                )
+            } else {
+                None
+            };
+            if pool_routing_requested && pool_selection.is_none() {
+                // A user-selected pool is an allowlist, not a hint. Falling
+                // back to the legacy executor here could spend on a model the
+                // user deliberately excluded. No sampler request has begun.
+                return Err(ExpertErrorCode::ModelMissing);
+            }
+            let executor_before_pool_selection = executor.clone();
+            if let Some(selection) = &pool_selection {
+                executor.clone_from(&selection.model_id);
+            }
             if let Some(repair) = continuation {
                 actor.expert.start_continuation(repair, &executor)?;
             } else {
                 actor.expert.start(task, mode, &executor)?;
+                if let Some(selection) = &pool_selection {
+                    actor
+                        .expert
+                        .record_advisor_pool_routing(selection, &executor_before_pool_selection);
+                }
             }
             // Own Goal rolling charges for the whole task, including mid-round
             // `/goalexpert off` (policy may flip while storm/post still runs).
@@ -667,6 +716,73 @@ impl SessionActor {
                 actor.expert.budget.attempt_cap = attempt_cap;
             }
             let consultant = actor.expert.consultant_requested.clone();
+            if actor.expert.advisor_shadow_enabled {
+                let provider_domain = |model_id: &str| {
+                    advisor_model_catalog
+                        .get(model_id)
+                        .or_else(|| {
+                            advisor_model_catalog
+                                .values()
+                                .find(|entry| entry.info.model == model_id)
+                        })
+                        .and_then(|entry| {
+                            let url = url::Url::parse(&entry.info.base_url).ok()?;
+                            let host = url.host_str()?;
+                            Some(match url.port() {
+                                Some(port) => format!("{host}:{port}"),
+                                None => host.to_owned(),
+                            })
+                        })
+                };
+                let executor_provider_domain = provider_domain(&executor);
+                let consultant_provider_domain = provider_domain(&consultant);
+                let provider_degraded = |model_id: &str| {
+                    advisor_model_catalog
+                        .get(model_id)
+                        .or_else(|| {
+                            advisor_model_catalog
+                                .values()
+                                .find(|e| e.info.model == model_id)
+                        })
+                        .is_some_and(|entry| {
+                            matches!(
+                                self.models_manager.provider_health(&entry.info.base_url),
+                                crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+                            )
+                        })
+                };
+                let mut advice = crate::session::expert::advisor_shadow_advice_with_fallback(
+                    task,
+                    &executor,
+                    &fallback_executor,
+                    &consultant,
+                    advisor_catalog_model_ids.clone(),
+                    advisor_user_model_pinned,
+                    actor
+                        .expert
+                        .budget
+                        .can_reserve(u64::from(actor.expert.max_consult_output_tokens)),
+                    executor_provider_domain.as_deref(),
+                    consultant_provider_domain.as_deref(),
+                    provider_degraded(&executor),
+                    provider_degraded(&consultant),
+                );
+                let fallback_provider_degraded = provider_degraded(&advice.executor_candidate);
+                if actor.expert.apply_advisor_fallback_before_output(
+                    &mut advice,
+                    continuation.is_none(),
+                    fallback_provider_degraded,
+                ) {
+                    executor = actor.expert.executor_requested.clone();
+                }
+                actor.expert.audit(
+                    "advisor_shadow_recorded",
+                    None,
+                    None,
+                    Some(advice.algorithm.clone()),
+                );
+                actor.expert.advisor_shadow_advice = Some(advice);
+            }
             // Dual owns its own two-leg reservation path (not single consult).
             let consult = !dual
                 && (vision
@@ -1276,7 +1392,9 @@ impl SessionActor {
                     summary: "executor cancelled".to_owned(),
                     ..VerificationSummary::default()
                 },
-                Ok(TurnOutcome::MaxTurnsReached { .. }) | Err(_) => VerificationSummary {
+                Ok(TurnOutcome::MaxTurnsReached { .. })
+                | Ok(TurnOutcome::StationarityEnded { .. })
+                | Err(_) => VerificationSummary {
                     outcome: HostVerificationOutcome::Failed,
                     summary: "executor did not finish successfully".to_owned(),
                     ..VerificationSummary::default()

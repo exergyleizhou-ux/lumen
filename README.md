@@ -1,8 +1,10 @@
-# Lumen
+# Lumen 2 — Governed Agent Runtime
 
-终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
+下一代终端 coding agent：**Grok Build 体验身体** + **多模型 BYOK**（默认 DeepSeek 高缓存）+ Lumen 安全/纪律/自修。
 
-- 方案：`docs/masterplan/`（权威：桌面 FINAL-2.0）
+产品代际名是 **Lumen 2**，实施代号为 **Lumen NextGen**。当前源码版本是诚实的开发预发布线 `2.0.0-alpha.1`；首个正式候选才是 `v2.0.0-rc.1`。alpha 不代表已验收、已合并、已发布，仍须 exact-SHA CI、source lock、SBOM、readiness 和人工发布门。`xai-grok-version` 是独立的上游协议/客户端身份，不是 Lumen 产品版本。
+
+- 当前执行书：[docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md](docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md)
 - 运行时：`agent/`（Grok pin，~135 万行 Rust）
 - 二进制：`lumen`（UI/交互仍是 Grok TUI，产品名 Lumen）
 
@@ -45,7 +47,7 @@ lumen --single "修 README 里的笔误" --always-approve
 
 | 项 | 值 |
 |----|-----|
-| 默认模型 | `deepseek-v4-pro`（正式 API ID；默认编码执行器，不是唯一后端） |
+| 默认模型 | `deepseek-v4-flash`（默认编码执行器；Grok 4.5 与 DeepSeek V4 Pro 为用户可排序的后备候选） |
 | 其它预设 | OpenAI / Claude / xAI / GLM / Qwen / MiMo / Ollama / 本地 OpenAI 兼容 |
 | 遥测 Mixpanel | 默认关 |
 | auto_update | 默认关 |

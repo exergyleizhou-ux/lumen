@@ -86,20 +86,22 @@ mod tests {
     }
 
     #[test]
-    fn lumen_default_model_is_deepseek_v4_pro() {
+    fn lumen_default_model_is_deepseek_v4_flash() {
         assert_eq!(
             default_model(),
-            "deepseek-v4-pro",
-            "embedded default_models.json must default to the formal DeepSeek V4 Pro API ID"
+            "deepseek-v4-flash",
+            "embedded default_models.json must default to the formal DeepSeek V4 Flash API ID"
         );
     }
 
     #[test]
     fn lumen_default_models_json_uses_formal_role_models() {
         let v = embedded_catalog();
-        assert_eq!(v["default"], "deepseek-v4-pro");
+        assert_eq!(v["default"], "deepseek-v4-flash");
         assert_eq!(v["web_search"], "deepseek-v4-pro");
-        assert_eq!(v["image_description"], "deepseek-chat");
+        // Pinned by scripts/assert-defaults.sh (release gate): the flash tier
+        // is the image-description fallback role.
+        assert_eq!(v["image_description"], "deepseek-v4-flash");
         assert_eq!(v["session_summary"], "deepseek-v4-flash");
         let models = v["models"].as_array().expect("models array");
         for id in ["deepseek-v4-pro", "deepseek-v4-flash"] {

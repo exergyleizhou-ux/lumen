@@ -69,6 +69,7 @@ fn ok_result(text: &str) -> Result<ToolRunResult, xai_tool_runtime::ToolError> {
         prompt_text: text.to_owned(),
         effective_tool_name: None,
         verify_outcome: None,
+        context_manifest_hash: None,
     })
 }
 

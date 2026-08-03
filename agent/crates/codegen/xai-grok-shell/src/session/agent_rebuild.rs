@@ -51,9 +51,8 @@ use xai_grok_tools::computer::types::{AsyncFileSystem, TerminalBackend};
 use xai_grok_tools::implementations::grok_build::ask_user_question::types::UserQuestionRequest;
 use xai_grok_tools::implementations::grok_build::deploy_app::AppBuilderDeployerConfig;
 use xai_grok_tools::implementations::grok_build::image_gen::ImageGenConfig;
-use xai_grok_tools::implementations::grok_build::task::types::{
-    MonitorEventBuffer, SubagentEvent, TaskModelValidator,
-};
+use xai_grok_tools::implementations::grok_build::monitor::types::MonitorEventBuffer;
+use xai_grok_tools::implementations::grok_build::task::types::{SubagentEvent, TaskModelValidator};
 use xai_grok_tools::implementations::grok_build::video_gen::VideoGenConfig;
 use xai_grok_tools::implementations::grok_build::web_fetch::WebFetchConfig;
 use xai_grok_tools::implementations::lsp::LspBackend;
@@ -92,6 +91,10 @@ pub(crate) struct AgentRebuildSpec {
     pub memory_global_path: Option<String>,
     pub memory_workspace_path: Option<String>,
     pub memory_backend: Option<Arc<dyn MemoryBackend>>,
+    pub task_tree_memory_backend:
+        Option<Arc<dyn xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackend>>,
+    pub task_tree_manifest_hash: Option<String>,
+    pub task_tree_write_scope_roots: Option<Vec<PathBuf>>,
     pub web_search_config: WebSearchConfig,
     pub backend_search: bool,
     pub web_fetch_config: WebFetchConfig,
@@ -101,6 +104,7 @@ pub(crate) struct AgentRebuildSpec {
     pub write_file_enabled: bool,
     pub subagents_enabled: bool,
     pub subagent_toggle: HashMap<String, bool>,
+    pub background_workflows_enabled: bool,
     pub ask_user_question_enabled: bool,
     pub persona_summaries: Vec<String>,
     pub prompt_audience: PromptAudience,
@@ -118,12 +122,21 @@ pub(crate) struct AgentRebuildSpec {
     pub attribution_callback: Option<xai_grok_tools::SharedAttributionCallback>,
     pub tool_params_json: ResolvedToolParamsJson,
     pub subagent_event_tx: Option<UnboundedSender<SubagentEvent>>,
+    pub subagent_control_tx: Option<UnboundedSender<SubagentEvent>>,
     pub monitor_event_buffer: Option<MonitorEventBuffer>,
     pub user_question_tx: UnboundedSender<UserQuestionRequest>,
     pub subagent_depth: u32,
+    pub subagents_max_depth: u32,
     pub session_id_str: String,
+    /// Stable root session ID for the task tree, even in a nested child.
+    pub task_tree_root_session_id: String,
+    pub blocking_wait_depth: Arc<crate::tools::tool_context::BlockingWaitState>,
     pub respect_gitignore: bool,
     pub path_not_found_hints: bool,
+    /// Fire side of the scheduler mode. The spawn copies the same resolution
+    /// onto [`SessionHandle::scheduler_background_loops`](crate::session::SessionHandle),
+    /// which is what clients read — keep the two on one resolve.
+    pub scheduler_background_loops: bool,
     pub mcp_state: Arc<tokio::sync::Mutex<crate::session::mcp_servers::McpState>>,
     pub managed_gateway_tool_client:
         Option<xai_grok_tools::types::resources::ManagedGatewayToolClient>,
@@ -132,6 +145,16 @@ pub(crate) struct AgentRebuildSpec {
     pub owner_session_id: Option<String>,
     pub parent_scheduler_handle:
         Option<xai_grok_tools::implementations::grok_build::scheduler::types::SchedulerHandle>,
+}
+
+fn child_write_scope_roots(
+    receipt_roots: Option<&[PathBuf]>,
+    working_directory: &std::path::Path,
+) -> Vec<PathBuf> {
+    receipt_roots
+        .filter(|roots| !roots.is_empty())
+        .map(<[PathBuf]>::to_vec)
+        .unwrap_or_else(|| vec![working_directory.to_path_buf()])
 }
 impl AgentRebuildSpec {
     /// Build a fresh [`Agent`] from this spec and an [`AgentDefinition`].
@@ -188,6 +211,9 @@ impl AgentRebuildSpec {
             memory_global_path,
             memory_workspace_path,
             memory_backend,
+            task_tree_memory_backend,
+            task_tree_manifest_hash,
+            task_tree_write_scope_roots,
             web_search_config,
             backend_search,
             web_fetch_config,
@@ -197,6 +223,7 @@ impl AgentRebuildSpec {
             write_file_enabled,
             subagents_enabled,
             subagent_toggle,
+            background_workflows_enabled,
             ask_user_question_enabled,
             persona_summaries,
             prompt_audience,
@@ -212,12 +239,17 @@ impl AgentRebuildSpec {
             attribution_callback,
             tool_params_json,
             subagent_event_tx,
+            subagent_control_tx,
             monitor_event_buffer,
             user_question_tx,
             subagent_depth,
+            subagents_max_depth,
             session_id_str,
+            task_tree_root_session_id,
+            blocking_wait_depth,
             respect_gitignore,
             path_not_found_hints,
+            scheduler_background_loops,
             mcp_state,
             managed_gateway_tool_client,
             is_non_interactive,
@@ -238,6 +270,7 @@ impl AgentRebuildSpec {
         .with_compaction_policy(compaction_policy.clone())
         .with_reminder_policy(reminder_policy.clone())
         .with_memory_enabled(*memory_enabled)
+        .with_task_tree_memory_enabled(task_tree_memory_backend.is_some())
         .with_memory_paths(memory_global_path.clone(), memory_workspace_path.clone())
         .with_is_non_interactive(*is_non_interactive)
         .with_system_prompt_label(system_prompt_label.clone())
@@ -253,6 +286,7 @@ impl AgentRebuildSpec {
         .with_fs(fs_backend.clone())
         .with_subagents_enabled(*subagents_enabled)
         .with_subagent_toggle(subagent_toggle.clone())
+        .with_background_workflows_enabled(*background_workflows_enabled)
         .with_task_model_slugs(
             models_manager
                 .available()
@@ -320,9 +354,21 @@ impl AgentRebuildSpec {
                 ChannelBackend, SubagentBackendResource,
             };
             use xai_grok_tools::implementations::grok_build::task::types::{
-                SessionIdResource, SubagentDepthCounter, SubagentEventSender,
+                MaxSubagentDepth, SessionIdResource, SubagentDepthCounter, SubagentEventSender,
+                TaskTreeRootSessionId,
             };
-            let backend = SubagentBackendResource(Arc::new(ChannelBackend::new(event_tx.clone())));
+            // A live SessionActor supplies this independent control lane.
+            // Old reconstructed/test sessions intentionally fall back to the
+            // normal lane rather than losing cancellation completely.
+            let control_tx = subagent_control_tx
+                .clone()
+                .unwrap_or_else(|| event_tx.clone());
+            let backend =
+                SubagentBackendResource(Arc::new(ChannelBackend::for_session_with_control(
+                    event_tx.clone(),
+                    control_tx,
+                    session_id_str.clone(),
+                )));
             agent.tool_bridge().update_resource(backend).await;
             agent
                 .tool_bridge()
@@ -330,20 +376,146 @@ impl AgentRebuildSpec {
                 .await;
             agent
                 .tool_bridge()
+                .update_resource(MaxSubagentDepth(*subagents_max_depth))
+                .await;
+            agent
+                .tool_bridge()
                 .update_resource(SessionIdResource(session_id_str.clone()))
+                .await;
+            agent
+                .tool_bridge()
+                .update_resource(TaskTreeRootSessionId(task_tree_root_session_id.clone()))
                 .await;
             agent
                 .tool_bridge()
                 .update_resource(SubagentEventSender(event_tx))
                 .await;
+            agent
+                .tool_bridge()
+                .update_resource(crate::tools::tool_context::subagent_foreground_wait(
+                    Arc::clone(blocking_wait_depth),
+                ))
+                .await;
             if let Some(buffer) = monitor_event_buffer.clone() {
                 agent.tool_bridge().update_resource(buffer).await;
+            }
+        }
+        if let Some(backend) = task_tree_memory_backend.clone() {
+            // A child already receives these identities with its task-event
+            // resources above. The root has no `subagent_event_tx`, but is
+            // the only session authorized to review a child's working-memory
+            // proposal, so supply its identities here without changing the
+            // existing child task/scheduler path.
+            if subagent_event_tx.is_none() {
+                use xai_grok_tools::implementations::grok_build::task::types::{
+                    SessionIdResource, TaskTreeRootSessionId,
+                };
+                agent
+                    .tool_bridge()
+                    .update_resource(SessionIdResource(session_id_str.clone()))
+                    .await;
+                agent
+                    .tool_bridge()
+                    .update_resource(TaskTreeRootSessionId(task_tree_root_session_id.clone()))
+                    .await;
+            }
+            agent
+                .tool_bridge()
+                .update_resource(
+                    xai_grok_tools::types::task_tree_memory::TaskTreeMemoryBackendResource(backend),
+                )
+                .await;
+        }
+        let governed_child = task_tree_manifest_hash.is_some();
+        if let Some(manifest_hash) = task_tree_manifest_hash {
+            agent
+                .tool_bridge()
+                .update_resource(
+                    xai_grok_tools::types::task_tree_memory::ContextManifestHashResource(
+                        manifest_hash.clone(),
+                    ),
+                )
+                .await;
+        }
+        // Nested task-tree sessions receive a path-scoped write grant. Root
+        // SessionActor omits it and is not constrained by this gate. A
+        // governed child without an explicit root-approved scope receives a
+        // deny-all lease: it must not silently regain legacy workspace-wide
+        // write authority just because a host forgot to assign a scope.
+        if session_id_str != task_tree_root_session_id {
+            use xai_grok_tools::implementations::grok_build::task::{
+                WriteScopeLease, WriteScopeLeaseResource,
+            };
+            let child_workspace = working_directory.clone();
+            let grant_id = format!("write-grant:{session_id_str}");
+            let lease = if governed_child
+                && task_tree_write_scope_roots
+                    .as_ref()
+                    .is_none_or(|roots| roots.is_empty())
+            {
+                WriteScopeLease::deny_all(
+                    grant_id,
+                    task_tree_root_session_id.clone(),
+                    session_id_str.clone(),
+                    24 * 60 * 60,
+                )
+            } else {
+                let allowed_roots = child_write_scope_roots(
+                    task_tree_write_scope_roots.as_deref(),
+                    &child_workspace,
+                );
+                match WriteScopeLease::issue(
+                    grant_id,
+                    task_tree_root_session_id.clone(),
+                    session_id_str.clone(),
+                    allowed_roots,
+                    24 * 60 * 60,
+                ) {
+                    Ok(lease) => lease,
+                    // `child_write_scope_roots` always yields one legacy
+                    // workspace root; keep an explicit fallback rather than
+                    // omitting the resource if that invariant ever changes.
+                    Err(_) => WriteScopeLease::deny_all(
+                        format!("write-grant:{session_id_str}"),
+                        task_tree_root_session_id.clone(),
+                        session_id_str.clone(),
+                        24 * 60 * 60,
+                    ),
+                }
+            };
+            agent
+                .tool_bridge()
+                .update_resource(WriteScopeLeaseResource { lease })
+                .await;
+
+            // NG-04D-4: project sandbox capabilities into the tool bridge so
+            // writers/spawn can fail closed without a tools→memory crate cycle.
+            if governed_child {
+                use xai_grok_tools::implementations::grok_build::task::{
+                    ChildSandboxCapability, ChildSandboxCapabilityResource, HARD_MAX_SUBAGENT_DEPTH,
+                };
+                let cap = ChildSandboxCapability::governed_defaults(
+                    session_id_str.clone(),
+                    task_tree_root_session_id.clone(),
+                    *subagent_depth,
+                    HARD_MAX_SUBAGENT_DEPTH,
+                );
+                agent
+                    .tool_bridge()
+                    .update_resource(ChildSandboxCapabilityResource(cap))
+                    .await;
             }
         }
         agent
             .tool_bridge()
             .update_resource(xai_grok_tools::types::resources::RespectGitignore(
                 *respect_gitignore,
+            ))
+            .await;
+        agent
+            .tool_bridge()
+            .update_resource(xai_grok_tools::types::resources::SchedulerBackgroundLoops(
+                *scheduler_background_loops,
             ))
             .await;
         agent
@@ -390,6 +562,9 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         memory_global_path: None,
         memory_workspace_path: None,
         memory_backend: None,
+        task_tree_memory_backend: None,
+        task_tree_manifest_hash: None,
+        task_tree_write_scope_roots: None,
         web_search_config: WebSearchConfig::default(),
         backend_search: false,
         web_fetch_config: WebFetchConfig::Disabled,
@@ -399,6 +574,7 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         write_file_enabled: true,
         subagents_enabled: false,
         subagent_toggle: HashMap::new(),
+        background_workflows_enabled: false,
         ask_user_question_enabled: true,
         persona_summaries: vec![],
         prompt_audience: PromptAudience::Primary,
@@ -414,11 +590,16 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
         attribution_callback: None,
         tool_params_json: ResolvedToolParamsJson::default(),
         subagent_event_tx: None,
+        subagent_control_tx: None,
         monitor_event_buffer: None,
         user_question_tx: uq_tx,
         subagent_depth: 0,
+        subagents_max_depth: xai_grok_tools::implementations::grok_build::task::MAX_SUBAGENT_DEPTH,
         session_id_str: "test-session".to_string(),
+        task_tree_root_session_id: "test-session".to_string(),
+        blocking_wait_depth: Arc::new(crate::tools::tool_context::BlockingWaitState::new()),
         respect_gitignore: false,
+        scheduler_background_loops: true,
         path_not_found_hints: false,
         mcp_state: Arc::new(tokio::sync::Mutex::new(
             crate::session::mcp_servers::McpState::new(vec![]),
@@ -434,6 +615,45 @@ pub(crate) fn test_rebuild_spec_default() -> Arc<AgentRebuildSpec> {
 mod tests {
     use super::*;
     use crate::agent::config::{EndpointsConfig, ModelEntry};
+    use xai_grok_tools::implementations::grok_build::task::WriteScopeLeaseResource;
+    use xai_grok_tools::implementations::grok_build::task::types::{
+        SessionIdResource, TaskTreeRootSessionId,
+    };
+    use xai_grok_tools::types::task_tree_memory::{
+        TaskTreeMemoryBackend, TaskTreeMemoryBackendResource, TaskTreeMemoryFact,
+        TaskTreeMemoryReviewState, TaskTreeMemoryWriteReceipt,
+    };
+
+    struct RootReviewBackend;
+
+    #[async_trait::async_trait]
+    impl TaskTreeMemoryBackend for RootReviewBackend {
+        async fn propose(
+            &self,
+            _author_session_id: &str,
+            fact: TaskTreeMemoryFact,
+        ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+            Ok(TaskTreeMemoryWriteReceipt {
+                fact_id: fact.fact_id,
+                revision: fact.revision,
+                state: "proposed",
+            })
+        }
+
+        async fn review(
+            &self,
+            _reviewer_session_id: &str,
+            fact: TaskTreeMemoryFact,
+            state: TaskTreeMemoryReviewState,
+        ) -> Result<TaskTreeMemoryWriteReceipt, String> {
+            Ok(TaskTreeMemoryWriteReceipt {
+                fact_id: fact.fact_id,
+                revision: fact.revision,
+                state: state.label(),
+            })
+        }
+    }
+
     fn model_entry(internal_id: &str) -> ModelEntry {
         ModelEntry::fallback(internal_id, &EndpointsConfig::default())
     }
@@ -449,6 +669,67 @@ mod tests {
             .and_then(|definition| definition.function.description)
             .expect("GrokBuild Task description should be present")
     }
+
+    #[test]
+    fn child_write_scope_roots_prefer_signed_receipt_and_fail_closed_to_workspace() {
+        let receipt_roots = vec![PathBuf::from("src"), PathBuf::from("tests")];
+
+        assert_eq!(
+            child_write_scope_roots(Some(&receipt_roots), std::path::Path::new("workspace")),
+            receipt_roots
+        );
+        assert_eq!(
+            child_write_scope_roots(Some(&[]), std::path::Path::new("workspace")),
+            vec![PathBuf::from("workspace")]
+        );
+        assert_eq!(
+            child_write_scope_roots(None, std::path::Path::new("workspace")),
+            vec![PathBuf::from("workspace")]
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn governed_child_without_signed_write_roots_gets_deny_all_lease() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut spec = test_rebuild_spec_default();
+                {
+                    let spec = Arc::get_mut(&mut spec).expect("test spec should be uniquely owned");
+                    spec.session_id_str = "child".to_owned();
+                    spec.task_tree_root_session_id = "root".to_owned();
+                    spec.task_tree_manifest_hash = Some("sha256:governed".to_owned());
+                    spec.task_tree_write_scope_roots = None;
+                }
+                let agent = spec
+                    .build_agent(AgentDefinition::default_grok_build())
+                    .await
+                    .expect("governed child should still build as read-only");
+                let scope = agent
+                    .tool_bridge()
+                    .toolset()
+                    .get_resource_cloned::<WriteScopeLeaseResource>()
+                    .await
+                    .expect("governed child must carry a deny-all scope resource");
+                assert!(
+                    scope
+                        .authorize(std::path::Path::new("src/lib.rs"), u64::MAX - 1)
+                        .is_err()
+                );
+                use xai_grok_tools::implementations::grok_build::task::ChildSandboxCapabilityResource;
+                let sandbox = agent
+                    .tool_bridge()
+                    .toolset()
+                    .get_resource_cloned::<ChildSandboxCapabilityResource>()
+                    .await
+                    .expect("governed child must carry sandbox capability resource");
+                assert!(
+                    sandbox.authorize_write().is_err(),
+                    "governed child sandbox defaults to write-denied"
+                );
+            })
+            .await;
+    }
+
     #[tokio::test(flavor = "current_thread")]
     async fn rebuild_projects_fresh_public_model_keys_into_task_description() {
         tokio::task::LocalSet::new()
@@ -475,14 +756,15 @@ mod tests {
                     .expect("first agent build should succeed");
                 let first_description = task_description(&first);
                 assert!(
-                    first_description
-                    .contains("If the user explicitly asks for the model of a subagent/task, you may ONLY use model slugs from this list:\n\
+                    first_description.contains(
+                        "If the user explicitly asks for the model of a subagent/task, you may ONLY use model slugs from this list:\n\
                          - alpha-public\n\
-                         - zeta-public")
+                         - zeta-public"
+                    )
                 );
-                assert!(! first_description.contains("private-hidden-model"));
-                assert!(! first_description.contains("private-unselectable-model"));
-                assert!(! first_description.contains("internal-alpha"));
+                assert!(!first_description.contains("private-hidden-model"));
+                assert!(!first_description.contains("private-unselectable-model"));
+                assert!(!first_description.contains("internal-alpha"));
                 let validator = first
                     .tool_bridge()
                     .toolset()
@@ -500,11 +782,56 @@ mod tests {
                     .expect("rebuilt agent should succeed");
                 let rebuilt_description = task_description(&rebuilt);
                 assert!(
-                    rebuilt_description
-                    .contains("If the user explicitly asks for the model of a subagent/task, you may ONLY use model slugs from this list:\n\
+                    rebuilt_description.contains(
+                        "If the user explicitly asks for the model of a subagent/task, you may ONLY use model slugs from this list:\n\
                          - alpha-public\n\
                          - beta-public\n\
-                         - zeta-public")
+                         - zeta-public"
+                    )
+                );
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn root_with_working_memory_gets_host_identity_and_review_port() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let mut spec = test_rebuild_spec_default();
+                {
+                    let spec = Arc::get_mut(&mut spec)
+                        .expect("test rebuild spec should be uniquely owned");
+                    spec.session_id_str = "root-session".to_owned();
+                    spec.task_tree_root_session_id = "root-session".to_owned();
+                    spec.task_tree_memory_backend = Some(Arc::new(RootReviewBackend));
+                }
+
+                let agent = spec
+                    .build_agent(AgentDefinition::default_grok_build())
+                    .await
+                    .expect("root agent build should succeed");
+                let toolset = agent.tool_bridge().toolset();
+                assert!(
+                    toolset
+                        .tool_definitions()
+                        .into_iter()
+                        .any(|definition| { definition.function.name == "task_tree_memory" })
+                );
+                let session_id = toolset
+                    .get_resource_cloned::<SessionIdResource>()
+                    .await
+                    .expect("root receives its host session identity");
+                let root_id = toolset
+                    .get_resource_cloned::<TaskTreeRootSessionId>()
+                    .await
+                    .expect("root receives its task-tree identity");
+                assert_eq!(session_id.0, "root-session");
+                assert_eq!(root_id.0, "root-session");
+                assert!(
+                    toolset
+                        .get_resource_cloned::<TaskTreeMemoryBackendResource>()
+                        .await
+                        .is_some()
                 );
             })
             .await;

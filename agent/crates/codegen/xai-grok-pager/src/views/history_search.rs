@@ -63,7 +63,7 @@ enum Msg {
 struct Daemon {
     shared: Arc<Mutex<Snapshot>>,
     tx: SyncSender<Msg>,
-    _handle: JoinHandle<()>,
+    handle: Option<JoinHandle<()>>,
 }
 
 const MAX_RESULTS: usize = 100;
@@ -74,7 +74,7 @@ impl Daemon {
         let (tx, rx) = sync_channel::<Msg>(256);
 
         let out = shared.clone();
-        let handle = thread::spawn(move || {
+        let worker = move || {
             let mut pattern = MultiPattern::new(1);
             let mut matcher = Matcher::new(Config::DEFAULT);
             let mut items: Vec<(String, Utf32String)> = Vec::new();
@@ -82,7 +82,6 @@ impl Daemon {
             let mut prev_q = String::new();
 
             while let Ok(msg) = rx.recv() {
-                // Drain to latest — skip intermediate queries.
                 let msg = drain_to_latest(msg, &rx);
 
                 match msg {
@@ -144,13 +143,23 @@ impl Daemon {
                     Msg::Stop => break,
                 }
             }
-        });
+        };
+        let handle = thread::Builder::new()
+            .name("history-search".into())
+            .spawn(worker);
 
-        Self {
-            shared,
-            tx,
-            _handle: handle,
-        }
+        let handle = match handle {
+            Ok(h) => Some(h),
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "history search daemon thread spawn failed; history search disabled"
+                );
+                None
+            }
+        };
+
+        Self { shared, tx, handle }
     }
 }
 
@@ -355,6 +364,9 @@ impl HistorySearchState {
     }
 
     fn activate_inner(&mut self, history: &[HistoryEntry], current_text: &str, browse: bool) {
+        if !self.is_available() {
+            return;
+        }
         self.active = true;
         self.browse = browse;
         self.saved_text = current_text.to_string();
@@ -367,6 +379,12 @@ impl HistorySearchState {
         self.snapshot = self.daemon.shared.lock().unwrap().clone();
         self.last_gen = self.snapshot.generation;
         self.selected = self.snapshot.items.len().saturating_sub(1);
+    }
+
+    /// False when the matcher thread never started, so the overlay cannot open
+    /// and callers must leave the composer alone.
+    pub fn is_available(&self) -> bool {
+        self.daemon.handle.is_some()
     }
 
     /// True while the overlay is in browse mode (see [`Self::activate_browse`]).
@@ -393,6 +411,36 @@ impl HistorySearchState {
             self.stick_to_bottom = true;
         }
         let _ = self.daemon.tx.send(Msg::SetQuery(query.to_string()));
+    }
+
+    /// Test-only: open the overlay with pre-seeded results, bypassing the
+    /// background matcher thread entirely (mirrors
+    /// `FuzzyFileMatcherDaemon::set_test_state`). No message is sent to the
+    /// daemon, so nothing can race the seeded snapshot; `poll()` observes the
+    /// seeded generation (1) against `last_gen` (0) and delivers exactly once.
+    #[cfg(test)]
+    pub(crate) fn activate_with_seeded_results(
+        &mut self,
+        history: &[HistoryEntry],
+        current_text: &str,
+        results: Vec<HistoryMatchResult>,
+    ) {
+        self.active = true;
+        self.browse = false;
+        self.saved_text = current_text.to_string();
+        self.stick_to_bottom = true;
+        self.last_query.clear();
+        {
+            let mut shared = self.daemon.shared.lock().unwrap();
+            shared.generation = 1;
+            shared.items = Arc::from(results);
+        }
+        self.snapshot = self.daemon.shared.lock().unwrap().clone();
+        // `last_gen` stays 0 so the first `poll()` observes a change and
+        // delivers the seeded snapshot (UI state machine, no wall clock).
+        self.last_gen = 0;
+        self.selected = self.snapshot.items.len().saturating_sub(1);
+        let _ = history;
     }
 
     /// Poll for new results from the daemon. Returns `true` if changed.

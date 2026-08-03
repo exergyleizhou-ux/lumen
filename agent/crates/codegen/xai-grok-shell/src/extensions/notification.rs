@@ -14,6 +14,27 @@ pub struct GoalDeliverableInfo {
     pub status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowPhaseInfo {
+    pub title: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WorkflowAgentInfo {
+    pub agent_id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    pub state: String,
+    #[serde(default)]
+    pub tokens_used: u64,
+    #[serde(default)]
+    pub duration_ms: u64,
+}
+
 /// xAI-specific session notification (parallel to acp::SessionNotification)
 /// This wraps an XaiSessionUpdate with session context for persistence and replay.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -129,7 +150,8 @@ impl PromptUsage {
             output_tokens,
             total_tokens: _, // derived from input + output
             cached_read_tokens,
-            reasoning_tokens: _, // subset of output_tokens
+            cache_creation_tokens, // subset of input_tokens on the wire
+            reasoning_tokens: _,   // subset of output_tokens
             model_calls,
             api_duration_ms: _, // timing, not tokens
             cost_usd_ticks: _,  // cost without usage cannot occur
@@ -140,6 +162,7 @@ impl PromptUsage {
             && input_tokens == 0
             && output_tokens == 0
             && cached_read_tokens == 0
+            && cache_creation_tokens == 0
             && self.model_usage.is_empty()
     }
 }
@@ -157,6 +180,10 @@ pub struct PromptUsageModel {
     pub total_tokens: u64,
     #[serde(default)]
     pub cached_read_tokens: u64,
+    /// Cache-creation prompt tokens, folded into `input_tokens` on the ACP wire
+    /// but projected as a disjoint bucket in the headless shape.
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
     #[serde(default)]
     pub reasoning_tokens: u64,
     #[serde(default)]
@@ -181,6 +208,23 @@ pub struct PromptUsageModel {
     pub cost_missing_calls: u64,
 }
 
+/// One model call's token usage: the four Messages API `message.usage` fields
+/// (`input_tokens` is the uncached prompt portion) plus `reasoning_tokens`.
+/// Distinct from [`PromptUsageModel`], which sums the whole prompt.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ResponseUsage {
+    #[serde(default)]
+    pub input_tokens: u64,
+    #[serde(default)]
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+}
+
 impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
     fn from(t: &xai_chat_state::UsageTotals) -> Self {
         // Exhaustive destructure: a new ledger field cannot silently miss the
@@ -189,6 +233,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             input_tokens,
             output_tokens,
             cached_read_tokens,
+            cache_creation_tokens,
             reasoning_tokens,
             model_calls,
             api_duration_ms,
@@ -200,6 +245,7 @@ impl From<&xai_chat_state::UsageTotals> for PromptUsageModel {
             output_tokens,
             total_tokens: t.total_tokens(),
             cached_read_tokens,
+            cache_creation_tokens,
             reasoning_tokens,
             model_calls,
             api_duration_ms,
@@ -242,8 +288,9 @@ pub fn uncached_input_tokens(full_input: u64, cached_read: u64) -> u64 {
 
 /// Project usage onto a headless result object.
 ///
-/// - `usage.input_tokens` = uncached (`full − cache_read`); identity
-///   `uncached + cache_read + output = total_tokens`.
+/// - `usage.input_tokens` = uncached (`full − cache_read − cache_creation`), so
+///   the three prompt buckets are disjoint; identity
+///   `input_tokens + cache_read + cache_creation + output = total_tokens`.
 /// - Omits all cost floats when partial or incomplete (absence ≠ free).
 /// - Incomplete with no tokens emits only `usage_is_incomplete` (no zero usage object).
 /// - `modelUsage` rows are a reduced external-compat schema (camelCase; no reasoning/duration).
@@ -260,6 +307,7 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
         output_tokens,
         total_tokens,
         cached_read_tokens,
+        cache_creation_tokens,
         reasoning_tokens,
         model_calls: _,     // totals-level; headless carries num_turns instead
         api_duration_ms: _, // dropped: not part of the frozen headless shape
@@ -276,8 +324,10 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
     });
     let hit_ratio = lumen_discipline::hit_ratio(input_tokens, cached_read_tokens);
     result["usage"] = serde_json::json!({
-        "input_tokens": uncached_input_tokens(input_tokens, cached_read_tokens),
+        "input_tokens": uncached_input_tokens(input_tokens, cached_read_tokens)
+            .saturating_sub(cache_creation_tokens),
         "cache_read_input_tokens": cached_read_tokens,
+        "cache_creation_input_tokens": cache_creation_tokens,
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
         "total_tokens": total_tokens,
@@ -307,6 +357,7 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
                 output_tokens,
                 total_tokens: _, // derivable per row
                 cached_read_tokens,
+                cache_creation_tokens,
                 reasoning_tokens: _, // dropped: reduced per-model schema
                 model_calls,
                 api_duration_ms: _, // dropped: reduced per-model schema
@@ -315,9 +366,11 @@ pub fn project_result_usage(result: &mut serde_json::Value, usage: &PromptUsage)
                 cost_missing_calls: _,
             } = *m;
             let mut entry = serde_json::json!({
-                "inputTokens": uncached_input_tokens(input_tokens, cached_read_tokens),
+                "inputTokens": uncached_input_tokens(input_tokens, cached_read_tokens)
+                    .saturating_sub(cache_creation_tokens),
                 "outputTokens": output_tokens,
                 "cacheReadInputTokens": cached_read_tokens,
+                "cacheCreationInputTokens": cache_creation_tokens,
                 "modelCalls": model_calls,
             });
             if !hide_costs
@@ -351,9 +404,18 @@ pub fn attach_result_usage_fail_closed(result: &mut serde_json::Value, usage: &s
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", tag = "status")]
 pub enum HookRunStatusDto {
-    Success { elapsed_ms: u64 },
+    Success {
+        elapsed_ms: u64,
+    },
     Skipped,
-    Failed { error: String, elapsed_ms: u64 },
+    Failed {
+        error: String,
+        elapsed_ms: u64,
+        /// Stop-gate block (the hook's decision, not a failure). Rides `failed`
+        /// so old pagers keep rendering it. TODO: promote to a dedicated status.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        blocked: bool,
+    },
 }
 
 /// A single hook run entry (wire format).
@@ -471,7 +533,6 @@ pub enum SessionUpdate {
     HookExecution {
         /// The hook event name ("pre_tool_use" or "post_tool_use").
         event_name: String,
-        /// The tool name this hook is associated with.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tool_name: Option<String>,
         /// The prompt turn this batch belongs to, when known; lets the
@@ -479,7 +540,6 @@ pub enum SessionUpdate {
         /// turn's marker.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt_id: Option<String>,
-        /// Individual hook run results.
         runs: Vec<HookRunEntryDto>,
     },
     /// Hooks registry changed (after reload or trust/untrust).
@@ -553,10 +613,10 @@ pub enum SessionUpdate {
     /// Task completed notification
     TaskCompleted {
         task_snapshot: TaskSnapshot,
-        /// Whether an auto-wake prompt follows this completion. The pager
-        /// skips its between-turns status line when set — the wake turn's
-        /// end marker carries the fresh counts instead. Missing (old
-        /// shells) reads as `false`: emit the line.
+        /// Advisory: an auto-wake prompt follows this completion. The
+        /// first-party TUI no longer consumes it (remaining background work
+        /// is surfaced by its persistent "watching" status row); kept for
+        /// wire compatibility and other clients. Missing reads as `false`.
         #[serde(default)]
         will_wake: bool,
     },
@@ -572,6 +632,15 @@ pub enum SessionUpdate {
         subagent_id: String,
         /// The parent session that spawned this subagent.
         parent_session_id: String,
+        /// Root session of the bounded task tree. Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        root_session_id: Option<String>,
+        /// Depth within the bounded task tree (root = 0). Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        depth: Option<u32>,
+        /// Ordered ancestors from root through the immediate parent. Optional for legacy JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lineage_path: Option<Vec<String>>,
         /// The parent prompt/turn that spawned this subagent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         parent_prompt_id: Option<String>,
@@ -602,6 +671,8 @@ pub enum SessionUpdate {
         /// ID of the source subagent this session was resumed from.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         resumed_from: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workflow_run_id: Option<String>,
     },
     /// Periodic progress update for a running subagent.
     ///
@@ -658,10 +729,10 @@ pub enum SessionUpdate {
         /// Final output text from the subagent (if completed).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         output: Option<String>,
-        /// Whether an auto-wake prompt follows this completion. The pager
-        /// skips its between-turns status line when set — the wake turn's
-        /// end marker carries the fresh counts instead. Missing (old
-        /// shells) reads as `false`: emit the line.
+        /// Advisory: an auto-wake prompt follows this completion. The
+        /// first-party TUI no longer consumes it (remaining background work
+        /// is surfaced by its persistent "watching" status row); kept for
+        /// wire compatibility and other clients. Missing reads as `false`.
         #[serde(default)]
         will_wake: bool,
     },
@@ -701,6 +772,8 @@ pub enum SessionUpdate {
         prompt: String,
         human_schedule: String,
         next_fire_at: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        subagent_id: Option<String>,
     },
     /// A scheduled task was deleted/cancelled.
     ScheduledTaskDeleted { task_id: String },
@@ -771,6 +844,47 @@ pub enum SessionUpdate {
     ImageDropped { notes: Vec<String> },
     /// Memory file listing for the pager's /memory modal.
     MemoryFiles { files: Vec<MemoryFileInfo> },
+    WorkflowUpdated {
+        run_id: String,
+        #[serde(default)]
+        revision: u64,
+        name: String,
+        objective: String,
+        status: String,
+        #[serde(default)]
+        foreground: bool,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        phases: Vec<WorkflowPhaseInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_phase: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        agent_budget: Option<u64>,
+        #[serde(default)]
+        agents_used: u64,
+        #[serde(default)]
+        agents_reserved: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        agents_remaining: Option<u64>,
+        #[serde(default)]
+        agent_usage_incomplete: bool,
+        elapsed_ms: u64,
+        #[serde(default)]
+        active_agents: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        current_agent_label: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents: Vec<WorkflowAgentInfo>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_event: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_event_detail: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_event_timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pause_message: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        result_summary: Option<String>,
+    },
     /// Goal mode orchestration progress update.
     ///
     /// Sent on the parent session's notification channel at phase transitions
@@ -909,6 +1023,60 @@ pub enum SessionUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<PromptUsage>,
     },
+    /// One model response opened (Messages `message_start`), carrying the real
+    /// message id, model, and input-side token counts. Rides the buffered chunk
+    /// rail so it is ordered AHEAD of this response's agent chunks: headless
+    /// partial-mode framing consumes it to emit the real `message_start` id and
+    /// input usage instead of a synthesized placeholder / zero-seeded usage.
+    /// Messages backend only; other backends never emit it (the reducer keeps
+    /// its placeholder fallback there).
+    ///
+    /// `input_tokens` is the uncached prompt portion; `cache_read_input_tokens`
+    /// and `cache_creation_input_tokens` are the separate prompt-side cache
+    /// buckets, both known at `message_start` on the Messages backend.
+    ResponseStarted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default)]
+        input_tokens: u64,
+        #[serde(default)]
+        cache_read_input_tokens: u64,
+        #[serde(default)]
+        cache_creation_input_tokens: u64,
+    },
+    /// This response's reasoning (thinking) block finished; carries its
+    /// encrypted signature. Rides the buffered chunk rail so it is ordered right
+    /// AFTER this response's thought chunks (and before its text): headless
+    /// partial-mode framing consumes it to emit `signature_delta` before the
+    /// thinking block's `content_block_stop`, in order. Messages backend only.
+    ReasoningCompleted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+    },
+    /// One completed model response, so headless can emit a Messages API
+    /// assistant frame per response. Ordered with the response's chunks; a tool
+    /// loop emits several. The durable outcome rides `TurnCompleted`.
+    ResponseCompleted {
+        /// Provider message id (Messages `message.id`), when reported.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        /// Verbatim wire stop reason (`end_turn`, `tool_use`, …), when reported.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<ResponseUsage>,
+        /// Reasoning signature (encrypted content) for this response's thinking.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<String>,
+        /// The provider's matched stop sequence (Messages API
+        /// `message.stop_sequence`), present only when the model stopped on a
+        /// configured stop sequence; `None` otherwise. Headless
+        /// `streaming-messages-json` stamps it onto the assistant frame.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_sequence: Option<String>,
+    },
     /// Catch-all for unrecognized session update types.
     /// Allows forward/backward compatibility when variants are added or removed.
     /// All fields from the unrecognized variant are discarded during deserialization.
@@ -994,8 +1162,12 @@ pub enum RetryState {
 /// `legacy_auth` is intentionally excluded: those failures carry their own
 /// detailed migration guidance (`grok logout` / `grok login`) in the
 /// message, so we surface that verbatim instead of the generic prompt.
+///
+/// `auth_transient` is excluded for the opposite reason: the shell emits it
+/// only when the failure self-heals (see `AuthManager::requires_manual_reauth`)
+/// and the message already says it recovers on its own — no `/login` banner.
 pub fn is_reauthable_failure(error_type: Option<&str>, message: &str) -> bool {
-    if error_type == Some("legacy_auth") {
+    if matches!(error_type, Some("legacy_auth") | Some("auth_transient")) {
         return false;
     }
     error_type == Some("auth") || message.contains("Unauthorized (401)")
@@ -1419,6 +1591,9 @@ mod tests {
         let spawned = serde_json::to_value(SessionUpdate::SubagentSpawned {
             subagent_id: "s".into(),
             parent_session_id: "p".into(),
+            root_session_id: Some("root".into()),
+            depth: Some(2),
+            lineage_path: Some(vec!["root".into(), "p".into()]),
             parent_prompt_id: None,
             child_session_id: "c".into(),
             subagent_type: "explore".into(),
@@ -1430,6 +1605,7 @@ mod tests {
             role: None,
             model: None,
             resumed_from: None,
+            workflow_run_id: None,
         })
         .unwrap();
         let progress = serde_json::to_value(SessionUpdate::SubagentProgress {

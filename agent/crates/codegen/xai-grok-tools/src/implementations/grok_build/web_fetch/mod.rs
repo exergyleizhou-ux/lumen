@@ -146,7 +146,7 @@ impl xai_tool_runtime::Tool for WebFetchTool {
     ) -> xai_tool_types::ToolDescription {
         xai_tool_types::ToolDescription::new(
             "web_fetch",
-            crate::types::tool_metadata::ToolMetadata::description_template(self),
+            crate::types::tool_metadata::ToolMetadata::sanitized_description_template(self),
         )
     }
 
@@ -169,6 +169,10 @@ impl xai_tool_runtime::Tool for WebFetchTool {
 
         let (client, session_folder, read_tool_name, execute_tool_name) = {
             let res = resources.lock().await;
+            crate::implementations::grok_build::task::enforce_child_sandbox_network_if_present(
+                &res,
+            )
+            .map_err(xai_tool_runtime::ToolError::invalid_arguments)?;
             let client = res.require::<WebFetchClient>()?.clone();
             let session_folder = res.get::<SessionFolder>().map(|folder| folder.0.clone());
             let renderer = res.get::<crate::types::template_renderer::TemplateRenderer>();

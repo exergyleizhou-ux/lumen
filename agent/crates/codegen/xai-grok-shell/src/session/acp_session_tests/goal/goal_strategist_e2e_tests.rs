@@ -22,7 +22,7 @@ use std::collections::VecDeque;
 use std::sync::Arc as StdArc;
 use std::sync::atomic::{AtomicUsize, Ordering as SeqOrd};
 use xai_grok_tools::implementations::grok_build::task::types::{
-    SubagentCancelOutcome, SubagentEvent, SubagentResult,
+    SubagentCancelOutcome, SubagentEvent, SubagentResult, SubagentSpawnRequest,
 };
 use xai_grok_tools::implementations::grok_build::update_goal::UpdateGoalInput;
 
@@ -102,17 +102,14 @@ fn spawn_coordinator(
     (tx, counters)
 }
 
-async fn answer_strategist(
-    behaviour: StrategistBehaviour,
-    req: Box<xai_grok_tools::implementations::grok_build::task::types::SubagentRequest>,
-) {
+async fn answer_strategist(behaviour: StrategistBehaviour, req: SubagentSpawnRequest) {
     match behaviour {
         StrategistBehaviour::WriteNoteThenDone => {
             if let Some(p) = parse_strategy_path(&req.prompt) {
                 let _ = tokio::fs::write(&p, b"## Diagnosis\n\nMonolith. Split into pure units.\n")
                     .await;
             }
-            let _ = req.result_tx.send(SubagentResult {
+            let _ = req.respond_with(|req| SubagentResult {
                 success: true,
                 output: StdArc::from("Done"),
                 subagent_id: req.id.clone(),
@@ -121,7 +118,7 @@ async fn answer_strategist(
             });
         }
         StrategistBehaviour::RuntimeFailure => {
-            let _ = req.result_tx.send(SubagentResult {
+            let _ = req.respond_with(|req| SubagentResult {
                 success: false,
                 error: Some("strategist crashed".into()),
                 subagent_id: req.id.clone(),
@@ -136,11 +133,7 @@ async fn answer_strategist(
     }
 }
 
-async fn answer_skeptic(
-    verdict: SkepticVerdict,
-    spawn_idx: usize,
-    req: Box<xai_grok_tools::implementations::grok_build::task::types::SubagentRequest>,
-) {
+async fn answer_skeptic(verdict: SkepticVerdict, spawn_idx: usize, req: SubagentSpawnRequest) {
     if let Some(p) = parse_details_path(&req.prompt) {
         let _ = tokio::fs::write(&p, b"# mock skeptic details\n").await;
     }
@@ -167,7 +160,7 @@ async fn answer_skeptic(
     if let Some(p) = crate::session::goal_classifier::parse_verdict_path_from_prompt(&req.prompt) {
         let _ = tokio::fs::write(&p, json).await;
     }
-    let _ = req.result_tx.send(SubagentResult {
+    let _ = req.respond_with(|req| SubagentResult {
         success: true,
         output: StdArc::from(token),
         subagent_id: req.id.clone(),
@@ -719,7 +712,7 @@ async fn persisted_recommendation_renders_into_continuation_directive() {
                 );
             }
 
-            let decision = actor.run_goal_round_end().await;
+            let decision = actor.run_goal_round_end_legacy().await;
             let GoalRoundDecision::Continue(directive) = decision else {
                 panic!("expected Continue (active goal must keep running)");
             };
@@ -739,7 +732,7 @@ async fn persisted_recommendation_renders_into_continuation_directive() {
             );
 
             // One-shot: a second round must not replay the consumed note.
-            let next = actor.run_goal_round_end().await;
+            let next = actor.run_goal_round_end_legacy().await;
             let GoalRoundDecision::Continue(next_directive) = next else {
                 panic!("expected Continue (active goal must keep running)");
             };
@@ -789,7 +782,7 @@ async fn refuted_continuation_escalates_to_reverify_at_threshold() {
             }
 
             // Round 1: counter reaches threshold-1 ⇒ no escalation yet.
-            let GoalRoundDecision::Continue(d1) = actor.run_goal_round_end().await else {
+            let GoalRoundDecision::Continue(d1) = actor.run_goal_round_end_legacy().await else {
                 panic!("expected Continue (active goal must keep running)");
             };
             assert!(
@@ -798,7 +791,7 @@ async fn refuted_continuation_escalates_to_reverify_at_threshold() {
             );
 
             // Round 2: counter reaches the threshold ⇒ escalate with the count.
-            let GoalRoundDecision::Continue(d2) = actor.run_goal_round_end().await else {
+            let GoalRoundDecision::Continue(d2) = actor.run_goal_round_end_legacy().await else {
                 panic!("expected Continue (active goal must keep running)");
             };
             assert!(

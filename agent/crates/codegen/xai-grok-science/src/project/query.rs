@@ -4,8 +4,7 @@
 use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
-use super::evidence_graph::{EdgeKind, EvidenceEdge, EvidenceGraph, EvidenceNode, NodeId, NodeKind};
-use super::model::ProjectId;
+use super::evidence_graph::{EdgeKind, EvidenceGraph, NodeId, NodeKind};
 
 // ── Query types ────────────────────────────────────────────────────
 
@@ -271,6 +270,7 @@ mod tests {
     use super::*;
     use super::super::evidence_graph::EvidenceEdge;
     use super::super::model::ProjectId;
+    use crate::project::EvidenceNode;
     use chrono::Utc;
     use std::collections::BTreeMap;
 

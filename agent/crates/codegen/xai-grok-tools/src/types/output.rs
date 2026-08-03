@@ -115,10 +115,12 @@ impl MediaGenOutput {
         let message = format!(
             "{action} and saved to {path}. Do not read or re-display it, and do not describe how it appears to the user."
         );
-        serde_json::json!(
-            { "path" : path, "filename" : & self.filename, "session_folder" : & self
-            .session_folder, "message" : message, }
-        )
+        serde_json::json!({
+            "path": path,
+            "filename": &self.filename,
+            "session_folder": &self.session_folder,
+            "message": message,
+        })
         .to_string()
     }
 }
@@ -149,8 +151,26 @@ pub struct ToolRunResult {
     /// evidence without parsing `prompt_text`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verify_outcome: Option<crate::verify_after_edit::VerifyAfterEditOutcome>,
+    /// ContextManifest identity for governed task-tree tool calls. Legacy and
+    /// ordinary interactive calls leave this absent for wire compatibility.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_manifest_hash: Option<String>,
 }
 impl ToolRunResult {
+    /// Attach host-verified ContextManifest provenance to a terminal result.
+    /// Callers must pass a non-empty canonical hash; model text cannot set it.
+    pub fn with_context_manifest_hash(
+        mut self,
+        hash: impl Into<String>,
+    ) -> Result<Self, &'static str> {
+        let hash = hash.into();
+        if hash.trim().is_empty() {
+            return Err("context manifest hash must not be empty");
+        }
+        self.context_manifest_hash = Some(hash);
+        Ok(self)
+    }
+
     /// Like [`TypedToolOutput::from_value`], but reattaches `chat_completion_output` from `output`.
     pub fn into_typed_tool_output(
         self,
@@ -654,6 +674,7 @@ pub enum ToolOutput {
     SchedulerDelete(crate::implementations::grok_build::scheduler::delete::SchedulerDeleteOutput),
     SchedulerList(crate::implementations::grok_build::scheduler::list::SchedulerListOutput),
     UpdateGoal(crate::implementations::grok_build::update_goal::UpdateGoalOutput),
+    Workflow(crate::implementations::grok_build::workflow::WorkflowToolOutput),
     /// Dynamic output for runtime-registered tools (MCP, test tools, etc.)
     Dynamic(DynamicOutput),
     /// Generic text output for tools that produce simple formatted text
@@ -706,6 +727,22 @@ impl ToolOutput {
     pub fn to_prompt_format(&self) -> String {
         match self {
             ToolOutput::ReadFile(read_file_output) => match read_file_output {
+                ReadFileOutput::FileContent(file_content) if file_content.content.is_empty() => {
+                    if file_content.total_lines == 0 {
+                        "File is empty.".to_string()
+                    } else if file_content
+                        .offset
+                        .is_some_and(|offset| offset > file_content.total_lines)
+                    {
+                        format!(
+                            "(no lines returned: the requested window is past the end of the \
+                             file; the file has {} lines)",
+                            file_content.total_lines
+                        )
+                    } else {
+                        "(no lines returned)".to_string()
+                    }
+                }
                 ReadFileOutput::FileContent(file_content) => file_content.content.clone(),
                 ReadFileOutput::ImageContent(image_content) => {
                     format!(
@@ -805,20 +842,22 @@ impl ToolOutput {
                         format!("=== Task {} ===", r.task_id),
                         format!("Command: {}", r.command),
                         format!("Status: {}", r.status),
-                        format!("Started: {}", r.started),
+                        format!("Duration: {:.2}s", r.duration_secs),
                     ];
-                    if let Some(ref ended) = r.ended {
-                        lines.push(format!("Ended: {}", ended));
-                    }
-                    lines.push(format!("Duration: {:.2}s", r.duration_secs));
                     if let Some(code) = r.exit_code {
                         lines.push(format!("Exit Code: {}", code));
                     }
-                    lines.push(format!("Output File: {}", r.output_file));
+                    if !r.output_file.is_empty() {
+                        lines.push(format!("Output File: {}", r.output_file));
+                    }
                     lines.push(String::new());
                     lines.push("=== Output ===".to_string());
                     if r.output.is_empty() {
-                        lines.push("(no output yet)".to_string());
+                        if r.status == "running" {
+                            lines.push("(no output yet)".to_string());
+                        } else {
+                            lines.push("(no output)".to_string());
+                        }
                     } else {
                         lines.push(r.output.clone());
                     }
@@ -968,9 +1007,10 @@ impl ToolOutput {
                 }
             }
             ToolOutput::SchedulerCreate(o) => {
+                let verb = if o.updated { "updated" } else { "created" };
                 format!(
-                    "Scheduled task created (ID: {}, {}, recurring: {}).",
-                    o.id, o.human_schedule, o.recurring
+                    "Scheduled task {} (ID: {}, {}).",
+                    verb, o.id, o.human_schedule
                 )
             }
             ToolOutput::SchedulerDelete(o) => o.message.clone(),
@@ -982,6 +1022,7 @@ impl ToolOutput {
                 }
             }
             ToolOutput::UpdateGoal(o) => o.summary.clone(),
+            ToolOutput::Workflow(o) => o.message.clone(),
             ToolOutput::Dynamic(v) => serde_json::to_string_pretty(&v.value).unwrap_or_default(),
             ToolOutput::Text(text) => text.text.clone(),
             ToolOutput::ImageGen(m) => m.prompt_text("Image generated"),
@@ -1287,6 +1328,65 @@ mod tests {
     fn to_json(output: ToolOutput) -> serde_json::Value {
         serde_json::to_value(&output).unwrap()
     }
+    fn empty_file_content(offset: Option<usize>, total_lines: usize) -> FileContent {
+        FileContent {
+            content: String::new(),
+            content_concise: None,
+            absolute_path: PathBuf::from("/tmp/f.txt"),
+            offset,
+            limit: None,
+            raw_output: String::new(),
+            total_lines,
+            extracted_images: vec![],
+        }
+    }
+    /// An empty file must render an explicit notice, not a blank result.
+    #[test]
+    fn read_empty_file_prompt_says_file_is_empty() {
+        let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(empty_file_content(None, 0)));
+        assert_eq!(output.to_prompt_format(), "File is empty.");
+    }
+    /// An offset beyond the last line must say past-EOF and report the real
+    /// line count.
+    #[test]
+    fn read_past_eof_prompt_reports_line_count() {
+        let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(empty_file_content(
+            Some(101),
+            100,
+        )));
+        let prompt = output.to_prompt_format();
+        assert!(
+            prompt.contains("past the end of the file"),
+            "expected past-EOF notice, got: {prompt}"
+        );
+        assert!(
+            prompt.contains("100 lines"),
+            "expected real line count, got: {prompt}"
+        );
+    }
+    /// An empty window with an in-range offset (e.g. `limit: 0`) must render
+    /// the generic notice, not a bogus past-EOF claim.
+    #[test]
+    fn read_empty_window_in_range_offset_is_not_past_eof() {
+        let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(empty_file_content(
+            Some(5),
+            100,
+        )));
+        let prompt = output.to_prompt_format();
+        assert_eq!(prompt, "(no lines returned)");
+        assert!(
+            !prompt.contains("past the end of the file"),
+            "in-range empty window must not claim past-EOF: {prompt}"
+        );
+    }
+    /// Non-empty content renders unchanged.
+    #[test]
+    fn read_non_empty_content_renders_verbatim() {
+        let mut fc = empty_file_content(None, 3);
+        fc.content = "1→a\nb\nc".to_string();
+        let output = ToolOutput::ReadFile(ReadFileOutput::FileContent(fc));
+        assert_eq!(output.to_prompt_format(), "1→a\nb\nc");
+    }
     #[test]
     fn text_output_to_prompt_format_omits_consumed_completion_task_id() {
         let output = ToolOutput::Text(TextOutput {
@@ -1417,8 +1517,7 @@ mod tests {
             to_json(ReadFileOutput::FileNotFound("Error: /tmp/x does not exist.".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "FileNotFound" :
-            "Error: /tmp/x does not exist." })
+            json!({"type": "ReadFile", "FileNotFound": "Error: /tmp/x does not exist."})
         );
     }
     #[test]
@@ -1427,8 +1526,7 @@ mod tests {
             to_json(ReadFileOutput::IsADirectory("Error: /tmp is a directory.".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "IsADirectory" :
-            "Error: /tmp is a directory." })
+            json!({"type": "ReadFile", "IsADirectory": "Error: /tmp is a directory."})
         );
     }
     #[test]
@@ -1438,8 +1536,7 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "PermissionDenied" :
-            "Permission denied: /etc/shadow" })
+            json!({"type": "ReadFile", "PermissionDenied": "Permission denied: /etc/shadow"})
         );
     }
     #[test]
@@ -1452,9 +1549,7 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "FileTooLarge" :
-            "File content (37044 tokens) exceeds maximum allowed tokens (25000 tokens)."
-            })
+            json!({"type": "ReadFile", "FileTooLarge": "File content (37044 tokens) exceeds maximum allowed tokens (25000 tokens)."})
         );
     }
     #[test]
@@ -1462,7 +1557,7 @@ mod tests {
         let json = to_json(ReadFileOutput::FileReadError("Failed to read file".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "FileReadError" : "Failed to read file" })
+            json!({"type": "ReadFile", "FileReadError": "Failed to read file"})
         );
     }
     #[test]
@@ -1470,7 +1565,7 @@ mod tests {
         let json = to_json(ReadFileOutput::ImageSizeError("Image too large".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ReadFile", "ImageSizeError" : "Image too large" })
+            json!({"type": "ReadFile", "ImageSizeError": "Image too large"})
         );
     }
     #[test]
@@ -1478,20 +1573,20 @@ mod tests {
         let json = to_json(ListDirOutput::NotFound("does not exist".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ListDir", "NotFound" : "does not exist" })
+            json!({"type": "ListDir", "NotFound": "does not exist"})
         );
     }
     #[test]
     fn list_dir_is_a_file_json() {
         let json = to_json(ListDirOutput::IsAFile("is a file".into()).into());
-        assert_eq!(json, json!({ "type" : "ListDir", "IsAFile" : "is a file" }));
+        assert_eq!(json, json!({"type": "ListDir", "IsAFile": "is a file"}));
     }
     #[test]
     fn list_dir_not_a_directory_json() {
         let json = to_json(ListDirOutput::NotADirectory("is not a directory".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ListDir", "NotADirectory" : "is not a directory" })
+            json!({"type": "ListDir", "NotADirectory": "is not a directory"})
         );
     }
     #[test]
@@ -1499,20 +1594,20 @@ mod tests {
         let json = to_json(ListDirOutput::PermissionDenied("Permission denied".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "ListDir", "PermissionDenied" : "Permission denied" })
+            json!({"type": "ListDir", "PermissionDenied": "Permission denied"})
         );
     }
     #[test]
     fn list_dir_generic_error_json() {
         let json = to_json(ListDirOutput::Error("Some error".into()).into());
-        assert_eq!(json, json!({ "type" : "ListDir", "Error" : "Some error" }));
+        assert_eq!(json, json!({"type": "ListDir", "Error": "Some error"}));
     }
     #[test]
     fn search_replace_file_not_found_json() {
         let json = to_json(SearchReplaceOutput::FileNotFound("not found".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "FileNotFound" : "not found" })
+            json!({"type": "SearchReplace", "FileNotFound": "not found"})
         );
     }
     #[test]
@@ -1527,8 +1622,13 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "NoMatchesFound" : { "message" :
-            "no matches", "file_path" : "/project/src/main.c" } })
+            json!({
+                "type": "SearchReplace",
+                "NoMatchesFound": {
+                    "message": "no matches",
+                    "file_path": "/project/src/main.c"
+                }
+            })
         );
     }
     #[test]
@@ -1552,8 +1652,7 @@ mod tests {
         let json = to_json(SearchReplaceOutput::MultipleMatchesFound("3 matches".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "MultipleMatchesFound" : "3 matches"
-            })
+            json!({"type": "SearchReplace", "MultipleMatchesFound": "3 matches"})
         );
     }
     #[test]
@@ -1561,7 +1660,7 @@ mod tests {
         let json = to_json(SearchReplaceOutput::FileAlreadyExists("exists".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "FileAlreadyExists" : "exists" })
+            json!({"type": "SearchReplace", "FileAlreadyExists": "exists"})
         );
     }
     #[test]
@@ -1569,7 +1668,7 @@ mod tests {
         let json = to_json(SearchReplaceOutput::InvalidInput("same strings".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "InvalidInput" : "same strings" })
+            json!({"type": "SearchReplace", "InvalidInput": "same strings"})
         );
     }
     #[test]
@@ -1577,9 +1676,60 @@ mod tests {
         let json = to_json(SearchReplaceOutput::FilenameTooLong("name too long".into()).into());
         assert_eq!(
             json,
-            json!({ "type" : "SearchReplace", "FilenameTooLong" : "name too long"
-            })
+            json!({"type": "SearchReplace", "FilenameTooLong": "name too long"})
         );
+    }
+    #[test]
+    fn apply_patch_parse_error_json() {
+        let json = to_json(ApplyPatchOutput::ParseError("Invalid patch: boom".into()).into());
+        assert_eq!(
+            json,
+            json!({"type": "ApplyPatch", "ParseError": "Invalid patch: boom"})
+        );
+    }
+    #[test]
+    fn apply_patch_application_error_json() {
+        let json = to_json(
+            ApplyPatchOutput::ApplicationError("File /tmp/x.rs does not exist".into()).into(),
+        );
+        assert_eq!(
+            json,
+            json!({"type": "ApplyPatch", "ApplicationError": "File /tmp/x.rs does not exist"})
+        );
+    }
+    #[test]
+    fn apply_patch_empty_patch_json() {
+        let json = to_json(ApplyPatchOutput::EmptyPatch("No files were modified.".into()).into());
+        assert_eq!(
+            json,
+            json!({"type": "ApplyPatch", "EmptyPatch": "No files were modified."})
+        );
+    }
+    /// `Success` must not serialize under any of the keys Python treats as a
+    /// failure, otherwise a successful patch would be taxed as a tool error.
+    #[test]
+    fn apply_patch_success_json_is_not_an_error_shape() {
+        let json = to_json(
+            ApplyPatchOutput::Success {
+                files: vec![ApplyPatchFileResult {
+                    path: PathBuf::from("/repo/src/main.rs"),
+                    action: "modified".into(),
+                    old_text: Some("old".into()),
+                    new_text: "new".into(),
+                    move_to: None,
+                }],
+                tool_output_for_prompt: "Updated /repo/src/main.rs".into(),
+            }
+            .into(),
+        );
+        assert_eq!(json["type"], "ApplyPatch");
+        assert!(json.get("Success").is_some(), "missing Success key: {json}");
+        for key in ["ParseError", "ApplicationError", "EmptyPatch"] {
+            assert!(
+                json.get(key).is_none(),
+                "success must not serialize under the error key {key}: {json}"
+            );
+        }
     }
     #[test]
     fn kill_task_result_json() {
@@ -1606,8 +1756,10 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "KillTask", "TaskNotFound" :
-            "Task abc not found. No background tasks exist in this session." })
+            json!({
+                "type": "KillTask",
+                "TaskNotFound": "Task abc not found. No background tasks exist in this session."
+            })
         );
     }
     #[test]
@@ -1616,8 +1768,7 @@ mod tests {
         let serialized = serde_json::to_value(&original).unwrap();
         let deserialized: KillTaskOutput = serde_json::from_value(serialized).unwrap();
         assert!(
-            matches!(deserialized, KillTaskOutput::TaskNotFound(ref msg) if msg ==
-            "not found")
+            matches!(deserialized, KillTaskOutput::TaskNotFound(ref msg) if msg == "not found")
         );
     }
     #[test]
@@ -1643,6 +1794,55 @@ mod tests {
         assert!(json.get("Result").is_some(), "missing Result key: {json}");
         assert_eq!(json["Result"]["task_id"], "task-1");
         assert_eq!(json["Result"]["status"], "running");
+    }
+    /// The single-task detail view is duration-only: absolute `started` /
+    /// `ended` instants stay on the wire struct but must not reach the prompt.
+    #[test]
+    fn task_output_prompt_is_duration_only() {
+        let out = ToolOutput::TaskOutput(TaskOutputOutput::Result(TaskOutputResult {
+            task_id: "task-1".into(),
+            command: "sleep 10".into(),
+            status: "completed".into(),
+            exit_code: Some(0),
+            started: "2026-03-09T00:00:00Z".into(),
+            ended: Some("2026-03-09T00:00:05Z".into()),
+            duration_secs: 5.0,
+            output: "hello".into(),
+            output_file: "/tmp/task-1.log".into(),
+            truncated: false,
+            truncation_hint: String::new(),
+            raw_output_bytes: 5,
+        }));
+        let prompt = out.to_prompt_format();
+        assert!(prompt.contains("Duration: 5.00s"), "{prompt}");
+        assert!(prompt.contains("Output File: /tmp/task-1.log"), "{prompt}");
+        assert!(
+            !prompt.contains("Started") && !prompt.contains("Ended"),
+            "absolute instants must not be model-visible: {prompt}"
+        );
+        assert!(
+            !prompt.contains("2026-03-09"),
+            "no wall-clock date may survive into the prompt: {prompt}"
+        );
+    }
+    #[test]
+    fn task_output_prompt_omits_empty_output_file() {
+        let out = ToolOutput::TaskOutput(TaskOutputOutput::Result(TaskOutputResult {
+            task_id: "task-2".into(),
+            command: "true".into(),
+            status: "completed".into(),
+            exit_code: Some(0),
+            started: String::new(),
+            ended: None,
+            duration_secs: 0.1,
+            output: "done".into(),
+            output_file: String::new(),
+            truncated: false,
+            truncation_hint: String::new(),
+            raw_output_bytes: 4,
+        }));
+        let prompt = out.to_prompt_format();
+        assert!(!prompt.contains("Output File"), "{prompt}");
     }
     fn make_result(status: &str, raw_output_bytes: usize) -> TaskOutputResult {
         TaskOutputResult {
@@ -1726,8 +1926,10 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "TaskOutput", "TaskNotFound" :
-            "Task xyz not found. Known task IDs: [task-1, task-2]" })
+            json!({
+                "type": "TaskOutput",
+                "TaskNotFound": "Task xyz not found. Known task IDs: [task-1, task-2]"
+            })
         );
     }
     #[test]
@@ -1736,8 +1938,7 @@ mod tests {
         let serialized = serde_json::to_value(&original).unwrap();
         let deserialized: TaskOutputOutput = serde_json::from_value(serialized).unwrap();
         assert!(
-            matches!(deserialized, TaskOutputOutput::TaskNotFound(ref msg) if msg ==
-            "not found")
+            matches!(deserialized, TaskOutputOutput::TaskNotFound(ref msg) if msg == "not found")
         );
     }
     #[test]
@@ -1778,8 +1979,9 @@ mod tests {
         );
         assert_eq!(
             json,
-            json!({ "type" : "Todo", "DuplicateId" :
-            "Duplicate todo ID in request: \"dup\". Each todo item must have a unique ID."
+            json!({
+                "type": "Todo",
+                "DuplicateId": "Duplicate todo ID in request: \"dup\". Each todo item must have a unique ID."
             })
         );
     }
@@ -1788,10 +1990,7 @@ mod tests {
         let original = TodoWriteOutput::DuplicateId("dup id".into());
         let serialized = serde_json::to_value(&original).unwrap();
         let deserialized: TodoWriteOutput = serde_json::from_value(serialized).unwrap();
-        assert!(
-            matches!(deserialized, TodoWriteOutput::DuplicateId(ref msg) if msg ==
-            "dup id")
-        );
+        assert!(matches!(deserialized, TodoWriteOutput::DuplicateId(ref msg) if msg == "dup id"));
     }
     #[test]
     fn todo_write_success_round_trip() {
@@ -2067,10 +2266,12 @@ mod tests {
     }
     #[test]
     fn enter_plan_mode_output_serde_defaults_tool_hints_when_absent() {
-        let json = json!(
-            { "Entered" : { "message" : "Entered plan mode.", "plan_file_path" :
-            "/tmp/plan.md" } }
-        );
+        let json = json!({
+            "Entered": {
+                "message": "Entered plan mode.",
+                "plan_file_path": "/tmp/plan.md"
+            }
+        });
         let deserialized: EnterPlanModeOutput = serde_json::from_value(json).unwrap();
         match deserialized {
             EnterPlanModeOutput::Entered {
@@ -2119,10 +2320,12 @@ mod tests {
     }
     #[test]
     fn enter_plan_mode_absent_seed_field_prompt_is_missing() {
-        let json = json!(
-            { "Entered" : { "message" : "Entered plan mode.", "plan_file_path" :
-            "/tmp/plan.md" } }
-        );
+        let json = json!({
+            "Entered": {
+                "message": "Entered plan mode.",
+                "plan_file_path": "/tmp/plan.md"
+            }
+        });
         let deserialized: EnterPlanModeOutput = serde_json::from_value(json).unwrap();
         let prompt = ToolOutput::EnterPlanMode(deserialized).to_prompt_format();
         assert!(
@@ -2174,7 +2377,7 @@ mod tests {
         let json = serde_json::to_value(&output).unwrap();
         assert_eq!(
             json["Entered"]["plan_file_seed"],
-            json!({ "missing" : "not_a_file" })
+            json!({ "missing": "not_a_file" })
         );
         let back: EnterPlanModeOutput = serde_json::from_value(json).unwrap();
         let EnterPlanModeOutput::Entered { plan_file_seed, .. } = back;
@@ -2420,6 +2623,7 @@ mod tests {
             prompt_text: "prompt".into(),
             effective_tool_name: None,
             verify_outcome: None,
+            context_manifest_hash: None,
             output,
         }
     }
@@ -2440,6 +2644,21 @@ mod tests {
             serde_json::to_value(&passed).unwrap()["verify_outcome"],
             "pass"
         );
+    }
+
+    #[test]
+    fn context_manifest_provenance_requires_non_empty_hash() {
+        let result = sample_run_result(ToolOutput::Text("ok".into()));
+        assert!(result.with_context_manifest_hash(" ").is_err());
+        let result = sample_run_result(ToolOutput::Text("ok".into()))
+            .with_context_manifest_hash("sha256:manifest")
+            .unwrap();
+        assert_eq!(
+            result.context_manifest_hash.as_deref(),
+            Some("sha256:manifest")
+        );
+        let encoded = serde_json::to_value(result).unwrap();
+        assert_eq!(encoded["context_manifest_hash"], "sha256:manifest");
     }
     fn bash_tool_id() -> xai_tool_protocol::ToolId {
         xai_tool_protocol::ToolId::new("bash").unwrap()

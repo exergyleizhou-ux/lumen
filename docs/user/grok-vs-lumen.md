@@ -6,7 +6,7 @@
 |--|---------------|--------|
 | Command | `~/.grok/bin/grok` (or `grok`) | `~/.local/bin/lumen` |
 | Source | xAI install / update channel | Built from `/Users/lei/code/lumen` (Grok Build OSS pin) |
-| Default config home (FINAL-5UX Gate B) | `~/.grok` | **`$LUMEN_HOME` or `~/.lumen`** |
+| Default config home | `~/.grok` | **`$LUMEN_HOME` or `~/.lumen`** |
 | Product chrome | Grok Build | **Lumen** |
 
 Lumen **reuses the Grok Build engine** (session, tools, TUI core). It is **not** guaranteed to match the official client version or default model (often `grok-4.5` + login).
@@ -47,4 +47,4 @@ Does **not** delete `~/.grok` (official Grok client may still need it).
 
 - Multi-provider catalog: `docs/user/multi-provider.md`
 - Local models: `docs/user/local-models.md`
-- UX target: `docs/masterplan/11-FINAL-5UX-目标态规格.md`
+- Current execution target: `docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md`

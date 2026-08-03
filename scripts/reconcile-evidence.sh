@@ -50,12 +50,46 @@ def load_json(path: Path, label: str, blockers: list[str]):
 
 blockers: list[str] = []
 
-# SOURCE_LOCK: exact HEAD plus the full configured critical-file content set.
+# SOURCE_LOCK: locked source plus the full configured critical-file content set.
+# A committed lock necessarily names the preceding source commit.  It may be
+# followed only by lock/SBOM/readiness evidence updates; any code change after
+# the locked source remains a hard failure.
 lock_path = root / "SOURCE_LOCK.json"
 lock = load_json(lock_path, "source_lock", blockers) if lock_path.is_file() else None
 lock_sha = sha256(lock_path) if lock_path.is_file() else None
 lock_head = ((lock or {}).get("monorepo") or {}).get("git_head") or ""
-lock_head_match = lock_head == head
+lock_head_exact = lock_head == head
+lock_head_ancestor = False
+evidence_only_suffix = False
+if lock_head:
+    try:
+        subprocess.run(
+            ["git", "merge-base", "--is-ancestor", lock_head, head],
+            cwd=root,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        lock_head_ancestor = True
+        suffix = subprocess.check_output(
+            ["git", "diff", "--name-only", f"{lock_head}..{head}"],
+            cwd=root,
+            text=True,
+        ).splitlines()
+        allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+        unexpected_suffix = [path for path in suffix if not path.startswith(allowed_suffixes)]
+        evidence_only_suffix = not unexpected_suffix
+        if unexpected_suffix:
+            blockers.append(
+                "source_lock_non_evidence_drift:" + ",".join(unexpected_suffix[:8])
+            )
+    except (OSError, subprocess.CalledProcessError):
+        blockers.append(
+            f"source_lock_not_ancestor:lock={lock_head[:7] or '?'} head={head[:7]}"
+        )
+else:
+    blockers.append("source_lock_head_missing")
+lock_head_match = lock_head_ancestor and evidence_only_suffix
 content_ok = True
 mismatched: list[str] = []
 critical = (lock or {}).get("critical_file_sha256") or {}
@@ -71,15 +105,12 @@ else:
         elif not isinstance(expected, str) or sha256(path) != expected:
             content_ok = False
             mismatched.append(str(rel))
-if not lock_head_match:
-    blockers.append(
-        f"source_lock_head_mismatch:lock={lock_head[:7] or '?'} head={head[:7]}"
-    )
 if not content_ok:
     blockers.append("source_lock_content_drift:" + ",".join(mismatched[:8]))
 lock_fresh = lock_head_match and content_ok
 
-# Binary tuple: both execution paths must be the same executable built from HEAD.
+# Binary tuple: both execution paths must be the same executable built from
+# the locked source. HEAD may contain a later evidence-only suffix.
 release_path = Path(
     os.environ.get("LUMEN_RELEASE_BIN", root / "agent/target/release/lumen")
 )
@@ -117,20 +148,21 @@ def _stamped_commit(version: str | None) -> str | None:
 # between the two binaries is impossible by design: the installed copy carries
 # an ad-hoc macOS code signature while cargo's release output stays pristine
 # (see install-local.sh). git also auto-widens --short under prefix ambiguity,
-# so the stamped commit is prefix-matched against the full head, never
+# so the stamped commit is prefix-matched against the locked source, never
 # compared at a fixed width.
 if release_version and installed_version and release_version != installed_version:
     blockers.append("binary_version_mismatch")
 stamped = _stamped_commit(release_version)
-if release_version and (stamped is None or not head.startswith(stamped)):
-    blockers.append(f"binary_head_mismatch:expected={head[:7]}")
+source_head = lock_head if lock_head_match else head
+if release_version and (stamped is None or not source_head.startswith(stamped)):
+    blockers.append(f"binary_source_mismatch:expected={source_head[:7]}")
 binary_tuple_match = bool(
     release_sha
     and installed_sha
     and release_version
     and release_version == installed_version
     and stamped is not None
-    and head.startswith(stamped)
+    and source_head.startswith(stamped)
 )
 
 # Required machine evidence and its semantics. L0 has no standalone artifact;
@@ -316,7 +348,8 @@ if status is not None:
     if status.get("binary_sha256") != release_sha:
         blockers.append("status_binary_sha256_mismatch")
 
-# SBOM must identify this exact source HEAD and this exact SOURCE_LOCK.
+# SBOM must identify the locked source and this exact SOURCE_LOCK. HEAD may
+# contain the evidence-only suffix that carries those two artifacts.
 sbom_path = root / "SBOM.spdx.json"
 sbom = load_json(sbom_path, "sbom", blockers) if sbom_path.is_file() else None
 sbom_sha = sha256(sbom_path) if sbom_path.is_file() else None
@@ -332,7 +365,7 @@ if sbom is not None:
         for ref in refs
         if isinstance(ref, dict) and ref.get("referenceType") == "gitCommit"
     }
-    if head not in git_heads or sbom.get("name") != f"lumen-{head[:7]}":
+    if source_head not in git_heads or sbom.get("name") != f"lumen-{source_head[:7]}":
         blockers.append("sbom_git_head_mismatch")
     for annotation in sbom.get("annotations") or []:
         if not isinstance(annotation, dict):
@@ -349,7 +382,7 @@ if sbom is not None:
             files = meta.get("file_sha256") or {}
             sbom_lock_sha = files.get("SOURCE_LOCK.json") if isinstance(files, dict) else None
             break
-    if sbom_git_head != head:
+    if sbom_git_head != source_head:
         blockers.append("sbom_annotation_head_mismatch")
     if sbom_lock_sha != lock_sha:
         blockers.append("sbom_source_lock_sha256_mismatch")
@@ -373,10 +406,14 @@ rec = {
     "pass": ok,
     "generated_at": now,
     "monorepo_git_head": head,
+    "source_git_head": source_head,
     "source_lock_sha256": lock_sha,
     "source_lock_git_head": lock_head,
     "source_lock_fresh": lock_fresh,
     "source_lock_head_match": lock_head_match,
+    "source_lock_head_exact": lock_head_exact,
+    "source_lock_head_ancestor": lock_head_ancestor,
+    "source_lock_evidence_only_suffix": evidence_only_suffix,
     "source_lock_content_ok": content_ok,
     "binary_path": str(release_path),
     "installed_binary_path": str(installed_path),
@@ -396,7 +433,7 @@ rec = {
     "sbom_semantics_ok": not any(item.startswith("sbom_") for item in blockers),
     "legal_present": legal_ok,
     "blockers": blockers,
-    "note": "R7: current-run status and L0-L5/R0/eval evidence reconcile to exact source, binaries, SOURCE_LOCK, and SBOM",
+    "note": "R7: current-run status and L0-L5/R0/eval evidence reconcile to locked source, binaries, SOURCE_LOCK, and SBOM; HEAD may contain only an evidence suffix",
 }
 
 out = art / "reconcile.json"
@@ -405,10 +442,14 @@ if out.is_file():
     material_keys = [
         "pass",
         "monorepo_git_head",
+        "source_git_head",
         "source_lock_sha256",
         "source_lock_git_head",
         "source_lock_fresh",
         "source_lock_head_match",
+        "source_lock_head_exact",
+        "source_lock_head_ancestor",
+        "source_lock_evidence_only_suffix",
         "source_lock_content_ok",
         "binary_path",
         "installed_binary_path",
