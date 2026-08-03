@@ -250,28 +250,40 @@ pub(crate) fn resolve_voice_mode_live(remote: Option<bool>, is_api_key: bool) ->
 mod voice_gate_tests {
     use super::resolve_voice_mode_enabled;
     use xai_grok_test_support::EnvGuard;
+    // GROK_VOICE_MODE is process-global env; every test isolates it and the
+    // module runs #[serial] so parallel runs can never leak env (CI runs the
+    // pager lib tests with default parallelism).
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_defaults_on_when_env_and_remote_absent() {
+        let _guard = EnvGuard::unset("GROK_VOICE_MODE");
         assert!(resolve_voice_mode_enabled(None, None, None, false));
     }
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_remote_false_is_kill_switch() {
+        let _guard = EnvGuard::unset("GROK_VOICE_MODE");
         assert!(!resolve_voice_mode_enabled(None, None, Some(false), false));
     }
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_remote_true_enables() {
+        let _guard = EnvGuard::unset("GROK_VOICE_MODE");
         assert!(resolve_voice_mode_enabled(None, None, Some(true), false));
     }
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_env_overrides_remote_kill_switch() {
         let _guard = EnvGuard::set("GROK_VOICE_MODE", "1");
         assert!(resolve_voice_mode_enabled(None, None, Some(false), false));
     }
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_env_force_off_overrides_remote_true() {
         let _guard = EnvGuard::set("GROK_VOICE_MODE", "0");
         assert!(!resolve_voice_mode_enabled(None, None, Some(true), false));
     }
+    #[serial_test::serial(VOICE_MODE)]
     #[test]
     fn voice_env_force_off_overrides_default_on() {
         let _guard = EnvGuard::set("GROK_VOICE_MODE", "0");
