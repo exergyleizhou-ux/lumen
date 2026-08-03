@@ -1325,6 +1325,14 @@ impl SessionActor {
             Some(guidance) => format!("{detailed_message}\n\n{guidance}"),
             None => detailed_message,
         };
+        // S9 / NG-06A: the failure-convergence checkpoint (>=2 repeated
+        // failures) records that a consult *would* be issued (shadow mode;
+        // no provider attempt) and stamps the advice epoch. The stamp is the
+        // P4b `stale_advice` write side: if policy later changes (live epoch
+        // bump), in-flight retry admission denies instead of replaying.
+        if consecutive_failures >= 2 {
+            self.tool_context.record_advice_issued();
+        }
         self.log_terminal_failure(error_type, error.status_code, &detailed_message);
         self.send_xai_notification(XaiSessionUpdate::RetryState(
             crate::extensions::notification::RetryState::Failed {

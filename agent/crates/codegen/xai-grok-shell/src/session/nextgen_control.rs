@@ -5,11 +5,13 @@
 //! durable daemon or exact-binary product readiness.
 
 use xai_grok_memory::{
-    AdviceReportV1, AdvisorDeny, AdvisorMode, AttemptSealTracker, DurableSealAuthority,
-    KairosCommand, KairosDeny, KairosSupervisorState, LoopPhase, RetryAdmissionRequest,
-    RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION, SealedAttemptReceiptStore,
-    SealedAttemptReceiptV1, advice_may_mutate_authority, apply_kairos_command,
-    authorize_in_process_retry_budget, issue_shadow_advice, ordinary_turn_max_retries,
+    AdviceReportV1, AdvisorContextCapsuleV1, AdvisorDeny, AdvisorMode, AdvisorRequestV1,
+    AdvisorUsageReceiptV1, AttemptSealTracker, ConsultBlockReason, ConsultOutcome,
+    DurableSealAuthority, KairosCommand, KairosDeny, KairosSupervisorState, LoopPhase,
+    RetryAdmissionRequest, RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION,
+    SealedAttemptReceiptStore, SealedAttemptReceiptV1, TokenUsage, advice_may_mutate_authority,
+    apply_kairos_command, authorize_in_process_retry_budget, build_usage_receipt,
+    consult_timed_out, issue_shadow_advice, ordinary_turn_max_retries,
     ordinary_turn_max_retries_with_authority,
 };
 
@@ -164,6 +166,216 @@ pub fn decide_auth_class_retry(
         Ok(_) => AuthClassRetryAction::Resubmit {
             next_used: auth_class_retries_used.saturating_add(1),
         },
+    }
+}
+
+/// Session-local ClientAdvisor consult host (S9 / NG-06A).
+///
+/// Modes (plan §3.4.3):
+/// - `Off`: consult refuses with `PolicyRefused`; no report, no receipt, no
+///   provider attempt.
+/// - `Shadow`: records the report and an independent usage receipt with
+///   `mode=Shadow` and **no provider attempt** (used for corpus evaluation).
+/// - `Consult`: runs the (fixture-only) adapter; timeout / unavailable is
+///   `Blocked`, never a downgraded success.
+///
+/// Advice can never mutate authority (`applies_authority` is forced false),
+/// and every consult gets its own usage receipt (never the model receipt).
+/// The host can persist reports + receipts as JSON (shadow marker on disk).
+#[derive(Debug, Clone)]
+pub struct ConsultAdvisorHost {
+    pub mode: AdvisorMode,
+    pub reports: Vec<AdviceReportV1>,
+    pub receipts: Vec<AdvisorUsageReceiptV1>,
+    /// Where `persist()` writes the JSON snapshot; `None` disables disk IO.
+    pub persist_path: Option<std::path::PathBuf>,
+}
+
+impl Default for ConsultAdvisorHost {
+    fn default() -> Self {
+        Self::new(AdvisorMode::Off)
+    }
+}
+
+impl ConsultAdvisorHost {
+    pub fn new(mode: AdvisorMode) -> Self {
+        Self {
+            mode,
+            reports: Vec::new(),
+            receipts: Vec::new(),
+            persist_path: None,
+        }
+    }
+
+    /// True when a provider call would be attempted for this mode.
+    pub fn mode_calls_provider(&self) -> bool {
+        matches!(self.mode, AdvisorMode::Consult)
+    }
+
+    /// Run one consult through the mode gate and (consult-only) adapter.
+    ///
+    /// Returns the outcome and, on success, the report id. `Blocked` reasons
+    /// are observable; a timeout/unavailable advisor never downgrades to a
+    /// success and never reopens the primary task.
+    pub fn run_consult(
+        &mut self,
+        request: &AdvisorRequestV1,
+        capsule: &AdvisorContextCapsuleV1,
+        adapter: &MockAdvisorAdapter,
+        now_epoch_ms: u64,
+        deadline_epoch_ms: Option<u64>,
+    ) -> ConsultOutcome {
+        match self.mode {
+            AdvisorMode::Off => ConsultOutcome::Blocked {
+                reason: ConsultBlockReason::PolicyRefused,
+            },
+            AdvisorMode::Shadow => {
+                // Record "would consult" shadow report; no provider attempt.
+                let report = issue_shadow_advice(
+                    AdvisorMode::Shadow,
+                    &request.request_id,
+                    capsule.manifest_summary.clone(),
+                    request.review_question.clone(),
+                    Some(format!("usage://{}", request.request_id)),
+                );
+                match report {
+                    Ok(r) => {
+                        let id = r.advice_id.clone();
+                        self.reports.push(r);
+                        self.receipts.push(build_usage_receipt(
+                            format!("u-{}", request.request_id),
+                            &request.request_id,
+                            now_epoch_ms,
+                            AdvisorMode::Shadow,
+                            None,
+                            capsule.capsule_hash.clone(),
+                            TokenUsage::Unknown,
+                            deadline_epoch_ms,
+                            None,
+                            false,
+                        ));
+                        ConsultOutcome::Succeeded { report_id: id }
+                    }
+                    Err(deny) => ConsultOutcome::Blocked {
+                        reason: ConsultBlockReason::Denied(deny),
+                    },
+                }
+            }
+            AdvisorMode::Consult => {
+                if let Some(deadline) = deadline_epoch_ms
+                    && consult_timed_out(now_epoch_ms, deadline, now_epoch_ms)
+                {
+                    self.receipts.push(build_usage_receipt(
+                        format!("u-{}", request.request_id),
+                        &request.request_id,
+                        now_epoch_ms,
+                        AdvisorMode::Consult,
+                        None,
+                        capsule.capsule_hash.clone(),
+                        TokenUsage::Unknown,
+                        Some(deadline),
+                        Some(ConsultBlockReason::TimedOut.code().into()),
+                        false,
+                    ));
+                    return ConsultOutcome::Blocked {
+                        reason: ConsultBlockReason::TimedOut,
+                    };
+                }
+                match adapter.run(request, capsule) {
+                    Ok(report) => {
+                        let id = report.advice_id.clone();
+                        self.reports.push(report);
+                        self.receipts.push(build_usage_receipt(
+                            format!("u-{}", request.request_id),
+                            &request.request_id,
+                            now_epoch_ms,
+                            AdvisorMode::Consult,
+                            adapter.model_ref.clone(),
+                            capsule.capsule_hash.clone(),
+                            adapter.token_usage,
+                            deadline_epoch_ms,
+                            None,
+                            false,
+                        ));
+                        ConsultOutcome::Succeeded { report_id: id }
+                    }
+                    Err(reason) => {
+                        self.receipts.push(build_usage_receipt(
+                            format!("u-{}", request.request_id),
+                            &request.request_id,
+                            now_epoch_ms,
+                            AdvisorMode::Consult,
+                            adapter.model_ref.clone(),
+                            capsule.capsule_hash.clone(),
+                            TokenUsage::Unknown,
+                            deadline_epoch_ms,
+                            Some(reason.code().into()),
+                            false,
+                        ));
+                        ConsultOutcome::Blocked { reason }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persist reports + receipts as a JSON snapshot (shadow marker on disk).
+    /// `persist_path` must be set; returns the path on success.
+    pub fn persist(&self) -> Result<std::path::PathBuf, std::io::Error> {
+        let Some(path) = &self.persist_path else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "consult host persist_path is not set",
+            ));
+        };
+        let payload = serde_json::json!({
+            "schema": "lumen.advisor.consult_host.v1",
+            "mode": serde_json::to_value(&self.mode).unwrap_or_default(),
+            "reports": self.reports,
+            "receipts": self.receipts,
+            "shadow_marker": !self.mode_calls_provider(),
+        });
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, serde_json::to_string_pretty(&payload)?)?;
+        Ok(path.clone())
+    }
+}
+
+/// Fixture-only adapter for consult runs. **Never used for billable calls**;
+/// the real provider adapter is wired by the product path behind the same
+/// `ConsultBlockReason` surface.
+#[derive(Debug, Clone)]
+pub struct MockAdvisorAdapter {
+    pub model_ref: Option<String>,
+    pub token_usage: TokenUsage,
+    pub respond: bool,
+    pub timed_out: bool,
+}
+
+impl MockAdvisorAdapter {
+    pub fn run(
+        &self,
+        request: &AdvisorRequestV1,
+        capsule: &AdvisorContextCapsuleV1,
+    ) -> Result<AdviceReportV1, ConsultBlockReason> {
+        if self.timed_out {
+            return Err(ConsultBlockReason::TimedOut);
+        }
+        if !self.respond {
+            return Err(ConsultBlockReason::AdvisorUnavailable);
+        }
+        let mut report = issue_shadow_advice(
+            AdvisorMode::Consult,
+            &request.request_id,
+            capsule.manifest_summary.clone(),
+            request.review_question.clone(),
+            Some(format!("usage://{}", request.request_id)),
+        )
+        .map_err(ConsultBlockReason::Denied)?;
+        report.mode = AdvisorMode::Consult;
+        Ok(report)
     }
 }
 
@@ -334,6 +546,214 @@ mod tests {
         assert!(!report.applies_authority);
         assert!(!advice_may_mutate_authority(report));
         assert_eq!(host.reports.len(), 1);
+    }
+
+    fn consult_request(id: &str) -> AdvisorRequestV1 {
+        AdvisorRequestV1 {
+            request_id: id.to_string(),
+            kind: xai_grok_memory::AdvisorRequestKind::FailureConvergenceReview,
+            review_question: Some("is the failure converging?".to_string()),
+            artifact_refs: vec!["artifacts/r0/ok.md".to_string()],
+        }
+    }
+
+    fn consult_capsule(request: &AdvisorRequestV1) -> AdvisorContextCapsuleV1 {
+        xai_grok_memory::build_advisor_capsule(
+            &request.request_id,
+            request.kind,
+            "manifest redacted ok",
+            "snapshot ok",
+            request.review_question.as_deref(),
+            &request.artifact_refs,
+            &["artifacts/"],
+        )
+        .expect("capsule builds")
+    }
+
+    #[test]
+    fn consult_off_refuses_without_provider_attempt() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Off);
+        let req = consult_request("c1");
+        let cap = consult_capsule(&req);
+        let adapter = MockAdvisorAdapter {
+            model_ref: Some("deepseek-v4-flash".into()),
+            token_usage: TokenUsage::Unknown,
+            respond: true,
+            timed_out: false,
+        };
+        let outcome = host.run_consult(&req, &cap, &adapter, 100, Some(200));
+        assert_eq!(
+            outcome,
+            ConsultOutcome::Blocked {
+                reason: ConsultBlockReason::PolicyRefused
+            }
+        );
+        assert!(host.reports.is_empty(), "off mode records nothing");
+        assert!(host.receipts.is_empty(), "off mode records no receipt");
+        assert!(!host.mode_calls_provider());
+    }
+
+    #[test]
+    fn consult_shadow_records_report_and_receipt_without_provider() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Shadow);
+        let req = consult_request("c2");
+        let cap = consult_capsule(&req);
+        let adapter = MockAdvisorAdapter {
+            model_ref: Some("deepseek-v4-flash".into()),
+            token_usage: TokenUsage::Unknown,
+            respond: true,
+            timed_out: false,
+        };
+        let outcome = host.run_consult(&req, &cap, &adapter, 100, Some(200));
+        assert!(matches!(outcome, ConsultOutcome::Succeeded { .. }));
+        assert_eq!(host.reports.len(), 1);
+        assert!(!host.reports[0].applies_authority, "shadow advice has no authority");
+        assert_eq!(host.receipts.len(), 1);
+        assert_eq!(host.receipts[0].mode, AdvisorMode::Shadow);
+        assert!(!host.mode_calls_provider(), "shadow must not call a provider");
+    }
+
+    #[test]
+    fn consult_timeout_blocks_and_receipt_records_reason() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Consult);
+        let req = consult_request("c3");
+        let cap = consult_capsule(&req);
+        // Deadline already passed → timed out before any adapter run.
+        let adapter = MockAdvisorAdapter {
+            model_ref: None,
+            token_usage: TokenUsage::Unknown,
+            respond: true,
+            timed_out: true,
+        };
+        let outcome = host.run_consult(&req, &cap, &adapter, 500, Some(400));
+        assert!(matches!(
+            outcome,
+            ConsultOutcome::Blocked {
+                reason: ConsultBlockReason::TimedOut
+            }
+        ));
+        assert!(host.reports.is_empty(), "blocked consult has no report");
+        assert_eq!(host.receipts.len(), 1);
+        assert_eq!(
+            host.receipts[0].cancel_or_deny_reason.as_deref(),
+            Some("advisor.timed_out")
+        );
+    }
+
+    #[test]
+    fn consult_unavailable_blocks_and_never_downgrades() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Consult);
+        let req = consult_request("c4");
+        let cap = consult_capsule(&req);
+        let adapter = MockAdvisorAdapter {
+            model_ref: None,
+            token_usage: TokenUsage::Unknown,
+            respond: false,
+            timed_out: false,
+        };
+        let outcome = host.run_consult(&req, &cap, &adapter, 100, Some(500));
+        assert!(matches!(
+            outcome,
+            ConsultOutcome::Blocked {
+                reason: ConsultBlockReason::AdvisorUnavailable
+            }
+        ));
+        assert!(host.reports.is_empty());
+        assert_eq!(
+            host.receipts[0].cancel_or_deny_reason.as_deref(),
+            Some("advisor.unavailable")
+        );
+    }
+
+    #[test]
+    fn consult_success_has_independent_usage_receipt() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Consult);
+        let req = consult_request("c5");
+        let cap = consult_capsule(&req);
+        let adapter = MockAdvisorAdapter {
+            model_ref: Some("deepseek-v4-flash".into()),
+            token_usage: TokenUsage::Known {
+                input_tokens: 42,
+                output_tokens: 7,
+            },
+            respond: true,
+            timed_out: false,
+        };
+        let outcome = host.run_consult(&req, &cap, &adapter, 100, Some(500));
+        assert!(matches!(outcome, ConsultOutcome::Succeeded { .. }));
+        assert_eq!(host.reports.len(), 1);
+        assert!(!host.reports[0].applies_authority);
+        assert_eq!(host.receipts.len(), 1);
+        // Independent receipt: request-scoped id, consult mode, adapter usage.
+        assert_eq!(host.receipts[0].request_id, "c5");
+        assert_eq!(host.receipts[0].mode, AdvisorMode::Consult);
+        assert_eq!(
+            host.receipts[0].token_usage,
+            TokenUsage::Known {
+                input_tokens: 42,
+                output_tokens: 7
+            }
+        );
+        assert!(host.receipts[0].cancel_or_deny_reason.is_none());
+    }
+
+    #[test]
+    fn consult_persist_writes_shadow_marker_json() {
+        let mut host = ConsultAdvisorHost::new(AdvisorMode::Shadow);
+        let req = consult_request("c6");
+        let cap = consult_capsule(&req);
+        let adapter = MockAdvisorAdapter {
+            model_ref: None,
+            token_usage: TokenUsage::Unknown,
+            respond: true,
+            timed_out: false,
+        };
+        host.run_consult(&req, &cap, &adapter, 100, None);
+        let dir = std::env::temp_dir().join(format!("consult-persist-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("advisor.json");
+        host.persist_path = Some(path.clone());
+        let written = host.persist().expect("persist succeeds");
+        assert_eq!(written, path);
+        let raw = std::fs::read_to_string(&path).expect("file readable");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("valid json");
+        assert_eq!(value["shadow_marker"], true);
+        assert_eq!(value["reports"].as_array().map(|a| a.len()), Some(1));
+        assert_eq!(value["receipts"].as_array().map(|a| a.len()), Some(1));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stale_advice_epoch_write_side_triggers_p4b_deny() {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        // Real epoch semantics through derive_p4b_side_conditions: advice
+        // issued at epoch 1, live bumped to 2 → stale_advice=true (deny path).
+        let live = AtomicU64::new(1);
+        let issued = AtomicU64::new(0);
+        // (simulated write side of ToolContext::record_advice_issued)
+        issued.store(live.load(Ordering::SeqCst), Ordering::SeqCst);
+        let side = derive_p4b_side_conditions(
+            true,
+            1,
+            true,
+            false,
+            (issued.load(Ordering::SeqCst) != 0).then_some(issued.load(Ordering::SeqCst)),
+            live.load(Ordering::SeqCst),
+        );
+        assert!(!side.stale_advice, "fresh advice is not stale");
+        // (simulated write side of ToolContext::bump_live_policy_epoch)
+        live.fetch_add(1, Ordering::SeqCst);
+        let side = derive_p4b_side_conditions(
+            true,
+            1,
+            true,
+            false,
+            (issued.load(Ordering::SeqCst) != 0).then_some(issued.load(Ordering::SeqCst)),
+            live.load(Ordering::SeqCst),
+        );
+        assert!(side.stale_advice, "bumped live epoch makes advice stale");
+        // The full production flow (ToolContext methods) is covered by
+        // tool_context::tests::advice_epoch_write_side_flows_into_stale_detection.
     }
 
     #[test]

@@ -274,6 +274,34 @@ impl ToolContext {
             budget.mark_incomplete_and_exhaust();
         }
     }
+
+    /// S9 / DEBT-001 write side: stamp the policy epoch at which shadow
+    /// advice was last issued. `0` means no advice on file (never stale).
+    pub(crate) fn record_advice_issued(&self) {
+        let live = self.live_policy_epoch.load(std::sync::atomic::Ordering::SeqCst);
+        self.advice_issued_policy_epoch
+            .store(live, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// S9 / DEBT-001 write side: advance the live policy epoch when
+    /// catalog/health/model-pool policy changes; issued-before-live advice
+    /// then fails the P4b `stale_advice` admission (fail-closed).
+    pub(crate) fn bump_live_policy_epoch(&self) {
+        self.live_policy_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// S9 read side: the epoch at which shadow advice was last issued
+    /// (0 = none), used by `derive_p4b_side_conditions`.
+    pub(crate) fn advice_issued_epoch(&self) -> u64 {
+        self.advice_issued_policy_epoch
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// S9 read side: current live policy epoch (starts at 1).
+    pub(crate) fn live_epoch(&self) -> u64 {
+        self.live_policy_epoch.load(std::sync::atomic::Ordering::SeqCst)
+    }
     pub fn new(
         cwd: AbsPathBuf,
         gateway: Option<GatewaySender>,
@@ -479,5 +507,33 @@ mod tests {
                 advice_issued_policy_epoch: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             }
         }
+    }
+
+    // S9 / DEBT-001 write side exercised through the real ToolContext methods:
+    // issuing advice stamps the live epoch; bumping policy makes previously
+    // issued advice stale (the P4b admission input).
+    #[test]
+    fn advice_epoch_write_side_flows_into_stale_detection() {
+        let cwd = AbsPathBuf::new(std::path::PathBuf::from("/tmp")).unwrap();
+        let fs = xai_grok_workspace::file_system::LocalFs::new(std::path::PathBuf::from("/tmp"));
+        let terminal = crate::terminal::LocalTerminalRunner;
+        let ctx = ToolContext::new_local_context(cwd, Arc::new(fs), Arc::new(terminal));
+
+        // Initially: no advice on file (0), live epoch = 1 → not stale.
+        assert_eq!(ctx.advice_issued_epoch(), 0);
+        assert_eq!(ctx.live_epoch(), 1);
+
+        // Issue advice → stamped at live epoch 1.
+        ctx.record_advice_issued();
+        assert_eq!(ctx.advice_issued_epoch(), 1);
+
+        // Policy change bumps live → issued(1) < live(2) → stale.
+        ctx.bump_live_policy_epoch();
+        assert_eq!(ctx.live_epoch(), 2);
+        assert!(ctx.advice_issued_epoch() < ctx.live_epoch());
+
+        // Re-issue after the bump → stamped at 2 → not stale again.
+        ctx.record_advice_issued();
+        assert_eq!(ctx.advice_issued_epoch(), ctx.live_epoch());
     }
 }

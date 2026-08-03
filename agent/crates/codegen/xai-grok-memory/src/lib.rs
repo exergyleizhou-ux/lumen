@@ -29,6 +29,7 @@ pub mod evidence_loop;
 pub mod m1_governed_tree_preview;
 pub mod bounded_assignment_apply;
 pub mod client_advisor_shadow;
+pub mod client_advisor_consult;
 pub mod kairos_supervisor;
 pub mod nextgen_contract_gates;
 pub mod sealed_attempt_receipt;
@@ -77,6 +78,11 @@ pub use bounded_assignment_apply::{
 };
 pub use client_advisor_shadow::{
     AdviceReportV1, AdvisorDeny, AdvisorMode, advice_may_mutate_authority, issue_shadow_advice,
+};
+pub use client_advisor_consult::{
+    AdvisorCapsuleDeny, AdvisorContextCapsuleV1, AdvisorRequestKind, AdvisorRequestV1,
+    AdvisorUsageReceiptV1, ConsultBlockReason, ConsultOutcome, TokenUsage, build_advisor_capsule,
+    build_usage_receipt, consult_timed_out, report_hash,
 };
 pub use kairos_supervisor::{
     KairosCommand, KairosDeny, KairosSupervisorState, apply_kairos_command,
