@@ -150,6 +150,11 @@ impl SubagentLineage {
     }
 
     /// Build the lineage for a child launched by an already-running child.
+    ///
+    /// `depth` is always `lineage_path.len()` so path and depth cannot drift
+    /// when the same immediate parent is re-applied (path is not duplicated
+    /// but depth used to keep incrementing). Production only ever calls this
+    /// with the spawner's session id, which is not already the path tail.
     pub fn child_of(parent: &Self, immediate_parent_session_id: impl Into<String>) -> Self {
         let immediate_parent_session_id = immediate_parent_session_id.into();
         let mut lineage_path = parent.lineage_path.clone();
@@ -159,7 +164,7 @@ impl SubagentLineage {
         Self {
             root_session_id: parent.root_session_id.clone(),
             immediate_parent_session_id,
-            depth: parent.depth.saturating_add(1),
+            depth: lineage_path.len() as u32,
             lineage_path,
         }
     }

@@ -58,10 +58,12 @@ fn child_of_extends_path_and_depth() {
 fn child_of_does_not_duplicate_same_parent() {
     let root = SubagentLineage::direct("root");
     let child = SubagentLineage::child_of(&root, "child");
-    // Re-spawning from the same parent must not duplicate the path entry.
+    // Re-applying the same immediate parent must not duplicate the path entry
+    // or invent a deeper depth than the path length.
     let again = SubagentLineage::child_of(&child, "child");
     assert_eq!(again.lineage_path, vec!["root", "child"]);
-    assert_eq!(again.depth, 3, "depth still advances per generation");
+    assert_eq!(again.depth, 2);
+    assert_eq!(again.depth as usize, again.lineage_path.len());
 }
 
 #[test]
