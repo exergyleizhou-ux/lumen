@@ -8,6 +8,7 @@ pub mod expert_consultant_tools;
 pub mod handle;
 pub mod memory_state;
 pub mod merge;
+pub mod nextgen_control;
 pub mod notifications;
 pub mod pending_interaction;
 pub mod prompt_queue;

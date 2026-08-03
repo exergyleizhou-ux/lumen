@@ -149,17 +149,17 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
 | derived_from（NG-04A） | 60% | 100% | 全图 enforcement（revoke 传播到消费方） |
-| Sandbox（NG-04D） | 80% | 100% | 全主 writer 接 sandbox write 门；待 process/network/spawn 全路径 |
-| Evidence loop（NG-04E） | 65% | 100% | Node+Tree+Supervisor pure reducers；待 run_loop 接线 |
-| 模型选择/Expert（NG-05） | 50% | 100% | SealedAttemptReceiptV1 gate 已落地；待全 sampler 接线与 inventory |
-| Advisor（NG-06/06A） | 45% | 100% | shadow issue 纯合同；待 virtual tool 接线与 consult 模式 |
+| Sandbox（NG-04D） | 90% | 100% | 主 writer + task spawn + web_fetch/web_search network 门已接线；待 process 全路径 |
+| Evidence loop（NG-04E） | 65% | 100% | Node+Tree+Supervisor pure reducers；待 run_loop 全量接线 |
+| 模型选择/Expert（NG-05） | 60% | 100% | SealedAttemptReceiptV1 + AttemptSealTracker + ordinary_turn_max_retries=0；待 durable 全 transport 收口 |
+| Advisor（NG-06/06A） | 55% | 100% | shadow issue 纯合同 + shell ShadowAdvisorHost；待 virtual tool/consult 模式 |
 | Assignment（NG-07） | 45% | 100% | authorize_assignment_apply 纯门 + RootGovernedAssignment 存储；待 recommend UI |
-| Kairos（NG-08） | 45% | 100% | KairosSupervisor claim/freeze/takeover 纯控制面；待 daemon 接线 |
-| exact-binary golden（NG-09A/B） | 35% | 100% | offline golden 串 loop/seal/sandbox；待 exact-binary UI |
+| Kairos（NG-08） | 55% | 100% | pure 控制面 + shell KairosControlHost；待 daemon/lease consumer |
+| exact-binary golden（NG-09A/B） | 40% | 100% | offline golden 串 loop/seal/sandbox + `scripts/run-nextgen-offline-gates.sh`；待 exact-binary UI |
 | R0/CI/release（R0、NG-10） | 25% | 100% | exact-SHA CI；A/B tuple；二阶段 release transaction；updater 隔离 |
 | 产品品牌/UI 身份 | 75% | 100% | 细节打磨（欢迎屏、状态栏、菜单） |
 
-**综合（保守加权）：约 38%**。积木层 ~50%；主路径接线 ~35%；Harness local-ready ~22%；RC ~15%。
+**综合（保守加权）：约 45%**。积木层 ~70%；主路径接线 ~50%；Harness local-ready ~28%；RC ~15%。`product_rc=NOT_READY`（人工/CI 门未闭合）。
 
 ---
 

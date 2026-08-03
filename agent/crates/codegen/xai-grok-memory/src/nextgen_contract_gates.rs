@@ -138,7 +138,7 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         offline_pass_count,
         offline_total,
         product_rc: "NOT_READY".into(),
-        note: "offline pure gates only; exact-SHA CI, sampler inventory, run_loop wire, RC transaction NOT RUN"
+        note: "offline pure gates only; task spawn/network sandbox + shell advisor/kairos hosts wired; durable attempt store, run_loop full wire, exact-SHA CI, RC transaction NOT RUN"
             .into(),
     }
 }

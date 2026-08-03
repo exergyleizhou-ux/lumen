@@ -34,6 +34,7 @@ pub use budget::{
 };
 pub use child_sandbox_capability::{
     ChildSandboxCapability, ChildSandboxCapabilityResource, ChildSandboxDeny,
+    enforce_child_sandbox_network_if_present, enforce_child_sandbox_spawn_if_present,
     enforce_child_sandbox_write_if_present,
 };
 pub use governed_operation::{
@@ -245,7 +246,7 @@ impl xai_tool_runtime::Tool for TaskTool {
             .get::<xai_tool_runtime::Cancellation>()
             .map(|cancellation| cancellation.0.clone());
 
-        // 1. Depth check
+        // 1. Depth + sandbox spawn check (capability projection before fire).
         let (
             depth,
             max_depth,
@@ -256,6 +257,12 @@ impl xai_tool_runtime::Tool for TaskTool {
             foreground_wait,
         ) = {
             let res = resources.lock().await;
+
+            // NG-04D-4: when host injected a child sandbox capability, spawn is
+            // fail-closed on may_spawn/revoked before depth or backend work.
+            enforce_child_sandbox_spawn_if_present(&res).map_err(|msg| {
+                xai_tool_runtime::ToolError::invalid_arguments(msg)
+            })?;
 
             let depth = res.get::<SubagentDepthCounter>().map(|d| d.0).unwrap_or(0);
             let max_depth = effective_max_subagent_depth(&res);
@@ -742,6 +749,50 @@ mod tests {
             "expected Ok at depth 1 with max 2: {result:?}"
         );
         let _ = rx.try_recv();
+    }
+
+    #[tokio::test]
+    async fn child_sandbox_spawn_denied_blocks_task_before_backend() {
+        let (backend, mut rx) = make_backend();
+        let mut resources = Resources::new();
+        resources.insert(backend);
+        resources.insert(SubagentDepthCounter(0));
+        resources.insert(MaxSubagentDepth(3));
+        resources.insert(SessionIdResource("leaf-session".to_string()));
+        resources.insert(CurrentPromptIdResource("prompt-leaf".to_string()));
+        // Leaf capability: may_spawn=false even though depth counter would allow.
+        resources.insert(ChildSandboxCapabilityResource(
+            ChildSandboxCapability::governed_defaults("leaf", "root", 3, 3),
+        ));
+
+        let result = xai_tool_runtime::Tool::run(
+            &TaskTool,
+            test_ctx(resources.into_shared()),
+            TaskToolInput {
+                description: "must fail closed".into(),
+                prompt: "should not reach coordinator".into(),
+                subagent_type: "explore".into(),
+                run_in_background: true,
+                capability_mode: None,
+                isolation: None,
+                resume_from: None,
+                cwd: None,
+                model: None,
+                task_id: None,
+            },
+        )
+        .await;
+
+        assert!(result.is_err(), "sandbox must deny spawn: {result:?}");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("spawn_denied") || err.contains("forbids spawn"),
+            "error: {err}"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "spawn must not reach the coordinator when sandbox denies"
+        );
     }
 
     #[tokio::test]

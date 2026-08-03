@@ -84,6 +84,10 @@ impl xai_tool_runtime::Tool for WebSearchTool {
         let client;
         {
             let res = resources.lock().await;
+            crate::implementations::grok_build::task::enforce_child_sandbox_network_if_present(
+                &res,
+            )
+            .map_err(xai_tool_runtime::ToolError::invalid_arguments)?;
             client = res.require::<WebSearchClient>()?.clone();
         }
 

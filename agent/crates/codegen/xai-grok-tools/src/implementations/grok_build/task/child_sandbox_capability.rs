@@ -128,6 +128,31 @@ pub fn enforce_child_sandbox_write_if_present(
         .map_err(|d| format!("{}: child sandbox forbids write", d.code()))
 }
 
+/// When the resource is present, nested `task` spawn must be allowed.
+/// Missing resource = root/legacy unconstrained (depth ceiling still applies).
+pub fn enforce_child_sandbox_spawn_if_present(
+    resources: &crate::types::resources::Resources,
+) -> Result<(), String> {
+    let Some(cap) = resources.get::<ChildSandboxCapabilityResource>() else {
+        return Ok(());
+    };
+    cap.authorize_spawn()
+        .map_err(|d| format!("{}: child sandbox forbids spawn", d.code()))
+}
+
+/// When the resource is present, network tools must be allowed.
+/// Missing resource = root/legacy unconstrained.
+pub fn enforce_child_sandbox_network_if_present(
+    resources: &crate::types::resources::Resources,
+) -> Result<(), String> {
+    let Some(cap) = resources.get::<ChildSandboxCapabilityResource>() else {
+        return Ok(());
+    };
+    cap.0
+        .authorize_network()
+        .map_err(|d| format!("{}: child sandbox forbids network", d.code()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -160,5 +185,31 @@ mod tests {
         cap.may_write = true;
         resources.insert(ChildSandboxCapabilityResource(cap));
         assert!(enforce_child_sandbox_write_if_present(&resources).is_ok());
+    }
+
+    #[test]
+    fn enforce_resource_gates_spawn_and_network_when_injected() {
+        let mut resources = Resources::new();
+        assert!(enforce_child_sandbox_spawn_if_present(&resources).is_ok());
+        assert!(enforce_child_sandbox_network_if_present(&resources).is_ok());
+
+        let leaf = ChildSandboxCapability::governed_defaults("leaf", "root", 3, 3);
+        resources.insert(ChildSandboxCapabilityResource(leaf));
+        assert!(
+            enforce_child_sandbox_spawn_if_present(&resources)
+                .unwrap_err()
+                .contains("spawn_denied")
+        );
+        assert!(
+            enforce_child_sandbox_network_if_present(&resources)
+                .unwrap_err()
+                .contains("network_denied")
+        );
+
+        let mut mid = ChildSandboxCapability::governed_defaults("mid", "root", 1, 3);
+        mid.may_network = true;
+        resources.insert(ChildSandboxCapabilityResource(mid));
+        assert!(enforce_child_sandbox_spawn_if_present(&resources).is_ok());
+        assert!(enforce_child_sandbox_network_if_present(&resources).is_ok());
     }
 }

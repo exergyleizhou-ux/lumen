@@ -19,6 +19,10 @@ pub(crate) enum McpReminderMode {
 /// `xai_grok_memory::may_in_process_retry`). Until every transport path
 /// produces that receipt, ordinary turns keep max retries at zero and surface
 /// failure instead of replaying in-process.
+///
+/// Prefer [`ordinary_turn_max_retries`] / [`crate::session::nextgen_control::ordinary_sampler_max_retries`]
+/// at call sites that already hold an optional seal; this constant is the
+/// hard ceiling when no receipt is available.
 pub(crate) const NO_RECEIPT_MAX_RETRIES: u32 = 0;
 
 #[cfg(test)]
@@ -26,6 +30,7 @@ mod no_replay_policy_tests {
     use super::NO_RECEIPT_MAX_RETRIES;
     use xai_grok_memory::{
         clean_preflight_receipt, mark_output_emitted, may_in_process_retry,
+        ordinary_turn_max_retries,
     };
 
     #[test]
@@ -33,6 +38,12 @@ mod no_replay_policy_tests {
         assert_eq!(
             NO_RECEIPT_MAX_RETRIES, 0,
             "ordinary turns must not in-process retry without sealed receipt"
+        );
+        assert_eq!(ordinary_turn_max_retries(None), NO_RECEIPT_MAX_RETRIES);
+        assert_eq!(
+            ordinary_turn_max_retries(Some(&clean_preflight_receipt("t0"))),
+            NO_RECEIPT_MAX_RETRIES,
+            "clean seal does not raise budget until durable multi-transport store"
         );
         // Clean preflight is the only seal that would permit a *future* retry
         // path once durable receipts are wired; today max_retries stays 0.

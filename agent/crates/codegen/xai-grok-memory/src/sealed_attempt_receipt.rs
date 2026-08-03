@@ -122,6 +122,66 @@ pub fn mark_external_effect_unknown(mut r: SealedAttemptReceiptV1) -> SealedAtte
     r
 }
 
+/// Policy for ordinary sampler turns (INV-11 / P0-NR-A).
+///
+/// Until a **durable** per-attempt receipt is the sole authority across every
+/// transport path, the in-process budget stays at zero even when a clean
+/// preflight seal is presented. Callers must still consult
+/// [`may_in_process_retry`] before any future non-zero budget path.
+pub fn ordinary_turn_max_retries(receipt: Option<&SealedAttemptReceiptV1>) -> u32 {
+    match receipt {
+        Some(r) => {
+            // Keep the gate exercised so a partial seal never silently becomes
+            // a retry budget; clean seals still map to 0 until durable store.
+            let _ = may_in_process_retry(r);
+            0
+        }
+        None => 0,
+    }
+}
+
+/// In-memory seal builder for a single attempt (shell/sampler wiring).
+#[derive(Debug, Clone)]
+pub struct AttemptSealTracker {
+    receipt: SealedAttemptReceiptV1,
+}
+
+impl AttemptSealTracker {
+    pub fn new(attempt_id: impl Into<String>) -> Self {
+        Self {
+            receipt: clean_preflight_receipt(attempt_id),
+        }
+    }
+
+    pub fn receipt(&self) -> &SealedAttemptReceiptV1 {
+        &self.receipt
+    }
+
+    pub fn mark_output(&mut self) {
+        self.receipt = mark_output_emitted(self.receipt.clone());
+    }
+
+    pub fn mark_tool(&mut self) {
+        self.receipt = mark_tool_call(self.receipt.clone());
+    }
+
+    pub fn mark_started(&mut self) {
+        self.receipt = mark_attempt_started(self.receipt.clone());
+    }
+
+    pub fn mark_effect_unknown(&mut self) {
+        self.receipt = mark_external_effect_unknown(self.receipt.clone());
+    }
+
+    pub fn may_retry(&self) -> Result<(), RetryDenyReason> {
+        may_in_process_retry(&self.receipt)
+    }
+
+    pub fn max_retries(&self) -> u32 {
+        ordinary_turn_max_retries(Some(&self.receipt))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -164,5 +224,20 @@ mod tests {
             may_in_process_retry(&r).unwrap_err(),
             RetryDenyReason::ObservationUnknown { field: "no_output" }
         ));
+    }
+
+    #[test]
+    fn ordinary_turn_budget_stays_zero_with_or_without_clean_seal() {
+        assert_eq!(ordinary_turn_max_retries(None), 0);
+        assert_eq!(
+            ordinary_turn_max_retries(Some(&clean_preflight_receipt("c"))),
+            0
+        );
+        let mut t = AttemptSealTracker::new("t1");
+        assert!(t.may_retry().is_ok());
+        assert_eq!(t.max_retries(), 0);
+        t.mark_output();
+        assert!(t.may_retry().is_err());
+        assert_eq!(t.max_retries(), 0);
     }
 }
