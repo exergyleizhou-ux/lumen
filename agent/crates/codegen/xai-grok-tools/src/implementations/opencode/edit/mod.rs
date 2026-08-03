@@ -212,6 +212,13 @@ impl xai_tool_runtime::Tool for EditTool {
                     error,
                 )
             })?;
+            crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(&res)
+                .map_err(|error| {
+                    xai_tool_runtime::ToolError::execution(
+                        xai_tool_protocol::ToolId::new("edit").expect("valid"),
+                        error,
+                    )
+                })?;
         }
 
         // ── Validate input ──────────────────────────────────────────

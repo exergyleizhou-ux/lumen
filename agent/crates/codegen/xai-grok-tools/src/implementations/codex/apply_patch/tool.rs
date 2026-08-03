@@ -365,6 +365,15 @@ impl xai_tool_runtime::Tool for ApplyPatchTool {
                         )));
                     }
                 }
+                if let Err(error) =
+                    crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                        &res,
+                    )
+                {
+                    return Ok(ApplyPatchOutput::ApplicationError(format!(
+                        "{error}: child sandbox forbids write"
+                    )));
+                }
             }
         }
 

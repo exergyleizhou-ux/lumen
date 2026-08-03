@@ -125,6 +125,13 @@ impl xai_tool_runtime::Tool for WriteTool {
                     error,
                 )
             })?;
+            crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(&res)
+                .map_err(|error| {
+                    xai_tool_runtime::ToolError::execution(
+                        xai_tool_protocol::ToolId::new("write").expect("valid"),
+                        error,
+                    )
+                })?;
         }
 
         // ── Check if file exists and read old content ────────────

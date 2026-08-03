@@ -215,6 +215,106 @@ pub fn reduce_node_loop(
     }
 }
 
+/// Tree-level fair-share / stop aggregation (pure).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TreeLoopState {
+    pub root_id: String,
+    pub phase: LoopPhase,
+    pub active_nodes: u32,
+    pub max_active_nodes: u32,
+    pub frozen_nodes: u32,
+    pub needs_parent: u32,
+}
+
+impl TreeLoopState {
+    pub fn fresh(root_id: impl Into<String>) -> Self {
+        Self {
+            root_id: root_id.into(),
+            phase: LoopPhase::Running,
+            active_nodes: 0,
+            max_active_nodes: 8,
+            frozen_nodes: 0,
+            needs_parent: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TreeLoopEvent {
+    NodeStarted,
+    NodeFinished,
+    NodeFrozen,
+    NodeNeedsParent,
+    RootCancel,
+    AllChildrenTerminal,
+}
+
+/// Aggregate node outcomes into a tree stop/escalate decision.
+pub fn reduce_tree_loop(
+    mut state: TreeLoopState,
+    event: TreeLoopEvent,
+) -> (TreeLoopState, LoopEffect) {
+    if state.phase.is_terminal() {
+        return (state, LoopEffect::None);
+    }
+    match event {
+        TreeLoopEvent::NodeStarted => {
+            state.active_nodes = state.active_nodes.saturating_add(1);
+            if state.active_nodes > state.max_active_nodes {
+                state.phase = LoopPhase::NeedsParentDecision;
+                return (
+                    state,
+                    LoopEffect::RequestParentDecision {
+                        reason: "fair_share_active_cap".into(),
+                    },
+                );
+            }
+            (state, LoopEffect::None)
+        }
+        TreeLoopEvent::NodeFinished => {
+            state.active_nodes = state.active_nodes.saturating_sub(1);
+            (state, LoopEffect::None)
+        }
+        TreeLoopEvent::NodeFrozen => {
+            state.frozen_nodes = state.frozen_nodes.saturating_add(1);
+            state.active_nodes = state.active_nodes.saturating_sub(1);
+            state.phase = LoopPhase::Frozen;
+            (
+                state,
+                LoopEffect::MarkFrozen {
+                    reason: "child_frozen".into(),
+                },
+            )
+        }
+        TreeLoopEvent::NodeNeedsParent => {
+            state.needs_parent = state.needs_parent.saturating_add(1);
+            state.phase = LoopPhase::NeedsParentDecision;
+            (
+                state,
+                LoopEffect::RequestParentDecision {
+                    reason: "child_needs_parent".into(),
+                },
+            )
+        }
+        TreeLoopEvent::RootCancel => {
+            state.phase = LoopPhase::Cancelled;
+            state.active_nodes = 0;
+            (state, LoopEffect::None)
+        }
+        TreeLoopEvent::AllChildrenTerminal => {
+            if state.frozen_nodes > 0 {
+                state.phase = LoopPhase::Frozen;
+            } else if state.needs_parent > 0 {
+                state.phase = LoopPhase::NeedsParentDecision;
+            } else {
+                state.phase = LoopPhase::Checkpointed;
+            }
+            (state, LoopEffect::None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -319,6 +419,36 @@ mod tests {
         let (s, effect) =
             reduce_node_loop(NodeLoopState::fresh(), LoopEvent::DeliveryUnknown).unwrap();
         assert_eq!(s.phase, LoopPhase::Frozen);
+        assert!(matches!(effect, LoopEffect::MarkFrozen { .. }));
+    }
+
+    #[test]
+    fn tree_fair_share_and_child_freeze_aggregate() {
+        let mut t = TreeLoopState::fresh("root");
+        t.max_active_nodes = 2;
+        let (t, _) = reduce_tree_loop(t, TreeLoopEvent::NodeStarted);
+        let (t, _) = reduce_tree_loop(t, TreeLoopEvent::NodeStarted);
+        let (t, effect) = reduce_tree_loop(t, TreeLoopEvent::NodeStarted);
+        assert_eq!(t.phase, LoopPhase::NeedsParentDecision);
+        assert!(matches!(
+            effect,
+            LoopEffect::RequestParentDecision { reason } if reason == "fair_share_active_cap"
+        ));
+
+        let t = TreeLoopState::fresh("root");
+        let (t, effect) = reduce_tree_loop(t, TreeLoopEvent::NodeFrozen);
+        assert_eq!(t.phase, LoopPhase::Frozen);
+        assert!(matches!(effect, LoopEffect::MarkFrozen { .. }));
+    }
+
+    /// Compose: node delivery-unknown freezes node; tree absorbs freeze.
+    #[test]
+    fn compose_node_freeze_escalates_tree() {
+        let (node, _) =
+            reduce_node_loop(NodeLoopState::fresh(), LoopEvent::DeliveryUnknown).unwrap();
+        assert_eq!(node.phase, LoopPhase::Frozen);
+        let (tree, effect) = reduce_tree_loop(TreeLoopState::fresh("root"), TreeLoopEvent::NodeFrozen);
+        assert_eq!(tree.phase, LoopPhase::Frozen);
         assert!(matches!(effect, LoopEffect::MarkFrozen { .. }));
     }
 }

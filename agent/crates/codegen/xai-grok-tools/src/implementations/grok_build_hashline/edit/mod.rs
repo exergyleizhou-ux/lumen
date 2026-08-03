@@ -333,6 +333,15 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
                     format!("Error: {error} (file: {})", input.file_path),
                 ));
             }
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                    &res,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
         }
         // Error-preserving variant: the Err arm drives new-file creation.
         let path = match crate::util::fs::try_canonicalize(&joined_path).await {
@@ -396,6 +405,15 @@ impl xai_tool_runtime::Tool for HashlineEditTool {
             if let Err(error) =
                 crate::implementations::grok_build::task::enforce_write_scope_if_present(
                     &res, &path, &cwd,
+                )
+            {
+                return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(
+                    format!("Error: {error} (file: {})", input.file_path),
+                ));
+            }
+            if let Err(error) =
+                crate::implementations::grok_build::task::enforce_child_sandbox_write_if_present(
+                    &res,
                 )
             {
                 return Ok(crate::types::output::SearchReplaceOutput::InvalidInput(

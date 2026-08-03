@@ -64,7 +64,8 @@ pub use handoff_packet::{
 };
 pub use evidence_loop::{
     DEFAULT_NO_PROGRESS_CAP, DEFAULT_REPAIR_CAP, LoopEffect, LoopEvent, LoopPhase,
-    LoopReduceError, NodeLoopState, reduce_node_loop,
+    LoopReduceError, NodeLoopState, TreeLoopEvent, TreeLoopState, reduce_node_loop,
+    reduce_tree_loop,
 };
 pub use m1_governed_tree_preview::{
     DenyMechanism, DenyRecord, M1PreviewReceipt, TreeNodeProjection, run_m1_governed_tree_preview,
