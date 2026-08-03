@@ -13,7 +13,8 @@ cargo test -p xai-grok-memory --lib ordinary_turn_budget -- --nocapture
 cargo test -p xai-grok-tools --lib child_sandbox -- --nocapture
 cargo test -p xai-grok-shell --lib nextgen_control -- --nocapture
 
-EVIDENCE_DIR="${LUMEN_EVIDENCE_DIR:-$ROOT/artifacts/readiness/nextgen}"
+# Default under SCRATCH/ (gitignored) so source-lock stays clean after a run.
+EVIDENCE_DIR="${LUMEN_EVIDENCE_DIR:-$ROOT/SCRATCH/nextgen-offline-gates}"
 mkdir -p "$EVIDENCE_DIR"
 RECEIPT="$EVIDENCE_DIR/offline-contract-gates-$(date -u +%Y%m%dT%H%M%SZ).json"
 
