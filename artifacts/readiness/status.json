@@ -1,18 +1,18 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-03T18:09:32Z",
+  "generated_at": "2026-08-03T18:52:56Z",
   "version": "2.0.0-alpha.1",
-  "head_short": "1c349210",
+  "head_short": "4c06ed41",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": false,
   "l0_pass": false,
   "engineering_complete": false,
   "source_lock_sha256": "a6d81493e6e6057ea7e5c07e301c88cdf1ca73214f7f74dc46aec8efd65e4ce0",
-  "binary_sha256": "fc7b31652cb963005a29dd181fdb68106ae9c300dee2d861bef54efcdc0995c9",
+  "binary_sha256": "46b4b37715493ddee6a810765c31c3d8a9b0269066e3d36dfc17110c74f308ac",
   "blockers": [
-    "binary_tuple_pre:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) ",
-    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) ",
+    "binary_tuple_pre:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) ",
+    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) ",
     "source_lock:non-evidence drift after source lock: .gitleaksignore, agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs, agent/crates/codegen/xai-grok-memory/src/harness_regression.rs, \"docs/\\344\\272\\272\\345\\267\\245\\351\\227\\250\\346\\270\\205\\345\\215\\225-2026-08-04.md\"",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
@@ -33,7 +33,7 @@
       "id": "binary_tuple_pre",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) "
+      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) "
     },
     {
       "id": "gitleaks",
@@ -159,7 +159,7 @@
       "id": "binary_tuple_post",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (945d505a) installed=lumen 2.0.0-alpha.1 (69070b38) "
+      "detail": "exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) "
     },
     {
       "id": "source_lock",
@@ -187,6 +187,6 @@
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-08-03T18:09:31Z",
+  "reconciled_at": "2026-08-03T18:52:56Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
