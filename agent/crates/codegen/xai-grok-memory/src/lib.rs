@@ -36,6 +36,7 @@ pub mod embedding;
 pub mod governed_assignment;
 pub mod governed_operation;
 pub mod index;
+pub mod lifecycle_journal;
 pub mod mmr;
 pub mod offline_golden;
 pub mod query_expansion;

@@ -111,6 +111,70 @@ pub enum CrashSafeAction {
     Frozen,
 }
 
+/// Whether an external effect may already have been applied (Unknown means
+/// it may have — never assume it did not).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalEffectObservation {
+    None,
+    Applied,
+    Unknown,
+}
+
+/// Whether any model/tool output block was already emitted for this attempt
+/// (Unknown means partial output is possible and replay is forbidden).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputObservation {
+    None,
+    Emitted,
+    Unknown,
+}
+
+/// The single crash-safe action for an operation, DERIVED from its recovery
+/// class and its observations — no hand-written table. This is the K4
+/// counterpart of the Kairos recovery table:
+///
+/// - Output observed or unknown → never replay, regardless of class.
+/// - External effect applied or unknown → at-least-once is unsafe: only
+///   `ProbeThenResume` (queryable) or `Frozen` may follow.
+/// - Pure + no observations → rerun. Idempotent + no observations → rerun
+///   with the same key. Queryable → probe, then resume or rerun.
+/// - Opaque → Frozen in every uncertain case.
+pub fn crash_action_for(
+    recovery_class: &EffectRecoveryClass,
+    output: OutputObservation,
+    external_effect: ExternalEffectObservation,
+) -> CrashSafeAction {
+    // P0 no-replay: any emitted or unknown output block makes replay unsafe.
+    if !matches!(output, OutputObservation::None) {
+        return CrashSafeAction::Frozen;
+    }
+    match recovery_class {
+        EffectRecoveryClass::Pure => match external_effect {
+            ExternalEffectObservation::None => CrashSafeAction::Rerun,
+            ExternalEffectObservation::Applied | ExternalEffectObservation::Unknown => {
+                // Pure must not have effects; if one is observed/possible the
+                // class declaration was wrong — fail closed.
+                CrashSafeAction::Frozen
+            }
+        },
+        EffectRecoveryClass::Idempotent { key } => match external_effect {
+            ExternalEffectObservation::None => CrashSafeAction::RerunWithKey { key: key.clone() },
+            // The effect may have been applied; the world deduplicates by key,
+            // so rerunning with the same key is at-least-once-safe.
+            ExternalEffectObservation::Applied | ExternalEffectObservation::Unknown => {
+                CrashSafeAction::RerunWithKey { key: key.clone() }
+            }
+        },
+        EffectRecoveryClass::Queryable { probe } => match external_effect {
+            ExternalEffectObservation::None => CrashSafeAction::Rerun,
+            ExternalEffectObservation::Applied | ExternalEffectObservation::Unknown => {
+                CrashSafeAction::ProbeThenResume { probe: probe.clone() }
+            }
+        },
+        EffectRecoveryClass::Opaque => CrashSafeAction::Frozen,
+    }
+}
+
 /// Design-time accounting: the Frozen rate upper bound is the proportion of
 /// Opaque effects. This is computable before any soak run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,5 +262,70 @@ mod effect_recovery_tests {
         let q2 = EffectRecoveryClass::Queryable { probe: "diff".into() };
         assert_ne!(q1.class_hash().unwrap(), q2.class_hash().unwrap());
         assert_ne!(a.class_hash().unwrap(), q1.class_hash().unwrap());
+    }
+
+    #[test]
+    fn crash_action_matrix_is_derived_not_looked_up() {
+        use super::{crash_action_for, ExternalEffectObservation, OutputObservation};
+
+        let pure = EffectRecoveryClass::Pure;
+        let idem = EffectRecoveryClass::Idempotent { key: "k".into() };
+        let query = EffectRecoveryClass::Queryable { probe: "p".into() };
+        let opaque = EffectRecoveryClass::Opaque;
+
+        // No observations.
+        assert_eq!(
+            crash_action_for(&pure, OutputObservation::None, ExternalEffectObservation::None),
+            CrashSafeAction::Rerun
+        );
+        assert_eq!(
+            crash_action_for(&idem, OutputObservation::None, ExternalEffectObservation::None),
+            CrashSafeAction::RerunWithKey { key: "k".into() }
+        );
+        assert_eq!(
+            crash_action_for(&query, OutputObservation::None, ExternalEffectObservation::None),
+            CrashSafeAction::Rerun
+        );
+        assert_eq!(
+            crash_action_for(&opaque, OutputObservation::None, ExternalEffectObservation::None),
+            CrashSafeAction::Frozen
+        );
+
+        // Effect applied/unknown: only idempotent (same key) and queryable
+        // (probe) may proceed; pure and opaque freeze.
+        assert_eq!(
+            crash_action_for(&pure, OutputObservation::None, ExternalEffectObservation::Unknown),
+            CrashSafeAction::Frozen
+        );
+        assert_eq!(
+            crash_action_for(
+                &idem,
+                OutputObservation::None,
+                ExternalEffectObservation::Unknown
+            ),
+            CrashSafeAction::RerunWithKey { key: "k".into() }
+        );
+        assert_eq!(
+            crash_action_for(
+                &query,
+                OutputObservation::None,
+                ExternalEffectObservation::Applied
+            ),
+            CrashSafeAction::ProbeThenResume { probe: "p".into() }
+        );
+
+        // Output emitted/unknown: no class may replay, ever.
+        for class in [&pure, &idem, &query, &opaque] {
+            assert_eq!(
+                crash_action_for(class, OutputObservation::Emitted, ExternalEffectObservation::None),
+                CrashSafeAction::Frozen,
+                "emitted output must freeze every class"
+            );
+            assert_eq!(
+                crash_action_for(class, OutputObservation::Unknown, ExternalEffectObservation::Unknown),
+                CrashSafeAction::Frozen,
+                "unknown output must freeze every class"
+            );
+        }
     }
 }

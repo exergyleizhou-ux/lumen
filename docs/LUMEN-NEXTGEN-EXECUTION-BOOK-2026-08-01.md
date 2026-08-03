@@ -1555,11 +1555,27 @@ pub struct AccountBudgetPolicyV1 {
 exactly-once settlement、usage-unavailable truthfulness、budget state replay 和 raw test counts。它不授权新的
 process recovery、provider reroute 或 child write；这些仍受各自 contract gate 约束。
 
-### NG-03C：GovernedOperation、operation lease、outbox 与 reconciliation
+### NG-03C：GovernedOperation、operation lease、event journal、outbox 与 reconciliation
 
-**状态：** Draft。scheduler 的 task-scoped durable lease、heartbeat、backoff/dead-letter 与
-occurrence journal 是可复用局部基础；workflow 在进程重启后转 terminal，正说明它不是通用可恢复
-operation。`SessionActivitySnapshot` 也只是 unload read model，不能代替 durable event journal。
+**状态：** Implementing。scheduler 的 task-scoped durable lease、heartbeat、backoff/dead-letter 与
+occurrence journal 是可复用局部基础；`GovernedOperationStore`（idempotency 去重、lease 字段、
+foreign-tree 导入拒绝、JSON snapshot 持久化、fail-closed）已存在。workflow 在进程重启后转 terminal，
+正说明它不是通用可恢复 operation。`SessionActivitySnapshot` 也只是 unload read model，不能代替
+durable event journal。
+
+**已实施（本 slice）：**
+- `LifecycleJournal`（xai-grok-memory）：append-only typed authority event（§3.3.2 的
+  `GovernedLifecycleEventV1` 全字段 + 11 kind + 4 source）；sequence 单调/因果父链/终态不可复活/
+  payload hash（NG-00 canonical）四重校验 fail-closed；`derived_state()` 是 K2 读模型（同事件集必得
+  同状态）；JSONL 落盘 round-trip。物理分层（claim/operation/artifact 各自 journal），不是单一巨型日志。
+- `crash_action_for(recovery_class, output_observation, external_effect_observation)`：K4 恢复程序派生
+  函数——输出已发/未知一律不重放；effect applied/unknown 时仅 Idempotent（同 key）与 Queryable
+  （probe）可继续，Pure/Opaque Frozen；取代手写 crash 表。
+
+**未完成（接线）：** LifecycleJournal 接入 `GovernedOperationStore` 与 coordinator spawn/complete
+路径；BudgetLedger 替换 coordinator 分散的 exhausted-set 检查（独立 commit）；outbox 与 state
+transition 的原子落盘（当前 store 为整库 snapshot，不是 event+outbox 原子追加）；Kairos claim/
+heartbeat/complete API。
 
 **目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
 root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以
