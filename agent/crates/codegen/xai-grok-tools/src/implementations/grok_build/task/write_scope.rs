@@ -1,4 +1,4 @@
-//! Root-signed, path-scoped write grant for nested agents.
+//! Root-signed, path-scoped write grant for nested agents (NG-03D / S3).
 //!
 //! This is not a second runtime: SessionActor / coordinator remains authority.
 //! Child tools may only request paths that fall under a live, non-expired,
@@ -6,10 +6,14 @@
 //!
 //! Production path: host injects [`WriteScopeLeaseResource`] into tool
 //! resources; `search_replace` (and other writers) call
-//! [`WriteScopeLease::authorize_write`] before mutating files.
+//! [`WriteScopeLease::authorize_write`] before mutating files. Spawn-time
+//! exclusivity uses [`write_scopes_overlap`] so two live children cannot share
+//! a path prefix. Root handoff produces [`MergeReceiptV1`] — never auto-merge.
 
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::{Deserialize, Serialize};
 
 use crate::register_resource;
 
@@ -163,6 +167,149 @@ fn path_is_under(path: &Path, root: &Path) -> bool {
         return false;
     }
     path == root || path.starts_with(root)
+}
+
+/// Normalize a host-issued write root for overlap comparison.
+///
+/// Rejects empty components and parent-dir escapes. Absolute roots are kept
+/// absolute (after normalize); relative roots stay relative. Callers that
+/// need symlink policy must use [`enforce_write_scope_if_present`] at write
+/// time — spawn-time overlap deliberately uses lexical containment so a
+/// mutable FS cannot flip admission after the host signed the receipt.
+pub fn normalize_write_scope_root(root: &Path) -> Result<PathBuf, WriteScopeDenyReason> {
+    if root.as_os_str().is_empty() {
+        return Err(WriteScopeDenyReason::EmptyGrant);
+    }
+    if path_escapes(root) {
+        return Err(WriteScopeDenyReason::AbsoluteEscape);
+    }
+    let normalized = normalize_rel(root);
+    if normalized.as_os_str().is_empty() {
+        return Err(WriteScopeDenyReason::EmptyGrant);
+    }
+    Ok(normalized)
+}
+
+/// True when two non-empty write-scope root lists share a path (prefix or
+/// equal). Empty lists are the legacy "no narrowing" form and never conflict
+/// via this detector — exclusivity only applies when both sides are explicit.
+///
+/// Examples that overlap: `src` vs `src/lib`, `tests` vs `tests`.
+/// Examples that do not: `src` vs `tests`, empty vs anything.
+pub fn write_scopes_overlap(left: &[PathBuf], right: &[PathBuf]) -> bool {
+    if left.is_empty() || right.is_empty() {
+        return false;
+    }
+    left.iter().any(|left_root| {
+        let Ok(left_norm) = normalize_write_scope_root(left_root) else {
+            // Un-normalizable roots fail closed as "conflicting" so a bad
+            // receipt cannot slip past the spawn gate.
+            return true;
+        };
+        right.iter().any(|right_root| {
+            let Ok(right_norm) = normalize_write_scope_root(right_root) else {
+                return true;
+            };
+            path_is_under(&left_norm, &right_norm) || path_is_under(&right_norm, &left_norm)
+        })
+    })
+}
+
+/// Result of a root-owned worktree/scope handoff (never auto-applied by child).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeApplyResult {
+    Applied,
+    Conflict,
+    Rejected,
+    Cancelled,
+}
+
+/// Root-only merge/handoff receipt. Children may produce patch candidates;
+/// only root (non-empty `root_decision_ref`) may accept an Applied outcome.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergeReceiptV1 {
+    pub write_lease_id: String,
+    pub task_tree_id: String,
+    pub node_id: String,
+    pub observed_base_commit: String,
+    pub expected_base_commit: String,
+    pub changed_path_hashes: Vec<String>,
+    pub apply_result: MergeApplyResult,
+    pub verification_refs: Vec<String>,
+    pub root_decision_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MergeHandoffDenyReason {
+    MissingRootDecision,
+    StaleBase,
+    EmptyChangeSet,
+    LeaseNotActive,
+    ForeignTree,
+}
+
+impl MergeHandoffDenyReason {
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::MissingRootDecision => "merge.missing_root_decision",
+            Self::StaleBase => "merge.stale_base",
+            Self::EmptyChangeSet => "merge.empty_change_set",
+            Self::LeaseNotActive => "merge.lease_not_active",
+            Self::ForeignTree => "merge.foreign_tree",
+        }
+    }
+}
+
+/// Build a handoff receipt from observed worktree state. Fail-closed: stale
+/// base, empty patch, revoked/expired lease, or missing root decision cannot
+/// become Applied. Conflict lists yield Conflict even with a root decision
+/// (root still must re-approve after resolve).
+pub fn evaluate_merge_handoff(
+    lease: &WriteScopeLease,
+    task_tree_id: &str,
+    observed_base_commit: impl Into<String>,
+    expected_base_commit: impl Into<String>,
+    changed_path_hashes: Vec<String>,
+    conflict_paths: &[String],
+    verification_refs: Vec<String>,
+    root_decision_ref: impl Into<String>,
+    now_unix_secs: u64,
+) -> Result<MergeReceiptV1, MergeHandoffDenyReason> {
+    if lease.revoked || now_unix_secs > lease.deadline_unix {
+        return Err(MergeHandoffDenyReason::LeaseNotActive);
+    }
+    if lease.root_tree_id != task_tree_id {
+        return Err(MergeHandoffDenyReason::ForeignTree);
+    }
+    let observed = observed_base_commit.into();
+    let expected = expected_base_commit.into();
+    let root_decision = root_decision_ref.into();
+    if root_decision.trim().is_empty() {
+        return Err(MergeHandoffDenyReason::MissingRootDecision);
+    }
+    if observed != expected {
+        return Err(MergeHandoffDenyReason::StaleBase);
+    }
+    if changed_path_hashes.is_empty() && conflict_paths.is_empty() {
+        return Err(MergeHandoffDenyReason::EmptyChangeSet);
+    }
+    let apply_result = if !conflict_paths.is_empty() {
+        MergeApplyResult::Conflict
+    } else {
+        MergeApplyResult::Applied
+    };
+    Ok(MergeReceiptV1 {
+        write_lease_id: lease.grant_id.clone(),
+        task_tree_id: task_tree_id.to_owned(),
+        node_id: lease.owner_node_id.clone(),
+        observed_base_commit: observed,
+        expected_base_commit: expected,
+        changed_path_hashes,
+        apply_result,
+        verification_refs,
+        root_decision_ref: root_decision,
+    })
 }
 
 /// Host-injected write grant for the current session/node.
@@ -430,6 +577,108 @@ mod tests {
         assert!(
             enforce_write_scope_if_present(&resources, &isolated.join("new.rs"), &workspace,)
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn write_scopes_overlap_parent_child_and_disjoint() {
+        let src = vec![PathBuf::from("src")];
+        let src_lib = vec![PathBuf::from("src/lib")];
+        let tests = vec![PathBuf::from("tests")];
+        assert!(write_scopes_overlap(&src, &src_lib));
+        assert!(write_scopes_overlap(&src_lib, &src));
+        assert!(write_scopes_overlap(&src, &src));
+        assert!(!write_scopes_overlap(&src, &tests));
+        assert!(!write_scopes_overlap(&[], &src));
+        assert!(!write_scopes_overlap(&src, &[]));
+        // Escape roots fail closed as conflicting.
+        assert!(write_scopes_overlap(
+            &[PathBuf::from("../escape")],
+            &[PathBuf::from("src")]
+        ));
+    }
+
+    #[test]
+    fn merge_handoff_requires_root_decision_and_rejects_stale_base() {
+        let lease =
+            WriteScopeLease::issue("lease-1", "tree", "code", vec![PathBuf::from("src")], 60)
+                .unwrap();
+        let now = now_unix();
+        assert_eq!(
+            evaluate_merge_handoff(
+                &lease,
+                "tree",
+                "abc",
+                "abc",
+                vec!["sha256:p1".into()],
+                &[],
+                vec!["verify://1".into()],
+                "",
+                now,
+            )
+            .unwrap_err(),
+            MergeHandoffDenyReason::MissingRootDecision
+        );
+        assert_eq!(
+            evaluate_merge_handoff(
+                &lease,
+                "tree",
+                "stale",
+                "fresh",
+                vec!["sha256:p1".into()],
+                &[],
+                vec![],
+                "root-approve-1",
+                now,
+            )
+            .unwrap_err(),
+            MergeHandoffDenyReason::StaleBase
+        );
+        let applied = evaluate_merge_handoff(
+            &lease,
+            "tree",
+            "base1",
+            "base1",
+            vec!["sha256:file".into()],
+            &[],
+            vec!["evidence://ok".into()],
+            "root-approve-1",
+            now,
+        )
+        .unwrap();
+        assert_eq!(applied.apply_result, MergeApplyResult::Applied);
+        assert_eq!(applied.root_decision_ref, "root-approve-1");
+
+        let conflicted = evaluate_merge_handoff(
+            &lease,
+            "tree",
+            "base1",
+            "base1",
+            vec!["sha256:file".into()],
+            &["src/a.rs".into()],
+            vec![],
+            "root-approve-2",
+            now,
+        )
+        .unwrap();
+        assert_eq!(conflicted.apply_result, MergeApplyResult::Conflict);
+
+        let mut revoked = lease.clone();
+        revoked.revoke();
+        assert_eq!(
+            evaluate_merge_handoff(
+                &revoked,
+                "tree",
+                "base1",
+                "base1",
+                vec!["sha256:file".into()],
+                &[],
+                vec![],
+                "root-approve-3",
+                now,
+            )
+            .unwrap_err(),
+            MergeHandoffDenyReason::LeaseNotActive
         );
     }
 }

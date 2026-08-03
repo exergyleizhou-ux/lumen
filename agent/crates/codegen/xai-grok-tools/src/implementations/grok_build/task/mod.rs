@@ -36,7 +36,9 @@ pub use governed_operation::{
     TreeBudgetLedger,
 };
 pub use write_scope::{
-    WriteScopeDenyReason, WriteScopeLease, WriteScopeLeaseResource, enforce_write_scope_if_present,
+    MergeApplyResult, MergeHandoffDenyReason, MergeReceiptV1, WriteScopeDenyReason,
+    WriteScopeLease, WriteScopeLeaseResource, enforce_write_scope_if_present,
+    evaluate_merge_handoff, normalize_write_scope_root, write_scopes_overlap,
 };
 
 use self::backend::SubagentBackendResource;

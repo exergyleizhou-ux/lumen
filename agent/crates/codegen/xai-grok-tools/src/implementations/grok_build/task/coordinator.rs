@@ -1321,9 +1321,9 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
     }
 
     /// A host-issued non-empty write scope is exclusive while its child is
-    /// pending or active.  We use lexical path containment here deliberately:
-    /// receipt validation rejects parent-directory escapes, and resolving
-    /// symlinks at this layer would make the admission result depend on a
+    /// pending or active. Overlap is [`super::write_scope::write_scopes_overlap`]
+    /// (lexical prefix containment): receipt validation rejects parent-dir
+    /// escapes, and resolving symlinks here would make admission depend on a
     /// mutable filesystem after the host signed it.
     ///
     /// Legacy children and governed receipts with an empty scope retain their
@@ -1346,13 +1346,10 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         .governed_admission
                         .as_ref()
                         .is_some_and(|admission| {
-                            !admission.write_scope_roots.is_empty()
-                                && candidate.write_scope_roots.iter().any(|candidate_root| {
-                                    admission.write_scope_roots.iter().any(|existing_root| {
-                                        candidate_root.starts_with(existing_root)
-                                            || existing_root.starts_with(candidate_root)
-                                    })
-                                })
+                            super::write_scope::write_scopes_overlap(
+                                &candidate.write_scope_roots,
+                                &admission.write_scope_roots,
+                            )
                         })
             })
             .map(|existing| existing.id.clone())

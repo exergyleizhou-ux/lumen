@@ -18,8 +18,10 @@
 
 任何实施者先读 P0，再读 P1；P2 与 P0/P1 冲突时直接弃用。不得为了“沿用计划”覆盖当前代码、把历史测试计数挪作新 HEAD 的绿，或从旧文件恢复已被否决的设计。
 
-### 本轮实施校准（2026-08-03 的审计快照；R0 前必须重新实测）
+### 本轮实施校准（活进度在合同书；本节是历史锚点 + 命令模板）
 
+> **进度源：** 切片状态以 `docs/LUMEN-NEXTGEN-EXECUTION-CONTRACT-2026-08-03.md` 为准（S1–S3 核心已实施）。
+> 下列 SHA/PR/计数是 2026-08-03 审阅开始时的**历史锚点**；与 `git rev-parse HEAD` 不符时立即作废。
 本书不是以旧规划或 implementer 口述来“报绿”。下列值是本次**编辑前的审计锚点**，不是会随本书
 提交自动更新的 source candidate：本次最终审阅开始时本地及 GitHub `sync/absorb-upstream-20260731` 均为
 文档提交 `90e38d7a4d53a47c07c5a00ef9e80a993dc34b0d`，其直接 runtime baseline 是
@@ -1702,9 +1704,12 @@ late-event、cancel/release、Frozen negative matrix，以及 exact-binary start
 
 ### NG-03D：WriteScopeLease、worktree handoff 与 merge receipt
 
-**状态：** Draft；现有 `xai-grok-shell/src/session/worktree.rs` 与 `xai-grok-workspace/src/worktree/mod.rs`
-已经能 create/resume/apply worktree，并在 apply 时基于 base commit 计算文件冲突。这只是工作目录机制，
-不是“哪个树节点在何时可写哪些路径”的 authority；当前并行 child 不能仅靠不同 worktree 被误称为无冲突。
+**状态：** Implementing（S3 核心已接线）。`write_scope::{write_scopes_overlap,WriteScopeLease,
+evaluate_merge_handoff,MergeReceiptV1}` + coordinator spawn 前 overlap 拒绝 + 生产 writer enforce
+已落地；现有 `xai-grok-shell/src/session/worktree.rs` 与 `xai-grok-workspace/src/worktree/mod.rs`
+仍提供 create/resume/apply worktree 与 base-commit 文件冲突，但 **自动** handoff→receipt 与
+dirty-target 全量 fixture 未完成。并行 child 不能仅靠不同 worktree 被误称为无冲突——须 host 签发
+非空 `write_scope_roots` 才会进入 exclusivity gate。
 
 **目标：** 每一个写入 node 只能在 root 签发的、时间有限的、可审计的 write scope 内工作；提交/合并是
 root-owned handoff，不是 child 自行 `git commit/push/merge`。同一 logical scope 的并发写必须在 spawn

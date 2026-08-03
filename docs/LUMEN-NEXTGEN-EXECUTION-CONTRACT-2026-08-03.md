@@ -144,7 +144,7 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | Tool contract（NG-02A） | 40% | 100% | dispatch 全路径强制；secret/artifact redaction 入 journal/UI |
 | Tree budget（NG-03/03B） | 70% | 100% | token 预留额（现 reserve=0）；daily-cost/artifact 限额；legacy exhausted-set 收编 |
 | Operation lease/journal/outbox（NG-03C） | 72% | 100% | S1 schema bridge + S2 outbox 原子快照已落地；待 Kairos API + outbox consumer/reconcile |
-| WriteScope（NG-03D） | 18% | 100% | overlap detector、spawn 前拒绝、root-owned handoff/merge receipt |
+| WriteScope（NG-03D） | 70% | 100% | S3：overlap 纯函数 + spawn 前拒绝 + MergeReceipt 根侧 handoff；待 worktree auto-handoff 接线与 dirty-target fixture |
 | Flow control（NG-03E） | 15% | 100% | bounded queue、DeliveryObservation、backpressure、fair share |
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
@@ -254,17 +254,21 @@ tempfile+rename；`list_outbox()`；legacy v1 裸数组仍可读；future schema
 
 ### S3 — NG-03D：WriteScopeLease v1（并行写防冲突）
 
-**状态：** 待开工（Draft）。前置：S1、S2。现资产：`write_scope.rs`（局部 grant/lease）、
-`xai-grok-shell/src/session/worktree.rs`、`xai-grok-workspace/src/worktree/mod.rs`（base-commit/file-conflict）。
+**状态：** 已实施（核心 gate；不授权自动 merge）。前置：S1、S2。
 **目标：** 每个写入 node 只能在 root 签发、限时、可审计的 write scope 内工作；**spawn 前**拒绝 overlap，
 不是事后让模型猜合并。child 不自行 commit/push/merge。
-**实施顺序：** (1) scope overlap detector（canonicalize、symlink policy、拒绝 `..`/absolute/empty glob）；
-(2) spawn 前 actor 事务同时取 grant + budget reservation + write lease；read-only role 不生成 lease；
-(3) terminal/file tool 只接受 lease 内 canonical path；(4) root 生成 `MergeReceiptV1`
-（base/change path hashes/apply result/approval ref）；stale base/overlap/conflict/dirty target 保持 pending/rejected。
-**反例：** two writers same glob；parent glob vs child file glob；symlink escape；stale base；dirty target；
-child `git commit`；cancel 与 late apply；worktree restore 后 lease owner mismatch。
-**Gate：** `WRITE_SCOPE_GATE=PASS`（overlap property tests + apply conflict fixtures + root-only handoff）。
+**已落地：**
+- `write_scopes_overlap` 纯函数（parent/child 前缀、disjoint、empty=legacy 不冲突、escape fail-closed）
+- coordinator `governed_write_scope_conflict` 调用该纯函数；spawn 真实入口测试
+  `governed_write_scopes_reject_overlap_but_allow_disjoint_live_children`
+- `WriteScopeLease` + `enforce_write_scope_if_present`（symlink 解析、绝对 worktree root）
+- 生产 writer（search_replace/edit/apply_patch 等）经 enforce 拒 scope 外写
+- `MergeReceiptV1` + `evaluate_merge_handoff`：缺 root decision / stale base / empty change /
+  revoked lease fail-closed；conflict 列表 → Conflict，不自动 Applied
+**未接线：** worktree apply 自动生成 receipt 的 host 路径、dirty-target 与 worktree restore 全套 fixture、
+child git commit 硬拒（依赖 shell/git policy 层）。
+**Gate：** `WRITE_SCOPE_GATE=PASS`（本地 overlap + merge handoff + writer enforce + coordinator spawn；
+exact-SHA CI `NOT RUN`）。
 **停止：** 本切片不授权自动 merge/auto commit。
 
 ---
