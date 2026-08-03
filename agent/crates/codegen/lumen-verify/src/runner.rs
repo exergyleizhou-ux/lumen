@@ -8,6 +8,7 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
+use xai_tty_utils::{ProcessGroup, ProcessScope};
 
 const MAX_CAPTURE_BYTES: usize = 256 * 1024;
 
@@ -36,33 +37,53 @@ pub fn run_step(root: &Path, step: &Step, timeout_secs: u64) -> Result<StepResul
         }
     };
 
-    // Execute the exact path we just resolved. Re-resolving the command name
-    // through PATH after the allowlist check would leave a check/use race.
-    let mut command = Command::new(&executable);
-    command
-        .args(&step.args)
-        .current_dir(root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if step.command == "go" {
-        // GOFLAGS may contain `-toolexec`, which would turn a fixed verifier
-        // command into arbitrary command execution inherited from the agent's
-        // environment. Verification intentionally uses its fixed argv only.
-        command.env_remove("GOFLAGS").env("GOTOOLCHAIN", "local");
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
-
-    // macOS can briefly report ETXTBSY when a freshly-created executable
-    // fixture is still being closed by the writer. Retry only that precise
-    // transient error; all other spawn failures remain fail-closed.
+    // Enrollment scope: verification children must be reaped if the host
+    // wedges, matching the workspace `clippy.toml` policy (no unenrolled
+    // `Command::spawn`). The `Arc<ProcessGroup>` must stay alive for the
+    // child's lifetime, so we hold it in `_scope_guard` until after the wait.
+    let scope = ProcessScope::new();
     let mut spawn_attempt = 0;
+    let mut _scope_guard: Option<std::sync::Arc<ProcessGroup>> = None;
     let mut child = loop {
+        // Execute the exact path we just resolved. Re-resolving the command
+        // name through PATH after the allowlist check would leave a
+        // check/use race.
+        let mut command = Command::new(&executable);
+        command
+            .args(&step.args)
+            .current_dir(root)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        if step.command == "go" {
+            // GOFLAGS may contain `-toolexec`, which would turn a fixed
+            // verifier command into arbitrary command execution inherited from
+            // the agent's environment. Verification intentionally uses its
+            // fixed argv only.
+            command.env_remove("GOFLAGS").env("GOTOOLCHAIN", "local");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut group = ProcessGroup::new()
+            .with_context(|| "create verifier process group")?;
+        #[allow(clippy::disallowed_methods)] // attached to the ProcessGroup built above (see clippy.toml)
         match command.spawn() {
-            Ok(child) => break child,
+            Ok(spawned) => {
+                group
+                    .attach_std(&spawned)
+                    .with_context(|| "attach verifier child to process group")?;
+                let group = std::sync::Arc::new(group);
+                if !scope.register(&group) {
+                    // Scope already closed: the child was killed. Fail closed.
+                    return Err(anyhow::anyhow!(
+                        "verifier process scope already closed; child killed"
+                    ));
+                }
+                _scope_guard = Some(group);
+                break spawned;
+            }
             Err(error)
                 if cfg!(unix)
                     && error.raw_os_error() == Some(26)

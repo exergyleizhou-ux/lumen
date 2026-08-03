@@ -5995,9 +5995,11 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "toml",
  "wait-timeout",
  "which",
+ "xai-tty-utils",
 ]
 
 [[package]]
