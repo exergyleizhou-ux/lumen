@@ -28,6 +28,10 @@ pub const SEALED_RECEIPT_SCHEMA_VERSION: u16 = 1;
 /// grants a non-zero budget for a new attempt id.
 pub const DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES: u32 = 1;
 
+/// Bounded store cap (DEBT-005): refuse new records past this instead of
+/// growing the JSON snapshot without limit.
+pub const SEAL_RECORDS_MAX: usize = 4096;
+
 /// Ternary observation: Unknown never permits retry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -134,6 +138,14 @@ fn check_true(
 
 /// Clean pre-attempt seal: nothing ran, safe to start (not a "retry" of a
 /// partial attempt — used for first submission and for true no-start failures).
+///
+/// DEBT-004 semantics: a *clean failure* after the request was dispatched to
+/// the provider still carries `not_attempted: True` in this schema — the
+/// field means "no attempt state was *observed* (no output/tool/effect
+/// evidence)", not "no request was sent". Retry budget is bounded (max 1) so
+/// a clean-sealed resubmit can at most double a request that may have been
+/// billed once; the durable store records the attempt_id so replay is
+/// trackable. Do not reinterpret `not_attempted` as a billing guarantee.
 pub fn clean_preflight_receipt(attempt_id: impl Into<String>) -> SealedAttemptReceiptV1 {
     SealedAttemptReceiptV1 {
         attempt_id: attempt_id.into(),
@@ -294,6 +306,9 @@ impl AttemptSealTracker {
         &self.receipt
     }
 
+    /// Consume the tracker, returning the final sealed receipt. Wired call
+    /// sites use `receipt()`; this exists for durable-store writes that need
+    /// ownership (DEBT-006: previously dead, now used by store writers).
     pub fn into_receipt(self) -> SealedAttemptReceiptV1 {
         self.receipt
     }
@@ -497,6 +512,14 @@ impl SealedAttemptReceiptStore {
                 )));
             }
             return Ok(existing.clone());
+        }
+        // DEBT-005: bounded store — refuse new records past the cap instead
+        // of growing the snapshot without limit (fail-closed; the caller sees
+        // a Persistence error and treats the store as unhealthy).
+        if map.len() >= SEAL_RECORDS_MAX {
+            return Err(SealedReceiptStoreError::Persistence(format!(
+                "sealed receipt store at capacity ({SEAL_RECORDS_MAX} records)"
+            )));
         }
         map.insert(rec.attempt_id.clone(), rec.clone());
         if let Err(error) = self.persist(&map) {

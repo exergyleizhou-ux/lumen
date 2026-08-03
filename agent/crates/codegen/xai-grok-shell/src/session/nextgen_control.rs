@@ -20,6 +20,12 @@ use xai_grok_memory::{
 /// `live_policy_epoch` is bumped when catalog/health/pool policy changes.
 /// Each `issue` stamps `last_advice_policy_epoch`; if live advances past that
 /// stamp the advice is **stale** and P4b admission must deny (S8).
+///
+/// DEBT-007: the *production* epoch write side lives on `ToolContext` atomics
+/// (stamped at the failure-convergence checkpoint in `run_turn_via_sampler`);
+/// this host keeps its own epoch fields for offline host tests only. Do not
+/// write production policy changes through this host — use
+/// `ToolContext::bump_live_policy_epoch` / `record_advice_issued`.
 #[derive(Debug, Clone)]
 pub struct ShadowAdvisorHost {
     pub mode: AdvisorMode,
@@ -157,6 +163,9 @@ pub fn decide_auth_class_retry(
         Err(deny) => AuthClassRetryAction::Terminal {
             reason: deny.code(),
         },
+        // Defensive dead branch (DEBT-010): `authorize_in_process_retry_budget`
+        // only returns Ok(n) with n >= 1 or Err(BudgetExhausted); Ok(0) is
+        // unreachable by construction, kept for total-match coverage.
         Ok(0) => AuthClassRetryAction::Terminal {
             reason: "retry.budget_exhausted",
         },

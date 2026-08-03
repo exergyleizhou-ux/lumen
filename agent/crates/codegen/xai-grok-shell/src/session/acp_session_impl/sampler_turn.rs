@@ -1463,6 +1463,12 @@ impl SessionActor {
                     let info = xai_grok_sampler::SamplingErrorInfo::from(&rich_err);
 
                     // S8: seal observations from streaming capture (fail-closed).
+                    // DEBT-008: `observation_complete` is true because the
+                    // capture is drained by the turn's own await points; the
+                    // failure path reads after the streaming task has stopped
+                    // producing, so no in-flight ToolCallDelta race is
+                    // exploitable here (tool deltas only arrive before a
+                    // Completed signal; 401s occur before the stream starts).
                     let (had_output, had_tool_call, observation_complete) =
                         self.seal_observations_from_streaming_capture();
                     seal.apply_failure_observations(
@@ -1618,7 +1624,10 @@ impl SessionActor {
     /// or any retained segment ended in that phase (INV-11). Observation is
     /// complete when we hold the capture mutex after the stream-drain oneshot
     /// was taken (failure path always takes the oneshot).
-    fn seal_observations_from_streaming_capture(&self) -> (bool, bool, bool) {
+    ///
+    /// DEBT-009: `pub(crate)` so the live integration tests drive this real
+    /// function directly instead of mirror-copying the phase expression.
+    pub(crate) fn seal_observations_from_streaming_capture(&self) -> (bool, bool, bool) {
         use crate::session::acp_session::CapturePhase;
         let cap = self.streaming_turn_capture.lock();
         let had_output = !cap.response_text.is_empty()

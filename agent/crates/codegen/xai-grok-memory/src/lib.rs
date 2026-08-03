@@ -30,6 +30,7 @@ pub mod m1_governed_tree_preview;
 pub mod bounded_assignment_apply;
 pub mod client_advisor_shadow;
 pub mod client_advisor_consult;
+pub mod harness_regression;
 pub mod kairos_supervisor;
 pub mod kairos_lease_consumer;
 pub mod operator_control;
@@ -85,6 +86,10 @@ pub use client_advisor_consult::{
     AdvisorCapsuleDeny, AdvisorContextCapsuleV1, AdvisorRequestKind, AdvisorRequestV1,
     AdvisorUsageReceiptV1, ConsultBlockReason, ConsultOutcome, TokenUsage, build_advisor_capsule,
     build_usage_receipt, consult_timed_out, report_hash,
+};
+pub use harness_regression::{
+    CorpusId, CorpusRunReport, CorpusScenario, HARNESS_CORPUS_SCHEMA_V1, corpus_manifest,
+    run_all_corpora,
 };
 pub use kairos_supervisor::{
     KairosCommand, KairosDeny, KairosSupervisorState, apply_kairos_command,

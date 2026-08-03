@@ -17,7 +17,7 @@ use crate::evidence_loop::{
 use crate::kairos_supervisor::{KairosCommand, KairosSupervisorState, apply_kairos_command};
 use crate::m1_governed_tree_preview::run_m1_governed_tree_preview;
 use crate::sealed_attempt_receipt::{
-    DurableSealAuthority, RetryAdmissionRequest, SEALED_RECEIPT_SCHEMA_VERSION,
+    DurableSealAuthority, RetryAdmissionRequest, RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION,
     SealedAttemptReceiptStore, authorize_in_process_retry_budget, clean_preflight_receipt,
     mark_output_emitted, may_in_process_retry, ordinary_turn_max_retries_with_authority,
 };
@@ -117,6 +117,107 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         already_used_retries: 0,
     };
     assert!(authorize_in_process_retry_budget(&deny_output).is_err());
+    // DEBT-003: the FULL_AUDIT gate now asserts the exact deny reason for all
+    // six required reject paths (pin / pool / breaker / schema / output /
+    // stale advice), not just is_err booleans.
+    let clean = clean_preflight_receipt("gate-clean");
+    let expect_deny = |req: RetryAdmissionRequest<'_>, want: RetryDenyReason| {
+        assert_eq!(
+            authorize_in_process_retry_budget(&req).unwrap_err(),
+            want,
+            "FULL_AUDIT deny reason mismatch"
+        );
+    };
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&clean),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: true,
+            pool_exhausted: false,
+            breaker_open: false,
+            stale_advice: false,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::ModelPinned,
+    );
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&clean),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: false,
+            pool_exhausted: true,
+            breaker_open: false,
+            stale_advice: false,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::PoolExhausted,
+    );
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&clean),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: false,
+            pool_exhausted: false,
+            breaker_open: true,
+            stale_advice: false,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::BreakerOpen,
+    );
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&clean),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: 2,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: false,
+            pool_exhausted: false,
+            breaker_open: false,
+            stale_advice: false,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::SchemaMismatch,
+    );
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&dirty),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: false,
+            pool_exhausted: false,
+            breaker_open: false,
+            stale_advice: false,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::OutputEmitted,
+    );
+    expect_deny(
+        RetryAdmissionRequest {
+            receipt: Some(&clean),
+            durable_authority: DurableSealAuthority::ConfirmedClean,
+            schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            expected_schema_version: SEALED_RECEIPT_SCHEMA_VERSION,
+            model_pinned: false,
+            pool_exhausted: false,
+            breaker_open: false,
+            stale_advice: true,
+            actor_policy_max_retries: 15,
+            already_used_retries: 0,
+        },
+        RetryDenyReason::StaleAdvice,
+    );
     // GROK_MAX_RETRIES cannot reopen: dirty seal + actor 15 → still closed
     assert_eq!(
         ordinary_turn_max_retries_with_authority(
