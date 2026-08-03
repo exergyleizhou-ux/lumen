@@ -91,6 +91,54 @@ pub fn ordinary_sampler_max_retries(receipt: Option<&SealedAttemptReceiptV1>) ->
     ordinary_turn_max_retries(receipt)
 }
 
+/// Escalation guidance appended to terminal sampling failures.
+///
+/// The first failure keeps the transient-blip framing ("resubmit"). Repeated
+/// failures must not read as "stuck": auth failures point at re-login +
+/// `/model`, provider failures point at `/model` or retry later, and a
+/// user-pinned model is called out explicitly because routing deliberately
+/// never overrides a pin (P0-NR-A / S11).
+pub fn failure_escalation_guidance(
+    consecutive_failures: u32,
+    is_auth_failure: bool,
+    status_code: Option<u16>,
+    model_pinned: bool,
+    provider_degraded: bool,
+) -> Option<String> {
+    if consecutive_failures < 2 {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::new();
+    if is_auth_failure {
+        let code = status_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "401".to_string());
+        lines.push(format!(
+            "Repeated auth failure ({} x{consecutive_failures}): this is no longer a transient blip; the credential may be invalid.",
+            code
+        ));
+        lines.push(
+            "Re-authenticate (grok login or /login) and retry, or switch the model with /model."
+                .to_string(),
+        );
+    } else if provider_degraded {
+        lines.push(format!(
+            "Repeated failure (x{consecutive_failures}): the provider may be unavailable; health was recorded."
+        ));
+        lines.push("Switch the model with /model, or retry later.".to_string());
+    } else {
+        lines.push(format!("Repeated failure (x{consecutive_failures})."));
+        lines.push("Switch the model with /model, or retry later.".to_string());
+    }
+    if model_pinned {
+        lines.push(
+            "You manually selected this model, so automatic rerouting is disabled to respect your choice; /model switches immediately."
+                .to_string(),
+        );
+    }
+    Some(lines.join("\n"))
+}
+
 /// Build a fresh attempt seal for a turn id (preflight clean).
 pub fn begin_attempt_seal(attempt_id: impl Into<String>) -> AttemptSealTracker {
     AttemptSealTracker::new(attempt_id)
@@ -145,5 +193,48 @@ mod tests {
             ))),
             0
         );
+    }
+
+    #[test]
+    fn escalation_first_failure_stays_transient() {
+        assert_eq!(
+            failure_escalation_guidance(0, false, None, false, false),
+            None
+        );
+        assert_eq!(
+            failure_escalation_guidance(1, true, Some(401), false, false),
+            None,
+            "first failure keeps the transient-blip framing"
+        );
+    }
+
+    #[test]
+    fn escalation_repeated_auth_guides_relogin_and_model_switch() {
+        let guidance = failure_escalation_guidance(2, true, Some(401), false, false)
+            .expect("second auth failure must escalate");
+        assert!(guidance.contains("401"), "guidance: {guidance}");
+        assert!(guidance.contains("grok login"), "guidance: {guidance}");
+        assert!(guidance.contains("/model"), "guidance: {guidance}");
+        assert!(!guidance.contains("manually selected"));
+    }
+
+    #[test]
+    fn escalation_pinned_model_is_called_out() {
+        let guidance = failure_escalation_guidance(3, true, Some(401), true, false)
+            .expect("must escalate");
+        assert!(
+            guidance.contains("manually selected"),
+            "pin must be visible: {guidance}"
+        );
+        assert!(guidance.contains("/model switches immediately"));
+    }
+
+    #[test]
+    fn escalation_provider_failure_mentions_health() {
+        let guidance = failure_escalation_guidance(2, false, Some(503), false, true)
+            .expect("must escalate");
+        assert!(guidance.contains("provider"), "guidance: {guidance}");
+        assert!(guidance.contains("health was recorded"), "guidance: {guidance}");
+        assert!(!guidance.contains("credential"));
     }
 }

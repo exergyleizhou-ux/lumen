@@ -235,6 +235,11 @@ pub struct ToolContext {
     pub blocking_wait_depth: Arc<BlockingWaitState>,
     pub task_output_token_budget: Option<TaskOutputTokenBudget>,
     pub(crate) sampler_retry_only_before_output: bool,
+    /// Consecutive ordinary-turn sampling failures for the current session
+    /// model. Incremented by `handle_sampling_failure`, reset to zero when a
+    /// sampling response succeeds. Drives failure-escalation guidance so
+    /// repeated failures never read as "stuck".
+    pub(crate) consecutive_sampling_failures: Arc<std::sync::atomic::AtomicU32>,
     /// This session's child-process reaper, set at session spawn; `None` for
     /// contexts without one (subagents, defaults). Spawn sites enroll children
     /// into it; enrolled children are killed when the session closes.
@@ -310,6 +315,9 @@ impl ToolContext {
             task_output_token_budget: None,
             sampler_retry_only_before_output: false,
             process_scope: None,
+            // Consecutive ordinary-turn sampling failures for the current
+            // session model. Reset on any successful sampling response.
+            consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
     pub fn with_preloaded_env(
@@ -356,6 +364,7 @@ impl ToolContext {
             task_output_token_budget: None,
             sampler_retry_only_before_output: false,
             process_scope: None,
+            consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
     pub fn with_file_state_handle(mut self, handle: FileStateHandle) -> Self {
@@ -455,6 +464,7 @@ mod tests {
                 task_output_token_budget: None,
                 sampler_retry_only_before_output: false,
                 process_scope: None,
+                consecutive_sampling_failures: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             }
         }
     }

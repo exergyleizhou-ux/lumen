@@ -1004,6 +1004,13 @@ impl SessionActor {
             .await
             .map(|c| (c.model, c.base_url))
             .unwrap_or_default();
+        // Failure escalation: repeated ordinary-turn failures must never read
+        // as "stuck". The counter resets on the next successful response.
+        let consecutive_failures = self
+            .tool_context
+            .consecutive_sampling_failures
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         let provider_failure_kind = provider_failure_kind_for_sampling_error(&error);
         if let Some(kind) = provider_failure_kind {
             self.models_manager
@@ -1299,6 +1306,25 @@ impl SessionActor {
                 "{detailed_message}\n\nThis request was not automatically resubmitted because no provider-attempt receipt can prove replay is safe. Submit a new task to retry."
             )
         };
+        // Escalation guidance turns repeated identical failures into an
+        // actionable hint instead of a silent wall of the same error.
+        let is_auth_failure = matches!(error.kind, SamplingErrorKind::Auth)
+            || error.status_code == Some(401);
+        let model_pinned = self.models_manager.user_selected_model();
+        let provider_degraded = matches!(
+            self.models_manager.provider_health(&failed_base_url),
+            crate::agent::models::ProviderHealthSnapshot::Degraded { .. }
+        );
+        let detailed_message = match crate::session::nextgen_control::failure_escalation_guidance(
+            consecutive_failures,
+            is_auth_failure,
+            error.status_code,
+            model_pinned,
+            provider_degraded,
+        ) {
+            Some(guidance) => format!("{detailed_message}\n\n{guidance}"),
+            None => detailed_message,
+        };
         self.log_terminal_failure(error_type, error.status_code, &detailed_message);
         self.send_xai_notification(XaiSessionUpdate::RetryState(
             crate::extensions::notification::RetryState::Failed {
@@ -1401,6 +1427,11 @@ impl SessionActor {
                          calls (eventId ordering may be imperfect this turn)"
                     );
                 }
+                // A successful sampling response resets the consecutive-failure
+                // escalation counter for the session model.
+                self.tool_context
+                    .consecutive_sampling_failures
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
                 Ok((Box::new(response), Box::new(metrics)))
             }
             Err(rich_err) => {
