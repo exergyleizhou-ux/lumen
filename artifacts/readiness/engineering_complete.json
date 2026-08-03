@@ -1,28 +1,15 @@
 {
   "schema_version": 1,
   "check_id": "engineering_complete",
-  "version": "2.0.0-alpha.1",
-  "head_short": "4c06ed41",
+  "version": "2.0.0-rc.1",
+  "head_short": "29ae8804",
   "pass": false,
-  "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+  "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
   "auto_blockers": [
-    "binary_tuple_pre:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) ",
-    "binary_tuple_post:exit 1 FAIL: release/installed version mismatch release=lumen 2.0.0-alpha.1 (92a3f6db) installed=lumen 2.0.0-alpha.1 (4c06ed41) ",
-    "source_lock:non-evidence drift after source lock: .gitleaksignore, agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs, agent/crates/codegen/xai-grok-memory/src/harness_regression.rs, \"docs/\\344\\272\\272\\345\\267\\245\\351\\227\\250\\346\\270\\205\\345\\215\\225-2026-08-04.md\"",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:.gitleaksignore,agent/crates/codegen/xai-grok-memory/src/client_advisor_consult.rs,agent/crates/codegen/x",
-    "L5_one_hour_soak:SKIP",
-    "R0_full:SKIP",
-    "L5_long_session:SKIP",
-    "R0_min:SKIP",
-    "L2_min_e2e:SKIP",
-    "L4_fault_cancel:SKIP",
-    "L1_tool_calls:SKIP",
-    "eval_live:SKIP",
-    "L3_multi_tool:SKIP",
-    "L0_connect:SKIP"
+    "release_version_changed:rerun scripts/verify-readiness.sh for 2.0.0-rc.1 at 29ae8804516c1289992820bc5eb737b069566346"
   ],
   "can_tool_call": false,
-  "source_lock_sha256": "a6d81493e6e6057ea7e5c07e301c88cdf1ca73214f7f74dc46aec8efd65e4ce0",
-  "binary_sha256": "46b4b37715493ddee6a810765c31c3d8a9b0269066e3d36dfc17110c74f308ac",
-  "generated_at": "2026-08-03T18:52:56Z"
+  "source_lock_sha256": "f933cbea717e66b6b8ba887fe0c6d4d914959590c2309c328b76ca437dddfa0d",
+  "binary_sha256": null,
+  "generated_at": "2026-08-03T19:31:14Z"
 }
