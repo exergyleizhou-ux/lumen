@@ -1576,14 +1576,21 @@ durable event journal。
 `BudgetLedger` + `GovernedOperationStore` + `LifecycleJournal` 串成一条
 reserve→create→claim→complete/cancel→settle/release→terminal 路径，并覆盖
 ceilings、idempotency、late complete、journal no-revival、crash_action_for
-（P0-NR-A/K4）fail-closed 边。这是接线前的合同证据，**不是** coordinator 全量
-替换完成。
+（P0-NR-A/K4）fail-closed 边。
 
-**未完成（接线）：** LifecycleJournal 接入 coordinator spawn/complete 路径；
-BudgetLedger 替换 coordinator 分散的 exhausted-set 检查（独立 commit；现有
-coordinator 已有等价结构性限额，强替换无新能力且风险高）；outbox 与 state
-transition 的原子落盘（当前 store 为整库 snapshot，不是 event+outbox 原子追加）；
-Kairos claim/heartbeat/complete API。
+**已实施（coordinator 主路径接线，NG-03B/C）：** `SubagentCoordinator` 在
+spawn 前 `BudgetLedger::reserve_spawn`（原子 check-and-reserve），create/claim
+绑定 `ledger:{id}` reservation；finish/cancel 路径 settle/release 恰好一次；
+durable create 失败回滚 reservation 防 slot 泄漏。`TreeAuthorityLog` 作为
+进程内 authority 事件序（per-op no-revival）写入 reserve/claim/terminal/cancel；
+完整 NG-00 disk JSONL `LifecycleJournal` 仍在 memory 层作 offline 合同。
+既有 exhausted-set（token/tool/wall）保留作 usage 后关闭 admission 的补充，
+不与 ledger 结构性限额冲突。
+
+**未完成（接线）：** memory `LifecycleJournal` JSONL 与 coordinator 日志统一；
+outbox 与 state transition 的原子落盘（当前 store 为整库 snapshot）；
+Kairos claim/heartbeat/complete API；token 预留额（现 reserve tokens=0，
+usage 在 settle 时记账）。
 
 **目标：** 给每个 child、terminal、monitor、scheduler fire、workflow run 和未来 Kairos job 一条
 root-owned operation identity。所有 UI/log 是 event projection；恢复、cancel、takeover 与 retry 都以

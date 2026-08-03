@@ -442,6 +442,24 @@ struct Harness {
             std::collections::HashMap<String, crate::implementations::grok_build::task::governed_operation::GovernedOperationStore>,
         >,
     >,
+    /// Shared tree budget ledgers (NG-03B) for reserve/settle probes.
+    tree_budgets: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<
+                String,
+                crate::implementations::grok_build::task::budget::BudgetLedger,
+            >,
+        >,
+    >,
+    /// Shared authority event logs (NG-03C wiring).
+    tree_authority_logs: std::sync::Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<
+                String,
+                crate::implementations::grok_build::task::authority_log::TreeAuthorityLog,
+            >,
+        >,
+    >,
 }
 
 fn harness(wait_before_start: bool, foreground_budget: std::time::Duration) -> Harness {
@@ -480,6 +498,10 @@ fn harness_with_options_and_usage(
     let (started_tx, started) = mpsc::unbounded_channel();
     let tree_operations =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let tree_budgets =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let tree_authority_logs =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let actor = tokio::spawn(
         SubagentCoordinator::with_tree_operations(
             command_rx,
@@ -496,6 +518,8 @@ fn harness_with_options_and_usage(
             },
             config,
             tree_operations.clone(),
+            tree_budgets.clone(),
+            tree_authority_logs.clone(),
         )
         .run(),
     );
@@ -511,6 +535,8 @@ fn harness_with_options_and_usage(
         started,
         actor,
         tree_operations,
+        tree_budgets,
+        tree_authority_logs,
     }
 }
 
@@ -524,6 +550,10 @@ async fn control_stop_precedes_already_queued_model_spawn() {
     let (request_tx, mut requests) = mpsc::unbounded_channel();
     let (started_tx, _started) = mpsc::unbounded_channel();
     let tree_operations =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let tree_budgets =
+        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    let tree_authority_logs =
         std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
     let (result_tx, result_rx) = oneshot::channel();
 
@@ -560,6 +590,8 @@ async fn control_stop_precedes_already_queued_model_spawn() {
             },
             CoordinatorConfig::default(),
             tree_operations,
+            tree_budgets,
+            tree_authority_logs,
         )
         .run(),
     );
@@ -2714,5 +2746,185 @@ async fn teardown_targets_lineage_descendants_and_spares_sibling() {
     let _ = harness.finish.send(());
     assert!(a.await.unwrap().unwrap().success);
     assert!(b.await.unwrap().unwrap().success);
+    harness.actor.abort();
+}
+
+/// NG-03B/C: coordinator spawn path must reserve on BudgetLedger and append
+/// authority events through the real SubagentCoordinator entry point.
+#[tokio::test]
+async fn coordinator_spawn_reserves_budget_and_records_authority_log() {
+    use crate::implementations::grok_build::task::authority_log::AuthorityEventKind;
+
+    let mut harness = harness(false, std::time::Duration::from_secs(60));
+    let spawn = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("budget-child", false)).await }
+    });
+    let observed = harness.requests.recv().await.expect("spawn reached runner");
+    assert_eq!(observed.id, "budget-child");
+
+    // While live: ledger holds the reservation; authority log has reserve+claim.
+    {
+        let budgets = harness.tree_budgets.lock().unwrap();
+        let ledger = budgets
+            .get("parent")
+            .expect("budget ledger created on spawn");
+        assert_eq!(
+            ledger.live_node_count(),
+            1,
+            "live child must occupy one budget slot"
+        );
+        let op = {
+            let map = harness.tree_operations.lock().unwrap();
+            map.get("parent")
+                .unwrap()
+                .get("spawn:budget-child")
+                .expect("op")
+        };
+        let res_raw = op.reservation_id.expect("ledger reservation id on op");
+        assert!(
+            res_raw.starts_with("ledger:"),
+            "reservation must be ledger-backed, got {res_raw}"
+        );
+    }
+    {
+        let logs = harness.tree_authority_logs.lock().unwrap();
+        let log = logs.get("parent").expect("authority log");
+        let kinds: Vec<_> = log
+            .events_for("spawn:budget-child")
+            .into_iter()
+            .map(|e| e.kind)
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                AuthorityEventKind::SpawnReserved,
+                AuthorityEventKind::SpawnClaimed
+            ]
+        );
+    }
+
+    let _ = harness.finish.send(());
+    let result = spawn.await.unwrap().unwrap();
+    assert!(result.success);
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    {
+        let budgets = harness.tree_budgets.lock().unwrap();
+        let ledger = budgets.get("parent").expect("budget ledger");
+        assert_eq!(
+            ledger.live_node_count(),
+            0,
+            "settled child must release live budget slot"
+        );
+    }
+    {
+        let logs = harness.tree_authority_logs.lock().unwrap();
+        let log = logs.get("parent").expect("authority log");
+        assert!(log.is_operation_terminal("spawn:budget-child"));
+        assert_eq!(
+            log.last_kind_for("spawn:budget-child"),
+            Some(AuthorityEventKind::TerminalSucceeded)
+        );
+    }
+    harness.actor.abort();
+}
+
+/// Durable create conflict must roll back the budget reservation so the live
+/// slot is not permanently leaked.
+#[tokio::test]
+async fn coordinator_durable_create_conflict_releases_budget_reservation() {
+    use crate::implementations::grok_build::task::governed_operation::GovernedOperationStore;
+
+    let harness = harness(true, std::time::Duration::from_secs(60));
+    {
+        let mut map = harness.tree_operations.lock().unwrap();
+        let store = map
+            .entry("parent".to_owned())
+            .or_insert_with(|| GovernedOperationStore::for_tree("parent"));
+        store
+            .create(
+                "spawn:rollback-child",
+                "foreign-owner",
+                "child_spawn",
+                "idem:spawn:rollback-child",
+                Some("ledger:seed".into()),
+                None,
+                300,
+            )
+            .expect("seed foreign idempotency claim");
+    }
+
+    let result = harness
+        .backend
+        .spawn(request("rollback-child", false))
+        .await
+        .unwrap();
+    assert!(!result.success);
+    tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+
+    let budgets = harness.tree_budgets.lock().unwrap();
+    // Either no ledger was retained empty, or live count is zero after rollback.
+    if let Some(ledger) = budgets.get("parent") {
+        assert_eq!(
+            ledger.live_node_count(),
+            0,
+            "failed durable create must not leave a live reservation"
+        );
+    }
+    harness.actor.abort();
+}
+
+/// Parent-session cancel must release ledger slots for every cascaded child.
+#[tokio::test]
+async fn coordinator_cancel_releases_budget_ledger_slots() {
+    use crate::implementations::grok_build::task::authority_log::AuthorityEventKind;
+
+    let mut harness = harness(true, std::time::Duration::from_secs(60));
+    let outer = tokio::spawn({
+        let backend = harness.backend.clone();
+        async move { backend.spawn(request("budget-outer", true)).await }
+    });
+    assert_eq!(
+        harness.requests.recv().await.as_ref().map(|r| r.id.as_str()),
+        Some("budget-outer")
+    );
+    let _ = harness.start.send(());
+    assert_eq!(
+        harness.started.recv().await.as_deref(),
+        Some("budget-outer")
+    );
+
+    {
+        let budgets = harness.tree_budgets.lock().unwrap();
+        assert_eq!(budgets.get("parent").unwrap().live_node_count(), 1);
+    }
+
+    assert!(matches!(
+        parent_backend(&harness).cancel_parent_session().await,
+        SubagentCancelOutcome::Cancelled
+    ));
+    assert!(outer.await.unwrap().unwrap().cancelled);
+    tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+
+    {
+        let budgets = harness.tree_budgets.lock().unwrap();
+        assert_eq!(
+            budgets.get("parent").unwrap().live_node_count(),
+            0,
+            "cancel cascade must release ledger reservation"
+        );
+    }
+    {
+        let logs = harness.tree_authority_logs.lock().unwrap();
+        let log = logs.get("parent").expect("log");
+        assert!(
+            matches!(
+                log.last_kind_for("spawn:budget-outer"),
+                Some(AuthorityEventKind::Cancelled) | Some(AuthorityEventKind::TerminalFailed)
+            ),
+            "cancel must terminalize authority log"
+        );
+    }
     harness.actor.abort();
 }

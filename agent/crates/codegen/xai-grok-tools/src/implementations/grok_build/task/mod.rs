@@ -14,6 +14,7 @@
 //! - `SubagentForegroundWait` — host wait-window guard factory (optional)
 //! - `TaskModelValidator` — validates explicit model slugs before spawn
 
+pub mod authority_log;
 pub mod backend;
 pub mod budget;
 pub mod coordinator;
@@ -23,6 +24,12 @@ pub mod governed_operation;
 pub mod types;
 pub mod write_scope;
 
+pub use authority_log::{
+    AuthorityEvent, AuthorityEventKind, AuthorityLogError, TreeAuthorityLog,
+};
+pub use budget::{
+    BudgetDenial, BudgetLedger, ReleaseOutcome, ReservationId, TreeBudgetV1, UsageSettlement,
+};
 pub use governed_operation::{
     ExternalEffectState, GovernedOperation, GovernedOperationState, GovernedOperationStore,
     OperationDenyReason, OutboxDeliveryState, TreeBudgetLedger,

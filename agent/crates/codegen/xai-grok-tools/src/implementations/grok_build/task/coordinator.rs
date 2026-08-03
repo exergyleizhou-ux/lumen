@@ -20,6 +20,10 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 
 use super::HARD_MAX_SUBAGENT_DEPTH;
+use super::authority_log::{AuthorityEventKind, TreeAuthorityLog};
+use super::budget::{
+    BudgetDenial, BudgetLedger, ReleaseOutcome, ReservationId, TreeBudgetV1, UsageSettlement,
+};
 use super::coordinator_state::{
     ActiveChild, BlockingWaiter, BufferedCompletion, ChildRecord, CompletedChild, InternalEvent,
     ListRequest, PendingChild, ProgressFuture, ProgressTarget, ReplyFuture, TaggedFuture,
@@ -115,6 +119,14 @@ pub struct SubagentCoordinator<R: ChildRunner> {
     /// for create/claim/cancel-cascade of child work under each root.
     /// `Arc` so tests can share a probe handle without a second writer path.
     tree_operations: Arc<Mutex<HashMap<String, GovernedOperationStore>>>,
+    /// Per-root atomic budget ledgers (NG-03B). Structural ceilings are
+    /// check-and-reserve here; usage settle/release happens on terminal.
+    /// Shared so tests can probe reservations without a second writer path.
+    tree_budgets: Arc<Mutex<HashMap<String, BudgetLedger>>>,
+    /// Per-root in-process authority event log (NG-03C wiring). Fail-closed
+    /// no-revival trail for spawn/settle/cancel; disk JSONL journal remains
+    /// the memory-crate LifecycleJournal for offline compose evidence.
+    tree_authority_logs: Arc<Mutex<HashMap<String, TreeAuthorityLog>>>,
     /// Optional host-owned durable location.  Test-only and legacy callers
     /// leave this unset; the shell host supplies its task-tree memory root.
     operation_store_dir: Option<PathBuf>,
@@ -166,17 +178,21 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             runner,
             config,
             Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
+            Arc::new(Mutex::new(HashMap::new())),
         )
     }
 
-    /// Construct with a shared tree-operations map (production uses an empty
-    /// private map; tests inject a probe handle).
+    /// Construct with shared durable maps (production uses empty private maps;
+    /// tests inject probe handles for operations, budgets, and authority logs).
     pub fn with_tree_operations(
         commands: mpsc::UnboundedReceiver<SubagentEvent>,
         control_commands: Option<mpsc::UnboundedReceiver<SubagentEvent>>,
         runner: R,
         config: CoordinatorConfig,
         tree_operations: Arc<Mutex<HashMap<String, GovernedOperationStore>>>,
+        tree_budgets: Arc<Mutex<HashMap<String, BudgetLedger>>>,
+        tree_authority_logs: Arc<Mutex<HashMap<String, TreeAuthorityLog>>>,
     ) -> Self {
         let (internal_tx, internal_rx) = mpsc::channel(MAX_INTERNAL_LIFECYCLE_EVENTS);
         Self {
@@ -210,6 +226,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             list_requests: HashMap::new(),
             next_list_request_id: 0,
             tree_operations,
+            tree_budgets,
+            tree_authority_logs,
             operation_store_dir: None,
         }
     }
@@ -243,8 +261,158 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         coordinator
     }
 
-    /// Record a governed child spawn as a durable operation (create + claim).
-    /// Fail-closed: spawn must not proceed without a durable op lease.
+    /// Build the per-tree budget contract from live coordinator config.
+    fn tree_budget_contract(&self) -> TreeBudgetV1 {
+        let max_children = u8::try_from(self.config.max_live_children_per_parent.min(255))
+            .unwrap_or(u8::MAX);
+        let max_live = u16::try_from(MAX_LIVE_SUBAGENTS_PER_TREE.min(u16::MAX as usize))
+            .unwrap_or(u16::MAX);
+        TreeBudgetV1 {
+            max_depth: u8::try_from(HARD_MAX_SUBAGENT_DEPTH.min(u32::from(u8::MAX)))
+                .unwrap_or(u8::MAX),
+            max_children_per_node: max_children.max(1),
+            max_live_nodes: max_live.max(1),
+            max_background_nodes: max_live.max(1),
+            token_reservation_limit: self.config.tree_total_token_budget,
+            tool_call_limit: self
+                .config
+                .tree_tool_call_budget
+                .and_then(|n| u32::try_from(n).ok()),
+            wall_time_limit: self.config.tree_wall_time_budget,
+            daily_cost_limit: None,
+            artifact_byte_limit: None,
+        }
+    }
+
+    fn parse_ledger_reservation(raw: &str) -> Option<ReservationId> {
+        raw.strip_prefix("ledger:")
+            .and_then(|n| n.parse::<u64>().ok())
+            .map(ReservationId)
+    }
+
+    /// Atomic check-and-reserve on the tree budget ledger. Fail-closed.
+    fn reserve_tree_budget(&self, request: &SubagentRequest) -> Result<ReservationId, String> {
+        let root = request.lineage.root_session_id.as_str();
+        let depth = u8::try_from(request.lineage.depth.min(u32::from(u8::MAX))).unwrap_or(u8::MAX);
+        let parent = request.lineage.immediate_parent_session_id.as_str();
+        let mut map = self
+            .tree_budgets
+            .lock()
+            .map_err(|_| "tree budget ledger lock poisoned".to_owned())?;
+        let contract = self.tree_budget_contract();
+        let ledger = map
+            .entry(root.to_owned())
+            .or_insert_with(|| BudgetLedger::new(contract));
+        // Keep contract aligned if host config changed between roots (rare).
+        if ledger.budget() != &self.tree_budget_contract() {
+            // Do not silently rewrite an existing ledger mid-tree; new trees
+            // get the current contract via or_insert_with above.
+        }
+        ledger
+            .reserve_spawn(
+                request.id.as_str(),
+                Some(parent),
+                depth,
+                request.run_in_background,
+                0,
+                0,
+            )
+            .map_err(|denial: BudgetDenial| format!("tree budget reserve denied: {denial}"))
+    }
+
+    fn release_tree_budget(&self, root: &str, reservation: ReservationId) {
+        let Ok(mut map) = self.tree_budgets.lock() else {
+            tracing::error!(root, "tree budget ledger lock poisoned during release");
+            return;
+        };
+        let Some(ledger) = map.get_mut(root) else {
+            return;
+        };
+        match ledger.release(reservation) {
+            ReleaseOutcome::Released | ReleaseOutcome::AlreadyReleased => {}
+            ReleaseOutcome::NotFound => {
+                tracing::warn!(
+                    root,
+                    reservation = reservation.0,
+                    "budget release for unknown reservation (already gone)"
+                );
+            }
+        }
+    }
+
+    fn settle_tree_budget(
+        &self,
+        root: &str,
+        reservation: ReservationId,
+        result: &SubagentResult,
+    ) {
+        let Ok(mut map) = self.tree_budgets.lock() else {
+            tracing::error!(root, "tree budget ledger lock poisoned during settle");
+            return;
+        };
+        let Some(ledger) = map.get_mut(root) else {
+            return;
+        };
+        let tokens = if result.output_usage_incomplete {
+            None
+        } else {
+            Some(result.total_tokens_used)
+        };
+        let tools = if result.output_usage_incomplete {
+            None
+        } else {
+            Some(result.tool_calls)
+        };
+        match ledger.settle_usage(reservation, tokens, tools) {
+            UsageSettlement::Applied
+            | UsageSettlement::AlreadySettled
+            | UsageSettlement::UnknownUsageNotDebited => {}
+            UsageSettlement::NotFound => {
+                tracing::warn!(
+                    root,
+                    reservation = reservation.0,
+                    "budget settle for unknown/released reservation"
+                );
+            }
+        }
+        // Release after settle so the live node detaches.
+        let _ = ledger.release(reservation);
+    }
+
+    fn append_authority_event(
+        &self,
+        root: &str,
+        node_id: &str,
+        operation_id: &str,
+        kind: AuthorityEventKind,
+        reservation_id: Option<String>,
+    ) {
+        let Ok(mut map) = self.tree_authority_logs.lock() else {
+            tracing::error!(root, "authority log lock poisoned");
+            return;
+        };
+        let log = map.entry(root.to_owned()).or_default();
+        // Cascade cancel + finish_child both try to terminalize; the second is
+        // an expected no-op, not an authority breach.
+        if log.is_operation_terminal(operation_id) {
+            return;
+        }
+        if let Err(error) = log.append(node_id, operation_id, kind, reservation_id) {
+            // Never invent revival; log loudly. Terminal child result handling
+            // still goes through durable store fail-closed paths.
+            tracing::error!(
+                root,
+                node_id,
+                operation_id,
+                %error,
+                "authority log refused event"
+            );
+        }
+    }
+
+    /// Record a governed child spawn as a durable operation (create + claim)
+    /// after an atomic budget reservation. Fail-closed: spawn must not
+    /// proceed without both a ledger reservation and a durable op lease.
     fn record_spawn_operation(&self, request: &SubagentRequest) -> Result<(), String> {
         let root = request.lineage.root_session_id.clone();
         let parent_op = if request.lineage.depth > 1 {
@@ -256,7 +424,17 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             None
         };
         let op_id = format!("spawn:{}", request.id);
-        let reservation = format!("budget:{}", request.id);
+        // 1) Atomic budget reserve first so structural ceilings cannot race.
+        let reservation_id = self.reserve_tree_budget(request)?;
+        let reservation = format!("ledger:{}", reservation_id.0);
+        self.append_authority_event(
+            &root,
+            &request.id,
+            &op_id,
+            AuthorityEventKind::SpawnReserved,
+            Some(reservation.clone()),
+        );
+
         let mut map = self
             .tree_operations
             .lock()
@@ -279,26 +457,37 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .join(format!("{encoded_root}.json")),
             )
         });
-        store
-            .create(
-                op_id.clone(),
-                request.lineage.immediate_parent_session_id.clone(),
-                "child_spawn",
-                format!("idem:spawn:{}", request.id),
-                Some(reservation),
-                parent_op,
-                300,
-            )
-            .map_err(|e| format!("durable spawn create failed: {e}"))?;
+        if let Err(e) = store.create(
+            op_id.clone(),
+            request.lineage.immediate_parent_session_id.clone(),
+            "child_spawn",
+            format!("idem:spawn:{}", request.id),
+            Some(reservation.clone()),
+            parent_op,
+            300,
+        ) {
+            // Roll back the reservation so a failed durable create cannot
+            // permanently consume a live-node slot.
+            self.release_tree_budget(&root, reservation_id);
+            return Err(format!("durable spawn create failed: {e}"));
+        }
         let lease = format!("lease:{}", request.id);
-        store
-            .claim(
-                &op_id,
-                &request.lineage.immediate_parent_session_id,
-                lease,
-                300,
-            )
-            .map_err(|e| format!("durable spawn claim failed: {e}"))?;
+        if let Err(e) = store.claim(
+            &op_id,
+            &request.lineage.immediate_parent_session_id,
+            lease,
+            300,
+        ) {
+            self.release_tree_budget(&root, reservation_id);
+            return Err(format!("durable spawn claim failed: {e}"));
+        }
+        self.append_authority_event(
+            &root,
+            &request.id,
+            &op_id,
+            AuthorityEventKind::SpawnClaimed,
+            Some(reservation),
+        );
         Ok(())
     }
 
@@ -322,17 +511,24 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let store = map.get(root).ok_or_else(|| {
             format!("durable settle missing store for root {root} (op {op_id}); fail-closed")
         })?;
+        let reservation_raw = store
+            .get(&op_id)
+            .ok()
+            .and_then(|op| op.reservation_id.clone());
+        let ledger_res = reservation_raw
+            .as_deref()
+            .and_then(Self::parse_ledger_reservation);
         // Cascade cancel may already have terminalized the op. Treat Cancelled
         // as an expected settle for a cancelled child; other terminal states on
         // a successful child are a durable authority failure.
-        if result.success && !result.cancelled {
+        let settle_result = if result.success && !result.cancelled {
             match store.complete(
                 &op_id,
                 owner,
                 &lease,
                 format!("receipt://child_complete:{}", request.id),
             ) {
-                Ok(_) => Ok(()),
+                Ok(_) => Ok(AuthorityEventKind::TerminalSucceeded),
                 Err(e) => {
                     // Already cancelled by cascade while child reported success:
                     // still fail-closed so host does not treat work as durable-ok.
@@ -349,7 +545,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     request.id, result.cancelled
                 ),
             ) {
-                Ok(_) => Ok(()),
+                Ok(_) => Ok(if result.cancelled {
+                    AuthorityEventKind::Cancelled
+                } else {
+                    AuthorityEventKind::TerminalFailed
+                }),
                 Err(e)
                     if e.code() == "op.cancelled" || e.code() == "op.late_event_after_terminal" =>
                 {
@@ -359,9 +559,34 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                         reason = %e,
                         "durable fail settle observed post-cascade terminal; ok"
                     );
-                    Ok(())
+                    Ok(AuthorityEventKind::Cancelled)
                 }
                 Err(e) => Err(format!("durable fail settle failed for {op_id}: {e}")),
+            }
+        };
+        // Drop the operations lock before touching budget/authority maps.
+        drop(map);
+        match settle_result {
+            Ok(kind) => {
+                if let Some(res) = ledger_res {
+                    self.settle_tree_budget(root, res, result);
+                }
+                self.append_authority_event(
+                    root,
+                    &request.id,
+                    &op_id,
+                    kind,
+                    reservation_raw,
+                );
+                Ok(())
+            }
+            Err(e) => {
+                // Even on durable failure, release the reservation so the tree
+                // does not leak live-node slots forever.
+                if let Some(res) = ledger_res {
+                    self.release_tree_budget(root, res);
+                }
+                Err(e)
             }
         }
     }
@@ -1633,6 +1858,11 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         }
         self.spawn_blocked_sessions
             .insert(root_session_id.to_owned());
+        if let Ok(mut map) = self.tree_budgets.lock()
+            && let Some(ledger) = map.get_mut(root_session_id)
+        {
+            ledger.expire_tree();
+        }
         for child in self.active.values() {
             if child.request.lineage.root_session_id == root_session_id {
                 child.cancellation.cancel();
@@ -1721,6 +1951,7 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     .collect()
             })
             .unwrap_or_default();
+        let mut released_reservations: Vec<(String, Option<String>)> = Vec::new();
         if let Some(store) = map.get(root_session_id) {
             let targets = if root_ops.is_empty() {
                 store
@@ -1733,7 +1964,12 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
             };
             for op_id in targets {
                 match store.cancel_cascade_from_root(root_session_id, &op_id) {
-                    Ok(_) => {}
+                    Ok(ops) => {
+                        for op in ops {
+                            released_reservations
+                                .push((op.operation_id.clone(), op.reservation_id.clone()));
+                        }
+                    }
                     Err(e) => {
                         // Do not hide authority failures: operator/host must see
                         // lease/budget cascade denials in logs.
@@ -1746,6 +1982,27 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
                     }
                 }
             }
+        }
+        drop(map);
+        // Mirror store budget_released into the atomic ledger + authority log.
+        for (op_id, reservation_raw) in released_reservations {
+            if let Some(res) = reservation_raw
+                .as_deref()
+                .and_then(Self::parse_ledger_reservation)
+            {
+                self.release_tree_budget(root_session_id, res);
+            }
+            let node_id = op_id
+                .strip_prefix("spawn:")
+                .unwrap_or(op_id.as_str())
+                .to_owned();
+            self.append_authority_event(
+                root_session_id,
+                &node_id,
+                &op_id,
+                AuthorityEventKind::Cancelled,
+                reservation_raw,
+            );
         }
     }
 
