@@ -13429,6 +13429,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "unicode-normalization",
  "windows 0.61.3",
  "xai-grok-auth",
  "xai-grok-config-types",
