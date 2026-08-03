@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-03T18:00:45Z",
+  "generated_at": "2026-08-03T18:09:55Z",
   "monorepo": {
-    "git_head": "945d505a4bf7bb3d7a0d4e086ba6c4f27cab89c9",
-    "git_short": "945d505"
+    "git_head": "4c06ed41bf373b7de433eea1998c156e0901d40a",
+    "git_short": "4c06ed4"
   },
   "lumen_version": "2.0.0-alpha.1",
   "upstream_pin": {
@@ -17,7 +17,7 @@
     "policy": "Current NextGen execution contract; historical plans are not authority"
   },
   "critical_file_sha256": {
-    ".gitleaksignore": "d2b1257151853b8d5a25ed564112629b48ac51d3db6ba0bfe0ff57b1ab997861",
+    ".gitleaksignore": "b748fb449ef6ef33034ac46f5f72340596da0cf3487981959415374756891cb2",
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs": "88cd1e135a41399eac5d7c108e0439b56af9a8b429dbe861ea73179ede9ac309",
     "agent/crates/codegen/xai-grok-models/default_models.json": "802f23626f08a7519b28792425a72ea9955eafefea989a8c5113a860b99a4c0c",
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "9ee2b7b84982dfa4f31186f24abc721db60940fc9bd91126624c30724165a147"
+  "aggregate_critical_sha256": "ad00560960f68a477d4f531bd76a7495a558f9c3504eb8cfd3b0dfbb24bd325b"
 }
