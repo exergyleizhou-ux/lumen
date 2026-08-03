@@ -413,6 +413,36 @@ impl HistorySearchState {
         let _ = self.daemon.tx.send(Msg::SetQuery(query.to_string()));
     }
 
+    /// Test-only: open the overlay with pre-seeded results, bypassing the
+    /// background matcher thread entirely (mirrors
+    /// `FuzzyFileMatcherDaemon::set_test_state`). No message is sent to the
+    /// daemon, so nothing can race the seeded snapshot; `poll()` observes the
+    /// seeded generation (1) against `last_gen` (0) and delivers exactly once.
+    #[cfg(test)]
+    pub(crate) fn activate_with_seeded_results(
+        &mut self,
+        history: &[HistoryEntry],
+        current_text: &str,
+        results: Vec<HistoryMatchResult>,
+    ) {
+        self.active = true;
+        self.browse = false;
+        self.saved_text = current_text.to_string();
+        self.stick_to_bottom = true;
+        self.last_query.clear();
+        {
+            let mut shared = self.daemon.shared.lock().unwrap();
+            shared.generation = 1;
+            shared.items = Arc::from(results);
+        }
+        self.snapshot = self.daemon.shared.lock().unwrap().clone();
+        // `last_gen` stays 0 so the first `poll()` observes a change and
+        // delivers the seeded snapshot (UI state machine, no wall clock).
+        self.last_gen = 0;
+        self.selected = self.snapshot.items.len().saturating_sub(1);
+        let _ = history;
+    }
+
     /// Poll for new results from the daemon. Returns `true` if changed.
     /// Call on every tick while the overlay is active.
     pub fn poll(&mut self) -> bool {

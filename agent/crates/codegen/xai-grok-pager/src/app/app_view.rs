@@ -6140,6 +6140,8 @@ pub(crate) mod tests {
     }
     #[test]
     fn needs_animation_gates_prompt_history_tick_delivery() {
+        use crate::views::history_search::HistoryMatchResult;
+
         let mut app = test_app_with_agent();
         let id = super::super::agent::AgentId(0);
         assert!(
@@ -6150,19 +6152,34 @@ pub(crate) mod tests {
             let agent = app.agents.get_mut(&id).unwrap();
             agent.session.prompt_history = vec!["first prompt".into(), "second prompt".into()];
             let history = agent.combined_prompt_history();
-            agent.prompt.history_search.activate(&history, "");
+            agent.prompt.history_search.activate_with_seeded_results(
+                &history,
+                "",
+                vec![
+                    HistoryMatchResult {
+                        text: "first prompt".into(),
+                        indices: vec![],
+                    },
+                    HistoryMatchResult {
+                        text: "second prompt".into(),
+                        indices: vec![],
+                    },
+                ],
+            );
         }
         assert!(
             app.needs_animation(),
             "an open prompt history overlay must request animation ticks"
         );
+        // Delivery is driven by the seeded snapshot through the same
+        // `tick()`/`poll()` state machine the production loop uses — no
+        // dependence on the background matcher thread's scheduling.
         let mut delivered = false;
-        for _ in 0..1000 {
+        for _ in 0..10 {
             if app.tick() && app.agents[&id].prompt.history_search.result_count() == 2 {
                 delivered = true;
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_millis(1));
         }
         assert!(
             delivered,
