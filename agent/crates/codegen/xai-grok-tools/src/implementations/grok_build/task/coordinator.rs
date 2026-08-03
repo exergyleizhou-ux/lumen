@@ -303,11 +303,8 @@ impl<R: ChildRunner> SubagentCoordinator<R> {
         let ledger = map
             .entry(root.to_owned())
             .or_insert_with(|| BudgetLedger::new(contract));
-        // Keep contract aligned if host config changed between roots (rare).
-        if ledger.budget() != &self.tree_budget_contract() {
-            // Do not silently rewrite an existing ledger mid-tree; new trees
-            // get the current contract via or_insert_with above.
-        }
+        // Existing trees keep the contract they were created with; only new
+        // roots pick up the latest host config via or_insert_with above.
         ledger
             .reserve_spawn(
                 request.id.as_str(),
