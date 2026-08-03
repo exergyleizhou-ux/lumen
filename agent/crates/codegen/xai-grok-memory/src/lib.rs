@@ -43,6 +43,7 @@ pub mod search;
 pub mod storage;
 pub mod task_ledger;
 pub mod text_utils;
+pub mod tool_contract;
 pub mod watcher;
 
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
