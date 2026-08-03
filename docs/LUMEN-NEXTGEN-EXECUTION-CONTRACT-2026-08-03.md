@@ -149,7 +149,7 @@ git log --oneline -6                            # 最新应到 bc64ea36（eviden
 | WorkingLedger/claim（NG-04） | 60% | 100% | 全入口强制 accepted-only；rebase/conflict 语义 |
 | ContextManifest（NG-04C） | 60% | 100% | 全入口 enforce；压缩/恢复重建 hash 一致 |
 | derived_from（NG-04A） | 60% | 100% | 全图 enforcement（revoke 传播到消费方） |
-| Sandbox（NG-04D） | 15% | 100% | AgentSandboxV1 统一签发；handoff packet；consumer enforcement |
+| Sandbox（NG-04D） | 45% | 100% | S5 schema+accepted-only 已落地；待 handoff packet + consumer enforcement |
 | Evidence loop（NG-04E） | 15% | 100% | Node/Tree/Supervisor reducer；收敛/stop/escalate 合同 |
 | 模型选择/Expert（NG-05） | 40% | 100% | P4b 唯一允许路线；provider health + no-replay failover 全审计 |
 | Advisor（NG-06/06A） | 25% | 100% | ClientAdvisor virtual tool；shadow→受限咨询；usage receipt |
@@ -290,15 +290,21 @@ two-tree fairness、shutdown drain。
 
 ### S5 — NG-04D-1/2：AgentSandboxV1 schema + accepted-only 能力
 
-**状态：** 待开工（Draft）。前置：S1。
+**状态：** 已实施（schema + accepted-only 授权；未做 handoff/consumer enforcement = NG-04D-3/4）。
+前置：S1。
 **目标：** `AgentSandboxV1` DTO（canonical hash、expiry/revoke reason）；每节点只能读 AcceptedSnapshot、
 写自己 branch 的 Proposed；sibling/foreign/scope 外一律拒绝（INV-6）。
-**允许路径：** `xai-grok-memory/src/{context_manifest,governed_assignment,task_ledger}.rs`、
-`xai-grok-tools/.../task/{types,coordinator,write_scope}.rs`、`xai-grok-shell/src/agent/subagent/*`。
-**禁止：** caller 提供 parent/depth/permission/bypass；顺手重构 workspace/global memory。
-**必测：** two siblings 同 snapshot 异 scratch；root 接受后 child rebase 才可见；handoff
-foreign/stale/malformed/oversize/secret 全拒；depth-3 leaf 不能 spawn/write/network/bypass。
-**Gate：** `SANDBOX_SCHEMA_GATE=PASS` + `SANDBOX_MEMORY_GATE=PASS`。
+**已落地（`xai-grok-memory/src/agent_sandbox.rs`）：**
+- `AgentSandboxV1` + `IssueSandboxRequest`；canonical `sandbox_hash`；默认
+  `HarnessPolicyOnly`；`OsSandboxVerified` 自签拒绝
+- 能力：`ReadAcceptedSnapshot` / `ProposeOwnBranch` / root-only `RootResolve`
+- leaf depth=3：`may_spawn=false`、write/network denied
+- `authorize_*` 纯函数：sibling scratch 恒拒、cross-branch propose 拒、foreign/stale snapshot 拒、
+  expire/revoke/freeze、bypass token 拒
+- 真实 `WorkingMemoryLedger::accepted_snapshot` 绑定双 sibling + rebase 测试
+**未接线：** shell admission 注入 sandbox 到每个 child、HandoffPacket（NG-04D-3）、tool dispatch
+enforcement（NG-04D-4）。
+**Gate：** `SANDBOX_SCHEMA_GATE=PASS` + `SANDBOX_MEMORY_GATE=PASS`（本地 lib tests；CI `NOT RUN`）。
 
 ---
 

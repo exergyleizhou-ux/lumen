@@ -22,6 +22,7 @@
 //! `GROK_MEMORY=1` environment variable. When disabled, this crate
 //! is not initialized by the host.
 
+pub mod agent_sandbox;
 pub mod archive;
 pub mod authority_event;
 pub mod authority_projection;
@@ -50,6 +51,11 @@ pub mod text_utils;
 pub mod tool_contract;
 pub mod watcher;
 
+pub use agent_sandbox::{
+    AgentSandboxState, AgentSandboxV1, FilesystemWriteMode, IssueSandboxRequest, MemoryCapability,
+    NetworkMode, SANDBOX_HARD_MAX_DEPTH, SandboxAssuranceV1, SandboxDenyReason,
+    AGENT_SANDBOX_SCHEMA_VERSION,
+};
 pub use backend::{EndpointScopedCredentials, MemoryBackendImpl, MemoryBackendParams};
 pub use claim_authority::{
     ClaimAuthority, ClaimAuthorityActor, ClaimDenyReason, ClaimTransitionRequest,

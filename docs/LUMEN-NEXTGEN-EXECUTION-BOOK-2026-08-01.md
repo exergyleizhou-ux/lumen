@@ -2071,9 +2071,11 @@ cargo check -p xai-grok-shell
 
 ### NG-04D：AgentSandbox 与 bounded branch handoff
 
-**状态：** Draft。`8b74b361` 已有 lineage、grant/manifest/operation/write-scope 的局部 building blocks，
-但它们尚未作为一个统一、可撤销的 per-agent sandbox 被签发和在所有 consumer 强制。当前不同 child 的
-context、scratch、handoff、tool/process ingress 和 rebase 语义仍不能被宣称完整闭合。
+**状态：** Implementing（NG-04D-1/2 / S5 已落地 schema + accepted-only 授权）。
+`xai-grok-memory::agent_sandbox::AgentSandboxV1` 提供 actor-issued DTO、canonical hash、
+ReadAcceptedSnapshot/ProposeOwnBranch、sibling 隔离、leaf deny、rebase。lineage/grant/manifest/
+write-scope 等 building blocks 仍在；**尚未**在所有 consumer 强制（NG-04D-3/4 handoff + tool/process
+enforcement）。不同 child 的 handoff/tool ingress 仍不能宣称完整闭合。
 
 **唯一 owner：** SessionActor。coordinator 可验证/投影；ToolRegistry、shell、worktree、workflow 和
 Kairos 只能消费 sandbox ref，不能自己构造或扩大它。
