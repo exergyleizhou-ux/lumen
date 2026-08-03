@@ -292,6 +292,13 @@ pub enum OperationClass {
 }
 ~~~
 
+**效果恢复类（K4，NG-03C 增补；已实施 `EffectRecoveryClass`）：** `OperationClass` 只表达"多严重"，
+不表达"崩溃后怎么恢复"。恢复程序由**外部世界的能力**决定，派生自 `EffectRecoveryClass`：
+`Pure`（重跑）/ `Idempotent{key}`（带同 key 重跑）/ `Queryable{probe}`（先 probe 再 resume 或重跑）/
+`Opaque`（唯一安全动作 `Frozen`，无人值守不授予 permit）。`Frozen` 率上界 = `Opaque` 比例（设计时可算，
+不靠 soak）。补偿只有自身为 `Idempotent`/`Queryable` 且带 receipt 才算补偿；`Opaque` 的"补偿"不是补偿。
+`ReversibleWrite` 是 K1（scope）与 K4（可撤销）的合成，后续拆解。
+
 **硬语义：**
 
 1. `PromptAccepted` 之前必须存在 immutable assignment、grant、policy、budget 和 context snapshot；
@@ -1871,6 +1878,7 @@ journal 能从 append-only authority 重建同一 accepted-set hash；不一致�
 | 切片 | 只实现什么 | 先读/允许触点 | 必须否证 | 退出收据 |
 |---|---|---|---|---|
 | `NG-04A ClaimJournal` | canonical `MemoryClaimV1` append、sequence/hash link、schema/reason code、read-only replay | `xai-grok-memory/src/task_ledger.rs` 及现有 tail-repair tests | foreign tree、duplicate sequence、unknown schema、middle corruption、content hash mismatch | `CLAIM_JOURNAL_GATE=PASS`：fixture journal → index → same end hash。 |
+| `NG-04A derived_from`（**已实施**：schema 字段 + 存在性/同 tree 校验 + JTMS 式失效传播纯函数 + 无环检测） | `derived_from: Option<FactId>` 单跳来源；撤销后果集由 justification 图传播确定（间接 consumer 不遗漏、无关分支不动）；环成员无稳定标定一律 `Frozen`；child 只能收窄不能扩展；legacy 记录无字段解码为 None | `task_ledger.rs`、claim_authority | dangling/foreign source、5 层链撤销、交叉引用环、double-settle | `DERIVED_FROM_GATE=PASS`：5 层链 + 环 fixture 的精确 affected 集与 cycles 断言 |
 | `NG-04B ClaimAuthority` | actor-owned transition validator、root-only accept/reject/supersede/revoke、evidence binding | ledger review port、`VerifyAfterEditOutcome`、artifact/provenance paths | child direct Accepted、empty evidence、Advisor/daemon/UI acceptance、cancelled/stale grant、auto-merge | `CLAIM_AUTHORITY_GATE=PASS`：每条合法/非法转移都有 raw test counts。 |
 | `NG-04C-1 AcceptedSnapshot` | deterministic selected accepted set、snapshot revision/end hash、scope redaction、legacy freeze | ledger read model、tree lineage/grant source | sibling Proposed、revoked/superseded claim、foreign artifact、secret/path leak、snapshot drift | `ACCEPTED_SNAPSHOT_GATE=PASS`：同 input same hash；冲突/缺链 Frozen。 |
 | `NG-04C-2 ContextManifest` | 以下 manifest builder/renderer、spawn/compact/resume admission | `NG-01` coordinator lineage、NG-04A-C-1 snapshot、shell child/summary seams | forged parent/grant/budget/hash、tamper、legacy automatic re-admit、raw-chat fallback | `CONTEXT_MANIFEST_GATE=PASS`：actor + rebuilt-binary offline proof。 |
@@ -2057,6 +2065,11 @@ receipt 的 proposal 后，child 只在明确 rebase 后看到新 snapshot。输
 `0 tests matched`、mock-only UI 或绕过 SessionActor 的 projection 都是 FAIL。M1 通过只说明基础产品可见，
 绝不说明三层写入、自动化、OS sandbox 认证或 24h daemon 可用。
 
+**M1 receipt 的 deny 机制归属（防证据挪用）：** 每条 deny 必须显式记录它由哪个机制产生——
+`deny_mechanism: CapabilityCeiling | ToolFilter | SandboxEnforcement | LineageDepth`。M1 不依赖 NG-04D-4
+（consumer enforcement），所以 grandchild 的 write/network/spawn deny 实际来自 NG-02 ceiling 与现有 tool
+filter，**不得**被后续当作 `SANDBOX_ENFORCEMENT_GATE` 的部分证据。该字段零成本，防的是几个月后证据挪用。
+
 ### NG-04E：Governed Evidence Loop 与收敛合同
 
 **状态：** Draft。现有 Expert repair、workflow、verification 与 operation state 各自能循环/重试，但没有一份
@@ -2078,6 +2091,12 @@ checkpoint transition，并保证树级冲突、取消、预算和 delivery unce
 | escalation | scope、budget、model、write lease、snapshot stale、连续 no-progress 进入 `NeedsParentDecision`。 |
 | uncertainty | 可判定但未完成 reconcile 进入 `RecoveryRequired`；queue/effect/lease/manifest/owner 任一不确定进入 `Frozen`，不可自动 retry。 |
 | fairness | actor 按 tree/node 限制 active iterations、tool calls、artifact bytes、queue share，避免一个分支饿死同树其它分支。 |
+
+**保守细化（NG-04E 增补）：** obligation 是规约、agent 工作是实现；细化必须是**保守的规约细化**——
+父义务永不离开义务集，子义务是策略（strategy）不是替代（replacement），父义务的 discharge 仍需其自身
+predicate 被宿主判定为真。`approved_refinement_limit` 只是资源限制（防无限拆分耗预算），不是安全机制。
+`Progress` 不是 claim（已实施：accepted 视图排除 Progress kind，永不注入模型输入）；`confidence` 不驱动任何
+决策分支（已实施：不再渲染进 child prompt），禁止新 consumer。
 
 **实现顺序：** (1) 分别实现 Node/Tree/Supervisor 三个 pure reducer + typed fake event source；(2) 先持久化
 `EffectIntent` 与 preimage/compensation readiness，再允许 node checkpoint 绑定 operation/ledger receipts；(3) root

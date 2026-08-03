@@ -31,6 +31,7 @@ pub mod claim_authority;
 pub mod context_manifest;
 pub mod dream;
 pub mod dream_lock;
+pub mod effect_recovery;
 pub mod embedding;
 pub mod governed_assignment;
 pub mod governed_operation;

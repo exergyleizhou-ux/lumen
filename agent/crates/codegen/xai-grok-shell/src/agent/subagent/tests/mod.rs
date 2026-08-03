@@ -138,6 +138,7 @@ fn shared_working_memory_renderer_uses_only_root_accepted_facts() {
         confidence: 90,
         state: WorkingMemoryState::Proposed,
         text: text.to_owned(),
+        derived_from: None,
     };
     ledger.propose(proposed(1, "unreviewed claim")).unwrap();
     assert!(render_task_tree_working_memory(&ledger).unwrap().is_none());
@@ -176,6 +177,7 @@ fn shared_working_memory_renderer_refuses_torn_ledger_tail() {
             confidence: 90,
             state: WorkingMemoryState::Proposed,
             text: "valid before power loss".to_owned(),
+            derived_from: None,
         })
         .unwrap();
     std::fs::OpenOptions::new()

@@ -78,6 +78,13 @@ pub struct WorkingMemoryFact {
     pub confidence: u8,
     pub state: WorkingMemoryState,
     pub text: String,
+    /// Direct source fact in the SAME tree this claim is derived from, when
+    /// the author claims a derivation. Propagation of revocation follows this
+    /// edge (JTMS-style); the graph must stay acyclic and `derived_from` may
+    /// only ever be narrowed by a child — it is never extensible by the
+    /// author after proposal.
+    #[serde(default)]
+    pub derived_from: Option<String>,
 }
 
 impl WorkingMemoryFact {
@@ -98,6 +105,15 @@ impl WorkingMemoryFact {
         if self.confidence > 100 {
             return Err(WorkingMemoryLedgerError::Invalid(
                 "confidence must be in 0..=100".to_owned(),
+            ));
+        }
+        if self
+            .derived_from
+            .as_deref()
+            .is_some_and(|source| source.trim().is_empty())
+        {
+            return Err(WorkingMemoryLedgerError::Invalid(
+                "derived_from must not be empty".to_owned(),
             ));
         }
         Ok(())
@@ -292,6 +308,7 @@ impl WorkingMemoryLedgerBackend {
             confidence: fact.confidence,
             state,
             text: fact.text,
+            derived_from: None,
         }
     }
 }
@@ -399,6 +416,21 @@ impl WorkingMemoryLedger {
     ) -> Result<(), WorkingMemoryLedgerError> {
         fact.state = WorkingMemoryState::Proposed;
         let expected = self.next_revision_for(&fact.fact_id)?;
+        // `derived_from` must name an existing fact in the SAME tree: a claim
+        // cannot lean on a foreign tree's fact for its justification, and a
+        // dangling source would make revocation propagation undefined.
+        if let Some(source) = fact.derived_from.as_deref() {
+            let exists_in_tree = self
+                .load_all()?
+                .iter()
+                .any(|existing| existing.fact_id == source && existing.task_tree_id == fact.task_tree_id);
+            if !exists_in_tree {
+                return Err(WorkingMemoryLedgerError::Invalid(format!(
+                    "derived_from {source:?} does not name an existing fact in tree {:?}",
+                    fact.task_tree_id
+                )));
+            }
+        }
         self.authorize_transition(ClaimTransitionRequest {
             actor,
             actor_session_id: fact.author_session_id.as_str(),
@@ -551,7 +583,13 @@ impl WorkingMemoryLedger {
         for fact in self.load_all()? {
             match fact.state {
                 WorkingMemoryState::Accepted => {
-                    accepted.insert(fact.fact_id.clone(), fact);
+                    // Progress is a coordination projection, never shared
+                    // truth: it is derivable from obligation state, and
+                    // admitting it as an accepted fact would let a model
+                    // launder self-assessment into the shared view (NG-04E).
+                    if fact.kind != TaskTreeMemoryFactKind::Progress {
+                        accepted.insert(fact.fact_id.clone(), fact);
+                    }
                 }
                 WorkingMemoryState::Superseded | WorkingMemoryState::Revoked => {
                     accepted.remove(&fact.fact_id);
@@ -953,6 +991,106 @@ fn promotion_marker(fact: &WorkingMemoryFact) -> String {
     )
 }
 
+/// Result of JTMS-style revocation propagation over a fact journal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RevocationPropagation {
+    /// Facts transitively derived (directly or indirectly) from the revoked
+    /// fact, in dependency order. These lose their support and must not be
+    /// treated as shared truth.
+    pub affected_fact_ids: Vec<String>,
+    /// Cycles in the `derived_from` graph. A cyclic derivation has no stable
+    /// labeling; every member of a cycle must be treated as Frozen, never as
+    /// accepted, regardless of its stored state.
+    pub cycles: Vec<Vec<String>>,
+}
+
+/// Compute the consequence set of revoking `revoked_fact_id` by following
+/// `derived_from` edges (the justification graph). Pure: the same journal
+/// always yields the same result, and it never mutates the journal itself —
+/// callers decide how to record the affected facts.
+pub fn propagate_revocation(
+    facts: &[WorkingMemoryFact],
+    revoked_fact_id: &str,
+) -> RevocationPropagation {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    // Forward edges: fact_id -> its direct source (if any).
+    let mut source_of: HashMap<&str, &str> = HashMap::new();
+    // Reverse edges: source -> facts that claim to derive from it.
+    let mut dependents: HashMap<&str, Vec<&str>> = HashMap::new();
+    for fact in facts {
+        if let Some(source) = fact.derived_from.as_deref() {
+            source_of.insert(fact.fact_id.as_str(), source);
+            dependents.entry(source).or_default().push(fact.fact_id.as_str());
+        }
+    }
+
+    // BFS over reverse edges from the revoked fact.
+    let mut affected = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+    if let Some(deps) = dependents.get(revoked_fact_id) {
+        for dependent in deps {
+            if seen.insert(dependent) {
+                queue.push_back(dependent);
+            }
+        }
+    }
+    while let Some(next) = queue.pop_front() {
+        affected.push(next.to_owned());
+        if let Some(deps) = dependents.get(next) {
+            for dependent in deps {
+                if seen.insert(dependent) {
+                    queue.push_back(dependent);
+                }
+            }
+        }
+    }
+
+    // Cycle detection over forward edges (DFS with white/gray/black).
+    let mut cycles: Vec<Vec<String>> = Vec::new();
+    let mut colors: HashMap<&str, u8> = HashMap::new();
+    let mut stack: Vec<&str> = Vec::new();
+    fn visit<'a>(
+        node: &'a str,
+        source_of: &HashMap<&'a str, &'a str>,
+        colors: &mut HashMap<&'a str, u8>,
+        stack: &mut Vec<&'a str>,
+        cycles: &mut Vec<Vec<String>>,
+    ) {
+        match colors.get(node) {
+            Some(2) => return,
+            Some(1) => {
+                if let Some(pos) = stack.iter().position(|entry| *entry == node) {
+                    let cycle: Vec<String> = stack[pos..].iter().map(|s| (*s).to_owned()).collect();
+                    if !cycles.contains(&cycle) {
+                        cycles.push(cycle);
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        colors.insert(node, 1);
+        stack.push(node);
+        if let Some(source) = source_of.get(node) {
+            visit(source, source_of, colors, stack, cycles);
+        }
+        stack.pop();
+        colors.insert(node, 2);
+    }
+    for fact in facts {
+        if colors.get(fact.fact_id.as_str()) != Some(&2) {
+            stack.clear();
+            visit(fact.fact_id.as_str(), &source_of, &mut colors, &mut stack, &mut cycles);
+        }
+    }
+    cycles.sort();
+    cycles.dedup();
+
+    RevocationPropagation { affected_fact_ids: affected, cycles }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -969,6 +1107,7 @@ mod tests {
             confidence: 80,
             state: WorkingMemoryState::Proposed,
             text: text.to_owned(),
+            derived_from: None,
         }
     }
 
@@ -1601,5 +1740,164 @@ mod tests {
             ledger.repair_torn_final_record("root"),
             Err(WorkingMemoryLedgerError::CorruptRecord { line: 1, .. })
         ));
+    }
+
+    // ── NG-04A derived_from / revocation propagation ────────────────────
+
+    fn fact_with_source(
+        fact_id: &str,
+        revision: u64,
+        source: Option<&str>,
+        kind: TaskTreeMemoryFactKind,
+    ) -> WorkingMemoryFact {
+        WorkingMemoryFact {
+            task_tree_id: "root".to_owned(),
+            branch_id: "branch-a".to_owned(),
+            fact_id: fact_id.to_owned(),
+            revision,
+            kind,
+            author_session_id: "child".to_owned(),
+            evidence_ref: Some("test://evidence".to_owned()),
+            confidence: 80,
+            state: WorkingMemoryState::Proposed,
+            text: fact_id.to_owned(),
+            derived_from: source.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn revocation_propagates_along_a_five_level_derivation_chain() {
+        // base ← d1 ← d2 ← d3 ← d4 : revoking base affects all four derived.
+        let facts = vec![
+            fact_with_source("base", 1, None, TaskTreeMemoryFactKind::Fact),
+            fact_with_source("d1", 1, Some("base"), TaskTreeMemoryFactKind::Fact),
+            fact_with_source("d2", 1, Some("d1"), TaskTreeMemoryFactKind::Fact),
+            fact_with_source("d3", 1, Some("d2"), TaskTreeMemoryFactKind::Fact),
+            fact_with_source("d4", 1, Some("d3"), TaskTreeMemoryFactKind::Fact),
+        ];
+        let propagation = propagate_revocation(&facts, "base");
+        assert_eq!(
+            propagation.affected_fact_ids,
+            vec!["d1".to_owned(), "d2".to_owned(), "d3".to_owned(), "d4".to_owned()]
+        );
+        assert!(propagation.cycles.is_empty());
+    }
+
+    #[test]
+    fn revocation_spares_unrelated_branches() {
+        let facts = vec![
+            fact_with_source("base", 1, None, TaskTreeMemoryFactKind::Fact),
+            fact_with_source("derived", 1, Some("base"), TaskTreeMemoryFactKind::Fact),
+            fact_with_source("independent", 1, None, TaskTreeMemoryFactKind::Fact),
+        ];
+        let propagation = propagate_revocation(&facts, "base");
+        assert_eq!(
+            propagation.affected_fact_ids,
+            vec!["derived".to_owned()]
+        );
+        assert!(!propagation.affected_fact_ids.contains(&"independent".to_owned()));
+    }
+
+    #[test]
+    fn derivation_cycle_is_detected_and_labeled() {
+        // a → b → a : no stable labeling; both members are a cycle.
+        let facts = vec![
+            fact_with_source("a", 1, Some("b"), TaskTreeMemoryFactKind::Fact),
+            fact_with_source("b", 1, Some("a"), TaskTreeMemoryFactKind::Fact),
+        ];
+        let propagation = propagate_revocation(&facts, "a");
+        assert!(
+            propagation
+                .cycles
+                .iter()
+                .any(|cycle| cycle.iter().any(|id| id == "a") && cycle.iter().any(|id| id == "b")),
+            "cycle must contain both members, got {:?}",
+            propagation.cycles
+        );
+    }
+
+    #[test]
+    fn derived_from_must_name_an_existing_same_tree_fact() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        let mut orphan = fact_with_source("orphan", 1, Some("missing"), TaskTreeMemoryFactKind::Fact);
+        orphan.author_session_id = "child".to_owned();
+        let error = ledger.propose(orphan).unwrap_err();
+        assert!(
+            error.to_string().contains("derived_from"),
+            "dangling derived_from must be rejected, got {error}"
+        );
+
+        // A valid source in the same tree is accepted.
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact_with_source("base", 1, None, TaskTreeMemoryFactKind::Fact))
+            .unwrap();
+        let mut derived = fact_with_source("derived", 1, Some("base"), TaskTreeMemoryFactKind::Fact);
+        derived.author_session_id = "child".to_owned();
+        ledger.propose(derived).unwrap();
+    }
+
+    #[test]
+    fn legacy_facts_without_derived_from_decode_to_none() {
+        let json = r#"{
+            "task_tree_id": "root",
+            "branch_id": "branch-a",
+            "fact_id": "legacy",
+            "revision": 1,
+            "kind": "fact",
+            "author_session_id": "child",
+            "evidence_ref": "test://evidence",
+            "confidence": 80,
+            "state": "proposed",
+            "text": "old record"
+        }"#;
+        let fact: WorkingMemoryFact = serde_json::from_str(json).expect("legacy decode");
+        assert_eq!(fact.derived_from, None);
+        assert_eq!(fact.text, "old record");
+    }
+
+    #[test]
+    fn accepted_progress_never_becomes_shared_truth() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact_with_source(
+                "progress-claim",
+                1,
+                None,
+                TaskTreeMemoryFactKind::Progress,
+            ))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact_with_source(
+                    "progress-claim",
+                    2,
+                    None,
+                    TaskTreeMemoryFactKind::Progress,
+                ),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        assert!(
+            ledger.accepted_facts().unwrap().is_empty(),
+            "Progress is a projection, never shared truth"
+        );
+
+        // A normal fact in the same ledger still flows.
+        ledger
+            .propose(fact_with_source("real-fact", 1, None, TaskTreeMemoryFactKind::Fact))
+            .unwrap();
+        ledger
+            .review(
+                "root",
+                fact_with_source("real-fact", 2, None, TaskTreeMemoryFactKind::Fact),
+                WorkingMemoryState::Accepted,
+            )
+            .unwrap();
+        assert_eq!(ledger.accepted_facts().unwrap().len(), 1);
     }
 }

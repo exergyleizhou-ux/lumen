@@ -47,3 +47,23 @@
 
 - **INV-23** 默认短任务（`interactive_single_turn`）不创建 tree/ledger/daemon 持久化、不调用 Advisor；升级为 governed profile 是一次性不可降级 admission，失败即 `Blocked(AdmissionUpgradeFailed)`。
 - **INV-24** 未授权 provider/billable 调用、deploy、release、自动 merge/push/tag、24h autonomy 宣称均需单独 human/live authority；`NOT RUN` 不隐藏。
+
+## 派生与失效（NG-04A）
+
+- **INV-25** `derived_from` 由 actor 从 manifest+AcceptedSnapshot 推出；child 只能在该集合内收窄，不能扩展或伪造来源；source 必须存在且同 tree，dangling/foreign 一律拒绝。
+- **INV-26** `derived_from` 图必须无环：环成员没有稳定标定，一律 `Frozen`（绝不因存储状态为 Accepted 而视为真相）；失效传播是 K2 意义上的纯函数（同 justification 集必得同 affected 集）。
+- **INV-27** 撤销/revoke 的后果集由 justification 图传播确定（间接 consumer 不遗漏）；无关分支不受影响；传播只读，不自动改写任何 claim。
+
+## 效果与恢复（NG-03C/K4）
+
+- **INV-28** 每个效果的恢复类由外部世界能力决定（Pure / Idempotent / Queryable / Opaque），不是按严重程度分类；`Opaque` 效果的崩溃恢复唯一动作是 `Frozen`，无人值守模式不得授予 `Opaque` permit。
+- **INV-29** 无 `CompensationReadyReceipt`（补偿自身为 Idempotent/Queryable 且有 receipt）的写不得标记为可补偿；补偿由人决定、机器执行、逐路径验证；`Opaque` 的"补偿"不叫补偿。
+- **INV-30** `RecoveryRequired` 必须带 procedure_id，且该 procedure 有确定性收敛 fixture；无 procedure 的 RecoveryRequired 立即升级 `Frozen`。
+
+## 观察、时钟与存储
+
+- **INV-31** replay 只消费已记录 observation event；replay 模式下 adapter 被隔离，绝不重放未记录输入或重新执行外部效果。
+- **INV-32** in-process 时序判定只用 monotonic clock；wall clock 仅用于展示与跨进程记录。
+- **INV-33** authority journal 写入前必须有空间 reservation；`ENOSPC` 是带 receipt 的失败，不是 torn record，不得触发 repair 裁剪。
+- **INV-34** `ArchivedNeedsReview` 释放 lease/reservation/write-scope/worktree/process，但保留全部 evidence；`LegacyUnpermitted` dispatch 使该 node assurance 封顶 `HarnessPolicyOnly`，且该计数单调递减。
+- **INV-35** `Progress` 不是 claim：它可从义务状态推导，只作为投影/审计存在，永不进入 AcceptedSnapshot 或注入模型输入；`confidence` 不驱动任何决策分支，禁止新 consumer（既有字段仅作遗留元数据）。

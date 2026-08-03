@@ -136,12 +136,14 @@ pub(super) fn render_task_tree_working_memory(
     );
     for fact in facts.into_iter().take(MAX_FACTS) {
         let evidence = fact.evidence_ref.as_deref().unwrap_or("not recorded");
+        // `confidence` is intentionally not rendered: no decision branch
+        // consumes it, and exposing it invites the model to treat it as a
+        // signal instead of relying on evidence + root acceptance (NG-04E).
         rendered.push_str(&format!(
-            "- [{}:{} r{} confidence={}] {} (evidence: {})\n",
+            "- [{}:{} r{}] {} (evidence: {})\n",
             fact.kind.label(),
             fact.fact_id,
             fact.revision,
-            fact.confidence,
             fact.text,
             evidence
         ));
