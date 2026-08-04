@@ -30,7 +30,7 @@
 | DEBT-021 | 2026-08-04 收尾审计 | S3 child git commit/push/merge 无硬拒；worktree auto-handoff 未接 | **closed (2026-08-04)** | tool_contract.rs child_git_mutation_in（词元切分 + 安全动词表 + -C 值跳过）+ shell prepare_tool_call Execute 工具 child depth 硬拒（2 端到端测试驱动真实 dispatch）；MergeReceiptV1/worktree auto-handoff 仍为纯函数（见 DEBT-024） |
 | DEBT-022 | 2026-08-04 收尾审计 | A10 kairos lease consumer 未接 scheduler/daemon 循环 | **closed (2026-08-04)** | ShellChildRunner::run/on_completed 接 SchedulerLoopOutbox：outbox_should_deliver 幂等门（成功 terminal 标记 delivered，失败/取消可重试）+ 单测 |
 | DEBT-023 | 2026-08-04 收尾审计 | A12 ReleaseSourceTuple / installer provenance 未落代码 | **closed (2026-08-04)** | release_source_tuple.rs（source≠evidence、tag 必须指向 source A、binary/lock sha256 必填）+ RELEASE_TUPLE_GATE；release.sh 生成 artifacts/release-source-tuple.json；install-local.sh 落 lumen-release-source-tuple.json |
-| DEBT-024 | 2026-08-04 收尾审计 | 残余 partial（诚实登记，不伪装关闭）：(a) worktree auto-handoff 仍为纯函数（evaluate_merge_handoff 无 shell 调用点）；(b) A9 recommend 产品 UI 未实现（governedTree ACP 投影提供 profile 升级面）；(c) M1 为 ACP 投影（x.ai/governedTree/status），pager 树 pane 未做；(d) DispatchPermitV1 为 memory 层类型，shell adapter 端到端消费未接；(e) readiness 人工门 M5/M6 与 1h soak/live eval 需真实环境 | **open** | 见下"残余 partial 说明" |
+| DEBT-024 | 2026-08-04 收尾审计 | 残余 partial（诚实登记，不伪装关闭）：(a) worktree auto-handoff 仍为纯函数（evaluate_merge_handoff 无 shell 调用点）；(b) A9 recommend 产品 UI 未实现（governedTree ACP 投影提供 profile 升级面）；(c) M1 为 ACP 投影（x.ai/governedTree/status），pager 树 pane 未做；(d) DispatchPermitV1 为 memory 层类型，shell adapter 端到端消费未接；(e) readiness 人工门 M5/M6 需真实环境 | open | 见下"残余 partial 说明" |
 
 ## 登记记录（追加式）
 

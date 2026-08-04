@@ -4,11 +4,11 @@
   "pass": true,
   "scope": "full_contract_soak",
   "binary": "/Users/lei/code/lumen/agent/target/release/lumen",
-  "binary_sha256": "a43a43c7ab539b13fe779256f42e2d1caa462d9a664768f9338f9759132cc268",
-  "session_id": "7c759e08-64bf-48ca-9064-48922a786519",
+  "binary_sha256": "4de5d07d2e940341c747a6a4bf090a6522e2236d2756c71d009b0948891098d3",
+  "session_id": "d5535ac9-9215-455b-9669-9cdfe2eab5ca",
   "resume_same_session": true,
-  "compaction_request": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/7c759e08-64bf-48ca-9064-48922a786519/compaction_requests/af5169df-cef0-402a-9f7c-c8f116f8694b.json",
-  "compaction_checkpoint": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/7c759e08-64bf-48ca-9064-48922a786519/compaction_checkpoints/ee214d0b-b461-4a63-ae9a-fbc72525f50d.json",
+  "compaction_request": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/d5535ac9-9215-455b-9669-9cdfe2eab5ca/compaction_requests/b2cfc201-ab0b-49fe-a39c-bb4e97139ed4.json",
+  "compaction_checkpoint": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/d5535ac9-9215-455b-9669-9cdfe2eab5ca/compaction_checkpoints/f7d12256-6756-4ec4-9bb3-f634b806a125.json",
   "compaction_persisted": true,
   "cache_read_tokens_samples": [
     512,
@@ -59,9 +59,9 @@
     "requested_seconds": 3600,
     "elapsed_seconds": 3600,
     "resume_turns": 117,
-    "started_at": "2026-08-04T13:11:49Z",
-    "finished_at": "2026-08-04T14:11:49Z"
+    "started_at": "2026-08-04T15:00:16Z",
+    "finished_at": "2026-08-04T16:00:16Z"
   },
   "note": "Explicit soak mode ran for at least one hour and repeatedly resumed the same session.",
-  "generated_at": "2026-08-04T14:11:49Z"
+  "generated_at": "2026-08-04T16:00:16Z"
 }
