@@ -326,6 +326,16 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
     }
     gates.push(pass("TOOL_CONTRACT_DISPATCH_GATE"));
 
+    // A3 token reservation (real BudgetLedger path — fail-closed over-limit).
+    {
+        use crate::nextgen_exit_gates::token_reservation_gate;
+        let (denied_limit, configured) =
+            token_reservation_gate().expect("A3 token reservation gate");
+        assert_eq!(denied_limit, configured);
+        assert_eq!(configured, 100);
+    }
+    gates.push(pass("A3_TOKEN_RESERVATION_GATE"));
+
     // A5–A12 Exit Gates — real shipped helpers in nextgen_exit_gates (not mocks).
     {
         use crate::nextgen_exit_gates::{
@@ -493,10 +503,14 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let receipt = run_offline_contract_gates(temp.path());
         assert_eq!(receipt.offline_pass_count, receipt.offline_total);
-        assert!(receipt.offline_total >= 17, "A5–A12 exit gates must be present");
+        assert!(
+            receipt.offline_total >= 18,
+            "A3 + A5–A12 exit gates must be present"
+        );
         assert_eq!(receipt.product_rc, "NOT_READY");
         let json = serde_json::to_string_pretty(&receipt).unwrap();
         assert!(json.contains("M1_GOVERNED_TREE_PREVIEW_GATE"));
+        assert!(json.contains("A3_TOKEN_RESERVATION_GATE"));
         assert!(json.contains("A5_CONTEXT_REBUILD_GATE"));
         assert!(json.contains("A12_ROLLBACK_RECEIPT_GATE"));
         assert!(json.contains("NOT_READY"));

@@ -115,7 +115,7 @@ pub use nextgen_exit_gates::{
     ExpertRepairDeny, HandoffDeliveryError, RollbackReceiptV1, authorize_applied_assignment_chain,
     authorize_context_rebuild, authorize_expert_repair_pass, authorize_rollback_receipt,
     deliver_handoff_receipt, invoke_advisor_consult_tool, kairos_fake_clock_lease_cycle,
-    operator_control_five_command_matrix,
+    operator_control_five_command_matrix, token_reservation_gate,
 };
 pub use sealed_attempt_receipt::{
     AttemptSealTracker, DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, DurableSealAuthority, Obs,
