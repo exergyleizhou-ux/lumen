@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 00defcb6 docs: H4 user confirmed rc.1 launches on real terminal |
+| Last non-bot commit | a860a350 docs: full-dimension 100% handover — remaining slices, session issues as test tasks |
 
 ---
 
