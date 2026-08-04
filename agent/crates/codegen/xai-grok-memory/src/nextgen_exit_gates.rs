@@ -515,12 +515,54 @@ pub fn authorize_rollback_receipt(r: &RollbackReceiptV1) -> Result<(), &'static 
     Ok(())
 }
 
+// ─── A3: token budget reservation ──────────────────────────────────────────
+
+/// A3 offline gate: account-level token reservation is bounded by
+/// `token_reservation_limit`; exceeding it fails closed with
+/// `TokenReservationExceeded`, and a within-limit reservation succeeds.
+pub fn token_reservation_gate() -> Result<(u64, u64), String> {
+    use std::time::Duration;
+    use xai_grok_tools::implementations::grok_build::task::budget::{
+        BudgetDenial, BudgetLedger, TreeBudgetV1,
+    };
+    // Tight budget: 100 token reservation limit, 2 live nodes.
+    let mut ledger = BudgetLedger::new(TreeBudgetV1 {
+        max_depth: 2,
+        max_children_per_node: 2,
+        max_live_nodes: 4,
+        max_background_nodes: 1,
+        token_reservation_limit: Some(100),
+        tool_call_limit: Some(10),
+        wall_time_limit: Duration::from_secs(3600),
+        daily_cost_limit: None,
+        artifact_byte_limit: None,
+    });
+    // Within limit: 60 tokens → ok.
+    let first = ledger
+        .reserve_spawn("n1", None, 0, false, 60, 1)
+        .map_err(|e| format!("{e:?}"))?;
+    // Second reservation pushes reserved over the limit → denied.
+    let denied = match ledger.reserve_spawn("n2", None, 0, false, 60, 1) {
+        Err(BudgetDenial::TokenReservationExceeded { limit }) => limit,
+        other => return Err(format!("expected TokenReservationExceeded, got {other:?}")),
+    };
+    // Settle the first to prove the settle path stays coherent.
+    ledger.settle_usage(first, Some(60), Some(1));
+    Ok((denied, 100))
+}
+
 // ─── tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn token_reservation_gate_bounds_and_denies_over_limit() {
+        let (denied_limit, configured_limit) = token_reservation_gate().expect("gate runs");
+        assert_eq!(denied_limit, configured_limit, "deny must report the configured limit");
+        assert_eq!(configured_limit, 100);
+    }
     #[test]
     fn context_rebuild_requires_identical_manifest_and_rendered_hash() {
         let ok = ContextRebuildRequest {
