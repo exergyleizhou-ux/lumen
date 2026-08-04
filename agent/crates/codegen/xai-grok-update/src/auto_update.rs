@@ -3662,14 +3662,28 @@ mod tests {
     }
 
     #[test]
-    fn unstamped_update_version_matches_shipping_crate_version() {
+    fn unstamped_version_falls_back_to_upstream_protocol_identity() {
+        // The Lumen product line (2.x) and the upstream protocol identity
+        // (0.x) are deliberately split (see release_gate.rs): xai-grok-version
+        // keeps the upstream identity and is never bumped by release.sh, while
+        // this crate carries the Lumen product version. The old lockstep
+        // contract (VERSION == this crate's version) no longer holds by design.
         if option_env!("GROK_VERSION").is_none() {
             assert_eq!(
                 xai_grok_version::VERSION,
-                env!("CARGO_PKG_VERSION"),
-                "the shared version crate must stay lockstepped with the shipping update crate"
+                xai_grok_version::PACKAGE_VERSION,
+                "unstamped VERSION must fall back to the version crate's own \
+                 package version (upstream protocol identity)"
             );
         }
+        // Separate assertion for the Lumen product line: this crate must stay
+        // on 2.x per the same definition the release gate keys on, guarding
+        // against an accidental re-sync to the upstream 0.x lane.
+        assert!(
+            crate::release_gate::is_lumen_product_version(env!("CARGO_PKG_VERSION")),
+            "xai-grok-update must stay on the Lumen product line (2.x); got {}",
+            env!("CARGO_PKG_VERSION")
+        );
     }
 
     // ──────────────────────────────────────────────────────────────────────

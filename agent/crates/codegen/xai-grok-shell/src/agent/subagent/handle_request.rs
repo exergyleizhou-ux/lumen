@@ -563,7 +563,7 @@ mod governed_snapshot_tests {
     }
 
     #[test]
-    fn accepts_matching_snapshot_and_rejects_stale_or_foreign() {
+    fn context_manifest_v1_accepts_matching_snapshot_and_rejects_stale_or_foreign() {
         let receipt = admission();
         assert!(validate_governed_snapshot_hash(&receipt, &snapshot()).is_ok());
         let mut stale = snapshot();
@@ -576,7 +576,7 @@ mod governed_snapshot_tests {
     }
 
     #[test]
-    fn production_admit_spawn_receipt_denies_empty_stale_and_forged_lineage() {
+    fn context_manifest_v1_production_admit_spawn_receipt_denies_empty_stale_and_forged_lineage() {
         use xai_grok_memory::admit_spawn_receipt;
         let snap = snapshot();
         let lineage = vec!["root".into(), "child".into()];
@@ -636,7 +636,7 @@ mod governed_snapshot_tests {
     }
 
     #[test]
-    fn resume_manifest_identity_must_match_the_recorded_original() {
+    fn context_manifest_v1_resume_manifest_identity_must_match_the_recorded_original() {
         // Matching recorded identity admits.
         assert!(validate_resume_manifest_identity(Some("sha256:one"), "sha256:one").is_ok());
         // Missing recorded identity on a governed resume fails closed.

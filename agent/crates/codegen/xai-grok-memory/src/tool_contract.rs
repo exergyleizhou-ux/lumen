@@ -179,6 +179,62 @@ impl ToolContractV1 {
     }
 }
 
+/// Surfaces that may invoke a tool. Child and daemon are fail-closed without a
+/// full [`ToolContractV1`]; root interactive may still approve tools that lack
+/// a sealed contract (legacy root UX).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolDispatchSurface {
+    RootInteractive,
+    Child,
+    Daemon,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolDispatchDeny {
+    MissingContract,
+    NotChildAdmissible,
+}
+
+impl ToolDispatchDeny {
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::MissingContract => "tool_contract.missing",
+            Self::NotChildAdmissible => "tool_contract.not_child_admissible",
+        }
+    }
+}
+
+/// Forced dispatch admission (NG-02A Exit Gate entry): every non-root surface
+/// must present an admissible contract before the tool body runs.
+pub fn authorize_tool_dispatch(
+    surface: ToolDispatchSurface,
+    contract: Option<&ToolContractV1>,
+) -> Result<(), ToolDispatchDeny> {
+    match surface {
+        ToolDispatchSurface::RootInteractive => Ok(()),
+        ToolDispatchSurface::Child | ToolDispatchSurface::Daemon => match contract {
+            None => Err(ToolDispatchDeny::MissingContract),
+            Some(c) if c.child_admissible() => Ok(()),
+            Some(_) => Err(ToolDispatchDeny::NotChildAdmissible),
+        },
+    }
+}
+
+/// Force result projection: apply the contract's preview limit when present,
+/// otherwise clamp to a hard fail-closed default so unbounded tool output
+/// never reaches model context.
+pub fn force_result_projection(
+    envelope: ToolResultEnvelopeV1,
+    contract: Option<&ToolContractV1>,
+) -> ToolResultEnvelopeV1 {
+    const HARD_DEFAULT_PREVIEW: u32 = 8192;
+    let limit = contract
+        .and_then(|c| c.result_policy.as_ref())
+        .map(|p| p.preview_byte_limit)
+        .unwrap_or(HARD_DEFAULT_PREVIEW);
+    envelope.apply_preview_limit(limit)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolResultStatus {
     Succeeded,
@@ -398,5 +454,46 @@ mod tool_contract_tests {
         let mut unknown_delivery = base.clone();
         unknown_delivery.status = ToolResultStatus::Unknown;
         assert_ne!(base.result_hash().unwrap(), unknown_delivery.result_hash().unwrap());
+    }
+
+    #[test]
+    fn authorize_tool_dispatch_forces_contract_on_child_and_daemon() {
+        let ok = read_contract();
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::RootInteractive, None).is_ok());
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&ok)).is_ok());
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::Daemon, Some(&ok)).is_ok());
+        assert_eq!(
+            authorize_tool_dispatch(ToolDispatchSurface::Child, None).unwrap_err(),
+            ToolDispatchDeny::MissingContract
+        );
+        let mut other = ok.clone();
+        other.tool_kind = ToolKind::Other;
+        assert_eq!(
+            authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&other)).unwrap_err(),
+            ToolDispatchDeny::NotChildAdmissible
+        );
+    }
+
+    #[test]
+    fn force_result_projection_applies_contract_or_hard_default() {
+        let contract = read_contract();
+        let big = ToolResultEnvelopeV1 {
+            call_id: "c".into(),
+            tool_contract_hash: "sha256:x".into(),
+            operation_id: None,
+            status: ToolResultStatus::Succeeded,
+            preview: "x".repeat(10_000),
+            preview_truncated: false,
+            full_artifact_ref: None,
+            emitted_bytes: 10_000,
+            context_bytes_admitted: 0,
+            verification_ref: None,
+        };
+        let projected = force_result_projection(big.clone(), Some(&contract));
+        assert!(projected.preview_truncated);
+        assert!(projected.preview.len() as u32 <= contract.result_policy.as_ref().unwrap().preview_byte_limit);
+        let no_contract = force_result_projection(big, None);
+        assert!(no_contract.preview_truncated);
+        assert!(no_contract.preview.len() <= 8192);
     }
 }

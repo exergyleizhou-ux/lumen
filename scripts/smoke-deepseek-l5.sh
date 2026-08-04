@@ -106,10 +106,8 @@ mkdir -p "$PROOF" "$(dirname "$ARTIFACT")"
 rm -rf -- "$CASE_DIR"
 mkdir -p "$CASE_DIR/workspace" "$CASE_DIR/home" "$CASE_DIR/grok-home" "$CASE_DIR/server"
 
-if [[ ! -x "$BIN" ]]; then
-  echo "=== build release Lumen binary ==="
-  (cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" cargo build -p xai-grok-pager-bin --release)
-fi
+echo "=== ensuring release Lumen binary (stamped with expected source) ==="
+"$ROOT/scripts/ensure-release-binary.sh"
 test -x "$BIN"
 
 SESSION_ID="$($PYTHON_BIN - <<'PY'

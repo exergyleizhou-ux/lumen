@@ -29,11 +29,12 @@ DEST="$DEST_DIR/lumen"
 HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD)"
 
 # Release evidence is deliberately committed after the source candidate it
-# describes.  When that suffix is limited to lock/SBOM/readiness artifacts,
-# install the already-built locked candidate instead of rebuilding HEAD and
-# stamping the evidence commit into the executable.  The same critical-file
-# checks used by the tuple gate prevent this from accepting an arbitrary stale
-# lock.
+# describes; docs-only commits (docs/, CURRENT_STATE_LEDGER.md) never refresh
+# the lock by discipline. When that suffix is limited to lock/SBOM/readiness/
+# docs artifacts, install the already-built locked candidate instead of
+# rebuilding HEAD and stamping the evidence commit into the executable. The
+# same critical-file checks used by the tuple gate prevent this from accepting
+# an arbitrary stale lock.
 EXPECTED_SOURCE="$HEAD_FULL"
 LOCKED_SOURCE="$(python3 - "$ROOT" "$HEAD_FULL" <<'PY'
 import hashlib, json, subprocess, sys
@@ -51,9 +52,9 @@ try:
         cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     suffix = subprocess.check_output(
-        ["git", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
+        ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
     ).splitlines()
-    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
     if any(not path.startswith(allowed) for path in suffix):
         raise ValueError("non-evidence suffix")
     critical = lock.get("critical_file_sha256")

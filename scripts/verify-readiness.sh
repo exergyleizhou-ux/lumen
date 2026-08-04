@@ -249,11 +249,11 @@ except (OSError, subprocess.CalledProcessError):
     print(f"source lock is not an ancestor lock={locked_head[:7] or '?'} current={head[:7]}")
     raise SystemExit(1)
 suffix = subprocess.check_output(
-    ["git", "diff", "--name-only", f"{locked_head}..{head}"],
+    ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{locked_head}..{head}"],
     cwd=root,
     text=True,
 ).splitlines()
-allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
 unexpected = [path for path in suffix if not path.startswith(allowed_suffixes)]
 if unexpected:
     print("non-evidence drift after source lock: " + ", ".join(unexpected[:8]))

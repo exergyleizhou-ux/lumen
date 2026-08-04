@@ -89,7 +89,7 @@ async fn live_pool_exhausted_denies_auth_class_admission() {
             .unwrap_err();
             assert_eq!(err, RetryDenyReason::PoolExhausted);
             assert_eq!(
-                decide_auth_class_retry(true, Err(err), true, 0),
+                decide_auth_class_retry(true, false, Err(err), true, 0),
                 AuthClassRetryAction::Terminal {
                     reason: "retry.pool_exhausted"
                 }
@@ -136,7 +136,7 @@ async fn live_breaker_open_denies_auth_class_admission() {
             .unwrap_err();
             assert_eq!(err, RetryDenyReason::BreakerOpen);
             assert_eq!(
-                decide_auth_class_retry(true, Err(err), true, 0),
+                decide_auth_class_retry(true, false, Err(err), true, 0),
                 AuthClassRetryAction::Terminal {
                     reason: "retry.breaker_open"
                 }
@@ -185,7 +185,7 @@ async fn live_stale_advice_denies_auth_class_admission() {
             .unwrap_err();
             assert_eq!(err, RetryDenyReason::StaleAdvice);
             assert_eq!(
-                decide_auth_class_retry(true, Err(err), true, 0),
+                decide_auth_class_retry(true, false, Err(err), true, 0),
                 AuthClassRetryAction::Terminal {
                     reason: "retry.stale_advice"
                 }
@@ -224,7 +224,7 @@ async fn live_healthy_side_conditions_allow_clean_seal_admission() {
             .expect("healthy live flags + clean seal must admit");
             assert_eq!(remaining, 1);
             assert_eq!(
-                decide_auth_class_retry(true, Ok(remaining), true, 0),
+                decide_auth_class_retry(true, false, Ok(remaining), true, 0),
                 AuthClassRetryAction::Resubmit { next_used: 1 }
             );
         })

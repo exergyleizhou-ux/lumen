@@ -380,7 +380,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_hash_is_stable_for_same_manifest() {
+    fn context_manifest_v1_canonical_hash_is_stable_for_same_manifest() {
         let manifest = fixture();
         assert_eq!(
             manifest.manifest_hash().unwrap(),
@@ -390,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_forged_lineage_and_unsorted_contracts() {
+    fn context_manifest_v1_rejects_forged_lineage_and_unsorted_contracts() {
         let mut manifest = fixture();
         manifest.lineage_path[0] = "foreign-root".into();
         assert!(manifest.validate().is_err());
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_schema_and_empty_authority_refs() {
+    fn context_manifest_v1_rejects_unknown_schema_and_empty_authority_refs() {
         let mut manifest = fixture();
         manifest.schema_version = 2;
         assert!(manifest.validate().is_err());
@@ -410,7 +410,7 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_binding_rejects_foreign_tree_or_hash() {
+    fn context_manifest_v1_snapshot_binding_rejects_foreign_tree_or_hash() {
         let manifest = fixture();
         let snapshot = crate::task_ledger::AcceptedLedgerSnapshot {
             task_tree_id: "tree-1".into(),
@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_no_manifest_cannot_auto_admit() {
+    fn context_manifest_v1_legacy_no_manifest_cannot_auto_admit() {
         let err = admit_context_manifest(&ManifestAdmissionRequest {
             mode: ManifestAdmissionMode::LegacyNoManifest,
             manifest: None,
@@ -449,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn forged_or_empty_manifest_hash_fail_closed() {
+    fn context_manifest_v1_forged_or_empty_manifest_hash_fail_closed() {
         let mut manifest = fixture();
         let snapshot = crate::task_ledger::AcceptedLedgerSnapshot {
             task_tree_id: "tree-1".into(),
@@ -502,7 +502,7 @@ mod tests {
     }
 
     #[test]
-    fn admit_spawn_receipt_accepts_live_snapshot_and_denies_stale_foreign_empty() {
+    fn context_manifest_v1_admit_spawn_receipt_accepts_live_snapshot_and_denies_stale_foreign_empty() {
         let snapshot = crate::task_ledger::AcceptedLedgerSnapshot {
             task_tree_id: "root".into(),
             record_count: 1,
@@ -589,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_snapshot_denies_admission_after_journal_moves() {
+    fn context_manifest_v1_stale_snapshot_denies_admission_after_journal_moves() {
         let mut manifest = fixture();
         let old = crate::task_ledger::AcceptedLedgerSnapshot {
             task_tree_id: "tree-1".into(),

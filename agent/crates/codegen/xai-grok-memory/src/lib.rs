@@ -23,6 +23,7 @@
 //! is not initialized by the host.
 
 pub mod agent_sandbox;
+pub mod capability_grant;
 pub mod archive;
 pub mod handoff_packet;
 pub mod evidence_loop;
@@ -67,6 +68,10 @@ pub use agent_sandbox::{
     AgentSandboxState, AgentSandboxV1, FilesystemWriteMode, IssueSandboxRequest, MemoryCapability,
     NetworkMode, SANDBOX_HARD_MAX_DEPTH, SandboxAssuranceV1, SandboxDenyReason,
     AGENT_SANDBOX_SCHEMA_VERSION,
+};
+pub use capability_grant::{
+    CAPABILITY_GRANT_SCHEMA_VERSION, CapabilityGrantProjectionV1, CapabilityGrantState,
+    CapabilityGrantV1, GRANT_MIN_TTL_SECS, GrantCapabilityClass, GrantDenyReason, IssueGrantRequest,
 };
 pub use handoff_packet::{
     HandoffDenyReason, HandoffPacketV1, HANDOFF_MAX_BYTES, HANDOFF_PACKET_SCHEMA_VERSION,
@@ -122,6 +127,10 @@ pub use claim_authority::{
 pub use context_manifest::{
     ContextManifestError, ContextManifestV1, ManifestAdmissionDenyReason, ManifestAdmissionMode,
     ManifestAdmissionRequest, admit_context_manifest, admit_spawn_receipt,
+};
+pub use tool_contract::{
+    ToolContractV1, ToolDispatchDeny, ToolDispatchSurface, ToolResultEnvelopeV1,
+    authorize_tool_dispatch, force_result_projection,
 };
 pub use governed_assignment::{
     RootGovernedAssignmentError, RootGovernedAssignmentStore, RootGovernedAssignmentV1,

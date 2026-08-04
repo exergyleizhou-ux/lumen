@@ -214,32 +214,16 @@ class Handler(BaseHTTPRequestHandler):
         self.close_connection = True
 
     def send_disconnect(self) -> None:
-        payload = (
-            "data: "
-            + json.dumps(
-                {
-                    "id": "chatcmpl-cut",
-                    "object": "chat.completion.chunk",
-                    "created": 0,
-                    "model": MODEL,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": "partial"},
-                            "finish_reason": None,
-                        }
-                    ],
-                },
-                separators=(",", ":"),
-            )
-            + "\n\n"
-        ).encode()
+        # Mid-stream drop with *zero* model output so the client seal stays
+        # clean (NoOutput + NoToolCall). A partial text chunk would mark
+        # output_emitted and correctly refuse INV-11 same-turn resubmit —
+        # which is fail-closed, but not what the L4 retry contract exercises.
+        # The fault is pure transport: headers then hard close.
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Transfer-Encoding", "chunked")
         self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(f"{len(payload):X}\r\n".encode() + payload + b"\r\n")
         self.wfile.flush()
         self.close_connection = True
         try:

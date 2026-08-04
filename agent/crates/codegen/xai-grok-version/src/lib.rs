@@ -1,12 +1,24 @@
-//! Installed grok CLI version, lockstepped with shipping binaries.
+//! Installed grok CLI version identity.
+//!
+//! The Lumen product line (2.x) and the upstream protocol identity (0.x) are
+//! deliberately split: this crate keeps the upstream grok CLI protocol
+//! identity (currently 0.2.116, never bumped by `release.sh`), while the
+//! Lumen product version is carried by the product crates (e.g.
+//! `xai-grok-update`, which `release.sh` *does* bump). When unstamped,
+//! [`VERSION`] falls back to this crate's own package version — the upstream
+//! identity, not the Lumen product version.
 
 use semver::Version;
 
 pub const TEST_VERSION_ENV: &str = "GROK_TEST_VERSION";
 
+/// This crate's own package version — the upstream protocol identity used
+/// as the unstamped fallback for [`VERSION`].
+pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub const VERSION: &str = match option_env!("GROK_VERSION") {
     Some(v) => v,
-    None => env!("CARGO_PKG_VERSION"),
+    None => PACKAGE_VERSION,
 };
 
 /// [`TEST_VERSION_ENV`] override first, then [`VERSION`]. Trimmed so
@@ -43,6 +55,16 @@ pub fn display_version_with_commit(version_with_commit: &str, channel_label: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The unstamped fallback must be this crate's own package version
+    /// (the upstream protocol identity), never a hardcoded string that
+    /// could drift from Cargo.
+    #[test]
+    fn unstamped_version_falls_back_to_own_package_version() {
+        if option_env!("GROK_VERSION").is_none() {
+            assert_eq!(VERSION, PACKAGE_VERSION);
+        }
+    }
 
     /// Display formatting invariant matrix — verifies label appending
     /// works correctly across all label states (alpha, stable, empty).

@@ -72,11 +72,11 @@ if lock_head:
         )
         lock_head_ancestor = True
         suffix = subprocess.check_output(
-            ["git", "diff", "--name-only", f"{lock_head}..{head}"],
+            ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{lock_head}..{head}"],
             cwd=root,
             text=True,
         ).splitlines()
-        allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+        allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
         unexpected_suffix = [path for path in suffix if not path.startswith(allowed_suffixes)]
         evidence_only_suffix = not unexpected_suffix
         if unexpected_suffix:

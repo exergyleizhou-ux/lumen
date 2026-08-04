@@ -11,9 +11,11 @@ HEAD_FULL="$(git -C "$ROOT" rev-parse HEAD)"
 
 # A release evidence commit necessarily follows the source commit it describes:
 # the lock, SBOM, and readiness records cannot be committed before they exist.
-# Accept that narrow suffix only when the lock is an ancestor, every changed
-# path is evidence-only, and every locked critical file still hashes exactly.
-# Otherwise retain the strict current-HEAD requirement below.
+# Docs-only commits (docs/, CURRENT_STATE_LEDGER.md) likewise never refresh the
+# lock by discipline. Accept that narrow suffix only when the lock is an
+# ancestor, every changed path is evidence-or-docs-only, and every locked
+# critical file still hashes exactly. Otherwise retain the strict current-HEAD
+# requirement below.
 EXPECTED_SOURCE="$HEAD_FULL"
 EXPECTED_SOURCE_KIND="current HEAD"
 LOCKED_SOURCE="$(python3 - "$ROOT" "$HEAD_FULL" <<'PY'
@@ -32,9 +34,9 @@ try:
         cwd=root, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     suffix = subprocess.check_output(
-        ["git", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
+        ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
     ).splitlines()
-    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/")
+    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
     if any(not path.startswith(allowed) for path in suffix):
         raise ValueError("non-evidence suffix")
     critical = lock.get("critical_file_sha256")

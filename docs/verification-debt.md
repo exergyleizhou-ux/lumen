@@ -21,3 +21,4 @@
 ## 登记记录（追加式）
 
 - 2026-08-03：S8 提交后（bf489044/1d2921af），Critic 两轮审查的 10 项债务全部登记。DEBT-001/002 为 Medium 级声明遗留，DEBT-003..010 为 Low/Info 级。
+- 2026-08-04（全维度100%）：关闭 P1–P5；A1 CapabilityGrantV1；A2 契约层 API；A3 BudgetLedger 既有真入口。DEBT-011..016 登记剩余 Exit Gate。

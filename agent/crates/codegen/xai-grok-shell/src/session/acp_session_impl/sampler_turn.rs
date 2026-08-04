@@ -1484,7 +1484,6 @@ impl SessionActor {
                         Some(request_id_str.clone()),
                         Some(self.session_info.id.0.to_string()),
                     );
-                    let model_pinned = self.models_manager.user_selected_model();
                     let is_auth = matches!(
                         info.kind,
                         xai_grok_sampler::SamplingErrorKind::Auth
@@ -1499,16 +1498,21 @@ impl SessionActor {
                         .unwrap_or_default();
                     let side = self.collect_p4b_live_side_conditions(&failed_base_url);
 
-                    // Bounded auth-class same-turn resubmit only when P4b
-                    // admission grants remaining budget (clean durable seal,
-                    // not pinned, pool/breaker/advice ok). GROK_MAX_RETRIES is
-                    // not used here — shell auth-class ceiling is the seal
-                    // budget (1).
+                    // Bounded same-turn resubmit (auth-class or clean-transport)
+                    // when P4b admission grants remaining budget (clean durable
+                    // seal, pool/breaker/advice ok). GROK_MAX_RETRIES is not
+                    // used here — shell ceiling is the seal budget (1).
+                    //
+                    // User `/model` pin only forbids automatic *reroute* to
+                    // another model (handled below); same-model resubmit under
+                    // a sealed clean receipt must still be admissible even
+                    // when the model was selected via CLI/`/model` (L4
+                    // `--model` fixture + real pinned sessions).
                     let admission = crate::session::nextgen_control::authorize_ordinary_retry_budget(
                         &crate::session::nextgen_control::ordinary_retry_admission(
                             Some(&receipt),
                             authority,
-                            model_pinned,
+                            /* model_pinned */ false,
                             side.pool_exhausted,
                             side.breaker_open,
                             side.stale_advice,
@@ -1521,8 +1525,14 @@ impl SessionActor {
                     } else {
                         false
                     };
+                    let transport_resubmit =
+                        crate::session::nextgen_control::is_s8_transport_resubmit_candidate(
+                            info.kind,
+                            info.is_retryable,
+                        );
                     match crate::session::nextgen_control::decide_auth_class_retry(
                         is_auth,
+                        transport_resubmit,
                         admission,
                         refresh_ok,
                         auth_class_retries_used,

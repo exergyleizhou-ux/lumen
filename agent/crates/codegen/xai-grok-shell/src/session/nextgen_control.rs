@@ -143,20 +143,71 @@ pub enum AuthClassRetryAction {
     Terminal { reason: &'static str },
 }
 
-/// Pure decision for auth-class same-turn resubmit (S8).
+/// Whether a sampling failure is an S8 same-turn **transport** resubmit
+/// candidate (429 / 5xx / mid-stream disconnect).
+///
+/// Explicitly **not** candidates (even when `is_retryable` is true):
+/// - [`SamplingErrorKind::IdleTimeout`] — L4 / product: stuck model is terminal
+/// - [`SamplingErrorKind::EmptyResponse`] — stall-then-close often surfaces as
+///   empty content; resubmitting would defeat the idle-timeout contract
+/// - Auth / serialization / max-tokens / doom-loop — other policies own these
+pub fn is_s8_transport_resubmit_candidate(
+    kind: xai_grok_sampler::SamplingErrorKind,
+    is_retryable: bool,
+) -> bool {
+    use xai_grok_sampler::SamplingErrorKind;
+    if !is_retryable {
+        return false;
+    }
+    matches!(
+        kind,
+        SamplingErrorKind::RateLimited | SamplingErrorKind::Api | SamplingErrorKind::Http
+    )
+}
+
+/// Pure decision for auth-class / clean-transport same-turn resubmit (S8).
 ///
 /// Call order in production: seal → admit → refresh → this table.
-/// Non-auth failures never resubmit. Admission deny reasons surface as
-/// terminal reasons (stable codes from [`RetryDenyReason::code`]).
+/// Auth failures resubmit only under admission + successful credential
+/// refresh. Non-auth failures resubmit only when the failure class is a
+/// retryable transport fault (429/5xx/disconnect — never IdleTimeout,
+/// EmptyResponse, 4xx, serialization, …) AND the sealed clean receipt +
+/// durable ConfirmedClean authority admit a bounded budget; the fail-closed
+/// streaming-capture seal already proved NoOutput+NoToolCall+NoExternalEffect
+/// with complete observation, so replay cannot duplicate a side effect.
+/// Admission deny reasons surface as terminal reasons (stable codes from
+/// [`RetryDenyReason::code`]).
 pub fn decide_auth_class_retry(
     is_auth_failure: bool,
+    retryable_transport_failure: bool,
     admission: Result<u32, RetryDenyReason>,
     refresh_succeeded: bool,
     auth_class_retries_used: u32,
 ) -> AuthClassRetryAction {
     if !is_auth_failure {
-        return AuthClassRetryAction::Terminal {
-            reason: "non_auth_failure",
+        if !retryable_transport_failure {
+            return AuthClassRetryAction::Terminal {
+                reason: "non_auth_failure",
+            };
+        }
+        // Non-auth retryable transport fault with a sealed clean receipt:
+        // the server rejected the attempt before any output, so a bounded
+        // same-turn resubmit cannot duplicate an effect (INV-11). No
+        // credential refresh is involved; the admission already enforced
+        // budget + P4b side conditions.
+        return match admission {
+            Err(deny) => AuthClassRetryAction::Terminal {
+                reason: deny.code(),
+            },
+            // Defensive dead branch (mirrors the auth arm below):
+            // `authorize_in_process_retry_budget` only returns Ok(n) with
+            // n >= 1 or Err(BudgetExhausted).
+            Ok(0) => AuthClassRetryAction::Terminal {
+                reason: "retry.budget_exhausted",
+            },
+            Ok(_) => AuthClassRetryAction::Resubmit {
+                next_used: auth_class_retries_used.saturating_add(1),
+            },
         };
     }
     match admission {
@@ -1147,7 +1198,7 @@ mod tests {
 
         // (a) 401 + clean seal + refresh ok → resubmit once
         assert_eq!(
-            decide_auth_class_retry(true, admit_ok.clone(), true, 0),
+            decide_auth_class_retry(true, false, admit_ok.clone(), true, 0),
             AuthClassRetryAction::Resubmit { next_used: 1 }
         );
 
@@ -1163,7 +1214,7 @@ mod tests {
             1,
         ));
         assert_eq!(
-            decide_auth_class_retry(true, admit_spent, true, 1),
+            decide_auth_class_retry(true, false, admit_spent, true, 1),
             AuthClassRetryAction::Terminal {
                 reason: "retry.budget_exhausted"
             }
@@ -1171,41 +1222,88 @@ mod tests {
 
         // (c) refresh failed → terminal, no resubmit
         assert_eq!(
-            decide_auth_class_retry(true, Ok(1), false, 0),
+            decide_auth_class_retry(true, false, Ok(1), false, 0),
             AuthClassRetryAction::Terminal {
                 reason: "auth_refresh_failed"
             }
         );
 
-        // (d) non-auth failure → terminal, never resubmit
+        // (d) non-auth failure that is NOT a retryable transport fault
+        // (IdleTimeout, 4xx, serialization, …) → terminal, never resubmit
         assert_eq!(
-            decide_auth_class_retry(false, Ok(1), true, 0),
+            decide_auth_class_retry(false, false, Ok(1), true, 0),
             AuthClassRetryAction::Terminal {
                 reason: "non_auth_failure"
             }
         );
 
+        // (e) non-auth retryable transport fault (429/5xx/disconnect) under
+        // a clean sealed receipt + ConfirmedClean admission → bounded
+        // resubmit, no refresh involved
+        assert_eq!(
+            decide_auth_class_retry(false, true, Ok(1), false, 0),
+            AuthClassRetryAction::Resubmit { next_used: 1 }
+        );
+
+        // (f) second non-auth retryable fault after the budget is spent →
+        // terminal budget exhausted
+        let admit_spent2 = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::ConfirmedClean,
+            false,
+            false,
+            false,
+            false,
+            1,
+            1,
+        ));
+        assert_eq!(
+            decide_auth_class_retry(false, true, admit_spent2, false, 1),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.budget_exhausted"
+            }
+        );
+
+        // (g) non-auth retryable fault with an admission deny (store
+        // untrusted / side condition) → terminal with the stable deny code
+        let admit_denied = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+            Some(&clean),
+            DurableSealAuthority::Untrusted,
+            false,
+            false,
+            false,
+            false,
+            1,
+            0,
+        ));
+        assert_eq!(
+            decide_auth_class_retry(false, true, admit_denied, false, 0),
+            AuthClassRetryAction::Terminal {
+                reason: "retry.durable_store_untrusted"
+            }
+        );
+
         // Admission deny reasons surface as terminal codes.
         assert_eq!(
-            decide_auth_class_retry(true, Err(RetryDenyReason::ModelPinned), true, 0),
+            decide_auth_class_retry(true, false, Err(RetryDenyReason::ModelPinned), true, 0),
             AuthClassRetryAction::Terminal {
                 reason: "retry.model_pinned"
             }
         );
         assert_eq!(
-            decide_auth_class_retry(true, Err(RetryDenyReason::PoolExhausted), true, 0),
+            decide_auth_class_retry(true, false, Err(RetryDenyReason::PoolExhausted), true, 0),
             AuthClassRetryAction::Terminal {
                 reason: "retry.pool_exhausted"
             }
         );
         assert_eq!(
-            decide_auth_class_retry(true, Err(RetryDenyReason::BreakerOpen), true, 0),
+            decide_auth_class_retry(true, false, Err(RetryDenyReason::BreakerOpen), true, 0),
             AuthClassRetryAction::Terminal {
                 reason: "retry.breaker_open"
             }
         );
         assert_eq!(
-            decide_auth_class_retry(true, Err(RetryDenyReason::StaleAdvice), true, 0),
+            decide_auth_class_retry(true, false, Err(RetryDenyReason::StaleAdvice), true, 0),
             AuthClassRetryAction::Terminal {
                 reason: "retry.stale_advice"
             }
@@ -1243,6 +1341,7 @@ mod tests {
         assert_eq!(
             decide_auth_class_retry(
                 true,
+                false,
                 Err(RetryDenyReason::ToolCallEmitted),
                 true,
                 0
@@ -1251,5 +1350,39 @@ mod tests {
                 reason: "retry.tool_call_emitted"
             }
         );
+    }
+
+    #[test]
+    fn s8_transport_candidate_is_status_and_http_only() {
+        use xai_grok_sampler::SamplingErrorKind;
+        // Allowed (when is_retryable).
+        assert!(is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::RateLimited,
+            true
+        ));
+        assert!(is_s8_transport_resubmit_candidate(SamplingErrorKind::Api, true));
+        assert!(is_s8_transport_resubmit_candidate(SamplingErrorKind::Http, true));
+        // is_retryable false always closed.
+        assert!(!is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::RateLimited,
+            false
+        ));
+        // L4 timeout / stall surface — must never open S8 resubmit.
+        assert!(!is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::IdleTimeout,
+            false
+        ));
+        assert!(!is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::EmptyResponse,
+            true
+        ));
+        assert!(!is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::Serialization,
+            true
+        ));
+        assert!(!is_s8_transport_resubmit_candidate(
+            SamplingErrorKind::DoomLoopDetected,
+            true
+        ));
     }
 }

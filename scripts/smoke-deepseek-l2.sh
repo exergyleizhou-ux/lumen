@@ -11,10 +11,11 @@ if [[ -z "$KEY" ]]; then
   exit 2
 fi
 
-# Unconditionally ask Cargo to validate/rebuild this checkout. Finding an old
-# release executable is not evidence that L2 exercised the current source.
-(cd "$ROOT/agent" && CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}" \
-  cargo build --locked -p xai-grok-pager-bin --release)
+# The release binary must be stamped with the expected source (never with an
+# evidence/docs-only suffix commit). ensure-release-binary.sh rebuilds only
+# when the binary is missing or stale, so a fresh tuple is preserved and a
+# rebuild at an evidence HEAD cannot break binary_tuple_post.
+"$ROOT/scripts/ensure-release-binary.sh"
 BIN="$ROOT/agent/target/release/lumen"
 test -x "$BIN"
 BIN_SHA="$(shasum -a 256 "$BIN" | awk '{print $1}')"
