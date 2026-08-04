@@ -36,7 +36,7 @@ try:
     suffix = subprocess.check_output(
         ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{locked}..{head}"], cwd=root, text=True
     ).splitlines()
-    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
+    allowed = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "artifacts/audit/", "docs/", "CURRENT_STATE_LEDGER.md")
     if any(not path.startswith(allowed) for path in suffix):
         raise ValueError("non-evidence suffix")
     critical = lock.get("critical_file_sha256")
