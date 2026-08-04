@@ -90,45 +90,52 @@ fi
 # the source lock and readiness evidence are collected on that clean tree and
 # committed as an evidence-only suffix (B) afterwards. The release tag always
 # points at A (the build source), never at B.
-python3 "$VERSION_TOOL" --root "$ROOT" set "$NEXT" >/dev/null
-python3 "$CHANGELOG_TOOL" --root "$ROOT" "$NEXT"
-python3 "$VERSION_TOOL" --root "$ROOT" check >/dev/null
-git -C "$ROOT" diff --check
-(cd "$ROOT/agent" && cargo check --locked --package xai-grok-pager-bin --features release-dist)
+if [[ "$CURRENT" != "$NEXT" ]]; then
+  python3 "$VERSION_TOOL" --root "$ROOT" set "$NEXT" >/dev/null
+  python3 "$CHANGELOG_TOOL" --root "$ROOT" "$NEXT"
+  python3 "$VERSION_TOOL" --root "$ROOT" check >/dev/null
+  git -C "$ROOT" diff --check
+  (cd "$ROOT/agent" && cargo check --locked --package xai-grok-pager-bin --features release-dist)
 
-SOURCE_PATHS=(
-  VERSION
-  CHANGELOG.md
-  agent/Cargo.lock
-  agent/crates/codegen/xai-grok-pager/Cargo.toml
-  agent/crates/codegen/xai-grok-pager-bin/Cargo.toml
-  agent/crates/codegen/xai-grok-shell/Cargo.toml
-  agent/crates/codegen/xai-grok-tools/Cargo.toml
-  agent/crates/codegen/xai-grok-tools-api/Cargo.toml
-  agent/crates/codegen/xai-grok-update/Cargo.toml
-  agent/crates/codegen/xai-grok-workspace/Cargo.toml
-)
-while IFS= read -r changed_path; do
-  case "$changed_path" in
-    VERSION|CHANGELOG.md|agent/Cargo.lock|\
-    agent/crates/codegen/xai-grok-pager/Cargo.toml|\
-    agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
-    agent/crates/codegen/xai-grok-shell/Cargo.toml|\
-    agent/crates/codegen/xai-grok-tools/Cargo.toml|\
-    agent/crates/codegen/xai-grok-tools-api/Cargo.toml|\
-    agent/crates/codegen/xai-grok-update/Cargo.toml|\
-    agent/crates/codegen/xai-grok-workspace/Cargo.toml) ;;
-    *) fail "release source candidate changed an unexpected path: $changed_path" ;;
-  esac
-done < <(
-  {
-    git -C "$ROOT" diff --name-only
-    git -C "$ROOT" ls-files --others --exclude-standard
-  } | sort -u
-)
-git -C "$ROOT" add -- "${SOURCE_PATHS[@]}"
-git -C "$ROOT" diff --cached --quiet && fail "version bump produced no staged changes"
-git -C "$ROOT" commit -m "chore(release): prepare $TAG source candidate"
+  SOURCE_PATHS=(
+    VERSION
+    CHANGELOG.md
+    agent/Cargo.lock
+    agent/crates/codegen/xai-grok-pager/Cargo.toml
+    agent/crates/codegen/xai-grok-pager-bin/Cargo.toml
+    agent/crates/codegen/xai-grok-shell/Cargo.toml
+    agent/crates/codegen/xai-grok-tools/Cargo.toml
+    agent/crates/codegen/xai-grok-tools-api/Cargo.toml
+    agent/crates/codegen/xai-grok-update/Cargo.toml
+    agent/crates/codegen/xai-grok-workspace/Cargo.toml
+  )
+  while IFS= read -r changed_path; do
+    case "$changed_path" in
+      VERSION|CHANGELOG.md|agent/Cargo.lock|\
+      agent/crates/codegen/xai-grok-pager/Cargo.toml|\
+      agent/crates/codegen/xai-grok-pager-bin/Cargo.toml|\
+      agent/crates/codegen/xai-grok-shell/Cargo.toml|\
+      agent/crates/codegen/xai-grok-tools/Cargo.toml|\
+      agent/crates/codegen/xai-grok-tools-api/Cargo.toml|\
+      agent/crates/codegen/xai-grok-update/Cargo.toml|\
+      agent/crates/codegen/xai-grok-workspace/Cargo.toml) ;;
+      *) fail "release source candidate changed an unexpected path: $changed_path" ;;
+    esac
+  done < <(
+    {
+      git -C "$ROOT" diff --name-only
+      git -C "$ROOT" ls-files --others --exclude-standard
+    } | sort -u
+  )
+  git -C "$ROOT" add -- "${SOURCE_PATHS[@]}"
+  git -C "$ROOT" diff --cached --quiet && fail "version bump produced no staged changes"
+  git -C "$ROOT" commit -m "chore(release): prepare $TAG source candidate"
+else
+  # Re-release after a failed workflow: the version is already bumped on main.
+  # Skip the bump commit; current HEAD is the source candidate A.
+  echo "note: version already at $NEXT; reusing current HEAD as source candidate"
+  git -C "$ROOT" diff --check
+fi
 SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || fail "source candidate must leave a clean tree for source-lock"
