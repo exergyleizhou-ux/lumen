@@ -133,6 +133,23 @@ SOURCE_COMMIT="$(git -C "$ROOT" rev-parse HEAD)"
 [[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all)" ]] \
   || fail "source candidate must leave a clean tree for source-lock"
 
+# Thrash-safe source-lock records the *installed binary stamp*, not HEAD.
+# Rebuild+install the source candidate so the lock names A (never a stale
+# pre-bump stamp, and never an evidence-only HEAD).
+echo "Building and installing release source candidate $SOURCE_COMMIT..."
+"$ROOT/scripts/install-local.sh" \
+  || fail "install-local failed for source candidate $SOURCE_COMMIT"
+INSTALLED_VER="$("$HOME/.local/bin/lumen" --version 2>/dev/null || true)"
+case "$INSTALLED_VER" in
+  *"($(git -C "$ROOT" rev-parse --short "$SOURCE_COMMIT"))"*) ;;
+  *)
+    # Short length may widen; prefix-match full sha via extracted stamp.
+    STAMP="$(printf '%s' "$INSTALLED_VER" | sed -nE 's/.*\(([0-9a-f]{7,40})\).*/\1/p')"
+    [[ -n "$STAMP" && "$SOURCE_COMMIT" == "$STAMP"* ]] \
+      || fail "installed binary not stamped with source A: $INSTALLED_VER (want $SOURCE_COMMIT)"
+    ;;
+esac
+
 # ── Phase B: evidence-only suffix on clean A ─────────────────────────────────
 # The lock names A; readiness evidence is regenerated for the bumped version;
 # the only files that may change now are lock/readiness evidence, and B must
