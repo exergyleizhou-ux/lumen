@@ -82,6 +82,10 @@ INSTALLED_VERSION="$("$INSTALLED_BIN" --version)"
 VER_COMMIT="$(printf '%s' "$RELEASE_VERSION" | sed -nE 's/.*\(([0-9a-f]{7,40})\).*/\1/p')"
 if [[ -z "$VER_COMMIT" || "$EXPECTED_SOURCE" != "$VER_COMMIT"* ]]; then
   echo "FAIL: binary is not built from expected $EXPECTED_SOURCE_KIND ${EXPECTED_SOURCE:0:8}: $RELEASE_VERSION" >&2
+  echo "hint: thrash pattern is lock/HEAD on an evidence commit while the binary" >&2
+  echo "  still stamps the source. Fix with one of:" >&2
+  echo "  1) install at the source candidate, then scripts/source-lock.sh (locks binary stamp)" >&2
+  echo "  2) or LUMEN_SKIP_BUILD=1 install-local when HEAD is evidence for a locked source" >&2
   exit 1
 fi
 

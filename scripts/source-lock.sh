@@ -10,9 +10,15 @@
 #
 #   1. commit all real changes            (HEAD = X)
 #   2. scripts/install-local.sh           (binary stamped X, needs clean tree)
-#   3. scripts/source-lock.sh             (lock records X)
+#   3. scripts/source-lock.sh             (lock records X from *binary stamp*)
 #   4. scripts/verify-readiness.sh        (evidence applies to X)
 #   5. commit lock/SBOM/readiness only    (verifier accepts evidence-only suffix)
+#
+# THRASH GUARD: never record HEAD when the installed/release binary is still
+# stamped with an earlier source commit. Lock the binary stamp instead (when
+# the suffix is evidence/docs-only). Recording HEAD after an evidence-only
+# commit while the binary still names the source is what made tuple fail
+# repeatedly in the A5–A12 land.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -30,12 +36,78 @@ if [[ -n "$dirty_status" ]]; then
 fi
 
 python3 <<'PY'
-import hashlib, json, subprocess
+import hashlib, json, re, subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
 root = Path(".")
 head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+
+def binary_stamp(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    try:
+        ver = subprocess.check_output([str(path), "--version"], text=True).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    m = re.search(r"\(([0-9a-f]{7,40})\)", ver)
+    if not m:
+        return None
+    short = m.group(1)
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", short], text=True
+        ).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+installed = Path.home() / ".local/bin/lumen"
+release = root / "agent/target/release/lumen"
+stamp = binary_stamp(installed) or binary_stamp(release)
+if not stamp:
+    raise SystemExit(
+        "FAIL: source-lock requires an installed or release lumen binary "
+        "(run scripts/install-local.sh first)"
+    )
+
+allowed_prefix = (
+    "SOURCE_LOCK.json",
+    "SBOM.spdx.json",
+    "artifacts/readiness/",
+    "docs/",
+    "CURRENT_STATE_LEDGER.md",
+)
+
+if stamp == head:
+    locked_source = head
+elif subprocess.run(
+    ["git", "merge-base", "--is-ancestor", stamp, head],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
+).returncode == 0:
+    suffix = subprocess.check_output(
+        ["git", "-c", "core.quotepath=false", "diff", "--name-only", f"{stamp}..{head}"],
+        text=True,
+    ).splitlines()
+    bad = [p for p in suffix if not p.startswith(allowed_prefix)]
+    if bad:
+        raise SystemExit(
+            "FAIL: binary stamp %s is behind HEAD but suffix has non-evidence paths: %s\n"
+            "Rebuild/install at HEAD, or finish source commits before source-lock."
+            % (stamp[:8], ", ".join(bad[:8]))
+        )
+    # Evidence/docs-only suffix: lock the *binary* source, never the evidence HEAD.
+    locked_source = stamp
+    print(
+        "note: locking binary stamp %s (HEAD %s is evidence-only suffix)"
+        % (stamp[:7], head[:7])
+    )
+else:
+    raise SystemExit(
+        "FAIL: binary stamp %s is not an ancestor of HEAD %s; reinstall from current source"
+        % (stamp[:8], head[:8])
+    )
+
 version = Path("VERSION").read_text().strip() if Path("VERSION").is_file() else None
 paths = [
     ".gitleaksignore",
@@ -89,7 +161,7 @@ if missing:
 lock = {
     "schema_version": 1,
     "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    "monorepo": {"git_head": head, "git_short": head[:7]},
+    "monorepo": {"git_head": locked_source, "git_short": locked_source[:7]},
     "lumen_version": version,
     "upstream_pin": {
         "doc": "agent/UPSTREAM.md",
@@ -105,5 +177,7 @@ lock = {
     "aggregate_critical_sha256": h.hexdigest(),
 }
 Path("SOURCE_LOCK.json").write_text(json.dumps(lock, indent=2) + "\n")
-print("OK: wrote SOURCE_LOCK.json", head[:7])
+print("OK: wrote SOURCE_LOCK.json", locked_source[:7])
+if locked_source != head:
+    print("OK: HEAD", head[:7], "is evidence suffix; binary/lock stay on", locked_source[:7])
 PY
