@@ -1,0 +1,76 @@
+{
+  "gates": [
+    {
+      "name": "M1_GOVERNED_TREE_PREVIEW_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "LOOP_CONVERGENCE_GATE_OFFLINE",
+      "status": "PASS"
+    },
+    {
+      "name": "P0_NR_A_SEAL_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "P0_NR_A_FULL_AUDIT_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "SANDBOX_SCHEMA_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "ASSIGNMENT_APPLY_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "ADVISOR_SHADOW_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "KAIROS_LOCAL_PURE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "FLOW_CONTROL_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "TOOL_CONTRACT_DISPATCH_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A5_CONTEXT_REBUILD_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A6_HANDOFF_JOURNAL_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A7_EXPERT_REPAIR_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A8_ADVISOR_CONSULT_TOOL_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A9_A11_APPLIED_CHAIN_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A10_OPERATOR_KAIROS_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "A12_ROLLBACK_RECEIPT_GATE",
+      "status": "PASS"
+    }
+  ],
+  "offline_pass_count": 17,
+  "offline_total": 17,
+  "product_rc": "NOT_READY",
+  "note": "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; A5-A12 exit gates; sandbox/advisor/kairos; exact-SHA CI + formal v2.0.0 tag NOT RUN"
+}
