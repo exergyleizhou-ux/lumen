@@ -100,6 +100,24 @@ def normalize_license(value):
             value = " OR ".join(parts)
         else:
             return "NOASSERTION"
+    # SPDX "or later" ("+") is only legal for licenses the SPDX list defines
+    # with a plus variant (GPL/LGPL/AGPL/GFDL families, MPL-1.x). The official
+    # spdx-tools validator rejects e.g. `MPL-2.0+` (smartstring) and
+    # `Apache-2.0+`; strip the plus from any other ID so the emitted SBOM
+    # passes the official validator. Licensing semantics are unchanged: the
+    # base license ID is the canonical reference either way.
+    OR_LATER_OK = {
+        "AGPL-1.0", "AGPL-3.0", "GFDL-1.1", "GFDL-1.2", "GFDL-1.3",
+        "GPL-1.0", "GPL-2.0", "GPL-3.0",
+        "LGPL-2.0", "LGPL-2.1", "LGPL-3.0",
+        "MPL-1.0", "MPL-1.1",
+    }
+
+    def fix_plus(match):
+        base = match.group(1)
+        return match.group(0) if base in OR_LATER_OK else base
+
+    value = re.sub(r"([A-Za-z0-9][A-Za-z0-9.-]*)\+", fix_plus, value)
     return value
 
 def download_location(package):
