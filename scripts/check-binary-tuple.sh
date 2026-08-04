@@ -71,6 +71,9 @@ INSTALLED_VERSION="$("$INSTALLED_BIN" --version)"
   echo "FAIL: release/installed version mismatch" >&2
   echo "release=$RELEASE_VERSION" >&2
   echo "installed=$INSTALLED_VERSION" >&2
+  echo "hint: after cargo build --release, reinstall the stamped binary:" >&2
+  echo "  LUMEN_SKIP_BUILD=1 bash scripts/install-local.sh" >&2
+  echo "  (or build+install from a clean source tree if install refuses dirty)" >&2
   exit 1
 }
 # The binary stamps `git rev-parse --short HEAD`, whose length git auto-widens
