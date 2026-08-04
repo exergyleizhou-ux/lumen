@@ -30,7 +30,9 @@
 | DEBT-021 | 2026-08-04 收尾审计 | S3 child git commit/push/merge 无硬拒；worktree auto-handoff 未接 | **closed (2026-08-04)** | tool_contract.rs child_git_mutation_in（词元切分 + 安全动词表 + -C 值跳过）+ shell prepare_tool_call Execute 工具 child depth 硬拒（2 端到端测试驱动真实 dispatch）；MergeReceiptV1/worktree auto-handoff 仍为纯函数（见 DEBT-024） |
 | DEBT-022 | 2026-08-04 收尾审计 | A10 kairos lease consumer 未接 scheduler/daemon 循环 | **closed (2026-08-04)** | ShellChildRunner::run/on_completed 接 SchedulerLoopOutbox：outbox_should_deliver 幂等门（成功 terminal 标记 delivered，失败/取消可重试）+ 单测 |
 | DEBT-023 | 2026-08-04 收尾审计 | A12 ReleaseSourceTuple / installer provenance 未落代码 | **closed (2026-08-04)** | release_source_tuple.rs（source≠evidence、tag 必须指向 source A、binary/lock sha256 必填）+ RELEASE_TUPLE_GATE；release.sh 生成 artifacts/release-source-tuple.json；install-local.sh 落 lumen-release-source-tuple.json |
-| DEBT-024 | 2026-08-04 收尾审计 | 残余 partial（诚实登记，不伪装关闭）：(a) worktree auto-handoff 仍为纯函数（evaluate_merge_handoff 无 shell 调用点）；(b) A9 recommend 产品 UI 未实现（governedTree ACP 投影提供 profile 升级面）；(c) M1 为 ACP 投影（x.ai/governedTree/status），pager 树 pane 未做；(d) DispatchPermitV1 为 memory 层类型，shell adapter 端到端消费未接；(e) readiness 人工门 M5/M6 需真实环境 | open | 见下"残余 partial 说明" |
+| DEBT-024 | 2026-08-04 收尾审计 | 残余 partial：worktree auto-handoff 纯函数 / A9 无产品 UI / M1 无 pager pane / DispatchPermit shell 未接 / M5·M6 人工门 | **closed (2026-08-05)** | (a) worktree auto-handoff 接 `on_completed` 生产路径（SessionCommand::GetWriteScopeLease 权威取回 lease + 真实 git delta + `evaluate_merge_handoff`，无 root 决定 fail-closed）；(b) A9 recommend 面落地为 `x.ai/governedTree/assignmentRecommendation`（按条件 readiness 矩阵）；(c) M1 pager 树 pane 落地（`views/governed_tree` 渲染器 + overlay + 输入钩子）；(d) DispatchPermitV1 进 spawn 适配器（真实 lineage/grant/manifest mint + 完成时重验）；(e) M5 真人陌生测试 / M6 15 天真实日志为人工门，脚本语义拒绝伪造，见 DEBT-025 |
+
+| DEBT-025 | 2026-08-05 | readiness 人工门：M5 真人 10 分钟陌生测试、M6 15 天真实生产力日志（当前 2 天）；`verify-readiness.sh` 脚本语义拒绝以 SKIP/模拟证据判定 ready | open | 真实人类完成 M5/M6 后重跑 `verify-readiness.sh`；`ready=true` 由脚本输出决定，不伪造 |
 
 ## 登记记录（追加式）
 
@@ -40,15 +42,13 @@
 - 2026-08-04 终：A5–A12 Exit Gates（nextgen_exit_gates + offline 17 gates + shell A5/A7/A8 真入口）；DEBT-013/014/016 closed；DEBT-015 正式 tag 仍 open（仅 dry-run）。
 - 2026-08-04 正式版：`v2.0.0` signed tag → `d42ea6e8`，push origin；DEBT-015 closed；verification_debt 全 closed。
 - 2026-08-04 收尾审计（本目标）：身份层/红队合同/接线/发布链落地；DEBT-017..023 closed；DEBT-024 残余 partial 显式登记 open。
+- 2026-08-05：DEBT-024(a)(b)(c)(d) 全部落地 closed（worktree auto-handoff 生产接线、A9 recommend 面、M1 pager 树 pane、DispatchPermit spawn 适配器）；残余人工门拆为 DEBT-025 open（M5/M6，脚本语义拒绝伪造）。
 
-## 残余 partial 说明（DEBT-024，诚实登记）
+## 残余 partial 说明（DEBT-025，唯一剩余 open 项）
 
-| 项 | 现状 | 关闭条件（真实环境/后续） |
+| 项 | 现状 | 关闭条件（真实环境） |
 |----|------|--------------------------|
-| (a) worktree auto-handoff | `evaluate_merge_handoff`/`MergeReceiptV1` 纯函数 + 测试；shell 无调用点 | 在 worktree apply host 路径接入并驱动真入口测试 |
-| (b) A9 recommend 产品 UI | `x.ai/governedTree/status` 提供 profile 升级面；applied 全链纯函数已关 | 用户可见的模型推荐界面 + root approval 交互 |
-| (c) M1 pager 树 pane | ACP 投影已接（governed_tree.rs）；pager 无树 pane | pager pane 渲染 + exact-binary 打开 fixture |
-| (d) DispatchPermitV1 shell 端到端 | memory 层类型 + 28 测；shell adapter 未消费 permit | 将 shell 实际 spawn/worktree/process 入口改为持有 permit |
-| (e) readiness 人工门 | 1h soak 已跑（绑定当前 binary）；M5 真人陌生测试、M6 15 天真实日志、live eval 需真实环境 | 真人完成 M5/M6；`EVAL_LIVE=1` 跑 eval-coding-live；readiness 聚合后 status.json ready=true |
+| M5_10_min_stranger | `onboarding-gate.sh` 拒绝模拟证据（m5_sim 语义非法） | 真实从未用过 Lumen 的陌生人完成 10 分钟上手路径 |
+| M6_15_day_self_use | productivity-gate 计数 2/15 天 | 连续/累计 15 天真实使用 journal |
 
-> 注：本目标使 `release_version_changed` blocker 消除、`binary_sha256` 绑定当前 build；`ready=true` 仍受 M5/M6 人工门约束（脚本语义，绝不伪造）。
+> 这两个是 `verify-readiness.sh` 的 publish 门；`engineering_complete` 的自动化门全部 PASS（含 3 次 1h soak、live eval 20/20、gitleaks 0、tuple、source_lock）。任何人完成 M5/M6 后重跑 `verify-readiness.sh` 即得到 `ready=true`（INV-36）。

@@ -1,18 +1,27 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-04T12:14:14Z",
-  "git_head": "34d04cff11a4478dec05251fc67922d3d321a753",
+  "generated_at": "2026-08-04T17:29:21Z",
+  "git_head": "6e026fbd2fae333600072c344d16fc148f5d0a93",
   "remote_heads": [
-    "main=b989d2d731d34993139abd7f570e99657254c47f"
+    "main=3751643d7c2351f7718bffea191833490415ec0d"
   ],
   "dirty_path_manifest": [
-    " M SOURCE_LOCK.json",
-    " M docs/evidence/offline-contract-gates-full.json",
-    " M docs/nextgen/INVARIANTS.md",
+    " M agent/crates/codegen/xai-grok-memory/src/dispatch_permit.rs",
+    " M agent/crates/codegen/xai-grok-memory/src/lib.rs",
+    " M agent/crates/codegen/xai-grok-pager/src/app/agent_view/input.rs",
+    " M agent/crates/codegen/xai-grok-pager/src/app/agent_view/mod.rs",
+    " M agent/crates/codegen/xai-grok-pager/src/app/agent_view/render.rs",
+    " M agent/crates/codegen/xai-grok-pager/src/app/agent_view/session.rs",
+    " M agent/crates/codegen/xai-grok-pager/src/views/mod.rs",
+    " M agent/crates/codegen/xai-grok-shell/src/agent/mvp_agent/subagent_coordinator.rs",
+    " M agent/crates/codegen/xai-grok-shell/src/extensions/governed_tree.rs",
+    " M agent/crates/codegen/xai-grok-shell/src/session/acp_session_impl/run_loop.rs",
+    " M agent/crates/codegen/xai-grok-shell/src/session/commands.rs",
     " M docs/verification-debt.md",
     " M \"docs/\\344\\272\\244\\346\\216\\245\\350\\257\\215-2026-08-04-\\345\\205\\250\\347\\273\\264\\345\\272\\246100%.md\"",
-    "?? artifacts/audit/",
-    "?? docs/evidence/offline-contract-gates-20260804T121411Z.json"
+    "?? agent/crates/codegen/xai-grok-memory/src/recommend_assignment.rs",
+    "?? agent/crates/codegen/xai-grok-pager/src/app/agent_view/governed_tree_overlay.rs",
+    "?? agent/crates/codegen/xai-grok-pager/src/views/governed_tree.rs"
   ],
   "ci_run": "NOT_RUN",
   "command_exits": [
@@ -21,5 +30,5 @@
     "child_sandbox=0",
     "nextgen_control=0"
   ],
-  "source_lock_sha256": "fc4b5fea63924ee8dbab1b5ccff337e32a6bcc86e87cf9fefa1e956dd8d82a8e"
+  "source_lock_sha256": "2b3cf071923db8666eab379e1dd8f1cf07a1d66791699f64cc6f3ffa4131075e"
 }

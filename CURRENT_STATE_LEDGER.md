@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **77** |
 | … fully merged into main | 9 |
 | … NOT in main | **68** |
-| Last non-bot commit | a4230435 chore(evidence): readiness for 9a133a95, third 1h soak bound to locked build |
+| Last non-bot commit | c7f0a12d feat(nextgen): land DEBT-024(a-d) — worktree handoff, A9 recommend, M1 pager pane, spawn permits |
 
 ---
 
