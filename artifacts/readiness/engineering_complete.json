@@ -2,14 +2,14 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "2.0.0",
-  "head_short": "d42ea6e8",
+  "head_short": "f51fb902",
   "pass": false,
   "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
   "auto_blockers": [
-    "release_version_changed:rerun scripts/verify-readiness.sh for 2.0.0 at d42ea6e8ab3e2483587af7afac7534bb7a34d118"
+    "release_version_changed:rerun scripts/verify-readiness.sh for 2.0.0 at f51fb902a4c97ab26e4cff5f52c52c1b72b8708d"
   ],
   "can_tool_call": false,
-  "source_lock_sha256": "5dae9bba2de4187e09ffdeb2e8bb6bfd09e8498b70064e1508d27b802d2210e4",
+  "source_lock_sha256": "2b7c5e8faabc241880da70b230bf7d5afe3a249616ffdad74d4b53514ebe69ba",
   "binary_sha256": null,
-  "generated_at": "2026-08-04T06:11:12Z"
+  "generated_at": "2026-08-04T08:15:34Z"
 }
