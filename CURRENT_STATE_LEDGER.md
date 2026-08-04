@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 76371190 docs: close DEBT-015 — formal v2.0.0 tag shipped |
+| Last non-bot commit | e8c6fc55 docs: handover snapshot — v2.0.0 shipped, debt all closed |
 
 ---
 
