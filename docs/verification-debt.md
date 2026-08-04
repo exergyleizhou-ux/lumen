@@ -19,13 +19,14 @@
 | DEBT-010 | S8 复审 | `decide_auth_class_retry` 的 `Ok(0)` 分支不可达（防御性死分支） | **closed (2026-08-04, S10)** | decide_auth_class_retry Ok(0) 死分支加防御性注释（构造上不可达）
 | DEBT-011 | 全维度100% A2 | ToolContract 生产 dispatch | **closed (2026-08-04)** | shell prepare_tool_call 强制 authorize_tool_dispatch；结果 clamp_tool_result_text；offline TOOL_CONTRACT_DISPATCH_GATE=PASS |
 | DEBT-012 | 全维度100% A4 | mailbox 有界 + FLOW_CONTROL | **closed (2026-08-04)** | flood/two-tree/shutdown fixtures + offline FLOW_CONTROL_GATE=PASS |
-| DEBT-013 | 全维度100% A5–A8 | adapter 全强制 / Expert repair / advisor ToolRegistry+UI | open | 交接词 A5–A8 Exit Gate |
-| DEBT-014 | 全维度100% A9–A12 | recommend/Kairos/NG-09B/release 全链 | open | 交接词 A9–A12 Exit Gate |
-| DEBT-015 | 全维度100% C1 | 正式 v2.0.0 tag 未打 | open | A5–A12 收口后 release.sh + 用户确认远端 tag |
-| DEBT-016 | 全维度100% D1–D2 | probe 收据 / grok-4.5 交叉审查 | open | 提交 probe 或排除理由；补审查记录 |
+| DEBT-013 | 全维度100% A5–A8 | adapter 全强制 / Expert repair / advisor ToolRegistry+UI | **closed (2026-08-04)** | nextgen_exit_gates + offline A5–A8 gates；shell resume→authorize_context_rebuild；expert repair→authorize_expert_repair_pass；ConsultAdvisorHost lumen_advisor_consult 工具入口；SCRATCH offline-contract-gates-full.json 17/17 |
+| DEBT-014 | 全维度100% A9–A12 | recommend/Kairos/NG-09B/release 全链 | **closed (2026-08-04)** | authorize_applied_assignment_chain + operator_control_five_command_matrix + kairos_fake_clock_lease_cycle + authorize_rollback_receipt；offline A9_A11/A10/A12 gates PASS；正式 installer/UI 可选路径不阻塞 pure Exit Gate |
+| DEBT-015 | 全维度100% C1 | 正式 v2.0.0 tag 未打 | open | 本地 `--dry-run` 可过；正式 tag/push 需用户确认远端（纪律：不擅自推送正式 v2.0.0） |
+| DEBT-016 | 全维度100% D1–D2 | probe 收据 / grok-4.5 交叉审查 | **closed (2026-08-04)** | D1: docs/evidence/reducer-purity-probe-2026-08-03.json 入库；D2: DeepSeek V4 Flash + Grok 4.5 交叉验收记录见 SCRATCH/cross-accept-*.md |
 
 ## 登记记录（追加式）
 
 - 2026-08-03：S8 提交后（bf489044/1d2921af），Critic 两轮审查的 10 项债务全部登记。DEBT-001/002 为 Medium 级声明遗留，DEBT-003..010 为 Low/Info 级。
 - 2026-08-04（全维度100%）：关闭 P1–P5；A1 CapabilityGrantV1；A2 契约层 API；A3 BudgetLedger 既有真入口。DEBT-011..016 登记剩余 Exit Gate。
 - 2026-08-04 续：A2 生产 shell 接线 + A4 FLOW_CONTROL_GATE + fixtures；DEBT-011/012 closed。
+- 2026-08-04 终：A5–A12 Exit Gates（nextgen_exit_gates + offline 17 gates + shell A5/A7/A8 真入口）；DEBT-013/014/016 closed；DEBT-015 正式 tag 仍 open（仅 dry-run）。

@@ -1,0 +1,162 @@
+{
+  "schema": "lumen/nextgen/reducer-purity-probe",
+  "encoding_revision": 1,
+  "nature": "read-only inventory; no runtime behavior changed",
+  "generated_at": "2026-08-03",
+  "decision_points": [
+    {
+      "id": "coordinator/event-loop",
+      "location": "xai-grok-tools/src/implementations/grok_build/task/coordinator.rs:430-486 (run loop), handle_command 489-1037",
+      "state": "pending/active/completed/recovered_terminals maps, tree budget maps, waiters",
+      "event": "SubagentEvent (typed, single mailbox)",
+      "transition": "handle_command -> mutated maps + emitted replies/observations",
+      "emitted_effects": [
+        "spawn reply via oneshot result_tx",
+        "runner.on_completed(ChildCompletion)",
+        "spawn delivery observation (Delivered/Uncertain/Undelivered)",
+        "cancel via shared CancellationToken + TestControl"
+      ],
+      "markers": {
+        "direct_io": false,
+        "clock_read": true,
+        "clock_read_note": "process_deadlines uses tokio::time::Instant::now for foreground budget and tree wall-time expiry",
+        "hidden_writer": ["CancellationToken shared with runner process (cancel is external mutation)"],
+        "non_replayable_input": ["oneshot reply channels", "mpsc command channels (unbounded)", "broadcast start/finish in test harness"],
+        "unserialized_lease": ["foreground_deadline on pending children (in-memory only, not journaled)"],
+        "cross_store_transaction": false,
+        "note": "tree_operations (GovernedOperationStore) is actor-owned durable store keyed by root; budget maps are NOT journaled"
+      }
+    },
+    {
+      "id": "coordinator/loop-unit-active",
+      "location": "coordinator.rs:1028-1038 (LoopUnitActive)",
+      "state": "pending + active child requests (loop_task_id overrides)",
+      "event": "SubagentLoopUnitActiveRequest",
+      "transition": "pure read -> bool reply",
+      "emitted_effects": ["oneshot bool"],
+      "markers": {
+        "direct_io": false, "clock_read": false, "hidden_writer": [],
+        "non_replayable_input": ["oneshot reply"], "unserialized_lease": false,
+        "cross_store_transaction": false
+      }
+    },
+    {
+      "id": "sampler/request-task",
+      "location": "xai-grok-sampler/src/actor/request_task.rs:90-350",
+      "state": "retry_count, doom_retry_count, output_observed AtomicBool, client",
+      "event": "SamplerCommand with request + config",
+      "transition": "classify_error (pure) -> retry decision; loop emits attempts",
+      "emitted_effects": ["HTTP transport calls via SamplingClient", "event_tx SamplingEvent emissions", "completion oneshot"],
+      "markers": {
+        "direct_io": true,
+        "direct_io_note": "transport call is the effect under test; retry decision itself is pure",
+        "clock_read": true,
+        "clock_read_note": "backoff sleep_or_cancel uses tokio sleep",
+        "hidden_writer": ["output_observed AtomicBool (shared with event path)"],
+        "non_replayable_input": ["event channel delivery (unbounded)", "oneshot completion"],
+        "unserialized_lease": ["doom_retry_count in-memory"],
+        "cross_store_transaction": false,
+        "note": "P0-NR-A closure: max_retries==0 short-circuits env override; classify_error returns Fatal before any resample branch"
+      }
+    },
+    {
+      "id": "shell/sampler-turn",
+      "location": "xai-grok-shell/src/session/acp_session_impl/sampler_turn.rs:954-1060 (handle_sampling_failure), 1321-1420 (submit path)",
+      "state": "session actor state, tool_context, pending_interactions",
+      "event": "SamplingResult / SamplingErrorInfo",
+      "transition": "terminal error propagation; passive provider health record",
+      "emitted_effects": ["terminal turn error", "provider health record", "log events"],
+      "markers": {
+        "direct_io": false, "clock_read": false,
+        "hidden_writer": ["tool_context.sampler_retry_only_before_output read"],
+        "non_replayable_input": ["completion oneshot + ACP event drainer race (receipt-less pre-P4b)"],
+        "unserialized_lease": false, "cross_store_transaction": false,
+        "note": "no *AndResubmit consumers remain (P0-NR-A); P4b ProviderAttemptReceipt still NOT STARTED"
+      }
+    },
+    {
+      "id": "shell/activity-snapshot",
+      "location": "xai-grok-shell/src/session/acp_session_impl/activity_snapshot.rs",
+      "state": "SessionActivitySnapshot (bounded read model)",
+      "event": "UnloadIfIdle request (actor mailbox)",
+      "transition": "aggregate foreground/queued/terminal/monitor/child/scheduler-lease/pending-approval; adapter probe timeout fail-closed",
+      "emitted_effects": ["unload decision"],
+      "markers": {
+        "direct_io": true,
+        "direct_io_note": "adapter probes (terminal/monitor queries) with timeout",
+        "clock_read": true,
+        "clock_read_note": "probe timeout via tokio timeout",
+        "hidden_writer": ["owner-less legacy snapshots treated as self"],
+        "non_replayable_input": ["actor mailbox ordering only; not a distributed atomic snapshot"],
+        "unserialized_lease": ["activity entries are in-memory read model, not journal"],
+        "cross_store_transaction": false,
+        "note": "NG-03A scope only; durable lifecycle journal is NG-03C"
+      }
+    },
+    {
+      "id": "scheduler/lease-heartbeat",
+      "location": "xai-grok-tools/src/implementations/grok_build/scheduler/actor.rs (owner lease, heartbeat, backoff, dead-letter)",
+      "state": "task-scoped lease records, occurrence journal",
+      "event": "scheduler fire / heartbeat / takeover",
+      "transition": "lease claim/heartbeat/expiry -> retry or dead-letter",
+      "emitted_effects": ["task spawn", "journal writes", "waiter resolution"],
+      "markers": {
+        "direct_io": true,
+        "direct_io_note": "occurrence journal durable writes",
+        "clock_read": true,
+        "clock_read_note": "lease expiry and heartbeat deadlines",
+        "hidden_writer": [],
+        "non_replayable_input": ["journal read after crash (one-shot durability)"],
+        "unserialized_lease": ["workflow reboot -> terminal (not recoverable)"],
+        "cross_store_transaction": false,
+        "note": "local building blocks only; generic operation lease/outbox/reconcile is NG-03C"
+      }
+    },
+    {
+      "id": "ledger/claim-authority",
+      "location": "xai-grok-memory/src/task_ledger.rs, claim_authority.rs",
+      "state": "append-only claim journal + accepted snapshot read model",
+      "event": "claim append / review transition / promote (root only)",
+      "transition": "journal append + read-model rebuild; foreign/torn/unproven fail-closed",
+      "emitted_effects": ["journal file append (fsync)", "recovery event on torn tail", "promotion marker"],
+      "markers": {
+        "direct_io": true,
+        "direct_io_note": "journal append + tail backup on repair",
+        "clock_read": true,
+        "clock_read_note": "created_at timestamps",
+        "hidden_writer": [],
+        "non_replayable_input": ["manual/legacy JSONL accepted-without-evidence -> fail-closed reload"],
+        "unserialized_lease": [],
+        "cross_store_transaction": false,
+        "note": "NG-04A/B foundation present; full migration/read-model replay gate NOT closed"
+      }
+    },
+    {
+      "id": "expert/pool-selection",
+      "location": "xai-grok-shell/src/session/expert.rs (P4a selection)",
+      "state": "user pool/priority, endpoint health, quota classification",
+      "event": "new Expert task admission",
+      "transition": "select healthy candidate within pool; pool exhausted -> ModelMissing fail-closed",
+      "emitted_effects": ["AdvisorPoolRoutingEvidence persistence", "model selection for next task only"],
+      "markers": {
+        "direct_io": true,
+        "direct_io_note": "evidence record persistence",
+        "clock_read": false,
+        "hidden_writer": [],
+        "non_replayable_input": [],
+        "unserialized_lease": [],
+        "cross_store_transaction": false,
+        "note": "no same-turn replay; ordinary-turn reroute is P0-NR-A closed"
+      }
+    }
+  ],
+  "summary": {
+    "count": 8,
+    "pure_read_only": ["coordinator/loop-unit-active"],
+    "clock_dependent": ["coordinator/event-loop", "sampler/request-task", "shell/activity-snapshot", "scheduler/lease-heartbeat", "ledger/claim-authority"],
+    "io_dependent": ["sampler/request-task", "shell/activity-snapshot", "scheduler/lease-heartbeat", "ledger/claim-authority", "expert/pool-selection"],
+    "hidden_writer_shared_state": ["coordinator/event-loop (CancellationToken)", "sampler/request-task (AtomicBool)"],
+    "no_fully_journaled_reducer_yet": true,
+    "note": "NG-00B reducer work begins AFTER this inventory; each listed marker must be turned into typed observation/input events before a reducer can replay"
+  }
+}

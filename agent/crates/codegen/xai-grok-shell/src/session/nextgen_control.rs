@@ -272,6 +272,42 @@ impl ConsultAdvisorHost {
         matches!(self.mode, AdvisorMode::Consult)
     }
 
+    /// Registered product tool name for on-demand advisor consult (A8).
+    pub fn registered_tool_name() -> &'static str {
+        xai_grok_memory::ADVISOR_CONSULT_TOOL_NAME
+    }
+
+    /// Product-face consult via the shipped Exit Gate tool entry (A8).
+    ///
+    /// UI projection never grants authority. Routes through
+    /// [`xai_grok_memory::invoke_advisor_consult_tool`] so offline
+    /// `A8_ADVISOR_CONSULT_TOOL_GATE` and shell cannot drift.
+    pub fn invoke_tool(
+        &self,
+        request_id: &str,
+        task_summary: &str,
+        review_question: Option<&str>,
+        now_epoch_ms: u64,
+        deadline_epoch_ms: Option<u64>,
+        fixture_succeeds: bool,
+    ) -> Result<
+        (
+            ConsultOutcome,
+            xai_grok_memory::AdvisorConsultProjectionV1,
+        ),
+        String,
+    > {
+        xai_grok_memory::invoke_advisor_consult_tool(
+            self.mode,
+            request_id,
+            task_summary,
+            review_question,
+            now_epoch_ms,
+            deadline_epoch_ms,
+            fixture_succeeds,
+        )
+    }
+
     /// Run one consult through the mode gate and (consult-only) adapter.
     ///
     /// Returns the outcome and, on success, the report id. `Blocked` reasons
@@ -606,6 +642,32 @@ mod tests {
         assert!(!report.applies_authority);
         assert!(!advice_may_mutate_authority(report));
         assert_eq!(host.reports.len(), 1);
+    }
+
+    #[test]
+    fn advisor_consult_tool_registry_entry_matches_exit_gate() {
+        assert_eq!(
+            ConsultAdvisorHost::registered_tool_name(),
+            "lumen_advisor_consult"
+        );
+        let host = ConsultAdvisorHost::new(AdvisorMode::Consult);
+        let (outcome, proj) = host
+            .invoke_tool("t1", "verify green", Some("ok?"), 100, Some(200), true)
+            .expect("tool invoke");
+        assert_eq!(proj.tool_name, ConsultAdvisorHost::registered_tool_name());
+        assert!(!proj.applies_authority);
+        assert!(matches!(outcome, ConsultOutcome::Succeeded { .. }));
+        let host_off = ConsultAdvisorHost::new(AdvisorMode::Off);
+        let (blocked, p2) = host_off
+            .invoke_tool("t2", "x", None, 1, None, true)
+            .expect("off");
+        assert!(!p2.applies_authority);
+        assert!(matches!(
+            blocked,
+            ConsultOutcome::Blocked {
+                reason: ConsultBlockReason::PolicyRefused
+            }
+        ));
     }
 
     fn consult_request(id: &str) -> AdvisorRequestV1 {

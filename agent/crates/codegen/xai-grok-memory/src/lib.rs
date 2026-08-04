@@ -36,6 +36,7 @@ pub mod kairos_supervisor;
 pub mod kairos_lease_consumer;
 pub mod operator_control;
 pub mod nextgen_contract_gates;
+pub mod nextgen_exit_gates;
 pub mod sealed_attempt_receipt;
 pub mod authority_event;
 pub mod authority_projection;
@@ -108,6 +109,14 @@ pub use operator_control::{
     apply_operator_command, issue_resume_approval,
 };
 pub use nextgen_contract_gates::{GateResult, NextGenContractGateReceipt, run_offline_contract_gates};
+pub use nextgen_exit_gates::{
+    ADVISOR_CONSULT_TOOL_NAME, AdvisorConsultProjectionV1, AppliedAssignmentChain,
+    AppliedChainDeny, ContextRebuildDeny, ContextRebuildRequest, ExpertRepairAdmission,
+    ExpertRepairDeny, HandoffDeliveryError, RollbackReceiptV1, authorize_applied_assignment_chain,
+    authorize_context_rebuild, authorize_expert_repair_pass, authorize_rollback_receipt,
+    deliver_handoff_receipt, invoke_advisor_consult_tool, kairos_fake_clock_lease_cycle,
+    operator_control_five_command_matrix,
+};
 pub use sealed_attempt_receipt::{
     AttemptSealTracker, DURABLE_CLEAN_MAX_IN_PROCESS_RETRIES, DurableSealAuthority, Obs,
     RetryAdmissionRequest, RetryDenyReason, SEALED_RECEIPT_SCHEMA_VERSION,

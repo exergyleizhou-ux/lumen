@@ -326,6 +326,151 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
     }
     gates.push(pass("TOOL_CONTRACT_DISPATCH_GATE"));
 
+    // A5–A12 Exit Gates — real shipped helpers in nextgen_exit_gates (not mocks).
+    {
+        use crate::nextgen_exit_gates::{
+            AppliedAssignmentChain, ContextRebuildRequest, ExpertRepairAdmission,
+            RollbackReceiptV1, authorize_applied_assignment_chain, authorize_context_rebuild,
+            authorize_expert_repair_pass, authorize_rollback_receipt, deliver_handoff_receipt,
+            invoke_advisor_consult_tool, kairos_fake_clock_lease_cycle,
+            operator_control_five_command_matrix, ADVISOR_CONSULT_TOOL_NAME,
+        };
+        use crate::client_advisor_shadow::AdvisorMode;
+        use crate::handoff_packet::HandoffPacketV1;
+        use crate::lifecycle_journal::LifecycleJournal;
+        use crate::bounded_assignment_apply::AssignmentLifecycle;
+
+        // A5 compact/resume/reconnect identity
+        for entry in ["compact", "resume", "reconnect"] {
+            assert!(authorize_context_rebuild(&ContextRebuildRequest {
+                entry,
+                expected_manifest_hash: "sha256:m",
+                rebuilt_manifest_hash: "sha256:m",
+                expected_rendered_input_hash: "sha256:r",
+                rebuilt_rendered_input_hash: "sha256:r",
+            })
+            .is_ok());
+        }
+        assert!(authorize_context_rebuild(&ContextRebuildRequest {
+            entry: "resume",
+            expected_manifest_hash: "sha256:m",
+            rebuilt_manifest_hash: "sha256:other",
+            expected_rendered_input_hash: "sha256:r",
+            rebuilt_rendered_input_hash: "sha256:r",
+        })
+        .is_err());
+        gates.push(pass("A5_CONTEXT_REBUILD_GATE"));
+
+        // A6 handoff → journal receipt
+        let packet = HandoffPacketV1::build(
+            "from-n",
+            "tree-1",
+            "branch-1",
+            "sha256:snap",
+            vec!["claim:1".into()],
+            vec!["ev:1".into()],
+            vec!["maybe flake".into()],
+            "next step review",
+            Some("blocked_on_review".into()),
+        )
+        .expect("handoff packet");
+        let mut journal = LifecycleJournal::in_memory("tree-1");
+        let evt = deliver_handoff_receipt(
+            &mut journal,
+            &packet,
+            "evt-gate",
+            "sess-gate",
+            0,
+            100,
+            1,
+        )
+        .expect("handoff delivery");
+        assert!(evt.contract_hash.is_some());
+        assert!(!evt.evidence_refs.is_empty());
+        gates.push(pass("A6_HANDOFF_JOURNAL_GATE"));
+
+        // A7 expert repair fail-closed
+        assert!(authorize_expert_repair_pass(&ExpertRepairAdmission {
+            repair_requested: true,
+            host_verification_passed: true,
+            external_effect_unknown: false,
+            max_repair_passes: 2,
+            repair_passes_used: 0,
+        })
+        .is_ok());
+        assert!(authorize_expert_repair_pass(&ExpertRepairAdmission {
+            repair_requested: true,
+            host_verification_passed: false,
+            external_effect_unknown: false,
+            max_repair_passes: 2,
+            repair_passes_used: 0,
+        })
+        .is_err());
+        gates.push(pass("A7_EXPERT_REPAIR_GATE"));
+
+        // A8 advisor consult tool surface
+        let (outcome, proj) = invoke_advisor_consult_tool(
+            AdvisorMode::Consult,
+            "gate-req",
+            "run tests",
+            Some("ok?"),
+            1_000,
+            Some(2_000),
+            true,
+        )
+        .expect("advisor consult");
+        assert_eq!(proj.tool_name, ADVISOR_CONSULT_TOOL_NAME);
+        assert!(!proj.applies_authority);
+        assert!(matches!(
+            outcome,
+            crate::client_advisor_consult::ConsultOutcome::Succeeded { .. }
+        ));
+        gates.push(pass("A8_ADVISOR_CONSULT_TOOL_GATE"));
+
+        // A9 + A11 Applied golden chain
+        let applied = authorize_applied_assignment_chain(&AppliedAssignmentChain {
+            lifecycle: AssignmentLifecycle::RootApproved,
+            assignment_hash: "sha256:a",
+            expected_assignment_hash: "sha256:a",
+            accepted_snapshot_hash: "sha256:s",
+            live_snapshot_hash: "sha256:s",
+            budget_reservation_held: true,
+            root_approval_id: "appr-1",
+            sealed_receipt_id: "seal-1",
+            tree_budget_reservation_id: "tb-1",
+            context_manifest_hash: "sha256:m",
+            model_receipt_id: "model-1",
+            ledger_decision: "applied",
+        })
+        .expect("applied chain");
+        assert_eq!(applied, AssignmentLifecycle::Applied);
+        gates.push(pass("A9_A11_APPLIED_CHAIN_GATE"));
+
+        // A10 operator five + kairos fake clock
+        let receipts = operator_control_five_command_matrix(10_000).expect("operator five");
+        assert_eq!(receipts.len(), 5);
+        let steps = kairos_fake_clock_lease_cycle();
+        assert!(steps.len() >= 3);
+        gates.push(pass("A10_OPERATOR_KAIROS_GATE"));
+
+        // A12 rollback receipt
+        assert!(authorize_rollback_receipt(&RollbackReceiptV1 {
+            from_version: "2.0.0-rc.1".into(),
+            to_version: "2.0.0-rc.0".into(),
+            source_commit: "df6bb13e".into(),
+            reason: "regression".into(),
+        })
+        .is_ok());
+        assert!(authorize_rollback_receipt(&RollbackReceiptV1 {
+            from_version: "x".into(),
+            to_version: "x".into(),
+            source_commit: "df6bb13e".into(),
+            reason: "noop".into(),
+        })
+        .is_err());
+        gates.push(pass("A12_ROLLBACK_RECEIPT_GATE"));
+    }
+
     let offline_pass_count = gates.iter().filter(|g| g.status == "PASS").count();
     let offline_total = gates.len();
 
@@ -334,7 +479,7 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         offline_pass_count,
         offline_total,
         product_rc: "NOT_READY".into(),
-        note: "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; sandbox/advisor/kairos; exact-SHA CI + RC transaction NOT RUN"
+        note: "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; A5-A12 exit gates; sandbox/advisor/kairos; exact-SHA CI + formal v2.0.0 tag NOT RUN"
             .into(),
     }
 }
@@ -348,10 +493,18 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let receipt = run_offline_contract_gates(temp.path());
         assert_eq!(receipt.offline_pass_count, receipt.offline_total);
-        assert!(receipt.offline_total >= 7);
+        assert!(receipt.offline_total >= 17, "A5–A12 exit gates must be present");
         assert_eq!(receipt.product_rc, "NOT_READY");
         let json = serde_json::to_string_pretty(&receipt).unwrap();
         assert!(json.contains("M1_GOVERNED_TREE_PREVIEW_GATE"));
+        assert!(json.contains("A5_CONTEXT_REBUILD_GATE"));
+        assert!(json.contains("A12_ROLLBACK_RECEIPT_GATE"));
         assert!(json.contains("NOT_READY"));
+        // Durable evidence for implementer SCRATCH / offline suite.
+        if let Ok(dir) = std::env::var("LUMEN_EVIDENCE_DIR") {
+            let path = std::path::Path::new(&dir).join("offline-contract-gates-full.json");
+            let _ = std::fs::create_dir_all(&dir);
+            let _ = std::fs::write(&path, &json);
+        }
     }
 }

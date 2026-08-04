@@ -209,6 +209,13 @@ fn inject_task_tree_working_memory(
 /// Governed resume identity gate: the NEW admission hash must equal the
 /// ORIGINAL child's recorded manifest identity. Legacy resumes (expected
 /// hash absent) are handled by callers outside this function.
+///
+/// A5 production path: delegates to
+/// [`xai_grok_memory::authorize_context_rebuild`] for the `resume` entry so
+/// shell resume and offline A5_CONTEXT_REBUILD_GATE share one fail-closed
+/// identity function. When a separate rendered-input hash is not yet
+/// threaded, both sides use the same manifest hash (identity still fails
+/// closed on drift of either recorded or expected field).
 pub(super) fn validate_resume_manifest_identity(
     recorded: Option<&str>,
     expected: &str,
@@ -216,11 +223,50 @@ pub(super) fn validate_resume_manifest_identity(
     if expected.trim().is_empty() {
         return Err("governed resume requires a non-empty expected context manifest hash");
     }
-    match recorded.map(str::trim) {
-        Some(actual) if !actual.is_empty() && actual == expected => Ok(()),
-        Some("") | None => Err("resume source is missing context manifest identity"),
-        Some(_) => Err("resume source context manifest hash mismatch"),
-    }
+    let actual = match recorded.map(str::trim) {
+        Some(actual) if !actual.is_empty() => actual,
+        Some("") | None => return Err("resume source is missing context manifest identity"),
+        Some(_) => return Err("resume source context manifest hash mismatch"),
+    };
+    // Rendered-input hash is not yet a separate admission field on this
+    // surface; bind it to the same identity so drift of either side still
+    // fails closed through the shared Exit Gate helper.
+    xai_grok_memory::authorize_context_rebuild(&xai_grok_memory::ContextRebuildRequest {
+        entry: "resume",
+        expected_manifest_hash: expected.trim(),
+        rebuilt_manifest_hash: actual,
+        expected_rendered_input_hash: expected.trim(),
+        rebuilt_rendered_input_hash: actual,
+    })
+    .map_err(|deny| match deny {
+        xai_grok_memory::ContextRebuildDeny::ManifestDrift
+        | xai_grok_memory::ContextRebuildDeny::RenderedInputDrift => {
+            "resume source context manifest hash mismatch"
+        }
+        xai_grok_memory::ContextRebuildDeny::EmptyField => {
+            "resume source is missing context manifest identity"
+        }
+        xai_grok_memory::ContextRebuildDeny::UnknownEntry => {
+            "governed resume requires a non-empty expected context manifest hash"
+        }
+    })
+}
+
+/// A5 production entries: compact / resume / reconnect share one Exit Gate.
+pub(super) fn validate_context_rebuild_entry(
+    entry: &str,
+    expected_manifest_hash: &str,
+    rebuilt_manifest_hash: &str,
+    expected_rendered_input_hash: &str,
+    rebuilt_rendered_input_hash: &str,
+) -> Result<(), xai_grok_memory::ContextRebuildDeny> {
+    xai_grok_memory::authorize_context_rebuild(&xai_grok_memory::ContextRebuildRequest {
+        entry,
+        expected_manifest_hash,
+        rebuilt_manifest_hash,
+        expected_rendered_input_hash,
+        rebuilt_rendered_input_hash,
+    })
 }
 
 fn validate_governed_snapshot(
@@ -659,6 +705,43 @@ mod governed_snapshot_tests {
             validate_resume_manifest_identity(Some("sha256:one"), "").unwrap_err(),
             "governed resume requires a non-empty expected context manifest hash"
         );
+    }
+
+    #[test]
+    fn context_manifest_v1_compact_resume_reconnect_share_exit_gate() {
+        use super::validate_context_rebuild_entry;
+        for entry in ["compact", "resume", "reconnect"] {
+            assert!(
+                validate_context_rebuild_entry(
+                    entry,
+                    "sha256:m",
+                    "sha256:m",
+                    "sha256:r",
+                    "sha256:r",
+                )
+                .is_ok(),
+                "entry {entry} must admit identical hashes"
+            );
+            assert!(
+                validate_context_rebuild_entry(
+                    entry,
+                    "sha256:m",
+                    "sha256:other",
+                    "sha256:r",
+                    "sha256:r",
+                )
+                .is_err(),
+                "entry {entry} must deny manifest drift"
+            );
+        }
+        assert!(validate_context_rebuild_entry(
+            "unknown",
+            "sha256:m",
+            "sha256:m",
+            "sha256:r",
+            "sha256:r",
+        )
+        .is_err());
     }
 }
 

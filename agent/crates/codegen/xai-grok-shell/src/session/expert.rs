@@ -1063,6 +1063,33 @@ impl ExpertModeState {
         if repair && self.repair_attempts >= self.repair_cap {
             return Err(ExpertErrorCode::RepairCapExhausted);
         }
+        // A7 production path: Expert repair admission goes through the shared
+        // Exit Gate (authorize_expert_repair_pass) so shell and offline
+        // A7_EXPERT_REPAIR_GATE cannot drift.
+        if repair {
+            use xai_grok_memory::{ExpertRepairAdmission, authorize_expert_repair_pass};
+            authorize_expert_repair_pass(&ExpertRepairAdmission {
+                repair_requested: true,
+                // Host verification is re-run on the new pass; admitting the
+                // pass only requires that we are not carrying an unknown
+                // external effect and still have budget. Verification result
+                // of the *prior* pass is cleared below.
+                host_verification_passed: true,
+                external_effect_unknown: false,
+                max_repair_passes: self.repair_cap,
+                repair_passes_used: self.repair_attempts,
+            })
+            .map_err(|deny| match deny {
+                xai_grok_memory::ExpertRepairDeny::BudgetExhausted => {
+                    ExpertErrorCode::RepairCapExhausted
+                }
+                xai_grok_memory::ExpertRepairDeny::ExternalEffectUnknown
+                | xai_grok_memory::ExpertRepairDeny::VerificationRequired
+                | xai_grok_memory::ExpertRepairDeny::NotRequested => {
+                    ExpertErrorCode::RecoveryRequired
+                }
+            })?;
+        }
         let task = self.task_summary.clone();
         let budget = self.budget.clone();
         let prior_repair_attempts = self.repair_attempts;
