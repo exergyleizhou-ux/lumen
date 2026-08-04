@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 5906bd14 fix(release): strip unsupported SPDX "or later" plus in release SBOMs |
+| Last non-bot commit | f51fb902 fix(release): allow re-release when version already bumped |
 
 ---
 
