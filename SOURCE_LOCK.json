@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-04T03:40:53Z",
+  "generated_at": "2026-08-04T03:51:09Z",
   "monorepo": {
-    "git_head": "28fe16871c821e06d115ac09a87912701470b525",
-    "git_short": "28fe168"
+    "git_head": "598a9a1b024d2c0ea6976b51bff706fb37191af6",
+    "git_short": "598a9a1"
   },
   "lumen_version": "2.0.0-rc.1",
   "upstream_pin": {
@@ -23,7 +23,7 @@
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "e0be26cdf91d23e1e7f8b7e07826fa5fd810af87538af2c767fd093c9714e0c9",
     "scripts/assert-defaults.sh": "4b8a15aff077aa26cda869af0f522b7a23cf8f099572b4a219c5248263476672",
-    "scripts/check-binary-tuple.sh": "7c324fa5d7961d5b95140be3c8b1e6462805a19f2e4a501c12f63b38871bdde2",
+    "scripts/check-binary-tuple.sh": "9b947489eebeb89f607abe8854d7ba6b8d8c32a257f770f8231777d377caec31",
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
     "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
     "scripts/generate-sbom.sh": "94944d320801e3e92d9250a3aff8f748a627076e32f6c18ee67e5cf2aa4ce2de",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "0984403f1e5522c4751191430a5d7f976b6b5d4292a4735d38cd6469902fa79d"
+  "aggregate_critical_sha256": "7a47a90508de37d3657d49787d03d57c81898eeb7f9921187059676e60f36831"
 }
