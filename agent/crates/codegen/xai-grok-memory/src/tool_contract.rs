@@ -235,6 +235,89 @@ pub fn force_result_projection(
     envelope.apply_preview_limit(limit)
 }
 
+/// Build a runtime contract from the registry tool kind for dispatch-time
+/// admission. Classified tools get a pinned schema identity (name+kind hash)
+/// and a default result policy; [`ToolKind::Other`] stays non-admissible for
+/// child/daemon surfaces (callers still pass it so deny is explicit).
+pub fn contract_from_runtime_kind(
+    tool_name: &str,
+    kind: ToolKind,
+    is_read_only: bool,
+    preview_byte_limit: u32,
+) -> ToolContractV1 {
+    let schema_seed = format!("{tool_name}\0{}", kind.as_key());
+    let schema_hash = format!("sha256:{:x}", Sha256::digest(schema_seed.as_bytes()));
+    let operation_class = if is_read_only {
+        OperationClass::ReadOnly
+    } else if matches!(
+        kind,
+        ToolKind::Execute
+            | ToolKind::WebSearch
+            | ToolKind::WebFetch
+            | ToolKind::DeployApp
+            | ToolKind::Task
+            | ToolKind::Monitor
+    ) {
+        // Shell / network / spawn are external-effect for child admission.
+        OperationClass::ExternalEffect
+    } else {
+        OperationClass::ReversibleWrite
+    };
+    // ExternalEffect requires IdempotentWithReceipt for child_admissible —
+    // runtime classified tools that are effectful still need a receipt class
+    // so children can run them under a sealed contract (NeverReplay would
+    // force root-only).
+    let idempotency_class = match operation_class {
+        OperationClass::ReadOnly => ToolIdempotencyClass::ReadOnlyRetryable,
+        OperationClass::ReversibleWrite | OperationClass::ExternalEffect => {
+            ToolIdempotencyClass::IdempotentWithReceipt
+        }
+    };
+    ToolContractV1 {
+        schema_version: TOOL_CONTRACT_SCHEMA_VERSION,
+        namespace: "runtime".into(),
+        tool_name: tool_name.to_owned(),
+        tool_kind: kind,
+        operation_class,
+        input_schema_hash: Some(schema_hash),
+        result_policy: Some(ToolResultPolicyV1 {
+            artifact_class: ArtifactClass::WorkspacePrivate,
+            preview_byte_limit: preview_byte_limit.max(1),
+        }),
+        idempotency_class,
+        provider_or_endpoint_ref: None,
+        policy_revision: 1,
+        encoding_revision: ENCODING_REVISION,
+    }
+}
+
+/// Clamp raw tool result text the same way production dispatch does: wrap in
+/// an envelope and apply [`force_result_projection`].
+pub fn clamp_tool_result_text(
+    call_id: &str,
+    tool_name: &str,
+    kind: ToolKind,
+    is_read_only: bool,
+    text: String,
+    preview_byte_limit: u32,
+) -> String {
+    let contract = contract_from_runtime_kind(tool_name, kind, is_read_only, preview_byte_limit);
+    let hash = contract.contract_hash().unwrap_or_else(|_| "sha256:unknown".into());
+    let envelope = ToolResultEnvelopeV1 {
+        call_id: call_id.to_owned(),
+        tool_contract_hash: hash,
+        operation_id: None,
+        status: ToolResultStatus::Succeeded,
+        preview: text,
+        preview_truncated: false,
+        full_artifact_ref: None,
+        emitted_bytes: 0,
+        context_bytes_admitted: 0,
+        verification_ref: None,
+    };
+    force_result_projection(envelope, Some(&contract)).preview
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolResultStatus {
     Succeeded,
@@ -495,5 +578,38 @@ mod tool_contract_tests {
         let no_contract = force_result_projection(big, None);
         assert!(no_contract.preview_truncated);
         assert!(no_contract.preview.len() <= 8192);
+    }
+
+    #[test]
+    fn runtime_kind_contract_admits_classified_tools_and_denies_other() {
+        let read = contract_from_runtime_kind("read_file", ToolKind::Read, true, 128);
+        assert!(read.child_admissible());
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&read)).is_ok());
+        let exec = contract_from_runtime_kind("run_terminal_command", ToolKind::Execute, false, 128);
+        assert!(
+            exec.child_admissible(),
+            "classified Execute must be child-admissible under sealed runtime contract"
+        );
+        let other = contract_from_runtime_kind("mcp_weird", ToolKind::Other, false, 128);
+        assert!(!other.child_admissible());
+        assert_eq!(
+            authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&other)).unwrap_err(),
+            ToolDispatchDeny::NotChildAdmissible
+        );
+    }
+
+    #[test]
+    fn clamp_tool_result_text_enforces_preview_limit() {
+        let big = "y".repeat(10_000);
+        let out = clamp_tool_result_text(
+            "call-1",
+            "read_file",
+            ToolKind::Read,
+            true,
+            big,
+            64,
+        );
+        assert!(out.len() <= 64);
+        assert_ne!(out.len(), 10_000);
     }
 }

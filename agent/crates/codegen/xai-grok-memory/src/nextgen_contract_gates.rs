@@ -286,6 +286,46 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
     assert_eq!(k.phase(), LoopPhase::Frozen);
     gates.push(pass("KAIROS_LOCAL_PURE_GATE"));
 
+    // NG-03E FLOW_CONTROL: flood / two-tree isolation / shutdown drain (std
+    // sync channels — same contract as delivery_observation fixtures).
+    {
+        use std::sync::mpsc;
+        let (tx, _rx) = mpsc::sync_channel::<u8>(2);
+        assert!(tx.try_send(1).is_ok());
+        assert!(tx.try_send(2).is_ok());
+        assert!(matches!(
+            tx.try_send(3),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        let (tx_a, _rx_a) = mpsc::sync_channel::<u8>(1);
+        let (tx_b, rx_b) = mpsc::sync_channel::<u8>(1);
+        assert!(tx_a.try_send(1).is_ok());
+        assert!(matches!(tx_a.try_send(2), Err(mpsc::TrySendError::Full(_))));
+        assert!(tx_b.try_send(9).is_ok());
+        assert_eq!(rx_b.try_recv().ok(), Some(9));
+        let (tx_s, rx_s) = mpsc::sync_channel::<&str>(2);
+        assert!(tx_s.try_send("a").is_ok());
+        drop(rx_s);
+        assert!(matches!(
+            tx_s.try_send("late"),
+            Err(mpsc::TrySendError::Disconnected(_))
+        ));
+    }
+    gates.push(pass("FLOW_CONTROL_GATE"));
+
+    // NG-02A tool contract dispatch admit (classified vs Other)
+    {
+        use crate::tool_contract::{
+            ToolDispatchSurface, authorize_tool_dispatch, contract_from_runtime_kind,
+        };
+        use xai_grok_tools::types::tool::ToolKind;
+        let ok = contract_from_runtime_kind("read_file", ToolKind::Read, true, 256);
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&ok)).is_ok());
+        let bad = contract_from_runtime_kind("mcp_x", ToolKind::Other, false, 256);
+        assert!(authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&bad)).is_err());
+    }
+    gates.push(pass("TOOL_CONTRACT_DISPATCH_GATE"));
+
     let offline_pass_count = gates.iter().filter(|g| g.status == "PASS").count();
     let offline_total = gates.len();
 
@@ -294,7 +334,7 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         offline_pass_count,
         offline_total,
         product_rc: "NOT_READY".into(),
-        note: "offline pure gates only; S8 durable seal + P0-NR-A audit matrix wired; task spawn/network sandbox + shell advisor/kairos hosts; run_loop full wire, exact-SHA CI, RC transaction NOT RUN"
+        note: "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; sandbox/advisor/kairos; exact-SHA CI + RC transaction NOT RUN"
             .into(),
     }
 }

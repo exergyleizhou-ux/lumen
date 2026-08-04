@@ -1537,11 +1537,12 @@ impl SessionActor {
                 "[exit_plan_mode] cursor SwitchMode(agent) with empty plan — skipping intercept"
             );
         }
-        let is_read_only = self
+        let tool_kind = self
             .agent
             .borrow()
             .tool_bridge()
-            .tool_kind(&call.function.name)
+            .tool_kind(&call.function.name);
+        let is_read_only = tool_kind
             .map(|k| {
                 use xai_grok_tools::types::tool::ToolKind;
                 matches!(
@@ -1561,6 +1562,36 @@ impl SessionActor {
                 )
             })
             .unwrap_or(false);
+        // NG-02A: child/daemon surfaces force ToolContract admission before
+        // the body runs. Root interactive remains open for legacy tools.
+        if self.tool_context.subagent_depth > 0 {
+            use xai_grok_memory::{
+                ToolDispatchSurface, authorize_tool_dispatch, contract_from_runtime_kind,
+            };
+            use xai_grok_tools::types::tool::ToolKind;
+            let kind = tool_kind.unwrap_or(ToolKind::Other);
+            let contract =
+                contract_from_runtime_kind(&call.function.name, kind, is_read_only, 4096);
+            if let Err(deny) =
+                authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&contract))
+            {
+                let message = format!(
+                    "Tool `{}` refused by ToolContract ({}) at child depth {}",
+                    call.function.name,
+                    deny.code(),
+                    self.tool_context.subagent_depth
+                );
+                tracing::warn!(
+                    tool = %call.function.name,
+                    depth = self.tool_context.subagent_depth,
+                    deny = deny.code(),
+                    "NG-02A tool contract denied child dispatch"
+                );
+                self.handle_tool_not_executed(&call.id, &tool_call_id, message)
+                    .await?;
+                return Ok(Err(ToolLoop::NonExistingTool));
+            }
+        }
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),
             tool_call_id,
@@ -2510,6 +2541,48 @@ impl SessionActor {
                 pdf.total_pages,
             );
         }
+        // NG-02A: child surfaces only ever see a contract-bounded preview.
+        let prompt_text = if self.tool_context.subagent_depth > 0 {
+            use xai_grok_memory::clamp_tool_result_text;
+            use xai_grok_tools::types::tool::ToolKind;
+            let kind = self
+                .agent
+                .borrow()
+                .tool_bridge()
+                .tool_kind(effective_tool_name)
+                .or_else(|| {
+                    self.agent
+                        .borrow()
+                        .tool_bridge()
+                        .tool_kind(requested_tool_name)
+                })
+                .unwrap_or(ToolKind::Other);
+            let is_ro = matches!(
+                kind,
+                ToolKind::Read
+                    | ToolKind::Search
+                    | ToolKind::Lsp
+                    | ToolKind::ListDir
+                    | ToolKind::List
+                    | ToolKind::MemorySearch
+                    | ToolKind::MemoryGet
+                    | ToolKind::WebSearch
+                    | ToolKind::WebFetch
+                    | ToolKind::EnterPlan
+                    | ToolKind::ExitPlan
+                    | ToolKind::AskUser
+            );
+            clamp_tool_result_text(
+                call_id,
+                effective_tool_name,
+                kind,
+                is_ro,
+                prompt_text,
+                4096,
+            )
+        } else {
+            prompt_text
+        };
         let tool_chat = if inline_images.is_empty() {
             ConversationItem::tool_result(call_id.to_string(), prompt_text)
         } else {

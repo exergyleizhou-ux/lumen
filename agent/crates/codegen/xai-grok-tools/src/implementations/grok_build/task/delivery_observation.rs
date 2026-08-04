@@ -216,4 +216,95 @@ mod tests {
         );
         assert!(full.pressure.is_saturated());
     }
+
+    /// Token-flood fixture: a bounded authority mailbox of capacity N refuses
+    /// the (N+1)th try_send with DroppedFull → FreezeOrRecover (not silent drop).
+    #[test]
+    fn token_flood_fixture_refuses_overflow_with_freeze() {
+        const CAP: usize = 8;
+        let (tx, _rx) = mpsc::sync_channel::<&'static str>(CAP);
+        let mut enqueued = 0u32;
+        let mut froze = 0u32;
+        for i in 0..(CAP + 4) {
+            let obs = observe_std_sync_try_send(tx.try_send("token"));
+            let sample = DeliverySampleV1 {
+                observation: obs.clone(),
+                pressure: QueuePressureV1::new(CAP as u32, enqueued.min(CAP as u32)),
+            };
+            match sample.authority_disposition() {
+                AuthorityDeliveryDisposition::Continue
+                | AuthorityDeliveryDisposition::WarnPressure => {
+                    assert_eq!(obs, DeliveryObservationV1::Enqueued);
+                    enqueued += 1;
+                }
+                AuthorityDeliveryDisposition::FreezeOrRecover => {
+                    assert!(matches!(
+                        obs,
+                        DeliveryObservationV1::DroppedFull
+                    ));
+                    froze += 1;
+                    assert!(i >= CAP, "overflow must not start before capacity");
+                }
+            }
+        }
+        assert_eq!(enqueued, CAP as u32);
+        assert_eq!(froze, 4);
+    }
+
+    /// Two-tree fairness: each tree has its own bounded mailbox; flood on tree
+    /// A must not fill tree B's capacity (isolated SyncSender per tree).
+    #[test]
+    fn two_tree_fairness_fixture_isolates_mailbox_pressure() {
+        let (tx_a, _rx_a) = mpsc::sync_channel::<u8>(2);
+        let (tx_b, rx_b) = mpsc::sync_channel::<u8>(2);
+        // Flood A to saturation.
+        assert_eq!(
+            observe_std_sync_try_send(tx_a.try_send(1)),
+            DeliveryObservationV1::Enqueued
+        );
+        assert_eq!(
+            observe_std_sync_try_send(tx_a.try_send(2)),
+            DeliveryObservationV1::Enqueued
+        );
+        assert_eq!(
+            observe_std_sync_try_send(tx_a.try_send(3)),
+            DeliveryObservationV1::DroppedFull
+        );
+        // B still accepts its own budget.
+        assert_eq!(
+            observe_std_sync_try_send(tx_b.try_send(10)),
+            DeliveryObservationV1::Enqueued
+        );
+        assert_eq!(
+            observe_std_sync_try_send(tx_b.try_send(11)),
+            DeliveryObservationV1::Enqueued
+        );
+        assert_eq!(rx_b.try_recv().ok(), Some(10));
+    }
+
+    /// Shutdown drain: after drop(receiver), further try_send is ReceiverClosed
+    /// (fail-closed); in-flight items already taken are not re-offered.
+    #[test]
+    fn shutdown_drain_fixture_closes_without_silent_loss_of_policy() {
+        let (tx, rx) = mpsc::sync_channel::<&'static str>(4);
+        assert_eq!(
+            observe_std_sync_try_send(tx.try_send("a")),
+            DeliveryObservationV1::Enqueued
+        );
+        assert_eq!(
+            observe_std_sync_try_send(tx.try_send("b")),
+            DeliveryObservationV1::Enqueued
+        );
+        // Drain what was enqueued.
+        let mut drained = Vec::new();
+        while let Ok(v) = rx.try_recv() {
+            drained.push(v);
+        }
+        assert_eq!(drained, ["a", "b"]);
+        drop(rx);
+        let closed = observe_std_sync_try_send(tx.try_send("late"));
+        assert_eq!(closed, DeliveryObservationV1::ReceiverClosed);
+        assert!(closed.requires_recovery_or_freeze());
+        assert!(!closed.is_authority_safe());
+    }
 }

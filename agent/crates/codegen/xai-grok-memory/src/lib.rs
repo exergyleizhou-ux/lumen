@@ -130,7 +130,8 @@ pub use context_manifest::{
 };
 pub use tool_contract::{
     ToolContractV1, ToolDispatchDeny, ToolDispatchSurface, ToolResultEnvelopeV1,
-    authorize_tool_dispatch, force_result_projection,
+    authorize_tool_dispatch, clamp_tool_result_text, contract_from_runtime_kind,
+    force_result_projection,
 };
 pub use governed_assignment::{
     RootGovernedAssignmentError, RootGovernedAssignmentStore, RootGovernedAssignmentV1,

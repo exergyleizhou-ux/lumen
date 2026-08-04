@@ -17,8 +17,15 @@
 | DEBT-008 | S8 复审 | 失败路径无 drain barrier：capture 读取与在途 ToolCallDelta 事件存在理论竞态（observation_complete 恒 true 但失败时未等 drainer 消费完） | **closed (2026-08-04, S10)** | 失败路径 drain 语义注释：capture 由 turn await 点排空，401 先于流开始，无可利用竞态
 | DEBT-009 | S8 复审 | L3 测试是私有函数镜像复制（s8_sealed_retry_live_tests.rs:240-255），可漂移 | **closed (2026-08-04, S10)** | seal_observations_from_streaming_capture 提为 pub(crate)，live 测试直测真实函数
 | DEBT-010 | S8 复审 | `decide_auth_class_retry` 的 `Ok(0)` 分支不可达（防御性死分支） | **closed (2026-08-04, S10)** | decide_auth_class_retry Ok(0) 死分支加防御性注释（构造上不可达）
+| DEBT-011 | 全维度100% A2 | ToolContract 生产 dispatch | **closed (2026-08-04)** | shell prepare_tool_call 强制 authorize_tool_dispatch；结果 clamp_tool_result_text；offline TOOL_CONTRACT_DISPATCH_GATE=PASS |
+| DEBT-012 | 全维度100% A4 | mailbox 有界 + FLOW_CONTROL | **closed (2026-08-04)** | flood/two-tree/shutdown fixtures + offline FLOW_CONTROL_GATE=PASS |
+| DEBT-013 | 全维度100% A5–A8 | adapter 全强制 / Expert repair / advisor ToolRegistry+UI | open | 交接词 A5–A8 Exit Gate |
+| DEBT-014 | 全维度100% A9–A12 | recommend/Kairos/NG-09B/release 全链 | open | 交接词 A9–A12 Exit Gate |
+| DEBT-015 | 全维度100% C1 | 正式 v2.0.0 tag 未打 | open | A5–A12 收口后 release.sh + 用户确认远端 tag |
+| DEBT-016 | 全维度100% D1–D2 | probe 收据 / grok-4.5 交叉审查 | open | 提交 probe 或排除理由；补审查记录 |
 
 ## 登记记录（追加式）
 
 - 2026-08-03：S8 提交后（bf489044/1d2921af），Critic 两轮审查的 10 项债务全部登记。DEBT-001/002 为 Medium 级声明遗留，DEBT-003..010 为 Low/Info 级。
 - 2026-08-04（全维度100%）：关闭 P1–P5；A1 CapabilityGrantV1；A2 契约层 API；A3 BudgetLedger 既有真入口。DEBT-011..016 登记剩余 Exit Gate。
+- 2026-08-04 续：A2 生产 shell 接线 + A4 FLOW_CONTROL_GATE + fixtures；DEBT-011/012 closed。
