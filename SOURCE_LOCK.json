@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-04T05:39:53Z",
+  "generated_at": "2026-08-04T05:49:50Z",
   "monorepo": {
-    "git_head": "70aff6b0d4e4136f65cd4c4be4490d82d7c4d865",
-    "git_short": "70aff6b"
+    "git_head": "8d0fdf09eeebaf8d560cb9092cfaad0b7d12724d",
+    "git_short": "8d0fdf0"
   },
   "lumen_version": "2.0.0-rc.1",
   "upstream_pin": {
@@ -23,7 +23,7 @@
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "e0be26cdf91d23e1e7f8b7e07826fa5fd810af87538af2c767fd093c9714e0c9",
     "scripts/assert-defaults.sh": "4b8a15aff077aa26cda869af0f522b7a23cf8f099572b4a219c5248263476672",
-    "scripts/check-binary-tuple.sh": "9b947489eebeb89f607abe8854d7ba6b8d8c32a257f770f8231777d377caec31",
+    "scripts/check-binary-tuple.sh": "776273adad1de063eab21a9bcd888271fa4ebeb6b28bd1fe5c8e82cb8298848b",
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
     "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
     "scripts/generate-sbom.sh": "94944d320801e3e92d9250a3aff8f748a627076e32f6c18ee67e5cf2aa4ce2de",
@@ -31,7 +31,7 @@
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
     "scripts/productivity-gate.sh": "f814b2ce106bd1f4234a901e2e9f85510998ad8dd5e377ae36ff85a0c38a922c",
     "scripts/reconcile-evidence.sh": "fa41dece36565101bc2f34741c193f5662a2d3f3b6bb9a5975f3be70529e151d",
-    "scripts/source-lock.sh": "db0a7d94ac8d2d50f38c98263f08d637950e2de1f5f4b4ba6b247cca84b822a0",
+    "scripts/source-lock.sh": "f21b7881b1f82a5869c12bb6be753eee97b0387b45ee970bb382713b39d52db4",
     "scripts/smoke-deepseek.sh": "f0db1e49bb58fffdbadd9f52ce55e983575392919eb48c86a1f1a9f247a9c8e7",
     "scripts/smoke-deepseek-agent.sh": "ae61b9be7ee460d5347221a420d56eb3bbe8558897722acc628e70a9800adfdc",
     "scripts/smoke-deepseek-l2.sh": "dcc5f95ee1adcb9ef8f3a6f7f0263bfde25e9c903e646a1f3ad5f9bb71e28328",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "7a47a90508de37d3657d49787d03d57c81898eeb7f9921187059676e60f36831"
+  "aggregate_critical_sha256": "f3e29d427feb6d7af60ab4b36bc61f4d01d91e8c606008a93bb33f93aacea378"
 }
