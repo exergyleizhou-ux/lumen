@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 90dc2caf docs: H5 grok-4.5 401 verified resolved after re-login (auth accepted) |
+| Last non-bot commit | 00defcb6 docs: H4 user confirmed rc.1 launches on real terminal |
 
 ---
 
