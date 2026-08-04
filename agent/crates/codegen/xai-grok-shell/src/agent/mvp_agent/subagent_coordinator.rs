@@ -3,6 +3,13 @@
 //! its `!Send` local-session runner into `spawn_local`.
 use super::*;
 use crate::session::repo_changes::UploadMethod;
+use xai_grok_tools::implementations::grok_build::task::{
+    MergeApplyResult, MergeHandoffDenyReason, MergeReceiptV1, WriteScopeLease,
+    evaluate_merge_handoff,
+};
+use xai_grok_memory::capability_grant::GrantCapabilityClass;
+use xai_grok_memory::dispatch_permit::DispatchPermitV1;
+use xai_tool_types::SubagentCapabilityMode;
 
 /// A10 (NG-08): outbox exactly-once gate for child dispatch at the real
 /// scheduler/daemon loop. A child whose successful terminal was already
@@ -44,6 +51,127 @@ impl SchedulerLoopOutbox {
 struct ShellChildRunner {
     agent_ref: LocalRef<MvpAgent>,
     loop_outbox: Arc<SchedulerLoopOutbox>,
+    /// DEBT-024(d): DispatchPermitV1 held by the spawn adapter, keyed by
+    /// child id; verified again at completion (INV-12 re-check).
+    spawn_permits: Arc<std::sync::Mutex<std::collections::HashMap<String, DispatchPermitV1>>>,
+}
+
+/// Map a requested capability mode to grant classes for the spawn permit
+/// (monotonic ceiling: the sandbox still enforces the real boundary).
+fn capability_mode_to_grant_classes(
+    mode: Option<SubagentCapabilityMode>,
+) -> Vec<GrantCapabilityClass> {
+    match mode {
+        None | Some(SubagentCapabilityMode::ReadOnly) => vec![GrantCapabilityClass::ReadOnly],
+        Some(SubagentCapabilityMode::ReadWrite) => {
+            vec![GrantCapabilityClass::ReadOnly, GrantCapabilityClass::ScopedWrite]
+        }
+        Some(SubagentCapabilityMode::Execute) | Some(SubagentCapabilityMode::All) => vec![
+            GrantCapabilityClass::ReadOnly,
+            GrantCapabilityClass::ScopedWrite,
+            GrantCapabilityClass::SpawnChild,
+        ],
+    }
+}
+
+/// DEBT-024(d) core: mint the spawn-adapter permit from the request's real
+/// identity (lineage), the capability ceiling, and the context hashes.
+/// Pure — the caller supplies the manifest/snapshot hashes it holds.
+fn mint_child_spawn_permit_core(
+    request: &xai_grok_tools::implementations::grok_build::task::types::SubagentRequest,
+    manifest_hash: &str,
+    accepted_snapshot_hash: &str,
+    now_unix: u64,
+) -> Option<DispatchPermitV1> {
+    use xai_grok_memory::capability_grant::{
+        CapabilityGrantV1, GrantCapabilityClass, IssueGrantRequest,
+    };
+    use xai_grok_memory::dispatch_permit::mint_governed_spawn_permit;
+    use xai_grok_memory::identity_envelope::issue_node_identity;
+    if request.lineage.depth == 0 || request.lineage.root_session_id.is_empty() {
+        return None; // root/ungoverned spawns carry no permit
+    }
+    let assignment_hash =
+        format!("sha256:{}", blake3::hash(request.prompt.as_bytes()).to_hex());
+    // The tools lineage path names ancestors only; the identity contract's
+    // lineage_path is root..=node, so append the child itself.
+    let mut lineage_path = request.lineage.lineage_path.clone();
+    lineage_path.push(request.id.clone());
+    let node = issue_node_identity(
+        request.lineage.root_session_id.clone(),
+        request.id.clone(),
+        request.lineage.root_session_id.clone(),
+        Some(request.lineage.immediate_parent_session_id.clone()),
+        lineage_path,
+        assignment_hash,
+    )
+    .ok()?;
+    let capabilities = capability_mode_to_grant_classes(request.runtime_overrides.capability_mode);
+    let grant = CapabilityGrantV1::issue(IssueGrantRequest {
+        grant_id: format!("grant:{}", request.id),
+        issuer_root_session_id: request.lineage.root_session_id.clone(),
+        target_node_id: request.id.clone(),
+        task_tree_id: request.lineage.root_session_id.clone(),
+        capabilities,
+        resource_scope_roots: request
+            .cwd
+            .clone()
+            .map(|cwd| vec![cwd])
+            .unwrap_or_default(),
+        issued_at_unix: now_unix,
+        ttl_secs: 24 * 60 * 60,
+        reason: "governed child spawn".into(),
+        approval_ref: format!("spawn:{}", request.id),
+        revoke_token: format!("tok:{}", request.id),
+        parent: None,
+    })
+    .ok()?;
+    mint_governed_spawn_permit(
+        &node,
+        &grant,
+        manifest_hash,
+        accepted_snapshot_hash,
+        &format!("spawn:{}", request.id),
+        now_unix.saturating_add(24 * 60 * 60),
+        now_unix,
+    )
+    .ok()
+}
+
+/// Agent-side wrapper: fetch the real context hashes the parent session holds
+/// and mint the permit (fail-closed: absent manifest ⇒ no permit).
+fn mint_child_spawn_permit(
+    this: &MvpAgent,
+    request: &xai_grok_tools::implementations::grok_build::task::types::SubagentRequest,
+) -> Option<DispatchPermitV1> {
+    let parent_sid = acp::SessionId::new(request.parent_session_id.clone());
+    let manifest_hash = this
+        .sessions
+        .borrow()
+        .get(&parent_sid)
+        .and_then(|handle| handle.tool_context.task_tree_manifest_hash.clone());
+    let manifest_hash = manifest_hash.unwrap_or_default();
+    let snapshot_hash: String = this
+        .sessions
+        .borrow()
+        .get(&parent_sid)
+        .and_then(|handle| handle.tool_context.task_tree_memory_workspace_dir.clone())
+        .and_then(|dir| {
+            use xai_grok_memory::task_ledger::WorkingMemoryLedger;
+            WorkingMemoryLedger::for_workspace_dir(
+                dir,
+                request.lineage.root_session_id.clone(),
+            )
+            .accepted_snapshot()
+            .ok()
+            .map(|snapshot| snapshot.accepted_set_hash)
+        })
+        .unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    mint_child_spawn_permit_core(request, &manifest_hash, &snapshot_hash, now)
 }
 
 /// Select a model for a fresh root-owned scheduler iteration before the child
@@ -179,6 +307,153 @@ fn journal_child_handoff_into(
     Ok(event.sequence)
 }
 
+/// DEBT-024(a): worktree auto-handoff at the real child-terminal seam.
+///
+/// A governed child cannot self-commit (S3 hard deny), so at completion the
+/// worktree base commit is stable: observed base == expected base == current
+/// HEAD. The helper computes the real delta (`git status --porcelain` +
+/// per-path content hashes) and runs the root merge-handoff evaluation.
+/// Fail-closed: without a root decision the evaluation denies
+/// (`MissingRootDecision`), so nothing ever auto-applies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum WorktreeHandoffOutcome {
+    /// Workspace is not a git repository — nothing to merge.
+    NotGitRepo,
+    /// The handoff evaluation denied; `pending_root_decision` distinguishes
+    /// the expected completion-time state (no decision yet) from a real deny
+    /// (stale base, inactive lease, foreign tree, ...).
+    Denied {
+        reason: MergeHandoffDenyReason,
+        pending_root_decision: bool,
+    },
+    /// Root decision present: a real receipt carrying the observed delta.
+    Receipt(MergeReceiptV1),
+}
+
+/// Run `git -C <workspace> <args>` and return stdout on success.
+fn git_output(workspace: &std::path::Path, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace)
+        .args(args)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Content hash of one changed path (deleted files hash the `deleted` marker).
+fn changed_path_hash(workspace: &std::path::Path, relative: &str) -> String {
+    match std::fs::read(workspace.join(relative)) {
+        Ok(bytes) => format!("{relative}:{}", blake3::hash(&bytes).to_hex()),
+        Err(_) => format!("{relative}:deleted"),
+    }
+}
+
+/// Sync core of the handoff evaluation — unit-testable against a real temp
+/// git repo; the async wrapper fetches the lease through the authority.
+pub(super) fn evaluate_worktree_handoff_core(
+    lease: &WriteScopeLease,
+    workspace: &std::path::Path,
+    root_decision_ref: Option<String>,
+) -> WorktreeHandoffOutcome {
+    let Some(head) = git_output(workspace, &["rev-parse", "HEAD"]) else {
+        return WorktreeHandoffOutcome::NotGitRepo;
+    };
+    let head = head.trim().to_string();
+    let porcelain = git_output(workspace, &["status", "--porcelain"]).unwrap_or_default();
+    let changed_path_hashes: Vec<String> = porcelain
+        .lines()
+        .filter_map(|line| {
+            let path = line.get(3..).map(str::trim).filter(|p| !p.is_empty())?;
+            Some(changed_path_hash(workspace, path.trim_matches('"')))
+        })
+        .collect();
+    let root_decision = root_decision_ref.clone().unwrap_or_default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    match evaluate_merge_handoff(
+        lease,
+        &lease.root_tree_id,
+        head.clone(),
+        head,
+        changed_path_hashes,
+        &[],
+        Vec::new(),
+        root_decision,
+        now,
+    ) {
+        Ok(receipt) => WorktreeHandoffOutcome::Receipt(receipt),
+        Err(reason) => WorktreeHandoffOutcome::Denied {
+            reason,
+            pending_root_decision: root_decision_ref.is_none(),
+        },
+    }
+}
+
+/// Fetch the child's write-scope lease through the authority and evaluate the
+/// merge handoff at completion. Best-effort: failures are logged, never
+/// allowed to mask the completion itself.
+fn handoff_write_scope_at_completion(
+    agent_ref: &LocalRef<MvpAgent>,
+    child_session_id: String,
+    workspace: Option<std::path::PathBuf>,
+) {
+    let agent_ref = agent_ref.clone();
+    tokio::task::spawn_local(async move {
+        let this = agent_ref.get();
+        let Some(handle) = this
+            .sessions
+            .borrow()
+            .iter()
+            .find(|(sid, _)| sid.0.as_ref() == child_session_id)
+            .map(|(_, handle)| handle.clone())
+        else {
+            return;
+        };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if handle
+            .cmd_tx
+            .send(SessionCommand::GetWriteScopeLease { respond_to: tx })
+            .is_err()
+        {
+            return;
+        }
+        let Ok(Some(lease)) = rx.await else {
+            return; // root session / ungoverned child — no lease to hand off
+        };
+        let Some(workspace) =
+            workspace.or_else(|| Some(std::path::PathBuf::from(handle.info.cwd.clone())))
+        else {
+            return;
+        };
+        match evaluate_worktree_handoff_core(&lease, &workspace, None) {
+            WorktreeHandoffOutcome::NotGitRepo => {}
+            WorktreeHandoffOutcome::Denied {
+                reason,
+                pending_root_decision: true,
+            } => {
+                tracing::info!(
+                    child_session_id = %child_session_id,
+                    deny = reason.code(),
+                    "write-scope handoff pending root decision (fail-closed; nothing auto-applied)"
+                );
+            }
+            outcome => {
+                tracing::warn!(
+                    child_session_id = %child_session_id,
+                    ?outcome,
+                    "unexpected worktree handoff outcome"
+                );
+            }
+        }
+    });
+}
+
 impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
     for ShellChildRunner
 {
@@ -205,11 +480,28 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
     ) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
         let loop_outbox = self.loop_outbox.clone();
+        let spawn_permits = self.spawn_permits.clone();
         let xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunRequest {
             mut request,
             cancellation,
             reporter,
         } = run;
+        // DEBT-024(d): the spawn adapter mints and holds a DispatchPermitV1
+        // from the request's real identity/grant/manifest data (fail-closed:
+        // no permit when context hashes are absent). Verified again at
+        // completion.
+        let permit = mint_child_spawn_permit(agent_ref.get(), &request);
+        if let Some(permit) = permit {
+            spawn_permits
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .insert(request.id.clone(), permit);
+            tracing::debug!(
+                subagent_id = %request.id,
+                depth = request.lineage.depth,
+                "governed spawn permit minted and held by the spawn adapter"
+            );
+        }
         // A10 (NG-08): kairos outbox exactly-once gate at the real
         // scheduler/daemon dispatch point. A child whose successful terminal
         // was already delivered is never dispatched again (INV-31); this
@@ -345,12 +637,48 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         if completion.result.success {
             self.loop_outbox.mark_delivered(&completion.request.id);
         }
+        // DEBT-024(d): re-verify the spawn permit at completion (INV-12).
+        if let Some(permit) = self
+            .spawn_permits
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .remove(&completion.request.id)
+        {
+            use xai_grok_memory::dispatch_permit::PermitConsumer;
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            match permit.authorize(PermitConsumer::SpawnAdapter, now) {
+                Ok(()) => {
+                    tracing::debug!(
+                        subagent_id = %completion.request.id,
+                        "spawn permit verified at completion"
+                    );
+                }
+                Err(deny) => {
+                    tracing::warn!(
+                        subagent_id = %completion.request.id,
+                        deny = deny.code(),
+                        "spawn permit invalid at completion (fail-closed)"
+                    );
+                }
+            }
+        }
         // A6 (NG-04D-4 / INV-18): every child terminal produces a bounded
         // handoff packet and a durable delivery receipt in the task-tree
         // lifecycle journal, so a late/foreign terminal reconciles instead of
         // being silently dropped. Best-effort journaling: a failure is logged,
         // never allowed to mask the completion itself.
         journal_child_handoff(self.agent_ref.get(), &completion);
+        // DEBT-024(a): worktree auto-handoff — evaluate the root merge
+        // handoff for governed children through the authority (fail-closed:
+        // no root decision yet ⇒ pending; nothing auto-applies).
+        handoff_write_scope_at_completion(
+            &self.agent_ref,
+            completion.result.child_session_id.clone(),
+            completion.request.cwd.clone().map(std::path::PathBuf::from),
+        );
         crate::agent::subagent::present_child_completion(completion, &gateway);
     }
     fn running_count_changed(&self, running: usize) {
@@ -396,6 +724,7 @@ impl MvpAgent {
         let runner = ShellChildRunner {
             agent_ref: agent_ref.clone(),
             loop_outbox: Arc::new(SchedulerLoopOutbox::default()),
+            spawn_permits: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
         let config =
             xai_grok_tools::implementations::grok_build::task::coordinator::CoordinatorConfig {
@@ -928,6 +1257,168 @@ mod scheduler_model_routing_tests {
             "unrelated children stay dispatchable"
         );
         assert!(outbox.may_dispatch("child-1-retry"));
+    }
+
+    /// Create a real temp git repo with one committed file.
+    fn temp_git_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let run = |args: &[&str]| {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .output()
+                .expect("git runs");
+            assert!(
+                output.status.success(),
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        run(&["init", "-q"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(dir.path().join("src.rs"), "fn main() {}\n").expect("write");
+        run(&["add", "src.rs"]);
+        run(&["commit", "-q", "-m", "init"]);
+        drop(run);
+        let src = dir.path().join("src.rs");
+        (dir, src)
+    }
+
+    #[test]
+    fn worktree_handoff_denies_without_root_decision_and_receipts_with_one() {
+        let (dir, src) = temp_git_repo();
+        let lease = WriteScopeLease::issue(
+            "grant-1",
+            "tree-1",
+            "node-1",
+            vec![dir.path().to_path_buf()],
+            3600,
+        )
+        .expect("lease");
+
+        // No root decision at completion time -> fail-closed pending.
+        let outcome = evaluate_worktree_handoff_core(&lease, dir.path(), None);
+        assert_eq!(
+            outcome,
+            WorktreeHandoffOutcome::Denied {
+                reason: MergeHandoffDenyReason::MissingRootDecision,
+                pending_root_decision: true,
+            },
+            "without a root decision nothing may auto-apply"
+        );
+
+        // Root decision present -> real receipt with the observed delta.
+        std::fs::write(&src, "fn main() { println!(\"hi\"); }\n").expect("modify");
+        let outcome = evaluate_worktree_handoff_core(&lease, dir.path(), Some("approval-1".into()));
+        match outcome {
+            WorktreeHandoffOutcome::Receipt(receipt) => {
+                assert_eq!(receipt.apply_result, MergeApplyResult::Applied);
+                assert_eq!(receipt.root_decision_ref, "approval-1");
+                assert_eq!(receipt.write_lease_id, "grant-1");
+                assert_eq!(receipt.node_id, "node-1");
+                assert!(
+                    receipt
+                        .changed_path_hashes
+                        .iter()
+                        .any(|hash| hash.starts_with("src.rs:")),
+                    "the changed path must carry its content hash: {:?}",
+                    receipt.changed_path_hashes
+                );
+            }
+            other => panic!("expected a receipt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn worktree_handoff_rejects_inactive_lease_and_non_repo() {
+        let (dir, _) = temp_git_repo();
+        let mut lease = WriteScopeLease::issue(
+            "grant-2",
+            "tree-1",
+            "node-1",
+            vec![dir.path().to_path_buf()],
+            3600,
+        )
+        .expect("lease");
+        lease.revoke();
+        let outcome = evaluate_worktree_handoff_core(&lease, dir.path(), Some("approval-1".into()));
+        assert_eq!(
+            outcome,
+            WorktreeHandoffOutcome::Denied {
+                reason: MergeHandoffDenyReason::LeaseNotActive,
+                pending_root_decision: false,
+            }
+        );
+
+        // Not a git repo -> no handoff.
+        let plain = tempfile::tempdir().expect("tempdir");
+        std::fs::write(plain.path().join("file.txt"), "x").expect("write");
+        let lease = WriteScopeLease::issue(
+            "grant-3",
+            "tree-1",
+            "node-1",
+            vec![plain.path().to_path_buf()],
+            3600,
+        )
+        .expect("lease");
+        assert_eq!(
+            evaluate_worktree_handoff_core(&lease, plain.path(), Some("approval-1".into())),
+            WorktreeHandoffOutcome::NotGitRepo
+        );
+    }
+
+    #[test]
+    fn spawn_permit_mints_for_governed_child_and_fails_closed_otherwise() {
+        use xai_grok_memory::dispatch_permit::PermitConsumer;
+
+        // Governed child (lineage depth 1) with real context hashes -> permit.
+        let request = scheduler_request();
+        let permit = mint_child_spawn_permit_core(
+            &request,
+            "sha256:manifest",
+            "sha256:snapshot",
+            1_000,
+        )
+        .expect("governed child mints a spawn permit");
+        permit
+            .authorize(PermitConsumer::SpawnAdapter, 1_000)
+            .expect("authorize");
+        let binding = permit.binding();
+        assert_eq!(binding.budget_reservation_id, format!("spawn:{}", request.id));
+        assert_eq!(binding.consumer, "spawn");
+
+        // Root/ungoverned spawns carry no permit.
+        let mut root = request.clone();
+        root.lineage = SubagentLineage::direct("root");
+        root.lineage.depth = 0;
+        assert!(
+            mint_child_spawn_permit_core(&root, "sha256:manifest", "sha256:snapshot", 1_000)
+                .is_none(),
+            "depth-0 spawns must not mint a permit"
+        );
+
+        // Missing manifest fails closed (no permit, never a fabricated one).
+        assert!(
+            mint_child_spawn_permit_core(&request, "", "sha256:snapshot", 1_000).is_none(),
+            "absent manifest must fail closed"
+        );
+
+        // Capability ceiling mapping is monotone and conservative.
+        use xai_tool_types::SubagentCapabilityMode;
+        assert_eq!(
+            capability_mode_to_grant_classes(Some(SubagentCapabilityMode::ReadOnly)),
+            vec![GrantCapabilityClass::ReadOnly]
+        );
+        assert_eq!(
+            capability_mode_to_grant_classes(None),
+            vec![GrantCapabilityClass::ReadOnly]
+        );
+        assert!(
+            capability_mode_to_grant_classes(Some(SubagentCapabilityMode::Execute))
+                .contains(&GrantCapabilityClass::SpawnChild)
+        );
     }
 
     #[test]

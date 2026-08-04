@@ -310,6 +310,17 @@ pub enum SessionCommand {
     GetToolOverrides {
         respond_to: oneshot::Sender<Option<xai_grok_sampling_types::ToolOverrides>>,
     },
+    /// DEBT-024(a): read the session's write-scope lease back through the
+    /// authority (the host uses it to evaluate the root merge handoff when a
+    /// governed child completes). Responds `None` for root sessions and
+    /// ungoverned children.
+    GetWriteScopeLease {
+        respond_to: oneshot::Sender<
+            Option<
+                xai_grok_tools::implementations::grok_build::task::WriteScopeLease,
+            >,
+        >,
+    },
     /// Establish the per-turn tool-overrides state before the first prompt runs. Sent once by
     /// `handle_subagent_request` ahead of the child's first `Prompt`, so a spawned subagent's
     /// inherited cutoff is applied and published (for its own subagents to read) before any turn.

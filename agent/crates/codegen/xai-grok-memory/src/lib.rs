@@ -60,6 +60,7 @@ pub mod lifecycle_journal;
 pub mod mmr;
 pub mod offline_golden;
 pub mod query_expansion;
+pub mod recommend_assignment;
 pub mod release_source_tuple;
 pub mod root_bypass;
 pub mod runtime_profile;

@@ -116,8 +116,71 @@ pub async fn handle(_agent: &MvpAgent, args: &acp::ExtRequest) -> ExtResult {
         "x.ai/governedTree/status" => {
             respond(governed_tree_status())
         }
+        "x.ai/governedTree/assignmentRecommendation" => {
+            respond(Ok::<_, String>(assignment_recommendation()))
+        }
         _ => Err(acp::Error::method_not_found()),
     }
+}
+
+/// NG-07 (A9) recommend surface: the readiness matrix for a governed
+/// assignment, derived from the authoritative applied-chain gate. With no
+/// live assignment in flight the projection truthfully reports every
+/// required condition as unmet — the UI's "what must hold before Applied".
+fn assignment_recommendation() -> AssignmentRecommendationWire {
+    use xai_grok_memory::bounded_assignment_apply::AssignmentLifecycle;
+    use xai_grok_memory::nextgen_exit_gates::AppliedAssignmentChain;
+    use xai_grok_memory::recommend_assignment::build_assignment_recommendation;
+
+    let chain = AppliedAssignmentChain {
+        lifecycle: AssignmentLifecycle::Draft,
+        assignment_hash: "",
+        expected_assignment_hash: "",
+        accepted_snapshot_hash: "",
+        live_snapshot_hash: "",
+        budget_reservation_held: false,
+        root_approval_id: "",
+        sealed_receipt_id: "",
+        tree_budget_reservation_id: "",
+        context_manifest_hash: "",
+        model_receipt_id: "",
+        ledger_decision: "",
+    };
+    let recommendation = build_assignment_recommendation(&chain);
+    AssignmentRecommendationWire {
+        assignment_hash: recommendation.assignment_hash,
+        lifecycle: recommendation.lifecycle,
+        checks: recommendation
+            .checks
+            .into_iter()
+            .map(|c| RecommendationCheckWire {
+                name: c.name,
+                met: c.met,
+                required: c.required,
+            })
+            .collect(),
+        gate_code: recommendation.gate_code,
+        recommended: recommendation.recommended,
+    }
+}
+
+/// Wire DTO for `x.ai/governedTree/assignmentRecommendation`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssignmentRecommendationWire {
+    pub assignment_hash: String,
+    pub lifecycle: String,
+    pub checks: Vec<RecommendationCheckWire>,
+    pub gate_code: String,
+    pub recommended: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecommendationCheckWire {
+    pub name: String,
+    pub met: bool,
+    pub required: bool,
 }
 
 #[cfg(test)]
@@ -166,5 +229,43 @@ mod tests {
         assert!(!response.accepted_snapshot_hash.is_empty());
         assert_eq!(response.default_profile, "interactive_single_turn");
         assert_eq!(response.upgrade_target, "governed_tree_development");
+    }
+
+    #[test]
+    fn assignment_recommendation_projects_required_chain() {
+        let recommendation = assignment_recommendation();
+        assert!(!recommendation.recommended, "no live assignment in flight");
+        assert_eq!(recommendation.lifecycle, "draft");
+        // Every required condition is surfaced with its readiness state.
+        let names: Vec<&str> = recommendation
+            .checks
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        for required in [
+            "root_approval",
+            "sealed_receipt",
+            "tree_budget_reservation",
+            "context_manifest",
+            "model_receipt",
+            "assignment_identity",
+            "accepted_snapshot",
+            "budget_held",
+            "ledger_decision",
+        ] {
+            assert!(names.contains(&required), "missing check {required}");
+        }
+        assert!(
+            recommendation.checks.iter().all(|c| c.required),
+            "every chain condition is required"
+        );
+        assert_eq!(
+            recommendation.gate_code,
+            "applied.missing_root_approval",
+            "the authoritative chain's first deny (missing root approval) is surfaced"
+        );
+        // Serializes as the wire contract.
+        let json = serde_json::to_string(&recommendation).expect("serde");
+        assert!(json.contains("rootApproval") || json.contains("root_approval"));
     }
 }

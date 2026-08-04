@@ -743,6 +743,20 @@ pub(super) async fn run_session(
                         SessionCommand::GetToolOverrides { respond_to } => {
                             let _ = respond_to.send(session.effective_tool_overrides());
                         }
+                        SessionCommand::GetWriteScopeLease { respond_to } => {
+                            use xai_grok_tools::implementations::grok_build::task::{
+                                WriteScopeLeaseResource,
+                            };
+                            let lease = session
+                                .agent
+                                .borrow()
+                                .tool_bridge()
+                                .toolset()
+                                .get_resource_cloned::<WriteScopeLeaseResource>()
+                                .await
+                                .map(|resource| resource.lease);
+                            let _ = respond_to.send(lease);
+                        }
                         SessionCommand::SetToolOverrides { overrides } => {
                             session.set_tool_overrides(overrides);
                         }

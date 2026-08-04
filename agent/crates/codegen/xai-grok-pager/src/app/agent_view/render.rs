@@ -4132,6 +4132,27 @@ impl AgentView {
                 self.frame_occluder_rects.push(popup);
             }
         }
+        if self.show_governed_tree {
+            if let Some(status) = self.governed_tree_status.clone() {
+                let lines = crate::views::governed_tree::render_tree_lines(
+                    &status,
+                    area.width.saturating_sub(4) as usize,
+                );
+                let height = (lines.len() as u16).min(area.height.saturating_sub(2));
+                let overlay_area = Rect::new(
+                    area.x,
+                    area.y.saturating_add(1),
+                    area.width,
+                    height.saturating_add(2).min(area.height),
+                );
+                crate::views::governed_tree::render_governed_tree(
+                    buf,
+                    overlay_area,
+                    &status,
+                );
+                self.frame_occluder_rects.push(overlay_area);
+            }
+        }
         self.pane_areas = layout.pane_areas();
         {
             let route = crate::hyperlink_route::hyperlink_route();

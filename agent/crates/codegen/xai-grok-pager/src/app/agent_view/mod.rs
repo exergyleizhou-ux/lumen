@@ -157,6 +157,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Instant;
 mod cta;
+mod governed_tree_overlay;
 mod input;
 pub(crate) use input::ExternalPromptEditorAccess;
 mod interactions;
@@ -911,6 +912,12 @@ pub struct AgentView {
     pub cleared_workflow_runs: std::collections::HashSet<String>,
     pub show_workflows: bool,
     pub workflows_view: crate::views::workflows::WorkflowsViewState,
+    /// Governed-tree overlay (M1 product surface): projection from
+    /// `x.ai/governedTree/status`, toggled by the user; draws only when data
+    /// is present.
+    pub show_governed_tree: bool,
+    pub governed_tree_status:
+        Option<crate::views::governed_tree::GovernedTreeStatusWire>,
     /// Live `stop`/`stop_failure` hook runs held for the turn's terminal
     /// marker (driver order: the hooks arrive before the `PromptResponse`
     /// that pushes it). Consumed or flushed by `push_turn_terminal_marker`;

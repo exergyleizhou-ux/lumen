@@ -405,6 +405,35 @@ impl DispatchPermitV1 {
     }
 }
 
+/// Convenience: mint a spawn-adapter permit from the fields a host genuinely
+/// holds at child-spawn time (identity from lineage, grant from the
+/// capability ceiling, manifest from the session context). Runs the full
+/// linear chain internally — the permit is only minted when every stage
+/// validates. The budget reservation reference is the host's attempt-scoped
+/// id; the authoritative budget remains the coordinator's BudgetLedger
+/// (DEBT-024(d): adapter-side integration).
+pub fn mint_governed_spawn_permit(
+    node: &crate::identity_envelope::NodeIdentityV1,
+    grant: &crate::capability_grant::CapabilityGrantV1,
+    manifest_hash: &str,
+    accepted_snapshot_hash: &str,
+    reservation_id: &str,
+    deadline_unix: u64,
+    now_unix: u64,
+) -> Result<DispatchPermitV1, PermitDeny> {
+    let raw = RawIntent::new(node.immutable_assignment_hash.clone(), "governed spawn")?;
+    let bound = bind_identity(raw, node, 1)?;
+    let resolved = resolve_policy(bound, grant, 1, now_unix)?;
+    let admitted = admit_context(resolved, manifest_hash, accepted_snapshot_hash)?;
+    let reserved = reserve_budget(admitted, reservation_id, deadline_unix, now_unix)?;
+    mint_dispatch_permit(
+        reserved,
+        "sha256:spawn-adapter-contract",
+        PermitConsumer::SpawnAdapter,
+        now_unix,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +633,77 @@ mod tests {
             permit.authorize(PermitConsumer::SpawnAdapter, 500).unwrap_err(),
             PermitDeny::Revoked
         );
+    }
+
+    #[test]
+    fn mint_governed_spawn_permit_full_chain() {
+        use crate::capability_grant::{GrantCapabilityClass, IssueGrantRequest};
+        use crate::identity_envelope::issue_node_identity;
+        let node = issue_node_identity(
+            "tree-1",
+            "child-1",
+            "sess-root",
+            Some("root".into()),
+            vec!["root".into(), "child-1".into()],
+            "sha256:assignment",
+        )
+        .expect("node");
+        let grant = crate::capability_grant::CapabilityGrantV1::issue(IssueGrantRequest {
+            grant_id: "grant-1".into(),
+            issuer_root_session_id: "sess-root".into(),
+            target_node_id: "child-1".into(),
+            task_tree_id: "tree-1".into(),
+            capabilities: vec![GrantCapabilityClass::ReadOnly],
+            resource_scope_roots: vec!["/work".into()],
+            issued_at_unix: 1_000,
+            ttl_secs: 86_400,
+            reason: "spawn".into(),
+            approval_ref: "appr-1".into(),
+            revoke_token: "tok-1".into(),
+            parent: None,
+        })
+        .expect("grant");
+        let permit = mint_governed_spawn_permit(
+            &node,
+            &grant,
+            "sha256:manifest",
+            "sha256:snapshot",
+            "spawn:child-1",
+            2_000_000_000,
+            500,
+        )
+        .expect("permit");
+        permit
+            .authorize(PermitConsumer::SpawnAdapter, 500)
+            .expect("authorize");
+        assert_eq!(permit.binding().budget_reservation_id, "spawn:child-1");
+        assert_eq!(permit.binding().manifest_hash, "sha256:manifest");
+        // A grant for a different node cannot resolve policy for this spawn.
+        let mut foreign_grant = grant.clone();
+        foreign_grant.target_node_id = "other-node".into();
+        let err = mint_governed_spawn_permit(
+            &node,
+            &foreign_grant,
+            "sha256:manifest",
+            "sha256:snapshot",
+            "spawn:child-1",
+            2_000_000_000,
+            500,
+        )
+        .unwrap_err();
+        assert_eq!(err, PermitDeny::ForeignNode);
+        // Missing manifest fails closed.
+        let err = mint_governed_spawn_permit(
+            &node,
+            &grant,
+            "",
+            "sha256:snapshot",
+            "spawn:child-1",
+            2_000_000_000,
+            500,
+        )
+        .unwrap_err();
+        assert_eq!(err, PermitDeny::EmptyField("manifest_hash"));
     }
 
     #[test]
