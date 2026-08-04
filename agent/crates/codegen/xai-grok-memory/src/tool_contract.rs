@@ -20,7 +20,8 @@ use xai_grok_tools::types::tool::ToolKind;
 /// revision, which is part of the preimage).
 pub const TOOL_CONTRACT_SCHEMA_VERSION: u16 = 1;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum OperationClass {
     ReadOnly,
     ReversibleWrite,
@@ -410,6 +411,74 @@ impl ToolResultEnvelopeV1 {
     }
 }
 
+/// S3 (NG-03D): children must never self-commit/push/merge (INV-13).
+/// Scans command text for a `git` invocation whose subcommand is a mutation
+/// verb. Tokens are split on non-alphanumeric characters (`-`, `_`, `.` are
+/// kept so `merge-base`, `-C`, `--git-dir` stay intact — JSON punctuation
+/// around the command field splits cleanly). Git option values are skipped
+/// (`-C <path>`, `-c k=v`, `--git-dir <path>`), and known read-only git
+/// verbs stop the scan. Fail-closed: any git mutation verb in command text
+/// is reported; callers gate this on command-execution tools only, so
+/// innocent prose that merely *mentions* `git commit` is never executed.
+pub fn child_git_mutation_in(args: &str) -> Option<&'static str> {
+    const SAFE_GIT_VERBS: &[&str] = &[
+        "status",
+        "log",
+        "diff",
+        "show",
+        "rev-parse",
+        "merge-base",
+        "ls-files",
+        "check-ignore",
+        "remote",
+        "config",
+        "help",
+        "version",
+        "fetch",
+        "pull",
+    ];
+    let words: Vec<&str> = args
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_' && c != '.')
+        .filter(|word| !word.is_empty())
+        .collect();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i] == "git" {
+            let mut j = i + 1;
+            let mut path_fragments = 0;
+            while j < words.len() {
+                let token = words[j];
+                if matches!(token, "commit" | "push" | "merge") {
+                    return Some("child_git_mutation");
+                }
+                if token.starts_with('-') {
+                    // Option flags are skipped; -C/-c/--git-dir also consume
+                    // their value word.
+                    if matches!(token, "-C" | "-c" | "--git-dir") {
+                        j += 1;
+                    }
+                    j += 1;
+                    path_fragments = 0;
+                    continue;
+                }
+                if SAFE_GIT_VERBS.contains(&token) {
+                    break;
+                }
+                // Path fragments of an option value (e.g. `/tmp/repo`
+                // splitting into `tmp`, `repo`): allow up to three before the
+                // verb.
+                path_fragments += 1;
+                if path_fragments > 3 {
+                    break;
+                }
+                j += 1;
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 #[cfg(test)]
 mod tool_contract_tests {
     use super::*;
@@ -611,5 +680,44 @@ mod tool_contract_tests {
         );
         assert!(out.len() <= 64);
         assert_ne!(out.len(), 10_000);
+    }
+
+    #[test]
+    fn child_git_mutation_detection_matrix() {
+        // Positive: mutation verbs after git (with and without flags).
+        assert_eq!(
+            child_git_mutation_in(r#"{"command": "git commit -m x"}"#),
+            Some("child_git_mutation")
+        );
+        assert_eq!(
+            child_git_mutation_in("git push origin main"),
+            Some("child_git_mutation")
+        );
+        assert_eq!(
+            child_git_mutation_in("git -C /tmp/x merge feature"),
+            Some("child_git_mutation")
+        );
+        assert_eq!(
+            child_git_mutation_in("git -c user.name=a commit -m x"),
+            Some("child_git_mutation")
+        );
+        assert_eq!(
+            child_git_mutation_in("cd repo && git push"),
+            Some("child_git_mutation")
+        );
+        // Negative: non-mutation git verbs and plain text are allowed.
+        assert_eq!(child_git_mutation_in("git status"), None);
+        assert_eq!(child_git_mutation_in("git log --oneline"), None);
+        assert_eq!(child_git_mutation_in("git diff HEAD"), None);
+        assert_eq!(child_git_mutation_in("git merge-base A B"), None);
+        assert_eq!(child_git_mutation_in("grep -l commit file"), None);
+        assert_eq!(child_git_mutation_in(""), None);
+        assert_eq!(child_git_mutation_in("no git here"), None);
+        // Fail-closed: command text that executes a git mutation verb is
+        // denied even inside prose/quoting — children never self-mutate.
+        assert_eq!(
+            child_git_mutation_in("search for 'git commit' in docs"),
+            Some("child_git_mutation")
+        );
     }
 }

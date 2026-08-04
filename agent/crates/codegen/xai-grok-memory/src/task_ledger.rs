@@ -36,13 +36,23 @@ pub enum WorkingMemoryState {
     /// Ephemeral only — never written to the durable JSONL ledger.
     Draft,
     Proposed,
+    /// Evidence artifacts/receipts bound by the author node or root; still
+    /// not shared truth (master plan §3.1.1).
+    EvidenceAttached,
     /// Root SessionActor marked host verification; still not shared truth.
     HostVerified,
     Accepted,
     Rejected,
+    /// Root review outcome: competing claims need a resolution record.
+    Conflicted,
+    /// Root review outcome: not enough evidence to decide either way.
+    Inconclusive,
     Superseded,
     /// Root-owned hard withdrawal after acceptance (stronger than Superseded).
     Revoked,
+    /// Journal/hash/authority uncertainty — never shared truth, never
+    /// auto-recovered (INV-8/INV-19).
+    Frozen,
 }
 
 impl WorkingMemoryState {
@@ -50,11 +60,15 @@ impl WorkingMemoryState {
         match self {
             Self::Draft => "draft",
             Self::Proposed => "proposed",
+            Self::EvidenceAttached => "evidence_attached",
             Self::HostVerified => "host_verified",
             Self::Accepted => "accepted",
             Self::Rejected => "rejected",
+            Self::Conflicted => "conflicted",
+            Self::Inconclusive => "inconclusive",
             Self::Superseded => "superseded",
             Self::Revoked => "revoked",
+            Self::Frozen => "frozen",
         }
     }
 
@@ -447,6 +461,33 @@ impl WorkingMemoryLedger {
         self.append_checked(fact, false)
     }
 
+    /// Bind evidence to an existing proposal (`Proposed → EvidenceAttached`,
+    /// master plan §3.1.1). Only the original author node or the root
+    /// SessionActor may attach; evidence is mandatory (artifact/command/
+    /// receipt hashes already written). The claim is still not shared truth
+    /// until a root review accepts it.
+    pub fn attach_evidence(
+        &self,
+        actor: ClaimAuthorityActor,
+        mut fact: WorkingMemoryFact,
+    ) -> Result<(), WorkingMemoryLedgerError> {
+        fact.state = WorkingMemoryState::EvidenceAttached;
+        self.authorize_transition(ClaimTransitionRequest {
+            actor,
+            actor_session_id: fact.author_session_id.as_str(),
+            root_session_id: self.root_session_id.as_str(),
+            ledger_task_tree_id: self.root_session_id.as_str(),
+            fact_task_tree_id: fact.task_tree_id.as_str(),
+            from: self.latest_state_for(&fact.fact_id)?,
+            to: WorkingMemoryState::EvidenceAttached,
+            evidence_ref: fact.evidence_ref.as_deref(),
+            expected_revision: self.next_revision_for(&fact.fact_id)?,
+            actual_revision: fact.revision,
+            grant_cancelled: false,
+        })?;
+        self.append_checked(fact, false)
+    }
+
     /// Append a reviewed revision. Only the root session may change a fact out
     /// of `Proposed`, and the revision must directly follow the last one for
     /// that fact. Prefer [`Self::review_with_authority`] when the caller role
@@ -475,9 +516,12 @@ impl WorkingMemoryLedger {
         mut fact: WorkingMemoryFact,
         state: WorkingMemoryState,
     ) -> Result<(), WorkingMemoryLedgerError> {
-        if state == WorkingMemoryState::Proposed || state == WorkingMemoryState::Draft {
+        if state == WorkingMemoryState::Proposed
+            || state == WorkingMemoryState::Draft
+            || state == WorkingMemoryState::EvidenceAttached
+        {
             return Err(WorkingMemoryLedgerError::Invalid(
-                "review state must not be proposed or draft".to_owned(),
+                "review state must not be proposed, draft or evidence_attached".to_owned(),
             ));
         }
         // Non-root session ids never review — keep the historical error shape
@@ -594,8 +638,15 @@ impl WorkingMemoryLedger {
                 WorkingMemoryState::Superseded | WorkingMemoryState::Revoked => {
                     accepted.remove(&fact.fact_id);
                 }
+                // Frozen is fail-closed: uncertainty is never shared truth.
+                WorkingMemoryState::Frozen => {
+                    accepted.remove(&fact.fact_id);
+                }
                 WorkingMemoryState::Proposed
+                | WorkingMemoryState::EvidenceAttached
                 | WorkingMemoryState::Rejected
+                | WorkingMemoryState::Conflicted
+                | WorkingMemoryState::Inconclusive
                 | WorkingMemoryState::HostVerified
                 | WorkingMemoryState::Draft => {}
             }

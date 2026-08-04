@@ -30,6 +30,17 @@ pub enum DenyMechanism {
     LineageDepth,
 }
 
+impl DenyMechanism {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CapabilityCeiling => "capability_ceiling",
+            Self::ToolFilter => "tool_filter",
+            Self::SandboxEnforcement => "sandbox_enforcement",
+            Self::LineageDepth => "lineage_depth",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DenyRecord {
     pub node_id: String,

@@ -167,11 +167,15 @@ impl ClaimAuthority {
 
         match request.to {
             WorkingMemoryState::Proposed => Self::validate_propose(request),
+            WorkingMemoryState::EvidenceAttached => Self::validate_attach(request),
             WorkingMemoryState::HostVerified
             | WorkingMemoryState::Accepted
             | WorkingMemoryState::Rejected
+            | WorkingMemoryState::Conflicted
+            | WorkingMemoryState::Inconclusive
             | WorkingMemoryState::Superseded
-            | WorkingMemoryState::Revoked => Self::validate_review(request),
+            | WorkingMemoryState::Revoked
+            | WorkingMemoryState::Frozen => Self::validate_review(request),
             WorkingMemoryState::Draft => Err(ClaimDenyReason::DraftNotPersistable),
         }
     }
@@ -206,12 +210,31 @@ impl ClaimAuthority {
             None
             | Some(WorkingMemoryState::Draft)
             | Some(WorkingMemoryState::Proposed)
+            | Some(WorkingMemoryState::EvidenceAttached)
             | Some(WorkingMemoryState::HostVerified)
             | Some(WorkingMemoryState::Accepted)
             | Some(WorkingMemoryState::Rejected)
+            | Some(WorkingMemoryState::Conflicted)
+            | Some(WorkingMemoryState::Inconclusive)
             | Some(WorkingMemoryState::Superseded)
-            | Some(WorkingMemoryState::Revoked) => Ok(()),
+            | Some(WorkingMemoryState::Revoked)
+            | Some(WorkingMemoryState::Frozen) => Ok(()),
         }
+    }
+
+    /// `Proposed → EvidenceAttached`: the original author node (or root)
+    /// binds artifact/command/receipt hashes to the claim (master plan
+    /// §3.1.1). Evidence is mandatory; a proposal without evidence cannot
+    /// advance. Non-author roles (Advisor/TUI/daemon/MCP) never attach.
+    fn validate_attach(request: &ClaimTransitionRequest<'_>) -> Result<(), ClaimDenyReason> {
+        match request.actor {
+            ClaimAuthorityActor::Child | ClaimAuthorityActor::RootSessionActor => {}
+            other => return Err(Self::deny_non_root_review(other)),
+        }
+        if request.from != Some(WorkingMemoryState::Proposed) {
+            return Err(ClaimDenyReason::InvalidTransition);
+        }
+        Self::require_evidence(request.evidence_ref)
     }
 
     fn validate_review(request: &ClaimTransitionRequest<'_>) -> Result<(), ClaimDenyReason> {
@@ -232,26 +255,55 @@ impl ClaimAuthority {
 
         let from = request.from;
         match (from, request.to) {
-            // Root may mark host verification on a proposal.
-            (Some(WorkingMemoryState::Proposed), WorkingMemoryState::HostVerified) => Ok(()),
-            // Atomic root acceptance: Proposed → Accepted implies host verification
-            // was performed by the root SessionActor in the same authoritative call.
+            // Root may mark host verification on a proposal or on an
+            // evidence-attached claim (host receipt re-derivable).
+            (Some(WorkingMemoryState::Proposed), WorkingMemoryState::HostVerified)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::HostVerified) => {
+                Ok(())
+            }
+            // Atomic root acceptance: Proposed/EvidenceAttached → Accepted
+            // implies host verification was performed by the root SessionActor
+            // in the same authoritative call.
             (Some(WorkingMemoryState::Proposed), WorkingMemoryState::Accepted)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Accepted)
             | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Accepted) => {
                 Self::require_evidence(request.evidence_ref)
             }
             (Some(WorkingMemoryState::Proposed), WorkingMemoryState::Rejected)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Rejected)
             | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Rejected)
             | (Some(WorkingMemoryState::Proposed), WorkingMemoryState::Superseded)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Superseded)
             | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Superseded)
             | (Some(WorkingMemoryState::Accepted), WorkingMemoryState::Superseded)
             | (Some(WorkingMemoryState::Accepted), WorkingMemoryState::Revoked)
-            | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Revoked) => Ok(()),
+            | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Revoked)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Revoked) => Ok(()),
+            // Root review outcomes: conflicting/inconclusive on any in-flight
+            // state (Proposed/EvidenceAttached/HostVerified).
+            (Some(WorkingMemoryState::Proposed), WorkingMemoryState::Conflicted)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Conflicted)
+            | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Conflicted)
+            | (Some(WorkingMemoryState::Proposed), WorkingMemoryState::Inconclusive)
+            | (Some(WorkingMemoryState::EvidenceAttached), WorkingMemoryState::Inconclusive)
+            | (Some(WorkingMemoryState::HostVerified), WorkingMemoryState::Inconclusive) => Ok(()),
+            // A Conflicted claim is resolved by a NEW resolution record
+            // (master plan §3.1.1); resolution to Accepted still requires
+            // evidence.
+            (Some(WorkingMemoryState::Conflicted), WorkingMemoryState::Accepted) => {
+                Self::require_evidence(request.evidence_ref)
+            }
+            (Some(WorkingMemoryState::Conflicted), WorkingMemoryState::Rejected)
+            | (Some(WorkingMemoryState::Conflicted), WorkingMemoryState::Inconclusive) => Ok(()),
+            // * → Frozen: recovery/actor only (root session actor). Frozen is
+            // never auto-recovered and never shared truth.
+            (Some(_), WorkingMemoryState::Frozen) => Ok(()),
             // First revision cannot be accepted without a prior proposal in the
             // normal path. Allow root to accept only when from is Proposed or
             // HostVerified. from=None → Accept is invalid (no claim to review).
             (None, WorkingMemoryState::Accepted) => Err(ClaimDenyReason::HostVerificationRequired),
             (None, WorkingMemoryState::HostVerified) => Err(ClaimDenyReason::InvalidTransition),
+            (None, WorkingMemoryState::Frozen) => Err(ClaimDenyReason::InvalidTransition),
             (Some(WorkingMemoryState::Accepted), WorkingMemoryState::Accepted) => {
                 Err(ClaimDenyReason::TerminalStateImmutable)
             }
@@ -426,5 +478,194 @@ mod tests {
             ))
             .is_ok()
         );
+    }
+
+    #[test]
+    fn child_attaches_evidence_to_own_proposal() {
+        let ok = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        ));
+        assert!(ok.is_ok(), "author node may bind evidence: {ok:?}");
+        let ok = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        ));
+        assert!(ok.is_ok(), "root may bind evidence: {ok:?}");
+    }
+
+    #[test]
+    fn attach_requires_proposed_from_and_evidence() {
+        // Attach without prior Proposed is an invalid transition.
+        let err = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::HostVerified),
+            WorkingMemoryState::EvidenceAttached,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ClaimDenyReason::InvalidTransition);
+        // Attach with no evidence fails closed.
+        let mut req = base(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        );
+        req.evidence_ref = None;
+        assert_eq!(
+            ClaimAuthority::validate(&req).unwrap_err(),
+            ClaimDenyReason::MissingEvidence
+        );
+        // Non-author roles never attach.
+        let err = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Advisor,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ClaimDenyReason::AdvisorCannotAccept);
+    }
+
+    #[test]
+    fn root_reviews_to_inconclusive_conflicted_and_frozen() {
+        for from in [
+            WorkingMemoryState::Proposed,
+            WorkingMemoryState::EvidenceAttached,
+            WorkingMemoryState::HostVerified,
+        ] {
+            assert!(
+                ClaimAuthority::validate(&base(
+                    ClaimAuthorityActor::RootSessionActor,
+                    Some(from),
+                    WorkingMemoryState::Inconclusive,
+                ))
+                .is_ok(),
+                "root may mark {from:?} inconclusive"
+            );
+            assert!(
+                ClaimAuthority::validate(&base(
+                    ClaimAuthorityActor::RootSessionActor,
+                    Some(from),
+                    WorkingMemoryState::Conflicted,
+                ))
+                .is_ok(),
+                "root may mark {from:?} conflicted"
+            );
+        }
+        // Freeze from any durable state, root only.
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::Accepted),
+                WorkingMemoryState::Frozen,
+            ))
+            .is_ok()
+        );
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::Proposed),
+                WorkingMemoryState::Frozen,
+            ))
+            .is_ok()
+        );
+        // Frozen from nothing is invalid — nothing to freeze.
+        assert_eq!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                None,
+                WorkingMemoryState::Frozen,
+            ))
+            .unwrap_err(),
+            ClaimDenyReason::InvalidTransition
+        );
+    }
+
+    #[test]
+    fn frozen_transition_is_root_only() {
+        let err = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::Accepted),
+            WorkingMemoryState::Frozen,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ClaimDenyReason::ChildCannotReview);
+        let err = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Daemon,
+            Some(WorkingMemoryState::Accepted),
+            WorkingMemoryState::Frozen,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ClaimDenyReason::DaemonCannotAccept);
+    }
+
+    #[test]
+    fn conflicted_resolution_requires_new_record() {
+        // Resolution to Accepted needs evidence; to Rejected/Inconclusive is a
+        // plain root review.
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::Conflicted),
+                WorkingMemoryState::Accepted,
+            ))
+            .is_ok()
+        );
+        let mut req = base(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::Conflicted),
+            WorkingMemoryState::Accepted,
+        );
+        req.evidence_ref = None;
+        assert_eq!(
+            ClaimAuthority::validate(&req).unwrap_err(),
+            ClaimDenyReason::MissingEvidence
+        );
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::Conflicted),
+                WorkingMemoryState::Rejected,
+            ))
+            .is_ok()
+        );
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::Conflicted),
+                WorkingMemoryState::Inconclusive,
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn evidence_attached_to_host_verified_and_accepted() {
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::EvidenceAttached),
+                WorkingMemoryState::HostVerified,
+            ))
+            .is_ok()
+        );
+        assert!(
+            ClaimAuthority::validate(&base(
+                ClaimAuthorityActor::RootSessionActor,
+                Some(WorkingMemoryState::EvidenceAttached),
+                WorkingMemoryState::Accepted,
+            ))
+            .is_ok()
+        );
+        // Child can never promote to HostVerified/Accepted — even with
+        // evidence attached.
+        let err = ClaimAuthority::validate(&base(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::EvidenceAttached),
+            WorkingMemoryState::Accepted,
+        ))
+        .unwrap_err();
+        assert_eq!(err, ClaimDenyReason::ChildCannotAccept);
     }
 }

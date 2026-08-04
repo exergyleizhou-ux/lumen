@@ -203,6 +203,50 @@ TAGGED_COMMIT="$(git -C "$ROOT" rev-parse "$TAG^{commit}")"
 [[ "$TAGGED_COMMIT" == "$SOURCE_COMMIT" ]] \
   || fail "release tag $TAG peeled to $TAGGED_COMMIT, not source commit $SOURCE_COMMIT"
 
+# NG-10A provenance: record the A/B release tuple as a machine-checkable
+# artifact. The tag peels to source A (verified above); the tuple freezes
+# source A / evidence B / tag target / binary sha / source-lock sha and is
+# re-validated by the Rust RELEASE_TUPLE_GATE contract on read.
+write_release_source_tuple() {
+  python3 - "$ROOT" "$TAG" "$SOURCE_COMMIT" <<'PY'
+import hashlib, json, subprocess, sys
+from datetime import datetime, timezone
+from pathlib import Path
+root = Path(sys.argv[1])
+tag = sys.argv[2]
+source = sys.argv[3]
+evidence = subprocess.check_output(
+    ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+).strip()
+binary = root / "agent" / "target" / "release" / "lumen"
+if not binary.is_file():
+    raise SystemExit(f"FAIL: release provenance needs the locked build at {binary}")
+binary_sha = "sha256:" + hashlib.sha256(binary.read_bytes()).hexdigest()
+lock = root / "SOURCE_LOCK.json"
+if not lock.is_file():
+    raise SystemExit("FAIL: release provenance needs SOURCE_LOCK.json")
+lock_sha = "sha256:" + hashlib.sha256(lock.read_bytes()).hexdigest()
+tuple_doc = {
+    "schema_version": 1,
+    "version": (root / "VERSION").read_text().strip(),
+    "source_commit": source,
+    "evidence_commit": evidence,
+    "tag_ref": tag,
+    "tag_commit": source,
+    "binary_sha256": binary_sha,
+    "source_lock_sha256": lock_sha,
+    "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+}
+out = root / "artifacts" / "release-source-tuple.json"
+out.parent.mkdir(parents=True, exist_ok=True)
+tmp = out.with_name(".release-source-tuple.tmp")
+tmp.write_text(json.dumps(tuple_doc, indent=2) + "\n")
+tmp.replace(out)
+print(f"wrote {out}")
+PY
+}
+write_release_source_tuple
+
 if ((NO_PUSH)); then
   echo "OK: prepared $TAG locally; no remote changes were made"
   exit 0

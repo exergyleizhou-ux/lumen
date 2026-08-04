@@ -1,5 +1,40 @@
 use super::*;
 
+/// A4 (NG-03E / INV-18): bounded prompt mailbox. A full queue is a typed
+/// delivery observation (`DroppedFull`) with a pressure projection, never a
+/// silent drop or unbounded growth.
+pub(super) const MAX_PENDING_INPUTS: usize = 128;
+
+type DeliveryObservationV1 =
+    xai_grok_tools::implementations::grok_build::task::delivery_observation::DeliveryObservationV1;
+type QueuePressureV1 =
+    xai_grok_tools::implementations::grok_build::task::delivery_observation::QueuePressureV1;
+
+/// Rejection payload carrying the typed observation + pressure sample.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PromptMailboxFull {
+    pub observation: DeliveryObservationV1,
+    pub pressure: QueuePressureV1,
+}
+
+/// Pure admission gate for the prompt mailbox — the single choke point
+/// `queue_input` consults before enqueueing. `Err` means the queue is full:
+/// the caller must reject the prompt explicitly (never drop silently).
+pub(super) fn prompt_mailbox_admission(
+    depth: usize,
+    capacity: usize,
+) -> Result<QueuePressureV1, PromptMailboxFull> {
+    let pressure = QueuePressureV1::new(capacity as u32, depth as u32);
+    if depth >= capacity {
+        Err(PromptMailboxFull {
+            observation: DeliveryObservationV1::DroppedFull,
+            pressure,
+        })
+    } else {
+        Ok(pressure)
+    }
+}
+
 /// Running-turn display fields for `x.ai/queue/changed` (clients paint turn-start UI).
 pub(super) struct RunningPromptDisplay {
     pub id: String,
@@ -128,6 +163,40 @@ impl SessionActor {
             };
 
         let mut state = self.state.lock().await;
+
+        // A4 (NG-03E / INV-18): the prompt mailbox is bounded. A full queue is
+        // a typed delivery observation (DroppedFull) with a pressure
+        // projection — the prompt is rejected explicitly with an error, never
+        // silently dropped and never allowed to grow without bound. Synthetic
+        // preempt-sweeps above already ran, so this cap applies to the queue
+        // that would otherwise keep accumulating.
+        if let Err(full) = prompt_mailbox_admission(state.pending_inputs.len(), MAX_PENDING_INPUTS)
+        {
+            tracing::warn!(
+                queue_depth = state.pending_inputs.len(),
+                capacity = MAX_PENDING_INPUTS,
+                "A4 prompt mailbox full; prompt rejected (DroppedFull)"
+            );
+            xai_grok_telemetry::unified_log::info(
+                "shell.prompt.queue_full",
+                Some(self.session_info.id.0.as_ref()),
+                Some(serde_json::json!({
+                    "prompt_id": prompt_id,
+                    "depth": state.pending_inputs.len(),
+                    "capacity": MAX_PENDING_INPUTS,
+                    "pressure_utilization_bps": full.pressure.utilization_bps(),
+                    "observation": "dropped_full",
+                })),
+            );
+            let _ = respond_to.send(Err(acp::Error::new(
+                acp::ErrorCode::InternalError.into(),
+                format!(
+                    "Prompt queue is full ({MAX_PENDING_INPUTS} pending); \
+                     try again after the current turn drains."
+                ),
+            )));
+            return false;
+        }
 
         // User prompts have priority over queued synthetic auto-wake prompts;
         // the guarded sweep exempts the running turn's own slot (see

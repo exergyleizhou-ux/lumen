@@ -481,6 +481,383 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
         gates.push(pass("A12_ROLLBACK_RECEIPT_GATE"));
     }
 
+    // NG-01 identity layer: four DTOs + envelope mint/verify + negatives.
+    {
+        use crate::identity_envelope::{
+            GovernedRunEnvelopeV1, IdentityDeny, issue_attempt_context, issue_grant_revision,
+            issue_node_identity,
+        };
+        use crate::tool_contract::OperationClass;
+        let node = issue_node_identity(
+            "tree-1",
+            "node-2",
+            "sess-root",
+            Some("node-1".into()),
+            vec!["node-1".into(), "node-2".into()],
+            "sha256:assignment",
+        )
+        .expect("node identity");
+        let grant = issue_grant_revision(
+            1,
+            "sha256:snapshot",
+            "sha256:manifest",
+            "grant-1",
+            1,
+            "sandbox-1",
+            None,
+            2_000_000_000,
+        )
+        .expect("grant revision");
+        let attempt = issue_attempt_context("attempt-1", "res-1", "model-receipt-1", None, 2_000_000_000, 1)
+            .expect("attempt");
+        let envelope = GovernedRunEnvelopeV1::mint(
+            "run-1",
+            &node,
+            &grant,
+            &attempt,
+            None,
+            OperationClass::ReadOnly,
+            "evidence://sink",
+            1_000,
+        )
+        .expect("envelope");
+        envelope
+            .verify(&node, &grant, &attempt, 1_500)
+            .expect("verify");
+        // Negative: stale grant revision must deny.
+        let stale_attempt =
+            issue_attempt_context("attempt-2", "res-1", "model-receipt-1", None, 2_000_000_000, 2)
+                .expect("stale attempt");
+        assert_eq!(
+            GovernedRunEnvelopeV1::mint(
+                "run-2",
+                &node,
+                &grant,
+                &stale_attempt,
+                None,
+                OperationClass::ReadOnly,
+                "evidence://sink",
+                1_000,
+            )
+            .unwrap_err(),
+            IdentityDeny::StaleGrantRevision
+        );
+        // Negative: empty identity fields refuse issue.
+        assert!(issue_node_identity(
+            "",
+            "node-2",
+            "sess-root",
+            Some("node-1".into()),
+            vec!["node-1".into(), "node-2".into()],
+            "sha256:assignment",
+        )
+        .is_err());
+        gates.push(pass("IDENTITY_ENVELOPE_GATE"));
+
+        // DispatchPermitV1 linear admission chain.
+        use crate::capability_grant::{
+            CapabilityGrantV1, GrantCapabilityClass, IssueGrantRequest,
+        };
+        use crate::dispatch_permit::{
+            PermitConsumer, PermitDeny, RawIntent, admit_context, bind_identity,
+            mint_dispatch_permit, reserve_budget, resolve_policy,
+        };
+        let grant = CapabilityGrantV1::issue(IssueGrantRequest {
+            grant_id: "grant-1".into(),
+            issuer_root_session_id: "sess-root".into(),
+            target_node_id: "node-2".into(),
+            task_tree_id: "tree-1".into(),
+            capabilities: vec![GrantCapabilityClass::ReadOnly],
+            resource_scope_roots: vec!["/work".into()],
+            issued_at_unix: 1_000,
+            ttl_secs: 1_999_999_000,
+            reason: "gate".into(),
+            approval_ref: "appr-1".into(),
+            revoke_token: "tok-1".into(),
+            parent: None,
+        })
+        .expect("capability grant");
+        let raw = RawIntent::new("sha256:assignment", "objective-1").expect("raw");
+        let bound = bind_identity(raw, &node, 1).expect("bound");
+        let resolved = resolve_policy(bound, &grant, 1, 500).expect("resolved");
+        let admitted =
+            admit_context(resolved, "sha256:manifest", "sha256:snapshot").expect("admitted");
+        let reserved = reserve_budget(admitted, "res-1", 2_000_000_000, 500).expect("reserved");
+        let permit = mint_dispatch_permit(
+            reserved,
+            "sha256:adapter-contract",
+            PermitConsumer::SpawnAdapter,
+            500,
+        )
+        .expect("permit");
+        permit
+            .authorize(PermitConsumer::SpawnAdapter, 500)
+            .expect("authorize");
+        // Negative: wrong consumer / expired / revoked all deny.
+        assert_eq!(
+            permit
+                .authorize(PermitConsumer::TerminalAdapter, 500)
+                .unwrap_err(),
+            PermitDeny::ConsumerMismatch
+        );
+        assert_eq!(
+            permit
+                .authorize(PermitConsumer::SpawnAdapter, 3_000_000_000)
+                .unwrap_err(),
+            PermitDeny::Expired
+        );
+        let mut permit = permit;
+        permit.revoke();
+        assert_eq!(
+            permit.authorize(PermitConsumer::SpawnAdapter, 500).unwrap_err(),
+            PermitDeny::Revoked
+        );
+        // Negative: revoked capability grant refuses policy resolution.
+        let mut revoked_grant = grant.clone();
+        revoked_grant.state = crate::capability_grant::CapabilityGrantState::Revoked;
+        let raw = RawIntent::new("sha256:assignment", "objective-1").expect("raw");
+        let bound = bind_identity(raw, &node, 1).expect("bound");
+        assert_eq!(
+            resolve_policy(bound, &revoked_grant, 1, 500).unwrap_err(),
+            PermitDeny::GrantRevoked
+        );
+        gates.push(pass("DISPATCH_PERMIT_GATE"));
+
+        // RootBypassPermission (INV-5 full field set + negatives).
+        use crate::root_bypass::{BypassDeny, IssueBypassRequest, issue_root_bypass};
+        let bypass = issue_root_bypass(IssueBypassRequest {
+            permission_id: "bypass-1".into(),
+            root_session_id: "sess-root".into(),
+            exact_action: "edit:file".into(),
+            resource_scope: "repo://crate/foo.rs".into(),
+            reason: "user-approved manual override".into(),
+            issued_at_unix: 1_000,
+            expires_at_unix: 2_000,
+            nonce: "nonce-1".into(),
+            audit_id: "audit-1".into(),
+        })
+        .expect("bypass");
+        bypass
+            .authorize("edit:file", "repo://crate/foo.rs", 1_500)
+            .expect("authorize");
+        // Negative: missing expiry / child inheritance / scope mismatch.
+        assert!(issue_root_bypass(IssueBypassRequest {
+            permission_id: "bypass-2".into(),
+            root_session_id: "sess-root".into(),
+            exact_action: "edit:file".into(),
+            resource_scope: "repo://crate/foo.rs".into(),
+            reason: "no expiry".into(),
+            issued_at_unix: 1_000,
+            expires_at_unix: 0,
+            nonce: "nonce-2".into(),
+            audit_id: "audit-2".into(),
+        })
+        .is_err());
+        assert_eq!(
+            bypass.derive_child_permission().unwrap_err(),
+            BypassDeny::ChildInheritanceForbidden
+        );
+        assert_eq!(
+            bypass
+                .authorize("shell:exec", "repo://crate/foo.rs", 1_500)
+                .unwrap_err(),
+            BypassDeny::ScopeMismatch
+        );
+        gates.push(pass("ROOT_BYPASS_GATE"));
+
+        // SecretRef/redaction (INV-17) + fail-closed shapes.
+        use crate::secret_ref::{
+            SecretDeny, SecretKind, SecretRef, assert_redaction_clean, redact_text,
+        };
+        let reference = SecretRef::new("ref-1", SecretKind::ProviderApiKey, "sha256:abc", "team-x", 30)
+            .expect("secret ref");
+        reference.validate().expect("valid");
+        assert!(SecretRef::new("ref-2", SecretKind::Token, "sha256:abc", "", 30).is_err());
+        let redacted = redact_text("key=sk-9eb31c9da659472e85ae78f746988570 and more");
+        assert_redaction_clean(&redacted).expect("redacted clean");
+        assert!(redacted.contains("<redacted>"));
+        let leak = assert_redaction_clean("api_key=sk-live-123").unwrap_err();
+        assert_eq!(leak, SecretDeny::SecretShapeLeak("sk-"));
+        gates.push(pass("SECRET_REF_GATE"));
+
+        // Claim state machine: EvidenceAttached / Conflicted / Inconclusive /
+        // Frozen transitions (master plan §3.1.1).
+        use crate::claim_authority::{
+            ClaimAuthority, ClaimAuthorityActor, ClaimDenyReason, ClaimTransitionRequest,
+        };
+        use crate::task_ledger::WorkingMemoryState;
+        let request = |actor, from, to| ClaimTransitionRequest {
+            actor,
+            actor_session_id: if actor.is_root_session_actor() {
+                "root"
+            } else {
+                "child"
+            },
+            root_session_id: "root",
+            ledger_task_tree_id: "root",
+            fact_task_tree_id: "root",
+            from,
+            to,
+            evidence_ref: Some("test://evidence"),
+            expected_revision: 2,
+            actual_revision: 2,
+            grant_cancelled: false,
+        };
+        assert!(ClaimAuthority::validate(&request(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        ))
+        .is_ok());
+        assert!(ClaimAuthority::validate(&request(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::EvidenceAttached),
+            WorkingMemoryState::HostVerified,
+        ))
+        .is_ok());
+        assert!(ClaimAuthority::validate(&request(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::HostVerified),
+            WorkingMemoryState::Conflicted,
+        ))
+        .is_ok());
+        assert!(ClaimAuthority::validate(&request(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::Conflicted),
+            WorkingMemoryState::Inconclusive,
+        ))
+        .is_ok());
+        assert!(ClaimAuthority::validate(&request(
+            ClaimAuthorityActor::RootSessionActor,
+            Some(WorkingMemoryState::Accepted),
+            WorkingMemoryState::Frozen,
+        ))
+        .is_ok());
+        // Negative: child attach without evidence; child freeze; advisor attach.
+        let mut no_evidence = request(
+            ClaimAuthorityActor::Child,
+            Some(WorkingMemoryState::Proposed),
+            WorkingMemoryState::EvidenceAttached,
+        );
+        no_evidence.evidence_ref = None;
+        assert_eq!(
+            ClaimAuthority::validate(&no_evidence).unwrap_err(),
+            ClaimDenyReason::MissingEvidence
+        );
+        assert_eq!(
+            ClaimAuthority::validate(&request(
+                ClaimAuthorityActor::Child,
+                Some(WorkingMemoryState::Accepted),
+                WorkingMemoryState::Frozen,
+            ))
+            .unwrap_err(),
+            ClaimDenyReason::ChildCannotReview
+        );
+        assert_eq!(
+            ClaimAuthority::validate(&request(
+                ClaimAuthorityActor::Advisor,
+                Some(WorkingMemoryState::Proposed),
+                WorkingMemoryState::EvidenceAttached,
+            ))
+            .unwrap_err(),
+            ClaimDenyReason::AdvisorCannotAccept
+        );
+        gates.push(pass("CLAIM_STATE_MACHINE_GATE"));
+
+        // Typed runtime profiles: one-way non-downgradable upgrade.
+        use crate::runtime_profile::{ProfileDeny, RuntimeProfile};
+        assert_eq!(
+            RuntimeProfile::default_profile(),
+            RuntimeProfile::InteractiveSingleTurn
+        );
+        assert_eq!(
+            RuntimeProfile::InteractiveSingleTurn
+                .upgrade(RuntimeProfile::GovernedTreeDevelopment)
+                .expect("up"),
+            RuntimeProfile::GovernedTreeDevelopment
+        );
+        assert_eq!(
+            RuntimeProfile::GovernedTreeDevelopment
+                .upgrade(RuntimeProfile::KairosLocal)
+                .expect("up2"),
+            RuntimeProfile::KairosLocal
+        );
+        let err = RuntimeProfile::GovernedTreeDevelopment
+            .upgrade(RuntimeProfile::InteractiveSingleTurn)
+            .unwrap_err();
+        assert_eq!(err.code(), "profile.admission_upgrade_failed");
+        assert_eq!(
+            err,
+            ProfileDeny::AdmissionUpgradeFailed {
+                from: "governed_tree_development".into(),
+                requested: "interactive_single_turn".into(),
+            }
+        );
+        assert!(RuntimeProfile::parse_validated("no_such_profile").is_err());
+        gates.push(pass("RUNTIME_PROFILE_GATE"));
+
+        // Audit snapshot: mandatory fields + write/read fail-closed.
+        use crate::audit_snapshot::{AuditSnapshotDeny, AuditSnapshotV1};
+        let snapshot = AuditSnapshotV1 {
+            schema_version: crate::audit_snapshot::AUDIT_SNAPSHOT_SCHEMA_VERSION,
+            generated_at: "2026-08-04T12:00:00Z".into(),
+            git_head: "d74db8e0a415911ad3c6eb859c8424888edf3499".into(),
+            remote_heads: vec![],
+            dirty_path_manifest: vec![],
+            ci_run: "NOT_RUN".into(),
+            command_exits: vec!["offline_gates=0".into()],
+            source_lock_sha256: "2b7c5e8faabc241880da70b230bf7d5afe3a249616ffdad74d4b53514ebe69ba".into(),
+        };
+        snapshot.validate().expect("valid");
+        let path = tmp.join("audit-latest.json");
+        snapshot.write_to(&path).expect("write");
+        assert_eq!(AuditSnapshotV1::read_from(&path).expect("read"), snapshot);
+        let mut broken = snapshot.clone();
+        broken.git_head = "short".into();
+        assert_eq!(
+            broken.validate().unwrap_err().code(),
+            "audit.invalid"
+        );
+        assert!(matches!(
+            broken.write_to(&path),
+            Err(AuditSnapshotDeny::Invalid(_))
+        ));
+        gates.push(pass("AUDIT_SNAPSHOT_GATE"));
+
+        // NG-10A release source tuple: tag must peel to source A, evidence B
+        // distinct, binary + source-lock hashes mandatory.
+        use crate::release_source_tuple::{
+            ReleaseSourceTupleV1, RELEASE_SOURCE_TUPLE_SCHEMA_VERSION,
+        };
+        let tuple = ReleaseSourceTupleV1 {
+            schema_version: RELEASE_SOURCE_TUPLE_SCHEMA_VERSION,
+            version: "2.0.0".into(),
+            source_commit: "f51fb902a4c97ab26e4cff5f52c52c1b72b8708d".into(),
+            evidence_commit: "d74db8e0a415911ad3c6eb859c8424888edf3499".into(),
+            tag_ref: "v2.0.0".into(),
+            tag_commit: "f51fb902a4c97ab26e4cff5f52c52c1b72b8708d".into(),
+            binary_sha256: "sha256:c929e50f8ef7ddacb552e2ea14261b80a4ae8b36485c4713ab55fd2b6dd62c4d"
+                .into(),
+            source_lock_sha256:
+                "sha256:2b7c5e8faabc241880da70b230bf7d5afe3a249616ffdad74d4b53514ebe69ba".into(),
+            generated_at: "2026-08-04T12:00:00Z".into(),
+        };
+        tuple.validate().expect("valid tuple");
+        let tuple_path = tmp.join("release-source-tuple.json");
+        tuple.write_to(&tuple_path).expect("write");
+        assert_eq!(
+            ReleaseSourceTupleV1::read_from(&tuple_path).expect("read"),
+            tuple
+        );
+        let mut bad_tag = tuple.clone();
+        bad_tag.tag_commit = bad_tag.evidence_commit.clone();
+        assert_eq!(
+            bad_tag.validate().unwrap_err(),
+            crate::release_source_tuple::ReleaseTupleDeny::TagNotAtSource
+        );
+        gates.push(pass("RELEASE_TUPLE_GATE"));
+    }
+
     let offline_pass_count = gates.iter().filter(|g| g.status == "PASS").count();
     let offline_total = gates.len();
 
@@ -504,8 +881,8 @@ mod tests {
         let receipt = run_offline_contract_gates(temp.path());
         assert_eq!(receipt.offline_pass_count, receipt.offline_total);
         assert!(
-            receipt.offline_total >= 18,
-            "A3 + A5–A12 exit gates must be present"
+            receipt.offline_total >= 26,
+            "A3 + A5–A12 exit gates + identity/permit/bypass/red-team/release-tuple gates must be present"
         );
         assert_eq!(receipt.product_rc, "NOT_READY");
         let json = serde_json::to_string_pretty(&receipt).unwrap();
@@ -513,6 +890,14 @@ mod tests {
         assert!(json.contains("A3_TOKEN_RESERVATION_GATE"));
         assert!(json.contains("A5_CONTEXT_REBUILD_GATE"));
         assert!(json.contains("A12_ROLLBACK_RECEIPT_GATE"));
+        assert!(json.contains("IDENTITY_ENVELOPE_GATE"));
+        assert!(json.contains("DISPATCH_PERMIT_GATE"));
+        assert!(json.contains("ROOT_BYPASS_GATE"));
+        assert!(json.contains("SECRET_REF_GATE"));
+        assert!(json.contains("CLAIM_STATE_MACHINE_GATE"));
+        assert!(json.contains("RUNTIME_PROFILE_GATE"));
+        assert!(json.contains("AUDIT_SNAPSHOT_GATE"));
+        assert!(json.contains("RELEASE_TUPLE_GATE"));
         assert!(json.contains("NOT_READY"));
         // Durable evidence for implementer SCRATCH / offline suite.
         if let Ok(dir) = std::env::var("LUMEN_EVIDENCE_DIR") {

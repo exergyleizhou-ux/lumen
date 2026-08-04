@@ -3805,6 +3805,9 @@ impl acp::Agent for MvpAgent {
             s if s.starts_with("x.ai/subagent/") => {
                 crate::extensions::task::handle_subagent(self, &args).await
             }
+            s if s.starts_with("x.ai/governedTree/") => {
+                crate::extensions::governed_tree::handle(self, &args).await
+            }
             s if s.starts_with("x.ai/terminal/") => {
                 crate::extensions::terminal::handle(self, &args).await
             }

@@ -2,6 +2,43 @@
 use super::support::*;
 use super::*;
 
+/// A4 (NG-03E / INV-18): the prompt mailbox is bounded. `prompt_mailbox_admission`
+/// — the choke point `queue_input` consults before enqueueing — returns a
+/// `DroppedFull` typed observation with pressure projection at capacity, and
+/// admits with pressure while below it.
+#[test]
+fn prompt_mailbox_admission_rejects_at_capacity_with_dropped_full() {
+    use crate::session::acp_session::prompt_queue::{
+        MAX_PENDING_INPUTS, PromptMailboxFull, prompt_mailbox_admission,
+    };
+    use xai_grok_tools::implementations::grok_build::task::delivery_observation::{
+        DeliveryObservationV1, QueuePressureV1,
+    };
+
+    // Below capacity: admitted with a pressure projection.
+    let pressure =
+        prompt_mailbox_admission(MAX_PENDING_INPUTS - 1, MAX_PENDING_INPUTS).expect("admitted");
+    assert_eq!(pressure.capacity, MAX_PENDING_INPUTS as u32);
+    assert!(!pressure.is_saturated());
+
+    // At capacity: rejected with DroppedFull, never a silent drop.
+    let full = prompt_mailbox_admission(MAX_PENDING_INPUTS, MAX_PENDING_INPUTS).unwrap_err();
+    assert_eq!(full.observation, DeliveryObservationV1::DroppedFull);
+    assert!(full.pressure.is_saturated());
+    assert_eq!(full.pressure.utilization_bps(), 10_000);
+    assert_eq!(
+        full,
+        PromptMailboxFull {
+            observation: DeliveryObservationV1::DroppedFull,
+            pressure: QueuePressureV1::new(MAX_PENDING_INPUTS as u32, MAX_PENDING_INPUTS as u32),
+        }
+    );
+
+    // Saturation is fail-closed: capacity 0 reports full utilization.
+    let full = prompt_mailbox_admission(1, 0).unwrap_err();
+    assert_eq!(full.pressure.utilization_bps(), 10_000);
+}
+
 /// The shared-queue text must use a block's compact `displayText` (e.g. a
 /// locally-expanded `/loop` invocation) rather than the raw expanded wire text,
 /// so other clients' turn-start shim renders the compact user block — not the

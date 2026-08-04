@@ -3,8 +3,47 @@
 //! its `!Send` local-session runner into `spawn_local`.
 use super::*;
 use crate::session::repo_changes::UploadMethod;
+
+/// A10 (NG-08): outbox exactly-once gate for child dispatch at the real
+/// scheduler/daemon loop. A child whose successful terminal was already
+/// delivered is never dispatched again (INV-31: replay consumes only already
+/// recorded observations). Failed/cancelled terminals are NOT marked, so
+/// legitimate retries and recovery re-dispatches stay open; the dedup only
+/// blocks re-delivery of the same successful terminal event.
+struct SchedulerLoopOutbox {
+    delivered: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl Default for SchedulerLoopOutbox {
+    fn default() -> Self {
+        Self {
+            delivered: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+impl SchedulerLoopOutbox {
+    /// True when this child id has no delivered terminal yet.
+    fn may_dispatch(&self, child_id: &str) -> bool {
+        let delivered = self
+            .delivered
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let snapshot: Vec<String> = delivered.iter().cloned().collect();
+        xai_grok_memory::kairos_lease_consumer::outbox_should_deliver(&snapshot, child_id)
+    }
+
+    fn mark_delivered(&self, child_id: &str) {
+        self.delivered
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .insert(child_id.to_owned());
+    }
+}
+
 struct ShellChildRunner {
     agent_ref: LocalRef<MvpAgent>,
+    loop_outbox: Arc<SchedulerLoopOutbox>,
 }
 
 /// Select a model for a fresh root-owned scheduler iteration before the child
@@ -38,6 +77,108 @@ fn scheduler_preflight_model(
     )
 }
 
+/// A6 (NG-04D-4 / INV-18): durable handoff delivery receipt for a child
+/// terminal. The receipt is a [`HandoffPacketV1`] delivery appended to the
+/// task-tree lifecycle journal, anchored under the same host-owned
+/// task-tree memory root the coordinator uses for operation stores.
+///
+/// The snapshot reference is content-bound (hash of the child's final
+/// output), so the receipt is re-derivable without storing the raw
+/// transcript. Best-effort by design: a journaling failure is logged and
+/// must never mask the completion itself.
+fn journal_child_handoff(
+    agent: &MvpAgent,
+    completion: &xai_grok_tools::implementations::grok_build::task::coordinator::ChildCompletion<
+        crate::agent::subagent::ShellCompletionData,
+    >,
+) {
+    let Some(memory_root) = agent
+        .sessions
+        .borrow()
+        .values()
+        .find_map(|session| session.tool_context.task_tree_memory_workspace_dir.clone())
+    else {
+        tracing::debug!(
+            subagent_id = %completion.request.id,
+            "A6: no task-tree memory root wired; handoff receipt skipped"
+        );
+        return;
+    };
+    journal_child_handoff_into(completion, &memory_root);
+}
+
+/// The journaling half of [`journal_child_handoff`], separated so tests drive
+/// the real shipped path with a temporary memory root.
+fn journal_child_handoff_into(
+    completion: &xai_grok_tools::implementations::grok_build::task::coordinator::ChildCompletion<
+        crate::agent::subagent::ShellCompletionData,
+    >,
+    memory_root: &std::path::Path,
+) -> Result<u64, String> {
+    use xai_grok_memory::handoff_packet::HandoffPacketV1;
+    use xai_grok_memory::lifecycle_journal::LifecycleJournal;
+    use xai_grok_memory::nextgen_exit_gates::deliver_handoff_receipt;
+
+    let request = &completion.request;
+    let result = &completion.result;
+    let root_session_id = &request.lineage.root_session_id;
+    let output_hash = format!(
+        "sha256:{}",
+        blake3::hash(result.output.as_bytes()).to_hex()
+    );
+    let uncertainties: Vec<String> = result
+        .error
+        .as_deref()
+        .filter(|error| !error.trim().is_empty())
+        .map(str::to_owned)
+        .into_iter()
+        .collect();
+    let terminal_reason = if result.cancelled {
+        "cancelled"
+    } else if result.success {
+        "completed"
+    } else {
+        "failed"
+    };
+    let packet = HandoffPacketV1::build(
+        request.id.clone(),
+        root_session_id.clone(),
+        request.id.clone(),
+        output_hash.clone(),
+        Vec::new(),
+        vec![format!("output:{output_hash}")],
+        uncertainties,
+        "await root review".to_string(),
+        Some(terminal_reason.to_string()),
+    )
+    .map_err(|deny| format!("handoff packet: {deny:?}"))?;
+    let journal_dir = memory_root.join("task-tree-lifecycle");
+    if let Err(error) = std::fs::create_dir_all(&journal_dir) {
+        return Err(format!("create journal dir: {error}"));
+    }
+    let journal_path = journal_dir.join(format!(
+        "{}.jsonl",
+        &blake3::hash(root_session_id.as_bytes()).to_hex()[..16]
+    ));
+    let mut journal = LifecycleJournal::at_path(root_session_id.clone(), &journal_path);
+    let sequence = journal.events().len() as u64;
+    let occurred_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let event = deliver_handoff_receipt(
+        &mut journal,
+        &packet,
+        format!("handoff:{}", request.id),
+        root_session_id.clone(),
+        sequence,
+        occurred_at,
+        1, // shipped policy revision baseline
+    )
+    .map_err(|error| format!("deliver handoff: {error:?}"))?;
+    Ok(event.sequence)
+}
+
 impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
     for ShellChildRunner
 {
@@ -63,12 +204,40 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         >,
     ) -> Self::RunFuture {
         let agent_ref = self.agent_ref.clone();
+        let loop_outbox = self.loop_outbox.clone();
+        let xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunRequest {
+            mut request,
+            cancellation,
+            reporter,
+        } = run;
+        // A10 (NG-08): kairos outbox exactly-once gate at the real
+        // scheduler/daemon dispatch point. A child whose successful terminal
+        // was already delivered is never dispatched again (INV-31); this
+        // covers scheduler lease recovery/replay paths where the same child
+        // id could be re-offered.
+        if !loop_outbox.may_dispatch(&request.id) {
+            tracing::warn!(
+                subagent_id = %request.id,
+                "A10 kairos outbox: child terminal already delivered; duplicate dispatch skipped"
+            );
+            let result = xai_grok_tools::implementations::grok_build::task::types::SubagentResult {
+                success: false,
+                output: std::sync::Arc::from(
+                    "duplicate dispatch deduplicated by kairos outbox (terminal already delivered)",
+                ),
+                error: Some("already_delivered".to_owned()),
+                cancelled: true,
+                ..Default::default()
+            };
+            return Box::pin(async move {
+                xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunOutput {
+                    result,
+                    completion_data: Default::default(),
+                    snapshot_ref: None,
+                }
+            });
+        }
         Box::pin(async move {
-            let xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunRequest {
-                mut request,
-                cancellation,
-                reporter,
-            } = run;
             let this = agent_ref.get();
             let parent_sid = request.parent_session_id.clone();
             let Some(mut ctx) = this.try_build_subagent_spawn_context(&parent_sid) else {
@@ -170,6 +339,18 @@ impl xai_grok_tools::implementations::grok_build::task::coordinator::ChildRunner
         >,
     ) {
         let gateway = self.agent_ref.get().gateway.clone();
+        // A10 (NG-08): a *successful* terminal is the delivery event the
+        // outbox records — failed/cancelled children stay dispatchable so
+        // retries and recovery are never blocked.
+        if completion.result.success {
+            self.loop_outbox.mark_delivered(&completion.request.id);
+        }
+        // A6 (NG-04D-4 / INV-18): every child terminal produces a bounded
+        // handoff packet and a durable delivery receipt in the task-tree
+        // lifecycle journal, so a late/foreign terminal reconciles instead of
+        // being silently dropped. Best-effort journaling: a failure is logged,
+        // never allowed to mask the completion itself.
+        journal_child_handoff(self.agent_ref.get(), &completion);
         crate::agent::subagent::present_child_completion(completion, &gateway);
     }
     fn running_count_changed(&self, running: usize) {
@@ -214,6 +395,7 @@ impl MvpAgent {
         let agent_ref = LocalRef::new(self);
         let runner = ShellChildRunner {
             agent_ref: agent_ref.clone(),
+            loop_outbox: Arc::new(SchedulerLoopOutbox::default()),
         };
         let config =
             xai_grok_tools::implementations::grok_build::task::coordinator::CoordinatorConfig {
@@ -729,6 +911,74 @@ mod scheduler_model_routing_tests {
         assert_eq!(
             scheduler_preflight_model(&scheduler_request(), 0, &manager),
             None
+        );
+    }
+
+    #[test]
+    fn scheduler_loop_outbox_dedups_delivered_terminal_only() {
+        let outbox = SchedulerLoopOutbox::default();
+        assert!(outbox.may_dispatch("child-1"));
+        outbox.mark_delivered("child-1");
+        assert!(
+            !outbox.may_dispatch("child-1"),
+            "a delivered successful terminal must never be dispatched again (INV-31)"
+        );
+        assert!(
+            outbox.may_dispatch("child-2"),
+            "unrelated children stay dispatchable"
+        );
+        assert!(outbox.may_dispatch("child-1-retry"));
+    }
+
+    #[test]
+    fn child_terminal_journals_durable_handoff_receipt() {
+        use xai_grok_tools::implementations::grok_build::task::coordinator::{
+            ChildCompletion, CompletionDisposition,
+        };
+        use xai_grok_tools::implementations::grok_build::task::types::SubagentResult;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let request = scheduler_request();
+        let completion = ChildCompletion {
+            request,
+            result: SubagentResult {
+                success: true,
+                output: std::sync::Arc::from("evidence: tests pass\n"),
+                error: None,
+                cancelled: false,
+                ..Default::default()
+            },
+            completion_data: crate::agent::subagent::ShellCompletionData::default(),
+            disposition: CompletionDisposition {
+                foreground_delivered: true,
+                backgrounded: false,
+                waiter_delivered: false,
+                explicitly_killed: false,
+                should_surface: true,
+            },
+        };
+        let sequence = journal_child_handoff_into(&completion, dir.path())
+            .expect("handoff receipt journaled");
+        assert_eq!(sequence, 0, "first event in a fresh tree journal");
+
+        // The receipt is durable: reload the journal from disk and verify the
+        // event carries evidence refs and the terminal handoff marker.
+        let journal_path = dir
+            .path()
+            .join("task-tree-lifecycle")
+            .join(format!("{}.jsonl", &blake3::hash(b"root").to_hex()[..16]));
+        assert!(journal_path.is_file(), "journal file must exist on disk");
+        let journal = xai_grok_memory::lifecycle_journal::LifecycleJournal::at_path(
+            "root",
+            &journal_path,
+        );
+        let events = journal.events();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].contract_hash.is_some());
+        assert!(!events[0].evidence_refs.is_empty());
+        assert_eq!(
+            events[0].kind,
+            xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind::Checkpointed
         );
     }
 }

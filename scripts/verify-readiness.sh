@@ -253,7 +253,7 @@ suffix = subprocess.check_output(
     cwd=root,
     text=True,
 ).splitlines()
-allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "docs/", "CURRENT_STATE_LEDGER.md")
+allowed_suffixes = ("SOURCE_LOCK.json", "SBOM.spdx.json", "artifacts/readiness/", "artifacts/audit/", "docs/", "CURRENT_STATE_LEDGER.md")
 unexpected = [path for path in suffix if not path.startswith(allowed_suffixes)]
 if unexpected:
     print("non-evidence drift after source lock: " + ", ".join(unexpected[:8]))

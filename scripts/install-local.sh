@@ -113,6 +113,15 @@ codesign --force --sign - "$TMP_DEST" 2>/dev/null || true
 mv -f "$TMP_DEST" "$DEST"
 trap - EXIT
 
+# NG-10A provenance: when a release-source tuple exists for this build, copy
+# it next to the installed binary so the installation carries its A/B tuple
+# provenance (`lumen-release-source-tuple.json` beside the binary).
+if [[ -f "$ROOT/artifacts/release-source-tuple.json" ]]; then
+  cp "$ROOT/artifacts/release-source-tuple.json" \
+     "$(dirname "$DEST")/lumen-release-source-tuple.json"
+  echo "Provenance: $(dirname "$DEST")/lumen-release-source-tuple.json"
+fi
+
 DEST_SHA="$(shasum -a 256 "$DEST" | awk '{print $1}')"
 
 echo "Installed: $DEST"

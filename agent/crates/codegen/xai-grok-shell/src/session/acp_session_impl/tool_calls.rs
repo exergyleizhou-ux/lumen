@@ -1591,6 +1591,25 @@ impl SessionActor {
                     .await?;
                 return Ok(Err(ToolLoop::NonExistingTool));
             }
+            // S3 (NG-03D / INV-13): children must never self-commit/push/
+            // merge. Command-execution tools at child depth scan the raw
+            // arguments for git mutation verbs and hard-deny.
+            if kind == ToolKind::Execute {
+                use xai_grok_memory::tool_contract::child_git_mutation_in;
+                if let Some(reason) = child_git_mutation_in(&call.function.arguments) {
+                    let message = format!(
+                        "Child agents cannot run git mutations ({reason}) — ask the root session to commit/push/merge"
+                    );
+                    tracing::warn!(
+                        tool = %call.function.name,
+                        depth = self.tool_context.subagent_depth,
+                        "S3 child git mutation denied"
+                    );
+                    self.handle_tool_not_executed(&call.id, &tool_call_id, message)
+                        .await?;
+                    return Ok(Err(ToolLoop::NonExistingTool));
+                }
+            }
         }
         let prepared = PreparedToolCall {
             call_id: call.id.clone(),
