@@ -218,6 +218,44 @@ impl StreamingTurnCapture {
         self.doom_loop.is_some() || self.segments.iter().any(|s| s.doom_loop.is_some())
     }
 
+    /// Attempt-scoped observations for the S8 sealed-receipt gate (INV-11).
+    ///
+    /// Only the **current in-progress generation** counts. Historical
+    /// [`Self::segments`] belong to prior generations (already committed,
+    /// discarded, or folded for upload) and must not poison a fresh attempt
+    /// that fails before any `StreamStarted` / channel token — that is the
+    /// common cli-chat-proxy "error sending request" path. Token counters
+    /// stamped on a previous terminal empty-response path are also ignored
+    /// here (they are not live stream evidence for this attempt).
+    pub(crate) fn attempt_seal_observations(&self) -> (bool, bool) {
+        let had_output = !self.response_text.is_empty()
+            || !self.reasoning_text.is_empty()
+            || self.text_chunks > 0
+            || self.reasoning_chunks > 0;
+        let had_tool_call = self.phase == CapturePhase::ToolCall;
+        (had_output, had_tool_call)
+    }
+
+    /// Wipe the in-progress generation slot before a new sampling attempt.
+    ///
+    /// Called at the start of each `run_turn_via_sampler` attempt so a
+    /// pre-stream transport failure seals clean even when a prior generation
+    /// left flat fields / empty-response token stamps behind. Retains
+    /// turn-level `segments` / `attempt_count` / identity for upload diagnostics.
+    pub(crate) fn prepare_attempt_slot(&mut self) {
+        self.reasoning_text.clear();
+        self.response_text.clear();
+        self.reasoning_chunks = 0;
+        self.text_chunks = 0;
+        self.phase = CapturePhase::default();
+        self.doom_loop = None;
+        self.reasoning_tokens = None;
+        self.completion_tokens = None;
+        self.finish_reason = None;
+        self.empty_reason = None;
+        self.started_at_ms = None;
+    }
+
     /// Discard the in-progress generation without folding it into `segments`.
     /// Called on `Completed`: that generation committed to `afterStateHistory`,
     /// so its reasoning must neither be uploaded nor count against the byte cap
@@ -618,5 +656,82 @@ mod streaming_turn_capture_tests {
         assert_eq!(cap.completion_tokens, Some(12));
         assert_eq!(cap.finish_reason.as_deref(), Some("stop"));
         assert_eq!(cap.empty_reason.as_deref(), Some("reasoning_only"));
+    }
+
+    /// S8: a pre-stream "error sending request" must seal clean even when
+    /// prior generations left segments / token stamps on the turn capture.
+    #[test]
+    fn attempt_seal_observations_ignore_historical_segments_and_token_stamps() {
+        let mut cap = StreamingTurnCapture::default();
+        cap.begin_turn(Some("p1".to_owned()), 1);
+        cap.start_stream(1);
+        cap.append(false, "prior generation text");
+        cap.phase = CapturePhase::ToolCall;
+        // Fold prior gen into segments (same-turn restart path).
+        cap.start_stream(2);
+        // Stamps that used to poison had_output via the old seal path.
+        cap.reasoning_tokens = Some(4096);
+        cap.completion_tokens = Some(12);
+        // Current slot is empty (no StreamStarted / tokens for this attempt).
+        assert!(cap.response_text.is_empty());
+        assert!(cap.reasoning_text.is_empty());
+        assert!(!cap.segments.is_empty(), "prior gen must be retained in segments");
+
+        let (had_output, had_tool) = cap.attempt_seal_observations();
+        assert!(
+            !had_output && !had_tool,
+            "historical segments/tokens must not dirty this attempt's seal"
+        );
+    }
+
+    #[test]
+    fn prepare_attempt_slot_clears_stale_current_without_dropping_segments() {
+        let mut cap = StreamingTurnCapture::default();
+        cap.begin_turn(Some("p1".to_owned()), 1);
+        cap.start_stream(1);
+        cap.append(true, "stale reasoning");
+        cap.segments.push(super::StreamSegment {
+            started_at_ms: Some(1),
+            reasoning_text: "kept".into(),
+            response_text: String::new(),
+            reasoning_chunks: 1,
+            text_chunks: 0,
+            phase: CapturePhase::Reasoning,
+            doom_loop: None,
+        });
+        cap.reasoning_tokens = Some(99);
+        cap.completion_tokens = Some(1);
+        cap.phase = CapturePhase::ToolCall;
+
+        cap.prepare_attempt_slot();
+
+        assert!(cap.response_text.is_empty());
+        assert!(cap.reasoning_text.is_empty());
+        assert_eq!(cap.text_chunks, 0);
+        assert_eq!(cap.reasoning_chunks, 0);
+        assert_eq!(cap.phase, CapturePhase::default());
+        assert!(cap.reasoning_tokens.is_none());
+        assert!(cap.completion_tokens.is_none());
+        assert_eq!(cap.segments.len(), 1);
+        assert_eq!(cap.segments[0].reasoning_text, "kept");
+        let (had_output, had_tool) = cap.attempt_seal_observations();
+        assert!(!had_output && !had_tool);
+    }
+
+    #[test]
+    fn attempt_seal_observations_current_partial_is_dirty() {
+        let mut cap = StreamingTurnCapture::default();
+        cap.begin_turn(Some("p1".to_owned()), 1);
+        cap.start_stream(1);
+        cap.append(false, "partial");
+        let (had_output, had_tool) = cap.attempt_seal_observations();
+        assert!(had_output);
+        assert!(!had_tool);
+
+        cap.prepare_attempt_slot();
+        cap.phase = CapturePhase::ToolCall;
+        let (had_output, had_tool) = cap.attempt_seal_observations();
+        assert!(!had_output);
+        assert!(had_tool);
     }
 }

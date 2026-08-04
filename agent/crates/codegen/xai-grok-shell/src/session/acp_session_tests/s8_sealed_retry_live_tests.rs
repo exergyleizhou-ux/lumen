@@ -233,17 +233,14 @@ async fn live_healthy_side_conditions_allow_clean_seal_admission() {
 
 #[test]
 fn seal_observations_tool_call_phase_marks_tool_emitted() {
-    // Mirrors sampler_turn::seal_observations_from_streaming_capture L3 path.
+    // Real attempt-scoped path (matches seal_observations_from_streaming_capture).
     use crate::session::acp_session::CapturePhase;
     use crate::session::streaming_capture::StreamingTurnCapture;
 
     let mut cap = StreamingTurnCapture::default();
     cap.phase = CapturePhase::ToolCall;
-    let had_tool = cap.phase == CapturePhase::ToolCall
-        || cap
-            .segments
-            .iter()
-            .any(|s| s.phase == CapturePhase::ToolCall);
+    let (had_output, had_tool) = cap.attempt_seal_observations();
+    assert!(!had_output);
     assert!(had_tool);
 
     let mut tracker = crate::session::nextgen_control::begin_attempt_seal("phase-tool");
@@ -251,5 +248,65 @@ fn seal_observations_tool_call_phase_marks_tool_emitted() {
     assert_eq!(
         tracker.may_retry().unwrap_err(),
         RetryDenyReason::ToolCallEmitted
+    );
+}
+
+#[test]
+fn pre_stream_transport_fail_seals_clean_despite_prior_segments() {
+    // Regression: cli-chat-proxy "error sending request" before StreamStarted
+    // used to inherit prior-generation segments / token stamps and refuse
+    // the S8 clean-seal transport resubmit.
+    use crate::session::acp_session::CapturePhase;
+    use crate::session::streaming_capture::StreamingTurnCapture;
+
+    let mut cap = StreamingTurnCapture::default();
+    cap.begin_turn(Some("goal-1".into()), 3);
+    cap.start_stream(1);
+    cap.append(false, "earlier tool-loop assistant text");
+    cap.phase = CapturePhase::ToolCall;
+    cap.start_stream(2); // folds prior gen into segments; current slot empty
+    cap.reasoning_tokens = Some(2048);
+    cap.completion_tokens = Some(64);
+
+    // New attempt slot (as run_turn_via_sampler does before submit).
+    cap.prepare_attempt_slot();
+    let (had_output, had_tool) = cap.attempt_seal_observations();
+    assert!(!had_output && !had_tool);
+
+    let mut tracker = crate::session::nextgen_control::begin_attempt_seal("pre-stream");
+    tracker.apply_failure_observations(had_output, had_tool, true);
+    assert!(
+        tracker.may_retry().is_ok(),
+        "clean pre-stream transport fail must admit in-process retry"
+    );
+
+    // End-to-end with durable store: ConfirmedClean + transport candidate.
+    let store = xai_grok_memory::SealedAttemptReceiptStore::in_memory();
+    let (receipt, authority) = crate::session::nextgen_control::seal_and_authority(
+        &store,
+        tracker.receipt().clone(),
+        None,
+        None,
+    );
+    assert_eq!(authority, DurableSealAuthority::ConfirmedClean);
+    let admit = authorize_ordinary_retry_budget(&ordinary_retry_admission(
+        Some(&receipt),
+        authority,
+        false,
+        false,
+        false,
+        false,
+        1,
+        0,
+    ));
+    assert_eq!(
+        decide_auth_class_retry(
+            false,
+            true, // Http / EventStreamError transport candidate
+            admit,
+            false,
+            0,
+        ),
+        AuthClassRetryAction::Resubmit { next_used: 1 }
     );
 }

@@ -853,6 +853,15 @@ impl SessionActor {
     /// the sampler actor is invalidated automatically by
     /// `update_config`.
     pub(crate) async fn prepare_sampler_for_turn(&self) {
+        self.prepare_sampler_for_turn_opts(false).await;
+    }
+
+    /// Push a fresh `SamplerConfig` before each attempt.
+    ///
+    /// `force_http1` escapes a poisoned HTTP/2 pool after a clean-seal
+    /// transport resubmit (mirrors sampler-level `RetryWithClientRebuild`,
+    /// which is closed under `NO_RECEIPT_MAX_RETRIES=0`).
+    pub(crate) async fn prepare_sampler_for_turn_opts(&self, force_http1: bool) {
         self.refresh_token_if_expired().await;
         let mut sampler_config = self.reconstruct_full_config().await;
         sampler_config.max_retries = Some(NO_RECEIPT_MAX_RETRIES);
@@ -863,6 +872,7 @@ impl SessionActor {
             sampler_config.doom_loop_recovery = None;
         }
         sampler_config.idle_timeout_secs = Some(self.inference_idle_timeout.as_secs());
+        sampler_config.force_http1 = force_http1;
         self.sampler_handle.update_config(sampler_config);
     }
 
@@ -954,6 +964,14 @@ impl SessionActor {
     pub(crate) async fn handle_sampling_failure(
         self: &Arc<Self>,
         error: xai_grok_sampler::SamplingErrorInfo,
+    ) -> Result<std::convert::Infallible, acp::Error> {
+        self.handle_sampling_failure_with_s8_reason(error, None).await
+    }
+
+    pub(crate) async fn handle_sampling_failure_with_s8_reason(
+        self: &Arc<Self>,
+        error: xai_grok_sampler::SamplingErrorInfo,
+        s8_terminal_reason: Option<&'static str>,
     ) -> Result<std::convert::Infallible, acp::Error> {
         use xai_grok_sampler::SamplingErrorKind;
         if self.tool_context.task_output_token_budget.is_some() {
@@ -1301,6 +1319,12 @@ impl SessionActor {
             format!(
                 "{detailed_message}\n\nCredentials were refreshed for a new task, but this request was not automatically resubmitted."
             )
+        } else if let Some(reason) = s8_terminal_reason {
+            // Surface the real S8 deny code (budget / dirty seal / store /
+            // non-transport class) instead of always blaming "no receipt".
+            format!(
+                "{detailed_message}\n\nThis request was not automatically resubmitted ({reason}). Submit a new task to retry."
+            )
         } else {
             format!(
                 "{detailed_message}\n\nThis request was not automatically resubmitted because no provider-attempt receipt can prove replay is safe. Submit a new task to retry."
@@ -1388,8 +1412,15 @@ impl SessionActor {
         // Shell-level auth-class retries already used this turn (bounded by
         // durable clean seal admission; independent of sampler max_retries).
         let mut auth_class_retries_used: u32 = 0;
+        // After a clean-seal transport resubmit, force HTTP/1.1 to escape a
+        // poisoned HTTP/2 keepalive pool (cli-chat-proxy mid-send resets).
+        let mut force_http1_next = false;
         loop {
-            self.prepare_sampler_for_turn().await;
+            self.prepare_sampler_for_turn_opts(force_http1_next).await;
+            force_http1_next = false;
+            // Fresh attempt slot: pre-stream failures must not inherit prior
+            // generation flat fields / empty-response token stamps.
+            self.streaming_turn_capture.lock().prepare_attempt_slot();
             let stream_drained_rx = {
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 *self.turn_stream_drained.lock() = Some(tx);
@@ -1530,22 +1561,33 @@ impl SessionActor {
                             info.kind,
                             info.is_retryable,
                         );
-                    match crate::session::nextgen_control::decide_auth_class_retry(
+                    let s8_decision = crate::session::nextgen_control::decide_auth_class_retry(
                         is_auth,
                         transport_resubmit,
                         admission,
                         refresh_ok,
                         auth_class_retries_used,
-                    ) {
+                    );
+                    match s8_decision {
                         crate::session::nextgen_control::AuthClassRetryAction::Resubmit {
                             next_used,
                         } => {
                             auth_class_retries_used = next_used;
+                            // Transport-class clean seal: rebuild on HTTP/1.1
+                            // and give the flaky path a short cooldown so the
+                            // immediate same-pool retry does not re-hit a
+                            // half-closed cli-chat-proxy connection.
+                            if transport_resubmit {
+                                force_http1_next = true;
+                                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                            }
                             tracing::info!(
                                 session_id = %self.session_info.id.0,
                                 attempt_id = %receipt.attempt_id,
                                 auth_class_retries_used,
-                                "S8: clean durable seal authorized one auth-class same-turn resubmit"
+                                transport_resubmit,
+                                force_http1 = force_http1_next,
+                                "S8: clean durable seal authorized one same-turn resubmit"
                             );
                             xai_grok_telemetry::unified_log::info(
                                 "s8.auth_class_retry.authorized",
@@ -1553,6 +1595,8 @@ impl SessionActor {
                                 Some(serde_json::json!({
                                     "attempt_id": receipt.attempt_id,
                                     "auth_class_retries_used": auth_class_retries_used,
+                                    "transport_resubmit": transport_resubmit,
+                                    "force_http1": force_http1_next,
                                 })),
                             );
                             continue;
@@ -1565,13 +1609,15 @@ impl SessionActor {
                                 attempt_id = %receipt.attempt_id,
                                 reason,
                                 kind = info.kind.as_str(),
+                                transport_resubmit,
                                 "S8: auth-class retry terminal; sealed receipt recorded"
                             );
+                            let never = self
+                                .handle_sampling_failure_with_s8_reason(info, Some(reason))
+                                .await?;
+                            match never {}
                         }
                     }
-
-                    let never = self.handle_sampling_failure(info).await?;
-                    match never {}
                 }
             }
         }
@@ -1630,33 +1676,19 @@ impl SessionActor {
     /// Positive observations from the turn's streaming capture for S8 seal.
     ///
     /// Returns `(had_output, had_tool_call, observation_complete)`.
-    /// Tool-call signal is true when capture phase is [`CapturePhase::ToolCall`]
-    /// or any retained segment ended in that phase (INV-11). Observation is
-    /// complete when we hold the capture mutex after the stream-drain oneshot
-    /// was taken (failure path always takes the oneshot).
+    ///
+    /// Scope is the **current attempt only** (see
+    /// [`StreamingTurnCapture::attempt_seal_observations`]): prior generations
+    /// folded into `segments` or leftover empty-response token stamps must not
+    /// dirty a pre-stream transport failure on a fresh request id. Observation
+    /// is complete because the failure path takes the stream-drain oneshot
+    /// before reading the capture mutex (no in-flight ToolCallDelta race).
     ///
     /// DEBT-009: `pub(crate)` so the live integration tests drive this real
     /// function directly instead of mirror-copying the phase expression.
     pub(crate) fn seal_observations_from_streaming_capture(&self) -> (bool, bool, bool) {
-        use crate::session::acp_session::CapturePhase;
         let cap = self.streaming_turn_capture.lock();
-        let had_output = !cap.response_text.is_empty()
-            || !cap.reasoning_text.is_empty()
-            || cap.text_chunks > 0
-            || cap.reasoning_chunks > 0
-            || cap.reasoning_tokens.is_some()
-            || cap.completion_tokens.is_some()
-            || cap.segments.iter().any(|s| {
-                !s.response_text.is_empty()
-                    || !s.reasoning_text.is_empty()
-                    || s.text_chunks > 0
-                    || s.reasoning_chunks > 0
-            });
-        let had_tool_call = cap.phase == CapturePhase::ToolCall
-            || cap
-                .segments
-                .iter()
-                .any(|s| s.phase == CapturePhase::ToolCall);
+        let (had_output, had_tool_call) = cap.attempt_seal_observations();
         let observation_complete = true;
         (had_output, had_tool_call, observation_complete)
     }
