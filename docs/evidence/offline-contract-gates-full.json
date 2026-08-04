@@ -71,10 +71,42 @@
     {
       "name": "A12_ROLLBACK_RECEIPT_GATE",
       "status": "PASS"
+    },
+    {
+      "name": "IDENTITY_ENVELOPE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "DISPATCH_PERMIT_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "ROOT_BYPASS_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "SECRET_REF_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "CLAIM_STATE_MACHINE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "RUNTIME_PROFILE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "AUDIT_SNAPSHOT_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "RELEASE_TUPLE_GATE",
+      "status": "PASS"
     }
   ],
-  "offline_pass_count": 18,
-  "offline_total": 18,
+  "offline_pass_count": 26,
+  "offline_total": 26,
   "product_rc": "NOT_READY",
   "note": "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; A5-A12 exit gates; sandbox/advisor/kairos; exact-SHA CI + formal v2.0.0 tag NOT RUN"
 }

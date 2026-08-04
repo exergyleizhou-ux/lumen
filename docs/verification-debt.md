@@ -23,6 +23,14 @@
 | DEBT-014 | 全维度100% A9–A12 | recommend/Kairos/NG-09B/release 全链 | **closed (2026-08-04)** | authorize_applied_assignment_chain + operator_control_five_command_matrix + kairos_fake_clock_lease_cycle + authorize_rollback_receipt；offline A9_A11/A10/A12 gates PASS；正式 installer/UI 可选路径不阻塞 pure Exit Gate |
 | DEBT-015 | 全维度100% C1 | 正式 v2.0.0 tag 未打 | **closed (2026-08-04)** | `scripts/release.sh 2.0.0` 已完成：source A `d42ea6e8` + evidence B `77a81393`；signed tag `v2.0.0` 指向 A 并已 atomic push origin；本地 binary `lumen 2.0.0 (d42ea6e8)` tuple 绿 |
 | DEBT-016 | 全维度100% D1–D2 | probe 收据 / grok-4.5 交叉审查 | **closed (2026-08-04)** | D1: docs/evidence/reducer-purity-probe-2026-08-03.json 入库；D2: DeepSeek V4 Flash + Grok 4.5 交叉验收记录见 SCRATCH/cross-accept-*.md |
+| DEBT-017 | 2026-08-04 收尾审计（本目标） | 总纲 0.1.3/0.1.4 身份层（DispatchPermitV1 线性链、GovernedRunEnvelopeV1 等四 DTO、RootBypassPermission）此前为零实现 | **closed (2026-08-04)** | identity_envelope.rs / dispatch_permit.rs / root_bypass.rs 落地：四 DTO canonical hash + 正反例 28 测；DispatchPermitV1 crate-private 链 + PermitConsumer 注册表；RootBypassPermission INV-5 全字段（expiry 必填、nonce+audit、child 继承恒拒）；IDENTITY_ENVELOPE_GATE / DISPATCH_PERMIT_GATE / ROOT_BYPASS_GATE PASS |
+| DEBT-018 | 2026-08-04 收尾审计 | 红队合同缺失：SecretRef 统一策略、claim 状态机缺四变体、typed 三 profile、audit snapshot | **closed (2026-08-04)** | secret_ref.rs（retention owner 必填、redaction fail-closed、shape leak 拒）；WorkingMemoryState 补 EvidenceAttached/Conflicted/Inconclusive/Frozen + 转移规则（作者 attach、root 唯一 review/freeze、conflict 新记录解析）；runtime_profile.rs 一次性不可降级；audit_snapshot.rs 写/读 fail-closed；SECRET_REF_GATE / CLAIM_STATE_MACHINE_GATE / RUNTIME_PROFILE_GATE / AUDIT_SNAPSHOT_GATE PASS |
+| DEBT-019 | 2026-08-04 收尾审计 | A4 mailbox 有界化此前为合同级 fixture（std 通道演示），非生产 mailbox | **closed (2026-08-04)** | 生产 prompt mailbox（pending_inputs）有界化：MAX_PENDING_INPUTS=128，满时 DroppedFull 显式拒绝 + QueuePressure 投影（prompt_queue.rs）；prompt_mailbox_admission 单测驱动真实函数 |
+| DEBT-020 | 2026-08-04 收尾审计 | A6 handoff 投递 receipt 无 shell 生产调用点 | **closed (2026-08-04)** | ShellChildRunner::on_completed → journal_child_handoff（真实 child terminal 路径）→ deliver_handoff_receipt 入 task-tree-lifecycle JSONL；child_terminal_journals_durable_handoff_receipt 单测 |
+| DEBT-021 | 2026-08-04 收尾审计 | S3 child git commit/push/merge 无硬拒；worktree auto-handoff 未接 | **closed (2026-08-04)** | tool_contract.rs child_git_mutation_in（词元切分 + 安全动词表 + -C 值跳过）+ shell prepare_tool_call Execute 工具 child depth 硬拒（2 端到端测试驱动真实 dispatch）；MergeReceiptV1/worktree auto-handoff 仍为纯函数（见 DEBT-024） |
+| DEBT-022 | 2026-08-04 收尾审计 | A10 kairos lease consumer 未接 scheduler/daemon 循环 | **closed (2026-08-04)** | ShellChildRunner::run/on_completed 接 SchedulerLoopOutbox：outbox_should_deliver 幂等门（成功 terminal 标记 delivered，失败/取消可重试）+ 单测 |
+| DEBT-023 | 2026-08-04 收尾审计 | A12 ReleaseSourceTuple / installer provenance 未落代码 | **closed (2026-08-04)** | release_source_tuple.rs（source≠evidence、tag 必须指向 source A、binary/lock sha256 必填）+ RELEASE_TUPLE_GATE；release.sh 生成 artifacts/release-source-tuple.json；install-local.sh 落 lumen-release-source-tuple.json |
+| DEBT-024 | 2026-08-04 收尾审计 | 残余 partial（诚实登记，不伪装关闭）：(a) worktree auto-handoff 仍为纯函数（evaluate_merge_handoff 无 shell 调用点）；(b) A9 recommend 产品 UI 未实现（governedTree ACP 投影提供 profile 升级面）；(c) M1 为 ACP 投影（x.ai/governedTree/status），pager 树 pane 未做；(d) DispatchPermitV1 为 memory 层类型，shell adapter 端到端消费未接；(e) readiness 人工门 M5/M6 与 1h soak/live eval 需真实环境 | **open** | 见下"残余 partial 说明" |
 
 ## 登记记录（追加式）
 
@@ -31,3 +39,16 @@
 - 2026-08-04 续：A2 生产 shell 接线 + A4 FLOW_CONTROL_GATE + fixtures；DEBT-011/012 closed。
 - 2026-08-04 终：A5–A12 Exit Gates（nextgen_exit_gates + offline 17 gates + shell A5/A7/A8 真入口）；DEBT-013/014/016 closed；DEBT-015 正式 tag 仍 open（仅 dry-run）。
 - 2026-08-04 正式版：`v2.0.0` signed tag → `d42ea6e8`，push origin；DEBT-015 closed；verification_debt 全 closed。
+- 2026-08-04 收尾审计（本目标）：身份层/红队合同/接线/发布链落地；DEBT-017..023 closed；DEBT-024 残余 partial 显式登记 open。
+
+## 残余 partial 说明（DEBT-024，诚实登记）
+
+| 项 | 现状 | 关闭条件（真实环境/后续） |
+|----|------|--------------------------|
+| (a) worktree auto-handoff | `evaluate_merge_handoff`/`MergeReceiptV1` 纯函数 + 测试；shell 无调用点 | 在 worktree apply host 路径接入并驱动真入口测试 |
+| (b) A9 recommend 产品 UI | `x.ai/governedTree/status` 提供 profile 升级面；applied 全链纯函数已关 | 用户可见的模型推荐界面 + root approval 交互 |
+| (c) M1 pager 树 pane | ACP 投影已接（governed_tree.rs）；pager 无树 pane | pager pane 渲染 + exact-binary 打开 fixture |
+| (d) DispatchPermitV1 shell 端到端 | memory 层类型 + 28 测；shell adapter 未消费 permit | 将 shell 实际 spawn/worktree/process 入口改为持有 permit |
+| (e) readiness 人工门 | 1h soak 已跑（绑定当前 binary）；M5 真人陌生测试、M6 15 天真实日志、live eval 需真实环境 | 真人完成 M5/M6；`EVAL_LIVE=1` 跑 eval-coding-live；readiness 聚合后 status.json ready=true |
+
+> 注：本目标使 `release_version_changed` blocker 消除、`binary_sha256` 绑定当前 build；`ready=true` 仍受 M5/M6 人工门约束（脚本语义，绝不伪造）。

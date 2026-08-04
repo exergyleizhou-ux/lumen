@@ -1,20 +1,179 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-04T08:15:34Z",
+  "generated_at": "2026-08-04T14:52:18Z",
   "version": "2.0.0",
-  "head_short": "f51fb902",
+  "head_short": "34d04cff",
   "ready": false,
   "state": "BLOCKED",
-  "can_tool_call": false,
-  "l0_pass": false,
+  "can_tool_call": true,
+  "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "2b7c5e8faabc241880da70b230bf7d5afe3a249616ffdad74d4b53514ebe69ba",
-  "binary_sha256": null,
+  "source_lock_sha256": "fc4b5fea63924ee8dbab1b5ccff337e32a6bcc86e87cf9fefa1e956dd8d82a8e",
+  "binary_sha256": "a43a43c7ab539b13fe779256f42e2d1caa462d9a664768f9338f9759132cc268",
   "blockers": [
-    "release_version_changed:rerun scripts/verify-readiness.sh for 2.0.0 at f51fb902a4c97ab26e4cff5f52c52c1b72b8708d"
+    "M5_10_min_stranger:human_gate missing_or_invalid",
+    "M6_15_day_self_use:human_gate count_lt_15",
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
   ],
-  "checks": [],
+  "checks": [
+    {
+      "id": "binary_tuple_pre",
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=a43a43c7ab53"
+    },
+    {
+      "id": "gitleaks",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "defaults",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "security",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "m2",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "parity",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_harness",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verify_cli",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "verticals",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L0_connect",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L1_tool_calls",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L2_min_e2e",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L3_multi_tool",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L4_fault_cancel",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L5_long_session",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "L5_one_hour_soak",
+      "pass": true,
+      "result": "PASS",
+      "detail": "elapsed>=3600, resume_turns>0, binary-bound"
+    },
+    {
+      "id": "R0_full",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "R0_min",
+      "pass": true,
+      "result": "PASS",
+      "detail": "via R0_full"
+    },
+    {
+      "id": "sbom",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "legal",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "eval_live",
+      "pass": true,
+      "result": "PASS",
+      "detail": ""
+    },
+    {
+      "id": "binary_tuple_post",
+      "pass": true,
+      "result": "PASS",
+      "detail": "sha256=a43a43c7ab53"
+    },
+    {
+      "id": "source_lock",
+      "pass": true,
+      "result": "PASS",
+      "detail": "source=34d04cf head=34d04cf suffix=exact files=32"
+    },
+    {
+      "id": "M5_10_min_stranger",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate missing_or_invalid"
+    },
+    {
+      "id": "M6_15_day_self_use",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "human_gate count_lt_15"
+    },
+    {
+      "id": "reconcile",
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
+    }
+  ],
   "reconcile_pass": false,
-  "reconciled_at": null,
-  "note": "A release version change invalidates prior readiness evidence. Run scripts/verify-readiness.sh to produce evidence for this version."
+  "reconciled_at": "2026-08-04T14:52:18Z",
+  "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }

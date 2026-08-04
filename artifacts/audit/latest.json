@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T12:14:14Z",
+  "git_head": "34d04cff11a4478dec05251fc67922d3d321a753",
+  "remote_heads": [
+    "main=b989d2d731d34993139abd7f570e99657254c47f"
+  ],
+  "dirty_path_manifest": [
+    " M SOURCE_LOCK.json",
+    " M docs/evidence/offline-contract-gates-full.json",
+    " M docs/nextgen/INVARIANTS.md",
+    " M docs/verification-debt.md",
+    " M \"docs/\\344\\272\\244\\346\\216\\245\\350\\257\\215-2026-08-04-\\345\\205\\250\\347\\273\\264\\345\\272\\246100%.md\"",
+    "?? artifacts/audit/",
+    "?? docs/evidence/offline-contract-gates-20260804T121411Z.json"
+  ],
+  "ci_run": "NOT_RUN",
+  "command_exits": [
+    "offline_contract_gates=0",
+    "ordinary_turn_budget=0",
+    "child_sandbox=0",
+    "nextgen_control=0"
+  ],
+  "source_lock_sha256": "fc4b5fea63924ee8dbab1b5ccff337e32a6bcc86e87cf9fefa1e956dd8d82a8e"
+}

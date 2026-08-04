@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-04T08:15:34Z",
+  "generated_at": "2026-08-04T12:07:49Z",
   "monorepo": {
-    "git_head": "f51fb902a4c97ab26e4cff5f52c52c1b72b8708d",
-    "git_short": "f51fb90"
+    "git_head": "34d04cff11a4478dec05251fc67922d3d321a753",
+    "git_short": "34d04cf"
   },
   "lumen_version": "2.0.0",
   "upstream_pin": {
@@ -17,7 +17,7 @@
     "policy": "Current NextGen execution contract; historical plans are not authority"
   },
   "critical_file_sha256": {
-    ".gitleaksignore": "b748fb449ef6ef33034ac46f5f72340596da0cf3487981959415374756891cb2",
+    ".gitleaksignore": "cfc2902538135976eddf789c2f12f15f3a91d037334e550f2f26b3e58470a252",
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs": "88cd1e135a41399eac5d7c108e0439b56af9a8b429dbe861ea73179ede9ac309",
     "agent/crates/codegen/xai-grok-models/default_models.json": "802f23626f08a7519b28792425a72ea9955eafefea989a8c5113a860b99a4c0c",
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
@@ -27,7 +27,7 @@
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
     "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
     "scripts/generate-sbom.sh": "94944d320801e3e92d9250a3aff8f748a627076e32f6c18ee67e5cf2aa4ce2de",
-    "scripts/install-local.sh": "28c95e62be1917d3c874280468032768c43304e8bbb11475f80ac75f7fa3b90f",
+    "scripts/install-local.sh": "e616f6fba712f5816177fe73b5d7f33df842709cbcc36998aa091a09fb752632",
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
     "scripts/productivity-gate.sh": "f814b2ce106bd1f4234a901e2e9f85510998ad8dd5e377ae36ff85a0c38a922c",
     "scripts/reconcile-evidence.sh": "fa41dece36565101bc2f34741c193f5662a2d3f3b6bb9a5975f3be70529e151d",
@@ -43,12 +43,12 @@
     "scripts/smoke-verify.sh": "71b6cab94b5536e73cb9b0ac1d309d35285aae1a0e48ce461e79cfacdfdf379b",
     "scripts/test-readiness-contract.sh": "64a71f46ac0f76de8c80b8b0e7b631c3166dad402b33c3f7df9ccf708c968739",
     "scripts/test-onboarding-gate.sh": "5c057d276a434eef4452d9728b0b2472ef80cd1e75c49cce9b1580acc9a252c8",
-    "scripts/verify-readiness.sh": "71f5c5763e518496aaec4fc3c78f020bbcd4aacac440a82ff9240d85e156cac0",
+    "scripts/verify-readiness.sh": "2f8e87cbed4d95fa19ea9e52df017a84123acca8d6fa1f1c2d419f00bcdca0eb",
     "scripts/probe-local.sh": "72a93b36c1c3178f23ef06f8f3f9ee59db6f5a6b3def445aa6ba79a15da3ec12",
     "scripts/doctor-verticals.sh": "49cb550ea04b6d5ab890598ac9426f65fff71ccc0dc2f84e6f22b2d9e11c88fb",
     "docs/LUMEN-NEXTGEN-EXECUTION-BOOK-2026-08-01.md": "00081f3c05fa31a96b560099bfe0febc4dcabf3cd1f3c2f98a58fd532e6d7300",
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "f3e29d427feb6d7af60ab4b36bc61f4d01d91e8c606008a93bb33f93aacea378"
+  "aggregate_critical_sha256": "00434aa565230fd49076f715cf4c9ca4214b8961e4ccf41bd7b31ffa1ed7ab84"
 }

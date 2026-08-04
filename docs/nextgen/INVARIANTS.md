@@ -67,3 +67,7 @@
 - **INV-33** authority journal 写入前必须有空间 reservation；`ENOSPC` 是带 receipt 的失败，不是 torn record，不得触发 repair 裁剪。
 - **INV-34** `ArchivedNeedsReview` 释放 lease/reservation/write-scope/worktree/process，但保留全部 evidence；`LegacyUnpermitted` dispatch 使该 node assurance 封顶 `HarnessPolicyOnly`，且该计数单调递减。
 - **INV-35** `Progress` 不是 claim：它可从义务状态推导，只作为投影/审计存在，永不进入 AcceptedSnapshot 或注入模型输入；`confidence` 不驱动任何决策分支，禁止新 consumer（既有字段仅作遗留元数据）。
+
+## 完成判定
+
+- **INV-36** "全维度 100%" / "Harness Kernel local-ready" 的机器可判定基准是 `CURRENT_STATE_LEDGER.md`（CI 自动生成）与 `artifacts/readiness/status.json`：`ready=true` 且 `state=READY`。发布、tag、CI 绿或离线 gate 全 PASS 都不能替代 readiness 聚合；`release_version_changed` 之类的自动 blocker 出现时，必须先重跑 `verify-readiness.sh` 再宣称完成，禁止以"已发布"绕过。

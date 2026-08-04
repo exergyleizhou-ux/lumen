@@ -1,0 +1,10 @@
+{
+  "schema": "lumen.nextgen.offline_gates.v1",
+  "generated_at": "2026-08-04T12:14:11Z",
+  "git_head": "34d04cff11a4478dec05251fc67922d3d321a753",
+  "git_short": "34d04cff",
+  "product_rc": "NOT_READY",
+  "suite": "run-nextgen-offline-gates.sh",
+  "status": "PASS",
+  "note": "offline pure + spawn sandbox + shell hosts; exact-SHA CI / RC NOT RUN"
+}
