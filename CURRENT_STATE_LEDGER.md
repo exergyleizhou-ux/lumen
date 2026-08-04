@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | df6bb13e chore(evidence): refresh source lock for advisor extraction deny |
+| Last non-bot commit | b9f96b8b docs: session handover — S8-S14, red-team hardening, A3, executor status, env pitfalls |
 
 ---
 
