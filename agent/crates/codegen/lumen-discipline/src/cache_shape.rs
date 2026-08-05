@@ -227,3 +227,108 @@ mod tests {
         assert!(d.change_reasons.contains(&PrefixChangeReason::ColdStart));
     }
 }
+
+// ============================================================================
+// B1 property tests (DEBT-033): prefix determinism under state churn.
+// ============================================================================
+//
+// The provider cache requires a byte-stable prefix (DeepSeek Context Caching:
+// full unit match). These tests lock the invariants the renderer must uphold:
+// same logical state -> identical fingerprint; tool order and rewrite version
+// deliberately participate (they are part of the wire material); token
+// estimates are deterministic and monotonic.
+
+#[cfg(test)]
+mod property_tests {
+    use super::*;
+
+    /// Tiny deterministic xorshift PRNG for property-style inputs (no deps).
+    struct Rng(u64);
+
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+
+        fn ascii(&mut self, len: usize) -> String {
+            (0..len).map(|_| (b'a' + (self.next() % 26) as u8) as char).collect()
+        }
+    }
+
+    #[test]
+    fn capture_shape_is_deterministic_under_state_churn() {
+        let mut rng = Rng(0xDEAD_BEEF);
+        for _ in 0..100 {
+            let sys_len = (rng.next() % 200 + 1) as usize;
+            let tools_len = (rng.next() % 400 + 1) as usize;
+            let sys = rng.ascii(sys_len);
+            let tools = rng.ascii(tools_len);
+            let rev = rng.next() % 5;
+            let a = capture_shape(&sys, &tools, rev);
+            let b = capture_shape(&sys, &tools, rev);
+            assert_eq!(a.prefix_hash, b.prefix_hash, "prefix hash must be deterministic");
+            assert_eq!(a.system_hash, b.system_hash);
+            assert_eq!(a.tools_hash, b.tools_hash);
+            assert_eq!(a.log_rewrite_version, rev);
+        }
+    }
+
+    #[test]
+    fn tools_order_is_deliberately_sensitive() {
+        // Tool order is part of the provider request material: reordering
+        // must change the fingerprint (cache identity) — never silently
+        // stable. This is the byte-stability contract, not a flake.
+        let sys = "system";
+        let a = capture_shape(sys, r#"[{"name":"read"},{"name":"write"}]"#, 0);
+        let b = capture_shape(sys, r#"[{"name":"write"},{"name":"read"}]"#, 0);
+        assert_ne!(a.tools_hash, b.tools_hash);
+        assert_ne!(a.prefix_hash, b.prefix_hash);
+    }
+
+    #[test]
+    fn rewrite_version_is_diagnostics_not_wire_material() {
+        // The rewrite counter is a LOCAL diagnostic axis: it never changes the
+        // wire prefix (provider cache identity is untouched by a rewrite).
+        // compare_shape detects it via the version field, not the hash.
+        let a = capture_shape("system", "[]", 0);
+        let b = capture_shape("system", "[]", 1);
+        assert_eq!(a.prefix_hash, b.prefix_hash, "wire prefix must ignore local rewrite counter");
+        assert_ne!(a.log_rewrite_version, b.log_rewrite_version);
+    }
+
+    #[test]
+    fn estimate_tokens_is_deterministic_and_monotonic() {
+        let mut rng = Rng(0xC0FFEE);
+        let mut prev = 0u64;
+        let mut acc = String::new();
+        for _ in 0..50 {
+            acc.push_str(&rng.ascii(10));
+            let tokens = estimate_tokens(&acc);
+            assert!(
+                tokens >= prev,
+                "longer input must not estimate fewer tokens (got {tokens} < {prev})"
+            );
+            assert!(
+                tokens <= (acc.len() as u64).saturating_add(1),
+                "estimate must not exceed byte count +1"
+            );
+            prev = tokens;
+        }
+        assert_eq!(estimate_tokens(""), 0);
+        assert_eq!(estimate_tokens("abcd"), 1);
+        assert_eq!(estimate_tokens(r#"{"a":"bcd"}"#), 3); // 12 ASCII chars -> ceil(12/4)
+    }
+
+    #[test]
+    fn cjk_estimate_weights_wide_chars() {
+        // 6 CJK chars ≈ 4 tokens (1.5 chars/token) — a pure bytes/4 rule would
+        // under-weight to 1..2. This guards the estimate used by the staged
+        // compaction policy on Chinese-heavy tool output.
+        assert!(estimate_tokens("中文测试文本啊") >= 3);
+    }
+}
