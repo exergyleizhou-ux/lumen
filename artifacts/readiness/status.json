@@ -1,26 +1,30 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-05T10:44:38Z",
+  "generated_at": "2026-08-05T16:25:07Z",
   "version": "2.1.0",
-  "head_short": "0b065739",
+  "head_short": "78120609",
   "ready": false,
   "state": "BLOCKED",
   "can_tool_call": true,
   "l0_pass": true,
   "engineering_complete": false,
-  "source_lock_sha256": "77eaf91ac7aafa530075bf232bc9ecdaa6f403ccfd64df9e7bcebe5870ea6eba",
-  "binary_sha256": "7ab824e5b9195bba3628c616702de61a853c95f7ce5fbdb84abf3e9d75c9d509",
+  "source_lock_sha256": "1200fbd454a7ad04e2ea3e8c6c210ebbbf0e729875cabf219147bbb7e99ba954",
+  "binary_sha256": "571e7b26cadda75388e09d6a025a8c21ad280f388f4eeda0ae2b566c5e535abd",
   "blockers": [
+    "eval_harness:exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval ",
+    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
+    "binary_tuple_post:exit 1 hint: after cargo build --release, reinstall the stamped binary:   LUMEN_SKIP_BUILD=1 bash scripts/install-local.sh   (or build+install from a clean source tree if install refuses dirty) ",
+    "source_lock:non-evidence drift after source lock: agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs",
     "M5_10_min_stranger:human_gate missing_or_invalid",
     "M6_15_day_self_use:human_gate count_lt_15",
-    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
+    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs', 'binary_version_mismatch', 'm5_onboardi"
   ],
   "checks": [
     {
       "id": "binary_tuple_pre",
       "pass": true,
       "result": "PASS",
-      "detail": "sha256=7ab824e5b919"
+      "detail": "sha256=cc6accde204a"
     },
     {
       "id": "gitleaks",
@@ -54,9 +58,9 @@
     },
     {
       "id": "eval_harness",
-      "pass": true,
-      "result": "PASS",
-      "detail": ""
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval "
     },
     {
       "id": "verify_cli",
@@ -108,9 +112,9 @@
     },
     {
       "id": "L5_one_hour_soak",
-      "pass": true,
-      "result": "PASS",
-      "detail": "elapsed>=3600, resume_turns>0, binary-bound"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak"
     },
     {
       "id": "R0_full",
@@ -144,15 +148,15 @@
     },
     {
       "id": "binary_tuple_post",
-      "pass": true,
-      "result": "PASS",
-      "detail": "sha256=7ab824e5b919"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "exit 1 hint: after cargo build --release, reinstall the stamped binary:   LUMEN_SKIP_BUILD=1 bash scripts/install-local.sh   (or build+install from a clean source tree if install refuses dirty) "
     },
     {
       "id": "source_lock",
-      "pass": true,
-      "result": "PASS",
-      "detail": "source=3d5d52c head=0b06573 suffix=evidence-only+5 files=32"
+      "pass": false,
+      "result": "FAIL",
+      "detail": "non-evidence drift after source lock: agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs"
     },
     {
       "id": "M5_10_min_stranger",
@@ -170,10 +174,10 @@
       "id": "reconcile",
       "pass": false,
       "result": "FAIL",
-      "detail": "exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
+      "detail": "exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs', 'binary_version_mismatch', 'm5_onboardi"
     }
   ],
   "reconcile_pass": false,
-  "reconciled_at": "2026-08-05T10:44:37Z",
+  "reconciled_at": "2026-08-05T16:25:07Z",
   "note": "ready=true only when every publish gate is PASS, including live eval, the observed M5 stranger path, and 15 productivity days. SKIP never counts as publish-ready. engineering_complete=true when required automated gates pass."
 }
