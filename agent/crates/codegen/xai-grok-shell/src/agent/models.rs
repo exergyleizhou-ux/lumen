@@ -1363,6 +1363,7 @@ pub enum RefreshStrategy {
 mod cache;
 mod endpoint;
 mod fetch;
+mod profile;
 mod resolution;
 
 pub(crate) use cache::*;
@@ -1371,6 +1372,12 @@ pub(crate) use fetch::*;
 pub use fetch::{
     EarlyPrefetchHandle, EarlyPrefetchResult, start_early_prefetch,
     start_early_prefetch_settings_only, start_early_prefetch_with_auth,
+};
+pub use profile::{
+    CACHE_COLLAPSE_HIT_RATIO, COMPLEXITY_ESCALATE_AT, DEEPSEEK_V4_FLASH_CONTEXT_WINDOW,
+    DEEPSEEK_V4_FLASH_TEMPERATURE, DEEPSEEK_V4_FLASH_TOP_P, OUTPUT_BUDGET_DEMOTE_THRESHOLD,
+    VERIFY_FAILURES_ESCALATE_AT, EffortDecision, EffortSignals, ModelProfile, SamplingParams,
+    ThinkingMode, decide_effort, deepseek_v4_flash_0731,
 };
 pub(crate) use resolution::*;
 

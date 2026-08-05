@@ -83,6 +83,7 @@ mod tests {
             occurred_at: 1_700_000_000 + sequence,
             payload_hash: String::new(),
             prev_payload_hash: None,
+            detail: None,
         };
         event.payload_hash = event.compute_payload_hash().unwrap();
         let _ = journal;

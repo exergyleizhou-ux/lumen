@@ -373,6 +373,7 @@ pub fn operator_receipt_to_event(
         occurred_at: occurred_at_epoch_ms,
         payload_hash: String::new(),
         prev_payload_hash: None,
+        detail: None,
     };
     // The journal verifies the payload hash on append; compute it here so the
     // event is append-ready (canonical NG-00 payload commitment).

@@ -163,6 +163,91 @@ pub fn resolve_compaction_wall_clock_budget_secs(gb_global: Option<u64>) -> u64 
     resolved
 }
 
+/// Env override for the staged compaction policy (DEBT-033 A2-b):
+/// `GROK_COMPACTION_POLICY=snip_tokens,placeholder_tokens,fold_tokens,budget_ratio`.
+/// All four components optional; unparseable values fall back per-component to
+/// [`lumen_discipline::CompactionPolicy::default`]. `never_fold_user` is a
+/// hard invariant and is never configurable.
+pub(crate) const ENV_COMPACTION_POLICY: &str = "GROK_COMPACTION_POLICY";
+
+/// Resolve the staged compaction policy from env (falls back to defaults).
+pub fn resolve_compaction_policy(env: Option<&str>) -> lumen_discipline::CompactionPolicy {
+    let base = lumen_discipline::CompactionPolicy::default();
+    let trimmed = env.map(str::trim).unwrap_or("");
+    let raw = trimmed
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    if raw.is_empty() {
+        return base;
+    }
+    let parts: Vec<&str> = raw.split(',').map(str::trim).collect();
+    let mut policy = base;
+    if let Some(v) = parts.first().and_then(|p| p.parse::<u64>().ok()) {
+        policy.snip_threshold_tokens = v;
+    }
+    if let Some(v) = parts.get(1).and_then(|p| p.parse::<u64>().ok()) {
+        policy.placeholder_threshold_tokens = v;
+    }
+    if let Some(v) = parts.get(2).and_then(|p| p.parse::<u64>().ok()) {
+        policy.fold_threshold_tokens = v;
+    }
+    if let Some(v) = parts.get(3).and_then(|p| p.parse::<f64>().ok())
+        && (0.0..=1.0).contains(&v)
+    {
+        policy.remaining_budget_trigger_ratio = v;
+    }
+    // Hard invariant: user turns and digests are never folded.
+    policy.never_fold_user = true;
+    policy
+}
+
+#[cfg(test)]
+mod staged_policy_tests {
+    use super::resolve_compaction_policy as resolve;
+
+    #[test]
+    fn default_when_unset_or_garbage() {
+        let d = lumen_discipline::CompactionPolicy::default();
+        assert_eq!(resolve(None), d);
+        assert_eq!(resolve(Some("garbage")), d);
+        assert_eq!(resolve(Some("")), d);
+    }
+
+    #[test]
+    fn parses_all_four_components() {
+        let p = resolve(Some("10000,20000,30000,0.25"));
+        assert_eq!(p.snip_threshold_tokens, 10_000);
+        assert_eq!(p.placeholder_threshold_tokens, 20_000);
+        assert_eq!(p.fold_threshold_tokens, 30_000);
+        assert_eq!(p.remaining_budget_trigger_ratio, 0.25);
+        assert!(p.never_fold_user);
+    }
+
+    #[test]
+    fn partial_components_fall_back_per_field() {
+        let d = lumen_discipline::CompactionPolicy::default();
+        let p = resolve(Some("10000,,,0.9"));
+        assert_eq!(p.snip_threshold_tokens, 10_000);
+        assert_eq!(p.placeholder_threshold_tokens, d.placeholder_threshold_tokens);
+        assert_eq!(p.fold_threshold_tokens, d.fold_threshold_tokens);
+        assert_eq!(p.remaining_budget_trigger_ratio, 0.9);
+    }
+
+    #[test]
+    fn out_of_range_ratio_is_rejected() {
+        let d = lumen_discipline::CompactionPolicy::default();
+        assert_eq!(resolve(Some(",,,1.5")).remaining_budget_trigger_ratio, d.remaining_budget_trigger_ratio);
+        assert_eq!(resolve(Some(",,,-0.1")).remaining_budget_trigger_ratio, d.remaining_budget_trigger_ratio);
+    }
+
+    #[test]
+    fn never_fold_user_cannot_be_turned_off() {
+        // Even a hostile value cannot disable the invariant.
+        assert!(resolve(Some("1,2,3,0.5")).never_fold_user);
+    }
+}
+
 #[cfg(test)]
 mod compaction_wall_clock_budget_tests {
     use super::resolve_compaction_wall_clock_budget_secs as resolve;

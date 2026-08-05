@@ -2395,6 +2395,51 @@ impl SessionActor {
                     line = %snap.cache_line,
                     "prompt cache session snapshot"
                 );
+
+                // DEBT-033 A2-a: durable cache-health observation (provider hit/miss tokens).
+                {
+                    let session_dir =
+                        crate::session::persistence::session_dir(&crate::session::info::Info {
+                            id: self.session_info.id.clone(),
+                            cwd: self.session_info.cwd.clone(),
+                        });
+                    let truth = match response.usage.as_ref().map(|u| u.provider_cache_usage_truth())
+                    {
+                        Some(xai_grok_sampling_types::CacheUsageTruth::Reported { .. }) => {
+                            "reported"
+                        }
+                        Some(xai_grok_sampling_types::CacheUsageTruth::Contradictory { .. }) => {
+                            "contradictory"
+                        }
+                        _ => "unavailable",
+                    };
+                    let record = crate::session::cache_epoch::CacheHealthRecord {
+                        schema_version: crate::session::cache_epoch::CACHE_HEALTH_SCHEMA_VERSION,
+                        ts: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0),
+                        prompt_tokens: prompt_tok,
+                        hit_tokens: hit_tok,
+                        miss_tokens: prompt_tok.saturating_sub(hit_tok),
+                        output_tokens: out_tok,
+                        hit_ratio: if prompt_tok > 0 {
+                            hit_tok as f64 / prompt_tok as f64
+                        } else {
+                            0.0
+                        },
+                        truth: truth.into(),
+                    };
+                    if let Err(error) =
+                        crate::session::cache_epoch::append_cache_health(&session_dir, &record)
+                    {
+                        tracing::warn!(
+                            %error,
+                            cache_health = "unavailable",
+                            "cache health append failed; continuing turn"
+                        );
+                    }
+                }
             }
 
             let response_completed = self.response_completed_update(&response);

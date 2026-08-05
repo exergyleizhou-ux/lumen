@@ -1,0 +1,209 @@
+{
+  "schema_version": 2,
+  "check_id": "eval_run",
+  "run_id": "baseline-flash-20260805",
+  "profile": "deepseek-v4-flash",
+  "binary": "/Users/lei/.local/bin/lumen",
+  "generated_at": "2026-08-05T11:30:23Z",
+  "aggregate": {
+    "pass_rate": 0.95,
+    "pass_count": 19,
+    "fail_count": 1,
+    "total": 20,
+    "total_input_bytes": 5303107,
+    "total_input_tokens": null,
+    "total_output_tokens": null,
+    "avg_cache_hit_ratio": null,
+    "avg_verify_count": null,
+    "avg_tool_calls": 6.85,
+    "avg_latency_ms": 21557.0
+  },
+  "tasks": [
+    {
+      "task": "01-average-empty",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 14033,
+      "tool_calls": 5,
+      "input_bytes": 207257,
+      "cache_epochs": 1
+    },
+    {
+      "task": "02-stack-lifo",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 16420,
+      "tool_calls": 7,
+      "input_bytes": 210619,
+      "cache_epochs": 1
+    },
+    {
+      "task": "03-reverse-runes",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 15151,
+      "tool_calls": 5,
+      "input_bytes": 207852,
+      "cache_epochs": 1
+    },
+    {
+      "task": "04-binary-search",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 15538,
+      "tool_calls": 6,
+      "input_bytes": 209221,
+      "cache_epochs": 1
+    },
+    {
+      "task": "05-counter-race",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 18909,
+      "tool_calls": 6,
+      "input_bytes": 209277,
+      "cache_epochs": 1
+    },
+    {
+      "task": "06-stringer-impl",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 13792,
+      "tool_calls": 6,
+      "input_bytes": 208557,
+      "cache_epochs": 1
+    },
+    {
+      "task": "07-nilmap-write",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 17494,
+      "tool_calls": 5,
+      "input_bytes": 209207,
+      "cache_epochs": 1
+    },
+    {
+      "task": "08-multifile-shapes",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 16631,
+      "tool_calls": 4,
+      "input_bytes": 165713,
+      "cache_epochs": 1
+    },
+    {
+      "task": "09-py-divzero",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 17067,
+      "tool_calls": 6,
+      "input_bytes": 293584,
+      "cache_epochs": 1
+    },
+    {
+      "task": "10-py-json-merge",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 17011,
+      "tool_calls": 7,
+      "input_bytes": 295366,
+      "cache_epochs": 1
+    },
+    {
+      "task": "11-ts-optional-chain",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 24175,
+      "tool_calls": 8,
+      "input_bytes": 390839,
+      "cache_epochs": 1
+    },
+    {
+      "task": "12-ts-async-race",
+      "result": "FAIL",
+      "agent_ec": 1,
+      "latency_ms": 96799,
+      "tool_calls": 14,
+      "input_bytes": 584637,
+      "cache_epochs": 1
+    },
+    {
+      "task": "13-go-context-cancel",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 16485,
+      "tool_calls": 7,
+      "input_bytes": 256786,
+      "cache_epochs": 1
+    },
+    {
+      "task": "14-go-error-wrap",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 18042,
+      "tool_calls": 7,
+      "input_bytes": 260758,
+      "cache_epochs": 1
+    },
+    {
+      "task": "15-py-path-traversal-fix",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 20128,
+      "tool_calls": 8,
+      "input_bytes": 351563,
+      "cache_epochs": 1
+    },
+    {
+      "task": "16-go-http-timeout",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 17823,
+      "tool_calls": 7,
+      "input_bytes": 294800,
+      "cache_epochs": 1
+    },
+    {
+      "task": "17-multi-pkg-go",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 14870,
+      "tool_calls": 6,
+      "input_bytes": 209634,
+      "cache_epochs": 1
+    },
+    {
+      "task": "18-fix-only-regression",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 15306,
+      "tool_calls": 7,
+      "input_bytes": 213168,
+      "cache_epochs": 1
+    },
+    {
+      "task": "19-readme-driven",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 16455,
+      "tool_calls": 9,
+      "input_bytes": 257741,
+      "cache_epochs": 1
+    },
+    {
+      "task": "20-flaky-to-stable",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 29012,
+      "tool_calls": 7,
+      "input_bytes": 266528,
+      "cache_epochs": 1
+    }
+  ],
+  "notes": [
+    "total_input_tokens/total_output_tokens null until A3 wiring (provider usage)",
+    "avg_cache_hit_ratio null until A2 CacheHealth wiring (wire_common_prefix_bytes is None today)",
+    "avg_verify_count null until Cycle B (\u2463 verification-obligation loop)",
+    "total_input_bytes = sum of cache_request_evidence body_bytes (input proxy)"
+  ]
+}

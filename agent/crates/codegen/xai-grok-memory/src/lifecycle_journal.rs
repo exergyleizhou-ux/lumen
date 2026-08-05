@@ -34,6 +34,16 @@ pub enum GovernedLifecycleEventKind {
     Cancelled,
     Reconciled,
     Frozen,
+    /// Session context was structurally reset (compaction or explicit
+    /// cache-reset point, DEBT-033 A2-c). `detail` carries
+    /// `{reason, old_epoch, new_epoch}` when available.
+    ContextReset,
+    /// Stale tool output was archived and shortened. `detail` carries
+    /// `{original_sequence, content_hash, causal_parent}` per snipped record.
+    ToolResultSnip,
+    /// One cache-health observation. `detail` carries
+    /// `{prompt_tokens, hit_tokens, miss_tokens, output_tokens, hit_ratio, truth}`.
+    CacheHealthSample,
 }
 
 impl GovernedLifecycleEventKind {
@@ -50,6 +60,9 @@ impl GovernedLifecycleEventKind {
             GovernedLifecycleEventKind::Cancelled => "cancelled",
             GovernedLifecycleEventKind::Reconciled => "reconciled",
             GovernedLifecycleEventKind::Frozen => "frozen",
+            GovernedLifecycleEventKind::ContextReset => "context_reset",
+            GovernedLifecycleEventKind::ToolResultSnip => "tool_result_snip",
+            GovernedLifecycleEventKind::CacheHealthSample => "cache_health_sample",
         }
     }
 
@@ -103,6 +116,11 @@ pub struct GovernedLifecycleEventV1 {
     /// so a chain can never be spliced across trees.
     #[serde(default)]
     pub prev_payload_hash: Option<String>,
+    /// Kind-specific structured payload (DEBT-033 A2-c): context reset
+    /// reason/epochs, snipped-record hash chain, cache-health numbers.
+    /// `None` for events without a payload; legacy records decode as `None`.
+    #[serde(default)]
+    pub detail: Option<serde_json::Value>,
 }
 
 impl GovernedLifecycleEventV1 {
@@ -162,6 +180,19 @@ impl GovernedLifecycleEventV1 {
                     .map(CanonicalValue::str)
                     .unwrap_or(CanonicalValue::Null),
             );
+        // DEBT-033 A2-c: kind-specific detail. Encoded as a deterministic JSON
+        // string (serde_json::Map sorts keys) so floats stay representable.
+        // Only included when present: legacy events keep byte-identical
+        // canonical preimages and their stored payload hashes still verify.
+        let record = match &self.detail {
+            Some(detail) => record.field(
+                "detail",
+                CanonicalValue::str(
+                    serde_json::to_string(detail).expect("serde_json::Value is serializable"),
+                ),
+            ),
+            None => record,
+        };
         record.canonical_bytes()
     }
 
@@ -427,6 +458,7 @@ mod lifecycle_journal_tests {
             occurred_at: 1_700_000_000 + sequence,
             payload_hash: String::new(),
             prev_payload_hash: None,
+            detail: None,
         };
         event.payload_hash = event.compute_payload_hash().unwrap();
         let _ = journal;
@@ -671,5 +703,83 @@ mod lifecycle_journal_tests {
         );
         // The read model must be derivable from the log alone.
         assert_eq!(reloaded.derived_state().last_sequence, 1);
+    }
+
+    #[test]
+    fn debt033_kinds_with_detail_round_trip_and_chain() {
+        let mut journal = LifecycleJournal::in_memory("tree-debt033");
+        let mut e1 = event(&journal, 0, GovernedLifecycleEventKind::ContextReset, None, "tree-debt033");
+        e1.detail = Some(serde_json::json!({
+            "reason": "explicit",
+            "old_epoch": "e1",
+            "new_epoch": "e2",
+        }));
+        let mut e2 = event(&journal, 1, GovernedLifecycleEventKind::ToolResultSnip, Some(0), "tree-debt033");
+        e2.detail = Some(serde_json::json!({
+            "original_sequence": 7,
+            "content_hash": "sha256:abc",
+            "causal_parent": 5,
+        }));
+        let mut e3 = event(&journal, 2, GovernedLifecycleEventKind::CacheHealthSample, Some(1), "tree-debt033");
+        e3.detail = Some(serde_json::json!({
+            "prompt_tokens": 1000,
+            "hit_tokens": 900,
+            "miss_tokens": 100,
+            "output_tokens": 42,
+            "hit_ratio": 0.9,
+            "truth": "reported",
+        }));
+        journal.append(e1).unwrap();
+        journal.append(e2).unwrap();
+        journal.append(e3).unwrap();
+
+        assert!(journal.verify_chain().is_ok(), "chain must verify with detail folded in");
+        assert_eq!(journal.events()[0].kind.as_str(), "context_reset");
+        assert_eq!(journal.events()[1].kind.as_str(), "tool_result_snip");
+        assert_eq!(journal.events()[2].kind.as_str(), "cache_health_sample");
+        assert_eq!(
+            journal.events()[2].detail.as_ref().unwrap()["hit_ratio"],
+            serde_json::json!(0.9)
+        );
+        // None of the new kinds are terminal.
+        assert!(!journal.events()[0].kind.is_terminal());
+        assert!(!journal.events()[2].kind.is_terminal());
+    }
+
+    #[test]
+    fn detail_participates_in_payload_hash() {
+        let journal = LifecycleJournal::in_memory("tree-dh");
+        let plain = event(&journal, 1, GovernedLifecycleEventKind::ContextReset, None, "tree-dh");
+        let mut with_detail = event(&journal, 1, GovernedLifecycleEventKind::ContextReset, None, "tree-dh");
+        with_detail.detail = Some(serde_json::json!({"reason": "x"}));
+        with_detail.payload_hash = with_detail.compute_payload_hash().unwrap();
+        assert_ne!(plain.payload_hash, with_detail.payload_hash);
+        // Canonical bytes for the detail-less event must not include a detail
+        // field: legacy stored hashes keep verifying. Field marker in the
+        // canonical encoding is `detail<TAB>`.
+        let legacy_bytes = plain.canonical_bytes().unwrap();
+        let as_text = String::from_utf8_lossy(&legacy_bytes);
+        assert!(as_text.contains("prev_payload_hash\t"));
+        assert!(!as_text.contains("detail\t"));
+        let with_bytes = with_detail.canonical_bytes().unwrap();
+        assert!(String::from_utf8_lossy(&with_bytes).contains("detail\t"));
+    }
+
+    #[test]
+    fn legacy_json_without_detail_field_decodes_and_verifies() {
+        // A v1-shape record (no detail key) must decode with detail = None and
+        // keep its stored payload hash verifiable.
+        let journal = LifecycleJournal::in_memory("tree-legacy-detail");
+        let event = event(&journal, 1, GovernedLifecycleEventKind::Ready, None, "tree-legacy-detail");
+        let mut json = serde_json::to_value(&event).unwrap();
+        json.as_object_mut().unwrap().remove("detail");
+        let decoded: GovernedLifecycleEventV1 = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.detail, None);
+        assert_eq!(decoded.payload_hash, event.payload_hash);
+        assert_eq!(
+            decoded.compute_payload_hash().unwrap(),
+            event.payload_hash,
+            "payload hash must survive legacy decode"
+        );
     }
 }

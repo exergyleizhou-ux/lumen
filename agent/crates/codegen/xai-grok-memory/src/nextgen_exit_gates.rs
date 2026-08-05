@@ -124,6 +124,7 @@ pub fn deliver_handoff_receipt(
         occurred_at,
         payload_hash: String::new(),
         prev_payload_hash: None,
+        detail: None,
     };
     event.payload_hash = event
         .compute_payload_hash()

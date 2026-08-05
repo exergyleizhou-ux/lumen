@@ -21,6 +21,8 @@ pub const CACHE_EPOCH_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EPOCH_FILE_NAME: &str = "cache_epoch.json";
 pub const CACHE_REQUEST_EVIDENCE_SCHEMA_VERSION: u32 = 1;
 pub const CACHE_EVIDENCE_FILE_NAME: &str = "cache_request_evidence.jsonl";
+pub const CACHE_HEALTH_SCHEMA_VERSION: u32 = 1;
+pub const CACHE_HEALTH_FILE_NAME: &str = "cache_health.jsonl";
 
 /// This is deliberately small: evidence must never accumulate unboundedly or
 /// become a source of request latency. A full queue makes the attempt's
@@ -404,6 +406,43 @@ pub fn append_request_evidence(
     file.sync_data()
 }
 
+/// Durable per-observation cache health (DEBT-033 A2-a): provider-reported
+/// cache hit/miss tokens for one completed model call. Diagnostics only —
+/// never authority for cache truth, never injected into any prompt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CacheHealthRecord {
+    pub schema_version: u32,
+    /// Unix milliseconds of the observation.
+    pub ts: u64,
+    pub prompt_tokens: u64,
+    pub hit_tokens: u64,
+    pub miss_tokens: u64,
+    pub output_tokens: u64,
+    /// hit / prompt; 0.0 when prompt_tokens == 0.
+    pub hit_ratio: f64,
+    /// "reported" | "contradictory" | "unavailable" (TokenUsage::provider_cache_usage_truth).
+    pub truth: String,
+}
+
+/// Append one cache-health observation to the session's `cache_health.jsonl`.
+/// Mirrors [`append_request_evidence`]: create + append + sync_data.
+pub fn append_cache_health(
+    session_dir: &Path,
+    record: &CacheHealthRecord,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(session_dir)?;
+    let path = session_dir.join(CACHE_HEALTH_FILE_NAME);
+    let mut line = serde_json::to_vec(record).expect("CacheHealthRecord is serializable");
+    line.push(b'\n');
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    use std::io::Write;
+    file.write_all(&line)?;
+    file.sync_data()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,5 +786,60 @@ mod tests {
         assert_eq!(rows[0]["attempt_index"], 0);
         assert_eq!(rows[1]["attempt_index"], 1);
         assert_eq!(rows[1]["mutation_reasons"][0], "retry_image_strip");
+    }
+
+    #[test]
+    fn cache_health_appends_rows_and_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = CacheHealthRecord {
+            schema_version: CACHE_HEALTH_SCHEMA_VERSION,
+            ts: 1_720_000_000_000,
+            prompt_tokens: 1000,
+            hit_tokens: 900,
+            miss_tokens: 100,
+            output_tokens: 42,
+            hit_ratio: 0.9,
+            truth: "reported".into(),
+        };
+        append_cache_health(dir.path(), &record).unwrap();
+        append_cache_health(dir.path(), &record).unwrap();
+
+        let rows: Vec<CacheHealthRecord> =
+            std::fs::read_to_string(dir.path().join(CACHE_HEALTH_FILE_NAME))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0], record);
+        assert_eq!(rows[1], record);
+        assert_eq!(rows[0].hit_ratio, 0.9);
+        assert_eq!(rows[0].truth, "reported");
+    }
+
+    #[test]
+    fn cache_health_creates_missing_session_dir() {
+        let base = tempfile::tempdir().unwrap();
+        let nested = base.path().join("sessions").join("deep");
+        let record = CacheHealthRecord {
+            schema_version: CACHE_HEALTH_SCHEMA_VERSION,
+            ts: 1,
+            prompt_tokens: 10,
+            hit_tokens: 0,
+            miss_tokens: 10,
+            output_tokens: 1,
+            hit_ratio: 0.0,
+            truth: "unavailable".into(),
+        };
+        append_cache_health(&nested, &record).unwrap();
+        assert!(nested.join(CACHE_HEALTH_FILE_NAME).exists());
+        let rows: Vec<CacheHealthRecord> =
+            std::fs::read_to_string(nested.join(CACHE_HEALTH_FILE_NAME))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].hit_ratio, 0.0);
     }
 }

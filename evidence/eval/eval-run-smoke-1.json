@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "check_id": "eval_run",
+  "run_id": "smoke-1",
+  "profile": "deepseek-v4-flash",
+  "binary": "/Users/lei/.local/bin/lumen",
+  "generated_at": "2026-08-05T11:22:51Z",
+  "aggregate": {
+    "pass_rate": 1.0,
+    "pass_count": 1,
+    "fail_count": 0,
+    "total": 1,
+    "total_input_bytes": 209802,
+    "total_input_tokens": null,
+    "total_output_tokens": null,
+    "avg_cache_hit_ratio": null,
+    "avg_verify_count": null,
+    "avg_tool_calls": 6.0,
+    "avg_latency_ms": 14623.0
+  },
+  "tasks": [
+    {
+      "task": "01-average-empty",
+      "result": "PASS",
+      "agent_ec": 0,
+      "latency_ms": 14623,
+      "tool_calls": 6,
+      "input_bytes": 209802,
+      "cache_epochs": 1
+    }
+  ],
+  "notes": [
+    "total_input_tokens/total_output_tokens null until A3 wiring (provider usage)",
+    "avg_cache_hit_ratio null until A2 CacheHealth wiring (wire_common_prefix_bytes is None today)",
+    "avg_verify_count null until Cycle B (\u2463 verification-obligation loop)",
+    "total_input_bytes = sum of cache_request_evidence body_bytes (input proxy)"
+  ]
+}

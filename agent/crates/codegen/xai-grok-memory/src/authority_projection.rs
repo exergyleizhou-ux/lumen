@@ -137,6 +137,7 @@ pub fn project_authority_event(
         occurred_at,
         payload_hash: String::new(),
         prev_payload_hash: None,
+        detail: None,
     };
     projected.payload_hash = projected
         .compute_payload_hash()

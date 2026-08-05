@@ -263,6 +263,20 @@ pub fn resolve_model_catalog(
         }
     }
 
+    // DEBT-033 A3: apply the official DeepSeek V4 Flash profile default
+    // (effort = high) when nothing explicit configured the effort. Agent work
+    // defaults to high; the adaptive controller escalates to max on
+    // complexity/failure signals (budget-guarded).
+    let flash_profile = crate::agent::models::deepseek_v4_flash_0731();
+    for entry in catalog.values_mut() {
+        if entry.info.reasoning_effort.is_none()
+            && entry.info.supports_reasoning_effort
+            && entry.info.model == "deepseek-v4-flash"
+        {
+            entry.info.reasoning_effort = Some(flash_profile.default_effort);
+        }
+    }
+
     catalog
 }
 

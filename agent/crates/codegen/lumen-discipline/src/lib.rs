@@ -8,6 +8,8 @@
 //!   - [`capture_shape`] / [`compare_shape`] — prefix miss diagnostics
 //!   - [`profile_for_model`] — adaptation matrix
 //!   - [`SessionCacheTracker`] — rolling hit + stability score
+//! - [`CompactionPolicy`] / [`CompactionStage`] — staged compaction
+//!   (absolute-token thresholds + remaining-budget trigger, DEBT-033 A2-b)
 //!
 //! **Never** put this state into the system-prompt *prefix* (breaks DeepSeek
 //! automatic prefix cache and every AutomaticPrefix provider). Inject only as
@@ -15,6 +17,7 @@
 
 mod cache;
 mod cache_shape;
+mod compaction;
 mod delivery;
 mod provider_strategy;
 mod request_prefix;
@@ -27,6 +30,7 @@ pub use cache_shape::{
     CacheDiagnostics, PrefixChangeReason, PrefixShape, capture_shape, compare_shape,
     estimate_tokens, format_change_reasons,
 };
+pub use compaction::{CompactionPolicy, CompactionStage};
 pub use delivery::{
     DELIVERY_REMINDER, DeliveryAction, DeliverySessionState, DeliveryStrictness, GoalGate,
     GoalIncompletePolicy, TodoSnapshot, gate_goal_complete, on_turn_end,
