@@ -129,6 +129,7 @@ async fn persist_ack_waits_for_disk_flush_before_success_inner() {
                 tokio_util::sync::CancellationToken::new(),
             );
             let actor = Arc::new(SessionActor {
+            governor_effort_override: std::cell::Cell::new(None),
                 session_info,
                 auth_method_id: test_auth_method_id("test-auth"),
                 model_auth_memo: std::cell::RefCell::new(None),
@@ -650,6 +651,7 @@ async fn run_first_turn_memory_injection_disabled_body() {
     };
     let (event_tx, _event_rx) = tokio::sync::mpsc::unbounded_channel::<SessionEvent>();
     let actor = Arc::new(SessionActor {
+            governor_effort_override: std::cell::Cell::new(None),
         session_info: session_info.clone(),
         auth_method_id: test_auth_method_id("test-auth"),
         model_auth_memo: std::cell::RefCell::new(None),
@@ -933,6 +935,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 )
                 .await;
             let actor = SessionActor {
+            governor_effort_override: std::cell::Cell::new(None),
                 session_info: SessionInfo {
                     id: acp::SessionId::new("test-cancel"),
                     cwd: cwd.as_str().to_string(),
@@ -2227,6 +2230,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 )
                 .await;
             let actor = SessionActor {
+            governor_effort_override: std::cell::Cell::new(None),
                 session_info: SessionInfo {
                     id: acp::SessionId::new("test-cancel-sampler"),
                     cwd: cwd.as_str().to_string(),

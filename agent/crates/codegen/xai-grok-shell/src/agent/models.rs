@@ -1377,7 +1377,7 @@ pub use profile::{
     CACHE_COLLAPSE_HIT_RATIO, COMPLEXITY_ESCALATE_AT, DEEPSEEK_V4_FLASH_CONTEXT_WINDOW,
     DEEPSEEK_V4_FLASH_TEMPERATURE, DEEPSEEK_V4_FLASH_TOP_P, OUTPUT_BUDGET_DEMOTE_THRESHOLD,
     VERIFY_FAILURES_ESCALATE_AT, EffortDecision, EffortSignals, ModelProfile, SamplingParams,
-    ThinkingMode, decide_effort, deepseek_v4_flash_0731,
+    ThinkingMode, decide_effort, deepseek_v4_flash_0731, escalate_effort,
 };
 pub(crate) use resolution::*;
 

@@ -2462,9 +2462,9 @@ impl SessionActor {
                     }
                     // DEBT-033 C2: uncertainty-to-governance decision from the
                     // signals available at turn end (cache health + repair
-                    // loop depth + goal status). The decision is journaled;
-                    // action application (effort escalation via SetSessionModel,
-                    // compaction trigger) is the documented next hook.
+                    // loop depth + goal status). The decision is journaled and
+                    // applied: effort escalation lands as a session override
+                    // that the next sampling config rebuild consumes.
                     {
                         let session_id = self.session_info.id.0.as_ref().to_string();
                         let repair_loop =
@@ -2489,6 +2489,32 @@ impl SessionActor {
                             human_gate_pending: false,
                         };
                         let action = xai_grok_memory::uncertainty_governor::decide(&signals);
+                        // Application: EscalateEffort sets the next-turn effort
+                        // override; a healthy Continue clears it.
+                        match action {
+                            xai_grok_memory::uncertainty_governor::GovernanceAction::EscalateEffort => {
+                                let current = self
+                                    .chat_state_handle
+                                    .get_sampling_config()
+                                    .await
+                                    .and_then(|c| c.reasoning_effort);
+                                self.governor_effort_override.set(Some(
+                                    crate::agent::models::escalate_effort(current),
+                                ));
+                                tracing::info!(
+                                    session = %session_id,
+                                    from = ?current,
+                                    to = ?self.governor_effort_override.get(),
+                                    "governor escalated effort (DEBT-033 C2)"
+                                );
+                            }
+                            xai_grok_memory::uncertainty_governor::GovernanceAction::Continue
+                                if no_progress == 0 && repair_loop.attempts == 0 =>
+                            {
+                                self.governor_effort_override.set(None);
+                            }
+                            _ => {}
+                        }
                         if action
                             != xai_grok_memory::uncertainty_governor::GovernanceAction::Continue
                         {

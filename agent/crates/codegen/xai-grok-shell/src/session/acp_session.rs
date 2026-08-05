@@ -670,6 +670,11 @@ pub(crate) struct SessionActor {
     /// `reconstruct_full_config` threads it into the sampler config, and the
     /// sampler itself sends the matching `x-grok-doom-loop-check` header.
     pub(crate) doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
+    /// DEBT-033 C2: effort override applied by the uncertainty governor when
+    /// it escalates (stall/repair signals). Consulted by
+    /// `reconstruct_full_config`; cleared when the goal is healthy again.
+    pub(crate) governor_effort_override:
+        std::cell::Cell<Option<xai_grok_sampling_types::ReasoningEffort>>,
     /// Telemetry-only per-turn doom-loop recovery tally (attempts, whether a
     /// budget-spent accept happened, tightest trigger label). Accumulated by
     /// the event drainer, taken at turn end for the per-turn analytics event.

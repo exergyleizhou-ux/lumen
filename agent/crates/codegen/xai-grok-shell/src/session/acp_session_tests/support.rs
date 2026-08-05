@@ -235,6 +235,7 @@ pub(crate) async fn create_test_actor_ex(
     chat_state_handle.record_token_usage(total_tokens);
     let (goal_update_tx, goal_update_rx) = tokio::sync::mpsc::unbounded_channel();
     let actor = SessionActor {
+            governor_effort_override: std::cell::Cell::new(None),
         session_info: SessionInfo {
             id: acp::SessionId::new("test-actor"),
             cwd: cwd.as_str().to_string(),

@@ -643,7 +643,9 @@ impl SessionActor {
             env_http_headers: cfg.env_http_headers.clone(),
             context_window: cfg.context_window.get(),
             client_version: creds.client_version,
-            reasoning_effort: cfg.reasoning_effort,
+            reasoning_effort: cfg
+                .reasoning_effort
+                .or(self.governor_effort_override.get()),
             force_http1: false,
             // P0: a turn without a durable provider-attempt receipt is never
             // safe to replay automatically. The actor policy is the second

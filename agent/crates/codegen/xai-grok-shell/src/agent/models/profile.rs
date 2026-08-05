@@ -126,6 +126,19 @@ pub fn decide_effort(current: ReasoningEffort, signals: &EffortSignals) -> Effor
     EffortDecision::Keep
 }
 
+/// One-step effort escalation (DEBT-033 C2 application). `None` (no explicit
+/// effort) escalates to High; Max stays Max.
+pub fn escalate_effort(current: Option<ReasoningEffort>) -> ReasoningEffort {
+    match current {
+        None | Some(ReasoningEffort::None | ReasoningEffort::Minimal | ReasoningEffort::Low) => {
+            ReasoningEffort::High
+        }
+        Some(ReasoningEffort::Medium | ReasoningEffort::High) => ReasoningEffort::Max,
+        Some(ReasoningEffort::Max) => ReasoningEffort::Max,
+        Some(ReasoningEffort::Xhigh) => ReasoningEffort::Max,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,5 +240,14 @@ mod tests {
             decide_effort(ReasoningEffort::High, &sig(9, 0, false, 100_000, None, false)),
             EffortDecision::Escalate
         );
+    }
+
+    #[test]
+    fn effort_escalation_steps() {
+        assert_eq!(escalate_effort(None), ReasoningEffort::High);
+        assert_eq!(escalate_effort(Some(ReasoningEffort::Low)), ReasoningEffort::High);
+        assert_eq!(escalate_effort(Some(ReasoningEffort::High)), ReasoningEffort::Max);
+        assert_eq!(escalate_effort(Some(ReasoningEffort::Max)), ReasoningEffort::Max);
+        assert_eq!(escalate_effort(Some(ReasoningEffort::Xhigh)), ReasoningEffort::Max);
     }
 }
