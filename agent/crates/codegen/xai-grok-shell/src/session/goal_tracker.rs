@@ -59,11 +59,6 @@ pub enum GoalPhase {
 /// — legacy `"Paused"` maps to `UserPaused` (matches the pager-side
 /// fallback). New
 /// snapshots emit snake_case per `rename_all`.
-/// No-progress signal fed to the uncertainty governor (DEBT-033 C2): the
-/// pause-family statuses mean the goal loop already detected a stall, which
-/// maps to the governor's early-stall escalation threshold.
-pub const GOAL_NO_PROGRESS_SIGNAL_TURNS: u32 = 2;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum GoalStatus {
