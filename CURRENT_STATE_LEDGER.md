@@ -11,12 +11,12 @@ For the generation date, see the last ledger commit in `git log`.
 | Question | Answer |
 |---|---|
 | Version (root VERSION) | **2.1.0** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=7 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 78120609 Merge remote-tracking branch 'origin/main' |
+| Last non-bot commit | f53805c2 chore(evidence): full readiness run for wired binary cc6accde — eval_live 20/20 PASS, tests 59/30/29 + shell 6359 + pager 8006 green, clippy clean |
 
 ---
 
