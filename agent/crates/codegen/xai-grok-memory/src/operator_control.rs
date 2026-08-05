@@ -334,7 +334,6 @@ pub fn issue_resume_approval(
     ttl_epoch_ms: u64,
     scope: impl Into<String>,
 ) -> ResumeApproval {
-    let issued_at_epoch_ms = issued_at_epoch_ms;
     ResumeApproval {
         approval_id: approval_id.into(),
         op_id: op_id.into(),
@@ -373,6 +372,7 @@ pub fn operator_receipt_to_event(
         evidence_refs: Vec::new(),
         occurred_at: occurred_at_epoch_ms,
         payload_hash: String::new(),
+        prev_payload_hash: None,
     };
     // The journal verifies the payload hash on append; compute it here so the
     // event is append-ready (canonical NG-00 payload commitment).

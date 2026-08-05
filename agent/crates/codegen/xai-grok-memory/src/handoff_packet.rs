@@ -184,7 +184,7 @@ impl HandoffPacketV1 {
                 CanonicalValue::Seq(
                     self.proposed_claim_refs
                         .iter()
-                        .map(|r| CanonicalValue::str(r))
+                        .map(CanonicalValue::str)
                         .collect(),
                 ),
             )
@@ -193,7 +193,7 @@ impl HandoffPacketV1 {
                 CanonicalValue::Seq(
                     self.evidence_refs
                         .iter()
-                        .map(|r| CanonicalValue::str(r))
+                        .map(CanonicalValue::str)
                         .collect(),
                 ),
             )
@@ -202,7 +202,7 @@ impl HandoffPacketV1 {
                 CanonicalValue::Seq(
                     self.uncertainties
                         .iter()
-                        .map(|r| CanonicalValue::str(r))
+                        .map(CanonicalValue::str)
                         .collect(),
                 ),
             )

@@ -151,7 +151,7 @@ fn require_sha256(field: &'static str, value: &str) -> Result<(), IdentityDeny> 
 }
 
 fn node_identity_preimage(node: &NodeIdentityV1) -> Result<Vec<u8>, CanonicalError> {
-    let mut record = CanonicalRecord::new("node-identity")
+    let record = CanonicalRecord::new("node-identity")
         .field("schema_version", CanonicalValue::U64(node.schema_version as u64))
         .field("task_tree_id", CanonicalValue::str(&node.task_tree_id))
         .field("node_id", CanonicalValue::str(&node.node_id))
@@ -168,7 +168,7 @@ fn node_identity_preimage(node: &NodeIdentityV1) -> Result<Vec<u8>, CanonicalErr
             CanonicalValue::Seq(
                 node.lineage_path
                     .iter()
-                    .map(|p| CanonicalValue::str(p))
+                    .map(CanonicalValue::str)
                     .collect(),
             ),
         )

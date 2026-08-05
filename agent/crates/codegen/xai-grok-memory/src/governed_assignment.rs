@@ -269,15 +269,14 @@ impl RootGovernedAssignmentV1 {
                 "assignment may not exceed the hard task-tree depth ceiling".to_owned(),
             ));
         }
-        if let Some(parent) = &self.immediate_parent_id {
-            if parent == &self.node_id
+        if let Some(parent) = &self.immediate_parent_id
+            && (parent == &self.node_id
                 || self.lineage_path.len() < 2
-                || self.lineage_path[self.lineage_path.len() - 2] != *parent
-            {
-                return Err(RootGovernedAssignmentError::Invalid(
-                    "immediate parent must be the direct lineage predecessor".to_owned(),
-                ));
-            }
+                || self.lineage_path[self.lineage_path.len() - 2] != *parent)
+        {
+            return Err(RootGovernedAssignmentError::Invalid(
+                "immediate parent must be the direct lineage predecessor".to_owned(),
+            ));
         }
         if self
             .permitted_tool_contract_hashes

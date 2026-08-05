@@ -319,6 +319,7 @@ impl WorkingMemoryLedgerBackend {
         self.review_actor
     }
 
+    #[allow(clippy::wrong_self_convention)] // legacy host-owned conversion; name kept for callers
     fn into_fact(
         &self,
         author_session_id: &str,

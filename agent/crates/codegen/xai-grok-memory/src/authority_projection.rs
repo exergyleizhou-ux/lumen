@@ -89,10 +89,10 @@ pub fn recover_authority_kind(
     evidence_refs: &[String],
 ) -> Option<AuthorityEventKind> {
     for reference in evidence_refs {
-        if let Some(token) = reference.strip_prefix("coord_kind:") {
-            if let Some(kind) = AuthorityEventKind::from_str_token(token) {
-                return Some(kind);
-            }
+        if let Some(token) = reference.strip_prefix("coord_kind:")
+            && let Some(kind) = AuthorityEventKind::from_str_token(token)
+        {
+            return Some(kind);
         }
     }
     // Terminals map 1:1 without coord_kind.
@@ -136,6 +136,7 @@ pub fn project_authority_event(
         evidence_refs: evidence_refs_for(event),
         occurred_at,
         payload_hash: String::new(),
+        prev_payload_hash: None,
     };
     projected.payload_hash = projected
         .compute_payload_hash()

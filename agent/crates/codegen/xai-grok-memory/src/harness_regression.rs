@@ -381,7 +381,7 @@ pub fn run_all_corpora() -> CorpusRunReport {
 
     // 3. Execution/liveness
     use crate::operator_control::{
-        OperatorCommand, OperatorReceipt, OperationView, apply_operator_command,
+        OperatorCommand, OperationView, apply_operator_command,
     };
     use crate::evidence_loop::LoopPhase;
     let op_view = OperationView {
@@ -497,7 +497,7 @@ pub fn run_all_corpora() -> CorpusRunReport {
 
     // 4. Provider/model
     use crate::sealed_attempt_receipt::{
-        DurableSealAuthority, RetryAdmissionRequest, SealedAttemptReceiptV1, Obs,
+        DurableSealAuthority, RetryAdmissionRequest, Obs,
         authorize_in_process_retry_budget, clean_preflight_receipt, mark_output_emitted,
         may_in_process_retry,
     };

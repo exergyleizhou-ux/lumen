@@ -123,6 +123,7 @@ pub fn deliver_handoff_receipt(
         ],
         occurred_at,
         payload_hash: String::new(),
+        prev_payload_hash: None,
     };
     event.payload_hash = event
         .compute_payload_hash()
@@ -231,22 +232,22 @@ pub fn invoke_advisor_consult_tool(
             report_id: format!("shadow-{request_id}"),
         },
         AdvisorMode::Consult => {
-            if let Some(dl) = deadline_epoch_ms {
-                if consult_timed_out(now_epoch_ms, dl, now_epoch_ms) {
-                    return Ok((
-                        ConsultOutcome::Blocked {
-                            reason: ConsultBlockReason::TimedOut,
-                        },
-                        AdvisorConsultProjectionV1 {
-                            tool_name: ADVISOR_CONSULT_TOOL_NAME.into(),
-                            mode: "consult".into(),
-                            outcome: "blocked_timeout".into(),
-                            report_id: None,
-                            receipt_count: 1,
-                            applies_authority: false,
-                        },
-                    ));
-                }
+            if let Some(dl) = deadline_epoch_ms
+                && consult_timed_out(now_epoch_ms, dl, now_epoch_ms)
+            {
+                return Ok((
+                    ConsultOutcome::Blocked {
+                        reason: ConsultBlockReason::TimedOut,
+                    },
+                    AdvisorConsultProjectionV1 {
+                        tool_name: ADVISOR_CONSULT_TOOL_NAME.into(),
+                        mode: "consult".into(),
+                        outcome: "blocked_timeout".into(),
+                        report_id: None,
+                        receipt_count: 1,
+                        applies_authority: false,
+                    },
+                ));
             }
             if fixture_succeeds {
                 ConsultOutcome::Succeeded {

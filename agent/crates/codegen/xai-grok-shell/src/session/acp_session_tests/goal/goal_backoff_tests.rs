@@ -8,6 +8,24 @@ use std::sync::atomic::Ordering;
 /// A persistence sink that acknowledges the durable operations the
 /// slash-command handlers require (upstream made `/goal clear` wait on a
 /// `DeleteGoalModeState` ack) while dropping everything else.
+/// DEBT-027: aborting a real `handle_prompt` future recursively drops a
+/// deeply nested async state machine; on the 2 MiB default test-thread stack
+/// (RUST_MIN_STACK) that drop overflows intermittently under CI load. These
+/// synthetic-turn tests therefore run on a dedicated 64 MiB stack thread, so
+/// the abort-drop is deterministic on every platform.
+fn run_synthetic_turn_on_large_stack<F>(body: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("large-stack-test".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(body)
+        .expect("spawn large-stack test thread")
+        .join()
+        .expect("large-stack test panicked");
+}
+
 fn spawn_persistence_stub() -> tokio::sync::mpsc::UnboundedSender<PersistenceMsg> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<PersistenceMsg>();
     tokio::spawn(async move {
@@ -2175,8 +2193,18 @@ async fn goal_resume_no_goal_through_handle_prompt_ends_turn() {
 /// the inference turn — the goal system-reminder becomes the turn's
 /// persisted user-message content (the Message arm would have returned
 /// before this), and "Goal resumed." is surfaced to the user.
-#[tokio::test(flavor = "current_thread")]
-async fn goal_resume_paused_through_handle_prompt_runs_inference() {
+#[test]
+fn goal_resume_paused_through_handle_prompt_runs_inference() {
+    run_synthetic_turn_on_large_stack(|| {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(goal_resume_paused_through_handle_prompt_runs_inference_impl());
+    });
+}
+
+async fn goal_resume_paused_through_handle_prompt_runs_inference_impl() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {

@@ -6,6 +6,24 @@ use xai_tool_types::{
     KillTaskOutput, KillTaskResult, MultiTaskOutputResult, SubagentCompletedOutput,
     TaskOutputOutput, TaskOutputResult,
 };
+/// DEBT-027: aborting a real `handle_prompt` future recursively drops a
+/// deeply nested async state machine; on the 2 MiB default test-thread stack
+/// (RUST_MIN_STACK) that drop overflows intermittently under CI load. These
+/// synthetic-turn tests therefore run on a dedicated 64 MiB stack thread, so
+/// the abort-drop is deterministic on every platform.
+fn run_synthetic_turn_on_large_stack<F>(body: F)
+where
+    F: FnOnce() + Send + 'static,
+{
+    std::thread::Builder::new()
+        .name("large-stack-test".into())
+        .stack_size(64 * 1024 * 1024)
+        .spawn(body)
+        .expect("spawn large-stack test thread")
+        .join()
+        .expect("large-stack test panicked");
+}
+
 fn input_with_origin(prompt_id: &str, origin: crate::session::PromptOrigin) -> InputItem {
     input_with_origin_rx(prompt_id, origin).0
 }
@@ -363,8 +381,18 @@ async fn non_task_prompt_is_not_subject_to_task_wake_barrier() {
         })
         .await;
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn task_completion_wake_is_admitted_without_cancel_barrier() {
+#[test]
+fn task_completion_wake_is_admitted_without_cancel_barrier() {
+    run_synthetic_turn_on_large_stack(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(task_completion_wake_is_admitted_without_cancel_barrier_impl());
+    });
+}
+
+async fn task_completion_wake_is_admitted_without_cancel_barrier_impl() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -492,8 +520,18 @@ async fn task_completion_wake_is_admitted_without_cancel_barrier() {
         })
         .await;
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn genuine_user_start_consumes_deferred_completions_without_notification_turn() {
+#[test]
+fn genuine_user_start_consumes_deferred_completions_without_notification_turn() {
+    run_synthetic_turn_on_large_stack(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(genuine_user_start_consumes_deferred_completions_without_notification_turn_impl());
+    });
+}
+
+async fn genuine_user_start_consumes_deferred_completions_without_notification_turn_impl() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {
@@ -623,8 +661,18 @@ async fn genuine_user_start_consumes_deferred_completions_without_notification_t
         })
         .await;
 }
-#[tokio::test(flavor = "multi_thread")]
-async fn accepted_reservation_survives_user_start() {
+#[test]
+fn accepted_reservation_survives_user_start() {
+    run_synthetic_turn_on_large_stack(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(accepted_reservation_survives_user_start_impl());
+    });
+}
+
+async fn accepted_reservation_survives_user_start_impl() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async {

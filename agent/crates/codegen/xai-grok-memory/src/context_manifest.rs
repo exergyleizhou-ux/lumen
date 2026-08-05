@@ -292,10 +292,10 @@ pub fn admit_spawn_receipt(
     if lineage_path.last().map(String::as_str) != Some(node_id) {
         return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
     }
-    if let Some(parent) = expected_parent_id {
-        if lineage_path.len() < 2 || lineage_path[lineage_path.len() - 2] != parent {
-            return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
-        }
+    if let Some(parent) = expected_parent_id
+        && (lineage_path.len() < 2 || lineage_path[lineage_path.len() - 2] != parent)
+    {
+        return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
     }
     Ok(())
 }
@@ -322,23 +322,23 @@ fn admit_governed(
         }
         Some(_) => {}
     }
-    if let Some(root) = request.expected_root_session_id {
-        if root != manifest.root_session_id {
-            return Err(ManifestAdmissionDenyReason::ForeignTaskTree);
-        }
+    if let Some(root) = request.expected_root_session_id
+        && root != manifest.root_session_id
+    {
+        return Err(ManifestAdmissionDenyReason::ForeignTaskTree);
     }
     if manifest.task_tree_id != snapshot.task_tree_id {
         return Err(ManifestAdmissionDenyReason::ForeignTaskTree);
     }
-    if let Some(node) = request.expected_node_id {
-        if node != manifest.node_id {
-            return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
-        }
+    if let Some(node) = request.expected_node_id
+        && node != manifest.node_id
+    {
+        return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
     }
-    if let Some(parent) = request.expected_parent_id {
-        if manifest.immediate_parent_id.as_deref() != Some(parent) {
-            return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
-        }
+    if let Some(parent) = request.expected_parent_id
+        && manifest.immediate_parent_id.as_deref() != Some(parent)
+    {
+        return Err(ManifestAdmissionDenyReason::ParentLineageMismatch);
     }
     manifest
         .validate_against_snapshot(snapshot)

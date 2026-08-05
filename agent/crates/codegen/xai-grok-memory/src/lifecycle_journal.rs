@@ -12,12 +12,12 @@
 
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::canonical::{CanonicalError, CanonicalRecord, CanonicalValue, ENCODING_REVISION};
+use crate::canonical::{CanonicalError, CanonicalRecord, CanonicalValue};
 
 /// Logical authority event kinds (execution book §3.3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +93,16 @@ pub struct GovernedLifecycleEventV1 {
     /// Canonical payload hash (NG-00): commits the event body without a
     /// second serialization convention.
     pub payload_hash: String,
+    /// Tamper-evident chain link (DEBT-031, absorbed from block/buzz
+    /// buzz-audit): the payload hash of the PREVIOUS event in this tree's
+    /// journal. The journal (the single writer) fills this on append and
+    /// recomputes the payload hash over `(body, prev)`; a forger who rewrites
+    /// a middle event cannot recompute the downstream chain. Legacy v1
+    /// records decode as `None` — the chain is re-established from the first
+    /// v2 append. The tree id is already folded into the payload preimage,
+    /// so a chain can never be spliced across trees.
+    #[serde(default)]
+    pub prev_payload_hash: Option<String>,
 }
 
 impl GovernedLifecycleEventV1 {
@@ -140,11 +150,18 @@ impl GovernedLifecycleEventV1 {
                 CanonicalValue::Seq(
                     self.evidence_refs
                         .iter()
-                        .map(|reference| CanonicalValue::str(reference))
+                        .map(CanonicalValue::str)
                         .collect(),
                 ),
             )
-            .field("occurred_at", CanonicalValue::U64(self.occurred_at));
+            .field("occurred_at", CanonicalValue::U64(self.occurred_at))
+            .field(
+                "prev_payload_hash",
+                self.prev_payload_hash
+                    .as_deref()
+                    .map(CanonicalValue::str)
+                    .unwrap_or(CanonicalValue::Null),
+            );
         record.canonical_bytes()
     }
 
@@ -173,6 +190,11 @@ pub enum JournalError {
     UnknownCausalParent { parent: u64 },
     LateEventAfterTerminal { kind: GovernedLifecycleEventKind },
     PayloadHashMismatch,
+    /// Tamper-evident chain broken (DEBT-031): the appended event's
+    /// `prev_payload_hash` does not match the previous event, or a genesis
+    /// event claims a predecessor. Fail-closed — the journal refuses rather
+    /// than guessing.
+    ChainBroken { sequence: u64 },
     Io(String),
 }
 
@@ -194,6 +216,9 @@ impl std::fmt::Display for JournalError {
             }
             JournalError::PayloadHashMismatch => {
                 write!(f, "payload hash does not match the canonical preimage")
+            }
+            JournalError::ChainBroken { sequence } => {
+                write!(f, "tamper-evident chain broken at sequence {sequence}")
             }
             JournalError::Io(message) => write!(f, "journal I/O failed: {message}"),
         }
@@ -244,9 +269,45 @@ impl LifecycleJournal {
         &self.events
     }
 
+    /// Verify the tamper-evident chain over the whole journal (DEBT-031):
+    /// every event's `prev_payload_hash` must equal the previous event's
+    /// `payload_hash`, and the genesis event must have no predecessor. This
+    /// is the read-side check a third-party verifier runs over the exported
+    /// evidence bundle — a rewrite of any event (even the genesis, whose
+    /// change invalidates the next event's link) is detected structurally.
+    pub fn verify_chain(&self) -> Result<(), JournalError> {
+        let mut prev: Option<&str> = None;
+        for event in &self.events {
+            match (prev, event.prev_payload_hash.as_deref()) {
+                (Some(expected), Some(got)) if got == expected => {}
+                (Some(_), None) => {
+                    return Err(JournalError::ChainBroken {
+                        sequence: event.sequence,
+                    })
+                }
+                (Some(_), Some(_)) => {
+                    return Err(JournalError::ChainBroken {
+                        sequence: event.sequence,
+                    })
+                }
+                (None, None) => {}
+                (None, Some(_)) => {
+                    return Err(JournalError::ChainBroken {
+                        sequence: event.sequence,
+                    })
+                }
+            }
+            prev = Some(&event.payload_hash);
+        }
+        Ok(())
+    }
+
     /// Append one authority event. Rules (fail closed, never best-effort):
     /// same tree, exact next sequence, known causal parent, no revival after
-    /// a terminal event, payload hash recomputable.
+    /// a terminal event, payload hash recomputable, tamper-evident chain
+    /// intact. The journal is the single writer: it fills `prev_payload_hash`
+    /// from the previous event and recomputes the payload hash over
+    /// `(body, prev)`, so the chain is structural, not conventional.
     pub fn append(&mut self, mut event: GovernedLifecycleEventV1) -> Result<(), JournalError> {
         if event.task_tree_id != self.root_tree_id {
             return Err(JournalError::ForeignTree);
@@ -273,12 +334,36 @@ impl LifecycleJournal {
                 kind: event.kind,
             });
         }
-        let computed = event.compute_payload_hash().map_err(|_| {
-            JournalError::PayloadHashMismatch
-        })?;
-        if computed != event.payload_hash {
-            return Err(JournalError::PayloadHashMismatch);
+        // Tamper-evident chain (DEBT-031): an explicit wrong predecessor is
+        // refused outright; a missing predecessor is filled by the journal
+        // (the caller cannot know the previous hash without holding the
+        // journal). Genesis (no previous event) must not claim a predecessor.
+        match self.events.last() {
+            Some(last) => {
+                if let Some(got) = &event.prev_payload_hash
+                    && got != &last.payload_hash
+                {
+                    return Err(JournalError::ChainBroken {
+                        sequence: event.sequence,
+                    });
+                }
+                event.prev_payload_hash = Some(last.payload_hash.clone());
+            }
+            None => {
+                if event.prev_payload_hash.is_some() {
+                    return Err(JournalError::ChainBroken {
+                        sequence: event.sequence,
+                    });
+                }
+            }
         }
+        // The body hash is recomputed AFTER chaining: the committed hash now
+        // covers (body, prev), so rewriting any middle event invalidates
+        // every downstream hash.
+        let computed = event
+            .compute_payload_hash()
+            .map_err(|_| JournalError::PayloadHashMismatch)?;
+        event.payload_hash = computed;
         if let Some(path) = &self.path {
             let mut file = OpenOptions::new()
                 .create(true)
@@ -341,6 +426,7 @@ mod lifecycle_journal_tests {
             evidence_refs: Vec::new(),
             occurred_at: 1_700_000_000 + sequence,
             payload_hash: String::new(),
+            prev_payload_hash: None,
         };
         event.payload_hash = event.compute_payload_hash().unwrap();
         let _ = journal;
@@ -426,14 +512,142 @@ mod lifecycle_journal_tests {
     }
 
     #[test]
-    fn tampered_payload_hash_is_rejected() {
+    fn caller_forged_hash_is_overridden_by_journal_authority() {
+        // The journal is the single writer: a caller-supplied payload hash
+        // is never trusted — the journal recomputes it over (body, prev).
+        // The old reject semantics are superseded by authority recomputation.
         let mut journal = LifecycleJournal::in_memory("tree-1");
-        let mut tampered = event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1");
-        tampered.payload_hash = "sha256:forged".to_owned();
+        let mut forged = event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1");
+        forged.payload_hash = "sha256:forged".to_owned();
+        journal.append(forged).expect("authority overrides the forged hash");
+        let committed = &journal.events()[0];
+        assert_ne!(committed.payload_hash, "sha256:forged");
+        assert_eq!(committed.prev_payload_hash, None, "genesis has no predecessor");
+        journal.verify_chain().expect("chain intact");
+    }
+
+    #[test]
+    fn chain_links_events_and_verifies() {
+        let mut journal = LifecycleJournal::in_memory("tree-1");
+        journal
+            .append(event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1"))
+            .unwrap();
+        journal
+            .append(event(&journal, 1, GovernedLifecycleEventKind::PromptAccepted, Some(0), "tree-1"))
+            .unwrap();
+        journal
+            .append(event(&journal, 2, GovernedLifecycleEventKind::Running, Some(1), "tree-1"))
+            .unwrap();
         assert_eq!(
-            journal.append(tampered),
-            Err(JournalError::PayloadHashMismatch)
+            journal.events()[1].prev_payload_hash.as_deref(),
+            Some(journal.events()[0].payload_hash.as_str()),
+            "each event chains to the previous payload hash"
         );
+        assert_eq!(
+            journal.events()[2].prev_payload_hash.as_deref(),
+            Some(journal.events()[1].payload_hash.as_str())
+        );
+        journal.verify_chain().expect("chain verifies");
+    }
+
+    #[test]
+    fn rewriting_a_middle_event_breaks_the_chain() {
+        // Self-consistent forgery: the attacker rewrites a middle event AND
+        // recomputes its own payload hash — but cannot recompute the
+        // downstream link, so the chain still breaks.
+        let mut journal = LifecycleJournal::in_memory("tree-1");
+        journal
+            .append(event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1"))
+            .unwrap();
+        journal
+            .append(event(&journal, 1, GovernedLifecycleEventKind::PromptAccepted, Some(0), "tree-1"))
+            .unwrap();
+        journal
+            .append(event(&journal, 2, GovernedLifecycleEventKind::Running, Some(1), "tree-1"))
+            .unwrap();
+        // Forge event 1: change its body and recompute its own hash.
+        let mut forged = journal.events()[1].clone();
+        forged.node_id = "node-compromised".to_owned();
+        forged.payload_hash = forged.compute_payload_hash().unwrap();
+        let mut tampered = LifecycleJournal::in_memory("tree-1");
+        tampered.events.push(journal.events()[0].clone());
+        tampered.events.push(forged);
+        tampered.events.push(journal.events()[2].clone());
+        tampered.next_sequence = 3;
+        assert_eq!(
+            tampered.verify_chain().unwrap_err(),
+            JournalError::ChainBroken { sequence: 2 },
+            "event 2's link points at the ORIGINAL hash — the forgery is detected"
+        );
+    }
+
+    #[test]
+    fn rewriting_the_genesis_event_breaks_the_next_link() {
+        // Even the first event is locked: its change invalidates event 1's
+        // prev link. No event is outside the chain.
+        let mut journal = LifecycleJournal::in_memory("tree-1");
+        journal
+            .append(event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1"))
+            .unwrap();
+        journal
+            .append(event(&journal, 1, GovernedLifecycleEventKind::PromptAccepted, Some(0), "tree-1"))
+            .unwrap();
+        let mut forged_genesis = journal.events()[0].clone();
+        forged_genesis.owner_session_id = "compromised".to_owned();
+        forged_genesis.payload_hash = forged_genesis.compute_payload_hash().unwrap();
+        let mut tampered = LifecycleJournal::in_memory("tree-1");
+        tampered.events.push(forged_genesis);
+        tampered.events.push(journal.events()[1].clone());
+        tampered.next_sequence = 2;
+        assert_eq!(
+            tampered.verify_chain().unwrap_err(),
+            JournalError::ChainBroken { sequence: 1 }
+        );
+    }
+
+    #[test]
+    fn genesis_with_claimed_predecessor_and_wrong_prev_are_rejected() {
+        let mut journal = LifecycleJournal::in_memory("tree-1");
+        let mut genesis = event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1");
+        genesis.prev_payload_hash = Some("sha256:somewhere-else".to_owned());
+        assert_eq!(
+            journal.append(genesis).unwrap_err(),
+            JournalError::ChainBroken { sequence: 0 },
+            "a genesis event must not claim a predecessor"
+        );
+        journal
+            .append(event(&journal, 0, GovernedLifecycleEventKind::Ready, None, "tree-1"))
+            .unwrap();
+        let mut second = event(&journal, 1, GovernedLifecycleEventKind::PromptAccepted, Some(0), "tree-1");
+        second.prev_payload_hash = Some("sha256:wrong-prev".to_owned());
+        assert_eq!(
+            journal.append(second).unwrap_err(),
+            JournalError::ChainBroken { sequence: 1 },
+            "an explicit wrong predecessor is refused, never auto-healed"
+        );
+    }
+
+    #[test]
+    fn legacy_v1_events_chain_is_reestablished_on_first_v2_append() {
+        // A v1 journal has no prev_payload_hash field; records decode as
+        // None (read-only legacy projection). The chain re-establishes from
+        // the first v2 append and verifies end-to-end.
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("legacy-events.jsonl");
+        let legacy_line = r#"{"event_id":"evt-old","task_tree_id":"tree-1","node_id":"n","owner_session_id":"s","sequence":0,"causal_parent":null,"kind":"ready","source":"actor","lease_id":null,"contract_hash":null,"policy_revision":1,"evidence_refs":[],"occurred_at":1700000000,"payload_hash":"sha256:legacy-hash"}"#;
+        std::fs::write(&path, format!("{legacy_line}\n")).unwrap();
+        let mut journal = LifecycleJournal::at_path("tree-1", &path);
+        assert_eq!(journal.events().len(), 1);
+        assert_eq!(journal.events()[0].prev_payload_hash, None);
+        journal
+            .append(event(&journal, 1, GovernedLifecycleEventKind::PromptAccepted, Some(0), "tree-1"))
+            .unwrap();
+        assert_eq!(
+            journal.events()[1].prev_payload_hash.as_deref(),
+            Some(journal.events()[0].payload_hash.as_str()),
+            "the chain links onto the legacy head"
+        );
+        journal.verify_chain().expect("mixed v1/v2 chain verifies");
     }
 
     #[test]
