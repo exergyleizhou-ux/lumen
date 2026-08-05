@@ -2490,7 +2490,8 @@ impl SessionActor {
                         };
                         let action = xai_grok_memory::uncertainty_governor::decide(&signals);
                         // Application: EscalateEffort sets the next-turn effort
-                        // override; a healthy Continue clears it.
+                        // override; ForceCompaction arms the next-request
+                        // compaction header; a healthy Continue clears both.
                         match action {
                             xai_grok_memory::uncertainty_governor::GovernanceAction::EscalateEffort => {
                                 let current = self
@@ -2508,10 +2509,20 @@ impl SessionActor {
                                     "governor escalated effort (DEBT-033 C2)"
                                 );
                             }
+                            xai_grok_memory::uncertainty_governor::GovernanceAction::ForceCompaction => {
+                                self.compaction_at_tokens.set(Some(
+                                    xai_grok_sampling_types::CompactionAtTokens::Fixed(1),
+                                ));
+                                tracing::info!(
+                                    session = %session_id,
+                                    "governor forced a compaction reset point (DEBT-033 C2)"
+                                );
+                            }
                             xai_grok_memory::uncertainty_governor::GovernanceAction::Continue
                                 if no_progress == 0 && repair_loop.attempts == 0 =>
                             {
                                 self.governor_effort_override.set(None);
+                                self.compaction_at_tokens.set(None);
                             }
                             _ => {}
                         }
