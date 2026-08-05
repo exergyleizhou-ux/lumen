@@ -60,6 +60,13 @@ pub enum GovernedLifecycleEventKind {
     UncertaintyDetected,
     /// A governance action was taken (INV-UG-01). `detail` carries the action.
     GovernanceActionTaken,
+    /// Planner session submitted a structured plan (DEBT-033 C1).
+    /// `detail` carries `{plan_hash, steps, complexity}`.
+    PlanSubmitted,
+    /// Executor session accepted the plan (INV-PE-02: structured handoff).
+    PlanAccepted,
+    /// Cross-session message leak detected — fail closed (INV-PE-03).
+    CrossSessionLeakDetected,
 }
 
 impl GovernedLifecycleEventKind {
@@ -86,6 +93,9 @@ impl GovernedLifecycleEventKind {
             GovernedLifecycleEventKind::RepairExhausted => "repair_exhausted",
             GovernedLifecycleEventKind::UncertaintyDetected => "uncertainty_detected",
             GovernedLifecycleEventKind::GovernanceActionTaken => "governance_action_taken",
+            GovernedLifecycleEventKind::PlanSubmitted => "plan_submitted",
+            GovernedLifecycleEventKind::PlanAccepted => "plan_accepted",
+            GovernedLifecycleEventKind::CrossSessionLeakDetected => "cross_session_leak_detected",
         }
     }
 
@@ -866,5 +876,47 @@ mod lifecycle_journal_tests {
         assert_eq!(journal.events()[1].detail.as_ref().unwrap()["action"], "fail_closed");
         assert!(!journal.events()[0].kind.is_terminal());
         assert!(!journal.events()[1].kind.is_terminal());
+    }
+
+    #[test]
+    fn c1_plan_kinds_round_trip() {
+        let mut journal = LifecycleJournal::in_memory("tree-c1");
+        let mut submitted = event(
+            &journal,
+            0,
+            GovernedLifecycleEventKind::PlanSubmitted,
+            None,
+            "tree-c1",
+        );
+        submitted.detail = Some(serde_json::json!({
+            "plan_hash": "sha256:plan",
+            "steps": 4,
+            "complexity": 6,
+        }));
+        journal.append(submitted).unwrap();
+        let mut accepted = event(
+            &journal,
+            1,
+            GovernedLifecycleEventKind::PlanAccepted,
+            Some(0),
+            "tree-c1",
+        );
+        accepted.detail = Some(serde_json::json!({"plan_hash": "sha256:plan"}));
+        journal.append(accepted).unwrap();
+        let leak = event(
+            &journal,
+            2,
+            GovernedLifecycleEventKind::CrossSessionLeakDetected,
+            Some(1),
+            "tree-c1",
+        );
+        journal.append(leak).unwrap();
+
+        assert!(journal.verify_chain().is_ok());
+        assert_eq!(journal.events()[0].kind.as_str(), "plan_submitted");
+        assert_eq!(journal.events()[1].kind.as_str(), "plan_accepted");
+        assert_eq!(journal.events()[2].kind.as_str(), "cross_session_leak_detected");
+        assert_eq!(journal.events()[0].detail.as_ref().unwrap()["steps"], 4);
+        assert!(!journal.events()[2].kind.is_terminal(), "leak kind is an alert, not a terminal state; the actor fails closed");
     }
 }

@@ -38,6 +38,7 @@ pub mod kairos_supervisor;
 pub mod kairos_lease_consumer;
 pub mod operator_control;
 pub mod uncertainty_governor;
+pub mod dual_session;
 pub mod nextgen_contract_gates;
 pub mod nextgen_exit_gates;
 pub mod sealed_attempt_receipt;
