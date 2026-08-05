@@ -1,19 +1,15 @@
 {
   "schema_version": 1,
   "check_id": "engineering_complete",
-  "version": "2.1.0",
-  "head_short": "78120609",
+  "version": "2.2.0",
+  "head_short": "098f7cd4",
   "pass": false,
-  "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
+  "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
   "auto_blockers": [
-    "eval_harness:exit 1 Build-err: 0 Skipped: 0 FAIL: 1 tasks already pass \u2014 workspaces must be broken for coding eval ",
-    "L5_one_hour_soak:soak evidence belongs to a different binary \u2014 rerun LUMEN_L5_MODE=soak",
-    "binary_tuple_post:exit 1 hint: after cargo build --release, reinstall the stamped binary:   LUMEN_SKIP_BUILD=1 bash scripts/install-local.sh   (or build+install from a clean source tree if install refuses dirty) ",
-    "source_lock:non-evidence drift after source lock: agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs",
-    "reconcile:exit 1 lock_fresh=False head_match=False binary_tuple=False blockers=['source_lock_non_evidence_drift:agent/crates/codegen/xai-grok-shell/src/session/goal_tracker.rs', 'binary_version_mismatch', 'm5_onboardi"
+    "release_version_changed:rerun scripts/verify-readiness.sh for 2.2.0 at 098f7cd424c1015bfe0d1cbd88c96570b36064ca"
   ],
-  "can_tool_call": true,
-  "source_lock_sha256": "1200fbd454a7ad04e2ea3e8c6c210ebbbf0e729875cabf219147bbb7e99ba954",
-  "binary_sha256": "571e7b26cadda75388e09d6a025a8c21ad280f388f4eeda0ae2b566c5e535abd",
-  "generated_at": "2026-08-05T16:25:07Z"
+  "can_tool_call": false,
+  "source_lock_sha256": "18b95181cbc752a3e39c50aaf0c6652af2c3d538f009a21809766c27f1bd97c1",
+  "binary_sha256": null,
+  "generated_at": "2026-08-05T16:55:45Z"
 }

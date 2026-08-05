@@ -1,11 +1,11 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-05T15:57:38Z",
+  "generated_at": "2026-08-05T16:55:44Z",
   "monorepo": {
-    "git_head": "9f6a593e1d40cba3ce3e0330f6b8e39059b0e60e",
-    "git_short": "9f6a593"
+    "git_head": "098f7cd424c1015bfe0d1cbd88c96570b36064ca",
+    "git_short": "098f7cd"
   },
-  "lumen_version": "2.1.0",
+  "lumen_version": "2.2.0",
   "upstream_pin": {
     "doc": "agent/UPSTREAM.md",
     "source": "xai-org/grok-build (local Desktop pin)",
