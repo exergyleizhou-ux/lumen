@@ -191,6 +191,59 @@ pub fn drop_session(session_id: &str) {
     }
 }
 
+/// Append a governed verify/repair event to the task-tree lifecycle journal
+/// (same pattern as `subagent_coordinator`: journal dir + blake3-truncated
+/// root-session filename). Best-effort: journaling failures degrade to a
+/// warning, never to a verification failure (evidence is non-authority for
+/// the pipeline itself, INV-VO events are audit records).
+///
+/// The call-site wiring (memory-root plumbing + root-session authorization)
+/// is the documented next-cycle hook; this helper is fully unit-tested so the
+/// wiring is a plain call.
+pub fn append_verify_event(
+    journal_dir: &Path,
+    root_session_id: &str,
+    kind: xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind,
+    detail: Option<serde_json::Value>,
+) -> std::io::Result<()> {
+    std::fs::create_dir_all(journal_dir)?;
+    let file_name = format!("{}.jsonl", &blake3::hash(root_session_id.as_bytes()).to_hex()[..16]);
+    let mut journal = xai_grok_memory::lifecycle_journal::LifecycleJournal::at_path(
+        root_session_id,
+        journal_dir.join(file_name),
+    );
+    let sequence = journal.events().len() as u64;
+    let occurred_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut event = xai_grok_memory::lifecycle_journal::GovernedLifecycleEventV1 {
+        event_id: format!("verify-{sequence}"),
+        task_tree_id: root_session_id.to_string(),
+        node_id: "verify-orchestrator".into(),
+        owner_session_id: root_session_id.to_string(),
+        sequence,
+        causal_parent: journal.events().last().map(|e| e.sequence),
+        kind,
+        source: xai_grok_memory::lifecycle_journal::GovernedLifecycleEventSource::Actor,
+        lease_id: None,
+        contract_hash: None,
+        policy_revision: 1,
+        evidence_refs: Vec::new(),
+        occurred_at,
+        payload_hash: String::new(),
+        prev_payload_hash: None,
+        detail,
+    };
+    event.payload_hash = event
+        .compute_payload_hash()
+        .map_err(|e| std::io::Error::other(format!("payload hash: {e}")))?;
+    journal
+        .append(event)
+        .map_err(|e| std::io::Error::other(format!("journal append: {e}")))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +336,50 @@ mod tests {
             "cap exhaustion must fail closed, got {:?}",
             outcome.state
         );
+    }
+
+    #[test]
+    fn verify_events_append_and_chain_verify() {
+        use xai_grok_memory::lifecycle_journal::{
+            GovernedLifecycleEventKind, LifecycleJournal,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let root = "root-session-verify-events";
+        append_verify_event(
+            dir.path(),
+            root,
+            GovernedLifecycleEventKind::VerificationStarted,
+            Some(serde_json::json!({"tool": "search_replace", "attempt": 0})),
+        )
+        .unwrap();
+        append_verify_event(
+            dir.path(),
+            root,
+            GovernedLifecycleEventKind::VerificationSucceeded,
+            None,
+        )
+        .unwrap();
+        append_verify_event(
+            dir.path(),
+            root,
+            GovernedLifecycleEventKind::RepairExhausted,
+            Some(serde_json::json!({"reason": "attempts_exhausted"})),
+        )
+        .unwrap();
+
+        let file_name = format!("{}.jsonl", &blake3::hash(root.as_bytes()).to_hex()[..16]);
+        let journal = LifecycleJournal::at_path(root, dir.path().join(file_name));
+        assert_eq!(journal.events().len(), 3);
+        assert!(journal.verify_chain().is_ok(), "chained verify events must verify");
+        assert_eq!(journal.events()[0].kind, GovernedLifecycleEventKind::VerificationStarted);
+        assert_eq!(
+            journal.events()[0].detail.as_ref().unwrap()["tool"],
+            "search_replace"
+        );
+        assert_eq!(journal.events()[2].kind, GovernedLifecycleEventKind::RepairExhausted);
+        assert_eq!(journal.events()[2].detail.as_ref().unwrap()["reason"], "attempts_exhausted");
+        // Causal chain: each event links to its predecessor.
+        assert_eq!(journal.events()[1].causal_parent, Some(0));
+        assert_eq!(journal.events()[2].causal_parent, Some(1));
     }
 }
