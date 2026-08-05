@@ -32,6 +32,7 @@ mod tests {
             state: WorkingMemoryState::Proposed,
             text: text.into(),
             derived_from: None,
+            derived_from_known: true,
         }
     }
 

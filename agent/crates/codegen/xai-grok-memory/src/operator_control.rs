@@ -157,6 +157,7 @@ pub enum OperatorDeny {
     NoLease,
     UnauthorizedOperator,
     EffectUncertain,
+    ArchiveWithoutEvidence,
 }
 
 impl OperatorDeny {
@@ -174,6 +175,7 @@ impl OperatorDeny {
             Self::NoLease => "operator.no_lease",
             Self::UnauthorizedOperator => "operator.unauthorized_operator",
             Self::EffectUncertain => "operator.effect_uncertain",
+            Self::ArchiveWithoutEvidence => "operator.archive_without_evidence",
         }
     }
 }
@@ -376,6 +378,63 @@ pub fn operator_receipt_to_event(
     // event is append-ready (canonical NG-00 payload commitment).
     event.payload_hash = event.compute_payload_hash().unwrap_or_default();
     Some(event)
+}
+
+/// An operation being archived (`ArchivedNeedsReview`, DEBT-028 W0-4).
+///
+/// The archive disposition is atomic and explicit: every governed resource
+/// the operation holds is released, while every evidence/effect observation
+/// is preserved. The archived operation remains *undecided* — archive is not
+/// success, not failure, and not deletion.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArchiveCandidate {
+    pub operation_id: String,
+    pub lease_id: Option<String>,
+    pub reservation_id: Option<String>,
+    pub write_lease_id: Option<String>,
+    pub worktree_id: Option<String>,
+    pub process_scope_id: Option<String>,
+    pub evidence_refs: Vec<String>,
+}
+
+/// Receipt of the atomic resource release that accompanies archiving.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceReleaseReceipt {
+    pub operation_id: String,
+    pub lease_released: bool,
+    pub reservation_released: bool,
+    pub write_scope_released: bool,
+    pub worktree_released: bool,
+    pub process_scope_released: bool,
+    pub evidence_preserved: Vec<String>,
+    pub archive_reason: String,
+}
+
+/// Pure archive disposition: release lease / reservation / write-scope /
+/// worktree / process scope; preserve every evidence ref; keep the operation
+/// undecided. Fail-closed: an archive that would destroy the last evidence of
+/// an operation is refused. Idempotent: the same candidate always produces
+/// the same receipt.
+pub fn archive_release_resources(
+    candidate: &ArchiveCandidate,
+    archive_reason: &str,
+) -> Result<ResourceReleaseReceipt, OperatorDeny> {
+    if candidate.operation_id.trim().is_empty() {
+        return Err(OperatorDeny::UnknownOperation);
+    }
+    if candidate.evidence_refs.is_empty() {
+        return Err(OperatorDeny::ArchiveWithoutEvidence);
+    }
+    Ok(ResourceReleaseReceipt {
+        operation_id: candidate.operation_id.clone(),
+        lease_released: candidate.lease_id.is_some(),
+        reservation_released: candidate.reservation_id.is_some(),
+        write_scope_released: candidate.write_lease_id.is_some(),
+        worktree_released: candidate.worktree_id.is_some(),
+        process_scope_released: candidate.process_scope_id.is_some(),
+        evidence_preserved: candidate.evidence_refs.clone(),
+        archive_reason: archive_reason.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -764,5 +823,84 @@ mod tests {
         )
         .expect("maps");
         assert_eq!(recovery.append(foreign), Err(JournalError::ForeignTree));
+    }
+
+    #[test]
+    fn archive_releases_resources_and_preserves_evidence() {
+        let candidate = ArchiveCandidate {
+            operation_id: "op-arch".into(),
+            lease_id: Some("lease-7".into()),
+            reservation_id: Some("res-7".into()),
+            write_lease_id: Some("wscope-7".into()),
+            worktree_id: Some("wt-7".into()),
+            process_scope_id: Some("proc-7".into()),
+            evidence_refs: vec!["ev-1".into(), "ev-2".into()],
+        };
+        let receipt =
+            archive_release_resources(&candidate, "archived after operator review").expect("ok");
+        assert_eq!(receipt.operation_id, "op-arch");
+        assert!(receipt.lease_released);
+        assert!(receipt.reservation_released);
+        assert!(receipt.write_scope_released);
+        assert!(receipt.worktree_released);
+        assert!(receipt.process_scope_released);
+        assert_eq!(receipt.evidence_preserved, vec!["ev-1", "ev-2"]);
+        assert_eq!(receipt.archive_reason, "archived after operator review");
+    }
+
+    #[test]
+    fn archive_without_evidence_is_refused() {
+        let candidate = ArchiveCandidate {
+            operation_id: "op-naked".into(),
+            lease_id: Some("lease-1".into()),
+            reservation_id: None,
+            write_lease_id: None,
+            worktree_id: None,
+            process_scope_id: None,
+            evidence_refs: Vec::new(),
+        };
+        assert_eq!(
+            archive_release_resources(&candidate, "cleanup").unwrap_err(),
+            OperatorDeny::ArchiveWithoutEvidence,
+            "archiving must never be a way to destroy the last evidence"
+        );
+        let unknown = ArchiveCandidate {
+            operation_id: String::new(),
+            ..candidate
+        };
+        assert_eq!(
+            archive_release_resources(&unknown, "x").unwrap_err(),
+            OperatorDeny::UnknownOperation
+        );
+    }
+
+    #[test]
+    fn archive_release_is_idempotent() {
+        let candidate = ArchiveCandidate {
+            operation_id: "op-again".into(),
+            lease_id: Some("l".into()),
+            reservation_id: None,
+            write_lease_id: None,
+            worktree_id: None,
+            process_scope_id: None,
+            evidence_refs: vec!["ev".into()],
+        };
+        let first = archive_release_resources(&candidate, "r").expect("first");
+        let second = archive_release_resources(&candidate, "r").expect("second");
+        assert_eq!(first, second, "archive release is a pure, idempotent disposition");
+        // A resource-less candidate (nothing held) still archives with
+        // evidence preserved — release of nothing is fine.
+        let bare = ArchiveCandidate {
+            operation_id: "op-bare".into(),
+            lease_id: None,
+            reservation_id: None,
+            write_lease_id: None,
+            worktree_id: None,
+            process_scope_id: None,
+            evidence_refs: vec!["ev".into()],
+        };
+        let receipt = archive_release_resources(&bare, "nothing held").expect("ok");
+        assert!(!receipt.lease_released && !receipt.write_scope_released);
+        assert_eq!(receipt.evidence_preserved, vec!["ev"]);
     }
 }

@@ -479,6 +479,109 @@ pub fn child_git_mutation_in(args: &str) -> Option<&'static str> {
     None
 }
 
+// ────────────────────────────────────────────────────────────────────────
+// DEBT-028 W2b-2 — per-turn context ledger with an eviction rule.
+//
+// The model sees a *bounded projection* of tool results; the full raw output
+// lives in artifacts. Eviction keeps the most recent `FULL_RESULT_KEEP_COUNT`
+// results complete, downgrades older ones to preview + artifact ref, and
+// defers new results when even the preview budget is exhausted. The tool
+// CALL fact is never hidden — eviction affects bytes, never the call ledger.
+// ────────────────────────────────────────────────────────────────────────
+
+pub const TURN_CONTEXT_SCHEMA_VERSION: u16 = 1;
+/// Default per-turn tool-result context budget.
+pub const DEFAULT_TURN_CONTEXT_BYTES: u32 = 256 * 1024;
+/// Preview size when a result is truncated.
+pub const DEFAULT_TOOL_PREVIEW_BYTES: u32 = 4 * 1024;
+/// How many most-recent results stay complete before downgrade.
+pub const FULL_RESULT_KEEP_COUNT: usize = 8;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TurnContextBudgetV1 {
+    pub schema_version: u16,
+    pub total_bytes: u32,
+    /// Assignment / manifest / system fragments — never evicted.
+    pub fixed_reserved: u32,
+    /// Remaining capacity for tool results after the fixed reservation.
+    pub tool_result_capacity: u32,
+    /// Bytes currently admitted.
+    pub admitted: u32,
+}
+
+impl TurnContextBudgetV1 {
+    pub fn new(total_bytes: u32, fixed_reserved: u32) -> Self {
+        Self {
+            schema_version: TURN_CONTEXT_SCHEMA_VERSION,
+            total_bytes,
+            fixed_reserved,
+            tool_result_capacity: total_bytes.saturating_sub(fixed_reserved),
+            admitted: 0,
+        }
+    }
+
+    pub fn remaining(&self) -> u32 {
+        self.tool_result_capacity.saturating_sub(self.admitted)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextAdmission {
+    /// The full result bytes are admitted.
+    Complete,
+    /// Only the bounded preview is admitted; the full result is an artifact.
+    TruncatedToPreview,
+    /// Even the preview is deferred; the call fact remains visible.
+    DeferredToArtifact,
+}
+
+/// One tool call fact. Recorded independently of the byte budget — the model
+/// always knows WHICH calls happened, even when their bytes are evicted.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ToolCallFact {
+    pub call_id: String,
+    pub tool_identity: String,
+    pub admitted: ContextAdmission,
+}
+
+/// Pure admission into the per-turn context budget.
+///
+/// - `result_bytes` = raw result size;
+/// - `release_oldest_full_bytes` = bytes freed by downgrading the oldest
+///   complete result to preview + ref (0 when nothing can be released).
+///
+/// Invariants: `admitted ≤ tool_result_capacity` always holds; the call
+/// fact is appended by the caller regardless of the admission outcome.
+pub fn admit_tool_result(
+    budget: &TurnContextBudgetV1,
+    result_bytes: u32,
+    release_oldest_full_bytes: u32,
+) -> (ContextAdmission, TurnContextBudgetV1) {
+    let mut next = budget.clone();
+    if result_bytes <= next.remaining() {
+        next.admitted += result_bytes;
+        return (ContextAdmission::Complete, next);
+    }
+    // Try evicting the oldest complete result first.
+    if release_oldest_full_bytes > 0 {
+        let released = release_oldest_full_bytes.min(next.admitted);
+        next.admitted -= released;
+        if result_bytes <= next.remaining() {
+            next.admitted += result_bytes;
+            return (ContextAdmission::Complete, next);
+        }
+    }
+    // Preview path: bounded preview only.
+    let preview = DEFAULT_TOOL_PREVIEW_BYTES.min(result_bytes);
+    if preview <= next.remaining() {
+        next.admitted += preview;
+        return (ContextAdmission::TruncatedToPreview, next);
+    }
+    // Even the preview does not fit — defer to artifact.
+    (ContextAdmission::DeferredToArtifact, next)
+}
+
 #[cfg(test)]
 mod tool_contract_tests {
     use super::*;
@@ -624,6 +727,70 @@ mod tool_contract_tests {
             authorize_tool_dispatch(ToolDispatchSurface::Child, Some(&other)).unwrap_err(),
             ToolDispatchDeny::NotChildAdmissible
         );
+    }
+
+    #[test]
+    fn context_budget_admits_complete_results_until_capacity() {
+        let mut budget = TurnContextBudgetV1::new(10_000, 2_000);
+        assert_eq!(budget.tool_result_capacity, 8_000);
+        let (admission, next) = admit_tool_result(&budget, 3_000, 0);
+        assert_eq!(admission, ContextAdmission::Complete);
+        assert_eq!(next.admitted, 3_000);
+        let (admission, next) = admit_tool_result(&next, 4_000, 0);
+        assert_eq!(admission, ContextAdmission::Complete);
+        assert_eq!(next.admitted, 7_000);
+        assert!(next.admitted <= next.tool_result_capacity);
+    }
+
+    #[test]
+    fn context_budget_evicts_oldest_before_truncating() {
+        // Full budget: releasing the oldest complete result frees bytes and
+        // lets the new result in complete.
+        let mut budget = TurnContextBudgetV1::new(10_000, 2_000);
+        budget.admitted = 8_000;
+        let (admission, next) = admit_tool_result(&budget, 2_000, 3_000);
+        assert_eq!(admission, ContextAdmission::Complete);
+        assert_eq!(next.admitted, 8_000 - 3_000 + 2_000);
+        assert!(next.admitted <= next.tool_result_capacity);
+    }
+
+    #[test]
+    fn context_budget_truncates_or_defers_when_nothing_can_be_released() {
+        let mut budget = TurnContextBudgetV1::new(10_000, 0);
+        budget.admitted = 5_000; // 5_000 remaining
+        // Result larger than remaining, nothing to release → preview only
+        // (preview 4_096 fits in the 5_000 remaining).
+        let (admission, next) = admit_tool_result(&budget, 6_000, 0);
+        assert_eq!(admission, ContextAdmission::TruncatedToPreview);
+        assert_eq!(next.admitted, 5_000 + DEFAULT_TOOL_PREVIEW_BYTES);
+        // Preview no longer fits → deferred, bytes unchanged.
+        let (admission, next2) = admit_tool_result(&next, 6_000, 0);
+        assert_eq!(admission, ContextAdmission::DeferredToArtifact);
+        assert_eq!(next2.admitted, next.admitted);
+        assert!(next2.admitted <= next2.tool_result_capacity);
+    }
+
+    #[test]
+    fn call_facts_are_never_hidden_by_eviction() {
+        // The call ledger is independent of the byte budget: even a deferred
+        // result leaves a visible call fact (the model always knows WHICH
+        // tool was called, only its bytes are deferred).
+        let mut budget = TurnContextBudgetV1::new(1_000, 500);
+        budget.admitted = 500; // full
+        let (admission, _) = admit_tool_result(&budget, 99_999, 0);
+        let fact = ToolCallFact {
+            call_id: "call-9".into(),
+            tool_identity: "grep".into(),
+            admitted: admission,
+        };
+        assert_eq!(fact.admitted, ContextAdmission::DeferredToArtifact);
+        assert_eq!(fact.call_id, "call-9");
+        assert_eq!(fact.tool_identity, "grep");
+        // A deferred call fact is still recorded — eviction never erases
+        // the fact that the call happened.
+        let ledger = vec![fact];
+        assert_eq!(ledger.len(), 1);
+        assert_eq!(ledger[0].admitted, ContextAdmission::DeferredToArtifact);
     }
 
     #[test]

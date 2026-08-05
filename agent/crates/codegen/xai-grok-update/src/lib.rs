@@ -1,6 +1,7 @@
 pub mod auto_update;
 pub mod release_gate;
 pub mod release_tuple;
+pub mod trust_root;
 pub mod version;
 mod version_policy;
 
@@ -13,5 +14,6 @@ pub use release_tuple::{
     ReleaseSourceTupleV1, ReleaseTupleError, RELEASE_CONTRACT_REVISION,
     RELEASE_TUPLE_SCHEMA_V1, is_evidence_only_path,
 };
+pub use trust_root::{TrustRoot, TrustRootDeny, TrustRootSet, validate_set_update};
 pub use version::{UpdateConfig, channel_label, channel_name, write_version_cache};
 pub use version_policy::enforce_version_policy_or_exit;

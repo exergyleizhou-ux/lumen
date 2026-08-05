@@ -238,6 +238,91 @@ impl ClaimDependencyIndex {
             })
             .collect()
     }
+
+    /// Kernel cascade (DEBT-028 W2a-1): run the revocation to its fixed
+    /// point and report the quarantine scope.
+    ///
+    /// Termination is structural: each round only ever ADDS claims to the
+    /// affected set (monotone over the finite claim universe), so the loop
+    /// reaches a fixed point in at most `|claims| + 1` iterations. The
+    /// quarantine scope is exactly the affected set's partition — a bad
+    /// record freezes its partition, never the whole product.
+    pub fn run_cascade(&self, revocation: &str) -> CascadeOutcome {
+        // Round-based closure until fixed point (monotone growth ⇒ bounded).
+        let mut current: Vec<String> = vec![revocation.to_string()];
+        let mut iterations: u32 = 0;
+        loop {
+            iterations += 1;
+            let mut next = current.clone();
+            for (claim, source) in &self.derived_from_edges {
+                if current.contains(source) && !next.contains(claim) {
+                    next.push(claim.clone());
+                }
+            }
+            next.sort();
+            next.dedup();
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        // Cycle members (no stable JTMS labeling) are Frozen candidates.
+        let mut frozen_members: Vec<String> = Vec::new();
+        for member in &current {
+            if self.depends_on_self(member) {
+                frozen_members.push(member.clone());
+            }
+        }
+        frozen_members.sort();
+        frozen_members.dedup();
+        // Quarantine partition: snapshots touched by the affected claims.
+        let mut quarantined_trees: Vec<String> = current
+            .iter()
+            .filter_map(|claim| self.claim_snapshot.get(claim).cloned())
+            .collect();
+        quarantined_trees.sort();
+        quarantined_trees.dedup();
+        CascadeOutcome {
+            iterations,
+            affected_claims: current,
+            quarantined_trees,
+            frozen_members,
+        }
+    }
+
+    /// Whether `claim_id` can reach itself through forward `derived_from`
+    /// edges — the JTMS odd-loop criterion for `Frozen(NoStableLabeling)`.
+    fn depends_on_self(&self, claim_id: &str) -> bool {
+        let mut horizon: Vec<String> = vec![claim_id.to_string()];
+        let seen: Vec<String> = Vec::new();
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for (claim, source) in &self.derived_from_edges {
+                if horizon.contains(source) && !seen.contains(claim) && !horizon.contains(claim) {
+                    horizon.push(claim.clone());
+                    changed = true;
+                }
+                if horizon.contains(source) && claim == claim_id {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+}
+
+/// Fixed-point outcome of a revocation cascade (DEBT-028 W2a-1).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CascadeOutcome {
+    /// Rounds to the fixed point (bounded by |claims| + 1).
+    pub iterations: u32,
+    /// The affected claims: the revocation's reachable set.
+    pub affected_claims: Vec<String>,
+    /// Quarantine partitions (snapshot ids touched by affected claims).
+    pub quarantined_trees: Vec<String>,
+    /// Cycle members with no stable labeling — Frozen candidates.
+    pub frozen_members: Vec<String>,
 }
 
 #[cfg(test)]
@@ -381,5 +466,65 @@ mod tests {
         let analysis = index.analyze_revocation("claim-3");
         assert_eq!(analysis.len(), 1);
         assert_eq!(analysis[0].0.node_id, "other");
+    }
+
+    #[test]
+    fn cascade_reaches_fixed_point_with_bounded_iterations() {
+        // base ← d1 ← d2 ← d3 ← d4 : the closure needs 5 rounds (one per
+        // level) and must report the exact reachable set.
+        let mut index = ClaimDependencyIndex::new();
+        for (claim, snapshot) in [
+            ("base", "snap-A"),
+            ("d1", "snap-A"),
+            ("d2", "snap-A"),
+            ("d3", "snap-A"),
+            ("d4", "snap-A"),
+        ] {
+            index
+                .record_claim(claim, snapshot, "manifest-A")
+                .expect("claim");
+        }
+        index.record_derived_from("d1", "base").expect("d1");
+        index.record_derived_from("d2", "d1").expect("d2");
+        index.record_derived_from("d3", "d2").expect("d3");
+        index.record_derived_from("d4", "d3").expect("d4");
+        let outcome = index.run_cascade("base");
+        assert_eq!(
+            outcome.affected_claims,
+            vec!["base", "d1", "d2", "d3", "d4"]
+        );
+        assert!(
+            outcome.iterations <= 6,
+            "iterations bounded by |claims| + 1, got {}",
+            outcome.iterations
+        );
+        assert_eq!(outcome.quarantined_trees, vec!["snap-A"]);
+        assert!(outcome.frozen_members.is_empty());
+    }
+
+    #[test]
+    fn cascade_frozen_cycle_members_and_isolates_partitions() {
+        // a → b → a is an odd loop (no stable labeling → Frozen members);
+        // claim-x lives in another snapshot partition and must stay out of
+        // the quarantine.
+        let mut index = ClaimDependencyIndex::new();
+        index.record_claim("a", "snap-1", "m1").expect("a");
+        index.record_claim("b", "snap-1", "m1").expect("b");
+        index.record_claim("x", "snap-2", "m2").expect("x");
+        index.record_derived_from("a", "b").expect("a<-b");
+        index.record_derived_from("b", "a").expect("b<-a");
+        let outcome = index.run_cascade("a");
+        assert_eq!(outcome.affected_claims, vec!["a", "b"]);
+        assert_eq!(
+            outcome.frozen_members,
+            vec!["a", "b"],
+            "odd-loop members are Frozen(NoStableLabeling) candidates"
+        );
+        assert_eq!(
+            outcome.quarantined_trees,
+            vec!["snap-1"],
+            "a bad record quarantines its partition, never the product"
+        );
+        assert!(!outcome.quarantined_trees.contains(&"snap-2".to_owned()));
     }
 }

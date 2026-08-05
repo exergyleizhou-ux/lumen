@@ -1016,20 +1016,108 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
             );
             let mut obligation = ObligationV1::new(
                 "obl-1",
+                "tree-1",
                 HostCheckablePredicate::parse("verify:go-test:./...").expect("predicate"),
+                None,
                 None,
                 2,
             )
             .expect("obligation");
+            obligation.validate().expect("obligation valid");
             obligation.authorize_refinement(1).expect("refine ok");
             obligation
-                .transition(ObligationState::Discharged)
+                .transition(
+                    ObligationState::Discharged,
+                    Some("verify:go-test:./...:PASS:receipt-1"),
+                )
                 .expect("discharge");
             assert_eq!(
-                obligation.transition(ObligationState::Refuted).unwrap_err(),
+                obligation.discharged_by.as_deref(),
+                Some("verify:go-test:./...:PASS:receipt-1"),
+                "terminal transitions bind the adjudicating receipt"
+            );
+            assert_eq!(
+                obligation
+                    .transition(ObligationState::Refuted, None)
+                    .unwrap_err(),
                 EnvelopeDeny::TerminalObligation
             );
             gates.push(pass("CHECKPOINT_ENVELOPE_GATE"));
+        }
+
+        // F5 / DEBT-028 W1-1 — obligation coverage: completion candidates
+        // require every declared obligation attempted + a live adequacy
+        // declaration; unattended loops require a live declaration.
+        {
+            use crate::obligation_coverage::{
+                CoverageDeny, KnowledgeGap, ObligationCoverageV1,
+                authorize_completion_candidate, authorize_unattended_loop, build_coverage,
+            };
+            let mut coverage = build_coverage(
+                "tree-1",
+                &["obl-a", "obl-b", "obl-c"],
+                &["obl-a", "obl-b"],
+                &[],
+            )
+            .expect("coverage");
+            assert_eq!(
+                coverage.never_attempted,
+                vec!["obl-c".to_owned()],
+                "never_attempted is derived, never hand-written"
+            );
+            assert_eq!(
+                authorize_completion_candidate(&coverage, false).unwrap_err(),
+                CoverageDeny::NeverAttemptedNotEmpty,
+                "an unasked question blocks the completion candidate"
+            );
+            coverage = coverage
+                .with_adequacy_declaration("claim-adeq-1")
+                .expect("declaration");
+            let _: ObligationCoverageV1 = coverage.clone();
+            authorize_unattended_loop(&coverage, false).expect("loop ok");
+            assert_eq!(
+                authorize_unattended_loop(&coverage, true).unwrap_err(),
+                CoverageDeny::AdequacyRevoked,
+                "an overturned adequacy declaration fails closed"
+            );
+            let _looked: KnowledgeGap = KnowledgeGap::LookedAndDidNotFind {
+                probe_ref: "probe://go-test:receipt-1".into(),
+            };
+            gates.push(pass("OBLIGATION_COVERAGE_GATE"));
+        }
+
+        // DEBT-028 W2a-1 — kernel cascade: revocation to fixed point with a
+        // bounded iteration count, exact reachable set, Frozen cycle members
+        // and partition-scoped quarantine.
+        {
+            use crate::claim_dependency_index::ClaimDependencyIndex;
+            let mut index = ClaimDependencyIndex::new();
+            for (claim, snapshot) in [
+                ("base", "snap-A"),
+                ("d1", "snap-A"),
+                ("d2", "snap-A"),
+                ("x", "snap-B"),
+            ] {
+                index.record_claim(claim, snapshot, "m").expect("claim");
+            }
+            index.record_derived_from("d1", "base").expect("d1");
+            index.record_derived_from("d2", "d1").expect("d2");
+            let outcome = index.run_cascade("base");
+            assert_eq!(
+                outcome.affected_claims,
+                vec!["base", "d1", "d2"],
+                "the reachable set is exact — no misses, no over-freeze"
+            );
+            assert!(
+                outcome.iterations <= 5,
+                "cascade iterations are bounded by |claims| + 1"
+            );
+            assert_eq!(
+                outcome.quarantined_trees,
+                vec!["snap-A"],
+                "quarantine is partition-scoped — claim-x's partition keeps running"
+            );
+            gates.push(pass("KERNEL_CASCADE_GATE"));
         }
     }
 
@@ -1056,8 +1144,8 @@ mod tests {
         let receipt = run_offline_contract_gates(temp.path());
         assert_eq!(receipt.offline_pass_count, receipt.offline_total);
         assert!(
-            receipt.offline_total >= 30,
-            "A3 + A5–A12 + identity/permit/bypass/red-team/release-tuple + snapshot-lease/claim-dep/env-fingerprint/checkpoint-envelope gates must be present"
+            receipt.offline_total >= 32,
+            "A3 + A5–A12 + identity/permit/bypass/red-team/release-tuple + snapshot-lease/claim-dep/env-fingerprint/checkpoint-envelope + obligation-coverage + kernel-cascade gates must be present"
         );
         assert_eq!(receipt.product_rc, "NOT_READY");
         let json = serde_json::to_string_pretty(&receipt).unwrap();
@@ -1077,6 +1165,8 @@ mod tests {
         assert!(json.contains("CLAIM_DEPENDENCY_GATE"));
         assert!(json.contains("ENV_FINGERPRINT_GATE"));
         assert!(json.contains("CHECKPOINT_ENVELOPE_GATE"));
+        assert!(json.contains("OBLIGATION_COVERAGE_GATE"));
+        assert!(json.contains("KERNEL_CASCADE_GATE"));
         assert!(json.contains("NOT_READY"));
         // Durable evidence for implementer SCRATCH / offline suite.
         if let Ok(dir) = std::env::var("LUMEN_EVIDENCE_DIR") {

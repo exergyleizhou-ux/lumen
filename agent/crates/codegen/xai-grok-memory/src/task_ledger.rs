@@ -99,6 +99,13 @@ pub struct WorkingMemoryFact {
     /// author after proposal.
     #[serde(default)]
     pub derived_from: Option<String>,
+    /// Whether the derivation graph for this fact is known (DEBT-028 W0-6).
+    /// Newly written facts are always `true`; legacy records decoded without
+    /// this field are `false`. A fact with `derived_from_known=false` cannot
+    /// be judged safe under a revocation cascade — it is conservatively
+    /// Frozen rather than silently kept (master plan §0.1.9 read-old rules).
+    #[serde(default)]
+    pub derived_from_known: bool,
 }
 
 impl WorkingMemoryFact {
@@ -163,6 +170,12 @@ pub enum WorkingMemoryLedgerError {
         line: usize,
         message: String,
     },
+    /// The accepted-claim set exceeded the snapshot cap (DEBT-028 W2a-2);
+    /// admission stays fail-closed instead of degrading silently.
+    SnapshotTooLarge {
+        accepted: u64,
+        max: u64,
+    },
 }
 
 impl std::fmt::Display for WorkingMemoryLedgerError {
@@ -195,6 +208,10 @@ impl std::fmt::Display for WorkingMemoryLedgerError {
             Self::TornFinalRecord { line, message } => write!(
                 f,
                 "working-memory ledger has a torn final record at line {line}; recovery review required: {message}"
+            ),
+            Self::SnapshotTooLarge { accepted, max } => write!(
+                f,
+                "accepted snapshot too large: {accepted} claims exceed the cap of {max} — admission blocked (Blocked(SnapshotTooLarge))"
             ),
         }
     }
@@ -323,6 +340,7 @@ impl WorkingMemoryLedgerBackend {
             state,
             text: fact.text,
             derived_from: None,
+            derived_from_known: true,
         }
     }
 }
@@ -660,6 +678,7 @@ impl WorkingMemoryLedger {
     pub fn accepted_snapshot(&self) -> Result<AcceptedLedgerSnapshot, WorkingMemoryLedgerError> {
         let records = self.load_all()?;
         let accepted = self.accepted_facts()?;
+        check_snapshot_size(accepted.len() as u64)?;
         let accepted_bytes = serde_json::to_vec(&accepted)?;
         let journal_bytes = serde_json::to_vec(&records)?;
         Ok(AcceptedLedgerSnapshot {
@@ -1042,6 +1061,25 @@ fn promotion_marker(fact: &WorkingMemoryFact) -> String {
     )
 }
 
+/// Hard cap on the accepted-claim set per snapshot (DEBT-028 W2a-2). The
+/// flat-hash snapshot design accepts O(N) admission per snapshot; the cap
+/// keeps the §3.4.6 admission budget honest. The Merkle accumulator is the
+/// recorded future migration (one full rehash via `encoding_revision`).
+pub const ACCEPTED_SNAPSHOT_MAX_CLAIMS: u64 = 1000;
+
+/// Guard used by [`WorkingMemoryLedger::accepted_snapshot`]. Pure and
+/// separately testable so the cap can be exercised without writing 1001
+/// journal records.
+pub fn check_snapshot_size(accepted_count: u64) -> Result<(), WorkingMemoryLedgerError> {
+    if accepted_count > ACCEPTED_SNAPSHOT_MAX_CLAIMS {
+        return Err(WorkingMemoryLedgerError::SnapshotTooLarge {
+            accepted: accepted_count,
+            max: ACCEPTED_SNAPSHOT_MAX_CLAIMS,
+        });
+    }
+    Ok(())
+}
+
 /// Result of JTMS-style revocation propagation over a fact journal.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RevocationPropagation {
@@ -1053,6 +1091,10 @@ pub struct RevocationPropagation {
     /// labeling; every member of a cycle must be treated as Frozen, never as
     /// accepted, regardless of its stored state.
     pub cycles: Vec<Vec<String>>,
+    /// Facts whose derivation graph is unknown (`derived_from_known=false`,
+    /// legacy records). Under a revocation cascade they cannot be proven
+    /// unaffected, so they are conservatively Frozen (DEBT-028 W0-6).
+    pub unverifiable_fact_ids: Vec<String>,
 }
 
 /// Compute the consequence set of revoking `revoked_fact_id` by following
@@ -1139,7 +1181,27 @@ pub fn propagate_revocation(
     cycles.sort();
     cycles.dedup();
 
-    RevocationPropagation { affected_fact_ids: affected, cycles }
+    // Legacy facts with an unknown derivation graph: under this revocation
+    // cascade they cannot be proven unaffected — conservatively Frozen.
+    // Excludes facts that are themselves the revoked one or already affected
+    // (those are handled by the caller regardless).
+    let mut unverifiable: Vec<String> = facts
+        .iter()
+        .filter(|fact| {
+            !fact.derived_from_known
+                && fact.fact_id != revoked_fact_id
+                && !affected.contains(&fact.fact_id)
+        })
+        .map(|fact| fact.fact_id.clone())
+        .collect();
+    unverifiable.sort();
+    unverifiable.dedup();
+
+    RevocationPropagation {
+        affected_fact_ids: affected,
+        cycles,
+        unverifiable_fact_ids: unverifiable,
+    }
 }
 
 #[cfg(test)]
@@ -1159,6 +1221,7 @@ mod tests {
             state: WorkingMemoryState::Proposed,
             text: text.to_owned(),
             derived_from: None,
+            derived_from_known: true,
         }
     }
 
@@ -1813,6 +1876,7 @@ mod tests {
             state: WorkingMemoryState::Proposed,
             text: fact_id.to_owned(),
             derived_from: source.map(str::to_owned),
+            derived_from_known: true,
         }
     }
 
@@ -1865,6 +1929,85 @@ mod tests {
             "cycle must contain both members, got {:?}",
             propagation.cycles
         );
+    }
+
+    #[test]
+    fn legacy_fact_without_known_flag_decodes_as_unknown_derivation() {
+        // A v1 journal record has no `derived_from_known` field: it decodes
+        // as false (read-old projection) and can never be silently treated
+        // as safely unaffected by a revocation.
+        let legacy_json = r#"{
+            "task_tree_id": "root",
+            "branch_id": "branch-a",
+            "fact_id": "legacy-1",
+            "revision": 1,
+            "kind": "fact",
+            "author_session_id": "child",
+            "evidence_ref": "test://evidence",
+            "confidence": 80,
+            "state": "proposed",
+            "text": "legacy text",
+            "derived_from": null
+        }"#;
+        let fact: WorkingMemoryFact = serde_json::from_str(legacy_json).expect("legacy decode");
+        assert!(!fact.derived_from_known, "legacy records have unknown derivation");
+    }
+
+    #[test]
+    fn revocation_cascade_conservatively_freezes_unknown_derivation_facts() {
+        // base ← d1 (known chain) plus a legacy fact whose derivation is
+        // unknown. Revoking base affects d1 exactly; the legacy fact cannot
+        // be proven unaffected and is reported for conservative Frozen.
+        let mut legacy = fact_with_source("legacy", 1, None, TaskTreeMemoryFactKind::Fact);
+        legacy.derived_from_known = false;
+        let facts = vec![
+            fact_with_source("base", 1, None, TaskTreeMemoryFactKind::Fact),
+            fact_with_source("d1", 1, Some("base"), TaskTreeMemoryFactKind::Fact),
+            legacy,
+            fact_with_source("independent", 1, None, TaskTreeMemoryFactKind::Fact),
+        ];
+        let propagation = propagate_revocation(&facts, "base");
+        assert_eq!(propagation.affected_fact_ids, vec!["d1".to_owned()]);
+        assert_eq!(
+            propagation.unverifiable_fact_ids,
+            vec!["legacy".to_owned()],
+            "unknown-derivation facts are Frozen candidates under a cascade"
+        );
+        // The revoked fact itself and known facts are never mislabeled.
+        assert!(!propagation.unverifiable_fact_ids.contains(&"independent".to_owned()));
+        assert!(!propagation.unverifiable_fact_ids.contains(&"base".to_owned()));
+        assert!(!propagation.unverifiable_fact_ids.contains(&"d1".to_owned()));
+    }
+
+    #[test]
+    fn new_facts_are_written_with_known_derivation() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger = WorkingMemoryLedger::with_path("root", temp.path().join("ledger.jsonl"));
+        ledger
+            .propose(fact("fresh", 1, "child", "brand new"))
+            .unwrap();
+        let all = ledger.load_all().unwrap();
+        assert!(
+            all.iter().any(|f| f.fact_id == "fresh" && f.derived_from_known),
+            "newly written facts must mark their derivation graph as known"
+        );
+    }
+
+    #[test]
+    fn snapshot_size_cap_fails_closed() {
+        // The accepted-set cap (DEBT-028 W2a-2): under the cap the snapshot
+        // proceeds; at/over the cap admission is blocked, never silently
+        // degraded.
+        check_snapshot_size(0).expect("empty ok");
+        check_snapshot_size(999).expect("under cap ok");
+        check_snapshot_size(1000).expect("at cap ok");
+        match check_snapshot_size(1001) {
+            Err(WorkingMemoryLedgerError::SnapshotTooLarge { accepted, max }) => {
+                assert_eq!(accepted, 1001);
+                assert_eq!(max, ACCEPTED_SNAPSHOT_MAX_CLAIMS);
+            }
+            other => panic!("expected SnapshotTooLarge, got {other:?}"),
+        }
     }
 
     #[test]

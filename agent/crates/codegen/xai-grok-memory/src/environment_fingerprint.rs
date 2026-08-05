@@ -103,7 +103,7 @@ fn fingerprint_preimage(
     sorted_hashes.sort();
     let artifacts: Vec<CanonicalValue> = sorted_hashes
         .iter()
-        .map(|h| CanonicalValue::str(h))
+        .map(CanonicalValue::str)
         .collect();
     CanonicalRecord::new("environment-fingerprint")
         .field("schema_version", CanonicalValue::U64(fingerprint.schema_version as u64))

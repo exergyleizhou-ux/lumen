@@ -640,6 +640,7 @@ mod tests {
             state: WorkingMemoryState::Proposed,
             text: text.into(),
             derived_from: None,
+            derived_from_known: true,
         };
         ledger
             .propose(mk("fact-a", 1, "branch-a", "child-a", "unreviewed"))

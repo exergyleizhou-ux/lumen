@@ -119,10 +119,18 @@
     {
       "name": "CHECKPOINT_ENVELOPE_GATE",
       "status": "PASS"
+    },
+    {
+      "name": "OBLIGATION_COVERAGE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "KERNEL_CASCADE_GATE",
+      "status": "PASS"
     }
   ],
-  "offline_pass_count": 30,
-  "offline_total": 30,
+  "offline_pass_count": 32,
+  "offline_total": 32,
   "product_rc": "NOT_READY",
   "note": "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; A5-A12 exit gates; sandbox/advisor/kairos; exact-SHA CI + formal v2.0.0 tag NOT RUN"
 }

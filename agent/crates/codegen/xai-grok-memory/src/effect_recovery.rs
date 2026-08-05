@@ -195,12 +195,51 @@ impl FrozenRateUpperBound {
         }
     }
 
+    /// Ratio of Opaque effects — the design-time upper bound on the Frozen
+    /// rate (`frozen_per_24h`). Fail-closed on an empty inventory: an
+    /// un-enumerated adapter set counts as fully Opaque, never as zero.
     pub fn ratio(&self) -> f64 {
         if self.total_effects == 0 {
-            0.0
+            1.0
         } else {
             self.opaque_effects as f64 / self.total_effects as f64
         }
+    }
+}
+
+/// Per-class effect inventory (DEBT-028 W0-3): enumerating every effect
+/// adapter's recovery class makes the Frozen bound and the probe backlog
+/// explicit instead of observed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct EffectClassInventory {
+    pub pure: usize,
+    pub idempotent: usize,
+    pub queryable: usize,
+    pub opaque: usize,
+}
+
+impl EffectClassInventory {
+    pub fn classify(adapters: &[(&'static str, EffectRecoveryClass)]) -> Self {
+        let mut inventory = Self::default();
+        for (_, class) in adapters {
+            match class {
+                EffectRecoveryClass::Pure => inventory.pure += 1,
+                EffectRecoveryClass::Idempotent { .. } => inventory.idempotent += 1,
+                EffectRecoveryClass::Queryable { .. } => inventory.queryable += 1,
+                EffectRecoveryClass::Opaque => inventory.opaque += 1,
+            }
+        }
+        inventory
+    }
+
+    pub fn total(&self) -> usize {
+        self.pure + self.idempotent + self.queryable + self.opaque
+    }
+
+    /// Adapters that still need a probe (or an idempotency key) before they
+    /// can run unattended — the actionable backlog behind the Frozen bound.
+    pub fn probe_backlog(&self) -> usize {
+        self.opaque
     }
 }
 
@@ -250,6 +289,40 @@ mod effect_recovery_tests {
         let bound = FrozenRateUpperBound::of(&classes);
         assert_eq!(bound.opaque_effects, 2);
         assert_eq!(bound.total_effects, 5);
+        assert!((bound.ratio() - 0.4).abs() < 1e-9);
+    }
+
+    #[test]
+    fn empty_inventory_is_fully_opaque_fail_closed() {
+        // An un-enumerated adapter set must count as fully Opaque — never
+        // as zero (that would hide the probe backlog).
+        let bound = FrozenRateUpperBound::of(&[]);
+        assert_eq!(bound.total_effects, 0);
+        assert_eq!(bound.ratio(), 1.0);
+        let inventory = EffectClassInventory::classify(&[]);
+        assert_eq!(inventory.total(), 0);
+        assert_eq!(inventory.probe_backlog(), 0);
+    }
+
+    #[test]
+    fn effect_class_inventory_counts_every_class() {
+        let adapters = [
+            ("rerun", EffectRecoveryClass::Pure),
+            ("git-commit", EffectRecoveryClass::Queryable { probe: "rev-parse".into() }),
+            ("file-write", EffectRecoveryClass::Queryable { probe: "hash-compare".into() }),
+            ("send", EffectRecoveryClass::Opaque),
+            ("provider-bill", EffectRecoveryClass::Opaque),
+        ];
+        let inventory = EffectClassInventory::classify(&adapters);
+        assert_eq!(inventory.pure, 1);
+        assert_eq!(inventory.idempotent, 0);
+        assert_eq!(inventory.queryable, 2);
+        assert_eq!(inventory.opaque, 2);
+        assert_eq!(inventory.total(), 5);
+        assert_eq!(inventory.probe_backlog(), 2);
+        let bound = FrozenRateUpperBound::of(
+            &adapters.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>(),
+        );
         assert!((bound.ratio() - 0.4).abs() < 1e-9);
     }
 
