@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "version": "2.2.0",
+  "source_commit": "098f7cd424c1015bfe0d1cbd88c96570b36064ca",
+  "evidence_commit": "af2857a21ec4b1c5655d308231b89ba81596c4fd",
+  "tag_ref": "v2.2.0",
+  "tag_commit": "098f7cd424c1015bfe0d1cbd88c96570b36064ca",
+  "binary_sha256": "sha256:f1aa406131f9db4b30f636770386738b289a5bcd65a695e7aac912f699073564",
+  "source_lock_sha256": "sha256:18b95181cbc752a3e39c50aaf0c6652af2c3d538f009a21809766c27f1bd97c1",
+  "generated_at": "2026-08-05T16:56:20Z"
+}

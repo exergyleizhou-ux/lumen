@@ -2,10 +2,10 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "lumen-9f6a593",
-  "documentNamespace": "https://lumen.local/spdx/9f6a593e1d40cba3ce3e0330f6b8e39059b0e60e",
+  "name": "lumen-098f7cd",
+  "documentNamespace": "https://lumen.local/spdx/098f7cd424c1015bfe0d1cbd88c96570b36064ca",
   "creationInfo": {
-    "created": "2026-08-05T16:13:30Z",
+    "created": "2026-08-05T18:21:38Z",
     "creators": [
       "Tool: scripts/generate-sbom.sh",
       "Organization: Lumen"
@@ -16,7 +16,7 @@
     {
       "SPDXID": "SPDXRef-Package-lumen-monorepo",
       "name": "lumen",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -27,7 +27,7 @@
         {
           "referenceCategory": "OTHER",
           "referenceType": "gitCommit",
-          "referenceLocator": "9f6a593e1d40cba3ce3e0330f6b8e39059b0e60e"
+          "referenceLocator": "098f7cd424c1015bfe0d1cbd88c96570b36064ca"
         }
       ]
     },
@@ -13254,9 +13254,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-pager-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-pager-2-2-0",
       "name": "xai-grok-pager",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13265,9 +13265,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-pager-bin-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-pager-bin-2-2-0",
       "name": "xai-grok-pager-bin",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13397,9 +13397,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-shell-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-shell-2-2-0",
       "name": "xai-grok-shell",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13463,9 +13463,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-tools-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-tools-2-2-0",
       "name": "xai-grok-tools",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13474,9 +13474,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-tools-api-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-tools-api-2-2-0",
       "name": "xai-grok-tools-api",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13485,9 +13485,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-update-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-update-2-2-0",
       "name": "xai-grok-update",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -13518,9 +13518,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-xai-grok-workspace-2-1-0",
+      "SPDXID": "SPDXRef-Package-xai-grok-workspace-2-2-0",
       "name": "xai-grok-workspace",
-      "versionInfo": "2.1.0",
+      "versionInfo": "2.2.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -14112,9 +14112,9 @@
       "supplier": "NOASSERTION"
     },
     {
-      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-9f6a593",
+      "SPDXID": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-098f7cd",
       "name": "github.com/lumen-ai/lumen-science",
-      "versionInfo": "9f6a593",
+      "versionInfo": "098f7cd",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "Apache-2.0",
@@ -14125,7 +14125,7 @@
         {
           "referenceCategory": "PACKAGE-MANAGER",
           "referenceType": "purl",
-          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@9f6a593"
+          "referenceLocator": "pkg:golang/github.com/lumen-ai/lumen-science@098f7cd"
         }
       ]
     }
@@ -20149,12 +20149,12 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-bin-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-pager-bin-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20214,7 +20214,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-shell-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-shell-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20244,17 +20244,17 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-api-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-tools-api-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-update-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-update-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20269,7 +20269,7 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "DEPENDS_ON",
-      "relatedSpdxElement": "SPDXRef-Package-xai-grok-workspace-2-1-0"
+      "relatedSpdxElement": "SPDXRef-Package-xai-grok-workspace-2-2-0"
     },
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
@@ -20539,15 +20539,15 @@
     {
       "spdxElementId": "SPDXRef-Package-lumen-monorepo",
       "relationshipType": "CONTAINS",
-      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-9f6a593"
+      "relatedSpdxElement": "SPDXRef-Package-go-github-com-lumen-ai-lumen-science-098f7cd"
     }
   ],
   "annotations": [
     {
       "annotationType": "OTHER",
       "annotator": "Tool: scripts/generate-sbom.sh",
-      "annotationDate": "2026-08-05T16:13:30Z",
-      "comment": "{\"monorepo_git_head\": \"9f6a593e1d40cba3ce3e0330f6b8e39059b0e60e\", \"evidence_git_head\": \"78120609595e24c60e59131e21fa19ce1798de0b\", \"lumen_version\": \"2.1.0\", \"package_count\": 1282, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"63b85ec091fea1a9817967b9ced55d90132573d200d42827a0802b6225bb9b21\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"1200fbd454a7ad04e2ea3e8c6c210ebbbf0e729875cabf219147bbb7e99ba954\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
+      "annotationDate": "2026-08-05T18:21:38Z",
+      "comment": "{\"monorepo_git_head\": \"098f7cd424c1015bfe0d1cbd88c96570b36064ca\", \"evidence_git_head\": \"5b7c02225f6407753e4d84c18133306b1a6dd29c\", \"lumen_version\": \"2.2.0\", \"package_count\": 1282, \"file_sha256\": {\"NOTICE\": \"85a9b0bf8149b71888efbc5fdaa30d00ee06a8288d45993170ecddeb47293c2d\", \"LEGAL.md\": \"63b85ec091fea1a9817967b9ced55d90132573d200d42827a0802b6225bb9b21\", \"agent/LICENSE\": \"116f7778b9802e569b7fa3a532b17bd80eb13c67837def01eed093d4ea472f28\", \"agent/THIRD-PARTY-NOTICES\": \"7b7c315403c596f9b7a13bb562553ee4fd4c05da8672f95bcaa02a125eea2947\", \"SOURCE_LOCK.json\": \"18b95181cbc752a3e39c50aaf0c6652af2c3d538f009a21809766c27f1bd97c1\", \"packs/science/go.mod\": \"e9ab3e974430b4d6cfe4546122f20faee97df377d442061fc977169349903741\"}, \"go_module_count\": 1, \"generator\": \"cargo metadata + go list -m + root legal files\"}"
     }
   ]
 }

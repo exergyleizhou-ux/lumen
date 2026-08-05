@@ -2,14 +2,14 @@
   "schema_version": 1,
   "check_id": "engineering_complete",
   "version": "2.2.0",
-  "head_short": "098f7cd4",
+  "head_short": "5b7c0222",
   "pass": false,
-  "meaning": "Readiness evidence was invalidated by a release version change and must be regenerated.",
+  "meaning": "All automatable readiness gates pass; publish ready still requires M5_10_min_stranger and M6_15_day_self_use",
   "auto_blockers": [
-    "release_version_changed:rerun scripts/verify-readiness.sh for 2.2.0 at 098f7cd424c1015bfe0d1cbd88c96570b36064ca"
+    "reconcile:exit 1 lock_fresh=True head_match=True binary_tuple=True blockers=['m5_onboarding_semantics_invalid'] wrote /Users/lei/code/lumen/artifacts/readiness/reconcile.json"
   ],
-  "can_tool_call": false,
+  "can_tool_call": true,
   "source_lock_sha256": "18b95181cbc752a3e39c50aaf0c6652af2c3d538f009a21809766c27f1bd97c1",
-  "binary_sha256": null,
-  "generated_at": "2026-08-05T16:55:45Z"
+  "binary_sha256": "f1aa406131f9db4b30f636770386738b289a5bcd65a695e7aac912f699073564",
+  "generated_at": "2026-08-05T18:32:55Z"
 }
