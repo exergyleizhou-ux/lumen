@@ -1003,10 +1003,25 @@ impl SessionActor {
                                                 "diagnostics": outcome.diagnostics,
                                             }),
                                         );
-                                        tracing::warn!(
+                                        // DEBT-033 B2: inject the repair
+                                        // instruction so the NEXT model request
+                                        // sees the failure and fixes it
+                                        // (established mid-loop injection
+                                        // pattern, cf. inject_workflow_status_reminder).
+                                        let instruction =
+                                            crate::session::verify_orchestrator::build_repair_instruction(
+                                                outcome.attempts,
+                                                outcome.max_attempts,
+                                                &outcome.diagnostics,
+                                            );
+                                        self.chat_state_handle
+                                            .push_user_message(ConversationItem::user(
+                                                &instruction,
+                                            ));
+                                        tracing::info!(
                                             session = %sid_log,
                                             attempts = outcome.attempts,
-                                            "verify-after-edit found failures; repair obligation wiring is the next hook"
+                                            "verify-after-edit failed; repair instruction injected"
                                         );
                                     }
                                 }

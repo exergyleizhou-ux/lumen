@@ -72,9 +72,32 @@ pub fn should_verify(effort_is_max: bool, profile_forces_verify_first: bool, ver
 pub struct VerifyOutcome {
     pub state: RepairLoopState,
     pub attempts: u32,
+    pub max_attempts: u32,
     pub verified_files: Vec<PathBuf>,
     /// Formatted diagnostics (empty when all checks passed or skipped).
     pub diagnostics: String,
+}
+
+/// Cap on diagnostics embedded in a repair instruction (a user turn should
+/// stay small; full diagnostics are in the journal event).
+const REPAIR_INSTRUCTION_DIAGNOSTICS_CAP_CHARS: usize = 2000;
+
+/// Build the repair instruction injected into the conversation when
+/// verification failed with attempts remaining (DEBT-033 B2): the next model
+/// request sees it and fixes the failing change.
+pub fn build_repair_instruction(attempts: u32, max_attempts: u32, diagnostics: &str) -> String {
+    let mut instruction = format!(
+        "Your last edit failed verification (attempt {attempts} of {max_attempts}). Fix the change so the checks pass."
+    );
+    if !diagnostics.is_empty() {
+        instruction.push_str("\nVerification diagnostics:\n");
+        let capped: String = diagnostics.chars().take(REPAIR_INSTRUCTION_DIAGNOSTICS_CAP_CHARS).collect();
+        instruction.push_str(&capped);
+        if capped.chars().count() < diagnostics.chars().count() {
+            instruction.push_str("\n[diagnostics truncated]");
+        }
+    }
+    instruction
 }
 
 /// Run the lumen-verify pipeline for the changed files and fold the result
@@ -118,6 +141,7 @@ pub fn run_verification(
     VerifyOutcome {
         state: loop_state.state,
         attempts: loop_state.attempts,
+        max_attempts: loop_state.max_repair_attempts,
         verified_files: verified,
         diagnostics,
     }
@@ -387,5 +411,21 @@ mod tests {
         // Causal chain: each event links to its predecessor.
         assert_eq!(journal.events()[1].causal_parent, Some(0));
         assert_eq!(journal.events()[2].causal_parent, Some(1));
+    }
+
+    #[test]
+    fn repair_instruction_mentions_attempt_and_caps_diagnostics() {
+        let with_diag = build_repair_instruction(1, 3, "line 5: compile error");
+        assert!(with_diag.contains("attempt 1 of 3"));
+        assert!(with_diag.contains("line 5: compile error"));
+        // No diagnostics → clean instruction without a diagnostics section.
+        let bare = build_repair_instruction(2, 3, "");
+        assert!(bare.contains("attempt 2 of 3"));
+        assert!(!bare.contains("Verification diagnostics"));
+        // Oversized diagnostics are capped with a truncation marker.
+        let huge = "x".repeat(5000);
+        let capped = build_repair_instruction(3, 3, &huge);
+        assert!(capped.contains("[diagnostics truncated]"));
+        assert!(capped.chars().count() < 3000);
     }
 }
