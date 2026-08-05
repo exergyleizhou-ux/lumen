@@ -7,6 +7,88 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-08-05
+
+### Added
+
+- tamper-evident journal chain (DEBT-031), clippy cleanup (DEBT-029), large-stack CI test fix (DEBT-027) (`02801630`)
+- land DEBT-028 W0–W2c — review adoption: obligation bindings, coverage, model check, cascade, fairness, trust roots, executable invariants (`be893649`)
+- land master-plan §3.1.3/§3.4.1/§3.4.2 pure contracts — snapshot leases, claim deps, env fingerprints, checkpoint envelopes (`3b791382`)
+- land DEBT-024(a-d) — worktree handoff, A9 recommend, M1 pager pane, spawn permits (`c7f0a12d`)
+- land identity/permit/bypass layer, red-team contracts, and production wiring (`825d960d`)
+- A3 token reservation offline gate + thrash-safe land (`8d0fdf09`)
+- A3 token-reservation offline gate (close last A-group slice) (`b3c1c591`)
+- close A5–A12 Exit Gates with production wiring (`18797e00`)
+- force ToolContract on child dispatch; FLOW_CONTROL mailbox fixtures (`bc00bbd1`)
+
+### Fixed
+
+- accept artifacts/audit/ in evidence-only suffix allowlist (`9a133a95`)
+- assemble fixture secrets at runtime; ignore gitleaks fingerprints (`34d04cff`)
+- allow re-release when version already bumped (`f51fb902`)
+- strip unsupported SPDX "or later" plus in release SBOMs (`5906bd14`)
+- install source candidate before thrash-safe source-lock (`fc871ad0`)
+- source-lock records binary stamp, not thrash HEAD (`e381fb5c`)
+- clean-seal transport resubmit on pre-stream cli-chat-proxy fail (`8bd6ddba`)
+- hint reinstall when release/installed stamps diverge (`67bce153`)
+- close P1-P5, grant/token budget paths, S8 clean-transport resubmit (`bb2e9088`)
+
+### Security
+
+- deny instruction-extraction probes (red-team finding) (`2a5430b0`)
+
+### Documentation
+
+- register DEBT-028 — engineering-review adoption plan (W0-W2, gates 30→32) (`cfded2b5`)
+- register DEBT-027 — pre-existing CI stack-overflow flake in auto-wake abort tests (`b5196dfa`)
+- record v2.0.0 GitHub Release published (19 assets, immutable) (`d74db8e0`)
+- handover snapshot — v2.0.0 shipped, debt all closed (`e8c6fc55`)
+- close DEBT-015 — formal v2.0.0 tag shipped (`76371190`)
+- session handover — S8-S14, red-team hardening, A3, executor status, env pitfalls (`b9f96b8b`)
+- full-dimension 100% handover — remaining slices, session issues as test tasks (`a860a350`)
+- H4 user confirmed rc.1 launches on real terminal (`00defcb6`)
+- H5 grok-4.5 401 verified resolved after re-login (auth accepted) (`90dc2caf`)
+- close human gates H2/H3, record H1/H4/H5 status (`61092f03`)
+
+### Maintenance
+
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`9f102cd3`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`a1ee5121`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`4731d920`)
+- lock 3b791382 — fifth 1h soak bound to release binary, readiness aggregation (`5d8a361b`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`f0812559`)
+- readiness for c7f0a12d, fourth 1h soak bound to locked build (`78fd0d94`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`3751643d`)
+- readiness for 9a133a95, third 1h soak bound to locked build (`a4230435`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`3a9ad1c8`)
+- readiness for 34d04cff, 26 offline gates, audit snapshot, debt ledger (`61d2eb0f`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`b989d2d7`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d7ffc019`)
+- evidence for v2.0.0 (re-release with SPDX fix) (`e8038b36`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`7a191df9`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`01ee03f1`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d85f4512`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`5401a3f4`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`5636a066`)
+- evidence for v2.0.0 (`77a81393`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`bdedf7b5`)
+- refresh SOURCE_LOCK timestamp after thrash-safe re-lock (`8146c85a`)
+- SOURCE_LOCK for 8d0fdf09 (A3/A5–A12 source stamp) (`d0f2b508`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d3e7dcc7`)
+- SOURCE_LOCK for 70aff6b0 after A5–A12 evidence install (`abc334d5`)
+- A5–A12 offline gates + dual-model accept pack (`7349140b`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`73cfbd68`)
+- refresh source lock for advisor extraction deny (`df6bb13e`)
+- evidence for 598a9a1b — SOURCE_LOCK after tuple reinstall hint (`5a6d9b62`)
+- refresh L4-fault-cancel evidence after regression re-run (`41447e86`)
+- evidence for 28fe1687 — SOURCE_LOCK + L4 full short PASS (`11245d31`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`98d2f7af`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`0ca44327`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`933d2231`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`39a6e051`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`c2a1ced4`)
+- evidence for v2.0.0-rc.1 (`1d8a4a73`)
+
 ## [2.0.0] - 2026-08-04
 
 ### Added
