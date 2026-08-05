@@ -34,6 +34,7 @@
 
 | DEBT-025 | 2026-08-05 | readiness 人工门：M5 真人 10 分钟陌生测试、M6 15 天真实生产力日志（当前 2 天）；`verify-readiness.sh` 脚本语义拒绝以 SKIP/模拟证据判定 ready | open | 真实人类完成 M5/M6 后重跑 `verify-readiness.sh`；`ready=true` 由脚本输出决定，不伪造 |
 | DEBT-026 | 2026-08-05 总纲复扫 | 总纲 §3.4.1 SnapshotLeaseV1、§3.1.3 ClaimDependencyIndex + EnvironmentFingerprintV1、§3.4.2 CheckpointEnvelopeV1 + ObligationV1 此前零实现（§3.1.3 撤销传播决策矩阵、三级复现、checkpoint 换代纪律均为书内合同） | **closed (2026-08-05)** | snapshot_lease.rs（advance 仅安全 checkpoint、Security/Grant/Evidence 三类立即失效、Active 必带 NormalAdvance）；claim_dependency_index.rs（derived_from 传递闭包、间接消费者不遗漏、Write/Effect 立即 BlockDispatch Frozen、无关兄弟 Unaffected）；environment_fingerprint.rs（toolchain/lock/target/exe/env/artifact 哈希 + ReproLevel 三级授权 promote/长存）；checkpoint_envelope.rs + obligation（序列+因果父校验、Obligation 一次性 terminal、refinement 上限、predicate 为 HostCheckablePredicate newtype 按书内字段类型 fail-closed）；4 新 gate 进离线套件 **26→30/30 全 PASS**（SNAPSHOT_LEASE_GATE / CLAIM_DEPENDENCY_GATE / ENV_FINGERPRINT_GATE / CHECKPOINT_ENVELOPE_GATE） |
+| DEBT-027 | 2026-08-05（CI 偶发红） | `auto_wake_suppression_tests` 三个测试 + `goal_backoff_tests::goal_resume_paused_through_handle_prompt_runs_inference` 在真实 `handle_prompt` 的 spawn_local 任务上 `turn.abort()`：中止的深嵌套 async 状态机在 2MiB 测试线程（RUST_MIN_STACK 默认）上递归 drop，CI 并行负载下偶发 stack overflow（2026-08-05 对 064a6d4e 触发一次；本地 2MiB 隔离 5/5 过、并行 6330 全绿；同代码 696853ce CI 绿 → 既有间歇债，非本发布引入；'x' 刷屏为并发测试输出，非本测试） | open | 将三个 abort 测试改为 `#[test]` 包装：body 移入 `async fn X_impl`，由 `std::thread::Builder::stack_size(64MiB)` 线程驱动（helper `run_synthetic_turn_on_large_stack`），abort-drop 在 64MiB 栈上确定性完成；goal_backoff 同模式一并改；改后以 `RUST_MIN_STACK=2097152` 跑该文件全绿再合入（测试-only 源码提交需走完整 rebuild/relock/soak 链） |
 
 ## 登记记录（追加式）
 
@@ -45,6 +46,7 @@
 - 2026-08-04 收尾审计（本目标）：身份层/红队合同/接线/发布链落地；DEBT-017..023 closed；DEBT-024 残余 partial 显式登记 open。
 - 2026-08-05：DEBT-024(a)(b)(c)(d) 全部落地 closed（worktree auto-handoff 生产接线、A9 recommend 面、M1 pager 树 pane、DispatchPermit spawn 适配器）；残余人工门拆为 DEBT-025 open（M5/M6，脚本语义拒绝伪造）。
 - 2026-08-05 总纲复扫：master book 全类型 grep 复扫发现 SnapshotLeaseV1 / ClaimDependencyIndex / EnvironmentFingerprintV1 / CheckpointEnvelopeV1 / ObligationV1 零实现 → 四模块纯合同落地（21 测，含负例），4 新 gate 入离线套件 26→30 全 PASS；DEBT-026 closed。DEBT-025 仍 open（人工门，不伪造）。
+- 2026-08-05 CI 偶发红：`auto_wake_suppression_tests::task_completion_wake_is_admitted_without_cancel_barrier` 在 CI 并行负载下 stack overflow（2MiB 测试线程递归 drop 中止的 handle_prompt future）。确认既有间歇债（测试代码 f3e04df3 引入、696853ce CI 同代码绿、本地复现不出）→ 登记 DEBT-027 open（含 64MiB 大栈线程修复方案）；对已 push 的 064a6d4e rerun failed job 重跑 gate。
 
 ## 残余 partial 说明（DEBT-025，唯一剩余 open 项）
 
