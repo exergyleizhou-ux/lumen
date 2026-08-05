@@ -191,6 +191,12 @@ pub fn drop_session(session_id: &str) {
     }
 }
 
+/// Derive the task-tree lifecycle journal dir from the session's memory
+/// workspace (same layout as `subagent_coordinator`).
+pub fn task_tree_journal_dir(memory_root: Option<&Path>) -> Option<PathBuf> {
+    memory_root.map(|root| root.join("task-tree-lifecycle"))
+}
+
 /// Append a governed verify/repair event to the task-tree lifecycle journal
 /// (same pattern as `subagent_coordinator`: journal dir + blake3-truncated
 /// root-session filename). Best-effort: journaling failures degrade to a

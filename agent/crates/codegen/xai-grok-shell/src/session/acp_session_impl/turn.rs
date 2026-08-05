@@ -2439,6 +2439,88 @@ impl SessionActor {
                             "cache health append failed; continuing turn"
                         );
                     }
+                    // DEBT-033 A2-c: governed CacheHealthSample event into the
+                    // task-tree lifecycle journal (best-effort).
+                    if let Some(journal_dir) =
+                        crate::session::verify_orchestrator::task_tree_journal_dir(
+                            self.tool_context.task_tree_memory_workspace_dir.as_deref(),
+                        )
+                    {
+                        let _ = crate::session::verify_orchestrator::append_verify_event(
+                            &journal_dir,
+                            self.session_info.id.0.as_ref(),
+                            xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind::CacheHealthSample,
+                            Some(serde_json::json!({
+                                "prompt_tokens": record.prompt_tokens,
+                                "hit_tokens": record.hit_tokens,
+                                "miss_tokens": record.miss_tokens,
+                                "output_tokens": record.output_tokens,
+                                "hit_ratio": record.hit_ratio,
+                                "truth": record.truth,
+                            })),
+                        );
+                    }
+                    // DEBT-033 C2: uncertainty-to-governance decision from the
+                    // signals available at turn end (cache health + repair
+                    // loop depth; no-progress/human-gate signals land with the
+                    // goal-tracker hook). The decision is journaled; action
+                    // application (effort escalation via SetSessionModel,
+                    // compaction trigger) is the documented next hook.
+                    {
+                        let session_id = self.session_info.id.0.as_ref().to_string();
+                        let repair_loop =
+                            crate::session::verify_orchestrator::session_repair_loop(&session_id);
+                        let signals = xai_grok_memory::uncertainty_governor::UncertaintySignals {
+                            no_progress_turns: 0,
+                            priority_demoted: false,
+                            recent_cache_hit_ratio: if record.prompt_tokens > 0 {
+                                Some(record.hit_ratio)
+                            } else {
+                                None
+                            },
+                            effort_demoted: false,
+                            repair_loop_depth: repair_loop.attempts,
+                            human_gate_pending: false,
+                        };
+                        let action = xai_grok_memory::uncertainty_governor::decide(&signals);
+                        if action
+                            != xai_grok_memory::uncertainty_governor::GovernanceAction::Continue
+                        {
+                            tracing::warn!(
+                                session = %session_id,
+                                action = ?action,
+                                signals = ?signals,
+                                "uncertainty governor decision (DEBT-033 C2)"
+                            );
+                            if let Some(journal_dir) =
+                                crate::session::verify_orchestrator::task_tree_journal_dir(
+                                    self.tool_context.task_tree_memory_workspace_dir.as_deref(),
+                                )
+                            {
+                                let _ = crate::session::verify_orchestrator::append_verify_event(
+                                    &journal_dir,
+                                    &session_id,
+                                    xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind::UncertaintyDetected,
+                                    Some(serde_json::json!({
+                                        "no_progress_turns": signals.no_progress_turns,
+                                        "priority_demoted": signals.priority_demoted,
+                                        "recent_cache_hit_ratio": signals.recent_cache_hit_ratio,
+                                        "effort_demoted": signals.effort_demoted,
+                                        "repair_loop_depth": signals.repair_loop_depth,
+                                        "human_gate_pending": signals.human_gate_pending,
+                                    })),
+                                );
+                                let _ = crate::session::verify_orchestrator::append_verify_event(
+                                    &journal_dir,
+                                    &session_id,
+                                    xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind::GovernanceActionTaken,
+                                    Some(serde_json::json!({
+                                        "action": format!("{action:?}").to_ascii_lowercase(),
+                                    })),
+                                );
+                            }
+                        }
+                    }
                 }
             }
 

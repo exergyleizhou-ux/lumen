@@ -205,12 +205,49 @@ impl SessionActor {
     ) -> std::io::Result<crate::session::cache_epoch::CacheEpochRecord> {
         let domain = self.cache_domain().await;
         let is_fork = self.startup_hints.inherited_prefix_len.is_some();
-        crate::session::cache_epoch::load_or_rotate(
+        let (record, disposition) = crate::session::cache_epoch::load_or_rotate(
             &crate::session::persistence::session_dir(&self.session_info),
             &domain,
             is_fork,
-        )
-        .map(|(record, _)| record)
+        )?;
+        // DEBT-033 A2-c: a rotated epoch is a structural cache-reset point.
+        self.emit_cache_reset_event(&record, disposition);
+        Ok(record)
+    }
+
+    /// DEBT-033 A2-c: journal a governed ContextReset event when the cache
+    /// epoch rotated (the single deliberate cache-reset point). Best-effort:
+    /// journaling failures degrade to a warning, never to a failure.
+    fn emit_cache_reset_event(
+        &self,
+        record: &crate::session::cache_epoch::CacheEpochRecord,
+        disposition: crate::session::cache_epoch::CacheEpochDisposition,
+    ) {
+        let reason = match disposition {
+            crate::session::cache_epoch::CacheEpochDisposition::RotatedDomainChanged => {
+                "domain_changed"
+            }
+            crate::session::cache_epoch::CacheEpochDisposition::RotatedInvalidRecord => {
+                "invalid_record"
+            }
+            crate::session::cache_epoch::CacheEpochDisposition::RotatedFork => "fork",
+            _ => return, // Retained / CreatedMissing are not resets
+        };
+        let Some(journal_dir) = crate::session::verify_orchestrator::task_tree_journal_dir(
+            self.tool_context.task_tree_memory_workspace_dir.as_deref(),
+        ) else {
+            return;
+        };
+        let _ = crate::session::verify_orchestrator::append_verify_event(
+            &journal_dir,
+            self.session_info.id.0.as_ref(),
+            xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind::ContextReset,
+            Some(serde_json::json!({
+                "reason": reason,
+                "new_epoch": record.epoch_id.to_string(),
+                "generation": record.generation,
+            })),
+        );
     }
 
     /// Rotate only after ChatState has committed a durable history rewrite.
@@ -1435,19 +1472,24 @@ impl SessionActor {
             let wire_context = {
                 let domain = self.cache_domain().await;
                 match crate::session::cache_epoch::load_or_rotate(&session_dir, &domain, false) {
-                    Ok((epoch, _)) => Some(lumen_discipline::WireObservationContext {
-                        cache_domain_hash: domain.fingerprint(),
-                        cache_epoch_id: epoch.epoch_id.to_string(),
-                        mutation_reasons:
-                            crate::session::cache_epoch::take_pending_mutation_reasons(
-                                &session_dir,
-                                epoch.epoch_id,
-                            )
-                            .unwrap_or_else(|error| {
-                                tracing::warn!(%error, "cache mutation attribution unavailable for wire observation");
-                                Vec::new()
-                            }),
-                    }),
+                    Ok((epoch, disposition)) => {
+                        // DEBT-033 A2-c: a rotated epoch is a structural
+                        // cache-reset point.
+                        self.emit_cache_reset_event(&epoch, disposition);
+                        Some(lumen_discipline::WireObservationContext {
+                            cache_domain_hash: domain.fingerprint(),
+                            cache_epoch_id: epoch.epoch_id.to_string(),
+                            mutation_reasons:
+                                crate::session::cache_epoch::take_pending_mutation_reasons(
+                                    &session_dir,
+                                    epoch.epoch_id,
+                                )
+                                .unwrap_or_else(|error| {
+                                    tracing::warn!(%error, "cache mutation attribution unavailable for wire observation");
+                                    Vec::new()
+                                }),
+                        })
+                    },
                     Err(error) => {
                         tracing::warn!(%error, "cache epoch unavailable for wire observation");
                         None

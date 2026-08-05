@@ -879,10 +879,11 @@ impl SessionActor {
             // default: only edit tools at Max effort with an enabled verify
             // policy run the lumen-verify pipeline. The pipeline is
             // workspace-bounded and project-marker-gated; heavy commands run
-            // on a blocking thread so the session loop never stalls. Repair
-            // obligation wiring (JTMS sub-goal + journal events) is the next
-            // cycle's hook.
+            // on a blocking thread so the session loop never stalls.
+            // Governed verify events land in the task-tree lifecycle journal
+            // (INV-VO audit records; journaling failures only warn).
             {
+                use xai_grok_memory::lifecycle_journal::GovernedLifecycleEventKind as Vk;
                 let verify_tool = prepared.tool_name.clone();
                 let verify_args = prepared.raw_arguments.clone();
                 let changed_files =
@@ -909,6 +910,29 @@ impl SessionActor {
                         let session_id = self.session_info.id.0.as_ref().to_string();
                         let sid_log = session_id.clone();
                         let workspace_root = self.session_info.cwd.clone();
+                        let journal_dir =
+                            crate::session::verify_orchestrator::task_tree_journal_dir(
+                                self.tool_context.task_tree_memory_workspace_dir.as_deref(),
+                            );
+                        let attempt = crate::session::verify_orchestrator::session_repair_loop(
+                            &session_id,
+                        )
+                        .attempts;
+                        if let Some(dir) = journal_dir.as_deref() {
+                            let _ = crate::session::verify_orchestrator::append_verify_event(
+                                dir,
+                                &session_id,
+                                Vk::VerificationStarted,
+                                Some(serde_json::json!({
+                                    "tool": verify_tool,
+                                    "files": changed_files
+                                        .iter()
+                                        .map(|p| p.display().to_string())
+                                        .collect::<Vec<_>>(),
+                                    "attempt": attempt,
+                                })),
+                            );
+                        }
                         let handle = tokio::task::spawn_blocking(move || {
                             let mut loop_state =
                                 crate::session::verify_orchestrator::session_repair_loop(
@@ -936,11 +960,55 @@ impl SessionActor {
                                     attempts = outcome.attempts,
                                     "verify-after-edit (DEBT-033 B2)"
                                 );
-                                if !outcome.diagnostics.is_empty() {
-                                    tracing::warn!(
-                                        diagnostics = %outcome.diagnostics,
-                                        "verify-after-edit found failures; repair obligation wiring lands next cycle"
-                                    );
+                                let emit = |kind: Vk, detail: serde_json::Value| {
+                                    if let Some(dir) = journal_dir.as_deref() {
+                                        let _ = crate::session::verify_orchestrator::append_verify_event(
+                                            dir, &sid_log, kind, Some(detail),
+                                        );
+                                    }
+                                };
+                                match outcome.state {
+                                    lumen_discipline::RepairLoopState::Succeeded => {
+                                        emit(
+                                            Vk::VerificationSucceeded,
+                                            serde_json::json!({
+                                                "tool": verify_tool,
+                                                "files": outcome.verified_files
+                                                    .iter()
+                                                    .map(|p| p.display().to_string())
+                                                    .collect::<Vec<_>>(),
+                                            }),
+                                        );
+                                    }
+                                    lumen_discipline::RepairLoopState::Exhausted { reason } => {
+                                        emit(
+                                            Vk::RepairExhausted,
+                                            serde_json::json!({
+                                                "reason": format!("{reason:?}").to_ascii_lowercase(),
+                                                "attempts": outcome.attempts,
+                                            }),
+                                        );
+                                        tracing::warn!(
+                                            session = %sid_log,
+                                            reason = ?reason,
+                                            "verify-after-edit failed closed (INV-VO-03); repair obligation wiring is the next hook"
+                                        );
+                                    }
+                                    lumen_discipline::RepairLoopState::Active => {
+                                        emit(
+                                            Vk::VerificationFailed,
+                                            serde_json::json!({
+                                                "tool": verify_tool,
+                                                "attempt": outcome.attempts,
+                                                "diagnostics": outcome.diagnostics,
+                                            }),
+                                        );
+                                        tracing::warn!(
+                                            session = %sid_log,
+                                            attempts = outcome.attempts,
+                                            "verify-after-edit found failures; repair obligation wiring is the next hook"
+                                        );
+                                    }
                                 }
                             }
                             Err(error) => {
