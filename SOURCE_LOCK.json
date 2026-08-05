@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-05T09:16:19Z",
+  "generated_at": "2026-08-05T12:37:06Z",
   "monorepo": {
-    "git_head": "3d5d52cf36a48b0ec43f502159c7f73409785bfb",
-    "git_short": "3d5d52c"
+    "git_head": "f10952b36e8e3ff63d45dee3da74ee37992201d0",
+    "git_short": "f10952b"
   },
   "lumen_version": "2.1.0",
   "upstream_pin": {
@@ -21,11 +21,11 @@
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs": "88cd1e135a41399eac5d7c108e0439b56af9a8b429dbe861ea73179ede9ac309",
     "agent/crates/codegen/xai-grok-models/default_models.json": "802f23626f08a7519b28792425a72ea9955eafefea989a8c5113a860b99a4c0c",
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
-    "agent/crates/codegen/lumen-discipline/src/lib.rs": "e0be26cdf91d23e1e7f8b7e07826fa5fd810af87538af2c767fd093c9714e0c9",
+    "agent/crates/codegen/lumen-discipline/src/lib.rs": "0ab9b2f13fb21fdb904f9f044ce3529ebc7a343f389ff0505d9ca958ea6c6310",
     "scripts/assert-defaults.sh": "4b8a15aff077aa26cda869af0f522b7a23cf8f099572b4a219c5248263476672",
     "scripts/check-binary-tuple.sh": "117d9b443fda1ffce9dfd45f88681db17feb4ef373b7fb0e80c514b5e787b9aa",
     "scripts/eval-coding.sh": "30db421e7ca874a79b2e42f1a1e87a0db9f659920ca15cd803baa44494416474",
-    "scripts/eval-coding-live.sh": "3241eabb0a3ba15f19b66c9d72e36d6e4e766459703f2b47f270d3d534ce6fc4",
+    "scripts/eval-coding-live.sh": "4e6918b319bf7ada68c586cfc3e587d88ad2f14cadb8e9b0e9611b72af25e482",
     "scripts/generate-sbom.sh": "94944d320801e3e92d9250a3aff8f748a627076e32f6c18ee67e5cf2aa4ce2de",
     "scripts/install-local.sh": "e616f6fba712f5816177fe73b5d7f33df842709cbcc36998aa091a09fb752632",
     "scripts/onboarding-gate.sh": "19032f37082a310dbf45b106f540c246238d41dc468b1c2eea32a8255d5b80d9",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "1b4258b7f2acfb2de000fed1364ed9362da6508cedd59e1c8061ea145c16cd28"
+  "aggregate_critical_sha256": "66347c7bcc92107f7b48b41b01f713d3851e197efd9908a72c53bc55b64fc726"
 }
