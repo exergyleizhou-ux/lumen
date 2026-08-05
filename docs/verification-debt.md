@@ -33,6 +33,7 @@
 | DEBT-024 | 2026-08-04 收尾审计 | 残余 partial：worktree auto-handoff 纯函数 / A9 无产品 UI / M1 无 pager pane / DispatchPermit shell 未接 / M5·M6 人工门 | **closed (2026-08-05)** | (a) worktree auto-handoff 接 `on_completed` 生产路径（SessionCommand::GetWriteScopeLease 权威取回 lease + 真实 git delta + `evaluate_merge_handoff`，无 root 决定 fail-closed）；(b) A9 recommend 面落地为 `x.ai/governedTree/assignmentRecommendation`（按条件 readiness 矩阵）；(c) M1 pager 树 pane 落地（`views/governed_tree` 渲染器 + overlay + 输入钩子）；(d) DispatchPermitV1 进 spawn 适配器（真实 lineage/grant/manifest mint + 完成时重验）；(e) M5 真人陌生测试 / M6 15 天真实日志为人工门，脚本语义拒绝伪造，见 DEBT-025 |
 
 | DEBT-025 | 2026-08-05 | readiness 人工门：M5 真人 10 分钟陌生测试、M6 15 天真实生产力日志（当前 2 天）；`verify-readiness.sh` 脚本语义拒绝以 SKIP/模拟证据判定 ready | open | 真实人类完成 M5/M6 后重跑 `verify-readiness.sh`；`ready=true` 由脚本输出决定，不伪造 |
+| DEBT-026 | 2026-08-05 总纲复扫 | 总纲 §3.4.1 SnapshotLeaseV1、§3.1.3 ClaimDependencyIndex + EnvironmentFingerprintV1、§3.4.2 CheckpointEnvelopeV1 + ObligationV1 此前零实现（§3.1.3 撤销传播决策矩阵、三级复现、checkpoint 换代纪律均为书内合同） | **closed (2026-08-05)** | snapshot_lease.rs（advance 仅安全 checkpoint、Security/Grant/Evidence 三类立即失效、Active 必带 NormalAdvance）；claim_dependency_index.rs（derived_from 传递闭包、间接消费者不遗漏、Write/Effect 立即 BlockDispatch Frozen、无关兄弟 Unaffected）；environment_fingerprint.rs（toolchain/lock/target/exe/env/artifact 哈希 + ReproLevel 三级授权 promote/长存）；checkpoint_envelope.rs + obligation（序列+因果父校验、Obligation 一次性 terminal、refinement 上限、predicate 为 HostCheckablePredicate newtype 按书内字段类型 fail-closed）；4 新 gate 进离线套件 **26→30/30 全 PASS**（SNAPSHOT_LEASE_GATE / CLAIM_DEPENDENCY_GATE / ENV_FINGERPRINT_GATE / CHECKPOINT_ENVELOPE_GATE） |
 
 ## 登记记录（追加式）
 
@@ -43,6 +44,7 @@
 - 2026-08-04 正式版：`v2.0.0` signed tag → `d42ea6e8`，push origin；DEBT-015 closed；verification_debt 全 closed。
 - 2026-08-04 收尾审计（本目标）：身份层/红队合同/接线/发布链落地；DEBT-017..023 closed；DEBT-024 残余 partial 显式登记 open。
 - 2026-08-05：DEBT-024(a)(b)(c)(d) 全部落地 closed（worktree auto-handoff 生产接线、A9 recommend 面、M1 pager 树 pane、DispatchPermit spawn 适配器）；残余人工门拆为 DEBT-025 open（M5/M6，脚本语义拒绝伪造）。
+- 2026-08-05 总纲复扫：master book 全类型 grep 复扫发现 SnapshotLeaseV1 / ClaimDependencyIndex / EnvironmentFingerprintV1 / CheckpointEnvelopeV1 / ObligationV1 零实现 → 四模块纯合同落地（21 测，含负例），4 新 gate 入离线套件 26→30 全 PASS；DEBT-026 closed。DEBT-025 仍 open（人工门，不伪造）。
 
 ## 残余 partial 说明（DEBT-025，唯一剩余 open 项）
 

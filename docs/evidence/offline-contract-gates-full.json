@@ -103,10 +103,26 @@
     {
       "name": "RELEASE_TUPLE_GATE",
       "status": "PASS"
+    },
+    {
+      "name": "SNAPSHOT_LEASE_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "CLAIM_DEPENDENCY_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "ENV_FINGERPRINT_GATE",
+      "status": "PASS"
+    },
+    {
+      "name": "CHECKPOINT_ENVELOPE_GATE",
+      "status": "PASS"
     }
   ],
-  "offline_pass_count": 26,
-  "offline_total": 26,
+  "offline_pass_count": 30,
+  "offline_total": 30,
   "product_rc": "NOT_READY",
   "note": "offline pure gates only; S8 durable seal + P0-NR-A; FLOW_CONTROL + TOOL_CONTRACT_DISPATCH; A5-A12 exit gates; sandbox/advisor/kairos; exact-SHA CI + formal v2.0.0 tag NOT RUN"
 }

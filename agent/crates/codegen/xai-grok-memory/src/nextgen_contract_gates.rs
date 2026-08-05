@@ -862,6 +862,175 @@ pub fn run_offline_contract_gates(tmp: &std::path::Path) -> NextGenContractGateR
             crate::release_source_tuple::ReleaseTupleDeny::TagNotAtSource
         );
         gates.push(pass("RELEASE_TUPLE_GATE"));
+
+        // Master plan §3.4.1 snapshot lease: safe-checkpoint advance only,
+        // immediate invalidation under revocation classes.
+        {
+            use crate::snapshot_lease::{
+                InvalidationClass, SnapshotLeaseDeny, SnapshotLeaseV1,
+            };
+            let mut lease = SnapshotLeaseV1::issue(
+                "lease-1",
+                "tree-1",
+                "sha256:snap-a",
+                10,
+                20,
+                InvalidationClass::NormalAdvance,
+            )
+            .expect("lease");
+            lease.validate().expect("valid");
+            assert_eq!(
+                lease.advance(15, "sha256:snap-b", 30).unwrap_err(),
+                SnapshotLeaseDeny::CheckpointNotReached,
+                "advance before the safe checkpoint must deny"
+            );
+            lease
+                .advance(20, "sha256:snap-b", 30)
+                .expect("advance at the safe checkpoint");
+            let mut revoked =
+                SnapshotLeaseV1::issue("l2", "tree-1", "sha256:s", 1, 2, InvalidationClass::NormalAdvance)
+                    .expect("lease2");
+            revoked
+                .invalidate(InvalidationClass::EvidenceInvalidated, "artifact revoked")
+                .expect("invalidate");
+            assert!(!revoked.is_usable());
+            assert_eq!(
+                revoked.advance(2, "sha256:s2", 3).unwrap_err(),
+                SnapshotLeaseDeny::NotActive,
+                "immediate invalidation must block every advance"
+            );
+            gates.push(pass("SNAPSHOT_LEASE_GATE"));
+        }
+
+        // Master plan §3.1.3 claim dependency index: indirect consumers are
+        // never missed; unrelated siblings keep running.
+        {
+            use crate::claim_dependency_index::{
+                BlockedState, ClaimDependencyIndex, ConsumerKind, ConsumerNode,
+                RevocationDisposition,
+            };
+            let mut index = ClaimDependencyIndex::new();
+            index.record_claim("c1", "snap-1", "manifest-1").expect("c1");
+            index.record_claim("c2", "snap-1", "manifest-1").expect("c2");
+            index.record_claim("c3", "snap-2", "manifest-2").expect("c3");
+            index.record_derived_from("c2", "c1").expect("derived");
+            index
+                .register_consumer(
+                    "c1",
+                    ConsumerNode { node_id: "reader".into(), kind: ConsumerKind::ReadOnly, operation_id: None },
+                )
+                .expect("reader");
+            index
+                .register_consumer(
+                    "c2",
+                    ConsumerNode { node_id: "writer".into(), kind: ConsumerKind::Write, operation_id: None },
+                )
+                .expect("writer"); // indirect via derived_from
+            index
+                .register_consumer(
+                    "c3",
+                    ConsumerNode { node_id: "sibling".into(), kind: ConsumerKind::Write, operation_id: None },
+                )
+                .expect("sibling");
+            let analysis = index.analyze_revocation("c1");
+            assert_eq!(analysis.len(), 2, "indirect consumers must not be missed");
+            let by_node = |node: &str| {
+                analysis
+                    .iter()
+                    .find(|(c, _)| c.node_id == node)
+                    .map(|(_, d)| d.clone())
+                    .expect("consumer")
+            };
+            assert_eq!(by_node("reader"), RevocationDisposition::CancelAndRebase);
+            assert_eq!(
+                by_node("writer"),
+                RevocationDisposition::BlockDispatch { state: BlockedState::Frozen }
+            );
+            assert_eq!(
+                index.disposition_for(
+                    "c1",
+                    &ConsumerNode { node_id: "sibling".into(), kind: ConsumerKind::Write, operation_id: None },
+                ),
+                RevocationDisposition::Unaffected,
+                "unrelated siblings must keep running"
+            );
+            gates.push(pass("CLAIM_DEPENDENCY_GATE"));
+        }
+
+        // Master plan §3.1.3 environment fingerprint + repro levels.
+        {
+            use crate::environment_fingerprint::{
+                EnvironmentFingerprintV1, FingerprintDeny, ReproLevel,
+            };
+            let same_env = EnvironmentFingerprintV1::build(
+                "rust-1.85",
+                "sha256:lock",
+                "x86_64-apple-darwin",
+                "sha256:exe",
+                "sha256:env",
+                vec!["sha256:input".into()],
+                ReproLevel::RecomputedSameEnv,
+            )
+            .expect("fingerprint");
+            same_env.validate().expect("valid");
+            assert_eq!(
+                same_env.authorize_promotion().unwrap_err(),
+                FingerprintDeny::InsufficientReproLevel,
+                "same-env reproduction cannot cross task boundaries"
+            );
+            let third_party = EnvironmentFingerprintV1::build(
+                "rust-1.85",
+                "sha256:lock",
+                "x86_64-apple-darwin",
+                "sha256:exe",
+                "sha256:env",
+                vec!["sha256:input".into()],
+                ReproLevel::ThirdPartyReproducible,
+            )
+            .expect("third party");
+            third_party.authorize_long_term_memory().expect("memory ok");
+            gates.push(pass("ENV_FINGERPRINT_GATE"));
+        }
+
+        // Master plan §3.4.2 checkpoint envelope + obligation.
+        {
+            use crate::checkpoint_envelope::{
+                CheckpointEnvelopeV1, EnvelopeDeny, HostCheckablePredicate, LoopKind,
+                ObligationState, ObligationV1,
+            };
+            let first =
+                CheckpointEnvelopeV1::build(LoopKind::Node, "tree-1", "node-1", 1, None, 1)
+                    .expect("first");
+            first.validate().expect("valid");
+            let second =
+                CheckpointEnvelopeV1::build(LoopKind::Node, "tree-1", "node-1", 2, Some(1), 1)
+                    .expect("second");
+            second.validate_append(1, &[1]).expect("append ok");
+            assert_eq!(
+                CheckpointEnvelopeV1::build(LoopKind::Tree, "tree-1", "op-1", 3, Some(1), 1)
+                    .expect("gap")
+                    .validate_append(1, &[1])
+                    .unwrap_err(),
+                EnvelopeDeny::SequenceGap,
+                "sequence gaps fail closed"
+            );
+            let mut obligation = ObligationV1::new(
+                "obl-1",
+                HostCheckablePredicate::parse("verify:go-test:./...").expect("predicate"),
+                None,
+                2,
+            )
+            .expect("obligation");
+            obligation.authorize_refinement(1).expect("refine ok");
+            obligation
+                .transition(ObligationState::Discharged)
+                .expect("discharge");
+            assert_eq!(
+                obligation.transition(ObligationState::Refuted).unwrap_err(),
+                EnvelopeDeny::TerminalObligation
+            );
+            gates.push(pass("CHECKPOINT_ENVELOPE_GATE"));
+        }
     }
 
     let offline_pass_count = gates.iter().filter(|g| g.status == "PASS").count();
@@ -887,8 +1056,8 @@ mod tests {
         let receipt = run_offline_contract_gates(temp.path());
         assert_eq!(receipt.offline_pass_count, receipt.offline_total);
         assert!(
-            receipt.offline_total >= 26,
-            "A3 + A5–A12 exit gates + identity/permit/bypass/red-team/release-tuple gates must be present"
+            receipt.offline_total >= 30,
+            "A3 + A5–A12 + identity/permit/bypass/red-team/release-tuple + snapshot-lease/claim-dep/env-fingerprint/checkpoint-envelope gates must be present"
         );
         assert_eq!(receipt.product_rc, "NOT_READY");
         let json = serde_json::to_string_pretty(&receipt).unwrap();
@@ -904,6 +1073,10 @@ mod tests {
         assert!(json.contains("RUNTIME_PROFILE_GATE"));
         assert!(json.contains("AUDIT_SNAPSHOT_GATE"));
         assert!(json.contains("RELEASE_TUPLE_GATE"));
+        assert!(json.contains("SNAPSHOT_LEASE_GATE"));
+        assert!(json.contains("CLAIM_DEPENDENCY_GATE"));
+        assert!(json.contains("ENV_FINGERPRINT_GATE"));
+        assert!(json.contains("CHECKPOINT_ENVELOPE_GATE"));
         assert!(json.contains("NOT_READY"));
         // Durable evidence for implementer SCRATCH / offline suite.
         if let Ok(dir) = std::env::var("LUMEN_EVIDENCE_DIR") {
