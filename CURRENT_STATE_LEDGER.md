@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 94f82b85 Merge remote-tracking branch 'origin/main' |
+| Last non-bot commit | dd5ba720 Merge remote-tracking branch 'origin/main' |
 
 ---
 
