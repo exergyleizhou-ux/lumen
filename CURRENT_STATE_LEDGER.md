@@ -11,12 +11,12 @@ For the generation date, see the last ledger commit in `git log`.
 | Question | Answer |
 |---|---|
 | Version (root VERSION) | **2.2.0** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=1 |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | 5b7c0222 Merge remote-tracking branch 'origin/main' (auto-ledger) |
+| Last non-bot commit | 7b8f385b Merge remote-tracking branch 'origin/main' (auto-ledger) |
 
 ---
 
