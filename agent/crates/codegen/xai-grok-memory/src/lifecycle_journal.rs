@@ -55,6 +55,11 @@ pub enum GovernedLifecycleEventKind {
     RepairObligationCreated,
     /// The repair loop failed closed (INV-VO-03). `detail` carries the reason.
     RepairExhausted,
+    /// Uncertainty-to-governance observation (DEBT-033 C2). `detail` carries
+    /// the signal snapshot.
+    UncertaintyDetected,
+    /// A governance action was taken (INV-UG-01). `detail` carries the action.
+    GovernanceActionTaken,
 }
 
 impl GovernedLifecycleEventKind {
@@ -79,6 +84,8 @@ impl GovernedLifecycleEventKind {
             GovernedLifecycleEventKind::VerificationFailed => "verification_failed",
             GovernedLifecycleEventKind::RepairObligationCreated => "repair_obligation_created",
             GovernedLifecycleEventKind::RepairExhausted => "repair_exhausted",
+            GovernedLifecycleEventKind::UncertaintyDetected => "uncertainty_detected",
+            GovernedLifecycleEventKind::GovernanceActionTaken => "governance_action_taken",
         }
     }
 
@@ -825,5 +832,39 @@ mod lifecycle_journal_tests {
             GovernedLifecycleEventKind::RepairExhausted.as_str(),
             "repair_exhausted"
         );
+    }
+
+    #[test]
+    fn c2_governor_kinds_round_trip_and_are_not_terminal() {
+        let mut journal = LifecycleJournal::in_memory("tree-c2");
+        let mut detected = event(
+            &journal,
+            0,
+            GovernedLifecycleEventKind::UncertaintyDetected,
+            None,
+            "tree-c2",
+        );
+        detected.detail = Some(serde_json::json!({
+            "no_progress_turns": 4,
+            "priority_demoted": true,
+            "recent_cache_hit_ratio": 0.80,
+        }));
+        journal.append(detected).unwrap();
+        let mut taken = event(
+            &journal,
+            1,
+            GovernedLifecycleEventKind::GovernanceActionTaken,
+            Some(0),
+            "tree-c2",
+        );
+        taken.detail = Some(serde_json::json!({"action": "fail_closed"}));
+        journal.append(taken).unwrap();
+
+        assert!(journal.verify_chain().is_ok());
+        assert_eq!(journal.events()[0].kind.as_str(), "uncertainty_detected");
+        assert_eq!(journal.events()[1].kind.as_str(), "governance_action_taken");
+        assert_eq!(journal.events()[1].detail.as_ref().unwrap()["action"], "fail_closed");
+        assert!(!journal.events()[0].kind.is_terminal());
+        assert!(!journal.events()[1].kind.is_terminal());
     }
 }
