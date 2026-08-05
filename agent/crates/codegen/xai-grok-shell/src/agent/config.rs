@@ -3045,13 +3045,30 @@ impl Config {
         &self,
         use_current_only: bool,
     ) -> Resolved<GoalRoleModelChoice> {
-        Self::resolve_single_role_model(
+        let resolved = Self::resolve_single_role_model(
             use_current_only,
             self.goal.planner_model.as_ref(),
             self.remote_settings
                 .as_ref()
                 .and_then(|s| s.goal_planner_model.as_ref()),
-        )
+        );
+        // DEBT-033 C1: with a DeepSeek V4 Flash executor and no explicit
+        // planner model, the dual-model preset defaults the planner to
+        // DeepSeek-V4-Pro (separate session, machine-parseable structured
+        // plans). Explicit config or remote settings always win.
+        if !use_current_only
+            && resolved.value == GoalRoleModelChoice::InheritCurrent
+            && self.models.default.as_deref() == Some("deepseek-v4-flash")
+        {
+            return Resolved::new(
+                GoalRoleModelChoice::Explicit(crate::util::config::GoalRoleModel {
+                    model: "deepseek-v4-pro".to_string(),
+                    agent_type: "general-purpose".to_string(),
+                }),
+                ConfigSource::Default,
+            );
+        }
+        resolved
     }
     /// Strategist role model; same precedence as [`Self::resolve_goal_planner_model`].
     pub(crate) fn resolve_goal_strategist_model(
@@ -9769,8 +9786,59 @@ reverify_after = 6
     }
     #[test]
     #[serial]
-    fn goal_use_current_model_only_env_true() {
+    fn c1_flash_defaults_planner_to_pro_when_unconfigured() {
         clear_goal_model_env();
+        // Flash executor + no planner configured → dual-model preset defaults
+        // the planner to DeepSeek-V4-Pro.
+        let cfg = Config::new_from_toml_cfg(
+            &toml::from_str(
+                r#"
+[models]
+default = "deepseek-v4-flash"
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let r = cfg.resolve_goal_planner_model(false);
+        match r.value {
+            GoalRoleModelChoice::Explicit(pair) => {
+                assert_eq!(pair.model, "deepseek-v4-pro");
+            }
+            other => panic!("flash executor must default to a Pro planner, got {other:?}"),
+        }
+        assert_eq!(r.source, ConfigSource::Default);
+
+        // Explicit planner config always wins over the preset.
+        let cfg2 = Config::new_from_toml_cfg(
+            &toml::from_str(
+                r#"
+[models]
+default = "deepseek-v4-flash"
+[goal.planner_model]
+model = "grok-4"
+agent_type = "general-purpose"
+"#,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let r2 = cfg2.resolve_goal_planner_model(false);
+        match r2.value {
+            GoalRoleModelChoice::Explicit(pair) => assert_eq!(pair.model, "grok-4"),
+            other => panic!("explicit planner must win, got {other:?}"),
+        }
+
+        // Non-flash executor keeps InheritCurrent.
+        let cfg3 = Config::new_from_toml_cfg(&toml::from_str("").unwrap()).unwrap();
+        let r3 = cfg3.resolve_goal_planner_model(false);
+        assert_eq!(r3.value, GoalRoleModelChoice::InheritCurrent);
+        clear_goal_model_env();
+    }
+
+    #[test]
+    #[serial]
+    fn goal_use_current_model_only_env_true() {        clear_goal_model_env();
         unsafe { std::env::set_var(GOAL_USE_CURRENT_ENV, "1") };
         let r = Config::default().resolve_goal_use_current_model_only();
         assert!(r.value);

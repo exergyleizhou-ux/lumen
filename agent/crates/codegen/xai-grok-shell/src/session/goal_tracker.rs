@@ -450,6 +450,10 @@ pub struct GoalOrchestration {
     pub total_worker_rounds: u32,
     #[serde(default)]
     pub total_verify_rounds: u32,
+    /// DEBT-033 C2: consecutive NoProgress pauses (real stall streak). Fed to
+    /// the uncertainty governor's no-progress signal.
+    #[serde(default)]
+    pub no_progress_pause_count: u32,
     #[serde(skip)]
     pub budget_limit_reported: bool,
     /// Session-wide total tokens recorded at goal creation. Seeds the
@@ -981,6 +985,7 @@ impl GoalTracker {
             current_subagent_role: None,
             total_worker_rounds: 0,
             total_verify_rounds: 0,
+            no_progress_pause_count: 0,
             budget_limit_reported: false,
             token_baseline,
             tokens_used_high_water: 0,
@@ -1100,6 +1105,12 @@ impl GoalTracker {
             o.status = reason.to_status();
             if message.is_some() {
                 o.pause_message = message;
+            }
+            // DEBT-033 C2: a NoProgress pause is a real stall signal — count
+            // it so the uncertainty governor sees an honest no-progress
+            // streak instead of a boolean status.
+            if reason == GoalPauseReason::NoProgress {
+                o.no_progress_pause_count = o.no_progress_pause_count.saturating_add(1);
             }
             true
         } else {
@@ -1433,6 +1444,7 @@ pub(crate) fn make_base_orchestration() -> GoalOrchestration {
         current_subagent_role: None,
         total_worker_rounds: 0,
         total_verify_rounds: 0,
+        no_progress_pause_count: 0,
         budget_limit_reported: false,
         token_baseline: 0,
         tokens_used_high_water: 0,
@@ -1664,8 +1676,25 @@ mod tests {
     }
 
     #[test]
-    fn pause_records_cause_specific_history_detail() {
-        // All six pause reasons record a distinct history `detail` (the
+    fn no_progress_pause_counter_increments_only_on_no_progress() {
+        let mut t = make_tracker();
+        activate_tracker(&mut t);
+        assert_eq!(t.snapshot().unwrap().no_progress_pause_count, 0);
+        // Non-NoProgress pauses must not count as stall signals.
+        assert!(t.pause(GoalPauseReason::User));
+        assert!(t.resume());
+        assert!(t.pause(GoalPauseReason::BackOff));
+        assert!(t.resume());
+        assert_eq!(t.snapshot().unwrap().no_progress_pause_count, 0);
+        // Each NoProgress pause is one stall signal for the governor.
+        assert!(t.pause(GoalPauseReason::NoProgress));
+        assert!(t.resume());
+        assert!(t.pause(GoalPauseReason::NoProgress));
+        assert_eq!(t.snapshot().unwrap().no_progress_pause_count, 2);
+    }
+
+    #[test]
+    fn pause_records_cause_specific_history_detail() {        // All six pause reasons record a distinct history `detail` (the
         // `history_detail` mapping, exercised via the real pause path).
         for (reason, expected) in [
             (GoalPauseReason::User, "user"),

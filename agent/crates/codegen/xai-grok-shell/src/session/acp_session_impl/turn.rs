@@ -2462,60 +2462,105 @@ impl SessionActor {
                     }
                     // DEBT-033 C2: uncertainty-to-governance decision from the
                     // signals available at turn end (cache health + repair
-                    // loop depth + goal status). The decision is journaled and
-                    // applied: effort escalation lands as a session override
-                    // that the next sampling config rebuild consumes.
+                    // loop depth + goal status incl. real no-progress counter
+                    // and human-gate family). The A3 adaptive controller runs
+                    // at the same site; decisions are journaled AND applied:
+                    // effort escalation/demotion land as a session override
+                    // the next sampling config rebuild consumes; compaction
+                    // collapse arms the next-request compaction header;
+                    // pause/fail-closed land on the goal tracker.
                     {
                         let session_id = self.session_info.id.0.as_ref().to_string();
                         let repair_loop =
                             crate::session::verify_orchestrator::session_repair_loop(&session_id);
-                        let no_progress = match self.goal_tracker.lock().status() {
-                            Some(
-                                crate::session::goal_tracker::GoalStatus::NoProgressPaused
-                                | crate::session::goal_tracker::GoalStatus::BackOffPaused,
-                            ) => crate::session::goal_tracker::GOAL_NO_PROGRESS_SIGNAL_TURNS,
-                            _ => 0,
+                        let (status, no_progress) = {
+                            let tracker = self.goal_tracker.lock();
+                            (
+                                tracker.status(),
+                                tracker
+                                    .snapshot()
+                                    .map(|o| o.no_progress_pause_count)
+                                    .unwrap_or(0),
+                            )
                         };
+                        let priority_demoted = status
+                            == Some(crate::session::goal_tracker::GoalStatus::BudgetLimited);
+                        let human_gate_pending = matches!(
+                            status,
+                            Some(
+                                crate::session::goal_tracker::GoalStatus::Blocked
+                                | crate::session::goal_tracker::GoalStatus::UserPaused
+                                | crate::session::goal_tracker::GoalStatus::InfraPaused
+                            )
+                        );
+                        let hit_ratio = if record.prompt_tokens > 0 {
+                            Some(record.hit_ratio)
+                        } else {
+                            None
+                        };
+                        // A3 adaptive effort decision (same turn-end site).
+                        let current_effort = self
+                            .chat_state_handle
+                            .get_sampling_config()
+                            .await
+                            .and_then(|c| c.reasoning_effort);
+                        let a3 = crate::agent::models::decide_effort(
+                            current_effort.unwrap_or(xai_grok_sampling_types::ReasoningEffort::High),
+                            &crate::agent::models::EffortSignals {
+                                goal_complexity: 0,
+                                consecutive_verify_failures: repair_loop.attempts,
+                                repair_loop_active: repair_loop.attempts > 0,
+                                remaining_output_budget: u32::MAX,
+                                recent_cache_hit_ratio: hit_ratio,
+                                turn_budget_tight: false,
+                            },
+                        );
+                        let effort_demoted = a3
+                            == crate::agent::models::EffortDecision::Demote;
+                        match a3 {
+                            crate::agent::models::EffortDecision::Demote => {
+                                self.governor_effort_override.set(
+                                    crate::agent::models::demote_effort(current_effort),
+                                );
+                            }
+                            crate::agent::models::EffortDecision::Escalate => {
+                                self.governor_effort_override.set(Some(
+                                    crate::agent::models::escalate_effort(current_effort),
+                                ));
+                            }
+                            crate::agent::models::EffortDecision::Keep => {}
+                        }
                         let signals = xai_grok_memory::uncertainty_governor::UncertaintySignals {
                             no_progress_turns: no_progress,
-                            priority_demoted: false,
-                            recent_cache_hit_ratio: if record.prompt_tokens > 0 {
-                                Some(record.hit_ratio)
-                            } else {
-                                None
-                            },
-                            effort_demoted: false,
+                            priority_demoted,
+                            recent_cache_hit_ratio: hit_ratio,
+                            effort_demoted,
                             repair_loop_depth: repair_loop.attempts,
-                            human_gate_pending: false,
+                            human_gate_pending,
                         };
                         let action = xai_grok_memory::uncertainty_governor::decide(&signals);
-                        // Application: EscalateEffort sets the next-turn effort
-                        // override; ForceCompaction arms the next-request
-                        // compaction header; a healthy Continue clears both.
+                        // Application of the governor actions.
                         match action {
                             xai_grok_memory::uncertainty_governor::GovernanceAction::EscalateEffort => {
-                                let current = self
-                                    .chat_state_handle
-                                    .get_sampling_config()
-                                    .await
-                                    .and_then(|c| c.reasoning_effort);
                                 self.governor_effort_override.set(Some(
-                                    crate::agent::models::escalate_effort(current),
+                                    crate::agent::models::escalate_effort(current_effort),
                                 ));
-                                tracing::info!(
-                                    session = %session_id,
-                                    from = ?current,
-                                    to = ?self.governor_effort_override.get(),
-                                    "governor escalated effort (DEBT-033 C2)"
-                                );
                             }
                             xai_grok_memory::uncertainty_governor::GovernanceAction::ForceCompaction => {
                                 self.compaction_at_tokens.set(Some(
                                     xai_grok_sampling_types::CompactionAtTokens::Fixed(1),
                                 ));
-                                tracing::info!(
-                                    session = %session_id,
-                                    "governor forced a compaction reset point (DEBT-033 C2)"
+                            }
+                            xai_grok_memory::uncertainty_governor::GovernanceAction::PauseAndRequestHuman => {
+                                self.goal_tracker.lock().pause_with_message(
+                                    crate::session::goal_tracker::GoalPauseReason::Verification,
+                                    "uncertainty governor: stall with a pending human gate — review requested".into(),
+                                );
+                            }
+                            xai_grok_memory::uncertainty_governor::GovernanceAction::FailClosed => {
+                                self.goal_tracker.lock().pause_with_message(
+                                    crate::session::goal_tracker::GoalPauseReason::Verification,
+                                    "uncertainty governor: fail-closed (INV-UG-02) — human intervention required to resume".into(),
                                 );
                             }
                             xai_grok_memory::uncertainty_governor::GovernanceAction::Continue

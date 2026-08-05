@@ -139,6 +139,19 @@ pub fn escalate_effort(current: Option<ReasoningEffort>) -> ReasoningEffort {
     }
 }
 
+/// One-step effort demotion (A3 adaptive controller application). `None`
+/// stays `None`; Low is the floor.
+pub fn demote_effort(current: Option<ReasoningEffort>) -> Option<ReasoningEffort> {
+    match current {
+        None | Some(ReasoningEffort::None | ReasoningEffort::Minimal | ReasoningEffort::Low) => {
+            current
+        }
+        Some(ReasoningEffort::Medium) => Some(ReasoningEffort::Low),
+        Some(ReasoningEffort::High | ReasoningEffort::Xhigh) => Some(ReasoningEffort::Medium),
+        Some(ReasoningEffort::Max) => Some(ReasoningEffort::High),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -249,5 +262,14 @@ mod tests {
         assert_eq!(escalate_effort(Some(ReasoningEffort::High)), ReasoningEffort::Max);
         assert_eq!(escalate_effort(Some(ReasoningEffort::Max)), ReasoningEffort::Max);
         assert_eq!(escalate_effort(Some(ReasoningEffort::Xhigh)), ReasoningEffort::Max);
+    }
+
+    #[test]
+    fn effort_demotion_steps() {
+        assert_eq!(demote_effort(None), None);
+        assert_eq!(demote_effort(Some(ReasoningEffort::Low)), Some(ReasoningEffort::Low));
+        assert_eq!(demote_effort(Some(ReasoningEffort::Medium)), Some(ReasoningEffort::Low));
+        assert_eq!(demote_effort(Some(ReasoningEffort::High)), Some(ReasoningEffort::Medium));
+        assert_eq!(demote_effort(Some(ReasoningEffort::Max)), Some(ReasoningEffort::High));
     }
 }
