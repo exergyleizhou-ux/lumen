@@ -44,6 +44,17 @@ pub enum GovernedLifecycleEventKind {
     /// One cache-health observation. `detail` carries
     /// `{prompt_tokens, hit_tokens, miss_tokens, output_tokens, hit_ratio, truth}`.
     CacheHealthSample,
+    /// Verification-obligation loop (DEBT-033 B2): a typed verification ran.
+    /// `detail` carries `{tool, effect_class, attempt}`.
+    VerificationStarted,
+    /// Verification passed; the effect is signed off as evidence.
+    VerificationSucceeded,
+    /// Verification failed. `detail` carries `{reason, attempt, repair_obligation?}`.
+    VerificationFailed,
+    /// A repair sub-goal was created in JTMS.
+    RepairObligationCreated,
+    /// The repair loop failed closed (INV-VO-03). `detail` carries the reason.
+    RepairExhausted,
 }
 
 impl GovernedLifecycleEventKind {
@@ -63,6 +74,11 @@ impl GovernedLifecycleEventKind {
             GovernedLifecycleEventKind::ContextReset => "context_reset",
             GovernedLifecycleEventKind::ToolResultSnip => "tool_result_snip",
             GovernedLifecycleEventKind::CacheHealthSample => "cache_health_sample",
+            GovernedLifecycleEventKind::VerificationStarted => "verification_started",
+            GovernedLifecycleEventKind::VerificationSucceeded => "verification_succeeded",
+            GovernedLifecycleEventKind::VerificationFailed => "verification_failed",
+            GovernedLifecycleEventKind::RepairObligationCreated => "repair_obligation_created",
+            GovernedLifecycleEventKind::RepairExhausted => "repair_exhausted",
         }
     }
 
@@ -780,6 +796,34 @@ mod lifecycle_journal_tests {
             decoded.compute_payload_hash().unwrap(),
             event.payload_hash,
             "payload hash must survive legacy decode"
+        );
+    }
+
+    #[test]
+    fn b2_verify_kinds_round_trip_and_are_not_terminal() {
+        let mut journal = LifecycleJournal::in_memory("tree-b2");
+        let kinds = [
+            GovernedLifecycleEventKind::VerificationStarted,
+            GovernedLifecycleEventKind::VerificationSucceeded,
+            GovernedLifecycleEventKind::VerificationFailed,
+            GovernedLifecycleEventKind::RepairObligationCreated,
+            GovernedLifecycleEventKind::RepairExhausted,
+        ];
+        for (i, kind) in kinds.iter().enumerate() {
+            let mut e = event(&journal, i as u64, *kind, if i == 0 { None } else { Some(i as u64 - 1) }, "tree-b2");
+            e.detail = Some(serde_json::json!({"attempt": i}));
+            journal.append(e).unwrap();
+        }
+        assert!(journal.verify_chain().is_ok());
+        for (i, kind) in kinds.iter().enumerate() {
+            let ev = &journal.events()[i];
+            assert_eq!(ev.kind, *kind);
+            assert!(!ev.kind.is_terminal(), "verify kinds are not terminal states");
+            assert_eq!(ev.detail.as_ref().unwrap()["attempt"], serde_json::json!(i));
+        }
+        assert_eq!(
+            GovernedLifecycleEventKind::RepairExhausted.as_str(),
+            "repair_exhausted"
         );
     }
 }

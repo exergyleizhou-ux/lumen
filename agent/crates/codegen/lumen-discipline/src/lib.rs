@@ -23,6 +23,7 @@ mod provider_strategy;
 mod request_prefix;
 mod session_cache;
 mod storm;
+mod verify_loop;
 mod wire;
 
 pub use cache::{CacheUsage, format_cache_line, format_cache_line_rich, hit_ratio};
@@ -43,6 +44,10 @@ pub use session_cache::{SessionCacheSnapshot, SessionCacheTracker};
 pub use storm::{
     RepeatSuccessAction, RepeatSuccessGuard, StormAction, StormBreaker, error_signature,
     hash_tool_args,
+};
+pub use verify_loop::{
+    DEFAULT_MAX_REPAIR_ATTEMPTS, RepairAttemptStatus, RepairExhaustionReason, RepairLoop,
+    RepairLoopState,
 };
 pub use wire::{
     WireMutationReason, WireObservationContext, WireRequestSnapshot, WireSerializationKind,
