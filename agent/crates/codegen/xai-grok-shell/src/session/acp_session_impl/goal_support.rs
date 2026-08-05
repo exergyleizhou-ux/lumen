@@ -664,6 +664,21 @@ pub(super) fn resolve_goal_next_step(plan_path: Option<&Path>) -> Option<String>
     use crate::session::goal_classifier::{cap_chars, neutralize_reminder_tags};
     use crate::session::goal_next_step::first_unchecked_plan_item;
 
+    // DEBT-033 C1: a structured (JSON) plan is validated against the
+    // StructuredPlan contract and its first step becomes the next-step item;
+    // free-text checklist plans keep the legacy path. A malformed JSON plan
+    // fails closed into the text path — never handed to the model raw.
+    if let Some(path) = plan_path
+        && let Ok(content) = std::fs::read_to_string(path)
+        && content.trim_start().starts_with('{')
+        && let Ok(plan) = xai_grok_memory::dual_session::StructuredPlan::parse(&content)
+    {
+        return Some(neutralize_reminder_tags(cap_chars(
+            &plan.steps[0].action,
+            GOAL_NEXT_STEP_MAX_CHARS,
+        )));
+    }
+
     plan_path
         .and_then(first_unchecked_plan_item)
         .map(|item| neutralize_reminder_tags(cap_chars(&item, GOAL_NEXT_STEP_MAX_CHARS)))
@@ -1585,5 +1600,65 @@ impl SessionActor {
                 xai_grok_tools::implementations::grok_build::task::types::GoalLoopActive(active),
             )
             .await;
+    }
+}
+
+#[cfg(test)]
+mod goal_plan_consumption_tests {
+    use super::resolve_goal_next_step;
+
+    /// Unique-per-call plan file: parallel tests must never share a path.
+    fn write_plan(tag: &str, json: &str) -> std::path::PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "goal-plan-test-{}-{}-{n}",
+            std::process::id(),
+            tag
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("plan.json");
+        std::fs::write(&out, json).unwrap();
+        out
+    }
+
+    #[test]
+    fn structured_plan_feeds_next_step() {
+        let path = write_plan(
+            "structured",
+            r#"{
+                "goal_id": "g-1",
+                "steps": [
+                    {"id": "s1", "action": "read the failing test", "tools": ["read_file"]},
+                    {"id": "s2", "action": "fix the bug", "tools": ["search_replace"]}
+                ],
+                "success_criteria": ["tests pass"],
+                "estimated_complexity": 3
+            }"#,
+        );
+        let next = resolve_goal_next_step(Some(&path));
+        assert_eq!(next.as_deref(), Some("read the failing test"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn malformed_structured_plan_falls_back_to_none() {
+        // JSON-shaped but invalid (empty goal) must fail closed: no panic, no
+        // raw JSON reaching the model — the text path finds no checklist item.
+        let path = write_plan(
+            "malformed",
+            r#"{"goal_id":"","steps":[{"id":"s","action":"a"}],"success_criteria":["c"],"estimated_complexity":1}"#,
+        );
+        let next = resolve_goal_next_step(Some(&path));
+        assert_eq!(next, None);
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn non_json_plan_keeps_legacy_path() {
+        let path = write_plan("legacy", "- [ ] first item\n- [ ] second item\n");
+        let next = resolve_goal_next_step(Some(&path));
+        assert_eq!(next.as_deref(), Some("first item"));
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

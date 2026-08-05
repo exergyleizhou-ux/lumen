@@ -2462,16 +2462,22 @@ impl SessionActor {
                     }
                     // DEBT-033 C2: uncertainty-to-governance decision from the
                     // signals available at turn end (cache health + repair
-                    // loop depth; no-progress/human-gate signals land with the
-                    // goal-tracker hook). The decision is journaled; action
-                    // application (effort escalation via SetSessionModel,
+                    // loop depth + goal status). The decision is journaled;
+                    // action application (effort escalation via SetSessionModel,
                     // compaction trigger) is the documented next hook.
                     {
                         let session_id = self.session_info.id.0.as_ref().to_string();
                         let repair_loop =
                             crate::session::verify_orchestrator::session_repair_loop(&session_id);
+                        let no_progress = match self.goal_tracker.lock().status() {
+                            Some(
+                                crate::session::goal_tracker::GoalStatus::NoProgressPaused
+                                | crate::session::goal_tracker::GoalStatus::BackOffPaused,
+                            ) => crate::session::goal_tracker::GOAL_NO_PROGRESS_SIGNAL_TURNS,
+                            _ => 0,
+                        };
                         let signals = xai_grok_memory::uncertainty_governor::UncertaintySignals {
-                            no_progress_turns: 0,
+                            no_progress_turns: no_progress,
                             priority_demoted: false,
                             recent_cache_hit_ratio: if record.prompt_tokens > 0 {
                                 Some(record.hit_ratio)
