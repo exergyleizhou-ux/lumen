@@ -4,11 +4,11 @@
   "pass": true,
   "scope": "full_contract_soak",
   "binary": "/Users/lei/code/lumen/agent/target/release/lumen",
-  "binary_sha256": "1793116dfe0e05c154b01b9e4834c8eb8f3e1b37eaf5f31906fe1af6fea244f8",
-  "session_id": "d2c413da-2bdf-4cd9-bdd6-672aa104258f",
+  "binary_sha256": "7ab824e5b9195bba3628c616702de61a853c95f7ce5fbdb84abf3e9d75c9d509",
+  "session_id": "e240b7d4-6e38-42df-80d8-a9bec50f3f07",
   "resume_same_session": true,
-  "compaction_request": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/d2c413da-2bdf-4cd9-bdd6-672aa104258f/compaction_requests/3df591ad-4d9c-4225-962b-ba8f31839f31.json",
-  "compaction_checkpoint": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/d2c413da-2bdf-4cd9-bdd6-672aa104258f/compaction_checkpoints/b411b564-073c-4951-9919-57125fe47ea7.json",
+  "compaction_request": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/e240b7d4-6e38-42df-80d8-a9bec50f3f07/compaction_requests/cfac0336-7e11-40e1-a1a5-f4a04e634a11.json",
+  "compaction_checkpoint": "/Users/lei/code/lumen/artifacts/readiness/L5-full-case-soak/grok-home/sessions/%2FUsers%2Flei%2Fcode%2Flumen%2Fartifacts%2Freadiness%2FL5-full-case-soak%2Fworkspace/e240b7d4-6e38-42df-80d8-a9bec50f3f07/compaction_checkpoints/c7c3eaf1-5557-455b-8674-7e569344a3c6.json",
   "compaction_persisted": true,
   "cache_read_tokens_samples": [
     512,
@@ -57,11 +57,11 @@
     "executed": true,
     "required_seconds": 3600,
     "requested_seconds": 3600,
-    "elapsed_seconds": 3600,
+    "elapsed_seconds": 3601,
     "resume_turns": 117,
-    "started_at": "2026-08-05T04:23:46Z",
-    "finished_at": "2026-08-05T05:23:46Z"
+    "started_at": "2026-08-05T09:21:08Z",
+    "finished_at": "2026-08-05T10:21:09Z"
   },
   "note": "Explicit soak mode ran for at least one hour and repeatedly resumed the same session.",
-  "generated_at": "2026-08-05T05:23:46Z"
+  "generated_at": "2026-08-05T10:21:09Z"
 }

@@ -66,7 +66,7 @@
     {
       "task": "12-ts-async-race",
       "result": "PASS",
-      "agent_ec": 1
+      "agent_ec": 0
     },
     {
       "task": "13-go-context-cancel",
@@ -110,6 +110,6 @@
     }
   ],
   "binary": "/Users/lei/.local/bin/lumen",
-  "generated_at": "2026-08-05T05:49:40Z",
+  "generated_at": "2026-08-05T10:44:36Z",
   "note": "Live agent solves; PASS only when deterministic workspace tests pass after agent edit."
 }
