@@ -7,6 +7,80 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-08-06
+
+### Added
+
+- C2 full signal wiring + applications; C1 preset default (`d2b7c724`)
+- C2 ForceCompaction application — x-compaction-at arming (`bb8ae3dc`)
+- C2 effort application — governor override consumed by sampler config (`810aea5b`)
+- C1 orchestration + C2 goal signal — final wiring (`ea419d10`)
+- wire governed event emission — verify/CacheHealthSample/CacheReset + C2 decision (`7aa8e6a9`)
+- B2 verify-event journal helper — append_verify_event (tested) (`70908074`)
+- C1 dual-model core — StructuredPlan + readonly filter + plan journal kinds (`b4e4d6de`)
+- C2 Uncertainty Governor — decision table + journal kinds (`7f010418`)
+- B2 session wiring — verify-after-edit orchestrator in tool loop (`7b5d6c6f`)
+- B1 property tests — prefix determinism under state churn (`23981be8`)
+- A2 execution wiring — staged compaction policy in prune path (additive) (`cd1a7cc4`)
+- Cycle B core — repair-loop governor + verify journal kinds (`f4b7ebc6`)
+- Cycle A — eval baseline 19/20 + cache health + staged compaction + journal kinds + flash profile (`138b8273`)
+
+### Fixed
+
+- close B2 repair loop (inject repair instruction) + fix DEBT-035 (`2b62c7d2`)
+
+### Documentation
+
+- final state — B2 repair closed, C2 full signals+applications, C1 preset default, DEBT-035 closed [skip ci] (`46f2948a`)
+- final wiring complete — event emission + C1 orchestration + tuning [skip ci] (`6e472756`)
+- C1 done + C3 Responses evaluation — decision: keep Chat Completions primary (`10f1150b`)
+- C2 completed — governor + journal kinds (contract appendix) [skip ci] (`03f57342`)
+- Cycle A wiring + B1 + B2 session wiring status (contract appendix) [skip ci] (`9f5aadf0`)
+- register DEBT-035 — pager memory_trace CI flake (purge sink pollution, mechanism located) [skip ci] (`5b342846`)
+- execution contract appendix — Cycle A done, B core done, remaining hooks [skip ci] (`04b68c47`)
+- register DEBT-034 — windows team build LNK4319 (non-blocking, toolchain) [skip ci] (`ae049ed1`)
+- register DEBT-033 — DeepSeek V4 Flash hardening cycle (post-2.1.0) (`05fc8d96`)
+
+### Maintenance
+
+- full readiness run for wired binary cc6accde — eval_live 20/20 PASS, tests 59/30/29 + shell 6359 + pager 8006 green, clippy clean (`f53805c2`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`e15cd6ce`)
+- remove dead GOAL_NO_PROGRESS_SIGNAL_TURNS constant (replaced by real counter) [skip ci] (`ebc9aec9`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`9261bfd6`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`ba38c26d`)
+- refresh SOURCE_LOCK to 9f6a593 — post-v2.1.0 dev cycle (C2/C1 wiring) (`f71a7ef9`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`8ab8a03c`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`b8f948cc`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`fab8dd43`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`96a4df73`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`91e0f38b`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`f3d8ec2e`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`a3bf6419`)
+- tuning evidence — wired binary 20/20, hit 0.9842, tool calls 6.75 (`cba7672f`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`8914dc88`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`bcabf1ea`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`9f388afc`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`f751066c`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`50dbb7b2`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`5cd4c574`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`7df8f257`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`384c1b76`)
+- Cargo.lock — shell now depends on lumen-verify [skip ci] (`1e5f7767`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d98d7f6a`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`264df935`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d45195ec`)
+- refresh SOURCE_LOCK to f10952b3 — Cycle A+B source at HEAD (post-v2.1.0 dev cycle) (`8e6e4bc9`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`e8ebe509`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`55bd00dc`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`90194555`)
+- Cycle A evidence — A2 rerun 20/20 with real cache hit ratio 98.45% (`9dd1efbe`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`c7c32202`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`42f9d08f`)
+- v2.1.0 evidence — readiness full gates PASS (L5 soak 3601s) + DEBT-033 contract/handoff docs (`55c9f655`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`ba13b01a`)
+- evidence for v2.1.0 (`33f91ba6`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`9b6a87c8`)
+
 ## [2.1.0] - 2026-08-05
 
 ### Added
