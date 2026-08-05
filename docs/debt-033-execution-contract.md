@@ -192,4 +192,4 @@ Responses 一等公民（仅 C3 评估）、本地推理（ds4/dsgo）、模型�
 | Cycle A（⑥①③） | ✅ **完成** | 提交 138b8273 + 9dd1efbe；基线 19/20 → A2 重跑 **20/20（100%）**，**avg_cache_hit_ratio 0.9845**（cache_health.jsonl 124 行 provider 真值，≥90% 验收 PASS）；memory 593、discipline 47、models 85、cache_epoch 15、compaction 13、profile 7 全绿；clippy 绿；审计 docs/nextgen/cache-audit.md |
 | Cycle B（②④）核心 | ✅ **完成** | 提交 f4b7ebc6 + 7b5d6c6f；RepairLoop 治理器 7 测（INV-VO-03/05、Inconclusive 防伪、interrupt 终态）+ journal verify 五种类；memory 594 绿；**B2 会话接线完成**：verify_orchestrator（编辑工具识别/变更文件提取/max-effort 门控/run_verification 折入 RepairLoop/会话注册表）+ tool_calls.rs ToolCompleted 钩子（spawn_blocking 不阻塞异步环），orchestrator 6 测绿；**剩余钩子**：JTMS 修复子目标注入 + journal 事件发射（下周期） |
 | Cycle B 剩余 | ⏳ 下周期 | B1 已交付（property 确定性测试 5 测）；B2 剩余 = 修复子目标注入 + 事件发射；A2 执行接线已交付（chat-state 分档剪枝 + spawn 注入 + ledger definitive 修复，358 测绿） |
-| Cycle C（⑤+C2+C3） | ⏳ 下周期 | 双模型预设、Uncertainty Governor 决策表、Responses 评估、全周期调优 |
+| Cycle C（⑤+C2+C3） | 🔶 C2 完成，C1/C3 待下周期 | C2 Governor（决策表 + journal 种类，memory 601/601）已交付 7f010418；C1 双模型预设、C3 Responses 评估 + 全周期调优待做 |
