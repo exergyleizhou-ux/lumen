@@ -1,17 +1,12 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-05T02:57:12Z",
-  "git_head": "696853ce0ae842a77fc81a829c68d5453dae00fc",
+  "generated_at": "2026-08-05T03:21:43Z",
+  "git_head": "3b7913821c42897d10b360fb27076a77138280ae",
   "remote_heads": [
     "main=f08125590eb58cf5ebd5539931f23eea040d38ab"
   ],
   "dirty_path_manifest": [
-    " M agent/crates/codegen/xai-grok-memory/src/lib.rs",
-    " M agent/crates/codegen/xai-grok-memory/src/nextgen_contract_gates.rs",
-    "?? agent/crates/codegen/xai-grok-memory/src/checkpoint_envelope.rs",
-    "?? agent/crates/codegen/xai-grok-memory/src/claim_dependency_index.rs",
-    "?? agent/crates/codegen/xai-grok-memory/src/environment_fingerprint.rs",
-    "?? agent/crates/codegen/xai-grok-memory/src/snapshot_lease.rs"
+    " M SOURCE_LOCK.json"
   ],
   "ci_run": "NOT_RUN",
   "command_exits": [
@@ -20,5 +15,5 @@
     "child_sandbox=0",
     "nextgen_control=0"
   ],
-  "source_lock_sha256": "d2c440a289fd45865a8cd0606c2b9c971c2a38de43e33bcbd7d3df1b67458ab6"
+  "source_lock_sha256": "ed31856c94ffc839c0cd09ae84966447dd27b290d56b1f719d576b2e99553c58"
 }
