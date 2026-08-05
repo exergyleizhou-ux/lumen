@@ -182,3 +182,14 @@ Responses 一等公民（仅 C3 评估）、本地推理（ds4/dsgo）、模型�
 1. v2.1.0 发布尾全绿（soak 通过 → readiness → 证据 → push → CI）。
 2. 本合同 + DEBT-033 已登记（本文件即登记物）。
 3. 开工第一动作：A1 跑通 20 题基线 + A2 审计交付（cache_epoch.rs / lumen-discipline 职责图）。
+
+---
+
+## 附录 A：周期执行状态（2026-08-05 更新）
+
+| 周期 | 状态 | 证据 |
+|---|---|---|
+| Cycle A（⑥①③） | ✅ **完成** | 提交 138b8273 + 9dd1efbe；基线 19/20 → A2 重跑 **20/20（100%）**，**avg_cache_hit_ratio 0.9845**（cache_health.jsonl 124 行 provider 真值，≥90% 验收 PASS）；memory 593、discipline 47、models 85、cache_epoch 15、compaction 13、profile 7 全绿；clippy 绿；审计 docs/nextgen/cache-audit.md |
+| Cycle B（②④）核心 | ✅ **决策核心完成** | 提交 f4b7ebc6；RepairLoop 治理器 7 测（INV-VO-03/05、Inconclusive 防伪、interrupt 终态）+ journal verify 五种类；memory 594 绿；**集成接线（下周期）**：profile 触发 verify-first + JTMS 修复子目标 + 事件发射（lumen-verify 无 shell 调用点，钩子见 cache-audit §4） |
+| Cycle B 剩余 | ⏳ 下周期 | B1 锚点前置（prompt 构造层定位 + property 测试）；B2 接线（mutations.rs 分档压缩同周期） |
+| Cycle C（⑤+C2+C3） | ⏳ 下周期 | 双模型预设、Uncertainty Governor 决策表、Responses 评估、全周期调优 |
