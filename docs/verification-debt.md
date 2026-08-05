@@ -54,6 +54,8 @@
 - 2026-08-05 外部材料校准（block/buzz）：吸收 1 项 prev-hash 防篡改审计链（DEBT-031，buzz-audit 机制补我们 LifecycleJournal 的结构级防篡改缺口）；已覆盖 6 项不吸收；协作产品层（relay/频道）不吸收（总纲禁止第二 runtime）。
 - 2026-08-05 外部材料校准（CL4R1T4S）：三重否决不内置（形态/许可/安全模型），DEBT-032 决策记录；"黑客/逆向能力"正确路径 = 受治理工具集成。
 
+| DEBT-033 | 2026-08-05（DeepSeek 强化周期，v2.1 发布后） | 用户目标：让 DeepSeek V4 Flash 在 Lumen 上接近/超过 Codex/Claude Code 旗舰体验。查证：V4 Flash **未开源**（无源码可分析）；同族前身 **V3.2-Exp 开源**（MIT）且官方明言为下一代架构中间步 → 关键发现 **DeepSeek Sparse Attention（稀疏注意力）**：长上下文选择性关注 → 关键信息必须前置、上下文必须最小化。官方 agentic 基准（V3.2-Exp）：SWE Verified 67.8（与旗舰同量级差 ~5%）、Terminal-bench 37.7（终端任务弱 → verify-first 必须）、采样默认 temperature=1.0 | open | 五项：①Manifest 关键信息前置策略（renderer 强制 assignment/objective 最前，DSA 锚点区）；②Model Profile deepseek-v4-flash（采样/重试/工具格式适配）；③verify-first 接线（Flash 编辑与终端命令自动 typed verification）；④Expert 混合分工预设（Flash 执行 + Pro/Grok 审查）；⑤eval-coding 基线实测（20 题记录锚点）。与 v2.1.0 发布后独立周期执行 |
+
 ## 残余 partial 说明（DEBT-025，唯一剩余 open 项）
 
 | DEBT-029 | 2026-08-05（clippy -D warnings 首次全量） | xai-grok-memory 既有代码 21 处 clippy -D warnings 违反（harness_regression/lifecycle_journal/recommend_assignment/identity_envelope/handoff_packet/operator_control 既有函数/nextgen_exit_gates/authority_projection/context_manifest/governed_assignment/task_ledger into_fact）：unused import ×5、unused mut ×2、redundant closure ×6、collapsible_if ×6、derivable/redundant locals/wrong_self_convention 各 ×1。CI clippy 仅对 lumen-guard/discipline/verify 生效，memory 从未被 -D warnings 门控；本日新增代码的 clippy 问题已全部清零 | open | 逐文件清理（unused import 删除、closure 简化、if 折叠、derive）；清理后 `cargo clippy -p xai-grok-memory --lib --no-deps -- -D warnings` 全绿；与源码周期同走（触碰既有文件需单 writer 纪律） |
