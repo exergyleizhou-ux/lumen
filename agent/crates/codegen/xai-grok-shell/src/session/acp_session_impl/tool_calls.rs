@@ -874,6 +874,82 @@ impl SessionActor {
                 tool_call_id: tool_call_id.clone(),
                 source: crate::session::events::ToolCompletedSource::Shell,
             });
+
+            // DEBT-033 B2: profile-triggered verify-after-edit. Dormant by
+            // default: only edit tools at Max effort with an enabled verify
+            // policy run the lumen-verify pipeline. The pipeline is
+            // workspace-bounded and project-marker-gated; heavy commands run
+            // on a blocking thread so the session loop never stalls. Repair
+            // obligation wiring (JTMS sub-goal + journal events) is the next
+            // cycle's hook.
+            {
+                let verify_tool = prepared.tool_name.clone();
+                let verify_args = prepared.raw_arguments.clone();
+                let changed_files =
+                    crate::session::verify_orchestrator::edit_tool_changed_files(
+                        &verify_tool,
+                        &verify_args,
+                    );
+                if !changed_files.is_empty() {
+                    let effort_is_max = self
+                        .chat_state_handle
+                        .get_sampling_config()
+                        .await
+                        .map(|c| {
+                            c.reasoning_effort
+                                == Some(xai_grok_sampling_types::ReasoningEffort::Max)
+                        })
+                        .unwrap_or(false);
+                    let verify_cfg = lumen_verify::config::Config::default();
+                    if crate::session::verify_orchestrator::should_verify(
+                        effort_is_max,
+                        false,
+                        verify_cfg.enabled,
+                    ) {
+                        let session_id = self.session_info.id.0.as_ref().to_string();
+                        let sid_log = session_id.clone();
+                        let workspace_root = self.session_info.cwd.clone();
+                        let handle = tokio::task::spawn_blocking(move || {
+                            let mut loop_state =
+                                crate::session::verify_orchestrator::session_repair_loop(
+                                    &session_id,
+                                );
+                            let outcome =
+                                crate::session::verify_orchestrator::run_verification(
+                                    std::path::Path::new(&workspace_root),
+                                    &changed_files,
+                                    &verify_cfg,
+                                    &mut loop_state,
+                                );
+                            crate::session::verify_orchestrator::store_session_repair_loop(
+                                &session_id,
+                                loop_state,
+                            );
+                            outcome
+                        });
+                        match handle.await {
+                            Ok(outcome) => {
+                                tracing::info!(
+                                    session = %sid_log,
+                                    files = ?outcome.verified_files,
+                                    state = ?outcome.state,
+                                    attempts = outcome.attempts,
+                                    "verify-after-edit (DEBT-033 B2)"
+                                );
+                                if !outcome.diagnostics.is_empty() {
+                                    tracing::warn!(
+                                        diagnostics = %outcome.diagnostics,
+                                        "verify-after-edit found failures; repair obligation wiring lands next cycle"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(%error, "verify-after-edit task failed to run");
+                            }
+                        }
+                    }
+                }
+            }
             self.observability_bridge
                 .emit(
                     xai_tool_protocol::session_event::SessionEvent::ToolCallCompleted {

@@ -144,6 +144,7 @@ xai-token-estimation = { workspace = true }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
 xai-grok-tools = { path = "../xai-grok-tools" }
 lumen-discipline = { path = "../lumen-discipline" }
+lumen-verify = { path = "../lumen-verify" }
 xai-tty-utils = { workspace = true }
 xai-workflow = { path = "../xai-workflow" }
 xai-system-power = { workspace = true }

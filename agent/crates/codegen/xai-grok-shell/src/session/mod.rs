@@ -335,6 +335,7 @@ pub(crate) mod image_describe;
 pub(crate) mod image_normalize;
 pub mod inference_metrics;
 pub(crate) mod prompt_cache_registry;
+pub(crate) mod verify_orchestrator;
 pub use xai_grok_shared::session::info;
 pub mod managed_mcp;
 pub(crate) mod mcp_descriptors;
