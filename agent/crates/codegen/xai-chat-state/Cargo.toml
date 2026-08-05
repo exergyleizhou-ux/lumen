@@ -10,6 +10,7 @@ default-bazel = []
 
 [dependencies]
 indexmap = { workspace = true }
+lumen-discipline = { path = "../lumen-discipline" }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

@@ -621,6 +621,17 @@ pub(crate) async fn spawn_session_actor(
         reasoning_effort: sampling_config.reasoning_effort,
         stream_tool_calls: Some(sampling_config.stream_tool_calls),
     };
+    // DEBT-033 A2-b: staged compaction applies to DeepSeek V4 Flash sessions
+    // (1M window) by default; other models keep the legacy thresholds.
+    let staged_policy = if sampling_config.model == "deepseek-v4-flash" {
+        let profile = crate::agent::models::deepseek_v4_flash_0731();
+        (
+            Some(lumen_discipline::CompactionPolicy::default()),
+            Some(profile.context_window),
+        )
+    } else {
+        (None, None)
+    };
     let actor_pruning_config = xai_chat_state::PruningConfig {
         enabled: session_pruning_config.enabled,
         keep_last_n_turns: session_pruning_config.keep_last_n_turns,
@@ -628,6 +639,8 @@ pub(crate) async fn spawn_session_actor(
         soft_trim_head: session_pruning_config.soft_trim_head,
         soft_trim_tail: session_pruning_config.soft_trim_tail,
         hard_clear_age_turns: session_pruning_config.hard_clear_age_turns,
+        compaction_policy: staged_policy.0,
+        context_window: staged_policy.1,
     };
     let (chat_state_event_tx, chat_state_event_rx) = mpsc::unbounded_channel();
     let chat_state_handle = xai_chat_state::ChatStateActor::spawn_with_pruning(

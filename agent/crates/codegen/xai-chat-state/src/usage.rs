@@ -49,10 +49,15 @@ impl UsageTotals {
         cost_usd_ticks: Option<i64>,
     ) -> Self {
         let cost_usd_ticks = xai_grok_sampling_types::reported_cost_ticks(cost_usd_ticks);
+        // Cache-read billing must not be invented from the compatibility
+        // field: `cached_prompt_tokens` can be populated by a generic provider
+        // shape even when cache accounting is unavailable. Use the definitive
+        // provider-reported hit count (None → 0, never synthesized).
+        let cached_read_tokens = u64::from(usage.definitive_provider_cache_hit_tokens().unwrap_or(0));
         Self {
             input_tokens: u64::from(usage.prompt_tokens),
             output_tokens: u64::from(usage.completion_tokens),
-            cached_read_tokens: u64::from(usage.cached_prompt_tokens),
+            cached_read_tokens,
             cache_creation_tokens: u64::from(usage.cache_creation_prompt_tokens),
             reasoning_tokens: u64::from(usage.reasoning_tokens),
             model_calls: 1,
@@ -164,6 +169,8 @@ mod tests {
             reasoning_tokens: 0,
             cached_prompt_tokens: 0,
             cache_creation_prompt_tokens: 0,
+            provider_cache_hit_tokens: None,
+            cache_miss_prompt_tokens: None,
         }
     }
 
@@ -208,6 +215,7 @@ mod tests {
             total_tokens: 110,
             reasoning_tokens: 0,
             cached_prompt_tokens: 90,
+            cache_creation_prompt_tokens: 0,
             provider_cache_hit_tokens: None,
             cache_miss_prompt_tokens: None,
         };

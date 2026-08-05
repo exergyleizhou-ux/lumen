@@ -82,6 +82,15 @@ pub struct PruningConfig {
     pub soft_trim_tail: usize,
     /// Turn age after which tool results are hard-cleared (replaced with placeholder).
     pub hard_clear_age_turns: usize,
+    /// Staged compaction policy (DEBT-033 A2-b). `None` keeps the legacy
+    /// char/age thresholds only — zero behavior change. When present, the
+    /// prune stage decides between Level-1 snip (head/tail markers) and
+    /// Level-2 placeholder on absolute stale-token thresholds plus remaining
+    /// budget, per `lumen_discipline::CompactionPolicy::stage_for`.
+    pub compaction_policy: Option<lumen_discipline::CompactionPolicy>,
+    /// Provider context window used by the budget trigger; required together
+    /// with `compaction_policy`.
+    pub context_window: Option<u32>,
 }
 
 impl Default for PruningConfig {
@@ -93,6 +102,8 @@ impl Default for PruningConfig {
             soft_trim_head: 1500,
             soft_trim_tail: 1500,
             hard_clear_age_turns: 10,
+            compaction_policy: None,
+            context_window: None,
         }
     }
 }

@@ -167,10 +167,18 @@ pub(crate) fn should_prune(total_tokens: u64, context_window: std::num::NonZeroU
 ///
 /// Turn age is estimated by walking backward through the conversation and
 /// counting `User` items to determine which "turn" each tool result belongs to.
+///
+/// DEBT-033 A2-b: when `config.compaction_policy` is present, the stage
+/// decision (absolute stale-token thresholds + remaining budget) additionally
+/// drives Level-1 snip (head/tail markers) and Level-2 placeholder for
+/// middle-aged results. With the policy absent, the legacy char/age thresholds
+/// apply unchanged.
 pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: &PruningConfig) {
     if !config.enabled {
         return;
     }
+
+    let stage = policy_stage(conversation, config);
 
     let mut turn_from_end: usize = 0;
     let mut seen_first_user = false;
@@ -201,6 +209,32 @@ pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: 
             continue;
         }
 
+        // DEBT-033 A2-b: staged policy drives middle-aged results when present.
+        if let Some(stage) = stage {
+            let already_placeholder = tool_result.content.as_ref() == HARD_CLEAR_PLACEHOLDER;
+            if !already_placeholder {
+                match stage {
+                    lumen_discipline::CompactionStage::Level2Placeholder
+                    | lumen_discipline::CompactionStage::Level3Summary => {
+                        tool_result.content = std::sync::Arc::<str>::from(HARD_CLEAR_PLACEHOLDER);
+                        continue;
+                    }
+                    lumen_discipline::CompactionStage::Level1Snip => {
+                        // Token thresholds already gated the stage; snip with
+                        // deterministic head/tail markers unconditionally.
+                        let head = safe_char_slice(&tool_result.content, 0, config.soft_trim_head);
+                        let tail =
+                            safe_char_slice_tail(&tool_result.content, config.soft_trim_tail);
+                        tool_result.content = std::sync::Arc::<str>::from(format!(
+                            "{head}{SOFT_TRIM_SEPARATOR}{tail}"
+                        ));
+                        continue;
+                    }
+                    lumen_discipline::CompactionStage::None => {}
+                }
+            }
+        }
+
         // Soft trim: large tool results → keep head + tail.
         let content_len = tool_result.content.chars().count();
         if content_len > config.soft_trim_threshold {
@@ -210,6 +244,40 @@ pub(crate) fn prune_conversation(conversation: &mut [ConversationItem], config: 
                 std::sync::Arc::<str>::from(format!("{head}{SOFT_TRIM_SEPARATOR}{tail}"));
         }
     }
+}
+
+/// Compute the staged-compaction decision (DEBT-033 A2-b) when the policy is
+/// configured. `None` when no policy or no context window is present (legacy
+/// behavior).
+fn policy_stage(
+    conversation: &[ConversationItem],
+    config: &PruningConfig,
+) -> Option<lumen_discipline::CompactionStage> {
+    let (policy, window) = (config.compaction_policy?, config.context_window?);
+    let window = u64::from(window);
+    let mut total_tokens = 0u64;
+    let mut stale_tool_tokens = 0u64;
+    let mut turn_from_end: usize = 0;
+    let mut seen_first_user = false;
+    for i in (0..conversation.len()).rev() {
+        match &conversation[i] {
+            ConversationItem::User(_) => {
+                if seen_first_user {
+                    turn_from_end += 1;
+                }
+                seen_first_user = true;
+            }
+            ConversationItem::ToolResult(tr) => {
+                let tokens = lumen_discipline::estimate_tokens(&tr.content);
+                total_tokens = total_tokens.saturating_add(tokens);
+                if turn_from_end >= config.keep_last_n_turns {
+                    stale_tool_tokens = stale_tool_tokens.saturating_add(tokens);
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(policy.stage_for(stale_tool_tokens, total_tokens, window))
 }
 
 // ============================================================================
@@ -549,6 +617,90 @@ mod tests {
         if let ConversationItem::ToolResult(ref tr) = conv[0] {
             assert_eq!(tr.content.len(), 10_000);
         }
+    }
+
+    // -- staged compaction policy (DEBT-033 A2-b) --
+
+    fn conv_two_turns() -> Vec<ConversationItem> {
+        // turn 1 (older): user + tool result — eligible for pruning with
+        // keep_last_n_turns = 1; turn 0 (recent): tool result never pruned.
+        vec![
+            ConversationItem::user("first ask"),
+            ConversationItem::tool_result("old-call", "old output ".repeat(50)),
+            ConversationItem::user("second ask"),
+            ConversationItem::tool_result("recent-call", "recent".to_string()),
+            ConversationItem::user("third ask"),
+        ]
+    }
+
+    #[test]
+    fn policy_absent_keeps_legacy_behavior() {
+        let mut conv = conv_two_turns();
+        let config = PruningConfig {
+            keep_last_n_turns: 1,
+            soft_trim_threshold: 10_000, // big; nothing trims
+            ..Default::default()
+        };
+        prune_conversation(&mut conv, &config);
+        if let ConversationItem::ToolResult(ref tr) = conv[1] {
+            assert!(!tr.content.contains(SOFT_TRIM_SEPARATOR));
+            assert_ne!(tr.content.as_ref(), HARD_CLEAR_PLACEHOLDER);
+        }
+    }
+
+    #[test]
+    fn policy_level1_snips_middle_aged_result() {
+        let mut conv = conv_two_turns();
+        let config = PruningConfig {
+            keep_last_n_turns: 1,
+            soft_trim_threshold: 10_000, // above content size — legacy would not trim
+            soft_trim_head: 8,
+            soft_trim_tail: 4,
+            compaction_policy: Some(lumen_discipline::CompactionPolicy {
+                snip_threshold_tokens: 1, // stale output ≥1 token → L1
+                ..lumen_discipline::CompactionPolicy::default()
+            }),
+            context_window: Some(1_048_576),
+            ..Default::default()
+        };
+        prune_conversation(&mut conv, &config);
+        if let ConversationItem::ToolResult(ref tr) = conv[1] {
+            assert!(
+                tr.content.contains(SOFT_TRIM_SEPARATOR),
+                "L1 must snip with head/tail markers, got: {}",
+                tr.content
+            );
+            assert_ne!(tr.content.as_ref(), HARD_CLEAR_PLACEHOLDER);
+        }
+    }
+
+    #[test]
+    fn policy_level2_placeholders_middle_aged_result() {
+        let mut conv = conv_two_turns();
+        let config = PruningConfig {
+            keep_last_n_turns: 1,
+            compaction_policy: Some(lumen_discipline::CompactionPolicy {
+                placeholder_threshold_tokens: 1, // stale output ≥1 token → L2
+                ..lumen_discipline::CompactionPolicy::default()
+            }),
+            context_window: Some(1_048_576),
+            ..Default::default()
+        };
+        prune_conversation(&mut conv, &config);
+        if let ConversationItem::ToolResult(ref tr) = conv[1] {
+            assert_eq!(tr.content.as_ref(), HARD_CLEAR_PLACEHOLDER);
+        }
+    }
+
+    #[test]
+    fn policy_stage_without_window_is_none() {
+        let conv = conv_two_turns();
+        let config = PruningConfig {
+            compaction_policy: Some(lumen_discipline::CompactionPolicy::default()),
+            context_window: None,
+            ..Default::default()
+        };
+        assert_eq!(policy_stage(&conv, &config), None);
     }
 
     #[test]
