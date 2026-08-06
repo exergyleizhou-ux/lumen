@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "version": "2.2.0",
+  "version": "2.3.0",
   "source_commit": "098f7cd424c1015bfe0d1cbd88c96570b36064ca",
   "evidence_commit": "af2857a21ec4b1c5655d308231b89ba81596c4fd",
   "tag_ref": "v2.2.0",
