@@ -13993,6 +13993,7 @@ dependencies = [
  "xai-tracing-macros",
  "xai-tty-utils",
  "xai-workflow",
+ "zip",
  "zstd",
 ]
 

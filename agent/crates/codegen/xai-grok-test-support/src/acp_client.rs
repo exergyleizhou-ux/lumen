@@ -16,9 +16,12 @@ use agent_client_protocol::{self as acp, Agent as _};
 use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 use xai_acp_lib::LineBufferedRead;
 
-use crate::env::grok_binary;
+use tempfile::TempDir;
+
+use crate::env::{grok_binary, test_env_cmd_tokio};
 use crate::headless::stderr_tail;
 use crate::mock_server::MockInferenceServer;
+use crate::process::spawn_piped_with_stderr_capture;
 use crate::process::{TestOutput, TestProcess, TestProcessConfig, TestStdin};
 use crate::sandbox::TestSandbox;
 
@@ -63,6 +66,7 @@ fn spawn_agent_process(
 struct TextCapture {
     chunks: std::sync::Mutex<Vec<String>>,
     notification_count: AtomicU32,
+    permission_request_count: AtomicU32,
 }
 
 /// How the typed ACP harness answers a production permission request.
@@ -71,6 +75,12 @@ struct TextCapture {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PermissionResponse {
     AllowOnce,
+    /// Hold the real ACP permission request open so a product test can mutate
+    /// hostile external state during the AwaitingApproval window.
+    AllowAfter(Duration),
+    /// Select the production RejectOnce option so the SessionActor records a
+    /// durable Denied terminal state rather than a transport cancellation.
+    DenyOnce,
     Reject,
     NeverRespond,
 }
@@ -87,13 +97,31 @@ impl acp::Client for TestAcpClient {
         &self,
         args: acp::RequestPermissionRequest,
     ) -> acp::Result<acp::RequestPermissionResponse> {
-        if self.permission_response == PermissionResponse::NeverRespond {
-            std::future::pending::<()>().await;
-        }
-        if self.permission_response == PermissionResponse::Reject {
-            return Ok(acp::RequestPermissionResponse::new(
-                acp::RequestPermissionOutcome::Cancelled,
-            ));
+        self.capture
+            .permission_request_count
+            .fetch_add(1, Ordering::SeqCst);
+        match self.permission_response {
+            PermissionResponse::NeverRespond => std::future::pending::<()>().await,
+            PermissionResponse::Reject => {
+                return Ok(acp::RequestPermissionResponse::new(
+                    acp::RequestPermissionOutcome::Cancelled,
+                ));
+            }
+            PermissionResponse::DenyOnce => {
+                let outcome = args
+                    .options
+                    .iter()
+                    .find(|option| option.kind == acp::PermissionOptionKind::RejectOnce)
+                    .map(|option| {
+                        acp::RequestPermissionOutcome::Selected(
+                            acp::SelectedPermissionOutcome::new(option.option_id.clone()),
+                        )
+                    })
+                    .unwrap_or(acp::RequestPermissionOutcome::Cancelled);
+                return Ok(acp::RequestPermissionResponse::new(outcome));
+            }
+            PermissionResponse::AllowAfter(delay) => tokio::time::sleep(delay).await,
+            PermissionResponse::AllowOnce => {}
         }
         // Auto-approve: pick AllowOnce if available, otherwise first option.
         let outcome = args
@@ -127,6 +155,38 @@ impl acp::Client for TestAcpClient {
     }
 }
 
+/// Spawn `grok agent stdio` with the home-isolated hermetic env
+/// ([`test_env_cmd_tokio`] plus the debug-logging kill-list). `leading_args`
+/// go before the `agent stdio` subcommand; `extra_env` is applied last.
+fn spawn_agent_process_home(
+    server: &MockInferenceServer,
+    cwd: &Path,
+    home: &Path,
+    extra_env: &[(&str, &str)],
+    leading_args: &[&str],
+) -> (tokio::process::Child, Arc<std::sync::Mutex<Vec<u8>>>) {
+    let binary = grok_binary();
+
+    let mut cmd = tokio::process::Command::new(&binary);
+    cmd.args(leading_args)
+        .args(["agent", "stdio"])
+        .current_dir(cwd);
+    test_env_cmd_tokio(&mut cmd, &server.url(), home);
+    for k in [
+        "GROK_DEBUG_LOG",
+        "GROK_LOG_FILE",
+        "GROK_LOG_SAMPLING",
+        "GROK_HOOKS_LOG",
+    ] {
+        cmd.env_remove(k);
+    }
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
+    spawn_piped_with_stderr_capture(cmd)
+}
+
 /// Drives `grok agent stdio` via the ACP protocol over pipes.
 ///
 /// Handles the full lifecycle: spawn → initialize → authenticate → session → prompt.
@@ -135,7 +195,9 @@ pub struct GrokStdioClient {
     conn: acp::ClientSideConnection,
     process: TestProcess,
     sandbox: Option<TestSandbox>,
+    home: Option<TempDir>,
     capture: Arc<TextCapture>,
+    stderr: Arc<std::sync::Mutex<Vec<u8>>>,
 }
 
 impl GrokStdioClient {
@@ -205,7 +267,108 @@ impl GrokStdioClient {
             conn,
             process,
             sandbox: Some(sandbox),
+            home: None,
             capture,
+            stderr: Arc::new(std::sync::Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Spawn with a caller-created home directory (`LUMEN_HOME`/`GROK_HOME`
+    /// point into `home`). Product tests use this to pre-seed an isolated
+    /// `config.toml` (e.g. `[science_features]` gate overrides) and, after
+    /// dropping the process, to reuse the same home for a restart.
+    pub async fn spawn_with_home(server: &MockInferenceServer, cwd: &Path, home: TempDir) -> Self {
+        Self::spawn_with_home_and_env(server, cwd, home, &[]).await
+    }
+
+    /// Like [`spawn_with_home`] but applies extra environment variables to the
+    /// child process (after the standard test env).
+    pub async fn spawn_with_home_and_env(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        home: TempDir,
+        extra_env: &[(&str, &str)],
+    ) -> Self {
+        Self::spawn_with_home_env_and_args(server, cwd, home, extra_env, &[]).await
+    }
+
+    /// Like [`spawn_with_home_and_env`] but also prepends `leading_args` before
+    /// the `agent stdio` subcommand.
+    pub async fn spawn_with_home_env_and_args(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        home: TempDir,
+        extra_env: &[(&str, &str)],
+        leading_args: &[&str],
+    ) -> Self {
+        Self::spawn_with_home_env_args_and_permission(
+            server,
+            cwd,
+            home,
+            extra_env,
+            leading_args,
+            PermissionResponse::AllowOnce,
+        )
+        .await
+    }
+
+    /// Spawn an ACP product process with both a caller-retained home directory
+    /// and an explicit client-side permission behavior.
+    ///
+    /// Restart/recovery product tests use this after taking the first
+    /// process's home and dropping that process. Keeping the home preserves
+    /// the real persisted session while changing the permission response lets
+    /// the second process prove whether recovery does or does not re-prompt.
+    pub async fn spawn_with_home_and_permission_response(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        home: TempDir,
+        permission_response: PermissionResponse,
+    ) -> Self {
+        Self::spawn_with_home_env_args_and_permission(
+            server,
+            cwd,
+            home,
+            &[],
+            &[],
+            permission_response,
+        )
+        .await
+    }
+
+    async fn spawn_with_home_env_args_and_permission(
+        server: &MockInferenceServer,
+        cwd: &Path,
+        home: TempDir,
+        extra_env: &[(&str, &str)],
+        leading_args: &[&str],
+        permission_response: PermissionResponse,
+    ) -> Self {
+        let (mut child, stderr) =
+            spawn_agent_process_home(server, cwd, home.path(), extra_env, leading_args);
+
+        let outgoing = child.stdin.take().unwrap().compat_write();
+        let incoming = child.stdout.take().unwrap().compat();
+
+        let capture = Arc::new(TextCapture::default());
+        let client = TestAcpClient {
+            capture: capture.clone(),
+            permission_response,
+        };
+
+        let incoming = LineBufferedRead::spawn_local(incoming);
+        let (conn, handle_io) = acp::ClientSideConnection::new(client, outgoing, incoming, |fut| {
+            tokio::task::spawn_local(fut);
+        });
+        tokio::task::spawn_local(handle_io);
+
+        Self {
+            conn,
+            process: TestProcess::orphan(child),
+            sandbox: None,
+            home: Some(home),
+            capture,
+            stderr: stderr.into(),
         }
     }
 
@@ -325,8 +488,25 @@ impl GrokStdioClient {
         self.capture.notification_count.load(Ordering::SeqCst)
     }
 
+    pub fn permission_request_count(&self) -> u32 {
+        self.capture.permission_request_count.load(Ordering::SeqCst)
+    }
+
     pub fn stderr(&self) -> String {
+        let captured = String::from_utf8_lossy(&self.stderr.lock().unwrap()).into_owned();
+        if !captured.is_empty() {
+            return captured;
+        }
         self.process.stderr_tail().text
+    }
+
+    pub fn take_home(&mut self) -> TempDir {
+        self.home.take().expect("test home already taken")
+    }
+
+    /// Return the home directory path (for cache invalidation between phases).
+    pub fn home_path(&self) -> &std::path::Path {
+        self.home.as_ref().expect("test home already taken").path()
     }
 
     pub fn child_pid(&self) -> Option<u32> {

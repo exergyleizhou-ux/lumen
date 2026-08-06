@@ -282,6 +282,17 @@ pub struct TestProcessTree {
 }
 
 impl TestProcessTree {
+    /// No-op tree for a child whose process group was established before the
+    /// harness took ownership (home-isolated ACP spawn path).
+    pub fn orphan() -> Self {
+        Self {
+            pid: 0,
+            label: "orphan".into(),
+            group: None,
+            attachment_error: None,
+        }
+    }
+
     /// Attach to a child already spawned as its own session/process group.
     pub fn try_attach(pid: u32, label: impl Into<String>) -> io::Result<Self> {
         let label = label.into();
@@ -426,6 +437,29 @@ pub struct TestProcess {
 }
 
 impl TestProcess {
+    /// Wrap an already-spawned child whose stdio pipes are owned by the caller
+    /// (used by the home-isolated ACP harness spawn path). Cleanup relies on
+    /// `kill_on_drop`; the process group cannot be re-attached after exec.
+    pub fn orphan(child: tokio::process::Child) -> Self {
+        Self {
+            child,
+            tree: TestProcessTree::orphan(),
+            stdin: None,
+            stdout: None,
+            stderr: None,
+            stdout_tail: OutputTail::new(0),
+            stderr_tail: OutputTail::new(0),
+            stdout_capture: None,
+            stderr_capture: None,
+            status: None,
+            termination: None,
+            lifecycle_errors: Vec::new(),
+            grace_period: Duration::from_secs(5),
+            kill_wait: Duration::from_secs(5),
+            redactions: Vec::new(),
+        }
+    }
+
     /// Spawn from the [`TestSandbox`] baseline with detached, piped stdio and
     /// test-owned process-tree cleanup.
     ///
@@ -1251,4 +1285,43 @@ mod tests {
             .expect("Windows job verifier timed out");
         assert!(status.success(), "grandchild survived Job Object kill");
     }
+}
+
+/// Pipe all three stdio handles, `kill_on_drop`, spawn, and drain the child's
+/// stderr into the returned buffer on a background task. Used by the
+/// home-isolated (`LUMEN_HOME`) ACP harness spawn path; env/args stay with the
+/// callers. The drain future is `Send`, so this works on and off a `LocalSet`.
+pub(crate) fn spawn_piped_with_stderr_capture(
+    mut cmd: tokio::process::Command,
+) -> (tokio::process::Child, Arc<std::sync::Mutex<Vec<u8>>>) {
+    cmd.stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    let program = cmd.as_std().get_program().to_string_lossy().into_owned();
+    let mut child = cmd
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn grok at {program}: {e}"));
+
+    let stderr = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let stderr_capture = stderr.clone();
+    let mut child_stderr = child.stderr.take().expect("child stderr missing");
+    tokio::spawn(async move {
+        use tokio::io::AsyncReadExt as _;
+
+        let mut buf = [0_u8; 1024];
+        loop {
+            match child_stderr.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(read) => stderr_capture
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&buf[..read]),
+                Err(_) => break,
+            }
+        }
+    });
+
+    (child, stderr)
 }

@@ -55,7 +55,7 @@ pub use headless::{
     HeadlessResult, assert_headless_success, assert_no_crashes, run_headless,
     run_headless_in_sandbox, run_headless_in_sandbox_borrowed,
     run_headless_in_sandbox_borrowed_with_env, run_headless_in_sandbox_with_env,
-    run_headless_with_env, stderr_tail,
+    run_headless_with_cmd, run_headless_with_env, stderr_tail,
 };
 pub use inference_override::{InferenceEndpoint, InferenceExpectation, InferenceRequestMatcher};
 #[cfg(unix)]
