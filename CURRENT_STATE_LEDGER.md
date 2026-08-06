@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 23d758e0 feat(science): X-S2 shell science-surface merge — seq/dossier/quarantine/workflow ACP routes onto canonical shell |
+| Last non-bot commit | 8c519303 fix(science): cross-platform compile — Windows path bugs in fused science crate |
 
 ---
 
