@@ -13,10 +13,10 @@ For the generation date, see the last ledger commit in `git log`.
 | Version (root VERSION) | **2.2.0** |
 | Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
 | Active git worktrees (this checkout) | 1 |
-| Remote branches on origin (excl. main) | **75** |
-| … fully merged into main | 9 |
+| Remote branches on origin (excl. main) | **76** |
+| … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 48e188e5 chore(lock): refresh SOURCE_LOCK for image_url strip fix (deb85fd7) |
+| Last non-bot commit | 0eb52c10 Merge science/xs1-store-seq-v1: X-S1 full-crate fusion (xai-grok-science onto canonical base) |
 
 ---
 
