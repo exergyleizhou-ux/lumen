@@ -300,7 +300,13 @@ mod tests {
             })
             .unwrap();
         store
+            .transition(&run_id, RunState::AwaitingApproval, None)
+            .unwrap();
+        store
             .decide_approval(&project, &run_id, owner, &call, ApprovalDecision::Allow)
+            .unwrap();
+        store
+            .transition(&run_id, RunState::Running, None)
             .unwrap();
         let artifact = store
             .put_artifact(
@@ -336,9 +342,8 @@ mod tests {
                 environment: BTreeMap::new(),
             })
             .unwrap();
-        store.transition(&run_id, RunState::Running, None).unwrap();
         store
-            .transition(&run_id, RunState::Succeeded, None)
+            .transition_succeeded_verified(&run_id)
             .unwrap();
         (store, run_id)
     }
