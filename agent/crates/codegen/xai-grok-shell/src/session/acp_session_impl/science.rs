@@ -520,6 +520,9 @@ impl SessionActor {
             &prepared.query,
             exchanges,
             format!("{tool_name} via WorkspaceOps::call_tool"),
+            // X-S1 fusion: capability provenance is not yet wired on this
+            // legacy tool path; admitted capability provenance lands with M1/W2.
+            None,
         )
     }
 
