@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 0eb52c10 Merge science/xs1-store-seq-v1: X-S1 full-crate fusion (xai-grok-science onto canonical base) |
+| Last non-bot commit | 81515aae fix(science): finish_fetch capability_provenance arg (X-S1 API alignment) |
 
 ---
 
