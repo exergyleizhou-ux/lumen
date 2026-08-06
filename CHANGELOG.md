@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-08-06
+
+### Added
+
+- X-S1: full xai-grok-science crate fusion (store layer + seq family + workflow) onto canonical base (`b521483d`)
+- X-S2: shell science-surface merge — seq/dossier/quarantine/workflow ACP routes, science_feature_gates (`23d758e0`)
+- cross-platform compile fixes for fused science crate (Windows paths) (`8c519303`)
+
 ## [2.2.0] - 2026-08-06
 
 ### Added
