@@ -945,6 +945,10 @@ impl MvpAgent {
             let sessions = self.sessions.borrow();
             sessions.get(&parent_sid).and_then(|h| h.max_turns)
         };
+        let parent_science_feature_gates = {
+            let sessions = self.sessions.borrow();
+            sessions.get(&parent_sid)?.science_feature_gates.clone()
+        };
         let parent_model_agent_type =
             config::find_model_by_id(&available_models, parent_model_id.0.as_ref())
                 .map(|e| e.info.agent_type.clone());
@@ -1015,6 +1019,7 @@ impl MvpAgent {
             auth: self.current_or_buffered_auth(),
             parent_cwd: parent_cwd.clone(),
             parent_session_id: parent_session_id.to_string(),
+            science_feature_gates: parent_science_feature_gates,
             inherited_tool_overrides,
             yolo_mode,
             subagent_event_tx: self.subagent_event_tx.clone(),

@@ -1501,6 +1501,12 @@ pub struct ShellEnvironmentPolicyKnownKeys {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     pub features: Features,
+    /// Operator-controlled Science capability states.
+    ///
+    /// These overrides are validated at config load and resolved into one
+    /// immutable `FeatureGates` snapshot when a session is spawned.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub science_features: std::collections::BTreeMap<String, xai_grok_science::features::GateState>,
     /// `[goal]` section: canonical `/goal` configuration. See [`GoalConfig`].
     #[serde(default)]
     pub goal: GoalConfig,
@@ -1962,6 +1968,7 @@ impl Default for Config {
         let endpoints = EndpointsConfig::default();
         let mut cfg = Self {
             features: Features::default(),
+            science_features: std::collections::BTreeMap::new(),
             goal: GoalConfig::default(),
             workflows: WorkflowsConfig::default(),
             expert: ExpertConfig::default(),
@@ -2233,6 +2240,8 @@ impl Config {
         }
         let (mut config, mut unrecognized_keys) =
             Self::deserialize_collecting_unrecognized(base, &raw_without_model_sections)?;
+        xai_grok_science::features::FeatureGates::from_overrides(&config.science_features)
+            .map_err(|error| format!("invalid [science_features] config: {error}"))?;
         config.mcp_servers = parsed_mcp_servers.into_iter().collect();
         config.config_models = config_models;
         config.config_warnings = config_warnings;

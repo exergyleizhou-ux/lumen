@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::bounded_assignment_apply::AssignmentLifecycle;
 use crate::nextgen_exit_gates::{
-    AppliedAssignmentChain, AppliedChainDeny, authorize_applied_assignment_chain,
+    AppliedAssignmentChain, authorize_applied_assignment_chain,
 };
 
 /// One condition of the applied-assignment chain, with its readiness state.
@@ -99,6 +99,7 @@ pub fn build_assignment_recommendation(chain: &AppliedAssignmentChain<'_>) -> As
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nextgen_exit_gates::AppliedChainDeny;
 
     fn ok_chain<'a>() -> AppliedAssignmentChain<'a> {
         AppliedAssignmentChain {

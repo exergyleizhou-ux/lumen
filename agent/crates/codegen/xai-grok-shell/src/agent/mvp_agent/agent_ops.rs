@@ -2653,6 +2653,9 @@ impl MvpAgent {
         query: String,
         requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
         fixture_bytes: Vec<Vec<u8>>,
+        capability_provenance: Option<
+            xai_grok_science::connectors::fetch::CapabilitySourceProvenance,
+        >,
         approval_timeout: std::time::Duration,
     ) -> xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult> {
         if context.session_id != session_id.0.as_ref() {
@@ -2671,6 +2674,7 @@ impl MvpAgent {
                 query,
                 requests,
                 fixture_bytes,
+                capability_provenance,
                 approval_timeout,
             )
             .await
@@ -4245,6 +4249,14 @@ impl MvpAgent {
                 code_nav: client_code_nav_enabled,
                 git_head_changed,
             });
+            let science_feature_gates = {
+                let cfg = self.cfg.borrow();
+                xai_grok_science::features::FeatureGates::from_overrides(&cfg.science_features)
+                    .map_err(|error| {
+                        acp::Error::internal_error()
+                            .data(format!("invalid science feature configuration: {error}"))
+                    })?
+            };
             spawn_session_on_thread(
                     session_info.clone(),
                     self.gateway.clone(),
@@ -4370,6 +4382,7 @@ impl MvpAgent {
                     laziness_debug_log_for_spawn,
                     None,
                     None,
+                    science_feature_gates,
                     max_turns,
                     None,
                     is_chat_kind,
@@ -4566,5 +4579,209 @@ mod governed_assignment_lineage_tests {
     fn governed_assignment_rejects_a_forged_direct_parent() {
         let assignment = assignment("review", "code", &["root", "code", "review"]);
         assert!(governed_lineage_from_assignment(&assignment, "root").is_err());
+    }
+}
+
+impl MvpAgent {
+    /// Route deterministic sequence analysis through the owning SessionActor.
+    /// This facade verifies the session binding and adds no execution or store
+    /// authority of its own.
+    pub async fn run_science_seq_analyze(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        options: xai_grok_science::seqbench::SeqAnalyzeOptions,
+        source_path: PathBuf,
+        source_bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::seqbench::SeqAnalyzeResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_seq_analyze_with_approval_timeout(
+                store,
+                context,
+                options,
+                source_path,
+                source_bytes,
+                approval_timeout,
+            )
+            .await
+    }
+
+
+    /// Route a bounded skill archive quarantine through the owning
+    /// SessionActor. The facade binds the requested session but cannot inspect
+    /// or persist the archive itself.
+    pub async fn run_science_skill_quarantine(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::skill_quarantine::SkillQuarantineRequest,
+        archive_bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<
+        xai_grok_science::skill_quarantine::SkillQuarantineResult,
+    > {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_skill_quarantine_with_approval_timeout(
+                store,
+                context,
+                request,
+                archive_bytes,
+                approval_timeout,
+            )
+            .await
+    }
+
+
+    /// WP-2 project mutation entry: verifies the science context and the
+    /// mutation request both target this SessionActor, then delegates to the
+    /// session handle's begin/permission/finish protocol. This facade adds no
+    /// executor and never touches the project store.
+    pub async fn run_science_project_mutation(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        project_root: std::path::PathBuf,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::project::MutationRequest,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::project::MutationOutcome> {
+        if context.session_id != session_id.0.as_ref()
+            || request.session_id != session_id.0.as_ref()
+        {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_project_mutation_with_approval_timeout(
+                store,
+                project_root,
+                context,
+                request,
+                approval_timeout,
+            )
+            .await
+    }
+
+
+    /// LS5-K8 workflow execution entry: verifies the science context and the
+    /// execution request both target this SessionActor, then delegates to the
+    /// session handle's begin/permission/finish protocol.
+    ///
+    /// This facade adds no executor, no runner and no kernel probe. Everything
+    /// that runs code happens inside the actor, after an allow decision.
+    pub async fn run_science_workflow_execution(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        binding: crate::session::commands::ScienceWorkflowBinding,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::workflow::WorkflowRunReport> {
+        if context.session_id != session_id.0.as_ref()
+            || binding.execution.session_id != session_id.0.as_ref()
+        {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_workflow_execution_with_approval_timeout(
+                store,
+                context,
+                binding,
+                approval_timeout,
+            )
+            .await
+    }
+
+
+    /// This facade performs only session binding; it never opens source
+    /// artifacts or writes the dossier itself.
+    pub async fn run_science_evidence_dossier(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        project_root: PathBuf,
+        context: xai_grok_science::RunContext,
+        source_run_ids: Vec<xai_grok_science::RunId>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::dossier::DossierResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_evidence_dossier_with_approval_timeout(
+                store,
+                project_root,
+                context,
+                source_run_ids,
+                approval_timeout,
+            )
+            .await
+    }
+
+    /// S3 connector fetch entry: verifies the science context targets this
+    /// SessionActor and delegates to the session handle's
+
+    /// Route kernel identity probing through the owning SessionActor. This
+    /// facade validates the session binding and adds no process or store
+    /// authority of its own.
+    pub async fn run_science_kernel_admission(
+        &self,
+        session_id: &acp::SessionId,
+        store: xai_grok_science::ScienceStore,
+        project_root: std::path::PathBuf,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::workflow::KernelAdmissionRequest,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::workflow::KernelAdmissionResult> {
+        if context.session_id != session_id.0.as_ref() {
+            return Err(xai_grok_science::ScienceError::Invalid(
+                "science context session does not match target SessionActor".into(),
+            ));
+        }
+        let handle = self.get_session_handle(session_id).ok_or_else(|| {
+            xai_grok_science::ScienceError::Invalid("science session not found".into())
+        })?;
+        handle
+            .run_science_kernel_admission_with_approval_timeout(
+                store,
+                project_root,
+                context,
+                request,
+                approval_timeout,
+            )
+            .await
     }
 }

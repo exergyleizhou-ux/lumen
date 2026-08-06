@@ -1963,6 +1963,7 @@ pub(crate) async fn run_shell_child(
         } else {
             ctx.parent_scheduler_handle.clone()
         },
+        ctx.science_feature_gates.clone(),
         subagent_max_turns,
         if verbatim_mirror_fork && !request.owner.is_workflow() {
             std::mem::take(&mut ctx.parent_tool_definitions)

@@ -60,6 +60,7 @@ pub(crate) fn ctx_with_toggle(toggle: HashMap<String, bool>) -> SubagentSpawnCon
         auth: None,
         parent_cwd: PathBuf::from("/tmp"),
         parent_session_id: "test-parent".into(),
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
         inherited_tool_overrides: None,
         yolo_mode: false,
         subagent_control_tx: tx.clone(),

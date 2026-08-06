@@ -1156,6 +1156,7 @@ fn make_test_handle(
             id: acp::SessionId::new("test"),
             cwd: "/tmp".to_string(),
         },
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
         max_turns: None,
         resolved_tool_overrides: std::sync::Arc::new(arc_swap::ArcSwapOption::empty()),
         hunk_tracker_handle,

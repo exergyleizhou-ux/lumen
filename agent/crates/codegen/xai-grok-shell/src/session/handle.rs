@@ -62,6 +62,8 @@ pub struct SessionHandle {
     /// Resolved turn limit for this session; lets a spawned subagent inherit
     /// the parent's limit. `None` = unlimited.
     pub max_turns: Option<usize>,
+    /// Sole-authority Science gate snapshot; read-only ACP routes use it.
+    pub science_feature_gates: xai_grok_science::features::FeatureGates,
     /// Configured cutoff a subagent inherits, published by the session actor. `None` when unset.
     pub resolved_tool_overrides:
         std::sync::Arc<arc_swap::ArcSwapOption<xai_grok_sampling_types::ToolOverrides>>,
@@ -423,6 +425,9 @@ impl SessionHandle {
         query: String,
         requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
         fixture_bytes: Vec<Vec<u8>>,
+        capability_provenance: Option<
+            xai_grok_science::connectors::fetch::CapabilitySourceProvenance,
+        >,
         approval_timeout: std::time::Duration,
     ) -> xai_grok_science::Result<xai_grok_science::connectors::fetch::FetchResult> {
         use xai_grok_workspace::permission::{AccessKind, Decision};
@@ -436,7 +441,7 @@ impl SessionHandle {
                     query,
                     requests,
                     fixture_bytes,
-                    capability_provenance: None,
+                    capability_provenance,
                     respond_to: begin_tx,
                 },
             )))
@@ -931,6 +936,724 @@ impl SessionHandle {
             );
         }
     }
+    /// Deterministic sequence analysis still produces durable artifacts. Begin
+    /// and finish therefore run in the SessionActor, with the existing
+    /// production permission manager between them.
+    pub async fn run_science_seq_analyze_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        options: xai_grok_science::seqbench::SeqAnalyzeOptions,
+        source_path: std::path::PathBuf,
+        source_bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::seqbench::SeqAnalyzeResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceSeqAnalyze(Box::new(
+                crate::session::commands::BeginScienceSeqAnalyze {
+                    store,
+                    context,
+                    options,
+                    source_path,
+                    source_bytes,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let mut prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+        if let Some(replayed) = prepared.replayed.take() {
+            return Ok(replayed);
+        }
+        if prepared.recovery_grant.is_some() {
+            // The actor reopened one exact durable Running+Allow operation.
+            // No second permission request is permitted; the opaque recovery
+            // grant is validated again by Finish inside the same actor.
+            let (respond_to, response) = oneshot::channel();
+            self.cmd_tx
+                .send(SessionCommand::FinishScienceSeqAnalyze(Box::new(
+                    crate::session::commands::FinishScienceSeqAnalyze {
+                        prepared,
+                        decision: xai_grok_science::ApprovalDecision::Allow,
+                        reason: "resuming exact durable sequence Allow".into(),
+                        permission_grant: None,
+                        respond_to,
+                    },
+                )))
+                .map_err(|_| {
+                    xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+                })?;
+            return response.await.map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+            })?;
+        }
+        let pending = PendingScienceSeqAnalyzeApproval::new(self.cmd_tx.clone(), prepared);
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-seq-analyze-{}",
+            pending.prepared().ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some(format!(
+                    "Lumen Science sequence analysis (NCBI table {}; {} restriction scan; {} digest enzyme(s))",
+                    pending.prepared().options.translation_table_id,
+                    pending.prepared().options.topology.as_str(),
+                    pending
+                        .prepared()
+                        .options
+                        .restriction_digest_enzymes
+                        .len()
+                ))),
+        );
+        let target = pending.prepared().target.clone();
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Edit(target),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let permission_grant = (decision == xai_grok_science::ApprovalDecision::Allow)
+            .then(|| ScienceSeqAnalyzePermissionGrant::new(pending.prepared()));
+        let prepared = pending.take();
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceSeqAnalyze(Box::new(
+                crate::session::commands::FinishScienceSeqAnalyze {
+                    prepared,
+                    decision,
+                    reason,
+                    permission_grant,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
+    /// Quarantine an uploaded skill archive through a durable actor-owned
+    /// Begin/permission/Finish protocol. Dropping this future while permission
+    /// is pending sends Cancel to the same actor.
+    pub async fn run_science_skill_quarantine_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::skill_quarantine::SkillQuarantineRequest,
+        archive_bytes: Vec<u8>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::skill_quarantine::SkillQuarantineResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceSkillQuarantine(Box::new(
+                crate::session::commands::BeginScienceSkillQuarantine {
+                    store,
+                    context,
+                    request,
+                    archive_bytes,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let mut prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+        if let Some(replayed) = prepared.replayed.take() {
+            return Ok(replayed);
+        }
+        let pending = PendingScienceSkillQuarantineApproval::new(self.cmd_tx.clone(), prepared);
+        let prepared = pending.prepared();
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-skill-quarantine-{}",
+            prepared.ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some(format!(
+                    "Quarantine {} skill root(s), {} file(s), {} bytes (not enabled)",
+                    prepared.admission.selected_subpaths().len(),
+                    prepared.admission.file_count(),
+                    prepared.admission.total_uncompressed_bytes()
+                ))),
+        );
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Edit(prepared.target.clone()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let permission_grant = (decision == xai_grok_science::ApprovalDecision::Allow)
+            .then(|| ScienceSkillQuarantinePermissionGrant::new(pending.prepared()));
+        let prepared = pending.take();
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceSkillQuarantine(Box::new(
+                crate::session::commands::FinishScienceSkillQuarantine {
+                    prepared,
+                    decision,
+                    reason,
+                    permission_grant,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
+    /// Compose byte-verified source runs into a self-contained dossier through
+    /// the same durable Begin/permission/Finish protocol as every Science
+    /// mutation.
+    pub async fn run_science_evidence_dossier_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        project_root: std::path::PathBuf,
+        context: xai_grok_science::RunContext,
+        source_run_ids: Vec<xai_grok_science::RunId>,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::dossier::DossierResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceEvidenceDossier(Box::new(
+                crate::session::commands::BeginScienceEvidenceDossier {
+                    store,
+                    project_root,
+                    context,
+                    source_run_ids,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+        let pending = PendingScienceDossierApproval::new(self.cmd_tx.clone(), prepared);
+        let prepared = pending.prepared();
+        let admission_sha256 = prepared.admission.sha256()?;
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-evidence-dossier-{}",
+            prepared.ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some(format!(
+                    "Build Lumen Science evidence dossier from {} verified run(s), request {}",
+                    prepared.admission.source_run_ids().len(),
+                    &admission_sha256[..12]
+                ))),
+        );
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Edit(prepared.target.clone()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let permission_grant = if decision == xai_grok_science::ApprovalDecision::Allow {
+            Some(ScienceDossierPermissionGrant::new(
+                prepared,
+                admission_sha256,
+            ))
+        } else {
+            None
+        };
+        let prepared = pending.take();
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceEvidenceDossier(Box::new(
+                crate::session::commands::FinishScienceEvidenceDossier {
+                    prepared,
+                    decision,
+                    reason,
+                    permission_grant,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
+    /// WP-2 project mutation: admits the mutation inside this session actor,
+    /// awaits the production permission bridge, then applies it through the
+    /// actor so the durable run record, the approval decision and the record
+    /// write all belong to the same authority. The ACP adapter never touches
+    /// the project store itself.
+    ///
+    /// An operation id that was already applied short-circuits inside the
+    /// actor: it returns the recorded outcome without a second prompt.
+    pub async fn run_science_project_mutation_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        project_root: std::path::PathBuf,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::project::MutationRequest,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::project::MutationOutcome> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceProjectMutation(Box::new(
+                crate::session::commands::BeginScienceProjectMutation {
+                    store,
+                    project_root,
+                    context,
+                    request,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+
+        // Already applied, or an actor-verified Running+Allow review recovery:
+        // no second prompt and no fresh permission grant.
+        if prepared.replayed.is_some() || prepared.resume_allowed {
+            return self
+                .finish_science_project_mutation(
+                    prepared,
+                    xai_grok_science::ApprovalDecision::Allow,
+                    String::new(),
+                )
+                .await;
+        }
+        let pending = PendingScienceProjectMutationApproval::new(self.cmd_tx.clone(), prepared);
+
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-project-mutation-{}",
+            pending.prepared().ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Other))
+                .title(Some(format!(
+                    "Lumen Science {} record mutation",
+                    pending.prepared().request.mutation.kind()
+                ))),
+        );
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Edit(pending.prepared().target.clone()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let permission_grant = if decision == xai_grok_science::ApprovalDecision::Allow {
+            Some(ScienceProjectMutationPermissionGrant::new(
+                pending.prepared(),
+            )?)
+        } else {
+            None
+        };
+        let mut prepared = pending.take();
+        prepared.permission_grant = permission_grant;
+        self.finish_science_project_mutation(prepared, decision, reason)
+            .await
+    }
+
+    async fn finish_science_project_mutation(
+        &self,
+        prepared: crate::session::commands::PreparedScienceProjectMutation,
+        decision: xai_grok_science::ApprovalDecision,
+        reason: String,
+    ) -> xai_grok_science::Result<xai_grok_science::project::MutationOutcome> {
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceProjectMutation(Box::new(
+                crate::session::commands::FinishScienceProjectMutation {
+                    prepared,
+                    decision,
+                    reason,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
+    /// Kernel admission executes an interpreter version probe. The actor first
+    /// opens a durable pending run, this handle obtains the production
+    /// permission decision, and the actor alone records the decision and probes.
+    pub async fn run_science_kernel_admission_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        project_root: std::path::PathBuf,
+        context: xai_grok_science::RunContext,
+        request: xai_grok_science::workflow::KernelAdmissionRequest,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::workflow::KernelAdmissionResult> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceKernelAdmission(Box::new(
+                crate::session::commands::BeginScienceKernelAdmission {
+                    store,
+                    project_root,
+                    context,
+                    request,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-kernel-admission-{}",
+            prepared.ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Execute))
+                .title(Some(format!(
+                    "Lumen Science kernel admission: {}",
+                    prepared.request.kernel_id
+                ))),
+        );
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Bash(prepared.target.clone()),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceKernelAdmission(Box::new(
+                crate::session::commands::FinishScienceKernelAdmission {
+                    prepared,
+                    decision,
+                    reason,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
+
+    /// LS5-K8 workflow execution: admits the run inside this session actor,
+    /// awaits the production permission bridge, then executes through the
+    /// actor, so the durable run record, the approval decision, the kernel
+    /// probe and the process launch all belong to the same authority. The ACP
+    /// adapter never builds an executor or a runner itself.
+    ///
+    /// A workflow step spawns an interpreter, so permission is requested as
+    /// `Bash` rather than `Edit`: it is at least as consequential as any
+    /// command the agent would run, and the prompt should say so.
+    ///
+    /// An operation id that already ran short-circuits inside the actor: it
+    /// returns the recorded report without a second prompt and without a second
+    /// execution.
+    pub async fn run_science_workflow_execution_with_approval_timeout(
+        &self,
+        store: xai_grok_science::ScienceStore,
+        context: xai_grok_science::RunContext,
+        binding: crate::session::commands::ScienceWorkflowBinding,
+        approval_timeout: std::time::Duration,
+    ) -> xai_grok_science::Result<xai_grok_science::workflow::WorkflowRunReport> {
+        use xai_grok_workspace::permission::{AccessKind, Decision};
+        let (begin_tx, begin_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::BeginScienceWorkflowExecution(Box::new(
+                crate::session::commands::BeginScienceWorkflowExecution {
+                    store,
+                    context,
+                    binding,
+                    respond_to: begin_tx,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        let prepared = begin_rx.await.map_err(|_| {
+            xai_grok_science::ScienceError::Invalid("session actor stopped".into())
+        })??;
+
+        // Already executed under this operation id: no second prompt, no
+        // second execution.
+        if prepared.replayed.is_some() || prepared.resume_allowed {
+            return self
+                .finish_science_workflow_execution(
+                    prepared,
+                    xai_grok_science::ApprovalDecision::Allow,
+                    String::new(),
+                )
+                .await;
+        }
+        let pending = PendingScienceWorkflowApproval::new(self.cmd_tx.clone(), prepared);
+
+        let call_id = acp::ToolCallId::new(std::sync::Arc::from(format!(
+            "science-workflow-execute-{}",
+            pending.prepared().ticket.run_id.0
+        )));
+        let update = acp::ToolCallUpdate::new(
+            call_id,
+            acp::ToolCallUpdateFields::new()
+                .kind(Some(acp::ToolKind::Execute))
+                .title(Some(format!(
+                    "Lumen Science workflow execution: {}",
+                    pending.prepared().binding.execution.spec.workflow_id
+                ))),
+        );
+        let permission_target = pending.prepared().target.clone();
+        let permission = tokio::time::timeout(
+            approval_timeout,
+            self.permission_handle.request(
+                AccessKind::Bash(permission_target),
+                update,
+                Some(self.info.id.0.to_string()),
+                None,
+                None,
+            ),
+        )
+        .await;
+        let (decision, reason) = match permission {
+            Err(_) => (
+                xai_grok_science::ApprovalDecision::Timeout,
+                format!(
+                    "permission request timed out after {} ms",
+                    approval_timeout.as_millis()
+                ),
+            ),
+            Ok(Decision::Allow) => (xai_grok_science::ApprovalDecision::Allow, String::new()),
+            Ok(Decision::Ask) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                "permission manager returned unresolved Ask".into(),
+            ),
+            Ok(Decision::Reject(reason)) | Ok(Decision::PolicyDeny(reason)) => {
+                (xai_grok_science::ApprovalDecision::Deny, reason)
+            }
+            Ok(Decision::Cancelled) => (
+                xai_grok_science::ApprovalDecision::Cancel,
+                "permission request cancelled".into(),
+            ),
+            Ok(Decision::FollowupMessage(message)) => (
+                xai_grok_science::ApprovalDecision::Deny,
+                format!("permission requires follow-up: {message}"),
+            ),
+        };
+        let permission_grant = if decision == xai_grok_science::ApprovalDecision::Allow {
+            Some(ScienceWorkflowPermissionGrant::new(pending.prepared())?)
+        } else {
+            None
+        };
+        let mut prepared = pending.take();
+        prepared.permission_grant = permission_grant;
+        self.finish_science_workflow_execution(prepared, decision, reason)
+            .await
+    }
+
+    async fn finish_science_workflow_execution(
+        &self,
+        prepared: crate::session::commands::PreparedScienceWorkflowExecution,
+        decision: xai_grok_science::ApprovalDecision,
+        reason: String,
+    ) -> xai_grok_science::Result<xai_grok_science::workflow::WorkflowRunReport> {
+        let (respond_to, response) = oneshot::channel();
+        self.cmd_tx
+            .send(SessionCommand::FinishScienceWorkflowExecution(Box::new(
+                crate::session::commands::FinishScienceWorkflowExecution {
+                    prepared,
+                    decision,
+                    reason,
+                    respond_to,
+                },
+            )))
+            .map_err(|_| {
+                xai_grok_science::ScienceError::Invalid("session actor unavailable".into())
+            })?;
+        response
+            .await
+            .map_err(|_| xai_grok_science::ScienceError::Invalid("session actor stopped".into()))?
+    }
 }
 
 
@@ -1012,6 +1735,8 @@ impl PendingScienceSeqAnalyzeApproval {
             .expect("sequence analysis approval guard must remain armed")
     }
 }
+
+
 
 
 impl Drop for PendingScienceSeqAnalyzeApproval {
