@@ -146,6 +146,7 @@ async fn persist_ack_waits_for_disk_flush_before_success_inner() {
                     rewindable: false,
                     nudges_used_this_session: 0,
                 }),
+                science_feature_gates: xai_grok_science::features::FeatureGates::default(),
                 notifications: NotificationSender {
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -668,6 +669,7 @@ async fn run_first_turn_memory_injection_disabled_body() {
             rewindable: false,
             nudges_used_this_session: 0,
         }),
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
         notifications: NotificationSender {
             gateway: GatewaySender::new(gateway_tx),
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -946,6 +948,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 auth_manager: None,
                 is_chat_kind: false,
                 state,
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
                 notifications: NotificationSender {
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(
@@ -2241,6 +2244,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 auth_manager: None,
                 is_chat_kind: false,
                 state,
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
                 notifications: NotificationSender {
                     gateway: GatewaySender::new(gateway_tx),
                     gateway_enabled: std::sync::Arc::new(

@@ -1710,6 +1710,7 @@ pub(crate) async fn spawn_session_actor(
         auth_manager,
         is_chat_kind,
         state,
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
         notifications: NotificationSender {
             gateway: gateway.clone(),
             gateway_enabled: gateway_enabled.clone(),

@@ -246,6 +246,7 @@ pub(crate) async fn create_test_actor_ex(
         auth_manager: None,
         is_chat_kind: false,
         state,
+        science_feature_gates: xai_grok_science::features::FeatureGates::default(),
         notifications: NotificationSender {
             gateway: GatewaySender::new(gateway_tx),
             gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),

@@ -436,6 +436,7 @@ impl SessionHandle {
                     query,
                     requests,
                     fixture_bytes,
+                    capability_provenance: None,
                     respond_to: begin_tx,
                 },
             )))
@@ -927,6 +928,628 @@ impl SessionHandle {
             tracing::warn!(
                 session_id = %self.info.id.0,
                 "feedback persistence channel closed; entry dropped",
+            );
+        }
+    }
+}
+
+
+/// Cancellation safety for a durably admitted sequence analysis.
+///
+/// The permission future is outside the SessionActor, but terminalization is
+/// not: dropping that future enqueues the same actor-only Finish command with
+/// Cancel and never mutates the store directly.
+struct PendingScienceSeqAnalyzeApproval {
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    prepared: Option<crate::session::commands::PreparedScienceSeqAnalyze>,
+}
+
+
+/// Only the production permission bridge in this module can construct an
+/// Allow grant. The actor binds it to the exact durable run, project snapshot,
+/// source bytes, options and retained context before changing Pending to
+/// Allow.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScienceSeqAnalyzePermissionGrant {
+    run_id: xai_grok_science::RunId,
+    call_id: xai_grok_science::CallId,
+    expected_context: xai_grok_science::RunContext,
+    project_revision: String,
+    source_path: std::path::PathBuf,
+    source_sha256: String,
+    options: xai_grok_science::seqbench::SeqAnalyzeOptions,
+}
+
+
+impl ScienceSeqAnalyzePermissionGrant {
+    fn new(prepared: &crate::session::commands::PreparedScienceSeqAnalyze) -> Self {
+        Self {
+            run_id: prepared.ticket.run_id.clone(),
+            call_id: prepared.ticket.call_id.clone(),
+            expected_context: prepared.expected_context.clone(),
+            project_revision: prepared.project_revision.clone(),
+            source_path: prepared.source_path.clone(),
+            source_sha256: xai_grok_science::seqbench::hex_sha256(&prepared.source_bytes),
+            options: prepared.options.clone(),
+        }
+    }
+
+    pub(crate) fn authorizes(
+        &self,
+        prepared: &crate::session::commands::PreparedScienceSeqAnalyze,
+    ) -> bool {
+        self.run_id == prepared.ticket.run_id
+            && self.call_id == prepared.ticket.call_id
+            && self.expected_context == prepared.expected_context
+            && self.project_revision == prepared.project_revision
+            && self.source_path == prepared.source_path
+            && self.source_sha256 == xai_grok_science::seqbench::hex_sha256(&prepared.source_bytes)
+            && self.options == prepared.options
+    }
+}
+
+
+impl PendingScienceSeqAnalyzeApproval {
+    fn new(
+        cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+        prepared: crate::session::commands::PreparedScienceSeqAnalyze,
+    ) -> Self {
+        Self {
+            cmd_tx,
+            prepared: Some(prepared),
+        }
+    }
+
+    fn prepared(&self) -> &crate::session::commands::PreparedScienceSeqAnalyze {
+        self.prepared
+            .as_ref()
+            .expect("sequence analysis approval guard must remain armed")
+    }
+
+    fn take(mut self) -> crate::session::commands::PreparedScienceSeqAnalyze {
+        self.prepared
+            .take()
+            .expect("sequence analysis approval guard must remain armed")
+    }
+}
+
+
+impl Drop for PendingScienceSeqAnalyzeApproval {
+    fn drop(&mut self) {
+        let Some(prepared) = self.prepared.take() else {
+            return;
+        };
+        let (respond_to, _response) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::FinishScienceSeqAnalyze(Box::new(
+                crate::session::commands::FinishScienceSeqAnalyze {
+                    prepared,
+                    decision: xai_grok_science::ApprovalDecision::Cancel,
+                    reason: "sequence analysis permission wait was cancelled before a decision"
+                        .into(),
+                    permission_grant: None,
+                    respond_to,
+                },
+            )))
+            .is_err()
+        {
+            tracing::warn!(
+                "session actor unavailable while cancelling a pending sequence analysis approval"
+            );
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScienceWorkflowPermissionGrant {
+    run_id: xai_grok_science::RunId,
+    call_id: xai_grok_science::CallId,
+    ticket_project_id: xai_grok_science::ProjectId,
+    ticket_owner_id: String,
+    expected_context: xai_grok_science::RunContext,
+    project_revision: String,
+    operation_id: String,
+    execution_session_id: String,
+    execution_owner_id: String,
+    workflow_spec_json: Vec<u8>,
+    executor_root: std::path::PathBuf,
+    kernel_id: String,
+    kernel_kind: xai_grok_science::workflow::KernelKind,
+    interpreter_path: std::path::PathBuf,
+    probe_timeout: std::time::Duration,
+    allow_kernel_steps: bool,
+    executable_sha256: String,
+    executable_backend: String,
+    permission_target: String,
+}
+
+
+impl ScienceWorkflowPermissionGrant {
+    /// Private by design: only this production permission bridge can turn an
+    /// actual `Decision::Allow` into an actor-consumable capability.
+    fn new(
+        prepared: &crate::session::commands::PreparedScienceWorkflowExecution,
+    ) -> xai_grok_science::Result<Self> {
+        Ok(Self {
+            run_id: prepared.ticket.run_id.clone(),
+            call_id: prepared.ticket.call_id.clone(),
+            ticket_project_id: prepared.ticket.project_id.clone(),
+            ticket_owner_id: prepared.ticket.owner_id.clone(),
+            expected_context: prepared.expected_context.clone(),
+            project_revision: prepared.project_revision.clone(),
+            operation_id: prepared.binding.execution.operation_id.clone(),
+            execution_session_id: prepared.binding.execution.session_id.clone(),
+            execution_owner_id: prepared.binding.execution.owner_id.clone(),
+            workflow_spec_json: serde_json::to_vec(&prepared.binding.execution.spec)?,
+            executor_root: prepared.binding.executor_root.clone(),
+            kernel_id: prepared.binding.kernel_id.clone(),
+            kernel_kind: prepared.binding.kernel_kind,
+            interpreter_path: prepared.binding.interpreter_path.clone(),
+            probe_timeout: prepared.binding.probe_timeout,
+            allow_kernel_steps: prepared.binding.allow_kernel_steps,
+            executable_sha256: prepared.executable.sha256().to_owned(),
+            executable_backend: prepared.executable.backend().to_string(),
+            permission_target: prepared.target.clone(),
+        })
+    }
+
+    pub(crate) fn authorizes(
+        &self,
+        prepared: &crate::session::commands::PreparedScienceWorkflowExecution,
+    ) -> xai_grok_science::Result<bool> {
+        Ok(self.run_id == prepared.ticket.run_id
+            && self.call_id == prepared.ticket.call_id
+            && self.ticket_project_id == prepared.ticket.project_id
+            && self.ticket_owner_id == prepared.ticket.owner_id
+            && self.expected_context == prepared.expected_context
+            && self.project_revision == prepared.project_revision
+            && self.operation_id == prepared.binding.execution.operation_id
+            && self.execution_session_id == prepared.binding.execution.session_id
+            && self.execution_owner_id == prepared.binding.execution.owner_id
+            && self.workflow_spec_json == serde_json::to_vec(&prepared.binding.execution.spec)?
+            && self.executor_root == prepared.binding.executor_root
+            && self.kernel_id == prepared.binding.kernel_id
+            && self.kernel_kind == prepared.binding.kernel_kind
+            && self.interpreter_path == prepared.binding.interpreter_path
+            && self.probe_timeout == prepared.binding.probe_timeout
+            && self.allow_kernel_steps == prepared.binding.allow_kernel_steps
+            && self.executable_sha256 == prepared.executable.sha256()
+            && self.executable_backend == prepared.executable.backend().to_string()
+            && self.permission_target == prepared.target)
+    }
+}
+
+
+struct PendingScienceWorkflowApproval {
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    prepared: Option<crate::session::commands::PreparedScienceWorkflowExecution>,
+}
+
+
+impl PendingScienceWorkflowApproval {
+    fn new(
+        cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+        prepared: crate::session::commands::PreparedScienceWorkflowExecution,
+    ) -> Self {
+        Self {
+            cmd_tx,
+            prepared: Some(prepared),
+        }
+    }
+
+    fn prepared(&self) -> &crate::session::commands::PreparedScienceWorkflowExecution {
+        self.prepared
+            .as_ref()
+            .expect("workflow approval guard must remain armed")
+    }
+
+    fn take(mut self) -> crate::session::commands::PreparedScienceWorkflowExecution {
+        self.prepared
+            .take()
+            .expect("workflow approval guard must remain armed")
+    }
+}
+
+
+impl Drop for PendingScienceWorkflowApproval {
+    fn drop(&mut self) {
+        let Some(mut prepared) = self.prepared.take() else {
+            return;
+        };
+        prepared.permission_grant = None;
+        let (respond_to, _response) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::FinishScienceWorkflowExecution(Box::new(
+                crate::session::commands::FinishScienceWorkflowExecution {
+                    prepared,
+                    decision: xai_grok_science::ApprovalDecision::Cancel,
+                    reason: "workflow permission wait was cancelled before a decision".into(),
+                    respond_to,
+                },
+            )))
+            .is_err()
+        {
+            tracing::warn!(
+                "session actor unavailable while cancelling a pending Science workflow approval"
+            );
+        }
+    }
+}
+
+
+/// Cancellation safety for a durably admitted evidence dossier.
+///
+/// Permission requests are ordinary futures and may be aborted when an ACP
+/// client disconnects. Retaining the prepared bundle here guarantees that a
+/// dropped request still sends an actor-owned Cancel finish instead of leaving
+/// the run permanently pending.
+struct PendingScienceDossierApproval {
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    prepared: Option<crate::session::commands::PreparedScienceEvidenceDossier>,
+}
+
+
+/// Unforgeable within the shell crate outside this module: only the production
+/// permission bridge below can construct an Allow grant. The actor verifies
+/// all three bindings before it changes the durable approval to Allow.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScienceDossierPermissionGrant {
+    run_id: xai_grok_science::RunId,
+    call_id: xai_grok_science::CallId,
+    admission_sha256: String,
+}
+
+
+impl ScienceDossierPermissionGrant {
+    fn new(
+        prepared: &crate::session::commands::PreparedScienceEvidenceDossier,
+        admission_sha256: String,
+    ) -> Self {
+        Self {
+            run_id: prepared.ticket.run_id.clone(),
+            call_id: prepared.ticket.call_id.clone(),
+            admission_sha256,
+        }
+    }
+
+    pub(crate) fn authorizes(
+        &self,
+        prepared: &crate::session::commands::PreparedScienceEvidenceDossier,
+    ) -> xai_grok_science::Result<bool> {
+        Ok(self.run_id == prepared.ticket.run_id
+            && self.call_id == prepared.ticket.call_id
+            && self.admission_sha256 == prepared.admission.sha256()?)
+    }
+}
+
+
+impl PendingScienceDossierApproval {
+    fn new(
+        cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+        prepared: crate::session::commands::PreparedScienceEvidenceDossier,
+    ) -> Self {
+        Self {
+            cmd_tx,
+            prepared: Some(prepared),
+        }
+    }
+
+    fn prepared(&self) -> &crate::session::commands::PreparedScienceEvidenceDossier {
+        self.prepared
+            .as_ref()
+            .expect("dossier approval guard must remain armed")
+    }
+
+    fn take(mut self) -> crate::session::commands::PreparedScienceEvidenceDossier {
+        self.prepared
+            .take()
+            .expect("dossier approval guard must remain armed")
+    }
+}
+
+
+impl Drop for PendingScienceDossierApproval {
+    fn drop(&mut self) {
+        let Some(prepared) = self.prepared.take() else {
+            return;
+        };
+        let (respond_to, _response) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::FinishScienceEvidenceDossier(Box::new(
+                crate::session::commands::FinishScienceEvidenceDossier {
+                    prepared,
+                    decision: xai_grok_science::ApprovalDecision::Cancel,
+                    reason: "dossier permission wait was cancelled before a decision".into(),
+                    permission_grant: None,
+                    respond_to,
+                },
+            )))
+            .is_err()
+        {
+            tracing::warn!(
+                "session actor unavailable while cancelling a pending Science dossier approval"
+            );
+        }
+    }
+}
+
+
+/// Cancellation safety for a durably admitted skill quarantine import.
+struct PendingScienceSkillQuarantineApproval {
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    prepared: Option<crate::session::commands::PreparedScienceSkillQuarantine>,
+}
+
+
+/// Only the production permission bridge can construct an Allow grant. It is
+/// bound to the exact durable run, call and kernel-derived admission digest.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScienceSkillQuarantinePermissionGrant {
+    run_id: xai_grok_science::RunId,
+    call_id: xai_grok_science::CallId,
+    admission_sha256: String,
+}
+
+
+impl ScienceSkillQuarantinePermissionGrant {
+    fn new(prepared: &crate::session::commands::PreparedScienceSkillQuarantine) -> Self {
+        Self {
+            run_id: prepared.ticket.run_id.clone(),
+            call_id: prepared.ticket.call_id.clone(),
+            admission_sha256: prepared.admission.sha256().to_owned(),
+        }
+    }
+
+    pub(crate) fn authorizes(
+        &self,
+        prepared: &crate::session::commands::PreparedScienceSkillQuarantine,
+    ) -> bool {
+        self.run_id == prepared.ticket.run_id
+            && self.call_id == prepared.ticket.call_id
+            && self.admission_sha256 == prepared.admission.sha256()
+    }
+}
+
+
+impl PendingScienceSkillQuarantineApproval {
+    fn new(
+        cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+        prepared: crate::session::commands::PreparedScienceSkillQuarantine,
+    ) -> Self {
+        Self {
+            cmd_tx,
+            prepared: Some(prepared),
+        }
+    }
+
+    fn prepared(&self) -> &crate::session::commands::PreparedScienceSkillQuarantine {
+        self.prepared
+            .as_ref()
+            .expect("skill quarantine approval guard must remain armed")
+    }
+
+    fn take(mut self) -> crate::session::commands::PreparedScienceSkillQuarantine {
+        self.prepared
+            .take()
+            .expect("skill quarantine approval guard must remain armed")
+    }
+}
+
+
+impl Drop for PendingScienceSkillQuarantineApproval {
+    fn drop(&mut self) {
+        let Some(prepared) = self.prepared.take() else {
+            return;
+        };
+        let (respond_to, _response) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::FinishScienceSkillQuarantine(Box::new(
+                crate::session::commands::FinishScienceSkillQuarantine {
+                    prepared,
+                    decision: xai_grok_science::ApprovalDecision::Cancel,
+                    reason: "skill quarantine permission wait was cancelled before a decision"
+                        .into(),
+                    permission_grant: None,
+                    respond_to,
+                },
+            )))
+            .is_err()
+        {
+            tracing::warn!(
+                "session actor unavailable while cancelling a pending skill quarantine approval"
+            );
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct ScienceProjectMutationPermissionGrant {
+    run_id: xai_grok_science::RunId,
+    ticket_project_id: xai_grok_science::ProjectId,
+    ticket_owner_id: String,
+    call_id: xai_grok_science::CallId,
+    expected_context: xai_grok_science::RunContext,
+    request_sha256: String,
+    review_admission_sha256: Option<String>,
+    migration_admission_sha256: Option<String>,
+    project_revision: Option<String>,
+    science_store_root: std::path::PathBuf,
+    project_root: std::path::PathBuf,
+    permission_target: String,
+}
+
+
+impl ScienceProjectMutationPermissionGrant {
+    /// Private by design: only the production permission bridge in this
+    /// module can turn a fresh `Decision::Allow` into actor authority.
+    fn new(
+        prepared: &crate::session::commands::PreparedScienceProjectMutation,
+    ) -> xai_grok_science::Result<Self> {
+        use xai_grok_science::{ScienceError, project::ProjectMutation};
+
+        if prepared.replayed.is_some() || prepared.resume_allowed {
+            return Err(ScienceError::Invalid(
+                "replayed or resumed project mutation cannot mint a fresh Allow grant".into(),
+            ));
+        }
+        if prepared.ticket.run_id != prepared.expected_context.run_id
+            || prepared.ticket.project_id != prepared.expected_context.project_id
+            || prepared.ticket.owner_id != prepared.expected_context.owner_id
+            || prepared.request.session_id != prepared.expected_context.session_id
+            || prepared.request.owner_id != prepared.expected_context.owner_id
+            || prepared.expected_context.artifact_root != prepared.store.root().join("runs")
+            || prepared.project_root != prepared.store.root()
+        {
+            return Err(ScienceError::Ownership);
+        }
+
+        let request_sha256 = prepared.request.replay_fingerprint()?;
+        let is_review = matches!(
+            prepared.request.mutation,
+            ProjectMutation::ReviewRecord { .. }
+        );
+        let is_migration = matches!(
+            prepared.request.mutation,
+            ProjectMutation::ProjectMigrate { .. }
+        );
+        if is_review != prepared.review_admission.is_some()
+            || is_migration != prepared.migration_admission.is_some()
+        {
+            return Err(ScienceError::Invalid(
+                "project mutation admission kind does not match its request".into(),
+            ));
+        }
+        if prepared.request.mutation.target_project().is_some()
+            && prepared.project_revision.is_none()
+        {
+            return Err(ScienceError::Invalid(
+                "existing-project mutation requires an actor-captured project revision".into(),
+            ));
+        }
+
+        let review_admission_sha256 = match prepared.review_admission.as_ref() {
+            Some(admission) => {
+                if admission.request_sha256() != request_sha256
+                    || admission.owner_id() != prepared.request.owner_id
+                    || admission.session_id() != prepared.request.session_id
+                    || admission.authority_run_id() != prepared.ticket.run_id.0
+                    || prepared.project_revision.as_deref() != Some(admission.project_revision())
+                {
+                    return Err(ScienceError::Ownership);
+                }
+                for (key, expected) in admission.authority_environment() {
+                    if prepared.expected_context.environment.get(&key) != Some(&expected) {
+                        return Err(ScienceError::Invalid(format!(
+                            "review grant context is missing exact {key} binding"
+                        )));
+                    }
+                }
+                Some(admission.sha256().to_string())
+            }
+            None => None,
+        };
+        let migration_admission_sha256 = match prepared.migration_admission.as_ref() {
+            Some(admission) => {
+                let sha256 = admission.sha256()?;
+                if prepared
+                    .expected_context
+                    .environment
+                    .get("project_migration_admission_sha256")
+                    != Some(&sha256)
+                {
+                    return Err(ScienceError::Invalid(
+                        "migration grant context is missing its exact admission binding".into(),
+                    ));
+                }
+                Some(sha256)
+            }
+            None => None,
+        };
+
+        Ok(Self {
+            run_id: prepared.ticket.run_id.clone(),
+            ticket_project_id: prepared.ticket.project_id.clone(),
+            ticket_owner_id: prepared.ticket.owner_id.clone(),
+            call_id: prepared.ticket.call_id.clone(),
+            expected_context: prepared.expected_context.clone(),
+            request_sha256,
+            review_admission_sha256,
+            migration_admission_sha256,
+            project_revision: prepared.project_revision.clone(),
+            science_store_root: prepared.store.root().to_path_buf(),
+            project_root: prepared.project_root.clone(),
+            permission_target: prepared.target.clone(),
+        })
+    }
+
+    pub(crate) fn authorizes(
+        &self,
+        prepared: &crate::session::commands::PreparedScienceProjectMutation,
+    ) -> xai_grok_science::Result<bool> {
+        Ok(self == &Self::new(prepared)?)
+    }
+}
+
+
+struct PendingScienceProjectMutationApproval {
+    cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+    prepared: Option<crate::session::commands::PreparedScienceProjectMutation>,
+}
+
+
+impl PendingScienceProjectMutationApproval {
+    fn new(
+        cmd_tx: mpsc::UnboundedSender<SessionCommand>,
+        prepared: crate::session::commands::PreparedScienceProjectMutation,
+    ) -> Self {
+        Self {
+            cmd_tx,
+            prepared: Some(prepared),
+        }
+    }
+
+    fn prepared(&self) -> &crate::session::commands::PreparedScienceProjectMutation {
+        self.prepared
+            .as_ref()
+            .expect("project mutation approval guard must remain armed")
+    }
+
+    fn take(mut self) -> crate::session::commands::PreparedScienceProjectMutation {
+        self.prepared
+            .take()
+            .expect("project mutation approval guard must remain armed")
+    }
+}
+
+
+impl Drop for PendingScienceProjectMutationApproval {
+    fn drop(&mut self) {
+        let Some(mut prepared) = self.prepared.take() else {
+            return;
+        };
+        // Cancellation can never carry a capability minted for Allow, even if
+        // future control-flow changes arm the guard after grant construction.
+        prepared.permission_grant = None;
+        let (respond_to, _response) = oneshot::channel();
+        if self
+            .cmd_tx
+            .send(SessionCommand::FinishScienceProjectMutation(Box::new(
+                crate::session::commands::FinishScienceProjectMutation {
+                    prepared,
+                    decision: xai_grok_science::ApprovalDecision::Cancel,
+                    reason: "project mutation permission wait was cancelled before a decision"
+                        .into(),
+                    respond_to,
+                },
+            )))
+            .is_err()
+        {
+            tracing::warn!(
+                "session actor unavailable while cancelling a pending Science project mutation approval"
             );
         }
     }

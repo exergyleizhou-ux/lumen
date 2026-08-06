@@ -157,6 +157,8 @@ pub struct PreparedScienceFetch {
     pub(crate) query: String,
     pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
     pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) capability_provenance:
+        Option<xai_grok_science::connectors::fetch::CapabilitySourceProvenance>,
     pub(crate) command: String,
     pub(crate) output_paths: Vec<std::path::PathBuf>,
 }
@@ -167,6 +169,8 @@ pub struct BeginScienceFetch {
     pub(crate) query: String,
     pub(crate) requests: Vec<xai_grok_science::connectors::ValidatedRequest>,
     pub(crate) fixture_bytes: Vec<Vec<u8>>,
+    pub(crate) capability_provenance:
+        Option<xai_grok_science::connectors::fetch::CapabilitySourceProvenance>,
     pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceFetch>>,
 }
 pub struct FinishScienceFetch {
@@ -973,4 +977,335 @@ pub enum SessionCommand {
         commit: Option<String>,
         branch: Option<String>,
     },
+
+    BeginScienceSeqAnalyze(Box<BeginScienceSeqAnalyze>),
+    FinishScienceSeqAnalyze(Box<FinishScienceSeqAnalyze>),
+    /// Uploaded ZIP/.skill bundles remain memory-only until this actor-owned
+    /// durable approval protocol reaches an exact Allow.
+    BeginScienceSkillQuarantine(Box<BeginScienceSkillQuarantine>),
+    FinishScienceSkillQuarantine(Box<FinishScienceSkillQuarantine>),
+    /// Compose already-succeeded, byte-verified Science runs into a
+    /// self-contained dossier. The ACP adapter may select source ids, but only
+    /// the actor may reopen source bytes and publish the new artifacts.
+    BeginScienceEvidenceDossier(Box<BeginScienceEvidenceDossier>),
+    FinishScienceEvidenceDossier(Box<FinishScienceEvidenceDossier>),
+    /// S3 phase one: begin a durable connector fetch run before the caller
+    /// awaits this session's production permission manager.
+    BeginScienceProjectMutation(Box<BeginScienceProjectMutation>),
+    FinishScienceProjectMutation(Box<FinishScienceProjectMutation>),
+    /// Kernel identity probing executes the selected interpreter, so its
+    /// durable Begin/permission/Finish protocol belongs to the actor.
+    BeginScienceKernelAdmission(Box<BeginScienceKernelAdmission>),
+    FinishScienceKernelAdmission(Box<FinishScienceKernelAdmission>),
+    /// LS5-K8 phase one: admit a workflow execution inside the actor. The ACP
+    /// adapter must not build an executor or a runner of its own — a workflow
+    /// step spawns a process, which is the most consequential authority in this
+    /// crate and belongs to the session actor alone.
+    BeginScienceWorkflowExecution(Box<BeginScienceWorkflowExecution>),
+    FinishScienceWorkflowExecution(Box<FinishScienceWorkflowExecution>),
+}
+
+
+/// Cross-process single-flight ownership for one durable sequence operation.
+///
+/// The SessionActor remains the execution authority. The ScienceStore owns the
+/// descriptor-relative lock protocol; this shell wrapper only retains its
+/// opaque lease through `PreparedScienceSeqAnalyze` drop.
+pub(crate) struct ScienceSeqOperationLease {
+    _store_lease: xai_grok_science::ScienceOperationLease,
+}
+
+
+impl ScienceSeqOperationLease {
+    pub(crate) fn claim(
+        store: &xai_grok_science::ScienceStore,
+        run_id: &xai_grok_science::RunId,
+    ) -> xai_grok_science::Result<Self> {
+        Ok(Self {
+            _store_lease: store.claim_operation_lease(run_id)?,
+        })
+    }
+}
+
+
+/// A deterministic sequence analysis admitted by the owning SessionActor and
+/// waiting on the production permission decision. The source bytes are
+/// immutable request input; only the actor may compute and commit outputs.
+pub struct PreparedScienceSeqAnalyze {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    /// Retained project authority opened from the exact same root as `store`.
+    /// Finish re-checks its owner and content revision after durable Allow.
+    pub(crate) project_store: xai_grok_science::project::ProjectStore,
+    pub(crate) project_revision: String,
+    pub(crate) expected_context: xai_grok_science::RunContext,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    /// Exact `run.created` event retained by the actor. Fresh Begin keeps the
+    /// just-written value in memory; restart paths explicitly mark the reopened
+    /// durable value as recovery-origin.
+    pub(crate) created_event: xai_grok_science::Event,
+    pub(crate) created_event_from_recovery: bool,
+    /// Running restart receives this only after the durable authority-prefix
+    /// seal exactly matches context, approval, and both prefix events.
+    pub(crate) allowed_witness: Option<xai_grok_science::seqbench::SeqAllowedWitness>,
+    pub(crate) options: xai_grok_science::seqbench::SeqAnalyzeOptions,
+    pub(crate) source_path: std::path::PathBuf,
+    pub(crate) source_bytes: Vec<u8>,
+    /// Store-owned artifact target shown in the permission prompt.
+    pub(crate) target: String,
+    /// A sealed exact-operation replay never crosses the permission bridge.
+    pub(crate) replayed: Option<xai_grok_science::seqbench::SeqAnalyzeResult>,
+    /// Opaque actor-only authority for resuming an already durable Allow.
+    pub(in crate::session) recovery_grant:
+        Option<crate::session::acp_session::ScienceSeqAnalyzeRecoveryGrant>,
+    /// Retains cross-process single-flight ownership until replay/finish/drop.
+    pub(crate) operation_lease: ScienceSeqOperationLease,
+}
+
+pub struct BeginScienceSeqAnalyze {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) options: xai_grok_science::seqbench::SeqAnalyzeOptions,
+    pub(crate) source_path: std::path::PathBuf,
+    pub(crate) source_bytes: Vec<u8>,
+    pub(crate) respond_to: oneshot::Sender<xai_grok_science::Result<PreparedScienceSeqAnalyze>>,
+}
+
+pub struct FinishScienceSeqAnalyze {
+    pub(crate) prepared: PreparedScienceSeqAnalyze,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) permission_grant: Option<crate::session::handle::ScienceSeqAnalyzePermissionGrant>,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::seqbench::SeqAnalyzeResult>>,
+}
+
+
+/// A bounded skill archive inspected and durably admitted by the owning
+/// SessionActor. No archive payload or live skill has been written yet.
+pub struct PreparedScienceSkillQuarantine {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) admission: xai_grok_science::skill_quarantine::SkillImportAdmission,
+    pub(crate) target: String,
+    /// A byte-verified succeeded operation with the same id and bindings.
+    /// Returned without issuing a second permission request.
+    pub(crate) replayed: Option<xai_grok_science::skill_quarantine::SkillQuarantineResult>,
+}
+
+pub struct BeginScienceSkillQuarantine {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) request: xai_grok_science::skill_quarantine::SkillQuarantineRequest,
+    pub(crate) archive_bytes: Vec<u8>,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<PreparedScienceSkillQuarantine>>,
+}
+
+pub struct FinishScienceSkillQuarantine {
+    pub(crate) prepared: PreparedScienceSkillQuarantine,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) permission_grant:
+        Option<crate::session::handle::ScienceSkillQuarantinePermissionGrant>,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<xai_grok_science::skill_quarantine::SkillQuarantineResult>,
+    >,
+}
+
+
+/// A biomedical evidence dossier admitted by the owning SessionActor. The
+/// retained project store and revision prevent the ACP request task from
+/// swapping the project or changing its question while approval is pending.
+pub struct PreparedScienceEvidenceDossier {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) project_store: xai_grok_science::project::ProjectStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) project: xai_grok_science::project::ResearchProject,
+    pub(crate) admission: xai_grok_science::dossier::DossierAdmission,
+    pub(crate) target: String,
+}
+
+pub struct BeginScienceEvidenceDossier {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) project_root: std::path::PathBuf,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) source_run_ids: Vec<xai_grok_science::RunId>,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<PreparedScienceEvidenceDossier>>,
+}
+
+pub struct FinishScienceEvidenceDossier {
+    pub(crate) prepared: PreparedScienceEvidenceDossier,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) permission_grant: Option<crate::session::handle::ScienceDossierPermissionGrant>,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::dossier::DossierResult>>,
+}
+
+/// A project mutation admitted by the actor and awaiting its permission
+/// decision. Holds the durable run ticket, so every allow/deny/timeout/cancel
+/// has a record to finish.
+pub struct PreparedScienceProjectMutation {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    /// The exact directory capability validated before approval. Finish must
+    /// use this retained handle instead of reopening a caller-controlled path.
+    pub(crate) project_store: xai_grok_science::project::ProjectStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    /// Exact durable context admitted before permission. The handle grant and
+    /// actor Finish both require equality with this snapshot.
+    pub(crate) expected_context: xai_grok_science::RunContext,
+    pub(crate) request: xai_grok_science::project::MutationRequest,
+    /// Actual project revision captured by the actor, independent of the
+    /// caller's optional optimistic-CAS field. Creates have no prior revision.
+    pub(crate) project_revision: Option<String>,
+    /// Path identity paired with the retained ProjectStore capability. The
+    /// actor separately proves retained ScienceStore/ProjectStore equality.
+    pub(crate) project_root: std::path::PathBuf,
+    /// Present only for review_record. Captured before permission and
+    /// revalidated after Allow.
+    pub(crate) review_admission: Option<xai_grok_science::project::ReviewAdmission>,
+    /// Present only for `project_migrate`. Captured before permission and
+    /// revalidated after Allow; private fields make it an immutable source
+    /// capability rather than caller-supplied metadata.
+    pub(crate) migration_admission: Option<xai_grok_science::project::MigrationAdmission>,
+    /// Human-readable target used in the permission prompt.
+    pub(crate) target: String,
+    /// An operation already applied under this id: returned without asking
+    /// for permission a second time.
+    pub(crate) replayed: Option<xai_grok_science::project::MutationOutcome>,
+    /// True only when the actor reopens an existing Running+Allow review
+    /// authority. It resumes internally without a new prompt or fresh grant.
+    pub(crate) resume_allowed: bool,
+    /// Minted only by SessionHandle after a real production Allow decision.
+    pub(crate) permission_grant:
+        Option<crate::session::handle::ScienceProjectMutationPermissionGrant>,
+}
+
+/// WP-2 phase one: admit a project/claim/evidence mutation, bind it to this
+/// session, and open its durable run before the caller awaits permission.
+pub struct BeginScienceProjectMutation {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) project_root: std::path::PathBuf,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) request: xai_grok_science::project::MutationRequest,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<PreparedScienceProjectMutation>>,
+}
+
+pub struct FinishScienceProjectMutation {
+    pub(crate) prepared: PreparedScienceProjectMutation,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::project::MutationOutcome>>,
+}
+
+
+/// A kernel admission run created by the actor and waiting on the production
+/// permission decision. The interpreter has not been executed or hashed yet.
+pub struct PreparedScienceKernelAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    pub(crate) request: xai_grok_science::workflow::KernelAdmissionRequest,
+    /// Human-readable executable identity shown in the permission prompt.
+    pub(crate) target: String,
+}
+
+
+pub struct BeginScienceKernelAdmission {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) project_root: std::path::PathBuf,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) request: xai_grok_science::workflow::KernelAdmissionRequest,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<PreparedScienceKernelAdmission>>,
+}
+
+
+pub struct FinishScienceKernelAdmission {
+    pub(crate) prepared: PreparedScienceKernelAdmission,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to: oneshot::Sender<
+        xai_grok_science::Result<xai_grok_science::workflow::KernelAdmissionResult>,
+    >,
+}
+
+pub struct ScienceWorkflowBinding {
+    /// Operation id, session, owner and the spec itself.
+    pub(crate) execution: xai_grok_science::workflow::WorkflowExecutionRequest,
+    /// Root for the durable run / attempt / commit / operation records.
+    pub(crate) executor_root: std::path::PathBuf,
+    pub(crate) kernel_id: String,
+    pub(crate) kernel_kind: xai_grok_science::workflow::KernelKind,
+    /// Absolute path to the interpreter. Probed by the actor, never by the
+    /// adapter: probing runs the binary.
+    pub(crate) interpreter_path: std::path::PathBuf,
+    pub(crate) probe_timeout: std::time::Duration,
+    /// The caller's explicit opt-in to `StepKind::NotebookCell`.
+    ///
+    /// `ExecutionPolicy::default()` omits that kind on purpose, so running
+    /// arbitrary code is a decision rather than a default. This carries the
+    /// decision from the request instead of assuming it here.
+    pub(crate) allow_kernel_steps: bool,
+}
+
+
+/// A workflow execution admitted by the actor and awaiting its permission
+/// decision. Holds the durable run ticket, so a deny/timeout/cancel still has a
+/// record to close.
+pub struct PreparedScienceWorkflowExecution {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    /// Retained project authority opened from the exact same root as `store`.
+    /// Finish re-checks the owner and exact revision after durable Allow.
+    pub(crate) project_store: xai_grok_science::project::ProjectStore,
+    pub(crate) project_revision: String,
+    pub(crate) ticket: xai_grok_science::csv::ScienceRunTicket,
+    /// Exact actor-validated identity expected on both first completion and
+    /// terminal replay. Finish never reopens the workspace pathname.
+    pub(crate) expected_context: xai_grok_science::RunContext,
+    pub(crate) binding: ScienceWorkflowBinding,
+    /// Exact store root retained before permission; ledger, cells, and outputs
+    /// all remain descriptor-relative to it after Allow.
+    pub(crate) io: xai_grok_science::workflow::WorkflowIoCapability,
+    /// Ledger constructed from the same retained root and policy used for
+    /// replay. Finish consumes this instead of reopening a pathname.
+    pub(crate) executor: xai_grok_science::workflow::WorkflowExecutor,
+    /// Non-serializable executable bytes pinned before permission. Admission
+    /// and every kernel spawn consume this exact capability.
+    pub(crate) executable: std::sync::Arc<xai_grok_science::workflow::PinnedExecutable>,
+    /// Human-readable target used in the permission prompt.
+    pub(crate) target: String,
+    /// This operation id already ran: the recorded report, returned without a
+    /// second prompt and without executing anything again.
+    pub(crate) replayed: Option<xai_grok_science::workflow::WorkflowRunReport>,
+    /// A previous process durably recorded Allow (and, if necessary, recovery
+    /// advanced AwaitingApproval to Running) before the workflow ledger was
+    /// created. The handle must route this straight back to the actor without
+    /// prompting again; Finish revalidates the exact durable Allow.
+    pub(crate) resume_allowed: bool,
+    /// An Allow token minted only by the production permission bridge in
+    /// `session::handle`. Replay and every non-Allow terminal carry `None`.
+    pub(crate) permission_grant: Option<crate::session::handle::ScienceWorkflowPermissionGrant>,
+}
+
+
+/// LS5-K8 phase one: admit a workflow execution, bind it to this session, and
+/// open its durable run before the caller awaits permission.
+pub struct BeginScienceWorkflowExecution {
+    pub(crate) store: xai_grok_science::ScienceStore,
+    pub(crate) context: xai_grok_science::RunContext,
+    pub(crate) binding: ScienceWorkflowBinding,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<PreparedScienceWorkflowExecution>>,
+}
+
+
+pub struct FinishScienceWorkflowExecution {
+    pub(crate) prepared: PreparedScienceWorkflowExecution,
+    pub(crate) decision: xai_grok_science::ApprovalDecision,
+    pub(crate) reason: String,
+    pub(crate) respond_to:
+        oneshot::Sender<xai_grok_science::Result<xai_grok_science::workflow::WorkflowRunReport>>,
 }

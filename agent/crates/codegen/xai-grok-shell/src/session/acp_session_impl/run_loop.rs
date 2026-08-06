@@ -844,6 +844,18 @@ pub(super) async fn run_session(
                             .await;
                             let _ = command.respond_to.send(result);
                         }
+            SessionCommand::BeginScienceSeqAnalyze(command) => { let command = *command; let result = session.prepare_science_seq_analyze(command.store, command.context, command.options, command.source_path, command.source_bytes); if let Some(prepared) = undelivered_science_begin(command.respond_to.send(result)) && let Err(error) = session.interrupt_undelivered_science_seq_analyze_begin(prepared) { tracing::error!("failed to interrupt undelivered Science sequence analysis Begin: {error}"); } }
+            SessionCommand::FinishScienceSeqAnalyze(command) => { let command = *command; let result = session.finish_science_seq_analyze(command.prepared, command.decision, command.reason, command.permission_grant); let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceSkillQuarantine(command) => { let command = *command; let result = session.prepare_science_skill_quarantine(command.store, command.context, command.request, command.archive_bytes); let _ = command.respond_to.send(result); }
+            SessionCommand::FinishScienceSkillQuarantine(command) => { let command = *command; let result = session.finish_science_skill_quarantine(command.prepared, command.decision, command.reason, command.permission_grant); let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceEvidenceDossier(command) => { let command = *command; let result = session.prepare_science_evidence_dossier(command.store, command.project_root, command.context, command.source_run_ids); let _ = command.respond_to.send(result); }
+            SessionCommand::FinishScienceEvidenceDossier(command) => { let command = *command; let result = session.finish_science_evidence_dossier(command.prepared, command.decision, command.reason, command.permission_grant); let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceProjectMutation(command) => { let command = *command; let result = session.prepare_science_project_mutation(command.store, command.project_root, command.context, command.request); if let Some(prepared) = undelivered_science_begin(command.respond_to.send(result)) && let Err(error) = session.interrupt_undelivered_science_project_mutation_begin(prepared) { tracing::error!("failed to interrupt undelivered Science project mutation Begin: {error}"); } }
+            SessionCommand::FinishScienceProjectMutation(command) => { let command = *command; let result = session.finish_science_project_mutation(command.prepared, command.decision, command.reason); let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceKernelAdmission(command) => { let command = *command; let result = session.prepare_science_kernel_admission(command.store, command.project_root, command.context, command.request); let _ = command.respond_to.send(result); }
+            SessionCommand::FinishScienceKernelAdmission(command) => { let command = *command; let result = session.finish_science_kernel_admission(command.prepared, command.decision, command.reason); let _ = command.respond_to.send(result); }
+            SessionCommand::BeginScienceWorkflowExecution(command) => { let command = *command; let result = session.prepare_science_workflow_execution(command.store, command.context, command.binding); if let Some(prepared) = undelivered_science_begin(command.respond_to.send(result)) && let Err(error) = session.interrupt_undelivered_science_workflow_begin(prepared) { tracing::error!("failed to interrupt undelivered Science workflow Begin: {error}"); } }
+            SessionCommand::FinishScienceWorkflowExecution(command) => { let command = *command; let result = session.finish_science_workflow_execution(command.prepared, command.decision, command.reason); let _ = command.respond_to.send(result); }
                         SessionCommand::BeginScienceFetch(command) => {
                             let command = *command;
                             let result = session.prepare_science_fetch(
@@ -853,6 +865,7 @@ pub(super) async fn run_session(
                                 command.query,
                                 command.requests,
                                 command.fixture_bytes,
+                                command.capability_provenance,
                             );
                             let _ = command.respond_to.send(result);
                         }
@@ -2565,3 +2578,14 @@ pub(super) fn turn_texts_for_feedback(
         });
     (user_text, assistant_text)
 }
+
+/// `Sender::send` returns ownership of the undelivered payload. Only an `Ok`
+/// contains a durable workflow Begin that now needs actor-owned interruption;
+/// an undelivered preparation error created no capability bundle to close.
+fn undelivered_science_begin<T, E>(delivery: Result<(), Result<T, E>>) -> Option<T> {
+    match delivery {
+        Err(Ok(prepared)) => Some(prepared),
+        Ok(()) | Err(Err(_)) => None,
+    }
+}
+
