@@ -13794,6 +13794,7 @@ dependencies = [
  "chrono",
  "dunce",
  "http 1.4.0",
+ "libc",
  "reqwest 0.12.24",
  "serde",
  "serde_json",
@@ -13803,6 +13804,7 @@ dependencies = [
  "tokio",
  "tower",
  "uuid",
+ "zip",
 ]
 
 [[package]]
