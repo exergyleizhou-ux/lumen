@@ -10,13 +10,13 @@ For the generation date, see the last ledger commit in `git log`.
 
 | Question | Answer |
 |---|---|
-| Version (root VERSION) | **2.2.0** |
+| Version (root VERSION) | **2.3.0** |
 | Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 8c519303 fix(science): cross-platform compile — Windows path bugs in fused science crate |
+| Last non-bot commit | c63b7173 chore(release): bump to 2.3.0 — X-S1/X-S2 science fusion (minor) |
 
 ---
 
