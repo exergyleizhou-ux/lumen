@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-08-05T16:55:44Z",
+  "generated_at": "2026-08-06T07:35:22Z",
   "monorepo": {
-    "git_head": "098f7cd424c1015bfe0d1cbd88c96570b36064ca",
-    "git_short": "098f7cd"
+    "git_head": "deb85fd75c77f350fa06a01b826e05a2fd54bd8a",
+    "git_short": "deb85fd"
   },
   "lumen_version": "2.2.0",
   "upstream_pin": {
@@ -19,7 +19,7 @@
   "critical_file_sha256": {
     ".gitleaksignore": "cfc2902538135976eddf789c2f12f15f3a91d037334e550f2f26b3e58470a252",
     "agent/crates/codegen/xai-grok-shell-base/src/util/event_id.rs": "88cd1e135a41399eac5d7c108e0439b56af9a8b429dbe861ea73179ede9ac309",
-    "agent/crates/codegen/xai-grok-models/default_models.json": "802f23626f08a7519b28792425a72ea9955eafefea989a8c5113a860b99a4c0c",
+    "agent/crates/codegen/xai-grok-models/default_models.json": "32198f9f091cbf37b473adcabcc752b457f250c9e701c750370e8526cb65b52c",
     "agent/crates/codegen/lumen-guard/src/lib.rs": "a8d8e52ce251db0089896845695f87c5b507b430ba863bf9d78d430557741e6a",
     "agent/crates/codegen/lumen-discipline/src/lib.rs": "0ab9b2f13fb21fdb904f9f044ce3529ebc7a343f389ff0505d9ca958ea6c6310",
     "scripts/assert-defaults.sh": "4b8a15aff077aa26cda869af0f522b7a23cf8f099572b4a219c5248263476672",
@@ -50,5 +50,5 @@
     "docs/masterplan/M5-onboarding-evidence.template.json": "eed791ab5a3cc1bb41e7e456bd6ce85b258390f44ff0166aca9a7303bbc9d4a1",
     "docs/masterplan/00A-\u6765\u6e90\u9501\u4e0e\u8fd0\u884c\u5408\u540c.md": "8fb50cae84dc2ccc2dd0fcd378fcf3b0235bdf87ebb0fe2ab82f8e1baf4a6ae7"
   },
-  "aggregate_critical_sha256": "66347c7bcc92107f7b48b41b01f713d3851e197efd9908a72c53bc55b64fc726"
+  "aggregate_critical_sha256": "a2a294c0dc7549599a195a648183edbf11f7d4e2bda268ffbf6b770aa9dbe67a"
 }
