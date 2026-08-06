@@ -1,17 +1,43 @@
 //! Declarative workflow specification and execution engine.
 //! Seam contracts: LS5-15, LS5-16, LS5-17, LS5-18, LS5-19, LS5-20, LS5-21.
 
+pub mod admission;
+pub mod executor;
+mod io;
 pub mod kernel;
+mod kernel_admission_protocol;
 pub mod package;
+mod pinned_executable;
+pub mod python_runner;
 
 #[cfg(test)]
 mod e2e_tests;
 
+pub use admission::{
+    KernelAdmissionRequest, KernelPolicy, RejectionReason, default_resource_cap, probe_kernel,
+    probe_pinned_kernel,
+};
+pub use executor::{
+    ArtifactCommit, ArtifactCommitState, AttemptState, Clock, ErrorClass, ExecutionPolicy,
+    KernelInvocation, ManualClock, RefusedStep, StepAttempt, StepFailure, StepOperation,
+    StepOutput, StepPlan, StepRunner, SystemClock, UnboundStepRunner, WorkflowExecutionRequest,
+    WorkflowExecutor, WorkflowOperationRecord, WorkflowRecoveryReport, WorkflowRunRecord,
+    WorkflowRunReport, WorkflowState, run_id_for_operation,
+};
+pub use io::{
+    AttemptOutputCapability, RetainedOutputDirectory, WorkflowChildPaths, WorkflowIoCapability,
+    WorkflowOutputSnapshot,
+};
 pub use kernel::{
     AdmissionStatus, KernelAdmission, KernelKind, KernelManifest, ReproductionAttempt,
     ReproductionLevel, ReproductionResult, ResourceCap,
 };
+pub use kernel_admission_protocol::{
+    KernelAdmissionResult, begin_kernel_admission, finish_kernel_admission,
+};
 pub use package::{ArtifactManifest, InputManifest, WorkflowPackage};
+pub use pinned_executable::PinnedExecutable;
+pub use python_runner::PythonLoopRunner;
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -21,7 +47,7 @@ use super::project::model::ProjectId;
 // ── WorkflowSpec (LS5-15) ──────────────────────────────────────────
 
 /// Step types allowed in a workflow. No arbitrary shell steps.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum StepKind {
     ConnectorFetch,
     ArtifactTransform,
@@ -39,7 +65,7 @@ pub struct WorkflowStep {
     pub kind: StepKind,
     pub connector_id: Option<String>,
     pub notebook_cell: Option<String>,
-    pub inputs: Vec<String>,  // step_id references
+    pub inputs: Vec<String>, // step_id references
     pub parameters: BTreeMap<String, String>,
     pub timeout_secs: u64,
     pub retry_policy: Option<RetryPolicy>,
@@ -122,7 +148,7 @@ impl WorkflowSpec {
         let mut visited: BTreeMap<&str, u8> = BTreeMap::new(); // 0=white, 1=gray, 2=black
         for node in graph.keys() {
             if !visited.contains_key(node) {
-                self.dfs_cycle_check(*node, &graph, &mut visited)?;
+                self.dfs_cycle_check(node, &graph, &mut visited)?;
             }
         }
         Ok(())
@@ -146,6 +172,49 @@ impl WorkflowSpec {
         }
         visited.insert(node, 2); // black
         Ok(())
+    }
+
+    /// Step ids in a deterministic dependency-respecting order.
+    ///
+    /// Kahn's algorithm with a lexicographic tie-break, so two runs of the
+    /// same spec visit steps in the same order and the attempt log of one run
+    /// can be compared against another's. Fails on a duplicate step id, a
+    /// dangling reference, or a cycle — a workflow that cannot be ordered
+    /// cannot be executed.
+    pub fn topological_order(&self) -> Result<Vec<String>, String> {
+        self.validate_references()?;
+        let mut pending: BTreeMap<&str, std::collections::BTreeSet<&str>> = BTreeMap::new();
+        for step in &self.steps {
+            if pending
+                .insert(
+                    step.step_id.as_str(),
+                    step.inputs.iter().map(String::as_str).collect(),
+                )
+                .is_some()
+            {
+                return Err(format!("duplicate step id: {}", step.step_id));
+            }
+        }
+
+        let mut order = Vec::with_capacity(self.steps.len());
+        while !pending.is_empty() {
+            // BTreeMap iteration is sorted, so the first ready step is always
+            // the lexicographically smallest one.
+            let Some(ready) = pending
+                .iter()
+                .find(|(_, inputs)| inputs.is_empty())
+                .map(|(id, _)| *id)
+            else {
+                let stuck: Vec<&str> = pending.keys().copied().collect();
+                return Err(format!("cycle detected among steps: {}", stuck.join(", ")));
+            };
+            pending.remove(ready);
+            for inputs in pending.values_mut() {
+                inputs.remove(ready);
+            }
+            order.push(ready.to_string());
+        }
+        Ok(order)
     }
 
     /// Verify all input references point to existing steps.
@@ -181,17 +250,37 @@ pub struct ReuseKey {
 
 impl ReuseKey {
     /// Compute a deterministic reuse key hash.
+    ///
+    /// DEFECT FIXED (LS5-K1): this used to hash only the input hashes, the
+    /// implementation version and the environment hash — it ignored
+    /// `parameters`, `policy_version`, `connector_version` and
+    /// `renderer_build_id`, all of which [`ReuseKey::matches`] does compare.
+    /// Two steps differing only in their parameters therefore produced the
+    /// same key, and anything using this hash as a cache or commit address
+    /// would have served one step's artifact for another's. Every field is
+    /// now covered, length-prefixed so no two field boundaries can collide.
     pub fn compute_hash(&self) -> String {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
+        let mut feed = |bytes: &[u8]| {
+            hasher.update(bytes.len().to_le_bytes());
+            hasher.update(bytes);
+        };
+        feed(b"reuse-key-v2");
         for (k, v) in &self.input_artifact_hashes {
-            hasher.update(k.as_bytes());
-            hasher.update(v.as_bytes());
+            feed(k.as_bytes());
+            feed(v.as_bytes());
         }
-        hasher.update(self.step_implementation_version.as_bytes());
-        hasher.update(self.compute_environment_hash.as_bytes());
-        let result = hasher.finalize();
-        format!("{:x}", result)
+        feed(self.step_implementation_version.as_bytes());
+        for (k, v) in &self.parameters {
+            feed(k.as_bytes());
+            feed(v.as_bytes());
+        }
+        feed(self.compute_environment_hash.as_bytes());
+        feed(self.policy_version.as_bytes());
+        feed(self.connector_version.as_deref().unwrap_or("").as_bytes());
+        feed(self.renderer_build_id.as_deref().unwrap_or("").as_bytes());
+        format!("{:x}", hasher.finalize())
     }
 
     /// Check if a cached result can be reused. Must verify:
@@ -205,6 +294,8 @@ impl ReuseKey {
             && self.compute_environment_hash == other.compute_environment_hash
             && self.parameters == other.parameters
             && self.policy_version == other.policy_version
+            && self.connector_version == other.connector_version
+            && self.renderer_build_id == other.renderer_build_id
     }
 }
 
@@ -243,15 +334,13 @@ impl ComputeEnvironment {
     /// Compute environment identity hash.
     pub fn identity_hash(&self) -> String {
         use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(self.os.as_bytes());
-        hasher.update(self.architecture.as_bytes());
-        hasher.update(self.lumen_binary_hash.as_bytes());
-        hasher.update(self.dependency_lock_hash.as_bytes());
-        if let Some(h) = &self.container_digest {
-            hasher.update(h.as_bytes());
-        }
-        format!("{:x}", hasher.finalize())
+        // This hash is an authority and replay boundary, not a display label.
+        // Bind every serialized field so a caller cannot reuse one operation
+        // id after changing an interpreter, dependency, locale, deterministic
+        // flag, hardware identity or network policy.
+        let bytes = serde_json::to_vec(self)
+            .expect("ComputeEnvironment contains only infallibly serializable fields");
+        format!("{:x}", Sha256::digest(bytes))
     }
 }
 
@@ -363,5 +452,11 @@ mod tests {
         };
         let h = env.identity_hash();
         assert!(!h.is_empty());
+
+        let mut changed = env.clone();
+        changed
+            .environment_allowlist
+            .push("different-kernel".into());
+        assert_ne!(h, changed.identity_hash());
     }
 }

@@ -29,27 +29,55 @@ pub fn verify_for_goal_completion(
     store: &ScienceStore,
     run_id: &RunId,
 ) -> Result<HostVerificationReport, ScienceError> {
+    verify_durable_evidence_in_state(store, run_id, RunState::Succeeded)
+}
+
+/// Verify a complete actor-owned commit while the run is still Running.
+///
+/// This is deliberately crate-internal: it exists so the SessionActor can
+/// make Succeeded the final fallible write, not so callers can consume
+/// pre-terminal artifacts.
+pub(crate) fn verify_before_successful_commit(
+    store: &ScienceStore,
+    run_id: &RunId,
+) -> Result<HostVerificationReport, ScienceError> {
+    verify_durable_evidence_in_state(store, run_id, RunState::Running)
+}
+
+fn verify_durable_evidence_in_state(
+    store: &ScienceStore,
+    run_id: &RunId,
+    required_state: RunState,
+) -> Result<HostVerificationReport, ScienceError> {
     let run = store.load_run(run_id)?;
-    if run.state != RunState::Succeeded {
+    if run.state != required_state {
         return Err(ScienceError::Invalid(
-            "science completion requires a succeeded run".into(),
+            "science verification run state does not match its commit phase".into(),
         ));
     }
 
     let approvals = store.approvals(run_id)?;
-    if approvals.is_empty()
-        || approvals
-            .iter()
-            .any(|approval| approval.decision != ApprovalDecision::Allow)
+    let [approval] = approvals.as_slice() else {
+        return Err(ScienceError::Invalid(
+            "science completion requires exactly one terminal allow approval".into(),
+        ));
+    };
+    if approval.project_id != run.context.project_id
+        || approval.run_id != *run_id
+        || approval.owner_id != run.context.owner_id
+        || approval.call_id.0.trim().is_empty()
+        || approval.decision != ApprovalDecision::Allow
+        || approval.decided_at.is_none()
     {
         return Err(ScienceError::Invalid(
-            "science completion requires only terminal allow approvals".into(),
+            "science completion approval does not exactly bind its run context and call".into(),
         ));
     }
 
     let artifacts = store.artifacts(run_id)?;
     let evidence = store.evidence(run_id)?;
     let provenance = store.provenance(run_id)?;
+    let previews = store.previews(run_id)?;
     if artifacts.is_empty() || evidence.is_empty() || provenance.is_empty() {
         return Err(ScienceError::Invalid(
             "science completion requires artifact, evidence, and provenance".into(),
@@ -57,26 +85,44 @@ pub fn verify_for_goal_completion(
     }
 
     let mut artifact_hashes = std::collections::BTreeSet::new();
+    let mut artifact_paths = std::collections::BTreeSet::new();
     for artifact in &artifacts {
-        let bytes = store.artifact_bytes(
-            &run.context.project_id,
-            run_id,
-            &run.context.owner_id,
-            &artifact.relative_path,
-        )?;
+        if artifact.run_id != *run_id
+            || artifact.call_id != approval.call_id
+            || !artifact_paths.insert(artifact.relative_path.clone())
+            || !artifact_hashes.insert(artifact.sha256.as_str())
+        {
+            return Err(ScienceError::Invalid(
+                "science artifact registry does not exactly bind its run approval".into(),
+            ));
+        }
+        let bytes = if required_state == RunState::Succeeded {
+            store.artifact_bytes(
+                &run.context.project_id,
+                run_id,
+                &run.context.owner_id,
+                &artifact.relative_path,
+            )?
+        } else {
+            store.running_artifact_bytes(
+                &run.context.project_id,
+                run_id,
+                &run.context.owner_id,
+                &artifact.relative_path,
+            )?
+        };
         if bytes.len() as u64 != artifact.bytes || crate::hex_sha256(&bytes) != artifact.sha256 {
             return Err(ScienceError::Invalid(
                 "registered science artifact hash or length mismatch".into(),
             ));
         }
-        artifact_hashes.insert(artifact.sha256.as_str());
     }
 
-    let mut cited_artifact = false;
+    let mut cited_artifacts = std::collections::BTreeSet::new();
     let any_bad = evidence.iter().any(|item| {
         let missing_or_bad_hash = match item.artifact_sha256.as_deref() {
             Some(hash) => {
-                cited_artifact = true;
+                cited_artifacts.insert(hash);
                 !artifact_hashes.contains(hash)
             }
             None => true, // missing artifact citation = fail
@@ -86,9 +132,9 @@ pub fn verify_for_goal_completion(
             || item.claim.trim().is_empty()
             || item.source.trim().is_empty()
     });
-    if any_bad || !cited_artifact {
+    if any_bad || cited_artifacts != artifact_hashes {
         return Err(ScienceError::Invalid(
-            "science evidence must cite a registered artifact".into(),
+            "science evidence must exactly cover the registered artifact hashes".into(),
         ));
     }
     if provenance.iter().any(|item| {
@@ -103,28 +149,35 @@ pub fn verify_for_goal_completion(
         ));
     }
 
-    let mut digest = Sha256::new();
-    digest.update(b"lumen-science-host-verification-v1\0");
-    digest.update(run_id.0.as_bytes());
-    digest.update([0]);
-    for approval in &approvals {
-        digest.update(approval.call_id.0.as_bytes());
-        digest.update([0]);
-    }
-    for artifact in &artifacts {
-        digest.update(artifact.sha256.as_bytes());
-        digest.update([0]);
-    }
-    for item in &evidence {
-        if let Some(hash) = item.artifact_sha256.as_deref() {
-            digest.update(hash.as_bytes());
-            digest.update([0]);
+    let mut events = Vec::new();
+    let mut after = 0;
+    loop {
+        let batch = store.events_after(run_id, after, 1_000)?;
+        if batch.is_empty() {
+            break;
+        }
+        after = batch.last().expect("non-empty event page").seq;
+        events.extend(batch);
+        if events.len() > 10_000 {
+            return Err(ScienceError::Invalid(
+                "science authority event log exceeds verification limit".into(),
+            ));
         }
     }
-    for item in &provenance {
-        digest.update(item.input_sha256.as_bytes());
-        digest.update([0]);
-    }
+
+    // This digest is a source-authority snapshot, not merely an artifact set.
+    // Review records persist it and replay recomputes it, so replacing an
+    // evidence claim, provenance producer, approval timestamp, preview, event
+    // or any other durable authority field cannot retain the old proof.
+    let mut digest = Sha256::new();
+    digest.update(b"lumen-science-host-verification-v2\0");
+    update_digest_json(&mut digest, &run)?;
+    update_digest_json(&mut digest, &approvals)?;
+    update_digest_json(&mut digest, &artifacts)?;
+    update_digest_json(&mut digest, &evidence)?;
+    update_digest_json(&mut digest, &provenance)?;
+    update_digest_json(&mut digest, &previews)?;
+    update_digest_json(&mut digest, &events)?;
 
     Ok(HostVerificationReport {
         run_id: run_id.clone(),
@@ -135,6 +188,16 @@ pub fn verify_for_goal_completion(
         provenance_count: provenance.len(),
         verification_sha256: format!("{:x}", digest.finalize()),
     })
+}
+
+fn update_digest_json(
+    digest: &mut Sha256,
+    value: &impl serde::Serialize,
+) -> Result<(), ScienceError> {
+    let bytes = serde_json::to_vec(value)?;
+    digest.update((bytes.len() as u64).to_le_bytes());
+    digest.update(bytes);
+    Ok(())
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -151,7 +214,7 @@ mod tests {
     use super::*;
     use crate::{Approval, CallId, Evidence, ProjectId, Provenance, RunContext};
 
-    fn completed_fixture() -> (tempfile::TempDir, ScienceStore, RunId) {
+    fn running_fixture() -> (tempfile::TempDir, ScienceStore, RunId) {
         let root = tempfile::tempdir().unwrap();
         let store = ScienceStore::new(root.path().join("store"));
         let run_id = RunId::new_v7();
@@ -183,6 +246,9 @@ mod tests {
             })
             .unwrap();
         store
+            .transition(&run_id, RunState::AwaitingApproval, None)
+            .unwrap();
+        store
             .decide_approval(
                 &project_id,
                 &run_id,
@@ -191,6 +257,7 @@ mod tests {
                 ApprovalDecision::Allow,
             )
             .unwrap();
+        store.transition(&run_id, RunState::Running, None).unwrap();
         let artifact = store
             .put_artifact(
                 &project_id,
@@ -225,10 +292,12 @@ mod tests {
                 environment: BTreeMap::new(),
             })
             .unwrap();
-        store.transition(&run_id, RunState::Running, None).unwrap();
-        store
-            .transition(&run_id, RunState::Succeeded, None)
-            .unwrap();
+        (root, store, run_id)
+    }
+
+    fn completed_fixture() -> (tempfile::TempDir, ScienceStore, RunId) {
+        let (root, store, run_id) = running_fixture();
+        store.transition_succeeded_verified(&run_id).unwrap();
         (root, store, run_id)
     }
 
@@ -285,7 +354,6 @@ mod tests {
     fn wrong_project_id_fails() {
         let (_root, store, run_id) = completed_fixture();
         // Evidence pointing to wrong project must fail
-        let bad_project = ProjectId::new("wrong-project");
         let evidence = store.evidence(&run_id).unwrap();
         assert!(!evidence.is_empty(), "fixture has evidence");
         // Store lookup with wrong project fails
@@ -296,8 +364,10 @@ mod tests {
 
     #[test]
     fn evidence_citing_unregistered_artifact_fails() {
-        let (_root, store, run_id) = completed_fixture();
-        // Add evidence pointing to a hash not in any registered artifact
+        let (_root, store, run_id) = running_fixture();
+        // Persist invalid evidence before the terminal transition. Terminal
+        // runs are immutable, but the completion verifier must still reject a
+        // malformed record that was created while the run was active.
         let fake_sha = "a".repeat(64);
         store
             .add_evidence(Evidence {
@@ -308,76 +378,41 @@ mod tests {
                 verified_at: Utc::now(),
             })
             .unwrap();
+        store.transition_succeeded_verified(&run_id).unwrap();
         assert!(verify_for_goal_completion(&store, &run_id).is_err());
     }
 
     #[test]
     fn approval_not_terminal_allow_fails() {
-        let root = tempfile::tempdir().unwrap();
-        let store = ScienceStore::new(root.path().join("store"));
-        let run_id = RunId::new_v7();
-        let project_id = ProjectId::new("reject-test");
-        let owner = "reject-owner";
-        store
-            .create_run(RunContext {
-                run_id: run_id.clone(),
-                project_id: project_id.clone(),
-                session_id: "reject-session".into(),
-                owner_id: owner.into(),
-                workspace_root: root.path().to_path_buf(),
-                provider: "offline".into(),
-                approval_policy: "host".into(),
-                tool_profile: "review".into(),
-                artifact_root: root.path().join("artifacts"),
-                environment: BTreeMap::new(),
-            })
-            .unwrap();
-        let call_id = CallId::new(uuid::Uuid::now_v7().to_string());
-        store
-            .request_approval(Approval {
-                project_id: project_id.clone(),
-                run_id: run_id.clone(),
-                call_id: call_id.clone(),
-                owner_id: owner.into(),
-                decision: ApprovalDecision::Pending,
-                decided_at: None,
-            })
-            .unwrap();
-        // Decision is Deny, not Allow — must fail
-        store
-            .decide_approval(&project_id, &run_id, owner, &call_id, ApprovalDecision::Deny)
-            .unwrap();
-        // Artifact + evidence still needed for the test to reach the approval check
-        let artifact = store
-            .put_artifact(
-                &project_id, &run_id, owner, call_id,
-                Path::new("reject.txt"), b"data", "text/plain", "reject",
-            )
-            .unwrap();
-        store.add_evidence(Evidence {
-            run_id: run_id.clone(),
-            claim: "reject test".into(),
-            source: "negative".into(),
-            artifact_sha256: Some(artifact.sha256.clone()),
-            verified_at: Utc::now(),
-        }).unwrap();
-        store.add_provenance(Provenance {
-            run_id: run_id.clone(),
-            source_uri: "fixture://reject".into(),
-            source_commit: None, source_path: None,
-            license: "test-only".into(),
-            retrieved_at: Utc::now(),
-            input_sha256: artifact.sha256,
-            tool: "reject-fixture".into(),
-            environment: BTreeMap::new(),
-        }).unwrap();
-        store.transition(&run_id, RunState::Running, None).unwrap();
-        store.transition(&run_id, RunState::Succeeded, None).unwrap();
-        assert!(verify_for_goal_completion(&store, &run_id).is_err());
+        let (_root, store, run_id) = completed_fixture();
+
+        // Output creation above used the real Pending -> Allow -> Running
+        // lifecycle. Corrupt only the durable approval projection afterwards
+        // so this test still reaches the verifier's terminal-Allow seam rather
+        // than passing because the output gate rejected fixture setup.
+        let mut approvals = store.approvals(&run_id).unwrap();
+        assert_eq!(approvals.len(), 1);
+        approvals[0].decision = ApprovalDecision::Deny;
+        std::fs::write(
+            store
+                .root
+                .join("runs")
+                .join(&run_id.0)
+                .join("approvals.json"),
+            serde_json::to_vec_pretty(&approvals).unwrap(),
+        )
+        .unwrap();
+
+        let error = verify_for_goal_completion(&store, &run_id).unwrap_err();
+        assert!(matches!(
+            error,
+            ScienceError::Invalid(message)
+                if message == "science completion approval does not exactly bind its run context and call"
+        ));
     }
 
     #[test]
-    fn run_succeeded_but_no_approvals_fails() {
+    fn run_cannot_succeed_without_approvals() {
         let root = tempfile::tempdir().unwrap();
         let store = ScienceStore::new(root.path().join("store"));
         let run_id = RunId::new_v7();
@@ -387,17 +422,21 @@ mod tests {
             .create_run(RunContext {
                 run_id: run_id.clone(),
                 project_id: project_id.clone(),
-                session_id: "s".into(), owner_id: owner.into(),
+                session_id: "s".into(),
+                owner_id: owner.into(),
                 workspace_root: root.path().to_path_buf(),
-                provider: "offline".into(), approval_policy: "host".into(),
+                provider: "offline".into(),
+                approval_policy: "host".into(),
                 tool_profile: "review".into(),
                 artifact_root: root.path().join("artifacts"),
                 environment: BTreeMap::new(),
             })
             .unwrap();
-        // No approval at all — must fail
-        store.transition(&run_id, RunState::Running, None).unwrap();
-        store.transition(&run_id, RunState::Succeeded, None).unwrap();
+        // The state machine itself now rejects both the Running edge and the
+        // dedicated successful completion seam before the host verifier is
+        // even consulted.
+        assert!(store.transition(&run_id, RunState::Running, None).is_err());
+        assert!(store.transition_succeeded_verified(&run_id).is_err());
         assert!(verify_for_goal_completion(&store, &run_id).is_err());
     }
 
@@ -419,32 +458,41 @@ mod tests {
 
     #[test]
     fn provenance_incomplete_fails() {
-        let (_root, store, run_id) = completed_fixture();
-        // Add provenance with empty source_uri — must fail
-        store.add_provenance(Provenance {
-            run_id: run_id.clone(),
-            source_uri: "".into(),  // empty source = incomplete
-            source_commit: None, source_path: None,
-            license: "".into(),  // empty license = incomplete
-            retrieved_at: Utc::now(),
-            input_sha256: "a".repeat(64),
-            tool: "".into(),  // empty tool = incomplete
-            environment: BTreeMap::new(),
-        }).unwrap();
+        let (_root, store, run_id) = running_fixture();
+        // Add provenance with empty source_uri before the immutable terminal
+        // transition; verification must still reject the malformed record.
+        store
+            .add_provenance(Provenance {
+                run_id: run_id.clone(),
+                source_uri: "".into(), // empty source = incomplete
+                source_commit: None,
+                source_path: None,
+                license: "".into(), // empty license = incomplete
+                retrieved_at: Utc::now(),
+                input_sha256: "a".repeat(64),
+                tool: "".into(), // empty tool = incomplete
+                environment: BTreeMap::new(),
+            })
+            .unwrap();
+        store.transition_succeeded_verified(&run_id).unwrap();
         assert!(verify_for_goal_completion(&store, &run_id).is_err());
     }
 
     #[test]
     fn evidence_without_artifact_citation_fails() {
-        let (_root, store, run_id) = completed_fixture();
-        // Evidence with artifact_sha256 = None — must fail (must cite artifact)
-        store.add_evidence(Evidence {
-            run_id: run_id.clone(),
-            claim: "evidence without citation".into(),
-            source: "negative test".into(),
-            artifact_sha256: None,  // no artifact cited
-            verified_at: Utc::now(),
-        }).unwrap();
+        let (_root, store, run_id) = running_fixture();
+        // Evidence with artifact_sha256 = None must fail after the run reaches
+        // the immutable Succeeded state.
+        store
+            .add_evidence(Evidence {
+                run_id: run_id.clone(),
+                claim: "evidence without citation".into(),
+                source: "negative test".into(),
+                artifact_sha256: None, // no artifact cited
+                verified_at: Utc::now(),
+            })
+            .unwrap();
+        store.transition_succeeded_verified(&run_id).unwrap();
         assert!(verify_for_goal_completion(&store, &run_id).is_err());
     }
 }

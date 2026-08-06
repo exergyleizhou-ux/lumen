@@ -10,15 +10,13 @@
 
 use std::collections::BTreeMap;
 
-use crate::connectors::ConnectorDescriptor;
-use crate::project::model::{OwnerId, ProjectId};
+use crate::project::model::ProjectId;
 use crate::workflow::{
     AcceptanceCondition, AcceptanceRule, CachePolicy, ComputeEnvironment,
     FailAction, NetworkPolicy, ReuseKey, ResourceLimits, StepKind,
     WorkflowSpec, WorkflowStep, WorkflowPackage, InputManifest,
     ArtifactManifest, KernelAdmission, KernelKind, KernelManifest,
-    ResourceCap, AdmissionStatus, ReproductionLevel, ReproductionAttempt,
-    ReproductionResult,
+    ResourceCap, AdmissionStatus, ReproductionLevel,
 };
 
 /// Build a representative 3-step pubmed→notebook→review workflow.
@@ -122,6 +120,9 @@ fn build_kernel_manifest() -> KernelManifest {
                 exact_version: "3.12.4".into(),
                 executable_hash: "sha256:py312".into(),
                 package_lock_hash: "sha256:pkg".into(),
+                interpreter_path: "/usr/bin/python3.12".into(),
+                os: "linux".into(),
+                architecture: "x86_64".into(),
                 default_no_network: true,
                 process_isolation: true,
                 resource_cap: ResourceCap {
@@ -132,6 +133,7 @@ fn build_kernel_manifest() -> KernelManifest {
                 },
                 artifact_only_io: true,
                 admission_status: AdmissionStatus::Admitted,
+                rejection_reason: None,
                 admitted_at: Some("2026-07-25".into()),
                 admitted_by: Some("e2e-test".into()),
             },
