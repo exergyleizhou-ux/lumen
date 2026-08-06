@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | c63b7173 chore(release): bump to 2.3.0 — X-S1/X-S2 science fusion (minor) |
+| Last non-bot commit | 9a70acf4 chore(release): sync 2.3.0 version stamps (status/readiness/source-lock) |
 
 ---
 
