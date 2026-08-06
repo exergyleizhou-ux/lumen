@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 81515aae fix(science): finish_fetch capability_provenance arg (X-S1 API alignment) |
+| Last non-bot commit | 16ac1d93 fix(science): align science_goal test fixture with fused store state machine |
 
 ---
 
