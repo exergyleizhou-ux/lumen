@@ -2177,6 +2177,36 @@ impl SessionActor {
                 })),
             );
             let mut request = request;
+            // Text-only models (e.g. DeepSeek BYOK — no multimodal): never
+            // send image content. Those backends reject image_url blocks with
+            // a 400 deserialize error; without this the first image in the
+            // conversation (tool result, user paste, image_gen output) kills
+            // every subsequent turn of the session. Strip to a text note
+            // before the request ever reaches the sampler.
+            let session_model = match request.model.clone() {
+                Some(model) => model,
+                None => self
+                    .chat_state_handle
+                    .get_sampling_config()
+                    .await
+                    .map(|c| c.model)
+                    .unwrap_or_default(),
+            };
+            if !crate::agent::config::model_supports_images(
+                &session_model,
+                &self.models_manager.models(),
+            ) {
+                let stripped = request.strip_images_with_reason(
+                    "[image omitted — model does not support image input]",
+                );
+                if stripped > 0 {
+                    tracing::warn!(
+                        model = %session_model,
+                        stripped,
+                        "stripped {stripped} image(s): model is text-only"
+                    );
+                }
+            }
             request.x_grok_session_id = Some(self.session_info.id.to_string());
             request.x_grok_turn_idx =
                 Some(self.chat_state_handle.get_prompt_index().await.to_string());

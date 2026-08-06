@@ -1691,6 +1691,7 @@ fn make_entry_config_with_id(
         auth_scheme: None,
         reasoning_effort: None,
         supports_reasoning_effort: false,
+        supports_images: None,
         reasoning_efforts: Vec::new(),
         supports_backend_search: false,
         compactions_remaining: None,

@@ -3997,6 +3997,25 @@ pub fn effective_classifier_supports_re(
         .map(|e| e.info().supports_reasoning_effort)
         .unwrap_or(false)
 }
+
+/// Whether `model_id` may receive image content on the wire.
+///
+/// `Some(false)` (explicitly declared text-only, e.g. DeepSeek BYOK) ⇒
+/// false. `None` / not-in-catalog ⇒ true: undeclared models are assumed
+/// image-capable so an unannotated vision model never silently loses
+/// image input. Sessions call this before building a request and strip
+/// `ContentPart::Image` when it returns false — DeepSeek chat completions
+/// rejects `image_url` blocks with a 400 deserialize error that would
+/// otherwise kill the session.
+pub fn model_supports_images(
+    model_id: &str,
+    models: &IndexMap<String, ModelEntry>,
+) -> bool {
+    find_model_by_id(models, model_id)
+        .and_then(|e| e.info().supports_images)
+        .unwrap_or(true)
+}
+
 /// JSON-only subset of `ModelEntryConfig`.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
@@ -4017,6 +4036,11 @@ struct DefaultModelJson {
     reasoning_effort: Option<ReasoningEffort>,
     #[serde(default)]
     supports_reasoning_effort: bool,
+    /// `Some(false)` declares the model text-only (no multimodal input).
+    /// `None` = unknown → treated as image-capable at use sites, so an
+    /// undeclared vision model never silently loses image input.
+    #[serde(default)]
+    supports_images: Option<bool>,
     #[serde(default)]
     reasoning_efforts: Vec<ReasoningEffortOption>,
     /// When false, only OAuth users see this in the picker.
@@ -4125,6 +4149,7 @@ fn default_models(endpoints: &EndpointsConfig) -> IndexMap<String, ModelEntryCon
                 supported_in_api: m.supported_in_api,
                 reasoning_effort: m.reasoning_effort,
                 supports_reasoning_effort: m.supports_reasoning_effort,
+                supports_images: m.supports_images,
                 reasoning_efforts: m.reasoning_efforts,
                 supports_backend_search: m.supports_backend_search,
                 compactions_remaining: m.compactions_remaining,
@@ -4177,6 +4202,10 @@ pub struct ModelEntryConfig {
     pub reasoning_effort: Option<ReasoningEffort>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub supports_reasoning_effort: bool,
+    /// `Some(false)` = text-only model (no multimodal input); `None` =
+    /// unknown, treated as image-capable at use sites.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_images: Option<bool>,
     /// Per-model reasoning-effort menu (source of truth). The two legacy fields
     /// above are derived from this list when it is non-empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -4322,6 +4351,10 @@ pub struct ConfigModelOverride {
     pub compaction_at_tokens: Option<CompactionAtTokens>,
     pub show_model_fingerprint: Option<bool>,
     pub stream_tool_calls: Option<bool>,
+    /// `Some(false)` = text-only model (no multimodal input); `None` =
+    /// inherit from the catalog/default entry.
+    #[serde(default)]
+    pub supports_images: Option<bool>,
 }
 impl ConfigModelOverride {
     pub(crate) fn apply(
@@ -4397,6 +4430,9 @@ impl ConfigModelOverride {
             && matches!(entry.info.api_backend, ApiBackend::Messages)
         {
             entry.info.supports_reasoning_effort = true;
+        }
+        if let Some(v) = self.supports_images {
+            entry.info.supports_images = Some(v);
         }
         if !self.reasoning_efforts.is_empty() {
             entry.info.reasoning_efforts = self.reasoning_efforts.clone();
@@ -4492,6 +4528,11 @@ pub struct ModelInfo {
     pub reasoning_effort: Option<ReasoningEffort>,
     /// When true, the UI shows effort controls for this model.
     pub supports_reasoning_effort: bool,
+    /// `Some(false)` = text-only model (no multimodal input); `None` =
+    /// unknown, treated as image-capable at use sites (see
+    /// [`model_supports_images`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_images: Option<bool>,
     /// Per-model reasoning-effort menu (source of truth); legacy fields derived from it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reasoning_efforts: Vec<ReasoningEffortOption>,
@@ -4540,6 +4581,7 @@ impl ModelInfo {
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
@@ -4577,6 +4619,7 @@ impl ModelInfo {
             supported_in_api: entry.supported_in_api,
             reasoning_effort: entry.reasoning_effort,
             supports_reasoning_effort: entry.supports_reasoning_effort,
+            supports_images: entry.supports_images,
             reasoning_efforts: entry.reasoning_efforts.clone(),
             supports_backend_search: entry.supports_backend_search,
             compactions_remaining: entry.compactions_remaining,
@@ -5331,6 +5374,7 @@ pub fn resolve_aux_model_sampling_config(
                 supported_in_api: true,
                 reasoning_effort: None,
                 supports_reasoning_effort: false,
+                supports_images: None,
                 reasoning_efforts: Vec::new(),
                 supports_backend_search: false,
                 compactions_remaining: None,
@@ -5566,6 +5610,7 @@ fn resolve_hidden_default_web_search_sampling_config(
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
@@ -6318,6 +6363,7 @@ reasoning_effort = "low"
                 supported_in_api: true,
                 reasoning_effort: None,
                 supports_reasoning_effort: false,
+                supports_images: None,
                 reasoning_efforts: Vec::new(),
                 supports_backend_search: false,
                 compactions_remaining: None,
@@ -6356,6 +6402,27 @@ reasoning_effort = "low"
             &models
         ));
         assert!(!effective_classifier_supports_re(None, "missing", &models));
+    }
+
+    #[test]
+    fn model_supports_images_explicit_false_wins() {
+        let mut text_only = test_model_entry("deepseek-chat", "https://x/v1", None, None, None);
+        text_only.info.supports_images = Some(false);
+        let mut vision = test_model_entry("kimi-k3", "https://x/v1", None, None, None);
+        vision.info.supports_images = Some(true);
+        let mut undeclared = test_model_entry("grok-x", "https://x/v1", None, None, None);
+        undeclared.info.supports_images = None;
+        let mut models = IndexMap::new();
+        models.insert("deepseek-chat".to_string(), text_only);
+        models.insert("kimi-k3".to_string(), vision);
+        models.insert("grok-x".to_string(), undeclared);
+
+        assert!(!model_supports_images("deepseek-chat", &models));
+        assert!(model_supports_images("kimi-k3", &models));
+        // Unknown / undeclared ⇒ assumed image-capable (never silently
+        // strip images from a vision model that forgot to declare it).
+        assert!(model_supports_images("grok-x", &models));
+        assert!(model_supports_images("not-in-catalog", &models));
     }
     #[test]
     fn sampling_config_uses_model_api_key_over_fallback() {
@@ -6989,6 +7056,30 @@ reasoning_effort = "low"
             "Some(false) override should disable show_model_fingerprint over a true base"
         );
     }
+
+    #[test]
+    fn config_override_supports_images_merges_over_base() {
+        let endpoints = EndpointsConfig::default();
+        // Override declares text-only; base (catalog) has no declaration.
+        let mut base = ModelEntry::fallback("deepseek-chat", &endpoints);
+        base.info.supports_images = None;
+        let override_text_only = ConfigModelOverride {
+            supports_images: Some(false),
+            ..Default::default()
+        };
+        let entry = override_text_only.apply("deepseek-chat", Some(base), &endpoints);
+        assert_eq!(entry.info.supports_images, Some(false));
+
+        // Absent override preserves the base declaration.
+        let mut base = ModelEntry::fallback("deepseek-chat", &endpoints);
+        base.info.supports_images = Some(false);
+        let entry = ConfigModelOverride::default().apply("deepseek-chat", Some(base), &endpoints);
+        assert_eq!(entry.info.supports_images, Some(false));
+
+        // Absent override + absent base ⇒ None (treated as image-capable).
+        let entry = ConfigModelOverride::default().apply("new-model", None, &endpoints);
+        assert_eq!(entry.info.supports_images, None);
+    }
     #[test]
     fn user_override_parses_compaction_at_tokens_from_toml() {
         use xai_grok_sampling_types::CompactionAtTokens;
@@ -7410,6 +7501,7 @@ reasoning_effort = "low"
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
@@ -7569,6 +7661,7 @@ reasoning_effort = "low"
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
@@ -8047,6 +8140,7 @@ reasoning_effort = "low"
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
@@ -11663,6 +11757,7 @@ default = "grok-4.5"
                 supported_in_api: true,
                 reasoning_effort: None,
                 supports_reasoning_effort: false,
+                supports_images: None,
                 reasoning_efforts: Vec::new(),
                 supports_backend_search: false,
                 compactions_remaining: None,

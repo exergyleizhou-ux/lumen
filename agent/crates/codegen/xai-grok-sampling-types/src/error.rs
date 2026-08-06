@@ -237,6 +237,28 @@ impl SamplingError {
         )
     }
 
+    /// The API rejected the request because it contained image content the
+    /// model cannot accept (non-multimodal backend). Two shapes:
+    ///
+    /// - Request deserialization rejections, e.g. DeepSeek chat
+    ///   completions: `unknown variant \`image_url\`, expected \`text\``.
+    /// - Provider "images not supported" errors, e.g. OpenAI
+    ///   `Image content blocks are only supported by ...`, Anthropic
+    ///   `only text content is supported`.
+    ///
+    /// Always a direct 400. Recovery is the same as [`Self::is_image_processing_error`]:
+    /// strip images from the request and retry once.
+    pub fn is_image_content_rejected_error(&self) -> bool {
+        matches!(
+            self,
+            SamplingError::Api {
+                status,
+                message,
+                ..
+            } if status.as_u16() == 400 && image_rejection_signals(message)
+        )
+    }
+
     pub fn is_retryable(&self) -> bool {
         match self {
             SamplingError::Auth(_) => false,
@@ -430,6 +452,21 @@ pub fn is_context_length_error(message: &str) -> bool {
         || m.contains("maximum prompt length")
         || m.contains("maximum context length")
         || m.contains("context_length_exceeded")
+}
+
+/// Case-insensitive signals that a 400 API error is caused by image content
+/// the backend cannot accept. Kept as a free function so the unit tests can
+/// exercise the matcher directly.
+fn image_rejection_signals(message: &str) -> bool {
+    let m = message.to_lowercase();
+    (m.contains("unknown variant") && (m.contains("image_url") || m.contains("input_image")))
+        || (m.contains("image_url") && (m.contains("expected") || m.contains("not supported") || m.contains("unsupported")))
+        || (m.contains("input_image") && (m.contains("not supported") || m.contains("unsupported")))
+        || m.contains("does not support images")
+        || m.contains("images are not supported")
+        || m.contains("image content blocks are only supported")
+        || m.contains("image input is not supported")
+        || m.contains("only text content")
 }
 
 /// Decide whether a [`reqwest::Error`] is worth retrying.
@@ -849,6 +886,79 @@ mod tests {
             !err.is_image_processing_error(),
             "only 400 and 500 should match"
         );
+    }
+
+    #[test]
+    fn image_content_rejected_deepseek_deserialize_error_detected() {
+        // Exact message observed 2026-08-06 from api.deepseek.com when the
+        // conversation contained an image_url block (session 019fd217).
+        let err = SamplingError::Api {
+            status: StatusCode::BAD_REQUEST,
+            message: "invalid_request_error: Failed to deserialize the JSON body into the target type: \
+                      messages[1086]: unknown variant `image_url`, expected `text` at line 1 column 1529515"
+                .into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert!(err.is_image_content_rejected_error());
+        assert!(err.is_image_processing_error() == false);
+    }
+
+    #[test]
+    fn image_content_rejected_provider_not_supported_variants_detected() {
+        for msg in [
+            "Image content blocks are only supported by the gpt-4-vision-preview model",
+            "images are not supported by this model",
+            "This model does not support images",
+            "image input is not supported",
+            "Error: image_url is not supported by the model",
+            "400 Bad Request: only text content is supported",
+            "unknown variant 'input_image', expected 'text'",
+        ] {
+            let err = SamplingError::Api {
+                status: StatusCode::BAD_REQUEST,
+                message: msg.into(),
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            };
+            assert!(
+                err.is_image_content_rejected_error(),
+                "must detect: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn image_content_rejected_wrong_status_or_unrelated_400_not_detected() {
+        for msg in [
+            "Invalid model parameter",
+            "The model `deepseek-chat` does not exist",
+            "context_length_exceeded: prompt is too long",
+            "unauthorized: invalid api key",
+        ] {
+            let err = SamplingError::Api {
+                status: StatusCode::BAD_REQUEST,
+                message: msg.into(),
+                model_metadata: None,
+                retry_after_secs: None,
+                should_retry: None,
+            };
+            assert!(
+                !err.is_image_content_rejected_error(),
+                "must NOT detect unrelated 400: {msg}"
+            );
+        }
+        // 502 with the same text is not a request-content rejection.
+        let err = SamplingError::Api {
+            status: StatusCode::BAD_GATEWAY,
+            message: "unknown variant `image_url`, expected `text`".into(),
+            model_metadata: None,
+            retry_after_secs: None,
+            should_retry: None,
+        };
+        assert!(!err.is_image_content_rejected_error());
     }
 
     #[test]

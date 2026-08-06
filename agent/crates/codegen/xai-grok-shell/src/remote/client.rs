@@ -934,6 +934,11 @@ pub fn parse_remote_model_value(
             .or_else(|| meta.and_then(|m| m.get("supportsReasoningEffort")))
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
+        supports_images: obj
+            .get("supportsImages")
+            .or_else(|| obj.get("supports_images"))
+            .or_else(|| meta.and_then(|m| m.get("supportsImages")))
+            .and_then(|v| v.as_bool()),
         reasoning_efforts: obj
             .get("reasoningEfforts")
             .or_else(|| obj.get("reasoning_efforts"))

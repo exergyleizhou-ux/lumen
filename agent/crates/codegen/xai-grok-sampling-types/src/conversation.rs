@@ -634,6 +634,16 @@ impl ConversationRequest {
     /// used as a recovery strategy when the downstream API returns 413
     /// "Request Entity Too Large".
     pub fn strip_images(&mut self) -> usize {
+        self.strip_images_with_reason("[image removed — conversation too large]")
+    }
+
+    /// Like [`Self::strip_images`] but with a caller-chosen placeholder
+    /// reason. Used by sessions running text-only models (e.g. DeepSeek
+    /// BYOK) to keep image content off the wire before the request is
+    /// ever sent — those backends reject `image_url` blocks with a 400
+    /// deserialize error.
+    pub fn strip_images_with_reason(&mut self, reason: &str) -> usize {
+        let reason = Arc::<str>::from(reason);
         let mut stripped = 0usize;
         for item in &mut self.items {
             match item {
@@ -641,7 +651,7 @@ impl ConversationRequest {
                     for part in &mut user.content {
                         if matches!(part, ContentPart::Image { .. }) {
                             *part = ContentPart::Text {
-                                text: Arc::<str>::from("[image removed — conversation too large]"),
+                                text: Arc::clone(&reason),
                             };
                             stripped += 1;
                         }
@@ -2396,8 +2406,6 @@ pub fn dedup_duplicate_tool_results(conversation: &mut Vec<ConversationItem>) ->
 
 #[cfg(test)]
 mod compaction_item_bridge_tests {
-    use super::*;
-    use xai_grok_compaction::{CompactionItem, CompactionItemFactory, CompactionRole};
     use super::*;
     use xai_grok_compaction::{CompactionItem, CompactionItemFactory, CompactionRole};
 
@@ -4642,6 +4650,45 @@ mod tests {
     }
 
     #[test]
+    fn test_strip_images_with_reason_uses_custom_placeholder_and_counts() {
+        let mut req = ConversationRequest::default();
+        let mut user = ConversationItem::user("look");
+        user.add_image("data:image/png;base64,abc123".to_string());
+        req.items.push(user);
+        req.items.push(ConversationItem::assistant("ok"));
+
+        let stripped = req.strip_images_with_reason(
+            "[image omitted — model does not support image input]",
+        );
+        assert_eq!(stripped, 1);
+        if let ConversationItem::User(user) = &req.items[0] {
+            assert_eq!(user.content.len(), 2);
+            assert_matches!(&user.content[1], ContentPart::Text { text } => {
+                assert_eq!(text.as_ref(), "[image omitted — model does not support image input]");
+            });
+        } else {
+            panic!("Expected User item");
+        }
+        // strip_images keeps the legacy placeholder.
+        assert_eq!(req.strip_images(), 0, "no images left to strip");
+    }
+
+    #[test]
+    fn test_strip_images_with_reason_clears_tool_result_images() {
+        let mut req = ConversationRequest::default();
+        req.items.push(ConversationItem::tool_result_with_images(
+            "call_1",
+            "read image file",
+            vec![ContentPart::Image {
+                url: "data:image/png;base64,abc".into(),
+            }],
+        ));
+
+        let stripped = req.strip_images_with_reason("[image omitted — text-only model]");
+        assert_eq!(stripped, 1);
+    }
+
+    #[test]
     fn test_strip_images_returns_zero_when_no_images() {
         let mut req = ConversationRequest::default();
         req.items.push(ConversationItem::user("just text"));
@@ -5738,376 +5785,4 @@ mod tests {
         assert!(!body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"));
     }
 
-    /// Edge case: assistant with EMPTY content but with tool_calls,
-    /// plus a preceding Reasoning sibling. The assistant must still
-    /// produce its FunctionCall items, and the reasoning sibling must
-    /// not be dropped or duplicated. Replaces the old
-    /// `test_assistant_without_content_but_with_tool_calls_and_raw_output`.
-    #[test]
-    fn empty_content_assistant_with_tool_calls_and_reasoning() {
-        let req = ConversationRequest::from_items(vec![
-            ConversationItem::user("u1"),
-            reasoning_sibling("r1", "must call a tool", Some("enc_pre_tool")),
-            ConversationItem::Assistant(AssistantItem {
-                content: Arc::<str>::from(""),
-                tool_calls: vec![ToolCall {
-                    id: Arc::<str>::from("call_1"),
-                    name: "read_file".to_string(),
-                    arguments: Arc::<str>::from("{}"),
-                }],
-                model_id: None,
-                model_fingerprint: None,
-                reasoning_effort: None,
-            }),
-            ConversationItem::tool_result("call_1", "file contents"),
-        ]);
-
-        let input = input_items_json(&req);
-        let summary = summarise_input(&input);
-
-        // Expected:
-        //   user:u1
-        //   reasoning:r1
-        //   (assistant message DROPPED because content is empty -- per
-        //    conversation_item_to_input_items, lines 1718-1724)
-        //   function_call:call_1
-        //   function_call_output (tool result)
-        //
-        // No spurious extra reasoning items, no placeholder.
-        let reasoning_count = summary
-            .iter()
-            .filter(|s| s.starts_with("reasoning:"))
-            .count();
-        assert_eq!(
-            reasoning_count, 1,
-            "exactly one reasoning item; got: {summary:?}"
-        );
-        assert!(
-            summary.iter().any(|s| s == "function_call:call_1"),
-            "function_call must appear; got: {summary:?}"
-        );
-        assert!(
-            summary
-                .iter()
-                .any(|s| s.starts_with("type:function_call_output")),
-            "function_call_output must appear; got: {summary:?}"
-        );
-
-        let body_str = serde_json::to_string(&input).unwrap();
-        assert!(!body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"));
-    }
-
-    /// Sanity guard: serializing a full ConversationRequest with multiple
-    /// Reasoning siblings produces a JSON body containing no
-    /// `__RAW_OUTPUT_PLACEHOLDER_` strings. Replaces the old
-    /// `test_serialize_splice_removes_all_placeholders` -- in the new
-    /// design the placeholder dance does not exist, so the absence of
-    /// placeholders is a structural invariant rather than a behavioral
-    /// one. This test prevents any future refactor from accidentally
-    /// re-introducing the splice machinery.
-    #[test]
-    fn serialized_body_contains_no_placeholder_strings() {
-        let req = ConversationRequest::from_items(vec![
-            ConversationItem::system("sys"),
-            ConversationItem::user("u1"),
-            reasoning_sibling("r1", "first", Some("enc1")),
-            ConversationItem::assistant("a1"),
-            ConversationItem::user("u2"),
-            reasoning_sibling("r2", "second", Some("enc2")),
-            ConversationItem::assistant("a2"),
-            ConversationItem::user("u3"),
-        ]);
-
-        let cr: rs::CreateResponse = (&req).into();
-        let mut body = serde_json::to_value(&cr).unwrap();
-        patch_reasoning_text_types(&mut body);
-        let body_str = serde_json::to_string(&body).unwrap();
-
-        assert!(
-            !body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"),
-            "no placeholder strings post-sibling-Reasoning refactor"
-        );
-
-        // Both reasoning items must appear inline in the input array.
-        let input = body["input"].as_array().unwrap();
-        let reasoning_items: Vec<&serde_json::Value> = input
-            .iter()
-            .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("reasoning"))
-            .collect();
-        assert_eq!(
-            reasoning_items.len(),
-            2,
-            "both reasoning siblings must be present"
-        );
-    }
-
-    #[test]
-    fn deepseek_cache_usage_preserves_reported_zero_and_miss() {
-        let wire = r#"{
-          "prompt_tokens": 100,
-          "completion_tokens": 4,
-          "total_tokens": 104,
-          "prompt_tokens_details": { "cached_tokens": 99 },
-          "prompt_cache_hit_tokens": 0,
-          "prompt_cache_miss_tokens": 100
-        }"#;
-        let usage: Usage = serde_json::from_str(wire).expect("valid DeepSeek usage");
-        let normalized = TokenUsage::from(usage);
-        assert_eq!(normalized.cached_prompt_tokens, 0);
-        assert_eq!(normalized.provider_cache_hit_tokens, Some(0));
-        assert_eq!(normalized.cache_miss_prompt_tokens, Some(100));
-        assert_eq!(
-            normalized.provider_cache_usage_truth(),
-            CacheUsageTruth::Reported {
-                hit_tokens: Some(0),
-                miss_tokens: Some(100),
-            }
-        );
-    }
-
-    #[test]
-    fn absent_deepseek_cache_usage_keeps_compatible_fallback() {
-        let wire = r#"{
-          "prompt_tokens": 100,
-          "completion_tokens": 4,
-          "total_tokens": 104,
-          "prompt_tokens_details": { "cached_tokens": 70 }
-        }"#;
-        let usage: Usage = serde_json::from_str(wire).expect("valid compatible usage");
-        let normalized = TokenUsage::from(usage);
-        assert_eq!(normalized.cached_prompt_tokens, 70);
-        assert_eq!(normalized.provider_cache_hit_tokens, Some(70));
-        assert_eq!(normalized.cache_miss_prompt_tokens, None);
-    }
-
-    #[test]
-    fn deepseek_cache_usage_truth_matrix_preserves_absence_zero_and_contradictions() {
-        struct Case {
-            wire: &'static str,
-            expected: CacheUsageTruth,
-        }
-
-        let cases = [
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_tokens_details":{"cached_tokens":70}}"#,
-                expected: CacheUsageTruth::Reported {
-                    hit_tokens: Some(70),
-                    miss_tokens: None,
-                },
-            },
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_tokens_details":{"cached_tokens":99},"prompt_cache_hit_tokens":0,"prompt_cache_miss_tokens":100}"#,
-                expected: CacheUsageTruth::Reported {
-                    hit_tokens: Some(0),
-                    miss_tokens: Some(100),
-                },
-            },
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":30}"#,
-                expected: CacheUsageTruth::Reported {
-                    hit_tokens: Some(70),
-                    miss_tokens: Some(30),
-                },
-            },
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":70,"prompt_cache_miss_tokens":40}"#,
-                expected: CacheUsageTruth::Contradictory {
-                    reported_hit_tokens: Some(70),
-                    reported_miss_tokens: Some(40),
-                    prompt_tokens: 100,
-                },
-            },
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_miss_tokens":100}"#,
-                expected: CacheUsageTruth::Reported {
-                    hit_tokens: None,
-                    miss_tokens: Some(100),
-                },
-            },
-            Case {
-                wire: r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100,"prompt_cache_hit_tokens":101,"prompt_cache_miss_tokens":0}"#,
-                expected: CacheUsageTruth::Contradictory {
-                    reported_hit_tokens: Some(101),
-                    reported_miss_tokens: Some(0),
-                    prompt_tokens: 100,
-                },
-            },
-        ];
-
-        for case in cases {
-            let usage: Usage = serde_json::from_str(case.wire).expect("valid usage fixture");
-            assert_eq!(usage.cache_usage_truth(), case.expected);
-        }
-    }
-
-    #[test]
-    fn absent_cache_usage_is_unavailable_not_a_zero_hit() {
-        let usage: Usage = serde_json::from_str(
-            r#"{"prompt_tokens":100,"completion_tokens":0,"total_tokens":100}"#,
-        )
-        .expect("valid usage fixture");
-        assert_eq!(usage.cache_usage_truth(), CacheUsageTruth::Unavailable);
-    }
-
-    #[test]
-    fn definitive_cache_hit_requires_consistent_nonzero_provider_truth() {
-        let cases = [
-            (
-                TokenUsage {
-                    prompt_tokens: 100,
-                    completion_tokens: 0,
-                    total_tokens: 100,
-                    reasoning_tokens: 0,
-                    // Generic compatibility data must not be promoted.
-                    cached_prompt_tokens: 90,
-                    provider_cache_hit_tokens: None,
-                    cache_miss_prompt_tokens: None,
-                },
-                None,
-            ),
-            (
-                TokenUsage {
-                    prompt_tokens: 100,
-                    completion_tokens: 0,
-                    total_tokens: 100,
-                    reasoning_tokens: 0,
-                    cached_prompt_tokens: 90,
-                    provider_cache_hit_tokens: Some(90),
-                    cache_miss_prompt_tokens: Some(20),
-                },
-                None,
-            ),
-            (
-                TokenUsage {
-                    prompt_tokens: 100,
-                    completion_tokens: 0,
-                    total_tokens: 100,
-                    reasoning_tokens: 0,
-                    cached_prompt_tokens: 90,
-                    provider_cache_hit_tokens: Some(0),
-                    cache_miss_prompt_tokens: Some(100),
-                },
-                None,
-            ),
-            (
-                TokenUsage {
-                    prompt_tokens: 100,
-                    completion_tokens: 0,
-                    total_tokens: 100,
-                    reasoning_tokens: 0,
-                    cached_prompt_tokens: 90,
-                    provider_cache_hit_tokens: Some(90),
-                    cache_miss_prompt_tokens: Some(10),
-                },
-                Some(90),
-            ),
-        ];
-
-        for (usage, expected) in cases {
-            assert_eq!(usage.definitive_provider_cache_hit_tokens(), expected);
-        }
-    }
-
-    /// Edge case: assistant with EMPTY content but with tool_calls,
-    /// plus a preceding Reasoning sibling. The assistant must still
-    /// produce its FunctionCall items, and the reasoning sibling must
-    /// not be dropped or duplicated. Replaces the old
-    /// `test_assistant_without_content_but_with_tool_calls_and_raw_output`.
-    #[test]
-    fn empty_content_assistant_with_tool_calls_and_reasoning() {
-        let req = ConversationRequest::from_items(vec![
-            ConversationItem::user("u1"),
-            reasoning_sibling("r1", "must call a tool", Some("enc_pre_tool")),
-            ConversationItem::Assistant(AssistantItem {
-                content: Arc::<str>::from(""),
-                tool_calls: vec![ToolCall {
-                    id: Arc::<str>::from("call_1"),
-                    name: "read_file".to_string(),
-                    arguments: Arc::<str>::from("{}"),
-                }],
-                model_id: None,
-                model_fingerprint: None,
-                reasoning_effort: None,
-            }),
-            ConversationItem::tool_result("call_1", "file contents"),
-        ]);
-
-        let input = input_items_json(&req);
-        let summary = summarise_input(&input);
-
-        // Expected:
-        //   user:u1
-        //   reasoning:r1
-        //   (assistant message DROPPED because content is empty -- per
-        //    conversation_item_to_input_items, lines 1718-1724)
-        //   function_call:call_1
-        //   function_call_output (tool result)
-        //
-        // No spurious extra reasoning items, no placeholder.
-        let reasoning_count = summary
-            .iter()
-            .filter(|s| s.starts_with("reasoning:"))
-            .count();
-        assert_eq!(
-            reasoning_count, 1,
-            "exactly one reasoning item; got: {summary:?}"
-        );
-        assert!(
-            summary.iter().any(|s| s == "function_call:call_1"),
-            "function_call must appear; got: {summary:?}"
-        );
-        assert!(
-            summary
-                .iter()
-                .any(|s| s.starts_with("type:function_call_output")),
-            "function_call_output must appear; got: {summary:?}"
-        );
-
-        let body_str = serde_json::to_string(&input).unwrap();
-        assert!(!body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"));
-    }
-
-    /// Sanity guard: serializing a full ConversationRequest with multiple
-    /// Reasoning siblings produces a JSON body containing no
-    /// `__RAW_OUTPUT_PLACEHOLDER_` strings. Replaces the old
-    /// `test_serialize_splice_removes_all_placeholders` -- in the new
-    /// design the placeholder dance does not exist, so the absence of
-    /// placeholders is a structural invariant rather than a behavioral
-    /// one. This test prevents any future refactor from accidentally
-    /// re-introducing the splice machinery.
-    #[test]
-    fn serialized_body_contains_no_placeholder_strings() {
-        let req = ConversationRequest::from_items(vec![
-            ConversationItem::system("sys"),
-            ConversationItem::user("u1"),
-            reasoning_sibling("r1", "first", Some("enc1")),
-            ConversationItem::assistant("a1"),
-            ConversationItem::user("u2"),
-            reasoning_sibling("r2", "second", Some("enc2")),
-            ConversationItem::assistant("a2"),
-            ConversationItem::user("u3"),
-        ]);
-
-        let cr: rs::CreateResponse = (&req).into();
-        let mut body = serde_json::to_value(&cr).unwrap();
-        patch_reasoning_text_types(&mut body);
-        let body_str = serde_json::to_string(&body).unwrap();
-
-        assert!(
-            !body_str.contains("__RAW_OUTPUT_PLACEHOLDER_"),
-            "no placeholder strings post-sibling-Reasoning refactor"
-        );
-
-        // Both reasoning items must appear inline in the input array.
-        let input = body["input"].as_array().unwrap();
-        let reasoning_items: Vec<&serde_json::Value> = input
-            .iter()
-            .filter(|v| v.get("type").and_then(|t| t.as_str()) == Some("reasoning"))
-            .collect();
-        assert_eq!(
-            reasoning_items.len(),
-            2,
-            "both reasoning siblings must be present"
-        );
-    }
 }

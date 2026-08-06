@@ -95,6 +95,29 @@ mod tests {
     }
 
     #[test]
+    fn lumen_default_models_json_declares_deepseek_text_only() {
+        // DeepSeek chat-completions is not multimodal: it rejects image_url
+        // content blocks with a 400 deserialize error. The catalog must
+        // declare supports_images=false so sessions strip image content
+        // before sending (and never hand image tools a dead end).
+        let v = embedded_catalog();
+        let models = v["models"].as_array().expect("models array");
+        for id in ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat", "deepseek-reasoner"] {
+            let deepseek = model_by_id(models, id);
+            assert_eq!(
+                deepseek["supports_images"].as_bool(),
+                Some(false),
+                "catalog entry {id} must declare supports_images=false"
+            );
+        }
+        // The default model (deepseek-v4-flash) must be text-only too.
+        assert_eq!(
+            v["default"], "deepseek-v4-flash",
+            "default model must stay deepseek-v4-flash"
+        );
+    }
+
+    #[test]
     fn lumen_default_models_json_uses_formal_role_models() {
         let v = embedded_catalog();
         assert_eq!(v["default"], "deepseek-v4-flash");

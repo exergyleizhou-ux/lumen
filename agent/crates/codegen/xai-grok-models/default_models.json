@@ -35,7 +35,8 @@
       "env_key": "DEEPSEEK_API_KEY",
       "byok": true,
       "auto_compact_threshold_percent": 85,
-      "show_model_fingerprint": true
+      "show_model_fingerprint": true,
+      "supports_images": false
     },
     {
       "id": "deepseek-v4-flash",
@@ -74,7 +75,8 @@
         "max_nudges_per_session": 3,
         "idle_threshold_ms": 8000,
         "min_confidence": 0.7
-      }
+      },
+      "supports_images": false
     },
     {
       "id": "deepseek-chat",
@@ -92,7 +94,8 @@
       "env_key": "DEEPSEEK_API_KEY",
       "byok": true,
       "auto_compact_threshold_percent": 80,
-      "show_model_fingerprint": true
+      "show_model_fingerprint": true,
+      "supports_images": false
     },
     {
       "id": "deepseek-reasoner",
@@ -118,7 +121,8 @@
       "env_key": "DEEPSEEK_API_KEY",
       "byok": true,
       "auto_compact_threshold_percent": 85,
-      "show_model_fingerprint": true
+      "show_model_fingerprint": true,
+      "supports_images": false
     },
     {
       "id": "openai-gpt4o",

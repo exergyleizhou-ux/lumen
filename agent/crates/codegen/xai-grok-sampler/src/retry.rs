@@ -173,6 +173,16 @@ pub fn classify_error(
         return RetryDecision::RetryWithImageStrip;
     }
 
+    // Non-multimodal backends reject image content outright — DeepSeek
+    // chat completions fails to deserialize `image_url` blocks (400,
+    // "unknown variant `image_url`, expected `text`"). Strip images and
+    // retry once, same recovery as 413. Without this the session dies:
+    // the image stays in history and every subsequent turn fails the
+    // same way.
+    if err.is_image_content_rejected_error() {
+        return RetryDecision::RetryWithImageStrip;
+    }
+
     // Server explicitly said don't retry (x-should-retry: false).
     // Trust the server — it knows if the error is request-content-caused
     // (e.g. malformed tool call in conversation history) vs transient.
@@ -563,6 +573,46 @@ mod tests {
     fn classify_image_processing_error_400_strips_images() {
         let err = api_err(StatusCode::BAD_REQUEST, "Could not process image");
         assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_image_content_rejected_deepseek_400_strips_images() {
+        // Exact DeepSeek failure observed 2026-08-06: the request carried an
+        // image_url block a text-only backend could not deserialize.
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "invalid_request_error: Failed to deserialize the JSON body into the target type: \
+             messages[1086]: unknown variant `image_url`, expected `text` at line 1 column 1529515",
+        );
+        assert!(matches!(
+            classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_image_content_rejected_strips_even_after_retries() {
+        // Strip-recovery must not be budget-gated by retry_count the way
+        // transport retries are — one strip attempt is always affordable.
+        let err = api_err(
+            StatusCode::BAD_REQUEST,
+            "image input is not supported by this model",
+        );
+        assert!(matches!(
+            classify_error(&err, 3, 5, RATE_LIMIT_RETRY_THRESHOLD),
+            RetryDecision::RetryWithImageStrip
+        ));
+    }
+
+    #[test]
+    fn classify_unrelated_400_stays_fatal_not_image_strip() {
+        // A plain 400 (no image signal) must NOT trigger image stripping —
+        // classification falls through to the status-code logic below.
+        let err = api_err(StatusCode::BAD_REQUEST, "Invalid model parameter");
+        assert!(!matches!(
             classify_error(&err, 0, 5, RATE_LIMIT_RETRY_THRESHOLD),
             RetryDecision::RetryWithImageStrip
         ));

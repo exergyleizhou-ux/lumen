@@ -2011,6 +2011,7 @@ fn test_model_entry(model_id: &str) -> crate::agent::config::ModelEntry {
             supported_in_api: true,
             reasoning_effort: None,
             supports_reasoning_effort: false,
+            supports_images: None,
             reasoning_efforts: Vec::new(),
             supports_backend_search: false,
             compactions_remaining: None,
