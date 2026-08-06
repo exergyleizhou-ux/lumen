@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **75** |
 | … fully merged into main | 9 |
 | … NOT in main | **66** |
-| Last non-bot commit | deb85fd7 fix(multimodal): strip image content for text-only models (DeepSeek BYOK) |
+| Last non-bot commit | 48e188e5 chore(lock): refresh SOURCE_LOCK for image_url strip fix (deb85fd7) |
 
 ---
 
