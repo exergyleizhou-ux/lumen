@@ -10,13 +10,13 @@ For the generation date, see the last ledger commit in `git log`.
 
 | Question | Answer |
 |---|---|
-| Version (root VERSION) | **2.3.0** |
-| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=3 |
+| Version (root VERSION) | **2.3.1** |
+| Readiness | state=BLOCKED ready=False engineering_complete=False blockers=1 |
 | Active git worktrees (this checkout) | 1 |
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | ff4456b3 fix(shell): allexport must not export huge snapshot assignments (E2BIG, exit 126) |
+| Last non-bot commit | a1db9385 chore(release): evidence for v2.3.1 |
 
 ---
 
