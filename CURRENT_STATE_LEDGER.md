@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | 2226b6d4 style(science): justify raw spawn sites in xai-grok-science (clippy -D warnings) |
+| Last non-bot commit | ff4456b3 fix(shell): allexport must not export huge snapshot assignments (E2BIG, exit 126) |
 
 ---
 
