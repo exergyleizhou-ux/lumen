@@ -7,6 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-08-07
+
+### Fixed
+
+- allexport must not export huge snapshot assignments (E2BIG, exit 126) (`ff4456b3`)
+
+### Maintenance
+
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`d22c5dca`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`5287eb84`)
+- justify raw spawn sites in xai-grok-science (clippy -D warnings) (`2226b6d4`)
+- auto-regenerate CURRENT_STATE_LEDGER.md [skip ci] (`2169087e`)
+
 ## [2.3.0] - 2026-08-07
 
 ### Added
