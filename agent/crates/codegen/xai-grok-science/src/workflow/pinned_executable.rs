@@ -735,6 +735,9 @@ impl PinnedCommand {
         Ok(())
     }
 
+    // The launched executable is verified immediately and reaped by the
+    // workflow runner; actor-owned, not session-scope enrolled.
+    #[allow(clippy::disallowed_methods)]
     pub fn spawn(&mut self) -> io::Result<Child> {
         self.verify_immediately_before_spawn()?;
         let _keep_alive = &self.inherited_snapshot;

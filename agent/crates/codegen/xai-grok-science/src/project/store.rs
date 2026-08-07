@@ -1453,6 +1453,9 @@ mod tests {
                     assert_eq!(rechecked_project.project_id, project.project_id);
                     assert_eq!(revision, store.project_revision(&project.project_id)?);
 
+                    // Project-lock child is waited on with a hard
+                    // deadline; actor-owned, not session-scope enrolled.
+                    #[allow(clippy::disallowed_methods)]
                     let mut child = Command::new(std::env::current_exe()?)
                         .arg("--exact")
                         .arg("project::store::tests::project_mutation_child_helper")
@@ -1545,6 +1548,8 @@ mod tests {
             .create_project("owner", "Cross-process lock", "Does it block?")
             .unwrap();
 
+        // Test helper child is waited on with a hard deadline.
+        #[allow(clippy::disallowed_methods)]
         let mut child = Command::new(std::env::current_exe().unwrap())
             .arg("--exact")
             .arg("project::store::tests::project_write_lock_child_helper")

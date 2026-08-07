@@ -850,6 +850,10 @@ fn run_version_probe(
         .env("LC_ALL", "C")
         .env("LANG", "C");
     configure_probe_process(&mut command);
+    // Kernel version probe: the actor completes the probe with a hard
+    // timeout and kills the child on cancellation; deliberately not
+    // session-scope enrolled (actor-owned execution).
+    #[allow(clippy::disallowed_methods)]
     let child = command
         .spawn()
         .map_err(|error| RejectionReason::VersionProbeSpawnFailed {

@@ -279,6 +279,9 @@ pub fn execute_scp(
     if let Some(path) = &config.fixture_ssh_config {
         command.arg("-F").arg(path);
     }
+    // Science transport spawns are actor-owned and always waited on (the
+    // polling loop below runs the child to completion); never fire-and-forget.
+    #[allow(clippy::disallowed_methods)]
     let mut child = command
         .arg(&source)
         .arg(&destination)
