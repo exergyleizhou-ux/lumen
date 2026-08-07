@@ -108,7 +108,16 @@ dump_bash_state() {
   # shell-global in bash); replaying them would abort later user commands.
   local posix_opts
   posix_opts=$(builtin shopt -po 2>/dev/null | command grep -vE '^set [-+]o (nounset|errexit|pipefail)$' || true)
-  _emit_encoded "$posix_opts" "POSIX_OPTS_B64"
+
+  # The user's `set -a` (allexport) must survive in the snapshot (it is part
+  # of `posix_opts`, captured above), but the big captures below (functions can
+  # be hundreds of KB on hosts with heavy rc files) must NOT get the export
+  # attribute: an exported string >128KB makes Linux execve fail with E2BIG
+  # (`Argument list too long`) for every external command from here on. Turn
+  # allexport off for the rest of the dump; the replay re-enables it via the
+  # POSIX_OPTS section, which is emitted last so its `set -o allexport` cannot
+  # re-export the `grok_snap_*` assignments that precede it.
+  builtin set +a 2>/dev/null || true
 
   local bash_opts
   bash_opts=$(builtin shopt -p 2>/dev/null || true)
@@ -121,6 +130,9 @@ dump_bash_state() {
   local aliases
   aliases=$(builtin alias -p 2>/dev/null || true)
   _emit_encoded "$aliases" "ALIASES_B64"
+
+  # Emitted last on purpose: see the `set +a` comment above.
+  _emit_encoded "$posix_opts" "POSIX_OPTS_B64"
 
   _emit "# end of bash state dump"
   _emit "__GROK_BASH_STATE_END__"
@@ -165,7 +177,12 @@ function dump_zsh_state() {
   # commands.
   local zsh_opts
   zsh_opts=$(setopt 2>/dev/null | command grep -vE '^(nounset|errexit|errreturn|pipefail)$' | command awk '{printf "builtin setopt %s 2>/dev/null || true\n", $0}' || true)
-  _emit_encoded "$zsh_opts" "ZSH_OPTS_B64"
+
+  # Mirror of the bash dump: allexport is captured in `zsh_opts` above, then
+  # switched off so the big FUNCTIONS capture cannot be exported (an exported
+  # string >128KB makes Linux execve fail with E2BIG). The opts replay is
+  # emitted last so it cannot re-export the `grok_snap_*` assignments.
+  builtin unsetopt allexport 2>/dev/null || true
 
   local all_functions
   all_functions=$(builtin typeset -f 2>/dev/null || true)
@@ -174,6 +191,9 @@ function dump_zsh_state() {
   local aliases
   aliases=$({ builtin alias -L; builtin alias -gL; builtin alias -sL } 2>/dev/null || true)
   _emit_encoded "$aliases" "ALIASES_B64"
+
+  # Emitted last on purpose: see the `unsetopt allexport` comment above.
+  _emit_encoded "$zsh_opts" "ZSH_OPTS_B64"
 
   _emit "# end of zsh state dump"
   _emit "__GROK_ZSH_STATE_END__"
@@ -441,8 +461,19 @@ impl ShellState {
                 // var=value` does NOT beat allexport) and unset it after the
                 // eval so it can never reach child processes or the state
                 // dump (`export -p`).
+                //
+                // `set +a` before the snapshot eval: if the snapshot's own
+                // replay re-enabled allexport (POSIX_OPTS is replayed last),
+                // the `grok_snap_*` assignments (base64 of env/functions,
+                // which can be hundreds of KB) would get the export attribute
+                // and blow past Linux's per-string execve limit (MAX_ARG_STR
+                // LEN, 128KB) — every later external command then fails with
+                // `Argument list too long` (E2BIG, exit 126). Starting the
+                // replay with allexport off keeps the big assignments
+                // unexported; the POSIX_OPTS replay restores the user's
+                // allexport state for the command below.
                 "{dump_script} \
-                 snap=$(command cat <&3) && builtin shopt -s extglob && builtin eval -- \"$snap\" && \
+                 snap=$(command cat <&3) && builtin shopt -s extglob && builtin set +a 2>/dev/null && builtin eval -- \"$snap\" && \
                  {{ builtin set +u 2>/dev/null || true; \
                  builtin export GROK_AGENT=1; \
                  builtin export PWD=\"$(builtin pwd)\"; \
@@ -461,6 +492,7 @@ impl ShellState {
                  snap=$(command cat <&3); \
                  builtin unsetopt aliases 2>/dev/null; \
                  builtin unalias -m '*' 2>/dev/null || true; \
+                 builtin unsetopt allexport 2>/dev/null || true; \
                  builtin eval \"$snap\" && \
                  {{ builtin unsetopt nounset 2>/dev/null || true; \
                  builtin setopt nonomatch 2>/dev/null || true; \
@@ -1204,6 +1236,74 @@ mod tests {
         assert!(
             stdout.contains("ENV_CLEAN") && !stdout.contains("LEAKED_TO_ENV"),
             "temp var must not be exported to child processes under allexport, got: {stdout:?}"
+        );
+    }
+
+    /// Regression: the dump must not let the user's `allexport` (set -a)
+    /// export the `grok_snap_*` base64 assignments during replay — an exported
+    /// string >128KB makes Linux execve fail with E2BIG (`Argument list too
+    /// long`, exit 126) for every later external command, which broke the
+    /// very first `run_command("set -a")` on hosts with huge rc-file function
+    /// sets (bash-completion, nvm: hundreds of KB). The fix: the wrapper turns
+    /// allexport off before the snapshot eval, and the dump emits the opts
+    /// section last so the replay's `set -o allexport` cannot re-export the
+    /// big assignments that precede it.
+    #[tokio::test]
+    async fn test_allexport_replay_cannot_export_grok_snap_assignments() {
+        if !bash_available() {
+            return;
+        }
+        let cwd = std::env::current_dir().unwrap();
+        let mut state = ShellState::init(ShellKind::Bash, &cwd, None).await.unwrap();
+
+        // Structure: the wrapper must clear allexport before the snapshot eval.
+        let prep = state
+            .prepare_command(
+                "true",
+                None,
+                crate::computer::local::SearchShadowConfig::default(),
+                None,
+            )
+            .unwrap();
+        let wrapper = prep
+            .args
+            .iter()
+            .find(|a| a.contains("builtin eval"))
+            .expect("bash wrapper should be in prepare_command args");
+        let set_a_pos = wrapper
+            .find("builtin set +a 2>/dev/null && builtin eval -- \"$snap\"")
+            .expect("wrapper must clear allexport before snapshot eval");
+        assert!(set_a_pos > 0, "wrapper={wrapper:?}");
+
+        // Structure: the dump emits POSIX_OPTS last (after FUNCTIONS/ALIASES)
+        // so its replay cannot re-enable allexport before the big assignments.
+        let opts_pos = state
+            .snapshot
+            .find("grok_snap_POSIX_OPTS_B64=")
+            .expect("snapshot must carry the POSIX_OPTS section");
+        let funcs_pos = state
+            .snapshot
+            .find("grok_snap_FUNCTIONS_B64=")
+            .expect("snapshot must carry the FUNCTIONS section");
+        let aliases_pos = state.snapshot.find("grok_snap_ALIASES_B64=");
+        assert!(
+            opts_pos > funcs_pos && aliases_pos.map_or(true, |a| opts_pos > a),
+            "POSIX_OPTS must be replayed last (after FUNCTIONS/ALIASES), got: opts={opts_pos} funcs={funcs_pos} aliases={aliases_pos:?}"
+        );
+
+        // Behavior: allexport enabled in one command still persists into the
+        // next command through the reordered snapshot.
+        let (code, _) = run_command(&mut state, "set -a").await;
+        assert_eq!(code, 0);
+        let (code, stdout) = run_command(
+            &mut state,
+            "builtin shopt -qo allexport && echo ALLEXPORT_ON || echo ALLEXPORT_OFF",
+        )
+        .await;
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("ALLEXPORT_ON"),
+            "allexport must persist across commands, got: {stdout:?}"
         );
     }
 
