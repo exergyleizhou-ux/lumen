@@ -16,7 +16,7 @@ For the generation date, see the last ledger commit in `git log`.
 | Remote branches on origin (excl. main) | **76** |
 | … fully merged into main | 10 |
 | … NOT in main | **66** |
-| Last non-bot commit | a1db9385 chore(release): evidence for v2.3.1 |
+| Last non-bot commit | 26f62b35 chore(release): refresh L2/L3 readiness evidence to v2.3.1 binary stamp |
 
 ---
 
